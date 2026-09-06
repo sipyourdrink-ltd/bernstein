@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.eval.bench.rotation import RotationStatus
+
 # ---------------------------------------------------------------------------
 # Leaderboard entry
 # ---------------------------------------------------------------------------
@@ -123,6 +125,12 @@ class Leaderboard:
             entries=entries,
         )
 
+    def check_rotation_due(self, threshold: float = 0.9, consecutive_required: int = 3) -> RotationStatus:
+        """Check if rotation is due based on saturation of baseline submissions."""
+        from bernstein.eval.bench.rotation import check_suite_saturation
+
+        return check_suite_saturation(self.entries, threshold=threshold, consecutive_required=consecutive_required)
+
     # ------------------------------------------------------------------
     # Markdown rendering
     # ------------------------------------------------------------------
@@ -135,11 +143,23 @@ class Leaderboard:
         ensuring entries were added only after ``BenchVerifier.verify()``
         returned MATCH).
         """
+        rotation_status = self.check_rotation_due()
         lines = [
             "# bernstein-bench leaderboard",
             "",
             "> Every row has passed `bernstein bench verify <bundle>`.  Click the bundle hash to re-verify.",
             "",
+        ]
+
+        if rotation_status.rotation_due:
+            lines += [
+                "> ⚠️ **ROTATION DUE**: Public suite has saturated "
+                "(pass rate exceeded 90% across 3 consecutive baselines). "
+                "Rotate to new task distribution or promote private holdout.",
+                "",
+            ]
+
+        lines += [
             f"Suite version: **{self.suite_version}**  ",
             f"Suite hash: `{self.suite_hash}`",
             "",

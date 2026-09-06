@@ -659,7 +659,7 @@ class TestDocs:
         repo_root = Path(__file__).parents[4]
         bench_docs = repo_root / "docs" / "eval" / "bench.md"
         assert bench_docs.exists()
-        assert "reliability" in bench_docs.read_text()
+        assert "reliability" in bench_docs.read_text(encoding="utf-8")
 
 
 # ===========================================================================

@@ -107,6 +107,7 @@ class SubmissionBundle:
     signature: str = ""
     # Install identity fingerprint (public-key fingerprint of the signer).
     signer_fingerprint: str = ""
+    holdout_hash: str = ""
 
     # Computed lazily.
     _bundle_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -137,14 +138,17 @@ class SubmissionBundle:
         return self._bundle_hash
 
     def _compute_hash(self) -> str:
+        payload_dict: dict[str, Any] = {
+            "suite_hash": self.suite_hash,
+            "suite_version": self.suite_version,
+            "submitted_at": self.submitted_at,
+            "scheduler_config": self.scheduler_config,
+            "task_results": [r.to_dict() for r in self.task_results],
+        }
+        if self.holdout_hash:
+            payload_dict["holdout_hash"] = self.holdout_hash
         payload = json.dumps(
-            {
-                "suite_hash": self.suite_hash,
-                "suite_version": self.suite_version,
-                "submitted_at": self.submitted_at,
-                "scheduler_config": self.scheduler_config,
-                "task_results": [r.to_dict() for r in self.task_results],
-            },
+            payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -155,7 +159,7 @@ class SubmissionBundle:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "bundle_hash": self.bundle_hash(),
             "suite_hash": self.suite_hash,
             "suite_version": self.suite_version,
@@ -167,6 +171,9 @@ class SubmissionBundle:
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
         }
+        if self.holdout_hash:
+            d["holdout_hash"] = self.holdout_hash
+        return d
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,6 +216,7 @@ class SubmissionBundle:
             submitted_at=raw["submitted_at"],
             signature=raw.get("signature", ""),
             signer_fingerprint=raw.get("signer_fingerprint", ""),
+            holdout_hash=raw.get("holdout_hash", ""),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:
