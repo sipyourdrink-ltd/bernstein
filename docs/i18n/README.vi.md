@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse` và `hub` là các lệnh con hoạt động.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://bernstein.readthedocs.io/):
 

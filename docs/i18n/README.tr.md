@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 [Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse` ve `hub`.
 
 ### ön sayfanın ötesinde
-<!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
 
 Daha derinlemesine tüm konular [belgelendirme sitesinde](https://bernstein.readthedocs.io/) yer alır:
 

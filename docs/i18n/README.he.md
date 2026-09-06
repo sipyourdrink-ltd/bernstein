@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 [מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse` ו-`hub` הן תת-הפקודות שעובדות.
 
 ### מעבר לעמוד הראשי
-<!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
 
 כל החומר המעמיק נמצא ב[אתר התיעוד](https://bernstein.readthedocs.io/):
 
