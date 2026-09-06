@@ -641,3 +641,66 @@ def test_plan_graph_full_deterministic_across_replays(tmp_path: Path) -> None:
     board_b = project_board(events_b)
     assert canonical_board_bytes(board_a) == canonical_board_bytes(board_b)
     assert board_hash(board_a) == board_hash(board_b)
+
+
+def test_task_merged_carries_merge_commit(tmp_path: Path) -> None:
+    """record_task_merged writes merge_commit, salvaged_commit, and reason into journal."""
+    journal = EventJournal("run-m1", tmp_path / ".sdd")
+    record_task_merged(
+        journal,
+        task_id="T-10",
+        agent_id="agent-10",
+        merge_commit="abc1234567",
+        salvaged_commit="def7654321",
+        reason="orphan_no_signals",
+    )
+    events = load_events(journal.path).events
+    assert len(events) == 1
+    row = events[0]
+    assert row["event"] == EVENT_TASK_MERGED
+    assert row["task_id"] == "T-10"
+    assert row["agent_id"] == "agent-10"
+    assert row["merge_commit"] == "abc1234567"
+    assert row["salvaged_commit"] == "def7654321"
+    assert row["reason"] == "orphan_no_signals"
+
+
+def test_review_board_projects_salvaged_merge(tmp_path: Path) -> None:
+    """Review board projection captures merge_commit, salvaged_commit, and salvage_reason."""
+    events = [
+        {"event": "run_started", "run_id": "r1", "git_branch": "main", "git_sha": "abc"},
+        {"event": "task_claimed", "task_id": "t-salvage", "agent_id": "agent-s"},
+        {
+            "event": EVENT_TASK_MERGED,
+            "task_id": "t-salvage",
+            "agent_id": "agent-s",
+            "merge_commit": "merge-sha-123",
+            "salvaged_commit": "wip-sha-456",
+            "reason": "dead_agent",
+        },
+    ]
+    board = project_board(events)
+    assert _column_of(board, "t-salvage") == "merged"
+    merged_cards = board["columns"]["merged"]
+    card = next(c for c in merged_cards if c["task_id"] == "t-salvage")
+    assert card["merge_commit"] == "merge-sha-123"
+    assert card["salvaged_commit"] == "wip-sha-456"
+    assert card["salvage_reason"] == "dead_agent"
+
+
+def test_rederive_accepts_merge_commit_field(tmp_path: Path) -> None:
+    """Rederive/replay cleanly accepts task_merged rows with merge_commit fields."""
+    journal = EventJournal("run-rederive-test", tmp_path / ".sdd")
+    journal.record("run_started", run_id="run-rederive-test", git_branch="main", git_sha="abc1234", config_hash="cfg")
+    journal.record(
+        EVENT_TASK_MERGED,
+        task_id="t-1",
+        agent_id="agent-1",
+        merge_commit="sha999",
+        salvaged_commit="wip888",
+        reason="dead_agent",
+    )
+    events = load_events(journal.path).events
+    assert len(events) == 2
+    assert events[1]["merge_commit"] == "sha999"
+

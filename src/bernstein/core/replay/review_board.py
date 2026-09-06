@@ -211,6 +211,12 @@ def _fold_event(cards: dict[str, dict[str, Any]], run: dict[str, Any], index: in
         card["column"] = "merged"
         agent_id = row.get("agent_id")
         card["agent_id"] = str(agent_id) if isinstance(agent_id, str) and agent_id else card["agent_id"]
+        if row.get("merge_commit"):
+            card["merge_commit"] = str(row["merge_commit"])
+        if row.get("salvaged_commit"):
+            card["salvaged_commit"] = str(row["salvaged_commit"])
+        if row.get("reason"):
+            card["salvage_reason"] = str(row["reason"])
     elif event == EVENT_TASK_DIFF_CAPTURED:
         if card is None:
             card = cards[task_id] = _new_card(task_id)
@@ -439,22 +445,40 @@ def list_board_runs(sdd_dir: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def record_task_merged(recorder: EventJournal | None, *, task_id: str, agent_id: str | None) -> None:
+def record_task_merged(
+    recorder: EventJournal | None,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    merge_commit: str | None = None,
+    salvaged_commit: str | None = None,
+    reason: str | None = None,
+) -> None:
     """Record a ``task_merged`` event into the run journal.
 
     Called by the task lifecycle right after a verified task's work is
-    merged, so the merge decision exists as a chained journal row that the
-    board's ``merged`` column projects from. ``None`` *recorder* is a
-    no-op so detached callers and minimal test harnesses need no journal.
+    merged, or by the agent lifecycle when salvaged partial work is merged.
+    ``None`` *recorder* is a no-op so detached callers and minimal test
+    harnesses need no journal.
 
     Args:
         recorder: The run's :class:`EventJournal` (or ``None``).
         task_id: The merged task's identifier.
         agent_id: The producing agent session id, when known.
+        merge_commit: Git commit SHA on the integration branch after merge.
+        salvaged_commit: Git commit SHA of salvaged WIP commit (if recovery merge).
+        reason: Reason for merge (e.g. 'orphan_no_signals', 'dead_agent', 'shutdown').
     """
     if recorder is None:
         return
-    recorder.record(EVENT_TASK_MERGED, task_id=task_id, agent_id=agent_id)
+    kwargs: dict[str, Any] = {"task_id": task_id, "agent_id": agent_id}
+    if merge_commit is not None:
+        kwargs["merge_commit"] = merge_commit
+    if salvaged_commit is not None:
+        kwargs["salvaged_commit"] = salvaged_commit
+    if reason is not None:
+        kwargs["reason"] = reason
+    recorder.record(EVENT_TASK_MERGED, **kwargs)
 
 
 # ---------------------------------------------------------------------------

@@ -93,10 +93,11 @@ class TestParseConflictFiles:
 class TestMergeWithConflictDetection:
     # ``merge_with_conflict_detection`` now goes straight to
     # ``git merge --no-commit --no-ff`` (no rebase-first fallback); its
-    # clean-merge path issues 4 git calls: merge, syntax-check diff,
-    # commit, diff --stat. These tests used to mock a 7-call sequence
-    # from the old rebase-first implementation, so the stdout for
-    # ``diff --stat`` landed at index 6 and was never reached.
+    # clean-merge path issues 6 git calls: merge, syntax-check diff,
+    # staging-safety diff, commit, diff --stat, rev-parse HEAD. These
+    # tests used to mock a 7-call sequence from the old rebase-first
+    # implementation, so the stdout for ``diff --stat`` landed at index 6
+    # and was never reached.
 
     @patch("bernstein.core.git.git_pr.run_git")
     def test_clean_merge(self, mock: MagicMock) -> None:
@@ -106,11 +107,13 @@ class TestMergeWithConflictDetection:
             GitResult(0, "src/foo.py\n", ""),  # _verify_merge_staging_is_safe: staged files
             GitResult(0, "", ""),  # commit -m <msg>
             GitResult(0, "1 file changed\n", ""),  # diff HEAD~1 --stat
+            GitResult(0, "0f1e2d3c4b5a\n", ""),  # rev-parse HEAD
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
         assert result.conflicting_files == []
         assert "1 file changed" in result.merge_diff
+        assert result.merge_commit == "0f1e2d3c4b5a"
 
     @patch("bernstein.core.git.git_pr.run_git")
     def test_clean_merge_custom_message(self, mock: MagicMock) -> None:
@@ -120,6 +123,7 @@ class TestMergeWithConflictDetection:
             GitResult(0, "src/foo.py\n", ""),  # _verify_merge_staging_is_safe
             GitResult(0, "", ""),  # commit
             GitResult(0, "", ""),  # diff --stat
+            GitResult(0, "0f1e2d3c4b5a\n", ""),  # rev-parse HEAD
         ]
         merge_with_conflict_detection(REPO, "feature/x", message="Custom merge msg")
         # Verify the commit used the custom message. Sequence: merge (0),
@@ -162,10 +166,12 @@ class TestMergeWithConflictDetection:
             GitResult(0, "", ""),  # _verify_merge_staging_is_safe: nothing staged -> safe
             GitResult(1, "", "nothing to commit"),  # commit fails
             GitResult(0, "", ""),  # merge --abort (fallback)
+            GitResult(0, "0f1e2d3c4b5a\n", ""),  # rev-parse HEAD
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
         assert result.conflicting_files == []
+        assert result.merge_commit == "0f1e2d3c4b5a"
 
 
 # ------------------------------------------------------------------

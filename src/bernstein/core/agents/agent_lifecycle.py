@@ -285,7 +285,13 @@ def _preserve_runner_logs(orch: Any, session: Any) -> Path | None:
         return None
 
 
-def _save_partial_work(spawner: Any, session: Any) -> bool:
+def _save_partial_work(
+    spawner: Any,
+    session: Any,
+    *,
+    recorder: Any = None,
+    reason: str = "dead_agent",
+) -> bool:
     """Commit and merge uncommitted agent work before worktree destruction.
 
     Called before ``cleanup_worktree()`` to prevent data loss on timeout
@@ -304,6 +310,7 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
 
     wt = str(worktree_path)
     committed = False
+    salvaged_commit = ""
     try:
         subprocess.run(
             ["git", "add", "-A"],
@@ -318,6 +325,16 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
             timeout=10,
         )
         committed = result.returncode == 0
+        if committed:
+            rev_r = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=wt,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if rev_r.returncode == 0:
+                salvaged_commit = rev_r.stdout.strip()
     except Exception:
         logger.exception(
             "Partial-work WIP commit failed during reap (session_id=%s role=%s worktree=%s) - reap continues",
@@ -327,8 +344,9 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
         )
 
     # Try to merge the branch before cleanup
+    merge_result: Any = None
     try:
-        spawner.reap_completed_agent(session, skip_merge=False)
+        merge_result = spawner.reap_completed_agent(session, skip_merge=False)
     except Exception:
         logger.exception(
             "reap_completed_agent (merge) failed during partial-work save "
@@ -340,6 +358,23 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
 
     if committed:
         logger.info("Saved partial work for agent %s", session.id)
+
+    # If merge succeeded and we have a recorder, record task_merged for all associated tasks
+    if merge_result is not None and getattr(merge_result, "success", False):
+        from bernstein.core.replay.review_board import record_task_merged
+
+        merge_commit = getattr(merge_result, "merge_commit", "")
+        task_ids = getattr(session, "task_ids", []) or []
+        for tid in task_ids:
+            record_task_merged(
+                recorder,
+                task_id=tid,
+                agent_id=session.id,
+                merge_commit=merge_commit or None,
+                salvaged_commit=salvaged_commit or None,
+                reason=reason,
+            )
+
     return committed
 
 
@@ -403,7 +438,12 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
         orch._crash_counts[task_id] = orch._crash_counts.get(task_id, 0) + 1
         _maybe_preserve_worktree(orch, session, task_id)
         _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
-    _save_partial_work(orch._spawner, session)
+    _save_partial_work(
+        orch._spawner,
+        session,
+        recorder=getattr(orch, "_recorder", None),
+        reason="dead_agent",
+    )
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(
         orch._spawner.get_worktree_path(session.id) == _preserved.get(tid) for tid in session.task_ids
@@ -2736,7 +2776,12 @@ def _reap_wall_clock_timeout(
     _preserve_runner_logs(orch, session)
     for task_id in session.task_ids:
         _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
-    _save_partial_work(orch._spawner, session)
+    _save_partial_work(
+        orch._spawner,
+        session,
+        recorder=getattr(orch, "_recorder", None),
+        reason="orphan_no_signals",
+    )
     _preserved = getattr(orch, "_preserved_worktrees", {})
     _session_preserved = any(
         orch._spawner.get_worktree_path(session.id) == _preserved.get(tid) for tid in session.task_ids

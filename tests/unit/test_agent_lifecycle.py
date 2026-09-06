@@ -1237,3 +1237,170 @@ def test_deferred_death_judgment_stays_deferred_while_log_keeps_growing(tmp_path
 
     mock_retry.assert_called_once()
     assert task.id not in orch._pending_liveness_judgments
+
+
+# ---------------------------------------------------------------------------
+# Salvage merge journal recording (#5271)
+# ---------------------------------------------------------------------------
+
+
+def test_salvage_merge_records_journal_row(tmp_path: Path) -> None:
+    """A successful salvage merge records task_merged with merge_commit and salvaged_commit."""
+    from bernstein.core.agents.agent_lifecycle import _save_partial_work
+    from bernstein.core.git.git_pr import MergeResult
+    from bernstein.core.replay.journal import EventJournal, load_events
+
+    wt = tmp_path / "worktree"
+    wt.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=wt, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=wt, check=True)
+    (wt / "file.txt").write_text("partial content\n", encoding="utf-8")
+
+    session = AgentSession(
+        id="sess-salvage-1",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=["T-1"],
+    )
+
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = wt
+    spawner.reap_completed_agent.return_value = MergeResult(
+        success=True,
+        conflicting_files=[],
+        merge_commit="c0ffee1234",
+    )
+
+    sdd_dir = tmp_path / ".sdd"
+    sdd_dir.mkdir(parents=True)
+    journal = EventJournal(run_id="run-salvage-1", sdd_dir=sdd_dir)
+
+    committed = _save_partial_work(spawner, session, recorder=journal, reason="dead_agent")
+    assert committed is True
+
+    events = load_events(journal.path).events
+    merged_events = [e for e in events if e.get("event") == "task_merged"]
+    assert len(merged_events) == 1
+    row = merged_events[0]
+    assert row["task_id"] == "T-1"
+    assert row["agent_id"] == "sess-salvage-1"
+    assert row["merge_commit"] == "c0ffee1234"
+    assert "salvaged_commit" in row
+    assert len(row["salvaged_commit"]) == 40
+    assert row["reason"] == "dead_agent"
+
+
+def test_salvage_row_precedes_task_retried_for_same_task(tmp_path: Path) -> None:
+    """The salvage task_merged event is recorded before task_retried."""
+    from bernstein.core.agents.agent_lifecycle import _save_partial_work
+    from bernstein.core.git.git_pr import MergeResult
+    from bernstein.core.replay.journal import EventJournal, load_events
+
+    wt = tmp_path / "worktree-ord"
+    wt.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=wt, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=wt, check=True)
+    (wt / "code.py").write_text("x = 1\n", encoding="utf-8")
+
+    session = AgentSession(
+        id="sess-ord-1",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=["T-99"],
+    )
+
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = wt
+    spawner.reap_completed_agent.return_value = MergeResult(
+        success=True,
+        conflicting_files=[],
+        merge_commit="deadbeef42",
+    )
+
+    sdd_dir = tmp_path / ".sdd"
+    sdd_dir.mkdir(parents=True)
+    journal = EventJournal(run_id="run-salvage-ord", sdd_dir=sdd_dir)
+
+    # 1. Salvage merge occurs during reap
+    _save_partial_work(spawner, session, recorder=journal, reason="orphan_no_signals")
+
+    # 2. Orchestrator retries task
+    journal.record("task_retried", task_id="T-99", attempt=2)
+
+    events = load_events(journal.path).events
+    event_types = [e.get("event") for e in events]
+    assert event_types == ["task_merged", "task_retried"]
+
+
+def test_failed_salvage_merge_records_nothing(tmp_path: Path) -> None:
+    """A failed salvage merge does not record task_merged."""
+    from bernstein.core.agents.agent_lifecycle import _save_partial_work
+    from bernstein.core.git.git_pr import MergeResult
+    from bernstein.core.replay.journal import EventJournal, load_events
+
+    wt = tmp_path / "worktree-fail"
+    wt.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=wt, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=wt, check=True)
+    (wt / "conflict.txt").write_text("conflict\n", encoding="utf-8")
+
+    session = AgentSession(
+        id="sess-fail-1",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=["T-2"],
+    )
+
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = wt
+    spawner.reap_completed_agent.return_value = MergeResult(
+        success=False,
+        conflicting_files=["conflict.txt"],
+        error="Merge conflict",
+    )
+
+    sdd_dir = tmp_path / ".sdd"
+    sdd_dir.mkdir(parents=True)
+    journal = EventJournal(run_id="run-salvage-fail", sdd_dir=sdd_dir)
+
+    committed = _save_partial_work(spawner, session, recorder=journal, reason="dead_agent")
+    assert committed is True
+
+    events = load_events(journal.path).events
+    merged_events = [e for e in events if e.get("event") == "task_merged"]
+    assert len(merged_events) == 0
+
+
+def test_skip_merge_records_nothing(tmp_path: Path) -> None:
+    """When no recorder is provided or merge is not successful, nothing is recorded."""
+    from bernstein.core.agents.agent_lifecycle import _save_partial_work
+
+    wt = tmp_path / "worktree-norec"
+    wt.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=wt, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=wt, check=True)
+    (wt / "norec.txt").write_text("norec\n", encoding="utf-8")
+
+    session = AgentSession(
+        id="sess-norec-1",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=["T-3"],
+    )
+
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = wt
+    spawner.reap_completed_agent.return_value = None
+
+    # Calling with recorder=None should not crash
+    committed = _save_partial_work(spawner, session, recorder=None, reason="dead_agent")
+    assert committed is True
+
