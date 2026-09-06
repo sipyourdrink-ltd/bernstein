@@ -126,6 +126,17 @@ without anyone having to fetch anything.
 Include what a PR would carry: what changed, the tests that prove it, and the
 commit the diff applies to.
 
+### Telling us you use it
+
+If you depend on Bernstein, add yourself to
+[ADOPTERS.md](ADOPTERS.md) — one row, in your own pull request. Nobody is
+listed by a maintainer on their behalf, and usage that could be inferred from
+public activity is not listed either: inference is not consent.
+
+It is worth doing for a reason that is not promotion. It is how a contributor
+finds out that the thing they fixed mattered to an air-gapped install, and how
+we learn which surfaces are load-bearing rather than guessing.
+
 ### Docs alongside code
 
 Every PR that adds or changes a feature MUST update docs in the same PR:

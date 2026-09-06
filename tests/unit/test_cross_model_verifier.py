@@ -64,6 +64,17 @@ class TestSelectReviewerModel:
         reviewer = select_reviewer_model("claude-sonnet", override=override)
         assert reviewer == override
 
+    def test_reviewer_override_equal_to_writer_is_refused(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            select_reviewer_model("anthropic/claude-3-5-sonnet", override="anthropic/claude-3-5-sonnet")
+        assert "non-independent" in str(excinfo.value).lower()
+
+    def test_policy_refusal_names_the_colliding_axis(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            select_reviewer_model("openai/gpt-4o", override="openai/gpt-4o")
+        msg = str(excinfo.value)
+        assert "model" in msg or "adapter" in msg or "served" in msg or "family" in msg
+
     def test_unknown_writer_returns_default(self) -> None:
         reviewer = select_reviewer_model("some/unknown-model-xyz")
         assert reviewer  # returns non-empty default

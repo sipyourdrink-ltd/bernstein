@@ -486,6 +486,7 @@ nav:
           - Agent run manifest: operations/run-manifest.md
           - Verification evidence bundles: operations/evidence-bundles.md
           - Delegation chain verification: operations/delegation-verify.md
+          - Access review: operations/access-review.md
           - Skill usage provenance: operations/skill-provenance.md
           - C2PA content credentials: operations/content-credentials.md
   - Reference:

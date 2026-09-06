@@ -27,14 +27,45 @@ evidence specifically, read `security/AUDIT.md`.
 Two distinct surfaces, both reachable through the `bernstein
 compliance` group:
 
-| Framework        | Surface                                                              | Status                                |
-| ---------------- | -------------------------------------------------------------------- | ------------------------------------- |
-| **EU AI Act**    | `compliance assess` / `eu-ai-act` / `report` (Annex III + Annex IV)  | Shipped (Regulation (EU) 2024/1689)   |
-| **HIPAA**        | `compliance: hipaa` mode (`core/security/hipaa.py`) + PHI detection  | Shipped (45 CFR §164.514(b))          |
-| **SOC 2**        | Policy library + `security/AUDIT.md` (HMAC-chained audit log)        | Shipped                               |
-| **ISO 27001**    | Policy library                                                       | Shipped                               |
-| **PCI-DSS**      | Policy library                                                       | Shipped                               |
-| **NIST 800-53**  | Policy library                                                       | Shipped                               |
+| Framework        | Surface                                                              | Status                                | What a pass asserts   |
+| ---------------- | -------------------------------------------------------------------- | ------------------------------------- | --------------------- |
+| **EU AI Act**    | `compliance assess` / `eu-ai-act` / `report` (Annex III + Annex IV)  | Shipped (Regulation (EU) 2024/1689)   | Verified from evidence |
+| **HIPAA**        | `compliance: hipaa` mode (`core/security/hipaa.py`) + PHI detection  | Shipped (45 CFR §164.514(b))          | Verified from evidence |
+| **SOC 2**        | Policy library + `security/AUDIT.md` (HMAC-chained audit log)        | Shipped                               | Declared posture      |
+| **ISO 27001**    | Policy library                                                       | Shipped                               | Declared posture      |
+| **PCI-DSS**      | Policy library                                                       | Shipped                               | Declared posture      |
+| **NIST 800-53**  | Policy library                                                       | Shipped                               | Declared posture      |
+
+### What the two values mean
+
+**Verified from evidence** means the check reads a record the system produced
+and re-derives the property from it. `core/security/article12_bundle.py` walks
+every HMAC link in the chain and aborts on a break: a pass is a statement about
+what happened.
+
+**Declared posture** means the check reads configuration and reports what the
+operator declared. A pass is a statement about intent, and it is the honest
+ceiling for a lint that never observes a run. The checks themselves say so —
+the evidence string for `check_auth_configured` is "Auth section found in
+config", not "authentication verified" — but a table that puts both under one
+"Shipped" sets the same expectation for both, and only one of them survives a
+reviewer asking what the check proves.
+
+Concretely: **14 of the 23 policy-library checks pass on a configuration whose
+keys are all present but empty.** `check_auth_configured` is
+`"auth" in config`, so an empty `auth:` section passes it.
+`tests/unit/test_compliance_assertion_classes.py` measures that rather than
+restating it, so this section cannot drift from the code.
+
+The remaining nine read a file's existence or a truthy flag —
+`check_privacy_policy` wants a document, `check_tls_enforced` wants the setting
+enabled. That is stronger than key presence and still a declaration: a file
+named `PRIVACY.md` is not a privacy programme.
+
+None of this makes the policy library less useful. A declared-posture lint
+catches the common real failure — nobody configured it at all — and it is the
+right tool for that. It is not evidence, and this column is where the
+difference is written down.
 
 The four framework values accepted by the policy commands are exactly
 the members of `ComplianceFramework`
