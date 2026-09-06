@@ -1909,6 +1909,27 @@ jobs:
           # one list and the slices are a partition of it again.
           git fetch --no-tags --depth=1 origin \
             "${BASE_SHA}:refs/remotes/origin/pr-base"
+      - name: Fetch PR head commit for orphan-ratchet inspection
+        # actions/checkout's default pull_request checkout resolves the
+        # synthetic merge commit, not the head commit that produced it.
+        # tests/unit/_orphan_scan.py:pull_request_head_sha() needs that
+        # exact commit object resolvable locally (`git cat-file -e
+        # <sha>^{commit}`) to inspect the real PR branch instead of the
+        # merge artifact, and raises rather than silently skipping when it
+        # is not there (#5565). Fetched by sha, not a branch or PR-number
+        # ref, for the same staggered-shard reason the base commit above
+        # is (#5421): the payload sha is fixed for the run.
+        #
+        # A separate step, not folded into the base-commit fetch above:
+        # tests/unit/scripts/test_run_tests_affected_base_pinned.py pins
+        # that step to writing exactly one ref for --affected to read, and
+        # a second fetch in the same run block would trip that guard.
+        if: github.event_name == 'pull_request' && runner.os != 'Windows'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin \
+            "${HEAD_SHA}:refs/remotes/origin/pr-head"
       - name: Run isolated test suite (Linux/macOS)
         if: runner.os != 'Windows'
         env:

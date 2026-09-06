@@ -162,6 +162,36 @@ class TestCIWorkflowExists:
         assert "${BASE_SHA}:refs/remotes/origin/pr-base" in run_script
         assert "refs/heads/" not in run_script
 
+    def test_pull_request_test_job_fetches_head_commit_for_orphan_ratchet_inspection(self) -> None:
+        """The PR head commit is fetched by sha, so orphan-ratchet inspection can see it.
+
+        ``actions/checkout``'s default ``pull_request`` checkout resolves the
+        synthetic merge commit, not the head commit that produced it.
+        ``tests/unit/_orphan_scan.py::pull_request_head_sha`` needs that exact
+        commit object resolvable locally (``git cat-file -e <sha>^{commit}``)
+        to inspect the real PR branch instead of the merge artifact, and
+        raises rather than silently skipping when it is not there (#5565).
+        """
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        fetch_steps = [
+            step for step in steps if step.get("name") == "Fetch PR head commit for orphan-ratchet inspection"
+        ]
+        assert len(fetch_steps) == 1
+        fetch_step = fetch_steps[0]
+        assert fetch_step.get("if") == "github.event_name == 'pull_request' && runner.os != 'Windows'"
+        env = fetch_step.get("env") or {}
+        assert env.get("HEAD_SHA") == "${{ github.event.pull_request.head.sha }}", (
+            "HEAD_SHA must be bound via env: to avoid template injection (zizmor)"
+        )
+        run_script = fetch_step.get("run", "")
+        assert "${HEAD_SHA}:refs/remotes/origin/pr-head" in run_script
+        # A step of its own, not folded into the base-commit fetch above:
+        # test_run_tests_affected_base_pinned.py pins that step to writing
+        # exactly one ref for --affected to read.
+        base_fetch = next(step for step in steps if step.get("name") == "Fetch base commit for impacted-test selection")
+        assert "HEAD_SHA" not in (base_fetch.get("env") or {})
+
     def test_pull_request_test_job_uses_affected_runner_with_fallback(self) -> None:
         data = _load_ci_workflow()
         steps = _ci_test_steps(data)
