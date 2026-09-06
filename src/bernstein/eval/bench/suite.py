@@ -64,13 +64,33 @@ class BenchSuite:
 
     ``suite_hash`` is derived from the *ordered* sequence of per-task hashes,
     so adding, removing, or reordering any task changes the suite identity.
+    If private holdout tasks are configured, ``holdout_hash`` is bound to
+    the manifest without publishing the private task specifications.
     """
 
     version: str
     tasks: list[BenchTask] = field(default_factory=list)
+    holdout_hash: str = ""
+    holdout_tasks: list[BenchTask] = field(default_factory=list, repr=False)
 
     # Computed lazily and cached.
     _suite_hash: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.holdout_hash and self.holdout_tasks:
+            self.holdout_hash = self.compute_holdout_hash()
+
+    def compute_holdout_hash(self) -> str:
+        """Deterministic SHA-256 of the canonical holdout task hashes."""
+        if not self.holdout_tasks:
+            return self.holdout_hash
+        task_hashes = [t.content_hash() for t in self.holdout_tasks]
+        payload = json.dumps(
+            {"task_hashes": task_hashes},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(payload).hexdigest()
 
     @property
     def suite_hash(self) -> str:
@@ -80,8 +100,12 @@ class BenchSuite:
 
     def _compute_hash(self) -> str:
         task_hashes = [t.content_hash() for t in self.tasks]
+        payload_dict: dict[str, Any] = {"task_hashes": task_hashes, "version": self.version}
+        effective_holdout = self.holdout_hash or (self.compute_holdout_hash() if self.holdout_tasks else "")
+        if effective_holdout:
+            payload_dict["holdout_hash"] = effective_holdout
         payload = json.dumps(
-            {"version": self.version, "task_hashes": task_hashes},
+            payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -92,7 +116,7 @@ class BenchSuite:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "version": self.version,
             "suite_hash": self.suite_hash,
             "tasks": [
@@ -107,6 +131,10 @@ class BenchSuite:
                 for t in self.tasks
             ],
         }
+        effective_holdout = self.holdout_hash or (self.compute_holdout_hash() if self.holdout_tasks else "")
+        if effective_holdout:
+            d["holdout_hash"] = effective_holdout
+        return d
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,7 +156,8 @@ class BenchSuite:
             )
             for t in raw["tasks"]
         ]
-        suite = cls(version=raw["version"], tasks=tasks)
+        holdout_hash = raw.get("holdout_hash", "")
+        suite = cls(version=raw["version"], tasks=tasks, holdout_hash=holdout_hash)
         # Integrity check: stored hash must match recomputed hash.
         if suite.suite_hash != raw["suite_hash"]:
             raise ValueError(

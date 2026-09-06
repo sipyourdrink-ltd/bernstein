@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.eval.bench.suite import BenchSuite, BenchTask
 
 # ---------------------------------------------------------------------------
@@ -159,6 +161,10 @@ class StochasticMockReplayAdapter:
 # ---------------------------------------------------------------------------
 
 
+class HoldoutIsolationError(ValueError):
+    """Raised when holdout specifications or results are exposed to a public location."""
+
+
 @dataclass
 class BenchRunner:
     """
@@ -192,7 +198,59 @@ class BenchRunner:
         return SubmissionBundle(
             suite_hash=self.suite.suite_hash,
             suite_version=self.suite.version,
+            holdout_hash=self.suite.holdout_hash,
             task_results=task_results,
             scheduler_config=self.scheduler_config,
             submitted_at=time.time(),
         )
+
+
+@dataclass
+class HoldoutBenchRunner:
+    """
+    Runs a :class:`BenchSuite`'s private holdout set end-to-end.
+
+    The holdout runner must refuse to write results or task specifications
+    anywhere public by construction.
+    """
+
+    suite: BenchSuite
+    adapter: ReplayAdapter
+    scheduler_config: dict[str, Any]
+
+    def run(self) -> SubmissionBundle:
+        """Execute holdout tasks; return the private submission bundle."""
+        if not self.suite.holdout_tasks:
+            raise ValueError("No holdout tasks defined in suite.")
+
+        task_results: list[TaskResult] = []
+        for task in self.suite.holdout_tasks:
+            receipt = self.adapter.run_task(task, self.scheduler_config)
+            passed, score, harness_output = self.adapter.score_task(task, receipt)
+            task_results.append(
+                TaskResult(
+                    task_id=task.id,
+                    task_hash=task.content_hash(),
+                    receipt=receipt,
+                    passed=passed,
+                    score=score,
+                    harness_output=harness_output,
+                )
+            )
+
+        return SubmissionBundle(
+            suite_hash=self.suite.suite_hash,
+            suite_version=self.suite.version,
+            holdout_hash=self.suite.compute_holdout_hash(),
+            task_results=task_results,
+            scheduler_config=self.scheduler_config,
+            submitted_at=time.time(),
+        )
+
+    def save_result(self, bundle: SubmissionBundle, path: Path, is_public: bool = False) -> None:
+        """Save a holdout bundle locally, refusing public export."""
+        if is_public or "public" in str(path).lower():
+            raise HoldoutIsolationError(
+                f"Holdout runner refuses to write holdout results to public location {path!r} by construction."
+            )
+        bundle.save(path)

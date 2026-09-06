@@ -260,22 +260,51 @@ All tests use `MockReplayAdapter` — no network, no real adapters, no API keys.
 
 ---
 
+## Suite Rotation, Private Holdout, and Saturation Tracking
+
+A fixed public benchmark suite naturally saturates as agents and models overfit to specific task distributions. To maintain evaluation integrity:
+
+1. **Versioned Manifests & Holdout Binding**:
+   - `BenchSuite` binds both public tasks and an optional `holdout_hash` into its content-addressed `suite_hash`.
+   - The private holdout tasks remain unpublished and local-only; only their cryptographic hash (`holdout_hash`) is published on manifests and `SubmissionBundle` artefacts so external third parties can verify that a holdout evaluation ran against the pinned task set without exposing the secret test definitions.
+2. **Private Holdout Isolation**:
+   - `HoldoutBenchRunner` executes holdout tasks locally and enforces by construction that results and specifications are never written or leaked to public paths (raising `HoldoutIsolationError`).
+3. **Saturation & Rotation Detection**:
+   - When the public-set pass rate exceeds **90%** (`>= 0.90`) across **three (3) consecutive baseline submissions**, the suite is declared *saturated*.
+   - `check_suite_saturation()` / `Leaderboard.check_rotation_due()` flags that rotation is due, triggering promotion of private holdout tasks into the public set and seeding a fresh private holdout distribution.
+
+---
+
+## Task Admission Gate: Contamination Check
+
+A benchmark task whose reference solution exists verbatim or with high n-gram overlap in public code hosting measures retrieval rather than problem-solving capability.
+
+During task admission:
+- `check_solution_contamination(solution, public_corpus, n=5, threshold=0.8)` computes normalized token n-grams and evaluates overlap against public corpora.
+- An admission verdict (`ContaminationVerdict`) is recorded.
+- If verbatim match or n-gram overlap exceeds the threshold (`>= 80%`), admission is rejected.
+
+---
+
 ## File map
 
 ```
 src/bernstein/eval/bench/
 ├── __init__.py          # public API re-exports
-├── suite.py             # BenchSuite, BenchTask (content-addressed)
-├── bundle.py            # SubmissionBundle, TaskResult
-├── runner.py            # BenchRunner, MockReplayAdapter, StochasticMockReplayAdapter
+├── suite.py             # BenchSuite, BenchTask (content-addressed, holdout binding)
+├── bundle.py            # SubmissionBundle, TaskResult (carries holdout_hash)
+├── contamination.py     # Contamination check & admission gate (n-gram fingerprinting)
+├── rotation.py          # Suite saturation & rotation detection
+├── runner.py            # BenchRunner, HoldoutBenchRunner (isolated execution)
 ├── verifier.py          # BenchVerifier, VerificationStatus
-├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render
+├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render & rotation alert
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
 ├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
-├── test_bench.py                   # TDD suite — all acceptance criteria
+├── test_bench.py                   # TDD suite — core acceptance criteria
+├── test_rotation_contamination.py  # Rotation, private holdout, and contamination tests (#5459)
 ├── test_reliability.py             # pass^k reliability floor tests
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
 
