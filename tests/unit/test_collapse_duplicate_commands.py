@@ -440,6 +440,46 @@ def _commands_by_body() -> dict[tuple[str, str], list[str]]:
     return grouped
 
 
+# Exact inventory of Click groups named ``receipt`` (#5102). These are four
+# different artefacts under one name -- not duplicates -- so the set is the
+# documentation-of-known-state, and a fifth module declaring ``.group("receipt")``
+# fails this test.
+KNOWN_RECEIPT_GROUPS = frozenset(
+    {
+        "commands/receipt_cmd.py",  # bernstein receipt
+        "commands/audit_cmd.py",  # bernstein audit receipt
+        "commands/sandbox_cmd.py",  # bernstein sandbox receipt
+        "commands/eval_benchmark_cmd.py",  # bernstein benchmark receipt
+    }
+)
+
+
+def _receipt_group_modules() -> set[str]:
+    """Modules under ``cli/`` that declare ``@….group("receipt")``."""
+    root = Path(__file__).resolve().parents[2] / "src" / "bernstein" / "cli"
+    found: set[str] = set()
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for decorator in node.decorator_list:
+                if _command_name(decorator) != "receipt":
+                    continue
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr == "group"
+                ):
+                    found.add(path.relative_to(root).as_posix())
+    return found
+
+
+def test_known_receipt_groups_are_exactly_these_four() -> None:
+    """Documents today's four ``receipt`` groups; fails if a fifth appears."""
+    assert _receipt_group_modules() == KNOWN_RECEIPT_GROUPS
+
+
 def test_no_two_commands_named_verify_share_a_body() -> None:
     """``verify`` is the name most copied, and the one an operator most needs to be single."""
     duplicates = {
