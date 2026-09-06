@@ -12,10 +12,12 @@ explaining whether the branch is at fault or the baseline snapshot is stale.
 
 from __future__ import annotations
 
-import os
 import subprocess
-from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -190,7 +192,8 @@ def assert_ratchet_matches(
 
     if removed:
         sections.append(
-            f"\n  [Stale Exemptions] Entries in {constant_name} that no longer exist or now have callers ({len(removed)}):"
+            f"\n  [Stale Exemptions] Entries in {constant_name} that no longer exist "
+            f"or now have callers ({len(removed)}):"
         )
         for item in removed:
             sections.append(f"    - {item}")

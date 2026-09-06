@@ -45,9 +45,11 @@ def test_both_directions_of_drift_reported_in_single_failure() -> None:
     assert "Wire each one to a consumer" in msg
 
 
-def test_git_attribution_distinguishes_branch_changes_from_main_staleness(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_git_attribution_distinguishes_branch_changes_from_main_staleness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """When a file was NOT touched by the branch, the failure explains the baseline is stale from main."""
-    import tests.unit._ratchet as _ratchet_mod
+    import bernstein.testing.ratchet as _ratchet_mod
 
     # Simulate git diff reporting only 'src/bernstein/core/tokens/branch_mod.py' changed on this branch
     monkeypatch.setattr(
