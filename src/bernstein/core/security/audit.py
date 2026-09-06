@@ -28,12 +28,14 @@ import shutil
 import stat
 import sys
 import threading
+import time
 import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.persistence.file_locks import LockTimeout
 from bernstein.core.security.key_derivation import (
     DOMAIN_AUDIT,
     SCHEME_V1,
@@ -507,7 +509,17 @@ def _chain_append_lock(audit_dir: Path) -> Iterator[None]:
             lock_path = audit_dir / ".chain.lock"
             fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                # Bound the wait to 5 seconds to prevent indefinite hangs.
+                _deadline = time.monotonic() + 5.0
+                while True:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.monotonic() >= _deadline:
+                            msg = f"Timed out waiting for audit chain lock at {lock_path}"
+                            raise LockTimeout(msg) from None
+                        time.sleep(0.05)
                 yield
             finally:
                 with contextlib.suppress(OSError):
