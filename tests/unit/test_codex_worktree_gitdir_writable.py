@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from bernstein.adapters.codex import _worktree_gitdir_roots
 
 
@@ -71,8 +72,9 @@ def _spawn_capturing_argv(
     host_isolation: str | None = None,
 ) -> list[str]:
     """Spawn against a fake `codex` and return the argv it was handed."""
-    from bernstein.adapters import codex as codex_mod
     from bernstein.core.models import ModelConfig
+
+    from bernstein.adapters import codex as codex_mod
 
     captured: dict[str, list[str]] = {}
     real_popen = subprocess.Popen
