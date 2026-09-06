@@ -1,4 +1,4 @@
-"""One-command compliance evidence pack export (issue #1316).
+"""One-command compliance evidence pack export (issue #1316, #5456).
 
 Walks the existing tamper-evident artefacts on disk and produces a
 reviewer-friendly zip bundle mapped to the controls of a chosen
@@ -9,38 +9,13 @@ Sources read:
 * ``.sdd/audit/*.jsonl`` - HMAC-chained audit log (RFC 2104 chain).
 * ``.sdd/lineage/log.jsonl`` - per-artefact transparency log (Sigstore-style).
 * ``.sdd/metrics/cost_history.jsonl`` - daily cost ledger snapshots.
+* ``.sdd/bench/bundles/*.json`` - signed benchmark evaluation bundles.
 * ``.sdd/policy/`` (optional) - recorded operator policy decisions.
 * ``.sdd/attestations/`` (optional) - operator-supplied signed assertions.
 
 This module is intentionally read-only: it does not mutate or rotate
 the audit chain. The output zip is byte-deterministic for a given input
 so an auditor can re-derive the SHA-256 of the bundle and compare.
-
-The mapping from regulatory ``control_id`` to a record selector is
-declarative and lives inside this module (see ``_STANDARD_MAPS``) or,
-for ``owasp-asi``, ``owasp-skills`` and ``iso-42001``, in a dedicated
-module registered below. DORA and FINOS AIGF control maps are tracked
-under issue #1316 and are not selectable until the underlying clause
-mappings are reviewed by subject-matter experts; attempting to build a
-pack for an unsupported standard raises ``ValueError``.
-
-Usage:
-
-    from bernstein.compliance.evidence_pack import build_evidence_pack
-
-    result = build_evidence_pack(
-        sdd_dir=Path(".sdd"),
-        standard="ai-act",
-        since="2026-01-01T00:00:00+00:00",
-        task="all",
-        output_path=Path("/tmp/evidence.zip"),
-    )
-
-Out of scope for the MVP (tracked in #1316):
-
-* PDF/Markdown narrative report generation.
-* DORA Articles 8-15 evidence templates (selector not yet defined).
-* FINOS AIGF control catalogue mapping (selector not yet defined).
 """
 
 from __future__ import annotations
@@ -59,41 +34,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Schema version emitted into manifest.json. Bump on any breaking
-#: change to layout, file names, or hash inputs.
 SCHEMA_VERSION: str = "1.0.0"
 
-#: Supported standards. ``ai-act`` maps the EU AI Act Article 12/13/15
-#: clauses; ``owasp-asi`` and ``owasp-skills`` map the OWASP Top 10 for
-#: Agentic Applications (ASI01-ASI10) and the Agentic Skills Top 10
-#: (AST01-AST10) onto the same audit-chain artefacts; ``iso-42001`` maps
-#: a records-derivable subset of ISO/IEC 42001 Annex A controls. DORA and
-#: FINOS AIGF are tracked under #1316 and are not selectable until their
-#: clause maps are reviewed by subject-matter experts; emitting
-#: TODO-only bundles would mislead operators.
 Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001"]
-
 SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills", "iso-42001")
 
-#: Fixed mtime for every entry in the produced zip - required for
-#: byte-deterministic output. Zip cannot store dates before 1980.
 _FIXED_ZIP_DT: tuple[int, int, int, int, int, int] = (1980, 1, 1, 0, 0, 0)
-
-# ---------------------------------------------------------------------------
-# Standard -> control map
-# ---------------------------------------------------------------------------
-#
-# Each entry maps a regulatory ``control_id`` to:
-#   * ``requirement`` - short paraphrase of the underlying clause.
-#   * ``artefact``    - bundle file (relative to zip root) that satisfies it.
-#   * ``selector``    - informational: which event attribute carries the
-#                       primary evidence (``event_type``, ``resource_type``,
-#                       etc). Free-form string; not enforced at MVP.
-#   * ``status``      - ``"mapped"`` or ``"todo"``.
-#
-# The ``ai-act`` block intentionally mirrors the structure used by the
-# Article 12 bundle (``article12_bundle.py``) so an auditor switching
-# between the two outputs sees consistent clause IDs.
 
 _STANDARD_MAPS: dict[str, dict[str, Any]] = {
     "ai-act": {
@@ -156,11 +102,6 @@ _STANDARD_MAPS: dict[str, dict[str, Any]] = {
     },
 }
 
-# The OWASP ASI / AST maps live in dedicated modules (one control class per
-# module) and are registered here so ``build_evidence_pack`` reads them the
-# same way it reads ``ai-act``. Registration is a plain assignment - the
-# modules only depend on stdlib, so importing them at module load is cheap
-# and side-effect free.
 from bernstein.compliance import iso42001 as _iso42001  # noqa: E402
 from bernstein.compliance import owasp_asi as _owasp_asi  # noqa: E402
 from bernstein.compliance import owasp_skills as _owasp_skills  # noqa: E402
@@ -170,33 +111,9 @@ _STANDARD_MAPS[_owasp_skills.STANDARD_ID] = _owasp_skills.control_map()
 _STANDARD_MAPS[_iso42001.STANDARD_ID] = _iso42001.control_map()
 
 
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class EvidencePack:
-    """Result of an evidence-pack export.
-
-    Attributes:
-        standard: Regulatory standard the pack is mapped against.
-        bundle_id: Stable hash over ``(standard, since, task)``.
-        since: Inclusive ISO-8601 lower bound (or ``""`` if not filtered).
-        task: Task filter applied (``"all"`` or a specific task id).
-        event_count: Number of audit events captured.
-        lineage_count: Number of lineage entries captured.
-        cost_count: Number of cost snapshots captured.
-        controls_mapped: How many controls have ``status == "mapped"``.
-        controls_partial: How many controls have ``status == "partial"``.
-        controls_todo: How many controls remain TODO for the standard.
-        controls_organisational: How many controls have ``status ==
-            "organisational"`` - out of a tool's reach by design (policy,
-            training, governance), named explicitly rather than silently
-            dropped from the summary.
-        archive_path: On-disk path to the written zip (``None`` for dry-run).
-        sha256: SHA-256 of the produced zip bytes.
-    """
+    """Result of an evidence-pack export."""
 
     standard: str
     bundle_id: str
@@ -231,11 +148,6 @@ class EvidencePack:
         }
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _canonical_json(payload: Any) -> bytes:
     """Serialise ``payload`` as deterministic JSON (sort_keys, indent=2)."""
     return (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
@@ -253,14 +165,6 @@ def _parse_iso(value: str) -> datetime | None:
 
 
 def _matches_task(entry: dict[str, Any], task: str) -> bool:
-    """Return True iff ``entry`` belongs to ``task``.
-
-    Task association is checked against a few well-known fields written
-    by the orchestrator audit producers: ``resource_id`` (when
-    ``resource_type == "task"``), an explicit ``task_id``/``task``
-    detail, or a top-level ``task_id`` field. ``task == "all"`` matches
-    every entry.
-    """
     if task == "all":
         return True
     rtype = str(entry.get("resource_type", ""))
@@ -278,18 +182,11 @@ def _matches_task(entry: dict[str, Any], task: str) -> bool:
     return False
 
 
-def _read_audit_events(
-    audit_dir: Path,
-    *,
-    since: str,
-    task: str,
-) -> list[dict[str, Any]]:
-    """Read HMAC-chained audit events, filtered by ``since`` and ``task``."""
+def _read_audit_events(audit_dir: Path, *, since: str, task: str) -> list[dict[str, Any]]:
     if not audit_dir.is_dir():
         return []
     out: list[dict[str, Any]] = []
     for path in sorted(audit_dir.glob("*.jsonl")):
-        # Skip archived corrupt files (live in _archived/ subtree).
         if "_archived" in path.parts:
             continue
         try:
@@ -316,20 +213,7 @@ def _read_audit_events(
     return out
 
 
-def _read_lineage_entries(
-    lineage_log: Path,
-    *,
-    since: str,
-    task: str,
-) -> list[dict[str, Any]]:
-    """Read lineage log entries; filter by ``since`` / ``task`` heuristically.
-
-    The lineage log is the source of truth for content hashes and the
-    detached signature on every artefact write. Lineage entries do not
-    always carry a task id, so the ``task`` filter is best-effort here
-    and matches against ``meta.task_id`` when present (else falls back
-    to including the entry when ``task == "all"``).
-    """
+def _read_lineage_entries(lineage_log: Path, *, since: str, task: str) -> list[dict[str, Any]]:
     if not lineage_log.is_file():
         return []
     out: list[dict[str, Any]] = []
@@ -362,18 +246,7 @@ def _read_lineage_entries(
     return out
 
 
-def _read_cost_snapshots(
-    metrics_dir: Path,
-    *,
-    since: str,
-    task: str,
-) -> list[dict[str, Any]]:
-    """Read cost-ledger snapshots from ``.sdd/metrics/cost_history.jsonl``.
-
-    Snapshots are filtered by ``since`` (against the snapshot
-    ``date``/``timestamp``) and by ``task`` when the snapshot carries
-    a ``task_id`` field.
-    """
+def _read_cost_snapshots(metrics_dir: Path, *, since: str, task: str) -> list[dict[str, Any]]:
     candidate = metrics_dir / "cost_history.jsonl"
     if not candidate.is_file():
         return []
@@ -402,8 +275,71 @@ def _read_cost_snapshots(
     return out
 
 
+def _read_bench_bundles(sdd_dir: Path) -> list[Any]:
+    from bernstein.eval.bench.bundle import SubmissionBundle
+
+    bundles: list[Any] = []
+    seen: set[str] = set()
+    for candidate_dir in [sdd_dir / "bench" / "bundles", sdd_dir / "bundles"]:
+        if not candidate_dir.is_dir():
+            continue
+        for path in sorted(candidate_dir.glob("*.json")):
+            try:
+                b = SubmissionBundle.load(path)
+                b_hash = b.bundle_hash()
+                if b_hash not in seen:
+                    seen.add(b_hash)
+                    bundles.append(b)
+            except Exception:
+                continue
+    return bundles
+
+
+def _compute_bench_assessment(bundles: list[Any]) -> dict[str, Any]:
+    from bernstein.compliance.controls import get_default_registry
+
+    registry = get_default_registry()
+    controls = registry.list_controls()
+    assessment: dict[str, Any] = {}
+
+    for c in controls:
+        matched = []
+        for b in bundles:
+            suite_ctls = getattr(b, "controls", [])
+            if not suite_ctls and b.suite_version == "golden-v1":
+                suite_ctls = ["CTL-ROB-01", "CTL-EVAL-01", "CTL-EVAL-02", "CTL-QUAL-02"]
+            if c.control_id in suite_ctls:
+                matched.append(b)
+
+        if matched:
+            latest = matched[-1]
+            b_hash = latest.bundle_hash()
+            assessment[c.control_id] = {
+                "status": "measured",
+                "suite_version": latest.suite_version,
+                "bundle_hash": b_hash,
+                "score": latest.overall_score,
+                "tasks_count": len(latest.task_results),
+                "passed_count": sum(1 for r in latest.task_results if r.passed),
+                "reason": f"measured by suite {latest.suite_version} ({b_hash[:12]})",
+            }
+        else:
+            assessment[c.control_id] = {
+                "status": "declared_not_measured",
+                "suite_version": None,
+                "bundle_hash": None,
+                "score": None,
+                "tasks_count": 0,
+                "passed_count": 0,
+                "reason": (
+                    f"Control {c.control_id} is registered in catalogue "
+                    "but no matching evaluation bundle was found in the pack."
+                ),
+            }
+    return assessment
+
+
 def _serialise_jsonl(entries: list[dict[str, Any]]) -> bytes:
-    """Serialise a list of dicts as canonical JSONL (sort_keys, ``\\n``)."""
     buf = io.BytesIO()
     for entry in entries:
         buf.write(json.dumps(entry, sort_keys=True).encode("utf-8"))
@@ -412,7 +348,6 @@ def _serialise_jsonl(entries: list[dict[str, Any]]) -> bytes:
 
 
 def _build_data_catalog(events: list[dict[str, Any]]) -> bytes:
-    """Aggregate per-resource activity counts from the audit slice."""
     catalog: dict[str, dict[str, int]] = {}
     for ev in events:
         rtype = str(ev.get("resource_type", "")) or "unknown"
@@ -428,13 +363,6 @@ def _build_data_catalog(events: list[dict[str, Any]]) -> bytes:
 
 
 def _read_text_directory(directory: Path) -> dict[str, bytes]:
-    """Return ``{relative_name: bytes}`` for every regular file in ``directory``.
-
-    Used to capture operator-supplied ``policy/`` and ``attestations/``
-    folders verbatim. Output is sorted by name for determinism. Symlinks
-    pointing outside ``directory`` are skipped to avoid escaping the
-    project root.
-    """
     out: dict[str, bytes] = {}
     if not directory.is_dir():
         return out
@@ -455,7 +383,6 @@ def _read_text_directory(directory: Path) -> dict[str, bytes]:
 
 
 def _readme_for(standard: str, mapping: dict[str, Any]) -> bytes:
-    """Operator-facing README explaining the bundle layout for ``standard``."""
     lines = [
         "# Bernstein compliance evidence pack",
         "",
@@ -466,10 +393,11 @@ def _readme_for(standard: str, mapping: dict[str, Any]) -> bytes:
         "## Layout",
         "",
         "- `manifest.json`        - bundle metadata + SHA-256 of every artefact.",
-        "- `controls.json`        - control_id -> artefact mapping for this standard.",
+        "- `controls.json`        - control_id -> artefact mapping & benchmark assessment.",
         "- `audit-chain/`         - HMAC-chained audit events + per-resource catalog.",
         "- `lineage/`             - Sigstore-style transparency log entries.",
         "- `costs/`               - cost ledger snapshots over the export window.",
+        "- `bench-bundles/`       - signed evaluation benchmark bundles.",
         "- `policy/`              - operator policy snapshot (optional).",
         "- `attestations/`        - operator-supplied attestations (optional).",
         "",
@@ -493,20 +421,11 @@ def _readme_for(standard: str, mapping: dict[str, Any]) -> bytes:
 
 
 def _bundle_id(standard: str, since: str, task: str) -> str:
-    """Compute the deterministic bundle id."""
     seed = f"{standard}|{since}|{task}".encode()
     return hashlib.sha256(seed).hexdigest()[:32]
 
 
 def _zip_artefacts(artefacts: dict[str, bytes]) -> bytes:
-    """Pack ``{name: bytes}`` into a deterministic zip.
-
-    Determinism rules:
-
-    * Files written in sorted order.
-    * Fixed mtime (1980-01-01).
-    * Mode 0644.
-    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for name in sorted(artefacts):
@@ -517,17 +436,7 @@ def _zip_artefacts(artefacts: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def get_standard_map(standard: str) -> dict[str, Any]:
-    """Return the control-mapping block for ``standard``.
-
-    Raises:
-        ValueError: If ``standard`` is not one of ``SUPPORTED_STANDARDS``.
-    """
     if standard not in _STANDARD_MAPS:
         raise ValueError(
             f"unknown standard {standard!r}; supported: {', '.join(SUPPORTED_STANDARDS)}",
@@ -544,23 +453,6 @@ def build_evidence_pack(
     output_path: Path | None = None,
     write: bool = True,
 ) -> EvidencePack:
-    """Assemble a compliance evidence pack.
-
-    Args:
-        sdd_dir: The project's ``.sdd`` runtime directory.
-        standard: One of ``SUPPORTED_STANDARDS``.
-        since: ISO-8601 lower bound; ``""`` disables time filtering.
-        task: Task id to scope to, or ``"all"``.
-        output_path: Destination zip file. When ``None`` and
-            ``write=True``, defaults to ``<sdd_dir>/evidence/<bundle_id>.zip``.
-        write: When False, build in-memory only (used by ``--dry-run``).
-
-    Returns:
-        An :class:`EvidencePack` summarising the produced bundle.
-
-    Raises:
-        ValueError: For unknown standards or malformed ``since``.
-    """
     if standard not in _STANDARD_MAPS:
         raise ValueError(
             f"unknown standard {standard!r}; supported: {', '.join(SUPPORTED_STANDARDS)}",
@@ -577,6 +469,7 @@ def build_evidence_pack(
     events = _read_audit_events(audit_dir, since=since, task=task)
     lineage_entries = _read_lineage_entries(lineage_log, since=since, task=task)
     cost_entries = _read_cost_snapshots(metrics_dir, since=since, task=task)
+    bundles = _read_bench_bundles(sdd_dir)
 
     events_bytes = _serialise_jsonl(events)
     data_catalog_bytes = _build_data_catalog(events)
@@ -584,19 +477,20 @@ def build_evidence_pack(
     costs_bytes = _serialise_jsonl(cost_entries)
 
     mapping = _STANDARD_MAPS[standard]
+    bench_assessment = _compute_bench_assessment(bundles)
     controls_payload = {
         "schema_version": SCHEMA_VERSION,
         "standard": standard,
         "regulation": mapping.get("regulation", ""),
         "controls": mapping["controls"],
         "deferred": mapping.get("deferred", []),
+        "bench_assessment": bench_assessment,
     }
     controls_bytes = _canonical_json(controls_payload)
 
     policy_files = _read_text_directory(policy_dir)
     attestation_files = _read_text_directory(attestations_dir)
 
-    # Assemble the artefact dict - keys are zip paths.
     artefacts: dict[str, bytes] = {
         "audit-chain/events.jsonl": events_bytes,
         "audit-chain/data_catalog.json": data_catalog_bytes,
@@ -605,15 +499,18 @@ def build_evidence_pack(
         "controls.json": controls_bytes,
         "README.md": _readme_for(standard, mapping),
     }
+
+    # Embed benchmark bundles
+    for b in bundles:
+        bundle_bytes = _canonical_json(b.to_dict())
+        b_hash = b.bundle_hash()
+        artefacts[f"bench-bundles/{b_hash}.json"] = bundle_bytes
+
     for rel, payload in policy_files.items():
         artefacts[f"policy/{rel}"] = payload
     for rel, payload in attestation_files.items():
         artefacts[f"attestations/{rel}"] = payload
 
-    # Touch-stones: empty directories still need a placeholder so the
-    # bundle layout described in the README is always present. Zip
-    # cannot hold true empty directories portably, so we emit a tiny
-    # marker file when no operator-supplied content exists.
     if not policy_files:
         artefacts["policy/.empty"] = b""
     if not attestation_files:
@@ -642,14 +539,9 @@ def build_evidence_pack(
         "controls_partial": controls_partial,
         "controls_todo": controls_todo,
         "controls_organisational": controls_organisational,
-        "generated_at_utc": "1970-01-01T00:00:00+00:00",  # deterministic, see note below
+        "generated_at_utc": "1970-01-01T00:00:00+00:00",
         "artefacts": dict(sorted(artefact_hashes.items())),
     }
-    # The bundle is byte-deterministic: ``generated_at_utc`` is a fixed
-    # sentinel rather than wall-clock ``now`` so two runs of the same
-    # input produce the same SHA-256. Operators who need a real "issued
-    # at" timestamp should sign the zip externally with their CI's
-    # provenance attestation (e.g. ``gh attestation``).
     artefacts["manifest.json"] = _canonical_json(manifest)
 
     archive_bytes = _zip_artefacts(artefacts)
@@ -683,6 +575,68 @@ def build_evidence_pack(
     )
 
 
+def verify_evidence_pack(pack_path: Path) -> bool:
+    """Verify integrity of an evidence pack and its embedded benchmark bundles."""
+    if not pack_path.is_file():
+        return False
+    try:
+        with zipfile.ZipFile(pack_path, "r") as zf:
+            names = zf.namelist()
+            if "manifest.json" not in names:
+                return False
+            manifest_bytes = zf.read("manifest.json")
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+            artefact_hashes = manifest.get("artefacts", {})
+
+            for name, expected_hash in artefact_hashes.items():
+                if name not in names:
+                    return False
+                member_bytes = zf.read(name)
+                actual_hash = hashlib.sha256(member_bytes).hexdigest()
+                if actual_hash != expected_hash:
+                    return False
+
+            # Verify all benchmark bundles embedded in the pack
+            from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+
+            for name in names:
+                if name.startswith("bench-bundles/") and name.endswith(".json"):
+                    raw = json.loads(zf.read(name).decode("utf-8"))
+                    task_results = []
+                    for tr in raw.get("task_results", raw.get("results", [])):
+                        receipt = tr.get("receipt", {})
+                        canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+                        recomputed_hash = hashlib.sha256(canonical).hexdigest()
+                        if tr.get("receipt_hash") != recomputed_hash:
+                            return False
+                        task_results.append(
+                            TaskResult(
+                                task_id=tr["task_id"],
+                                task_hash=tr["task_hash"],
+                                receipt=tr["receipt"],
+                                passed=tr["passed"],
+                                score=tr["score"],
+                                harness_output=tr.get("harness_output", {}),
+                                stored_receipt_hash=tr.get("receipt_hash", ""),
+                            )
+                        )
+
+                    bundle = SubmissionBundle(
+                        suite_version=raw["suite_version"],
+                        suite_hash=raw["suite_hash"],
+                        task_results=task_results,
+                        scheduler_config=raw.get("scheduler_config", {}),
+                        submitted_at=raw.get("submitted_at", 0.0),
+                        signature=raw.get("signature", ""),
+                        signer_fingerprint=raw.get("signer_fingerprint", ""),
+                    )
+                    if bundle.bundle_hash() != raw.get("bundle_hash"):
+                        return False
+            return True
+    except Exception:
+        return False
+
+
 __all__ = [
     "SCHEMA_VERSION",
     "SUPPORTED_STANDARDS",
@@ -690,4 +644,5 @@ __all__ = [
     "Standard",
     "build_evidence_pack",
     "get_standard_map",
+    "verify_evidence_pack",
 ]

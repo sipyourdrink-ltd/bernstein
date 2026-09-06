@@ -92,3 +92,96 @@ signed manifest `input_hashes`, the manifest self-anchors (`output_hash`), and
 the chained substrate re-verifies for the pack kind. Flipping a single byte in
 any member, including a rendered PDF, fails verification and names the member.
 Existing Article 12 packs (format v1 and v2) verify unchanged.
+
+## Central Control Registry
+
+Bernstein maintains a centralized taxonomy of compliance, security, and governance controls mapped across six major regulatory frameworks:
+- **EU AI Act**: Regulation (EU) 2024/1689 (Articles 10, 11, 12, 13, 14, 15, 73, Annex IV).
+- **OWASP ASI**: Top 10 for Agentic Applications (ASI01-ASI10).
+- **OWASP Skills**: Top 10 for Agentic Skills (AST01-AST10).
+- **NIST AI RMF**: AI Risk Management Framework 1.0.
+- **ISO/IEC 42001**: Artificial Intelligence Management System (Annex A).
+- **FINOS AIGF**: Open-source AI Governance Framework for Financial Services.
+
+### Suite Control Declarations & Build-Time Enforcement
+
+Every benchmark evaluation suite (`BenchSuite`) must declare the standard control IDs it measures. Any suite that omits controls or references unregistered control IDs fails build-time validation:
+
+```python
+from bernstein.eval.bench.suite import BenchSuite
+
+suite = BenchSuite(
+    version="golden-v1",
+    tasks=tasks,
+    controls=["CTL-ROB-01", "CTL-EVAL-01", "CTL-EVAL-02", "CTL-QUAL-02"],
+)
+suite.validate_controls()  # Fails build if invalid or unmapped
+```
+
+### CLI Inspection & Coverage
+
+Inspect the control registry and evaluation suite coverage using the CLI:
+
+```bash
+# List all registered controls in text format
+bernstein compliance controls
+
+# Show benchmark suite coverage
+bernstein compliance controls --coverage
+
+# Filter by regulatory framework in JSON or Markdown format
+bernstein compliance controls --framework eu_ai_act --format json
+bernstein compliance controls --format markdown
+```
+
+### Registered Standard Controls & Benchmark Coverage
+
+| Control ID | Title | Frameworks | Evidence Kinds | Suites Covering |
+| --- | --- | --- | --- | --- |
+| CTL-GOV-01 | Policy as Code & Governance Boundary | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, policy, lineage_log | *(uncovered)* |
+| CTL-GOV-02 | Agent Identity & System Card Declaration | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | agent_card, lineage_log | *(uncovered)* |
+| CTL-AUD-01 | Tamper-Evident HMAC Audit Logging | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain | *(uncovered)* |
+| CTL-AUD-02 | Audit Chain Continuity & Retention Verification | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, retention_evidence | *(uncovered)* |
+| CTL-LIN-01 | Artifact Lineage & Provenance Tracking | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | lineage_log, signatures | *(uncovered)* |
+| CTL-OVS-01 | Human Oversight & Approval Gating | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | approval_receipt, audit_chain | *(uncovered)* |
+| CTL-OVS-02 | Displayed vs Executed Action Equivalence | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | approval_receipt, oversight_evidence | *(uncovered)* |
+| CTL-SEC-01 | Prompt Injection & Goal Hijack Defense | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, audit_chain | *(uncovered)* |
+| CTL-SEC-02 | Tool Execution Sandboxing & Authorization | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, bench_bundle | *(uncovered)* |
+| CTL-SEC-03 | Canary Token & Secret Leakage Prevention | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, audit_chain | *(uncovered)* |
+| CTL-SEC-04 | Gate Evasion & Adversarial Bypass Resistance | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle | *(uncovered)* |
+| CTL-SEC-05 | Outbound Model Egress & Policy Boundary Checks | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, check_record | *(uncovered)* |
+| CTL-ROB-01 | Deterministic Execution & Offline Replay Verification | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, verifier_receipt | golden-v1 |
+| CTL-ROB-02 | Model Drift & Degradation Detection | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, drift_report | *(uncovered)* |
+| CTL-ROB-03 | Error Handling & Graceful Degradation | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, bench_bundle | *(uncovered)* |
+| CTL-DATA-01 | Data Governance & Lineage Integrity | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | lineage_log, dataset_manifest | *(uncovered)* |
+| CTL-DATA-02 | Confidential Information & PII Redaction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, redaction_log | *(uncovered)* |
+| CTL-INC-01 | Serious Incident Recording & Timeline Reconstruction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | incident_pack, audit_chain | *(uncovered)* |
+| CTL-COST-01 | Token Budget & Cost Allocation Controls | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, cost_ledger | *(uncovered)* |
+| CTL-EVAL-01 | Content-Addressed Benchmark Reproducibility | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, suite_hash | golden-v1 |
+| CTL-EVAL-02 | Multi-Run Empirical Determinism Scoring | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, reliability_report | golden-v1 |
+| CTL-EVAL-03 | Quality Gate & Verification Adjudication | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | adjudication_record, bench_bundle | *(uncovered)* |
+| CTL-QUAL-01 | Producing Identity & Independence Class Tracking | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | adjudication_record, audit_chain | *(uncovered)* |
+| CTL-QUAL-02 | Automated Test Coverage & Static Verification | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | ci_run, sarif_report | golden-v1 |
+| CTL-SKILL-01 | Agentic Skill Discovery & Verification | FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_SKILLS | skill_manifest, audit_chain | *(uncovered)* |
+| CTL-SKILL-02 | Skill Execution Boundaries & Permissions | FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_SKILLS | audit_chain, policy | *(uncovered)* |
+| CTL-SKILL-03 | Untrusted Skill Quarantine & Code Review | FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_SKILLS | audit_chain, approval_receipt | *(uncovered)* |
+| CTL-MON-01 | Operational Health & Status Dashboarding | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | status_dashboard, metrics | *(uncovered)* |
+| CTL-MON-02 | Anomaly Detection & Behavioral Alerts | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, alert_record | *(uncovered)* |
+| CTL-DOC-01 | Technical Documentation & Compliance Evidence Packs | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | evidence_pack, tech_doc | *(uncovered)* |
+| CTL-DOC-02 | Agent Capability & Limitation Declaration | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | agent_card, system_descriptor | *(uncovered)* |
+| CTL-DEP-01 | Air-Gapped & Offline Verification Support | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | verifier_receipt | *(uncovered)* |
+
+## NIST OSCAL Assessment-Results Export
+
+Bernstein supports automated export of evaluation benchmark assessment results in NIST OSCAL v1.1.0 format.
+
+```bash
+# Export OSCAL assessment-results to stdout
+bernstein compliance oscal --standard ai-act
+
+# Export OSCAL assessment-results to a JSON file
+bernstein compliance oscal --standard ai-act --out oscal-assessment-results.json
+```
+
+The exported document models findings, benchmark observations, and control satisfaction state (`satisfied` vs `not-satisfied`) mapped to the central control registry and standard clauses.
+
