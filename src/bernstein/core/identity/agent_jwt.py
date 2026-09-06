@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 from bernstein.core.path_scope import (
     ScopePatternError,
     paths_outside_scope,
+    pattern_subsumes,
     validate_repo_relative_pattern,
 )
 from bernstein.core.security.auth import create_jwt, verify_jwt
@@ -197,9 +198,13 @@ def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
     child scoped to ``src/secret.py`` -- a file the parent's own scope never
     admitted.  ``src/**`` is how a tree is admitted.
 
-    A child that is itself a glob is covered only when the parent declared that
-    same glob.  Whether one glob is contained in another is not a question this
-    check guesses at, and refusing is the direction that cannot widen a scope.
+    A child that is itself a glob is covered when some parent pattern subsumes
+    it -- when no path exists that the child admits and the parent does not.
+    :func:`~bernstein.core.path_scope.pattern_subsumes` decides that against the
+    same pattern language, so a parent scoped to ``src/**`` can mint a child
+    scoped to ``src/core/**`` while one scoped to ``src`` still cannot mint
+    ``src/core``.  A child no *single* parent pattern subsumes is refused, which
+    is the direction that cannot widen a scope.
 
     Deliberately not the prefix-coverage helper in
     :mod:`bernstein.core.security.capability_tokens`: that one answers this
@@ -211,7 +216,7 @@ def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
     if child in parent_patterns:
         return True
     if any(wildcard in child for wildcard in "*?"):
-        return False
+        return any(pattern_subsumes(parent, child) for parent in parent_patterns)
     return not paths_outside_scope((child,), parent_patterns)
 
 
