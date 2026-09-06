@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import yaml
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.evolution.admission import AdmissionPolicy
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
 
@@ -119,16 +120,20 @@ class FileUpgradeExecutor:
         """Read a YAML file; return empty dict if missing or empty."""
         if not file_path.exists():
             return {}
-        with file_path.open() as f:
+        with file_path.open(encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
     def _atomic_write(self, file_path: Path, data: dict[str, Any]) -> None:
-        """Write *data* to *file_path* atomically (tmp + rename)."""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
-        with tmp_path.open("w") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-        tmp_path.rename(file_path)
+        """Write *data* to *file_path* through the crash-safe write path.
+
+        Three things the previous local version got wrong. It renamed with
+        ``Path.rename``, which on Windows raises ``FileExistsError`` when
+        the destination exists rather than replacing it, so rewriting a
+        proposal failed outright there. It never called ``fsync``. And it
+        opened the temporary with no encoding, so the YAML was written in
+        the host locale rather than UTF-8.
+        """
+        write_atomic_text(file_path, yaml.dump(data, default_flow_style=False, sort_keys=False))
 
     def _record_history(self, proposal: UpgradeProposal, status: str) -> None:
         """Append an upgrade record to history.jsonl."""

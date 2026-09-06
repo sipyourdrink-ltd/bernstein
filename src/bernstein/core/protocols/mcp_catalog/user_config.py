@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
+
 if TYPE_CHECKING:
     from bernstein.core.protocols.mcp_catalog.manifest import CatalogEntry
 
@@ -124,7 +126,7 @@ def _load_raw(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return {}
     if not text.strip():
@@ -169,11 +171,14 @@ def list_installed(path: Path) -> list[InstalledEntry]:
 
 
 def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
-    """Write JSON atomically: tempfile + rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    tmp.replace(path)
+    """Write JSON through the crash-safe write path.
+
+    The previous local version renamed without ``fsync``, reused one fixed
+    temporary name per target, and called ``write_text`` with no encoding,
+    so the catalog was serialised in whatever the host locale happened to
+    be rather than in UTF-8.
+    """
+    write_atomic_text(path, json.dumps(payload, indent=2, sort_keys=True))
 
 
 def install_entry(

@@ -67,6 +67,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.persistence.atomic_write import write_atomic_bytes
 from bernstein.core.plugins_core.plugin_manifest import is_exact_semver
 
 if TYPE_CHECKING:
@@ -717,11 +718,14 @@ def pin_state_dir(workdir: Path) -> Path:
 
 
 def _write_atomic(path: Path, payload: bytes) -> None:
-    """Write *payload* to *path* via a sibling temp file and one rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_bytes(payload)
-    tmp.replace(path)
+    """Write *payload* to *path* through the crash-safe write path.
+
+    The previous local version renamed without ``fsync`` and reused one
+    fixed temporary name per target. A pin manifest is the record of which
+    plugin versions this install is holding, so a crash that leaves it
+    empty is one that forgets the pins.
+    """
+    write_atomic_bytes(path, payload)
 
 
 def apply_pin_manifest(manifest: PinManifest, *, workdir: Path, timestamp: int) -> PinApplyRecord:
