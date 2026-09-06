@@ -22,3 +22,10 @@ tests/fixtures/receipt-vectors/*.pem -text
 # is compared byte-for-byte, so no checkout may translate their line endings.
 tests/fixtures/trust-record-vectors/*.json -text
 tests/fixtures/trust-record-vectors/*.pem -text
+# Agent-card UTF-16 ordering vector: same byte-exact rule. The signature and
+# the regeneration test both compare raw bytes, so no checkout may translate
+# line endings in the card body, its signature sidecar, the digest, or the
+# public key.
+tests/fixtures/agent-card-utf16-vector/*.json -text
+tests/fixtures/agent-card-utf16-vector/*.pem -text
+tests/fixtures/agent-card-utf16-vector/*.sha256 -text
