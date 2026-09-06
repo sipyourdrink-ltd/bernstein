@@ -1906,12 +1906,12 @@ jobs:
           fi
           if [ "${EVENT_NAME}" = "pull_request" ] && \
              git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
-            uv run python scripts/run_tests.py --parallel 4 \
+            uv run python scripts/run_tests.py --parallel 6 \
               "${coverage_args[@]}" \
               --shard "${SHARD}/${SHARD_COUNT}" \
               --affected refs/remotes/origin/pr-base
           else
-            uv run python scripts/run_tests.py --parallel 4 \
+            uv run python scripts/run_tests.py --parallel 6 \
               "${coverage_args[@]}" \
               --shard "${SHARD}/${SHARD_COUNT}"
           fi
@@ -2178,11 +2178,11 @@ jobs:
           # complete suite rather than a fixed quarter of it.
           if [ "${EVENT_NAME}" = "pull_request" ] && \
              git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
-            uv run python scripts/run_tests.py --parallel 4 \
+            uv run python scripts/run_tests.py --parallel 6 \
               --shard "${SHARD}/${SHARD_COUNT}" \
               --affected refs/remotes/origin/pr-base
           else
-            uv run python scripts/run_tests.py --parallel 4 \
+            uv run python scripts/run_tests.py --parallel 6 \
               --shard "${SHARD}/${SHARD_COUNT}"
           fi
       - name: Run capability-matrix spawn-refusal integration tests
