@@ -6982,3 +6982,21 @@ class TestCostPolicyDispatchWiring:
 
         assert result.cost_dispatch_halt is None
         assert len(result.spawned) == 1
+
+
+def test_seal_intent_capsules_handles_lock_timeout(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import bernstein.core.security.intent_capsule as ic_mod
+    from bernstein.core.persistence.file_locks import LockTimeout
+
+    def mock_seal_fail(*args, **kwargs):
+        raise LockTimeout("Timed out waiting for lock")
+
+    monkeypatch.setattr(ic_mod, "seal_capsules_bound_to_run", mock_seal_fail)
+
+    orch = _build_orchestrator(tmp_path)
+    with caplog.at_level("WARNING"):
+        orch._seal_intent_capsules(b"x" * 32)
+
+    assert "Failed to acquire lock to seal intent capsules" in caplog.text
