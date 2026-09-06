@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.unit._ratchet import (
+from bernstein.testing.ratchet import (
     assert_ratchet_matches,
     format_snapshot_snippet,
 )

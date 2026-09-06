@@ -22,7 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from bernstein.core import _REDIRECT_MAP
-from tests.unit._ratchet import assert_ratchet_matches
+from bernstein.testing.ratchet import assert_ratchet_matches
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOKENS_DIR = REPO_ROOT / "src" / "bernstein" / "core" / "tokens"

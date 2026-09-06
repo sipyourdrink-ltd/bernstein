@@ -40,7 +40,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import pytest
-from tests.unit._ratchet import assert_ratchet_matches
+from bernstein.testing.ratchet import assert_ratchet_matches
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "security"
