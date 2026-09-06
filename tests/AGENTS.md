@@ -25,8 +25,8 @@ uv run python scripts/run_tests.py tests/unit/test_foo.py[::test_name]  # one fi
   (`BEARTYPE_USE_CLAW=enable`; CI's beartype job sets it, local defaults off).
 - Docs-guard tests (`unit/test_naming_policy_docs.py`, `unit/test_nested_agents_context.py`)
   pin repo-level invariants; extend them when adding gated docs.
-- `unit/test_token_orphans.py` fails on a new caller-less module under `core/tokens/`;
-  its `KNOWN_ORPHANS` set only ever shrinks.
+- `unit/test_core_reachability.py` (and `unit/test_token_orphans.py`, scoped to tokens)
+  fail on a new caller-less module under `src/bernstein/core/`; allowlists only shrink.
 - Tests for `scripts/*.py` load the script via importlib; git-derived
   behaviour runs on synthetic repos (`unit/test_context_staleness.py`).
 
@@ -37,4 +37,4 @@ uv run python scripts/run_tests.py tests/unit/test_foo.py[::test_name]  # one fi
 - Live adapter conformance tests are opt-in via the `--live` flag
   registered in `conftest.py`.
 
-<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-09-02 against this subtree; the notes above still hold. -->
