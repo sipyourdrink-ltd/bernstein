@@ -403,30 +403,20 @@ def test_close_wal_fsyncs_parent_dir(tmp_path: Path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "bug-hunt finding #6 (LOW): UncommittedIndex (audit-085) is "
-        "documented as 'sidecar index of uncommitted WAL entries across "
-        "all runs' to avoid the O(N) full-WAL scan on every boot. "
-        "WALWriter.append() updates the index for every committed=False "
-        "row, and mark_committed() removes rows. But "
-        "WALRecovery.scan_all_uncommitted and find_orphaned_claims "
-        "still glob('*.wal.jsonl') and iterate every entry - they "
-        "never read the index. The promised performance gain is not "
-        "realised, and the index code is effectively dead-on-read. Fix: "
-        "make scan_all_uncommitted's fast path read the index first "
-        "and fall back to the glob scan only on missing/corrupt index."
-    ),
-)
 def test_uncommitted_index_is_consulted_by_scan(tmp_path: Path, monkeypatch) -> None:
-    """Recovery must not re-parse every WAL line if the index is healthy.
+    """Recovery does not re-parse every WAL line when the index is healthy.
+
+    This was an ``xfail(strict=True)`` recording finding #6 (LOW):
+    ``UncommittedIndex`` (audit-085) is documented as a sidecar index of
+    uncommitted entries across all runs, kept so boot does not pay an
+    O(N) full-WAL scan. ``WALWriter.append`` maintained it and
+    ``mark_committed`` pruned it, but ``scan_all_uncommitted`` and
+    ``find_orphaned_claims`` still globbed ``*.wal.jsonl`` and walked
+    every entry, so the index was dead on read.
 
     We assert by patching ``WALReader._iter_parsed`` - the single line
-    parse path behind both ``iter_entries`` and
-    ``iter_verified_entries`` - and counting calls when an up-to-date
-    index exists.  Currently the call count is nonzero: the index isn't
-    consulted at all.
+    parse path behind both ``iter_entries`` and ``iter_verified_entries``
+    - and counting calls when an up-to-date index exists.
     """
     sdd = tmp_path / ".sdd"
     sdd.mkdir()

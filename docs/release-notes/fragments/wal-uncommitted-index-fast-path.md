@@ -1,0 +1,7 @@
+## Crash recovery reads the uncommitted index instead of every WAL
+
+`UncommittedIndex` is documented as a sidecar index of uncommitted WAL entries kept so boot does not pay an O(N) scan of every run's log. The writer maintained it and `mark_committed` pruned it, but `WALRecovery.scan_all_uncommitted` and `find_orphaned_claims` still globbed `*.wal.jsonl` and parsed every entry, so the index was dead on read. Both now open only the runs the index names, and fall back to a full scan plus a rebuild when it is absent or unparseable.
+
+Reading the index means trusting it, so the invariant it now carries is that the index is either absent or right, and three rules hold that up. A failed index write invalidates the file, because an index that parses cleanly while naming fewer runs than exist would send recovery past a run that still needs it. `add` is a no-op when the file is gone, since append mode would otherwise resurrect it holding a single row and absent has to stay absent until a full scan rebuilds it. And every mutation, along with the existence-and-read pair, takes the cross-process lock from `core/persistence/file_locks.py`: `add` is a bare append while `remove` and `rebuild` are load-modify-save, so without one a lost update drops a run from recovery.
+
+The index is created by seeding it from one scan rather than by writing an empty file, so a project whose WALs predate it is not told there is nothing to recover, and that seeding tolerates a log that is not valid UTF-8 rather than blocking the writer from constructing (#5510).

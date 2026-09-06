@@ -107,10 +107,33 @@ If the process crashes between the intent and the confirm, the intent
 remains in the file with `committed=False` and the sidecar index points
 to it. Recovery picks up there.
 
-The sidecar index (`UncommittedIndex`) is a performance cache only - if
-it is missing, truncated, or stale, recovery falls back to a full WAL
-scan and rebuilds it (`wal.py`). Loss of the index never costs
-correctness, only one slow boot.
+The sidecar index (`UncommittedIndex`) is what lets recovery decide which
+WALs to open at all. A run it does not name holds no uncommitted entry,
+so that run's file is never read: 200 runs of 500 entries stop being
+100 000 JSON parses per boot.
+
+Recovery therefore has to be able to trust it, and the rule is that the
+index is either **absent** or **right**. Three paths keep that true
+(`wal.py`):
+
+- **Absent or unparseable.** Recovery walks every WAL and rebuilds the
+  index from what it found. One slow boot, never a wrong answer.
+- **Present and parseable, including empty.** Taken as authoritative.
+  Empty means "nothing is uncommitted", not "I do not know".
+- **A row that could not be written.** `WALWriter.append` records an
+  uncommitted entry in the index after the WAL line is durable. If that
+  write fails, the append still succeeds - the entry is on disk - but the
+  index is now well-formed and short, which is the one state a reader
+  must never trust. The writer deletes it, turning the case back into
+  "absent". If the file cannot be deleted either, that is logged at
+  `error`, because recovery may then skip the run until the index is
+  removed by hand.
+
+The index is created by seeding it from one scan, not by writing an empty
+file, so a project whose WALs predate the index does not get told there is
+nothing to recover.
+
+Loss of the index still never costs correctness, only one slow boot.
 
 ---
 

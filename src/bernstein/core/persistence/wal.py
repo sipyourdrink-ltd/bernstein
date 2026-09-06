@@ -25,7 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from contextlib import AbstractContextManager
     from pathlib import Path
+
+from bernstein.core.persistence.file_locks import LockTimeout, cross_process_lock
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +87,23 @@ class UncommittedIndex:
 
         {"run_id": "r-1", "seq": 3, "entry_hash": "ab12..."}
 
-    The index is a *secondary cache*: if it is missing, truncated, or
-    otherwise corrupt, callers must fall back to a full WAL scan and
-    rebuild the index from the scan result. Loss of the index therefore
-    only costs one slow boot - never correctness.
+    :meth:`WALRecovery.scan_all_uncommitted` trusts an index it can parse,
+    so this file is authoritative rather than advisory, and the invariant
+    that makes that safe is: **the index is either absent or right.**
+
+    Three rules hold it up:
+
+    * *Absent means scan.* A missing or unparseable index sends the caller
+      to a full WAL scan that rebuilds it. Losing the file costs one slow
+      boot, never a missed record.
+    * *Absent stays absent.* Only :meth:`rebuild` creates the file.
+      :meth:`add` is a no-op when it is gone, because an append-mode write
+      would resurrect it holding one row - short, well-formed, parseable,
+      and trusted, which is the one state a reader must never see.
+    * *One writer at a time.* Every mutation and the read pair take a
+      cross-process lock. ``add`` is a bare append while ``remove`` and
+      ``rebuild`` are load-modify-save, so without one a lost update drops
+      a run from recovery entirely.
 
     All mutating operations ``fsync`` the file so a crash cannot leave
     the on-disk form diverging from the in-process state.
@@ -95,14 +111,49 @@ class UncommittedIndex:
 
     _FILENAME = "uncommitted.idx.json"
 
+    #: Bound on how long a mutation waits for the index lock. The WAL
+    #: append path runs through here, so a stuck holder must degrade into a
+    #: reported failure rather than stall the orchestrator forever.
+    _LOCK_TIMEOUT_SECONDS = 5.0
+
     def __init__(self, sdd_dir: Path) -> None:
         self._path = sdd_dir / "runtime" / "wal" / self._FILENAME
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_path = self._path.with_name(self._path.name + ".lock")
 
     @property
     def path(self) -> Path:
         """Return the on-disk path of the index file."""
         return self._path
+
+    def _locked(self) -> AbstractContextManager[None]:
+        """Return the cross-process index lock for one operation.
+
+        Never nested: :meth:`load` and :meth:`_write_all` stay lock-free and
+        are only called from inside a public method that already holds it.
+        ``flock`` will not grant a second descriptor to a process already
+        holding one, so a nested acquire would deadlock rather than reenter.
+        """
+        return cross_process_lock(self._lock_path, timeout=self._LOCK_TIMEOUT_SECONDS)
+
+    def read_rows(self) -> list[tuple[str, int, str]] | None:
+        """Return the indexed rows, or ``None`` when the index cannot be used.
+
+        ``None`` covers both "no index file" and "index we cannot parse",
+        which are the same instruction to the caller: scan everything and
+        rebuild. The existence check and the read happen under one lock, so
+        a concurrent :meth:`rebuild` cannot land between them.
+
+        Returns:
+            The rows, or ``None`` when there is no usable index.
+        """
+        try:
+            with self._locked():
+                if not self._path.exists():
+                    return None
+                return self.load()
+        except (ValueError, OSError, LockTimeout):
+            return None
 
     # ------------------------------------------------------------------
     # Load / persist
@@ -161,13 +212,32 @@ class UncommittedIndex:
     # Mutations
     # ------------------------------------------------------------------
 
-    def add(self, run_id: str, seq: int, entry_hash: str) -> None:
+    def add(self, run_id: str, seq: int, entry_hash: str) -> bool:
         """Append ``(run_id, seq, entry_hash)`` to the index.
+
+        A no-op when the index file is absent, and that is the point rather
+        than an optimisation. Append mode creates what it opens, so an add
+        after :meth:`invalidate` would resurrect the file holding a single
+        row: short, well-formed, parseable, and therefore trusted by
+        :meth:`WALRecovery.scan_all_uncommitted`, which would then walk past
+        every other run that still needs recovery. Absent has to stay absent
+        until a full scan rebuilds it.
 
         Duplicates are allowed on disk - :meth:`load` is tolerant of them
         as long as each row is individually well-formed.  Callers that
         care about uniqueness should use :meth:`remove` before re-adding.
+
+        Returns:
+            True when the row was written. False when there was no index to
+            append to, which is not a failure: the next scan rebuilds it.
         """
+        with self._locked():
+            if not self._path.exists():
+                return False
+            return self._append_row(run_id, seq, entry_hash)
+
+    def _append_row(self, run_id: str, seq: int, entry_hash: str) -> bool:
+        """Append one row. Caller holds the lock and has checked existence."""
         with self._path.open("a") as f:
             f.write(
                 json.dumps(
@@ -178,6 +248,7 @@ class UncommittedIndex:
             )
             f.flush()
             os.fsync(f.fileno())
+        return True
 
     def remove(self, run_id: str, seq: int) -> bool:
         """Remove every row matching ``(run_id, seq)`` from the index.
@@ -186,14 +257,17 @@ class UncommittedIndex:
         corrupt indexes are treated as empty (no rows removed, no error).
         """
         try:
-            rows = self.load()
-        except ValueError:
-            # Corrupt index: nothing to remove, let the next scan rebuild.
+            with self._locked():
+                rows = self.load()
+                kept = [r for r in rows if not (r[0] == run_id and r[1] == seq)]
+                if len(kept) == len(rows):
+                    return False
+                self._write_all(kept)
+        except (ValueError, LockTimeout):
+            # Corrupt index, or a holder we could not wait out: nothing is
+            # removed and the next scan rebuilds. Leaving a row in is the
+            # safe direction - it costs one WAL read, not a missed record.
             return False
-        kept = [r for r in rows if not (r[0] == run_id and r[1] == seq)]
-        if len(kept) == len(rows):
-            return False
-        self._write_all(kept)
         return True
 
     def remove_run(self, run_id: str) -> int:
@@ -204,18 +278,45 @@ class UncommittedIndex:
         stale rows pointing at an already-recovered WAL.
         """
         try:
-            rows = self.load()
-        except ValueError:
+            with self._locked():
+                rows = self.load()
+                kept = [r for r in rows if r[0] != run_id]
+                removed = len(rows) - len(kept)
+                if removed:
+                    self._write_all(kept)
+        except (ValueError, LockTimeout):
             return 0
-        kept = [r for r in rows if r[0] != run_id]
-        removed = len(rows) - len(kept)
-        if removed:
-            self._write_all(kept)
         return removed
 
     def rebuild(self, rows: list[tuple[str, int, str]]) -> None:
-        """Replace the index with *rows* (used after a fallback scan)."""
-        self._write_all(rows)
+        """Replace the index with *rows* (used after a fallback scan).
+
+        The only operation that may create the file. See :meth:`add`.
+        """
+        with self._locked():
+            self._write_all(rows)
+
+    def invalidate(self) -> bool:
+        """Delete the index so the next scan falls back and rebuilds it.
+
+        A writer that could not record an uncommitted entry leaves an index
+        that is well-formed and *wrong*: it names fewer entries than exist.
+        A reader trusting it would skip a run that still needs recovery,
+        which is a lost entry rather than a slow boot. Removing the file
+        turns that back into the slow-boot case the class is designed
+        around.
+
+        Returns:
+            True when the index is gone afterwards. False means the file
+            could not be removed and may still be read as authoritative,
+            which is the one case the caller has to shout about.
+        """
+        try:
+            with self._locked():
+                self._path.unlink(missing_ok=True)
+        except (OSError, LockTimeout):
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -241,12 +342,42 @@ class WALWriter:
         # Sidecar index of uncommitted entries. Lazily instantiated
         # so tests that only exercise the reader do not create the index file.
         self._index: UncommittedIndex | None = None
+        self._seed_uncommitted_index()
 
     def _uncommitted_index(self) -> UncommittedIndex:
         """Return a lazily-instantiated :class:`UncommittedIndex`."""
         if self._index is None:
             self._index = UncommittedIndex(self._sdd_dir)
         return self._index
+
+    def _seed_uncommitted_index(self) -> None:
+        """Create the sidecar index from one scan when it is not there yet.
+
+        :meth:`WALRecovery.scan_all_uncommitted` trusts an index it can
+        parse, so the file's *presence* is what says "this .sdd maintains an
+        index". Creating it empty would be wrong on a project whose WALs
+        predate the index: their uncommitted entries are in no index, and a
+        reader trusting an empty one would walk past every one of them.
+        Seeding it from a scan costs the one slow boot this class already
+        budgets for, and every boot after it is the fast path.
+
+        Best-effort. A failure leaves the index absent, which is the same
+        documented fallback: the next scan walks every WAL and rebuilds.
+        """
+        index = self._uncommitted_index()
+        if index.path.exists():
+            return
+        wal_dir = self._sdd_dir / "runtime" / "wal"
+        try:
+            found = _uncommitted_in_runs(wal_dir, self._sdd_dir) if wal_dir.is_dir() else []
+            index.rebuild([(run_id, entry.seq, entry.entry_hash) for run_id, entry in found])
+        except (OSError, ValueError, LockTimeout):
+            # ValueError covers UnicodeDecodeError: the reader opens as UTF-8
+            # and a torn write mid-multibyte is exactly what crash recovery
+            # exists for. This runs in WALWriter.__init__, before the guard
+            # that wraps replay, so letting it out would stop the
+            # orchestrator constructing at all over one garbled log.
+            logger.warning("could not seed the uncommitted index at %s", index.path, exc_info=True)
 
     def _load_tail(self) -> tuple[int, str]:
         """Return (last_seq, last_entry_hash) from an existing WAL file.
@@ -431,15 +562,30 @@ class WALWriter:
             self._rollback_partial_append(pre_write_size)
             raise
 
-        # update the sidecar index after the WAL line has been
-        # durably written. Index corruption only degrades startup speed
-        # (scan_all_uncommitted falls back to a full scan and rebuilds)
-        # so we swallow the error rather than failing the append.
+        # Update the sidecar index after the WAL line has been durably
+        # written. A failure here must not fail the append: the entry is on
+        # disk and a full scan can always find it.
+        #
+        # What it must not do either is leave the index well-formed and
+        # short. scan_all_uncommitted trusts an index it can parse, so an
+        # index missing this row would send recovery past a run that still
+        # needs it. Losing the file entirely is the safe direction, because
+        # a missing index means "scan everything and rebuild".
         if not committed:
+            index = self._uncommitted_index()
             try:
-                self._uncommitted_index().add(self._run_id, seq, entry_hash)
+                index.add(self._run_id, seq, entry_hash)
             except OSError:
-                logger.warning("uncommitted index add failed; will rebuild on next scan", exc_info=True)
+                logger.warning("uncommitted index add failed; invalidating the index", exc_info=True)
+                if not index.invalidate():
+                    logger.error(
+                        "uncommitted index at %s could not be invalidated after a failed add; "
+                        "seq %d of run %s is not named in it, and recovery may skip the run "
+                        "until the index is deleted by hand",
+                        index.path,
+                        seq,
+                        self._run_id,
+                    )
 
         entry = WALEntry(
             seq=seq,
@@ -671,6 +817,41 @@ class WALReader:
 # ---------------------------------------------------------------------------
 
 
+def _uncommitted_in_runs(
+    wal_dir: Path,
+    sdd_dir: Path,
+    *,
+    only_runs: set[str] | None = None,
+) -> list[tuple[str, WALEntry]]:
+    """Read uncommitted entries from every open WAL, or only from *only_runs*.
+
+    Module-level rather than a :class:`WALRecovery` method because
+    :class:`WALWriter` seeds the index with it, and a writer reaching into
+    the recovery class's privates reads worse than one shared helper.
+
+    Args:
+        wal_dir: The ``.sdd/runtime/wal`` directory.
+        sdd_dir: The ``.sdd`` directory root.
+        only_runs: When given, the only run ids whose WAL is opened.
+
+    Returns:
+        ``(run_id, entry)`` for every uncommitted entry found, including
+        those belonging to the caller's own run.
+    """
+    found: list[tuple[str, WALEntry]] = []
+    for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
+        if wal_file.is_symlink():
+            continue
+        run_id = wal_file.name.removesuffix(".wal.jsonl")
+        if only_runs is not None and run_id not in only_runs:
+            continue
+        if WALRecovery.is_wal_closed(run_id, sdd_dir):
+            continue
+        recovery = WALRecovery(run_id=run_id, sdd_dir=sdd_dir)
+        found.extend((run_id, entry) for entry in recovery.get_uncommitted_entries())
+    return found
+
+
 class WALRecovery:
     """Crash recovery helper: find entries not yet committed at crash time.
 
@@ -832,19 +1013,53 @@ class WALRecovery:
         if not wal_dir.is_dir():
             return []
 
-        results: list[tuple[str, WALEntry]] = []
-        for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
-            if wal_file.is_symlink():
-                continue
-            run_id = wal_file.name.removesuffix(".wal.jsonl")
-            if run_id == exclude_run_id:
-                continue
-            if WALRecovery.is_wal_closed(run_id, sdd_dir):
-                continue
-            recovery = WALRecovery(run_id=run_id, sdd_dir=sdd_dir)
-            for entry in recovery.get_uncommitted_entries():
-                results.append((run_id, entry))
-        return results
+        index = UncommittedIndex(sdd_dir)
+        named = WALRecovery._indexed_run_ids(index)
+        if named is not None:
+            # The index names every run holding an uncommitted entry, so a
+            # run it does not name has nothing to find and its WAL is never
+            # opened. This is the whole point of the sidecar: 200 runs of
+            # 500 entries stop being 100 000 JSON parses per boot.
+            found = _uncommitted_in_runs(wal_dir, sdd_dir, only_runs=named)
+        else:
+            # Missing or unparseable index: one slow boot, then rebuild it
+            # from what the scan found so the next boot takes the fast path.
+            found = _uncommitted_in_runs(wal_dir, sdd_dir)
+            WALRecovery._rebuild_index(index, found)
+        # ``exclude_run_id`` is filtered last, not during the walk: the
+        # current run's own uncommitted entries belong in the index, so a
+        # rebuild that skipped them would write a short one.
+        return [(run_id, entry) for run_id, entry in found if run_id != exclude_run_id]
+
+    @staticmethod
+    def _indexed_run_ids(index: UncommittedIndex) -> set[str] | None:
+        """Return the run ids the index names, or ``None`` if it cannot be used.
+
+        ``None`` covers both "no index file" and "index file we cannot
+        parse", which are the same instruction to the caller: scan
+        everything and rebuild. An index that exists and parses is
+        authoritative, including when it is empty - that is the answer
+        "nothing is uncommitted", not "I do not know".
+
+        Args:
+            index: The sidecar index for this ``.sdd`` root.
+
+        Returns:
+            The run ids with at least one uncommitted entry, or ``None``.
+        """
+        rows = index.read_rows()
+        if rows is None:
+            logger.debug("no usable uncommitted index at %s; falling back to a full scan", index.path)
+            return None
+        return {run_id for run_id, _seq, _entry_hash in rows}
+
+    @staticmethod
+    def _rebuild_index(index: UncommittedIndex, found: list[tuple[str, WALEntry]]) -> None:
+        """Write *found* back to the index. Best-effort: a failure costs a scan."""
+        try:
+            index.rebuild([(run_id, entry.seq, entry.entry_hash) for run_id, entry in found])
+        except OSError:
+            logger.warning("could not rebuild the uncommitted index at %s", index.path, exc_info=True)
 
     @staticmethod
     def find_orphaned_claims(
@@ -880,12 +1095,20 @@ class WALRecovery:
         if not wal_dir.is_dir():
             return []
 
+        # An orphaned claim is an uncommitted ``task_claimed`` entry, so a run
+        # the index does not name cannot hold one and its WAL is not opened.
+        # A missing or unparseable index means every run is a candidate;
+        # rebuilding it is scan_all_uncommitted's job, not this one's.
+        named = WALRecovery._indexed_run_ids(UncommittedIndex(sdd_dir))
+
         orphans: list[tuple[str, WALEntry]] = []
         for wal_file in sorted(wal_dir.glob("*.wal.jsonl")):
             if wal_file.is_symlink():
                 continue
             run_id = wal_file.name.removesuffix(".wal.jsonl")
             if run_id == exclude_run_id:
+                continue
+            if named is not None and run_id not in named:
                 continue
             if WALRecovery.is_wal_closed(run_id, sdd_dir):
                 continue
