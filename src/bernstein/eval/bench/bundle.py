@@ -107,6 +107,8 @@ class SubmissionBundle:
     signature: str = ""
     # Install identity fingerprint (public-key fingerprint of the signer).
     signer_fingerprint: str = ""
+    # Compliance controls measured by this benchmark bundle.
+    controls: list[str] = field(default_factory=list)
 
     # Computed lazily.
     _bundle_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -137,14 +139,17 @@ class SubmissionBundle:
         return self._bundle_hash
 
     def _compute_hash(self) -> str:
+        payload_dict: dict[str, Any] = {
+            "suite_hash": self.suite_hash,
+            "suite_version": self.suite_version,
+            "submitted_at": self.submitted_at,
+            "scheduler_config": self.scheduler_config,
+            "task_results": [r.to_dict() for r in self.task_results],
+        }
+        if self.controls:
+            payload_dict["controls"] = list(self.controls)
         payload = json.dumps(
-            {
-                "suite_hash": self.suite_hash,
-                "suite_version": self.suite_version,
-                "submitted_at": self.submitted_at,
-                "scheduler_config": self.scheduler_config,
-                "task_results": [r.to_dict() for r in self.task_results],
-            },
+            payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -155,7 +160,7 @@ class SubmissionBundle:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "bundle_hash": self.bundle_hash(),
             "suite_hash": self.suite_hash,
             "suite_version": self.suite_version,
@@ -167,6 +172,9 @@ class SubmissionBundle:
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
         }
+        if self.controls:
+            d["controls"] = list(self.controls)
+        return d
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,6 +209,7 @@ class SubmissionBundle:
             )
             for r in raw["task_results"]
         ]
+        controls = list(raw.get("controls", []))
         bundle = cls(
             suite_hash=raw["suite_hash"],
             suite_version=raw["suite_version"],
@@ -209,6 +218,7 @@ class SubmissionBundle:
             submitted_at=raw["submitted_at"],
             signature=raw.get("signature", ""),
             signer_fingerprint=raw.get("signer_fingerprint", ""),
+            controls=controls,
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:

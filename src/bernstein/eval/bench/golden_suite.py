@@ -95,4 +95,8 @@ def build_golden_suite_v1() -> BenchSuite:
             category="documentation",
         ),
     ]
-    return BenchSuite(version="golden-v1", tasks=tasks)
+    return BenchSuite(
+        version="golden-v1",
+        tasks=tasks,
+        controls=["CTRL-AUDIT-TRAIL", "CTRL-DATA-LINEAGE", "ASI02"],
+    )

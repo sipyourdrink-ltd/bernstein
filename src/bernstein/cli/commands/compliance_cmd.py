@@ -928,3 +928,35 @@ def pack_incident(
         operator_key_path=resolved_key,
     )
     click.echo(f"Incident pack written to: {out_path} ({len(gaps)} evidence gap(s))")
+
+
+# ---------------------------------------------------------------------------
+# bernstein compliance controls
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("controls")
+@click.option(
+    "--framework",
+    default=None,
+    help="Filter by framework (e.g. eu_ai_act, owasp_asi, owasp_skills, iso42001, finos_aigf).",
+)
+@click.option("--json-output", "as_json", is_flag=True, help="Emit raw JSON instead of a table.")
+def compliance_controls_status(framework: str | None, as_json: bool) -> None:
+    """List compliance controls and framework references."""
+    from bernstein.compliance.controls import list_controls
+
+    controls = list_controls(framework=framework)
+
+    if as_json:
+        click.echo(json.dumps({"controls": [c.to_dict() for c in controls]}, indent=2))
+        return
+
+    click.echo(f"Compliance Control Registry ({len(controls)} controls)")
+    click.echo("")
+    header = f"{'Control ID':<25} {'Title':<42} {'Status':<10} {'References':<35}"
+    click.echo(header)
+    click.echo("-" * len(header))
+    for c in controls:
+        refs = ", ".join(f"{k}:{v}" for k, v in sorted(c.references.items()))
+        click.echo(f"{c.control_id:<25} {c.title[:40]:<42} {c.status:<10} {refs:<35}")

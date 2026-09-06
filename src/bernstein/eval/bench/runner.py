@@ -195,4 +195,5 @@ class BenchRunner:
             task_results=task_results,
             scheduler_config=self.scheduler_config,
             submitted_at=time.time(),
+            controls=list(getattr(self.suite, "controls", [])),
         )

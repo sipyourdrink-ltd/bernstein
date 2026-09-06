@@ -52,10 +52,8 @@ import logging
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +162,11 @@ _STANDARD_MAPS: dict[str, dict[str, Any]] = {
 from bernstein.compliance import iso42001 as _iso42001  # noqa: E402
 from bernstein.compliance import owasp_asi as _owasp_asi  # noqa: E402
 from bernstein.compliance import owasp_skills as _owasp_skills  # noqa: E402
+from bernstein.compliance.oscal import (  # noqa: E402
+    generate_oscal_assessment_results,
+    validate_oscal_assessment_results,
+)
+from bernstein.eval.bench.bundle import SubmissionBundle  # noqa: E402
 
 _STANDARD_MAPS[_owasp_asi.STANDARD_ID] = _owasp_asi.control_map()
 _STANDARD_MAPS[_owasp_skills.STANDARD_ID] = _owasp_skills.control_map()
@@ -171,8 +174,23 @@ _STANDARD_MAPS[_iso42001.STANDARD_ID] = _iso42001.control_map()
 
 
 # ---------------------------------------------------------------------------
-# Result type
+# Result types
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PackVerificationResult:
+    """Result of an offline verification on an evidence pack zip.
+
+    Attributes:
+        passed: True iff all integrity, hash, and signature checks passed.
+        errors: Detailed error strings if any check failed.
+        manifest: Parsed manifest dictionary if available.
+    """
+
+    passed: bool
+    errors: list[str]
+    manifest: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,6 +488,8 @@ def _readme_for(standard: str, mapping: dict[str, Any]) -> bytes:
         "- `audit-chain/`         - HMAC-chained audit events + per-resource catalog.",
         "- `lineage/`             - Sigstore-style transparency log entries.",
         "- `costs/`               - cost ledger snapshots over the export window.",
+        "- `bench/`               - signed benchmark bundles providing empirical control measurements.",
+        "- `oscal/`               - NIST OSCAL 1.0.0 assessment-results export.",
         "- `policy/`              - operator policy snapshot (optional).",
         "- `attestations/`        - operator-supplied attestations (optional).",
         "",
@@ -517,6 +537,68 @@ def _zip_artefacts(artefacts: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
+def _normalize_bench_bundles(
+    bench_bundles: list[SubmissionBundle] | list[Path] | list[Any] | None,
+) -> list[SubmissionBundle]:
+    """Coerce various representations of bench bundles to SubmissionBundle objects."""
+    if not bench_bundles:
+        return []
+    out: list[SubmissionBundle] = []
+    for item in bench_bundles:
+        if isinstance(item, SubmissionBundle):
+            out.append(item)
+        elif isinstance(item, (str, Path)):
+            p = Path(item)
+            if p.is_file():
+                out.append(SubmissionBundle.load(p))
+        elif isinstance(item, dict):
+            out.append(SubmissionBundle.from_dict(item))
+    return out
+
+
+def _process_controls(
+    controls: list[dict[str, Any]],
+    bundles: list[SubmissionBundle],
+) -> list[dict[str, Any]]:
+    """Annotate controls with measurement status and reasons from benchmark bundles."""
+    if not bundles:
+        return [dict(c) for c in controls]
+
+    measured_by_control: dict[str, list[SubmissionBundle]] = {}
+    for bundle in bundles:
+        for cid in getattr(bundle, "controls", []):
+            measured_by_control.setdefault(cid, []).append(bundle)
+
+    out: list[dict[str, Any]] = []
+    for c in controls:
+        c_dict = dict(c)
+        cid = c_dict.get("control_id", "")
+        matching_bundles = measured_by_control.get(cid, [])
+        if matching_bundles:
+            b = matching_bundles[0]
+            c_dict["status"] = "measured"
+            c_dict["reason"] = (
+                f"Measured by benchmark suite {b.suite_version} ({b.suite_hash[:12]}) "
+                f"with pass rate {b.pass_rate * 100:.1f}%."
+            )
+            c_dict["measured_values"] = {
+                "pass_rate": b.pass_rate,
+                "overall_score": b.overall_score,
+                "bundle_hash": b.bundle_hash(),
+                "suite_version": b.suite_version,
+            }
+        else:
+            orig_status = c_dict.get("status", "mapped")
+            if orig_status in ("organisational", "not-applicable"):
+                c_dict["status"] = orig_status
+                c_dict["reason"] = c_dict.get("requirement", "Organisational policy control.")
+            else:
+                c_dict["status"] = "declared-not-measured"
+                c_dict["reason"] = "No automated benchmark bundle provided for this control in this evidence pack."
+        out.append(c_dict)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -541,6 +623,7 @@ def build_evidence_pack(
     standard: str,
     since: str = "",
     task: str = "all",
+    bench_bundles: list[SubmissionBundle] | list[Path] | None = None,
     output_path: Path | None = None,
     write: bool = True,
 ) -> EvidencePack:
@@ -551,6 +634,7 @@ def build_evidence_pack(
         standard: One of ``SUPPORTED_STANDARDS``.
         since: ISO-8601 lower bound; ``""`` disables time filtering.
         task: Task id to scope to, or ``"all"``.
+        bench_bundles: Optional signed benchmark bundles to embed and link to controls.
         output_path: Destination zip file. When ``None`` and
             ``write=True``, defaults to ``<sdd_dir>/evidence/<bundle_id>.zip``.
         write: When False, build in-memory only (used by ``--dry-run``).
@@ -584,17 +668,8 @@ def build_evidence_pack(
     costs_bytes = _serialise_jsonl(cost_entries)
 
     mapping = _STANDARD_MAPS[standard]
-    controls_payload = {
-        "schema_version": SCHEMA_VERSION,
-        "standard": standard,
-        "regulation": mapping.get("regulation", ""),
-        "controls": mapping["controls"],
-        "deferred": mapping.get("deferred", []),
-    }
-    controls_bytes = _canonical_json(controls_payload)
-
-    policy_files = _read_text_directory(policy_dir)
-    attestation_files = _read_text_directory(attestations_dir)
+    loaded_bundles = _normalize_bench_bundles(bench_bundles)
+    bundles_manifest: list[dict[str, Any]] = []
 
     # Assemble the artefact dict - keys are zip paths.
     artefacts: dict[str, bytes] = {
@@ -602,9 +677,53 @@ def build_evidence_pack(
         "audit-chain/data_catalog.json": data_catalog_bytes,
         "lineage/log.jsonl": lineage_bytes,
         "costs/cost_history.jsonl": costs_bytes,
-        "controls.json": controls_bytes,
         "README.md": _readme_for(standard, mapping),
     }
+
+    # Embed benchmark bundles
+    for b in loaded_bundles:
+        b_hash = b.bundle_hash()
+        zip_rel = f"bench/{b.suite_version}_{b_hash[:16]}.json"
+        artefacts[zip_rel] = _canonical_json(b.to_dict())
+        bundles_manifest.append(
+            {
+                "bundle_hash": b_hash,
+                "suite_version": b.suite_version,
+                "suite_hash": b.suite_hash,
+                "overall_score": b.overall_score,
+                "pass_rate": b.pass_rate,
+                "signed": bool(b.signature),
+                "signer_fingerprint": b.signer_fingerprint,
+                "zip_path": zip_rel,
+            }
+        )
+
+    processed_controls = _process_controls(mapping["controls"], loaded_bundles)
+    controls_payload = {
+        "schema_version": SCHEMA_VERSION,
+        "standard": standard,
+        "regulation": mapping.get("regulation", ""),
+        "controls": processed_controls,
+        "deferred": mapping.get("deferred", []),
+    }
+    controls_bytes = _canonical_json(controls_payload)
+    artefacts["controls.json"] = controls_bytes
+
+    bundle_id = _bundle_id(standard, since, task)
+
+    # Embed OSCAL assessment-results
+    oscal_doc = generate_oscal_assessment_results(
+        standard=standard,
+        regulation=mapping.get("regulation", ""),
+        bundle_id=bundle_id,
+        controls=processed_controls,
+        bundles=bundles_manifest,
+    )
+    artefacts["oscal/assessment-results.json"] = _canonical_json(oscal_doc)
+
+    policy_files = _read_text_directory(policy_dir)
+    attestation_files = _read_text_directory(attestations_dir)
+
     for rel, payload in policy_files.items():
         artefacts[f"policy/{rel}"] = payload
     for rel, payload in attestation_files.items():
@@ -621,14 +740,13 @@ def build_evidence_pack(
 
     artefact_hashes = {name: hashlib.sha256(payload).hexdigest() for name, payload in artefacts.items()}
 
-    controls = mapping["controls"]
-    controls_mapped = sum(1 for c in controls if c.get("status") == "mapped")
+    controls = processed_controls
+    controls_mapped = sum(1 for c in controls if c.get("status") in ("mapped", "measured"))
     controls_partial = sum(1 for c in controls if c.get("status") == "partial")
-    controls_todo = sum(1 for c in controls if c.get("status") == "todo")
+    controls_todo = sum(1 for c in controls if c.get("status") in ("todo", "declared-not-measured"))
     controls_organisational = sum(1 for c in controls if c.get("status") == "organisational")
 
-    bundle_id = _bundle_id(standard, since, task)
-    manifest = {
+    manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "bundle_id": bundle_id,
         "standard": standard,
@@ -645,6 +763,9 @@ def build_evidence_pack(
         "generated_at_utc": "1970-01-01T00:00:00+00:00",  # deterministic, see note below
         "artefacts": dict(sorted(artefact_hashes.items())),
     }
+    if bundles_manifest or bench_bundles is not None:
+        manifest["bundles"] = bundles_manifest
+
     # The bundle is byte-deterministic: ``generated_at_utc`` is a fixed
     # sentinel rather than wall-clock ``now`` so two runs of the same
     # input produce the same SHA-256. Operators who need a real "issued
@@ -683,11 +804,131 @@ def build_evidence_pack(
     )
 
 
+def export_oscal_assessment_results(
+    standard: str,
+    *,
+    sdd_dir: Path | None = None,
+    bench_bundles: list[SubmissionBundle] | list[Path] | None = None,
+    since: str = "",
+    task: str = "all",
+) -> dict[str, Any]:
+    """Export a NIST OSCAL 1.0.0 assessment-results document for a standard and benchmark bundles."""
+    if standard not in _STANDARD_MAPS:
+        raise ValueError(
+            f"unknown standard {standard!r}; supported: {', '.join(SUPPORTED_STANDARDS)}",
+        )
+    mapping = _STANDARD_MAPS[standard]
+    bundle_id = _bundle_id(standard, since, task)
+    loaded_bundles = _normalize_bench_bundles(bench_bundles)
+    bundles_manifest = [
+        {
+            "bundle_hash": b.bundle_hash(),
+            "suite_version": b.suite_version,
+            "suite_hash": b.suite_hash,
+            "overall_score": b.overall_score,
+            "pass_rate": b.pass_rate,
+            "signed": bool(b.signature),
+            "signer_fingerprint": b.signer_fingerprint,
+        }
+        for b in loaded_bundles
+    ]
+    processed_controls = _process_controls(mapping["controls"], loaded_bundles)
+    return generate_oscal_assessment_results(
+        standard=standard,
+        regulation=mapping.get("regulation", ""),
+        bundle_id=bundle_id,
+        controls=processed_controls,
+        bundles=bundles_manifest,
+    )
+
+
+def verify_evidence_pack(pack_path: Path | str | bytes) -> PackVerificationResult:
+    """Verify an evidence pack zip bundle offline.
+
+    Checks:
+    1. Manifest integrity: all files listed in manifest['artefacts'] exist and match SHA-256.
+    2. Benchmark bundle signatures: all bundles in bench/ are signed.
+    3. Benchmark bundle receipts: stored receipt hash matches recomputed receipt hash.
+    4. Bundle hash integrity: recomputed bundle hash matches stored bundle_hash.
+    """
+    errors: list[str] = []
+    manifest: dict[str, Any] | None = None
+
+    try:
+        if isinstance(pack_path, bytes):
+            zf = zipfile.ZipFile(io.BytesIO(pack_path), "r")
+        else:
+            zf = zipfile.ZipFile(Path(pack_path), "r")
+    except Exception as exc:
+        return PackVerificationResult(passed=False, errors=[f"Failed to open zip archive: {exc}"])
+
+    with zf:
+        if "manifest.json" not in zf.namelist():
+            return PackVerificationResult(passed=False, errors=["manifest.json is missing from zip archive."])
+
+        try:
+            manifest_bytes = zf.read("manifest.json")
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+        except Exception as exc:
+            return PackVerificationResult(passed=False, errors=[f"manifest.json is corrupt: {exc}"])
+
+        artefact_hashes = manifest.get("artefacts", {})
+        for name, expected_sha in artefact_hashes.items():
+            if name not in zf.namelist():
+                errors.append(f"Missing artefact {name!r} listed in manifest.")
+                continue
+            try:
+                actual_sha = hashlib.sha256(zf.read(name)).hexdigest()
+                if actual_sha != expected_sha:
+                    errors.append(
+                        f"Artefact {name!r} hash mismatch (tampered content): "
+                        f"expected {expected_sha}, got {actual_sha}."
+                    )
+            except Exception as exc:
+                errors.append(f"Failed to read artefact {name!r}: {exc}")
+
+        # Check bench bundles
+        bench_entries = [name for name in zf.namelist() if name.startswith("bench/") and name.endswith(".json")]
+        for name in bench_entries:
+            try:
+                bundle_raw = json.loads(zf.read(name).decode("utf-8"))
+                bundle = SubmissionBundle.from_dict(bundle_raw)
+            except Exception as exc:
+                errors.append(f"Bench bundle {name!r} tampered or invalid: {exc}")
+                continue
+
+            if not bundle.signature:
+                errors.append(
+                    f"Bench bundle {name!r} (suite {bundle.suite_version}) is unsigned. "
+                    "Signed benchmark bundle required for compliance evidence."
+                )
+
+            for tr in bundle.task_results:
+                live_hash = hashlib.sha256(
+                    json.dumps(tr.receipt, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                if tr.stored_receipt_hash != live_hash:
+                    errors.append(
+                        f"Task {tr.task_id!r} receipt in bundle {name!r} tampered: "
+                        f"stored {tr.stored_receipt_hash!r} != live {live_hash!r}."
+                    )
+
+    return PackVerificationResult(
+        passed=len(errors) == 0,
+        errors=errors,
+        manifest=manifest,
+    )
+
+
 __all__ = [
     "SCHEMA_VERSION",
     "SUPPORTED_STANDARDS",
     "EvidencePack",
+    "PackVerificationResult",
     "Standard",
     "build_evidence_pack",
+    "export_oscal_assessment_results",
     "get_standard_map",
+    "validate_oscal_assessment_results",
+    "verify_evidence_pack",
 ]
