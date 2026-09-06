@@ -30,11 +30,10 @@ never at risk.
 
 from __future__ import annotations
 
-import ast
 from functools import lru_cache
 from pathlib import Path
 
-from bernstein.core import _REDIRECT_MAP
+from tests.unit._orphan_scan import PythonSourceTree, assert_orphans_match, pull_request_head_sha
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src" / "bernstein"
@@ -81,51 +80,34 @@ EXCLUDED_FROM_SCAN = {SRC / "core" / "__init__.py"}
 KNOWN_ORPHANS = frozenset({"hipaa", "soc2_report", "compliance_report"})
 
 
-def _scanned_files() -> list[Path]:
-    return [p for p in SRC.rglob("*.py") if p not in EXCLUDED_FROM_SCAN]
+@lru_cache(maxsize=2)
+def _source_tree(ref: str | None = None) -> PythonSourceTree:
+    return PythonSourceTree(REPO_ROOT, SRC, ref)
 
 
-@lru_cache(maxsize=1)
-def _import_index() -> tuple[dict[str, list[Path]], dict[tuple[str, str], list[Path]]]:
+@lru_cache(maxsize=2)
+def _import_index(ref: str | None = None) -> tuple[dict[str, list[Path]], dict[tuple[str, str], list[Path]]]:
     """One AST pass over ``src`` instead of one per candidate module."""
-    dotted: dict[str, list[Path]] = {}
-    from_package: dict[tuple[str, str], list[Path]] = {}
-
-    for path in _scanned_files():
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                source = node.module or ""
-                dotted.setdefault(source, []).append(path)
-                for alias in node.names:
-                    from_package.setdefault((source, alias.name), []).append(path)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    dotted.setdefault(alias.name, []).append(path)
-
-    return dotted, from_package
+    return _source_tree(ref).import_index(EXCLUDED_FROM_SCAN)
 
 
-def _import_targets(label: str) -> set[str]:
+def _import_targets(label: str, ref: str | None = None) -> set[str]:
     """Every dotted path that resolves to the candidate's file, redirect aliases included."""
     _, canonical = CANDIDATES[label]
     targets = {canonical}
-    for legacy, real in _REDIRECT_MAP.items():
+    for legacy, real in _source_tree(ref).redirects.items():
         if real == canonical:
             targets.add(legacy if legacy.startswith("bernstein.") else f"bernstein.core.{legacy}")
     return targets
 
 
-def _importers_of(label: str) -> set[Path]:
+def _importers_of(label: str, ref: str | None = None) -> set[Path]:
     """Every file that imports `label`, by any of its resolvable dotted paths."""
     own_file, _ = CANDIDATES[label]
-    targets = _import_targets(label)
+    targets = _import_targets(label, ref)
     packages = {t.rsplit(".", 1)[0] for t in targets}
     module_name = own_file.stem
-    dotted, from_package = _import_index()
+    dotted, from_package = _import_index(ref)
 
     found: set[Path] = set()
     for target in targets:
@@ -158,8 +140,8 @@ def reachable_labels(importers: dict[str, set[Path]]) -> set[str]:
     return reachable
 
 
-def _current_orphans() -> set[str]:
-    importers = {label: _importers_of(label) for label in CANDIDATES}
+def _current_orphans(ref: str | None = None) -> set[str]:
+    importers = {label: _importers_of(label, ref) for label in CANDIDATES}
     return set(importers) - reachable_labels(importers)
 
 
@@ -174,18 +156,16 @@ def test_every_compliance_module_has_a_non_test_importer() -> None:
     and fails again the moment a fifth compliance module goes dark.
     """
     current = _current_orphans()
-
-    appeared = sorted(current - KNOWN_ORPHANS)
-    assert not appeared, (
-        f"new caller-less compliance modules: {appeared}. Wire each one to a consumer "
-        "that exists today, or delete the module together with its tests and its "
-        "bernstein/core/__init__.py alias entry."
-    )
-
-    removed = sorted(KNOWN_ORPHANS - current)
-    assert not removed, (
-        f"{removed} now has a caller or is gone from the tree; strike it from "
-        "KNOWN_ORPHANS so the list keeps shrinking."
+    head_sha = pull_request_head_sha(REPO_ROOT)
+    assert_orphans_match(
+        known=KNOWN_ORPHANS,
+        current=current,
+        branch_current=None if head_sha is None else _current_orphans(head_sha),
+        subject="compliance modules",
+        wire_or_delete=(
+            "Wire each one to a consumer that exists today, or delete the module together "
+            "with its tests and its bernstein/core/__init__.py alias entry."
+        ),
     )
 
 

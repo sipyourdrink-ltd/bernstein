@@ -17,11 +17,10 @@ calls it.
 
 from __future__ import annotations
 
-import ast
 from functools import lru_cache
 from pathlib import Path
 
-from bernstein.core import _REDIRECT_MAP
+from tests.unit._orphan_scan import PythonSourceTree, assert_orphans_match, pull_request_head_sha
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOKENS_DIR = REPO_ROOT / "src" / "bernstein" / "core" / "tokens"
@@ -48,57 +47,42 @@ KNOWN_ORPHANS = frozenset(
 )
 
 
-def _module_names() -> list[str]:
-    return sorted(p.stem for p in TOKENS_DIR.glob("*.py") if p.name != "__init__.py")
+@lru_cache(maxsize=2)
+def _source_tree(ref: str | None = None) -> PythonSourceTree:
+    return PythonSourceTree(REPO_ROOT, REPO_ROOT / "src", ref)
 
 
-def _import_targets(module: str) -> set[str]:
+def _module_names(ref: str | None = None) -> list[str]:
+    return sorted(
+        path.stem for path in _source_tree(ref).sources if path.parent == TOKENS_DIR and path.name != "__init__.py"
+    )
+
+
+def _import_targets(module: str, ref: str | None = None) -> set[str]:
     """Every dotted path that resolves to ``core/tokens/<module>.py``."""
     canonical = f"{TOKENS_PKG}.{module}"
     targets = {canonical}
-    for legacy, real in _REDIRECT_MAP.items():
+    for legacy, real in _source_tree(ref).redirects.items():
         if real == canonical:
             targets.add(legacy if legacy.startswith("bernstein.") else f"bernstein.core.{legacy}")
     return targets
 
 
-def _scanned_files() -> list[Path]:
-    return [p for p in (REPO_ROOT / "src").rglob("*.py") if p not in EXCLUDED_FROM_SCAN]
-
-
-@lru_cache(maxsize=1)
-def _import_index() -> tuple[dict[str, list[Path]], dict[tuple[str, str], list[Path]]]:
+@lru_cache(maxsize=2)
+def _import_index(ref: str | None = None) -> tuple[dict[str, list[Path]], dict[tuple[str, str], list[Path]]]:
     """One AST pass over ``src`` instead of one per module.
 
     Rebuilt per test session; the naive shape re-parsed the whole tree for
     each of the 30-odd modules and cost over a minute of CI wall time.
     """
-    dotted: dict[str, list[Path]] = {}
-    from_package: dict[tuple[str, str], list[Path]] = {}
-
-    for path in _scanned_files():
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                source = node.module or ""
-                dotted.setdefault(source, []).append(path)
-                for alias in node.names:
-                    from_package.setdefault((source, alias.name), []).append(path)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    dotted.setdefault(alias.name, []).append(path)
-
-    return dotted, from_package
+    return _source_tree(ref).import_index(EXCLUDED_FROM_SCAN)
 
 
-def _importer_of(module: str) -> Path | None:
-    targets = _import_targets(module)
+def _importer_of(module: str, ref: str | None = None) -> Path | None:
+    targets = _import_targets(module, ref)
     packages = {t.rsplit(".", 1)[0] for t in targets}
     own_file = TOKENS_DIR / f"{module}.py"
-    dotted, from_package = _import_index()
+    dotted, from_package = _import_index(ref)
 
     for target in targets:
         for path in dotted.get(target, ()):
@@ -111,12 +95,12 @@ def _importer_of(module: str) -> Path | None:
     return None
 
 
-def _importers_of(module: str) -> set[Path]:
+def _importers_of(module: str, ref: str | None = None) -> set[Path]:
     """Every file that imports `module`, by any of its resolvable paths."""
-    targets = _import_targets(module)
+    targets = _import_targets(module, ref)
     packages = {t.rsplit(".", 1)[0] for t in targets}
     own_file = TOKENS_DIR / f"{module}.py"
-    dotted, from_package = _import_index()
+    dotted, from_package = _import_index(ref)
 
     found: set[Path] = set()
     for target in targets:
@@ -147,26 +131,24 @@ def reachable_modules(importers: dict[str, set[Path]]) -> set[str]:
     return reachable
 
 
-def _current_orphans() -> set[str]:
-    importers = {name: _importers_of(name) for name in _module_names()}
+def _current_orphans(ref: str | None = None) -> set[str]:
+    importers = {name: _importers_of(name, ref) for name in _module_names(ref)}
     return set(importers) - reachable_modules(importers)
 
 
 def test_no_new_orphan_token_modules() -> None:
     """The set of caller-less modules may shrink, never grow."""
     current = _current_orphans()
-
-    appeared = sorted(current - KNOWN_ORPHANS)
-    assert not appeared, (
-        f"new caller-less modules under core/tokens/: {appeared}. Wire each one to a "
-        "consumer that exists today, or delete the module together with its tests and "
-        "its bernstein/core/__init__.py alias entry."
-    )
-
-    removed = sorted(KNOWN_ORPHANS - current)
-    assert not removed, (
-        f"{removed} now has a caller or is gone from the tree; strike it from "
-        "KNOWN_ORPHANS so the list keeps shrinking."
+    head_sha = pull_request_head_sha(REPO_ROOT)
+    assert_orphans_match(
+        known=KNOWN_ORPHANS,
+        current=current,
+        branch_current=None if head_sha is None else _current_orphans(head_sha),
+        subject="modules under core/tokens/",
+        wire_or_delete=(
+            "Wire each one to a consumer that exists today, or delete the module together "
+            "with its tests and its bernstein/core/__init__.py alias entry."
+        ),
     )
 
 
