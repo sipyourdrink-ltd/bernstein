@@ -50,7 +50,12 @@ _SIGNED_WRITE_MODULE = _SRC / "core" / "lineage" / "signed_write.py"
 _SEALING_NAMES = {"seal_write", "SignedLineageLog"}
 
 
+import functools
+
+
+@functools.cache
 def _iter_src_modules() -> list[tuple[Path, ast.Module]]:
+    """Parse and cache the AST for all src/ modules once per test session."""
     out: list[tuple[Path, ast.Module]] = []
     for py in sorted(_SRC.rglob("*.py")):
         try:

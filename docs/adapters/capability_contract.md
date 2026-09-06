@@ -161,7 +161,7 @@ adapters at a glance.
 | `ollama` | unsupported | unsupported | text-signals |
 | `open_interpreter` | unsupported | unsupported | text-signals |
 | `openai_agents` | flag | always-on | hooks |
-| `opencode` | flag | cli-flag | text-signals |
+| `opencode` | flag | cli-flag | stream-json |
 | `openhands` | unsupported | unsupported | text-signals |
 | `pi` | unsupported | unsupported | text-signals |
 | `plandex` | unsupported | unsupported | text-signals |

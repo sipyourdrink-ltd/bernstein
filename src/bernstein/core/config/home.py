@@ -2,8 +2,11 @@
 
 Provides cross-project config storage, catalog cache, and cost tracking.
 
-Config precedence (highest to lowest):
-  session overrides > project .sdd/config.yaml > ~/.bernstein/config.yaml > built-in defaults
+Config precedence is defined once, by ``CONFIG_PRECEDENCE`` below, and every
+statement of it elsewhere should point at that tuple rather than restate it.
+Two copies of this list had already gone stale in this file: the header said
+four layers and ``resolve_config`` said five, while the resolver has built six
+since ``context`` was added.
 
 Environment overrides (take priority over all file-based config layers):
   BERNSTEIN_CLI         Default CLI adapter (e.g. claude, codex, gemini, qwen).
@@ -69,6 +72,31 @@ model: null
 """
 
 ConfigSource = Literal["seed", "session", "project", "context", "global", "default"]
+
+
+#: Every config layer, highest precedence first. This is the ONLY definition of
+#: the order: :func:`resolve_config` builds its chain in exactly this sequence,
+#: ``bernstein config explain`` prints it in this sequence, and
+#: ``test_config_precedence_is_defined_once`` fails if a layer is added to
+#: :data:`ConfigSource` without being placed here (#5110).
+CONFIG_PRECEDENCE: tuple[ConfigSource, ...] = (
+    "seed",
+    "session",
+    "project",
+    "context",
+    "global",
+    "default",
+)
+
+#: What each layer is, for an operator asking where a value came from.
+CONFIG_LAYER_DESCRIPTIONS: dict[ConfigSource, str] = {
+    "seed": "run seed (bernstein.yaml) — the value the orchestrator enforces at runtime",
+    "session": "session-only override (environment variable or caller-provided)",
+    "project": "<project>/.sdd/config.yaml",
+    "context": "the active context's config, selected within the project",
+    "global": "~/.bernstein/config.yaml",
+    "default": "built-in default",
+}
 
 
 class ConfigProvenanceLayer(TypedDict):
@@ -422,13 +450,10 @@ def resolve_config(
 ) -> ConfigResolution:
     """Resolve the effective value for *key* across all config layers.
 
-    Precedence (highest first):
-    1. Run seed overrides (``bernstein.yaml``, the value the orchestrator
-       actually enforces at runtime - see ``seed_overrides``)
-    2. Session-only overrides (environment or caller-provided)
-    3. ``<project>/.sdd/config.yaml``
-    4. ``~/.bernstein/config.yaml``
-    5. Built-in defaults
+    Layers are appended in :data:`CONFIG_PRECEDENCE` order, highest first, so
+    ``source_chain[0]`` is always the winner. The order is not restated here:
+    the copy that used to live in this docstring omitted ``context`` and stayed
+    wrong for as long as nothing compared it to the code.
 
     Args:
         key: Config key to look up.

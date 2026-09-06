@@ -45,7 +45,7 @@ PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "security"
 SEARCHED = ("src", "tests", "scripts")
 SELF = Path(__file__).resolve()
 
-#: The 20 still PROVED uncalled: each name appears nowhere outside its own module, in
+#: The 8 still PROVED uncalled: each name appears nowhere outside its own module, in
 #: any file, in any form. Pre-existing debt, deliberately not fixed here - each needs
 #: its own judgement about wiring versus deleting. The two `post_tool_enforcement`
 #: entries the list started with are gone: #4992 wired them into the hook receiver's
@@ -61,22 +61,10 @@ KNOWN_UNCALLED: frozenset[str] = frozenset(
         "audit_chain.py:record_pool_claim_receipt",
         "audit_chain.py:record_pool_retired",
         "audit_chain.py:record_schedule_collision",
-        "auth_middleware.py:check_agent_task_scope_ids",
-        "capability_tokens.py:path_covered_by",
-        "deployment_profile.py:installed_sovereign_public_key",
-        "eu_ai_act.py:read_assessment_records",
-        "guardrails.py:check_critical_file_modifications",
-        "guardrails.py:check_review_checklist",
-        "intent_capsule.py:iter_module_import_names",
-        "intent_capsule.py:normalise_tool_name",
         "permission_matrix.py:log_resolution",
-        "permission_policy.py:load_permissions_config",
-        "promptware_ingest.py:get_default_detector",
         "rbac.py:require_permission",
         "rbac.py:require_role",
-        "secrets_broker.py:unregister_secret_for_redaction",
         "socket_guard.py:collect_unmonitored_destinations",
-        "tenanting.py:build_tenant_registry",
     }
 )
 
@@ -141,6 +129,8 @@ def _static_references() -> dict[str, set[str]]:
                     if stem != own:
                         for a in node.names:
                             refs[stem].add(a.name)
+                elif own is not None and isinstance(node, ast.Name):
+                    refs[own].add(node.id)
     return refs
 
 
@@ -246,3 +236,13 @@ def test_alias_resolution_actually_resolves() -> None:
     invisible and forty live functions were reported dead.
     """
     assert "mint_root" in _static_references().get("capability_tokens", set())
+
+
+def test_the_guard_can_see_same_module_callers() -> None:
+    """Bare calls within the same module are indexed as references (#5336).
+
+    A public function called directly from another function in the same module
+    is not uncalled, even if nothing outside references it.
+    """
+    assert "_render_control_statement" in _static_references().get("compliance_policies", set())
+

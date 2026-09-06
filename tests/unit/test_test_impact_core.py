@@ -170,6 +170,45 @@ def test_workflow_change_selects_guards_that_read_workflow_yaml(tmp_path: Path) 
     ]
 
 
+def test_static_directory_guard_selects_descendants_only(tmp_path: Path) -> None:
+    """A tree scan must run on a pull request that changes its tree.
+
+    The guard imports no module below ``controls``. Its static directory is
+    still an input to the assertion, so a new module there must select it;
+    a sibling directory must not.
+    """
+    _write(tmp_path / "src" / "demo" / "__init__.py", "")
+    _write(tmp_path / "src" / "demo" / "controls" / "__init__.py", "")
+    _write(
+        tmp_path / "tests" / "unit" / "test_control_reachability.py",
+        "from pathlib import Path\n\nREPO_ROOT = Path(__file__).resolve().parents[2]\n"
+        'CONTROL_DIR = REPO_ROOT / "src" / "demo" / "controls"\n',
+    )
+
+    dep_map = build_compat_dep_map(
+        tmp_path,
+        tmp_path / "src",
+        [tmp_path / "tests" / "unit"],
+        {"demo"},
+    )
+
+    selected = compat_get_affected_tests(
+        ["src/demo/controls/added.py"],
+        dep_map,
+        root=tmp_path,
+        src_root=tmp_path / "src",
+    )
+    sibling_selected = compat_get_affected_tests(
+        ["src/demo/other.py"],
+        dep_map,
+        root=tmp_path,
+        src_root=tmp_path / "src",
+    )
+
+    assert [path.relative_to(tmp_path).as_posix() for path in selected] == ["tests/unit/test_control_reachability.py"]
+    assert sibling_selected == []
+
+
 def test_dispatcher_workflow_change_selects_the_real_dispatcher_guard() -> None:
     """A change to post-ci-dispatcher.yml selects this repository's own guard.
 

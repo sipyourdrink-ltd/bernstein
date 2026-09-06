@@ -284,6 +284,10 @@ def parse_completion(payload: dict[str, Any]) -> WorkerCompletion:
     Returns:
         The validated :class:`WorkerCompletion`.
 
+    ``verification`` and ``receipt_ref`` are validated together: a payload that
+    claims a verification ran must name where the outcome was recorded. A
+    completion carrying neither is valid - not every task runs one.
+
     Raises:
         ContractViolation: On any schema mismatch, carrying the field path.
     """
@@ -299,6 +303,21 @@ def parse_completion(payload: dict[str, Any]) -> WorkerCompletion:
         if not isinstance(receipt_ref_raw, str) or not receipt_ref_raw.strip():
             raise ContractViolation("$.receipt_ref", "must be a non-empty string or null")
         receipt_ref = receipt_ref_raw
+    if verification is not None and receipt_ref is None:
+        # The two fields were independent, so a completion could assert that a
+        # command ran and exited 0 while naming nowhere the outcome was
+        # recorded. A claim backed by a receipt and one the worker simply
+        # asserted then serialized identically, and every later reader - the
+        # orchestrator releasing a dependent task, an operator reading the
+        # ledger - had to treat them the same.
+        #
+        # The path is `$.receipt_ref` rather than `$.verification` because the
+        # missing half is what has to be supplied, and the path is what makes
+        # the failure diagnosable from the ledger without the original payload.
+        raise ContractViolation(
+            "$.receipt_ref",
+            "required when `verification` is present: a verification that ran must name where it was recorded",
+        )
     return WorkerCompletion(
         summary=summary,
         files_changed=files_changed,
