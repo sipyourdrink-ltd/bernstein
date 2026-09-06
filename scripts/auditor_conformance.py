@@ -32,7 +32,10 @@ if str(ROOT) not in sys.path:
 from tests.conformance.auditor import recorder  # noqa: E402
 from tests.conformance.auditor.scoreboard import REPORT_PATH_ENV, read_report  # noqa: E402
 
-VECTORS = "tests/conformance/auditor/test_vectors.py"
+VECTORS = (
+    "tests/conformance/auditor/test_vectors.py",
+    "tests/conformance/auditor/test_data_endpoint_vectors.py",
+)
 SCORE_PLUGIN = "tests.conformance.auditor.scoreboard"
 
 
@@ -59,7 +62,7 @@ def score() -> int:
                 sys.executable,
                 "-m",
                 "pytest",
-                VECTORS,
+                *VECTORS,
                 "-q",
                 "--no-cov",
                 "-p",
