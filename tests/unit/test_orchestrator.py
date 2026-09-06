@@ -6984,19 +6984,30 @@ class TestCostPolicyDispatchWiring:
         assert len(result.spawned) == 1
 
 
-def test_seal_intent_capsules_handles_lock_timeout(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import bernstein.core.security.intent_capsule as ic_mod
+def test_chain_append_lock_bounded_wait(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Assert that _chain_append_lock raises LockTimeout instead of hanging indefinitely."""
+    import fcntl
+    import os
+
     from bernstein.core.persistence.file_locks import LockTimeout
+    from bernstein.core.security import audit
+    from bernstein.core.security.audit import _chain_append_lock
 
-    def mock_seal_fail(*args, **kwargs):
-        raise LockTimeout("Timed out waiting for lock")
+    # Make the timeout tiny so the test runs instantly
+    monkeypatch.setattr(audit, "AUDIT_LOCK_TIMEOUT_S", 0.1)
 
-    monkeypatch.setattr(ic_mod, "seal_capsules_bound_to_run", mock_seal_fail)
+    audit_dir = tmp_path / ".sdd" / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = audit_dir / ".chain.lock"
 
-    orch = _build_orchestrator(tmp_path)
-    with caplog.at_level("WARNING"):
-        orch._seal_intent_capsules(b"x" * 32)
+    # Hold the lock indefinitely using a separate file descriptor
+    blocking_fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(blocking_fd, fcntl.LOCK_EX)
 
-    assert "Failed to acquire lock to seal intent capsules" in caplog.text
+        with pytest.raises(LockTimeout, match="Timed out waiting for audit chain lock"):
+            with _chain_append_lock(audit_dir):
+                pass  # Should never reach here
+    finally:
+        fcntl.flock(blocking_fd, fcntl.LOCK_UN)
+        os.close(blocking_fd)
