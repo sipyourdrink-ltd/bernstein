@@ -23,6 +23,9 @@ Two surfaces:
   artefact path, not the run-id-keyed regulator store.
 * ``bernstein lineage verify <run_id>`` -- one-shot chain verification;
   exits 0 only when every record validates.
+* ``bernstein lineage sensitivity <artefact>`` -- effective data sensitivity
+  (maximum class over the lineage closure) plus the walk through the graph
+  that produced it.
 
 Operator guide: docs/compliance/lineage-export.md.
 """
@@ -40,6 +43,7 @@ from bernstein.cli.commands.lineage_replay_cmd import lineage_replay_cmd
 from bernstein.cli.commands.lineage_tracker_audit_cmd import tracker_audit_cmd
 from bernstein.cli.commands.lineage_verify_cmd import lineage_verify_cmd
 from bernstein.cli.helpers import console
+from bernstein.core.lineage.entry import entry_hash
 
 
 def _parse_target(target: str) -> tuple[str, int | None]:
@@ -357,6 +361,109 @@ def chain_cmd(artefact_path: str, log_path: Path, cards_dir: Path) -> None:
     console.print(f"  merged:    {tips['merged']}")
 
 
+@lineage_cmd.command(name="sensitivity")
+@click.argument("target", required=True)
+@click.option(
+    "--log",
+    "log_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path(".sdd/lineage/log.jsonl"),
+    show_default=True,
+)
+@click.option(
+    "--cards",
+    "cards_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path(".sdd/agents"),
+    show_default=True,
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of human text.")
+def sensitivity_cmd(target: str, log_path: Path, cards_dir: Path, as_json: bool) -> None:
+    """Report the effective data sensitivity of TARGET and why it holds.
+
+    TARGET is a repo-relative artefact path or an entry hash
+    (``sha256:...``). The effective class is the maximum sensitivity class
+    over the artefact's lineage closure, so a summary of a confidential
+    document reports as confidential.
+
+    The report names the closure member that raised the level and the walk
+    that reaches it: not "this is confidential", which invites an argument,
+    but "this is confidential because it derives, through these hops, from
+    that entry", which is checkable offline.
+
+    Exits 1 without a verdict when the lineage gate fails -- a class projected
+    from an unverified log is not evidence of anything. An artefact the log
+    does not know, and a log that does not exist, both report the fail-closed
+    class (``restricted``): absence of a classification is not a claim that
+    something is harmless.
+    """
+    import sys
+
+    from bernstein.core.lineage.gate import check as gate_check
+    from bernstein.core.lineage.provenance import load_entries_from_log
+    from bernstein.core.lineage.sensitivity import (
+        effective_sensitivity,
+        sensitivity_for_artefact,
+    )
+
+    if log_path.exists():
+        result = gate_check(log_path=log_path, agent_cards_dir=cards_dir)
+        if not result.ok:
+            console.print(f"[red]lineage gate FAILED ({len(result.failures)}); no verdict emitted:[/red]")
+            for f in result.failures[:10]:
+                console.print(f"  - {f}")
+            sys.exit(1)
+        entries = load_entries_from_log(log_path)
+    else:
+        # No log means no closure to project from, which is the same fact the
+        # fail-closed default already covers. Reporting it through the ordinary
+        # path keeps one rule instead of two.
+        entries = []
+
+    verdict = (
+        effective_sensitivity(target, entries)
+        if target.startswith("sha256:")
+        else sensitivity_for_artefact(target, entries)
+    )
+
+    if as_json:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                {
+                    "target": verdict.target,
+                    "sensitivity": str(verdict.sensitivity),
+                    "resolved": verdict.resolved,
+                    "raised_by": verdict.raised_by,
+                    "path": list(verdict.path),
+                    "closure": list(verdict.closure),
+                    "sensitivity_records": [list(r) for r in verdict.sensitivity_records],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    # soft_wrap so an entry hash is never split across lines: an operator
+    # copying one out of the report has to get the whole hash.
+    paths_by_hash = {entry_hash(e): e.artefact_path for e in entries}
+    console.print(f"[bold]{verdict.target}[/bold]", soft_wrap=True)
+    console.print(f"  sensitivity: [bold]{verdict.sensitivity}[/bold]")
+    console.print(f"  resolved:    {'yes' if verdict.resolved else 'no'}")
+    console.print(f"  closure:     {len(verdict.closure)} entry(ies)")
+    if verdict.raised_by is None:
+        console.print("  raised by:   nothing -- no classification in the closure, so the fail-closed class applies")
+        return
+    console.print(f"  raised by:   {paths_by_hash.get(verdict.raised_by, '?')}", soft_wrap=True)
+    console.print(f"               {verdict.raised_by}", soft_wrap=True)
+    console.print("  path (target -> the entry that raised the level):")
+    for hop in verdict.path:
+        console.print(f"    - {paths_by_hash.get(hop, '?')}", soft_wrap=True)
+        console.print(f"      {hop}", soft_wrap=True)
+
+
 @lineage_cmd.command(name="export-prov")
 @click.argument("artefact_path", required=True)
 @click.option(
@@ -420,6 +527,69 @@ def export_prov_cmd(artefact_path: str, fmt: str, log_path: Path, output_path: P
     else:
         output_path.write_text(payload, encoding="utf-8")
         console.print(f"[green]Wrote[/green] {len(payload)} byte(s) -> {output_path} [{fmt.lower()}]")
+
+
+@lineage_cmd.command(name="plan")
+@click.argument("run_id")
+@click.option(
+    "--runs-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path(".sdd/runs"),
+    show_default=True,
+    help="Directory holding per-run journals.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the plan as JSON instead of text.")
+def lineage_plan_cmd(run_id: str, runs_dir: Path, as_json: bool) -> None:
+    """Render RUN_ID's whole task graph from its journal.
+
+    Every review surface is per-task, so an operator approving task 7 of 20
+    has no rendering of what the other 19 add up to. This reads the run's
+    recorded decomposition back: the goal, every task, its role and title,
+    and the dependencies between them.
+
+    Re-rendering the same journal produces identical bytes.
+    """
+    import json as _json
+
+    from bernstein.core.lineage.plan_render import read_run_plan, render_plan_text
+    from bernstein.core.replay.journal import contained_run_journal
+
+    # RUN_ID arrives from the command line, so the path is derived through the
+    # containment barrier rather than by joining: a crafted id must not address
+    # a journal outside the runs root, and an ordinary-looking run directory
+    # that is a symlink must not redirect the read.
+    journal_path = contained_run_journal(runs_dir, run_id)
+    if journal_path is None:
+        console.print(f"[red]run id does not resolve inside[/red] {runs_dir}: {run_id}")
+        raise SystemExit(1)
+    plan = read_run_plan(journal_path)
+
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {
+                    "run_id": run_id,
+                    "goal": plan.goal,
+                    "recorded": plan.recorded,
+                    "nodes": [
+                        {
+                            "id": node.task_id,
+                            "role": node.role,
+                            "title": node.title,
+                            "depends_on": list(node.depends_on),
+                        }
+                        for node in plan.nodes
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    # click.echo rather than the Rich console: the output is an artefact a
+    # caller may diff or hash, and Rich would wrap it to the terminal width.
+    click.echo(render_plan_text(plan, run_id=run_id), nl=False)
 
 
 @lineage_cmd.command(name="reindex")

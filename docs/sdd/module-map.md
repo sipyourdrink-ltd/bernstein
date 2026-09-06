@@ -249,32 +249,33 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 
 ### `src/bernstein/evolution/` - self-evolution engine
 
-| File                       | Purpose |
-|----------------------------|---------|
-| `_shared.py`               | Shared constants, data classes, and helpers for the evolution loop modules |
-| `admission.py`             | Empirical-confidence admission gate for upgrade proposals |
-| `aggregator.py`            | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
-| `applicator.py`            | Change applicator - execute upgrades via file modification |
-| `benchmark.py`             | Tiered benchmark runner for evolution validation |
-| `circuit.py`               | CircuitBreaker - halt evolution when safety conditions are violated |
-| `creative.py`              | Creative evolution pipeline - visionary → analyst → production gate |
-| `data_collector.py`        | Metric record types and file-based metrics collection for the evolution system |
-| `detector.py`              | Opportunity detection from aggregated metrics |
-| `gate.py`                  | ApprovalGate and EvalGate - risk-stratified routing for evolution proposals |
-| `governance.py`            | Adaptive governance for the evolution system |
-| `invariants.py`            | InvariantsGuard - hash-lock safety-critical files |
-| `loop.py`                  | Autoresearch evolution loop - continuous self-improvement via experiment cycles |
-| `observability_signals.py` | Read ``bernstein doctor observe`` snapshots into evolution signals |
-| `oscillation_guard.py`     | Oscillation guard for prompt-evolution proposals |
-| `predicted_delta.py`       | Predicted-delta gate for prompt-evolution proposals |
-| `proposal_scorer.py`       | Proposal risk scoring and routing classification |
-| `proposals.py`             | Upgrade proposal generation |
-| `report.py`                | Evolution observability - history table and static report generation |
-| `report_generator.py`      | Analysis result types, statistical helpers, and Goodhart's Law defenses |
-| `risk.py`                  | Strategic Risk Score (SRS) computation for evolution proposals |
-| `sandbox.py`               | SandboxValidator - isolated testing of evolution proposals |
-| `types.py`                 | Shared types for the evolution system |
-| `upgrade_targets.py`       | Category-to-target-file mapping shared by the upgrade executor and task spawn |
+| File                        | Purpose |
+|-----------------------------|---------|
+| `_shared.py`                | Shared constants, data classes, and helpers for the evolution loop modules |
+| `admission.py`              | Empirical-confidence admission gate for upgrade proposals |
+| `aggregator.py`             | Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses |
+| `applicator.py`             | Change applicator - execute upgrades via file modification |
+| `benchmark.py`              | Tiered benchmark runner for evolution validation |
+| `change_contract_replay.py` | Replay service for ReplayContract — verifiable offline replay of governance decisions |
+| `circuit.py`                | CircuitBreaker - halt evolution when safety conditions are violated |
+| `creative.py`               | Creative evolution pipeline - visionary → analyst → production gate |
+| `data_collector.py`         | Metric record types and file-based metrics collection for the evolution system |
+| `detector.py`               | Opportunity detection from aggregated metrics |
+| `gate.py`                   | ApprovalGate and EvalGate - risk-stratified routing for evolution proposals |
+| `governance.py`             | Adaptive governance for the evolution system |
+| `invariants.py`             | InvariantsGuard - hash-lock safety-critical files |
+| `loop.py`                   | Autoresearch evolution loop - continuous self-improvement via experiment cycles |
+| `observability_signals.py`  | Read ``bernstein doctor observe`` snapshots into evolution signals |
+| `oscillation_guard.py`      | Oscillation guard for prompt-evolution proposals |
+| `predicted_delta.py`        | Predicted-delta gate for prompt-evolution proposals |
+| `proposal_scorer.py`        | Proposal risk scoring and routing classification |
+| `proposals.py`              | Upgrade proposal generation |
+| `report.py`                 | Evolution observability - history table and static report generation |
+| `report_generator.py`       | Analysis result types, statistical helpers, and Goodhart's Law defenses |
+| `risk.py`                   | Strategic Risk Score (SRS) computation for evolution proposals |
+| `sandbox.py`                | SandboxValidator - isolated testing of evolution proposals |
+| `types.py`                  | Shared types for the evolution system |
+| `upgrade_targets.py`        | Category-to-target-file mapping shared by the upgrade executor and task spawn |
 
 ### `src/bernstein/eval/` - evaluation harness
 
@@ -402,6 +403,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `server.py`           | Bernstein MCP server |
 | `signal_paths.py`     | Containment barrier for the MCP shutdown-signal path |
 | `streaming.py`        | In-flight tool-call tracking with cancellation and partial-result preservation |
+| `tool_surface.py`     | Tool surface risk scoring and capability receipts for MCP servers |
 | `resources/`          | MCP resource registrars for Bernstein |
 | `tool_schemas/`       | tool_schemas/ sub-package |
 

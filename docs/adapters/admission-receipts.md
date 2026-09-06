@@ -75,8 +75,11 @@ blocking. To make a refusal a hard stop:
 export BERNSTEIN_ADAPTER_ADMISSION_POLICY=enforce
 ```
 
-`=off` disables the gate entirely. `mock` and `generic` are always exempt —
-neither wraps a pinned upstream surface, so offline work is never blocked.
+`=off` disables the gate entirely. `mock` is the only exempt adapter — the
+test-only stub wraps no pinned upstream surface, so offline work against it
+is never blocked. `generic` was exempt until #4752 and is now gated like
+every other adapter; an operator running `generic` under `enforce` needs a
+sealed receipt for it, or `=off`.
 
 ## Operator commands
 

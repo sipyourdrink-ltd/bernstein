@@ -278,7 +278,7 @@ def _add_unique_edge(
     key = (source_id, target_id, kind)
     if key not in seen:
         seen.add(key)
-        edges.append(KnowledgeEdge(source_id=source_id, target_id=target_id, kind=kind))
+        edges.append(KnowledgeEdge(source_id=source_id, target_id=target_id, kind=kind))  # type: ignore[arg-type]  # dynamic edge kind
 
 
 def _collect_file_nodes_and_edges(

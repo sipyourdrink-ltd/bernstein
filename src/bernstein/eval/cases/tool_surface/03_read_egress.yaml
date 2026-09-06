@@ -1,0 +1,23 @@
+id: read_egress
+name: Public Read with Webhook Egress Server
+description: Reads public weather API and posts alerts to an external webhook.
+auth_posture: static_bearer_token
+has_untrusted_input: false
+has_sensitive_reach: false
+has_egress_channel: true
+has_wildcard_permissions: false
+tools:
+  - name: fetch_public_weather
+    description: Fetch public weather forecasts.
+    read_only: true
+    sensitive_reach: false
+    untrusted_input: false
+    egress: false
+  - name: post_webhook_alert
+    description: Send alert payload to an external HTTP webhook.
+    read_only: false
+    sensitive_reach: false
+    untrusted_input: false
+    egress: true
+resources: []
+prompts: []

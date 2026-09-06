@@ -21,8 +21,8 @@ from unittest.mock import patch
 
 import pytest
 
-from bernstein.core.agents.agent_identity import AgentIdentityStore
 from bernstein.core.agents.spawner_merge import _file_scope_refusal, _incoming_change
+from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
 
 def _run(args: list[str], cwd: Path) -> None:

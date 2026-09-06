@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -139,6 +139,52 @@ def _flag(
 # ---------------------------------------------------------------------------
 
 
+def _as_text(value: Any) -> str:
+    """Render one payload value as text, decoding a binary transport.
+
+    A payload carried as ``bytes`` is the same payload. Skipping it is how
+    a detector reports clean on a string it never read.
+
+    Args:
+        value: One value out of a detector's input payload.
+
+    Returns:
+        The value as text, with undecodable bytes replaced rather than
+        raising, so a malformed transport cannot suppress the scan.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _rendered_values(payload: Any) -> str:
+    """Flatten a tool-argument payload of any wire shape into one string.
+
+    Tool calls carry their arguments as a mapping, as a positional list,
+    and occasionally as a bare scalar. A detector that reads only the
+    mapping shape returns a pass on the other two that the caller never
+    earned, so every shape is rendered here instead.
+
+    Args:
+        payload: The ``tool_args`` value as it arrived, of any type.
+
+    Returns:
+        The payload's values joined by spaces, or ``""`` when it holds
+        nothing to scan.
+    """
+    if payload is None:
+        return ""
+    if isinstance(payload, Mapping):
+        values: list[Any] = list(payload.values())
+    elif isinstance(payload, (str, bytes, bytearray, memoryview)):
+        values = [payload]
+    elif isinstance(payload, Iterable):
+        values = list(payload)
+    else:
+        values = [payload]
+    return " ".join(_as_text(value) for value in values if value is not None)
+
+
 _GOAL_HIJACK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -168,10 +214,17 @@ def detect_asi01_goal_hijack(context: dict[str, Any]) -> ASIFinding:
     haystack_parts: list[str] = []
     for key in ("prompt", "retrieved_content", "system_prompt"):
         value = context.get(key)
-        if isinstance(value, str):
-            haystack_parts.append(value)
-        elif isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray)):
-            haystack_parts.extend(str(item) for item in value)
+        if value is None:
+            continue
+        # bytes and bytearray are Iterable, so an unguarded Iterable branch
+        # would scan them one integer at a time. They are decoded whole
+        # instead: a payload sent down a binary channel is still a payload.
+        if isinstance(value, (str, bytes, bytearray, memoryview)):
+            haystack_parts.append(_as_text(value))
+        elif isinstance(value, Iterable):
+            haystack_parts.extend(_as_text(item) for item in value)
+        else:
+            haystack_parts.append(_as_text(value))
     haystack = "\n".join(haystack_parts)
     if not haystack:
         return _ok(ASIClass.ASI01_GOAL_HIJACK, name)
@@ -208,12 +261,12 @@ def detect_asi02_tool_misuse(context: dict[str, Any]) -> ASIFinding:
     tool_name = context.get("tool_name")
     tool_args = context.get("tool_args") or {}
     descriptions: dict[str, str] = context.get("tool_descriptions") or {}
-    if not tool_name or not isinstance(tool_args, dict):
+    if not tool_name:
         return _ok(ASIClass.ASI02_TOOL_MISUSE, name)
     description = (descriptions.get(tool_name) or "").lower()
     advertises_shell = any(token in description for token in ("shell", "command", "exec", "filesystem", "path", "file"))
     suspicious = re.compile(r"[;&|`$><]|(?:\.\./){2,}|/etc/(?:passwd|shadow)")
-    rendered = " ".join(str(v) for v in tool_args.values() if v is not None)
+    rendered = _rendered_values(tool_args)
     if rendered and not advertises_shell and suspicious.search(rendered):
         return _flag(
             ASIClass.ASI02_TOOL_MISUSE,
@@ -255,6 +308,43 @@ def detect_asi03_identity_privilege(context: dict[str, Any]) -> ASIFinding:
     return _ok(ASIClass.ASI03_IDENTITY_PRIVILEGE, name, DetectorStatus.DELEGATING)
 
 
+def _unsigned_components(components: Any) -> list[str] | None:
+    """Return the names of loaded components that carry no signature.
+
+    ``None`` means the manifest could not be read as a component list at
+    all, which is not the same answer as an empty list: an unreadable
+    manifest is one whose components were never checked, so the caller
+    reports it rather than passing.
+
+    A mapping is read as ``name -> record``, the shape a manifest takes
+    once it has travelled as a JSON object instead of an array. An entry
+    that is not a record carries no ``signed`` field to read, so it counts
+    as unsigned rather than as absent.
+
+    Args:
+        components: The ``loaded_components`` value as it arrived.
+
+    Returns:
+        The unsigned components' names, or ``None`` when the value is not
+        a component manifest.
+    """
+    entries: list[tuple[str, Any]]
+    if isinstance(components, Mapping):
+        entries = [(str(key), record) for key, record in components.items()]
+    elif isinstance(components, (list, tuple, set, frozenset)):
+        entries = [("<anonymous>", record) for record in components]
+    else:
+        return None
+    unsigned: list[str] = []
+    for label, record in entries:
+        if isinstance(record, Mapping):
+            if not record.get("signed"):
+                unsigned.append(str(record.get("name", label)))
+        else:
+            unsigned.append(label)
+    return unsigned
+
+
 def detect_asi04_supply_chain(context: dict[str, Any]) -> ASIFinding:
     """ASI04 Agentic Supply Chain - unsigned MCP/plugin/skill load.
 
@@ -271,12 +361,25 @@ def detect_asi04_supply_chain(context: dict[str, Any]) -> ASIFinding:
     """
     name = "asi04_supply_chain"
     components = context.get("loaded_components") or []
-    if not isinstance(components, Iterable):
-        return _ok(ASIClass.ASI04_SUPPLY_CHAIN, name, DetectorStatus.DELEGATING)
-    unsigned = [c.get("name", "<anonymous>") for c in components if isinstance(c, dict) and not c.get("signed")]
+    unsigned = _unsigned_components(components)
+    severity = ASISeverity.INFO if context.get("allow_unsigned_in_dev") else ASISeverity.WARNING
+    if unsigned is None:
+        return _flag(
+            ASIClass.ASI04_SUPPLY_CHAIN,
+            name,
+            severity,
+            evidence=(
+                f"loaded_components is a {type(components).__name__}, not a component "
+                "manifest, so no component in it was checked for a signature"
+            ),
+            remediation=(
+                "Pass loaded_components as a list of {'name': ..., 'signed': bool} "
+                "records, or as a mapping of name to that record."
+            ),
+            status=DetectorStatus.DELEGATING,
+        )
     if not unsigned:
         return _ok(ASIClass.ASI04_SUPPLY_CHAIN, name, DetectorStatus.DELEGATING)
-    severity = ASISeverity.INFO if context.get("allow_unsigned_in_dev") else ASISeverity.WARNING
     return _flag(
         ASIClass.ASI04_SUPPLY_CHAIN,
         name,
@@ -316,9 +419,9 @@ def detect_asi05_code_execution(context: dict[str, Any]) -> ASIFinding:
     tool_name = context.get("tool_name")
     tool_args = context.get("tool_args") or {}
     safe = set(context.get("code_safe_tools") or [])
-    if tool_name in safe or not isinstance(tool_args, dict):
+    if tool_name in safe:
         return _ok(ASIClass.ASI05_CODE_EXECUTION, name)
-    rendered = " ".join(str(v) for v in tool_args.values() if v is not None)
+    rendered = _rendered_values(tool_args)
     for pattern in _CODE_EXEC_PATTERNS:
         match = pattern.search(rendered)
         if match:

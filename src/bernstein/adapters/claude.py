@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 # ``bernstein.core.cost.budget_countdown``) to keep this adapter free of
 # scheduler-internal transitive dependencies - see ``.importlinter``
 # contract ``adapters-no-scheduler``. Source of truth for both constants
-# is :mod:`bernstein.core.cost.budget_countdown` / :mod:`bernstein.core.security.agent_identity`.
+# is :mod:`bernstein.core.cost.budget_countdown` / :mod:`bernstein.core.identity.agent_card`.
 _TASK_BUDGETS_OPT_IN_ENV: str = "BERNSTEIN_ANTHROPIC_TASK_BUDGETS"
 _TASK_BUDGETS_BETA_VALUE: str = "task-budgets-2026-03-13"
 
@@ -757,7 +757,7 @@ class ClaudeCodeAdapter(CLIAdapter):
     def _inject_hooks_config(
         workdir: Path,
         session_id: str,
-        server_url: str = "http://127.0.0.1:8052",
+        server_url: str | None = None,
     ) -> None:
         """Write Claude Code hooks config to ``.claude/settings.local.json``.
 
@@ -775,8 +775,17 @@ class ClaudeCodeAdapter(CLIAdapter):
         Args:
             workdir: Project working directory (worktree root).
             session_id: Agent session identifier, embedded in the hook URL.
-            server_url: Task server base URL (default localhost:8052).
+            server_url: Task server base URL. When None (the caller never passes
+                it), resolve BERNSTEIN_SERVER_URL, which the orchestrator sets to
+                its own ``--port``. The hard-coded 8052 default used to win
+                unconditionally, so on any non-default port every hook POSTed to
+                whatever else held 8052 and got 401 (measured 2026-09-02: 9 such
+                401s from one judge session).
         """
+        if server_url is None:
+            server_url = os.environ.get("BERNSTEIN_SERVER_URL", "http://127.0.0.1:8052")
+        server_url = server_url.rstrip("/")
+
         settings_dir = workdir / ".claude"
         settings_dir.mkdir(parents=True, exist_ok=True)
         settings_path = settings_dir / "settings.local.json"

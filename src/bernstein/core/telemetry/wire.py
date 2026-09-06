@@ -233,7 +233,7 @@ def _safe_emit(
     """Inner shared boundary used by every emit_* helper."""
     try:
         c = client if client is not None else get_client()
-        c.emit(name, payload)  # pyright: ignore[reportArgumentType]
+        c.emit(name, payload)  # type: ignore[arg-type]  # dynamic payload
     except Exception as exc:
         _LOG.debug("telemetry: wire emit failed (suppressed): %s", exc)
 

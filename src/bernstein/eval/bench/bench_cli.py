@@ -37,9 +37,11 @@ def _get_suite(name: str):
     """Resolve a suite name or .json path to a BenchSuite."""
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
     from bernstein.eval.bench.suite import BenchSuite
+    from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     _BUILTIN = {
         "golden-v1": build_golden_suite_v1,
+        "tool-surface-v1": build_tool_surface_suite,
     }
 
     if name in _BUILTIN:
@@ -107,7 +109,7 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     reliability receipt reporting pass@1 (any attempt passed) and pass^k
     (all K attempts passed — the headline floor).
     """
-    from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
+    from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter, ReplayAdapter
     from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
 
     suite_obj = _get_suite(suite)
@@ -120,7 +122,13 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         return
 
     # Production: swap MockReplayAdapter for the real scenario_runner adapter.
-    adapter = MockReplayAdapter()
+    adapter: ReplayAdapter
+    if suite_obj.version == "tool-surface-v1":
+        from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
+
+        adapter = ToolSurfaceReplayAdapter()
+    else:
+        adapter = MockReplayAdapter()
     runner = BenchRunner(
         suite=suite_obj,
         adapter=adapter,
@@ -159,7 +167,7 @@ def bench_verify(bundle: str, suite: str) -> None:
     Exits 0 on MATCH, 1 on any divergence or fabricated score.
     """
     from bernstein.eval.bench.bundle import SubmissionBundle
-    from bernstein.eval.bench.runner import MockReplayAdapter
+    from bernstein.eval.bench.runner import MockReplayAdapter, ReplayAdapter
     from bernstein.eval.bench.verifier import BenchVerifier
 
     bundle_path = Path(bundle)
@@ -170,7 +178,13 @@ def bench_verify(bundle: str, suite: str) -> None:
     suite_obj = _get_suite(suite)
 
     # Production: swap MockReplayAdapter for the real scenario_runner adapter.
-    adapter = MockReplayAdapter()
+    adapter: ReplayAdapter
+    if suite_obj.version == "tool-surface-v1":
+        from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
+
+        adapter = ToolSurfaceReplayAdapter()
+    else:
+        adapter = MockReplayAdapter()
     verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
     result = verifier.verify(bundle_obj)
 

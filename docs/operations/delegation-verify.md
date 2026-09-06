@@ -82,11 +82,34 @@ Receipts are written by calling `DelegationLedger.record_hop` (or its
 convenience wrapper `record_delegation_hop`) for each
 `principal -> orchestrator -> sub-agent` handoff — there is no
 `delegation emit` CLI verb; an operator only verifies, never hand-authors a
-receipt. **Limitation:** as of this writing, no orchestration code path in
-this codebase calls `record_delegation_hop`; the ledger and its verifier are
-exercised directly by unit tests. Until a caller wires the write path into a
-real run, `bernstein delegation verify <run>` against a live run's default
-root correctly reports "no receipts" (exit 1) rather than a populated chain.
+receipt. The write path runs at identity minting. When a run starts the
+orchestrator mints one parentless run-root identity, records its id in the run
+manifest (`.sdd/runtime/manifests/<run-id>.json`, field `run_root_identity_id`),
+and every top-level agent is minted under it; a nested spawn is minted under its
+spawning agent instead, from `AgentSession.parent_id`. Each parented mint records
+one hop, issuer the parent and subject the child, carrying the child's task and
+file scope on the receipt so narrowing is recomputable from the chain alone. An
+parentless mint records nothing, and an empty chain is not a broken chain.
+
+`delegation verify <run>` reads `run_root_identity_id` from the run manifest and
+treats hops issued by that identity as chain roots, so several agents spawned by
+the same run each grade instead of the second and later ones reading as
+`root_claimed_mid_chain`. The name arrives from outside the receipts, so a
+receipt still cannot promote itself out of a narrowing check by writing its own
+issuer field, and a run whose manifest declares no root keeps the positional root
+rule unchanged. The identity store is never consulted.
+
+The write is fail closed at the spawn. A hop that cannot be written raises
+`DelegationWriteError`, the spawner re-raises that type rather than starting the
+agent, and a `spawn.refused_unreceipted` audit event records the run, the refused
+session and the reason. Every other identity failure keeps its previous
+log-and-continue behaviour, so a token that cannot be issued still does not stop
+a run.
+
+**Known limit:** deleting the *final* receipt of a chain leaves a shorter chain
+that still verifies, because no receipt records how many hops a run should have
+had. Detecting that needs a terminal hop or the chain head recorded at close,
+which is tracked separately.
 
 ## `bernstein delegation verify-token` — the capability-token chain
 

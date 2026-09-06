@@ -5,7 +5,7 @@ This module contains advanced/specialized commands (excluding eval/benchmark whi
   github_group (setup, test-webhook)
   mcp_server
   quarantine_group (list, clear)
-  completions, live, dashboard
+  live, dashboard
   install_hooks, plugins_cmd, doctor, recap, help_all, retro
 
 All commands and groups are registered with the main CLI group in main.py.
@@ -1137,6 +1137,7 @@ def trace_cmd(ctx: click.Context, traces_dir: str) -> None:
       bernstein trace show <task-id>      Pretty-print a task trace
       bernstein trace serve --port 8765   Run the local read-only viewer
       bernstein trace verify <trace-id>   Confirm on-disk bytes match sha256
+      bernstein trace follow <entity-id>  Every trace entry referencing one entity
       bernstein trace reindex             Rebuild .sdd/traces/index.jsonl
     """
     ctx.obj = {"traces_dir": traces_dir}
@@ -1192,6 +1193,81 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
     """Show execution trace for a task."""
     traces_dir = (ctx.obj or {}).get("traces_dir", ".sdd/traces")
     _trace_show_task(task_id, traces_dir=traces_dir, as_json=as_json)
+
+
+@trace_cmd.command("follow")
+@click.argument("entity_id")
+@click.option(
+    "--as-json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Output the matched index entries as JSON.",
+)
+@click.pass_context
+def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
+    """Show every trace entry that references ENTITY_ID, oldest first.
+
+    `trace show` globs filenames for one task id and prints whichever file
+    matches, once. An entity id -- a task, a run, a grant -- appears across
+    several traces, and following it meant exporting and grepping.
+
+    Ordering is by start time, and ties break on trace id, so a finished run
+    prints byte-identically on every invocation.
+    """
+    from bernstein.core.observability.trace_store import ContentAddressedTraceStore
+
+    traces_dir = (ctx.obj or {}).get("traces_dir", ".sdd/traces")
+    traces_path = Path(traces_dir)
+    if not traces_path.exists():
+        console.print(f"[red]Traces directory not found:[/red] {traces_path}")
+        raise SystemExit(1)
+
+    store = ContentAddressedTraceStore(traces_path)
+    # `search(text=...)` matches trace_id, task_id or sha256 -- the three
+    # spellings by which an index row can reference an entity.
+    matches = store.search(text=entity_id)
+    # Sorted rather than index order: `reindex` rebuilds by walking the blob
+    # tree, so the file's order is a filesystem artefact and would make the
+    # same finished run print differently after a rebuild.
+    matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
+
+    if not matches:
+        console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
+        raise SystemExit(1)
+
+    if as_json:
+        console.print_json(json.dumps([entry.to_dict() for entry in matches]))
+        return
+
+    from rich.table import Table
+
+    table = Table(
+        title=f"Traces referencing {entity_id}",
+        show_header=True,
+        header_style="bold cyan",
+    )
+    table.add_column("Started")
+    table.add_column("Trace")
+    table.add_column("Task")
+    table.add_column("Model")
+    table.add_column("Bytes", justify="right")
+    for entry in matches:
+        table.add_row(
+            _trace_timestamp(entry.started_at),
+            entry.trace_id,
+            entry.task_id or "-",
+            entry.model or "-",
+            str(entry.byte_size),
+        )
+    console.print(table)
+    suffix = "y" if len(matches) == 1 else "ies"
+    console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
+
+
+def _trace_timestamp(epoch: float) -> str:
+    """Render a trace timestamp in UTC, so output does not follow the reader."""
+    return dt.datetime.fromtimestamp(epoch, tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @trace_cmd.command("serve")
@@ -2717,50 +2793,6 @@ def _github_setup() -> None:  # type: ignore[reportUnusedFunction]
 def _github_test_webhook() -> None:  # type: ignore[reportUnusedFunction]
     """Test GitHub webhook configuration."""
     console.print("[green]Webhook configured.[/green]")
-
-
-# ---------------------------------------------------------------------------
-# completions
-# ---------------------------------------------------------------------------
-
-
-@click.command("completions")
-@click.option(
-    "--shell",
-    type=click.Choice(["bash", "zsh", "fish"]),
-    default="bash",
-    show_default=True,
-    help="Shell type.",
-)
-@click.pass_context
-def completions(ctx: click.Context, shell: str) -> None:
-    """Generate shell completion scripts.
-
-    \b
-    For bash, add to ~/.bashrc:
-      eval "$(bernstein completions --shell bash)"
-
-    \b
-    For zsh, add to ~/.zshrc:
-      eval "$(bernstein completions --shell zsh)"
-
-    \b
-    For fish, add to ~/.config/fish/completions/bernstein.fish:
-      bernstein completions --shell fish | source
-    """
-    from click.shell_completion import BashComplete, FishComplete, ZshComplete
-
-    _complete_var = "_BERNSTEIN_COMPLETE"
-    _prog_name = "bernstein"
-
-    shell_cls = {"bash": BashComplete, "zsh": ZshComplete, "fish": FishComplete}[shell]
-    # Walk up to the root CLI group so completions cover all subcommands.
-    root_ctx = ctx
-    while root_ctx.parent is not None:
-        root_ctx = root_ctx.parent
-
-    completer = shell_cls(root_ctx.command, {}, _prog_name, _complete_var)
-    click.echo(completer.source())
 
 
 # ---------------------------------------------------------------------------

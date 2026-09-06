@@ -22,28 +22,8 @@ from pathlib import Path
 
 import click
 
-from bernstein.cli.helpers import console
+from bernstein.cli.helpers import console, load_verify_only_key
 from bernstein.core.lineage.spine import LineageSpine, SpineStatus
-
-
-def _load_hmac_key(key_path: Path | None = None) -> bytes:
-    """Load the audit HMAC key read-only for a verify pass.
-
-    ``verify`` only reads the chain, so it must never mint key material.
-    ``load_or_create_audit_key`` would generate a fresh key on a machine that
-    has none -- and that key cannot authenticate a chain written under the real
-    key, so every HMAC tag would fail and a plain missing-key setup error would
-    be misreported as tamper (issue #2639). Load read-only and fail closed with
-    a clear "key missing" error and a distinct exit code instead.
-    """
-    from bernstein.core.security.audit import AuditKeyMissingError, load_audit_key
-
-    try:
-        return load_audit_key(key_path)
-    except AuditKeyMissingError as exc:
-        console.print()
-        console.print(f"[yellow]CANNOT VERIFY[/yellow] -- {exc}")
-        raise SystemExit(3) from exc
 
 
 def _spine_dir(workdir: str) -> Path:
@@ -113,7 +93,7 @@ def lineage_verify_cmd(
         _verify_receipt(run_id, lineage_root, spine_path, receipt_hash, receipt_file, key_path_resolved)
 
     if spine_path.exists():
-        spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key(key_path_resolved))
+        spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=load_verify_only_key(key_path_resolved))
         result = spine.verify()
         console.print()
         console.print(f"[bold]Lineage spine[/bold] run={run_id} entries={result.count} head={spine.head_hash()[:16]}")
@@ -164,7 +144,7 @@ def _verify_receipt(
         console.print(f"[red]No spine for run[/red] {run_id} -- cannot resolve receipt {receipt_hash}.")
         raise SystemExit(2)
 
-    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=_load_hmac_key(key_path))
+    spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=load_verify_only_key(key_path))
     content = Path(receipt_file).read_bytes() if receipt_file is not None else None
     resolution = resolve_receipt_on_spine(spine, entry_hash=receipt_hash, receipt_content=content)
 

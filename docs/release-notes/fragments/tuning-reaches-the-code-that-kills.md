@@ -11,4 +11,4 @@ decision. Measured: with `liveness_grace_s: 600` set, the liveness judge logged
 `grace_s=90 verdict=DEAD` and four healthy agents were sent SIGTERM at 122-129s
 of quiet. All of these now resolve through the module on every call. Two
 thresholds additionally gained a floor so that lowering a tunable can never
-judge an agent dead sooner than the shipped defaults do.
+judge an agent dead sooner than the shipped defaults do (#5381).

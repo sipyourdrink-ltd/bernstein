@@ -160,6 +160,14 @@ EVENT_SKILL_USAGE = "skill.usage"
 #: :mod:`bernstein.core.skills.catalog.revocation`.
 EVENT_SKILL_VERIFICATION_REFUSAL = "skill.verification_refusal"
 
+#: Issue #5047 -- emitted when a spawn is refused because the delegation hop for
+#: the agent's identity could not be written. Fail-closed: an agent whose
+#: delegation cannot be receipted must not run, because the chain would then be
+#: short by exactly the hop a verifier needs and a missing hop is
+#: indistinguishable from a delegation that never happened. Carries the run, the
+#: refused session and the reason; never a token or a key.
+EVENT_SPAWN_REFUSED_UNRECEIPTED = "spawn.refused_unreceipted"
+
 #: Issue #2306 -- emitted whenever a payment is authorized under a signed
 #: spending mandate. The event carries the consent receipt binding
 #: ``{mandate_hash, authorized_tool_calls_hash, settlement_ref,
@@ -1027,6 +1035,15 @@ EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
 #: Issue #5031 -- session revocation propagation
 EVENT_IDENTITY_REVOKED = "identity.revoked"
+
+#: Issue #4970 -- emitted whenever the external-directory bridge
+#: (:mod:`bernstein.core.security.directory_bridge`) answers "who is this
+#: principal and what is it a member of". The event names the adapter and its
+#: version, the reference asked for, the principal the directory returned, the
+#: groups, the mapped role, the revocation state, and whether the answer came
+#: from the directory or from the bridge cache (with its age). A live lookup
+#: nobody can reproduce later thereby becomes a verifiable historical fact.
+EVENT_DIRECTORY_RESOLUTION = "identity.directory_resolution"
 
 #: Issue #2930 -- emitted whenever an eval run seals a clean-run attestation
 #: (:mod:`bernstein.eval.clean_run`). The event mirrors the attestation's
