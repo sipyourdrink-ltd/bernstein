@@ -36,7 +36,10 @@ import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SOURCE_ROOT = REPO_ROOT / "src" / "bernstein"
+#: The tree this guard walks, spelled as a repo-relative glob. A guard that
+#: scans a directory imports nothing from it, so this literal is the only
+#: edge the affected-test selector can bind a change inside the tree to.
+SCANNED_TREE = "src/bernstein/**/*.py"
 
 #: Module-level assignments whose name marks them as a cast target.
 _CAST_PREFIX = "_CAST_"
@@ -63,7 +66,7 @@ def _string_valued_cast_aliases(tree: ast.Module) -> list[tuple[str, int]]:
 def test_no_cast_alias_is_declared_as_a_string() -> None:
     """A string here type-checks as `str`, so every cast through it is untyped."""
     offenders: list[str] = []
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+    for path in sorted(REPO_ROOT.glob(SCANNED_TREE)):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError:  # pragma: no cover - a parse failure is another test's problem

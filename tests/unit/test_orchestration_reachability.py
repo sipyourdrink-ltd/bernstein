@@ -30,13 +30,20 @@ from __future__ import annotations
 import ast
 import re
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "src" / "bernstein" / "core" / "orchestration"
-SEARCHED = ("src", "tests", "scripts")
+#: The trees this guard walks, spelled as repo-relative globs. It reads the
+#: whole search space rather than importing it, so these literals are the only
+#: edge the affected-test selector can bind a change to. Both directions matter:
+#: a new entry point inside the subject package, and a change anywhere else that
+#: drops the last reference to one.
+SCANNED_TREES = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
+SEARCHED = tuple(tree.split("/", 1)[0] for tree in SCANNED_TREES)
 
 #: The 27 already unreachable when this guard landed. Pre-existing debt, deliberately NOT
 #: fixed here: this change removes one dead run loop, and deleting three more modules in
@@ -78,8 +85,12 @@ SELF = Path(__file__).resolve()
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+@lru_cache(maxsize=1)
 def _reference_index() -> dict[str, set[str]]:
     """``{module_stem: {names other files reach through it}}``.
+
+    Built once per session: the uncached shape re-parsed ``src``, ``tests`` and
+    ``scripts`` for each of the three tests below.
 
     Read off the AST, not the text. Two earlier shapes of this were wrong in opposite
     directions, and both are worth naming because either would have shipped a guard that
@@ -120,7 +131,7 @@ def _reference_index() -> dict[str, set[str]]:
                     if stem != own:
                         for alias in node.names:
                             refs[stem].add(alias.name)
-    return refs
+    return dict(refs)
 
 
 def _unreachable_in(path: Path, source: str, refs: dict[str, set[str]]) -> list[str]:
@@ -179,15 +190,16 @@ def _unreachable_in(path: Path, source: str, refs: dict[str, set[str]]) -> list[
     return sorted(set(funcs) - seen)
 
 
-def _scan() -> dict[str, list[str]]:
+@lru_cache(maxsize=1)
+def _scan() -> dict[str, tuple[str, ...]]:
     refs = _reference_index()
-    found: dict[str, list[str]] = {}
+    found: dict[str, tuple[str, ...]] = {}
     for path in sorted(PACKAGE.glob("*.py")):
         if path.name == "__init__.py":
             continue
         dead = _unreachable_in(path, path.read_text(encoding="utf-8"), refs)
         if dead:
-            found[path.name] = dead
+            found[path.name] = tuple(dead)
     return found
 
 
