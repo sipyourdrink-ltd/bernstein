@@ -72,9 +72,7 @@ def _code_point_canonical(value: object) -> bytes:
     ASCII escaping. So the *only* difference from our output is the ordering
     rule, which is what makes it a fair stand-in for a shortcut implementation.
     """
-    return json.dumps(
-        value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def test_the_fixture_carries_a_supplementary_plane_key(card_body: dict) -> None:
@@ -109,22 +107,16 @@ def test_a_code_point_canonicalizer_computes_different_signing_bytes(
     card_body: dict,
 ) -> None:
     """The failure a verifier would actually hit."""
-    assert canonicalize_jcs(card_body["extensions"]) != _code_point_canonical(
-        card_body["extensions"]
-    )
+    assert canonicalize_jcs(card_body["extensions"]) != _code_point_canonical(card_body["extensions"])
 
 
-def test_our_verifier_accepts_the_record(
-    card_body: dict, signature: AgentCardSignature
-) -> None:
+def test_our_verifier_accepts_the_record(card_body: dict, signature: AgentCardSignature) -> None:
     card = AgentIdentityCard(**card_body)
     public_key = (VECTOR_DIR / "public-key.pem").read_bytes()
     assert verify_agent_card(card, signature, public_key) is True
 
 
-def test_a_code_point_ordering_would_be_rejected(
-    card_body: dict, signature: AgentCardSignature
-) -> None:
+def test_a_code_point_ordering_would_be_rejected(card_body: dict, signature: AgentCardSignature) -> None:
     """The other direction: wrong order, wrong signing input, no verification.
 
     The JWS is detached, so its payload segment is empty and the signing input

@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 #: U+FFFF: BMP, one UTF-16 code unit, FFFF.
 BMP_KEY = "\uffff"
 #: U+1D11E MUSICAL SYMBOL G CLEF: supplementary plane, surrogate pair D834 DD1E.
-SUPPLEMENTARY_KEY = "\U0001D11E"
+SUPPLEMENTARY_KEY = "\U0001d11e"
 
 #: A fixed Ed25519 seed, so the vector is byte-reproducible. Test key only.
 SEED = bytes(range(32))
@@ -109,8 +109,7 @@ def main() -> None:
     )
     (HERE / "public-key.pem").write_bytes(public_pem)
     (HERE / "public-key.jwk.json").write_text(
-        json.dumps(ed25519_public_jwk(public_pem, kid="utf16-ordering-vector"), indent=2)
-        + "\n",
+        json.dumps(ed25519_public_jwk(public_pem, kid="utf16-ordering-vector"), indent=2) + "\n",
         encoding="utf-8",
     )
     print("wrote card.json, signature.json, public-key.pem, public-key.jwk.json")
