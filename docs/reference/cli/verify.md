@@ -3,12 +3,13 @@
 `bernstein verify` is a command group: two run-receipt subcommands
 (`run` and `receipt`, issue #2924), the verifier-ladder subcommand
 (`ladder`, issue #2927), the plugin/skill pin subcommand (`pins`,
-issue #5089), plus five legacy verification modes —
+issue #5089), the merge admission receipt coverage subcommand (`coverage`,
+issue #5400), plus five legacy verification modes —
 air-gap wheelhouse signatures, WAL hash-chain integrity,
 execution-determinism fingerprints, lesson-memory provenance, and formal
 property checks. The legacy modes live on the default `legacy` subcommand:
 any invocation whose first token is not `run` / `receipt` / `ladder` /
-`pins` / `legacy` routes there, so pre-group invocations keep their exact
+`pins` / `coverage` / `legacy` routes there, so pre-group invocations keep their exact
 behaviour and exit codes.
 Each legacy mode is selected by its own flag (or a positional argument for
 wheelhouse mode); passing more than one runs all of them and combines their
@@ -24,6 +25,7 @@ bernstein verify run <run-id> --signing-key-path key.pem    # build the signed r
 bernstein verify receipt <path> [--public-key pub.pem]      # verify a receipt offline (0/1/2)
 bernstein verify ladder <receipt-hash>                      # re-derive a verifier-ladder receipt (0/1/2)
 bernstein verify pins --manifest pins.yaml --loaded loaded.json  # check the loaded set against the pins (0/1/2)
+bernstein verify coverage <head-sha> [--sha <head-sha>]     # inspect and recompute merge receipt coverage (0/1/2)
 bernstein verify <wheelhouse-path>                          # air-gap wheelhouse signatures
 bernstein verify --wal-integrity <run-id>                   # WAL hash-chain check
 bernstein verify --determinism <run-id>                     # print execution fingerprint
@@ -37,7 +39,7 @@ Running the bare command with no arguments prints a usage hint and returns
 without error.
 
 One routing edge: a wheelhouse directory literally named `run`, `receipt`,
-`ladder`, `pins`, or `legacy` shadows the positional mode — spell it `./run`
+`ladder`, `pins`, `coverage`, or `legacy` shadows the positional mode — spell it `./run`
 or use `bernstein verify legacy <path>`.
 
 ## Run receipts
@@ -184,6 +186,30 @@ the pin exactly.
 | 1 | The manifest or the loaded set could not be read or failed validation. |
 | 2 | At least one entry drifted. |
 
+## Merge admission receipt coverage (`verify coverage`)
+
+Inspects and verifies the structured coverage sets (`verified`, `unverified`,
+`skipped`) on a merge admission receipt (`MergeAdmissionReceipt`, issue #5400).
+
+```bash
+bernstein verify coverage <head-sha>
+bernstein verify coverage --sha <head-sha> --workdir . --json
+```
+
+The command loads the merge admission receipt covering `head_sha` from
+`.sdd/merges/receipts/<sha256(head_sha)>.json`, recomputes the
+`coverage_set_hash` from the receipt's own verified paths, unverified remainder,
+and skipped `(path, reason)` pairs, and verifies that the digest matches the
+signed `coverage_set_hash` on the receipt byte-for-byte.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Coverage sets are internally consistent and `coverage_set_hash` matches byte-for-byte. |
+| 1 | No readable merge receipt for the SHA, missing SHA, or receipt was signed under schema v1 (no coverage data). |
+| 2 | `coverage_set_hash` mismatch (tamper or scope divergence). |
+
+Architecture and operation: [Verification tracking](../../operations/verification-tracking.md).
+
 ## Legacy modes
 
 ### Wheelhouse signature verification
@@ -257,6 +283,9 @@ Every verification command in Bernstein follows a strict exit-code contract. The
 | | `2` | `TAMPER DETECTED` | Step divergence, spine/audit head mismatch, signature or pinned-key mismatch |
 | | `3` | `REQUIRE-PROVENANCE NOT MET` | `--require-provenance` given but only the integrity-only tier was reached |
 | | `4` | `SIGNING KEY NOT TRUSTED` | Authentic signature under a key the supplied `--key-chain` revoked, does not introduce, or introduces as a different key |
+| `verify coverage <sha>` | `0` | `Merge Coverage: VERIFIED` | Structured coverage sets recomputed and match receipt `coverage_set_hash` |
+| | `1` | `NOT FOUND` / `NO COVERAGE DATA` | Missing receipt, missing SHA, or v1 receipt lacking coverage sets |
+| | `2` | `TAMPER / DIVERGENCE DETECTED` | `coverage_set_hash` mismatch / scope divergence |
 | `lineage verify <run>` | `0` | `OK` | Lineage spine/chain intact and non-empty, all HMAC tags / signatures valid |
 | | `1` | `NO ENTRIES` / `SEAL ONLY` | Empty run emitted no lineage (1), or chain records only journal-head seal with no artifact provenance (1) |
 | | `2` | `TAMPER DETECTED` / `RECEIPT VERIFICATION FAILED` | HMAC tag mismatch, broken Merkle chain, or recovery receipt resolution failed |
@@ -271,6 +300,8 @@ Every verification command in Bernstein follows a strict exit-code contract. The
 `src/bernstein/core/replay/run_receipt.py` (receipt build + offline verify);
 `src/bernstein/core/security/receipt_key_chain.py` (key succession chain);
 `src/bernstein/core/quality/verifier_ladder.py` (ladder receipts);
+`src/bernstein/core/quality/merge_receipt.py` (merge admission receipts and coverage verification);
 `src/bernstein/core/plugins_core/plugin_pin_manifest.py` (pin manifest,
 verify, and idempotent apply).
+
 

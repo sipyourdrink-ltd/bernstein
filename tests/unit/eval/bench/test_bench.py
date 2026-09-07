@@ -510,7 +510,7 @@ class TestDocs:
         docs_path = repo_root / "docs" / "eval" / "bench.md"
         if not docs_path.exists():
             pytest.skip("docs file missing — caught by test_docs_file_exists")
-        content = docs_path.read_text()
+        content = docs_path.read_text(encoding="utf-8")
         assert "bernstein bench run" in content
         assert "bernstein bench verify" in content
 

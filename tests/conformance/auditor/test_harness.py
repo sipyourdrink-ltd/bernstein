@@ -116,10 +116,10 @@ def test_scoreboard_target_prints_the_score_out_of_twenty_one(tmp_path: Path) ->
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert f"1/{TOTAL_QUESTIONS}" in completed.stdout
+    assert f"3/{TOTAL_QUESTIONS}" in completed.stdout
 
     report = json.loads((tmp_path / "score.json").read_text(encoding="utf-8"))
-    assert report["passed"] == [17]
+    assert report["passed"] == [8, 9, 17]
 
 
 def test_regenerating_the_fixture_rewrites_the_bundle(tmp_path: Path) -> None:

@@ -239,4 +239,3 @@ def test_the_guard_can_see_same_module_callers() -> None:
     is not uncalled, even if nothing outside references it.
     """
     assert "_render_control_statement" in _static_references().get("compliance_policies", set())
-

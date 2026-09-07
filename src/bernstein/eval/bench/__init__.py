@@ -1,6 +1,12 @@
 """bernstein-bench: runnable, reproducibility-gated evaluation harness."""
 
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+from bernstein.eval.bench.contamination import (
+    ContaminationVerdict,
+    admit_task,
+    check_solution_contamination,
+    extract_ngrams,
+)
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
 from bernstein.eval.bench.reliability import (
@@ -20,8 +26,14 @@ from bernstein.eval.bench.reliability import (
     reliability_check,
     validate_run_receipt,
 )
+from bernstein.eval.bench.rotation import (
+    RotationStatus,
+    check_suite_saturation,
+)
 from bernstein.eval.bench.runner import (
     BenchRunner,
+    HoldoutBenchRunner,
+    HoldoutIsolationError,
     MockReplayAdapter,
     ReplayAdapter,
     StochasticMockReplayAdapter,
@@ -44,6 +56,9 @@ __all__ = [
     "BenchTask",
     "BenchVerifier",
     "BundleVerificationResult",
+    "ContaminationVerdict",
+    "HoldoutBenchRunner",
+    "HoldoutIsolationError",
     "InstallIdentityReliabilitySigner",
     "Leaderboard",
     "LeaderboardEntry",
@@ -55,6 +70,7 @@ __all__ = [
     "ReliabilityVerificationStatus",
     "ReliabilityVerifier",
     "ReplayAdapter",
+    "RotationStatus",
     "StochasticMockReplayAdapter",
     "StubReliabilitySigner",
     "SubmissionBundle",
@@ -64,10 +80,14 @@ __all__ = [
     "TaskVerificationResult",
     "ToolSurfaceReplayAdapter",
     "VerificationStatus",
+    "admit_task",
     "build_golden_suite_v1",
     "build_tool_surface_suite",
+    "check_solution_contamination",
+    "check_suite_saturation",
     "coordination_hash",
     "coordination_projection",
+    "extract_ngrams",
     "first_divergent_coordination_field",
     "reliability_check",
     "validate_run_receipt",

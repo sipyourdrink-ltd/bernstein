@@ -28,12 +28,14 @@ providers, no wall-clock in sealed bytes.
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from bernstein.core.security.audit_dsse import DSSE_PAYLOAD_TYPE, pae
 from bernstein.eval.metrics import EvalScoreComponents, TierScores
 from bernstein.eval.trajectory_receipt import (
     BestOfNProvenance,
@@ -44,6 +46,7 @@ from bernstein.eval.trajectory_receipt import (
 from bernstein.eval.trajectory_receipt_projection import (
     TrajectoryProjectionError,
     TrajectoryReceiptProjection,
+    _verify_intoto,
     project_trajectory_receipt,
     verify_cose_projection_bytes,
     verify_trajectory_receipt_projection,
@@ -185,6 +188,94 @@ def test_intoto_tamper_payload_raises(tmp_path: Path) -> None:
 
     with pytest.raises(TrajectoryProjectionError):
         verify_trajectory_receipt_projection(bad_proj, public_key=sk.public_key())
+
+
+# ---------------------------------------------------------------------------
+# What the DSSE signature loop rejects, and what it must not swallow
+# ---------------------------------------------------------------------------
+#
+# These drive ``_verify_intoto`` rather than the whole projection: it is the
+# function the loop lives in, and it needs no receipt on disk.
+
+
+def _signed_intoto(signing_key: Ed25519PrivateKey, *, receipt_hash: str = "sha256:" + "ab" * 32) -> dict:
+    """Return a minimal, correctly signed in-toto envelope."""
+    payload = json.dumps({"predicate": {"receipt_hash": receipt_hash}}, sort_keys=True).encode("utf-8")
+    signature = signing_key.sign(pae(DSSE_PAYLOAD_TYPE, payload))
+    return {
+        "payloadType": DSSE_PAYLOAD_TYPE,
+        "payload": base64.b64encode(payload).decode("ascii"),
+        "signatures": [{"keyid": "k1", "sig": base64.b64encode(signature).decode("ascii")}],
+    }
+
+
+def test_a_correctly_signed_envelope_returns_its_receipt_hash() -> None:
+    sk = _fresh_key()
+    envelope = _signed_intoto(sk)
+    assert _verify_intoto(envelope, public_key=sk.public_key()) == "sha256:" + "ab" * 32
+
+
+@pytest.mark.parametrize(
+    ("signatures", "expected"),
+    [
+        pytest.param(["not-an-object"], "not an object", id="entry-is-not-an-object"),
+        pytest.param([{"sig": 42}], "not a string", id="sig-is-not-a-string"),
+        pytest.param([{"sig": "!!! not base64 !!!"}], "not base64", id="sig-is-not-base64"),
+        pytest.param([{"sig": "AAAA"}], "does not verify", id="sig-does-not-verify"),
+    ],
+)
+def test_a_rejected_signature_entry_says_why(signatures: object, expected: str) -> None:
+    """The error names the cause instead of blaming the key.
+
+    The loop used to catch ``(InvalidSignature, Exception)``, which reads as
+    if only a bad signature was caught. ``Exception`` subsumes
+    ``InvalidSignature``, so a malformed entry produced the same
+    "does not verify against the supplied public key" as a real mismatch,
+    and pointed the reader at their key.
+    """
+    sk = _fresh_key()
+    envelope = _signed_intoto(sk)
+    envelope["signatures"] = signatures
+
+    with pytest.raises(TrajectoryProjectionError, match=expected):
+        _verify_intoto(envelope, public_key=sk.public_key())
+
+
+def test_a_later_signature_still_verifies_after_an_earlier_one_is_rejected() -> None:
+    """A DSSE envelope may carry several signatures; one good one is enough."""
+    sk = _fresh_key()
+    envelope = _signed_intoto(sk)
+    good = envelope["signatures"][0]
+    envelope["signatures"] = [{"sig": "!!! not base64 !!!"}, good]
+
+    assert _verify_intoto(envelope, public_key=sk.public_key()) == "sha256:" + "ab" * 32
+
+
+def test_a_bug_inside_verification_is_not_reported_as_a_bad_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected error must escape, not be recorded as "signature invalid".
+
+    This is the half of the old clause that mattered. ``except (...,
+    Exception)`` turned any fault raised from inside the loop into a
+    verification failure, so a real bug reached the operator as a signature
+    that did not verify against their key.
+    """
+    sk = _fresh_key()
+    envelope = _signed_intoto(sk)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("verification backend exploded")
+
+    monkeypatch.setattr(type(sk.public_key()), "verify", boom, raising=False)
+
+    # Reported as a verify error, never folded in with the rejections: the
+    # two sibling legs keep the same contract, so a caller writing the
+    # documented `except TrajectoryProjectionError` still catches it.
+    with pytest.raises(TrajectoryProjectionError, match="verify error") as caught:
+        _verify_intoto(envelope, public_key=sk.public_key())
+    assert "does not verify against the supplied public key" not in str(caught.value)
+    assert isinstance(caught.value.__cause__, RuntimeError)
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,6 @@ from bernstein.core.models import (
 
 from bernstein.core.agents.agent_signals import AgentSignalManager
 from bernstein.core.agents.heartbeat import (
-    AGENT,
     StallProfile,
     _escalate_heartbeat,
     _escalate_stall_profiled,
@@ -35,6 +34,7 @@ from bernstein.core.agents.heartbeat import (
     check_stale_agents,
     check_stalled_tasks,
 )
+from bernstein.core.defaults import AGENT
 from bernstein.core.security.audit_chain import (
     EVENT_STALL_VERDICT,
     AuditChainStore,

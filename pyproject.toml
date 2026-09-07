@@ -746,6 +746,9 @@ module = [
     # Declared extras, absent from a plain `uv sync`:
     "datasets.*",  # `eval` extra, benchmark/{swe_bench,programbench}.py
     "spiffe.*",  # `spiffe` extra, core/identity/spiffe/workload_api.py
+    "sklearn.*",  # core/tokens/context_compression.py, core/planning/duration_predictor.py
+    "z3.*",       # core/quality/formal_verification.py
+    "playwright.async_api.*",  # core/orchestration/rendering_fetcher.py
 ]
 ignore_missing_imports = true
 

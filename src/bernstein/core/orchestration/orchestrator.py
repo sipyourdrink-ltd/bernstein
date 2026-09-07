@@ -1741,7 +1741,15 @@ class Orchestrator:
         # Checking "done" alone re-blocked dependents forever after that
         # transition, so lower-priority independent tasks were claimed ahead
         # of a high-priority task whose dependency had already completed.
-        done_ids = {t.id for t in done_tasks} | {t.id for t in tasks_by_status.get("closed", [])}
+        from bernstein.core.tasks.unreachable import satisfied_dependency_ids
+
+        # Lineage-aware: a retry carries a NEW id, so a dependent's depends_on
+        # still names the original. satisfied_dependency_ids folds
+        # original_task_id/retry_of in, which is what the store's claim check
+        # and blocking_dependency already do; this filter's raw id set was the
+        # one copy that did not, and a successful retry could not unblock its
+        # dependents (finding L, 2026-09-03).
+        done_ids = satisfied_dependency_ids(done_tasks + list(tasks_by_status.get("closed", [])))
         now = time.time()
         open_tasks = [
             t
@@ -3578,6 +3586,7 @@ class Orchestrator:
         attestation aid and must not fail a run that already completed.
         """
         try:
+            from bernstein.core.persistence.file_locks import LockTimeout
             from bernstein.core.security.audit_chain import AuditChainStore
             from bernstein.core.security.intent_capsule import seal_capsules_bound_to_run
 
@@ -3589,6 +3598,12 @@ class Orchestrator:
             )
             if sealed:
                 logger.info("Sealed %d intent capsule(s) for run %s", len(sealed), self._run_id)
+        except LockTimeout:
+            logger.warning(
+                "Failed to acquire lock to seal intent capsules for run %s: timeout. "
+                "The receipt will not be written. Check for stale lock files.",
+                self._run_id,
+            )
         except Exception as exc:
             logger.warning("Failed to seal intent capsules: %s", sanitize_log(str(exc)))
 

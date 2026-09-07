@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from bernstein.core import defaults as _defaults
 from bernstein.core import heartbeat as heartbeat_protocol  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.cost import price_model_usage
 from bernstein.core.lifecycle import transition_agent
@@ -1675,6 +1676,30 @@ def _probe_fast_exit(
 _ORPHAN_LIVENESS_GRACE_S = 90.0
 
 
+def _orphan_liveness_grace_s() -> float:
+    """Resolve the liveness grace window at CALL time, honouring operator tuning.
+
+    ``tuning.agent.liveness_grace_s`` documents itself as the window in which a
+    fresh log/git mtime proves an agent alive, and ``AgentDefaults`` says it
+    mirrors ``_ORPHAN_LIVENESS_GRACE_S`` -- but the constant above was read
+    directly, so the configured value reached the config snapshot and nothing
+    that kills. Measured 2026-09-03 (finding X): with ``liveness_grace_s: 600``
+    set, this probe still logged ``grace_s=90 verdict=DEAD`` for agents whose
+    log had moved 126-142s ago, and four healthy agents were SIGTERMed.
+
+    Read through the module (``_defaults.AGENT``), never a name captured with
+    ``from ... import``: bernstein.yaml is parsed long after this module is
+    imported and ``defaults.override`` REBINDS the singleton rather than
+    mutating the frozen instance.
+
+    The shipped 90s is kept as a FLOOR. It is a measured safety minimum for
+    double-forked runners (see the constant's docstring above), so lowering the
+    tunable must not make this probe judge agents dead sooner; raising it is
+    honoured in full.
+    """
+    return max(float(_defaults.AGENT.liveness_grace_s), _ORPHAN_LIVENESS_GRACE_S)
+
+
 def _mtime_age(path: Path, now: float) -> float | None:
     """Return seconds since ``path`` was last modified, or None if unreadable/missing."""
     with contextlib.suppress(OSError):
@@ -1744,7 +1769,8 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
     git_path = (_wt_dir / ".git") if _wt_dir is not None else None
     git_age = _mtime_age(git_path, now) if git_path is not None else None
 
-    fresh_ages = [a for a in (heartbeat_age, log_age, git_age) if a is not None and a < _ORPHAN_LIVENESS_GRACE_S]
+    grace_s = _orphan_liveness_grace_s()
+    fresh_ages = [a for a in (heartbeat_age, log_age, git_age) if a is not None and a < grace_s]
     has_fresh_signal = bool(fresh_ages)
     verdict = "ALIVE (fresh signal found)" if has_fresh_signal else "DEAD (no fresh signal)"
     reason = (
@@ -1766,7 +1792,7 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
         f"{log_age:.1f}" if log_age is not None else "missing",
         git_path if git_path is not None else "no-per-agent-worktree",
         f"{git_age:.1f}" if git_age is not None else "missing",
-        _ORPHAN_LIVENESS_GRACE_S,
+        grace_s,
         verdict,
         reason,
     )
@@ -2070,7 +2096,7 @@ def _handle_orphan_no_signals(
             _liveness["heartbeat_age_s"],
             _liveness["log_age_s"],
             _liveness["git_age_s"],
-            _ORPHAN_LIVENESS_GRACE_S,
+            _orphan_liveness_grace_s(),
         )
         # The session backing this deferral is transitioned to "dead" and its
         # worktree cleaned up in this same tick (_handle_dead_agent), so it
@@ -2189,6 +2215,27 @@ def handle_orphaned_task(
     if task_id in task_by_id:
         task = task_by_id[task_id]
         logger.debug("handle_orphaned_task %s: resolved from tick snapshot", task_id)
+        # The snapshot is fetched once at the top of the tick, so it can be
+        # seconds stale by the time an orphan is judged - long enough for the
+        # task to have reached done and had its branch merged. Acting on the
+        # stale copy reopens a finished task (2026-09-02: a task merged at
+        # 22:25:39 was resumed 33 s later). Re-read it live so the
+        # already-resolved check below sees the real status; the snapshot copy
+        # stays the fallback when the server cannot be reached.
+        try:
+            _fresh = orch._client.get(f"{base}/tasks/{task_id}")
+            _fresh.raise_for_status()
+            task = Task.from_dict(_fresh.json())
+        # Broad: the re-fetch is a freshness improvement over a copy we already
+        # hold, so ANY failure to obtain or parse it (transport, malformed body,
+        # a stubbed client) must degrade to the snapshot - the pre-patch
+        # behaviour - and never abort the orphan path.
+        except Exception as exc:
+            logger.warning(
+                "handle_orphaned_task %s: live re-fetch failed (%s); using the tick snapshot",
+                task_id,
+                exc,
+            )
     else:
         # Not in snapshot -- fall back to a live fetch
         try:

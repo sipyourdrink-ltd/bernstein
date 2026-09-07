@@ -165,14 +165,41 @@ or wait for the unverified ones to age out.
 
 ---
 
+---
+
+## Coarse nudge signal vs. Recomputable receipt coverage
+
+It is important to distinguish the coarse operator nudge tracked here from the fine-grained, cryptographically verifiable merge admission coverage:
+
+| Property | `VerificationNudgeTracker` (this page) | Merge Admission Coverage (`MergeAdmissionReceipt`) |
+|---|---|---|
+| **Nature** | Coarse operational heuristic / nudge | Fine-grained, content-addressed cryptographic record |
+| **Source** | **Self-reported** log summary flags (`OR` over 3 booleans) | Deterministic set diff of changed paths against oracle scopes |
+| **Verification** | In-memory count / metric alert | Offline recomputable via `bernstein verify coverage <sha>` |
+| **Artifact** | `.sdd/metrics/verification_nudges.jsonl` | Signed receipt at `.sdd/merges/receipts/<hash>.json` |
+| **Granularity** | Task-level binary flag (`verified: bool`) | Per-path `verified`, `unverified`, and `skipped` sets |
+
+While `VerificationNudgeTracker` alerts operators when tasks finish without any reported verification activity, the merge admission gate binds exact path coverage into signed receipts that can be verified and recomputed offline at any time via:
+
+```bash
+bernstein verify coverage <head-sha>
+```
+
+For the complete command-line interface and exit codes, see [`bernstein verify coverage`](../reference/cli/verify.md#merge-admission-receipt-coverage-verify-coverage).
+
+---
+
 ## Code pointers
 
 | File                                                       | What it does |
 |------------------------------------------------------------|--------------|
 | `src/bernstein/core/quality/verification_nudge.py`         | `VerificationNudgeTracker`, `VerificationRecord`, `NudgeSummary`, `load_nudge_summary()` |
+| `src/bernstein/core/quality/merge_receipt.py`              | `MergeAdmissionReceipt`, `compute_coverage_sets()`, `read_merge_receipt()` |
+| `src/bernstein/cli/commands/verify_cmd.py`                 | `bernstein verify coverage` subcommand |
 | `src/bernstein/core/models.py`                             | `Task.verification_count`, `Task.flagged_unverified` fields |
 | `src/bernstein/core/quality/janitor.py`                    | `verify_task()` - supplies the `completion_signals_checked` evidence |
 | `tests/unit/test_verification_nudge.py`                    | 44 tests across 8 classes (record, persistence, summary, alert thresholds) |
+| `tests/unit/test_verify_coverage_cmd.py`                   | Unit tests for CLI coverage verification |
 
 JSONL ledger schema (one object per line):
 
@@ -192,6 +219,8 @@ JSONL ledger schema (one object per line):
 
 ## Related
 
+- [Merge Admission Receipt Coverage](../reference/cli/verify.md#merge-admission-receipt-coverage-verify-coverage) - offline verification of structured coverage sets.
 - [Permission modes](../architecture/permission-modes.md) - how the
   approval gate decides whether a completion needs human signoff.
 - [Runbooks](runbooks.md) - automated remediation for failing tasks.
+
