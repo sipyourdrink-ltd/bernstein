@@ -15,6 +15,9 @@ Per-artifact provenance in two layers: Lineage v1 (Sigstore-style transparency l
 | `gate.py` | Lineage CI gate (ADR-009 §6.2) |
 | `run_graph.py` | Pairs each fan-out worktree branch with the spine that recorded it: `build_run_graph` returns one `RunGraphNode` per branch (`session_id`, `head_sha`, `run_id`, `spine_head_hash`) plus a deterministic root hash. Pure - it adds no storage and resolves `session_id -> run_id` from a caller-supplied mapping |
 | `merge_provenance.py` | Records one row per path a CLI agent's work lands through a merge (issue #2789). Reads `before..after` so a fast-forward records like a true merge, hashes the git blob rather than the working tree, and names the merge commit in `step_id` - so a third party recomputes every `content_hash` from the repository alone. Recording must never undo a landed merge: `spawner_merge` logs a failure and keeps the merge, and neither reading the base nor writing the rows may gate it |
+| `prov_export.py` | Projects the ancestry DAG into standard PROV-O representations (#5039) |
+| `sensitivity.py` | Propagates data sensitivity forward over the lineage closure (#5042) |
+| `plan_render.py` | Renders a run's execution plan from its journal (#4958) |
 
 ## Invariants
 
@@ -30,4 +33,4 @@ Per-artifact provenance in two layers: Lineage v1 (Sigstore-style transparency l
 
 Single files only, e.g. `uv run pytest tests/unit/test_lineage_record.py -x -q`; the `test_lineage_*.py` files cover entries, stores, signing, and gates. Merge recording is tested against real git repositories, not a stub - what it asserts is that a row's `content_hash` is the blob git stored (`tests/unit/lineage/test_merge_provenance.py`).
 
-<!-- Reviewed 2026-08-28 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-09-07 against this subtree; the notes above still hold. -->

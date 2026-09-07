@@ -19,8 +19,7 @@ The verification layer between a worker's diff and merge or human review: a conf
 ## Invariants
 
 - Gate names are a closed set: a step name must be in `VALID_GATE_NAMES` or come from a registered gate plugin; anything else is rejected (`gate_runner.py`).
-- Defaults are deliberate: `lint`, `pii_scan`, `dlp_scan`, `run_config` on; `tests`,
-  `type_check`, heavier gates off (`quality_gates.py`). Never flip one as a side effect; `run_config` is a safety invariant (`../config/run_overlay.py`).
+- Defaults are deliberate: `lint`, `pii_scan`, `dlp_scan`, `run_config` on; `tests`, `type_check`, heavier gates off (`quality_gates.py`). Never flip one as a side effect; `run_config` is a safety invariant (`../config/run_overlay.py`).
 - Blocking vs advisory semantics are per-gate; a new gate declares which. No
   package-level `__getattr__` re-export magic here (`__init__.py` explains why).
 - `behavior_probe` claims crashes, not semantics: undocumented exception, return
@@ -37,4 +36,4 @@ The verification layer between a worker's diff and merge or human review: a conf
 
 Single files only, e.g. `uv run pytest tests/unit/test_quality_gates.py -x -q`; runner and pipeline behaviour lives in the `test_gate_*.py` files.
 
-<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-09-07 against this subtree; the notes above still hold. -->
