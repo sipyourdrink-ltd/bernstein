@@ -28,7 +28,8 @@ Exit codes:
 
     0 - every module met its threshold
     1 - at least one module below threshold (gate failed)
-    2 - baseline tests fail (cannot trust mutation results)
+    2 - baseline tests fail (cannot trust mutation results); a timed-out
+        baseline exits the same way with ``baseline_timeout`` in the JSON
 """
 
 from __future__ import annotations
@@ -42,6 +43,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+#: Per-mutant pytest cap. The baseline run gets a share of the module's
+#: own ``budget_seconds`` (see :func:`_mutate_module`) instead of this
+#: constant: a baseline is one run, a mutant run is one of many, and one
+#: constant for both is what made a slow suite fatal (issue #5570).
+_MUTANT_RUN_TIMEOUT = 180
 
 
 @dataclass(frozen=True)
@@ -215,6 +222,7 @@ class ModuleResult:
     elapsed_seconds: float = 0.0
     threshold: float = 0.0
     baseline_ok: bool = True
+    baseline_timeout: bool = False  # baseline run exceeded its budget (distinct from a failing baseline)
     timed_out: bool = False  # wall-clock budget exceeded mid-run
 
     @property
@@ -236,12 +244,13 @@ class ModuleResult:
             "threshold": self.threshold,
             "passed": self.passed,
             "baseline_ok": self.baseline_ok,
+            "baseline_timeout": self.baseline_timeout,
             "elapsed_seconds": round(self.elapsed_seconds, 1),
             "budget_exceeded": self.timed_out,
         }
 
 
-def _run_tests(test_paths: tuple[str, ...]) -> bool:
+def _run_tests(test_paths: tuple[str, ...], timeout: int = _MUTANT_RUN_TIMEOUT) -> bool:
     """Return True iff tests pass (i.e. mutation NOT killed)."""
     res = subprocess.run(
         [
@@ -258,9 +267,21 @@ def _run_tests(test_paths: tuple[str, ...]) -> bool:
         cwd=str(REPO),
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=timeout,
     )
     return res.returncode == 0
+
+
+def _baseline_timeout_seconds(mod: Module) -> int:
+    """Wall-clock budget for a module's baseline pytest run.
+
+    A quarter of the module's own ``budget_seconds`` - a baseline is one
+    run of the suite, while a mutant run is one of many inside the same
+    budget - floored at the per-mutant cap so the baseline never gets a
+    smaller allowance than a single mutant (issue #5570).
+    """
+
+    return max(mod.budget_seconds // 4, _MUTANT_RUN_TIMEOUT)
 
 
 def _candidates(target: Path, limit: int) -> list[tuple[int, str, str, str]]:
@@ -298,7 +319,14 @@ def _mutate_module(mod: Module, *, verbose: bool = True) -> ModuleResult:
 
     if verbose:
         print(f"[{mod.key}] baseline tests: {mod.tests}", flush=True)
-    if not _run_tests(mod.tests):
+    try:
+        baseline_passed = _run_tests(mod.tests, timeout=_baseline_timeout_seconds(mod))
+    except subprocess.TimeoutExpired:
+        print(f"[{mod.key}] baseline timed out - cannot trust mutation run", file=sys.stderr)
+        res.baseline_ok = False
+        res.baseline_timeout = True
+        return res
+    if not baseline_passed:
         print(f"[{mod.key}] baseline fails - cannot trust mutation run", file=sys.stderr)
         res.baseline_ok = False
         return res
@@ -347,7 +375,7 @@ def _print_summary(results: list[ModuleResult]) -> None:
         status = "PASS" if r.passed else ("BASE-FAIL" if not r.baseline_ok else "FAIL")
         rate = f"{100 * r.kill_rate:5.1f}%" if r.total else "  n/a"
         thr = f"{100 * r.threshold:4.0f}%"
-        suffix = " (budget exceeded)" if r.timed_out else ""
+        suffix = " (baseline timed out)" if r.baseline_timeout else (" (budget exceeded)" if r.timed_out else "")
         print(f"{r.key:<20} {rate:>10} {thr:>6} {status:>8}  {r.killed}/{r.total} killed{suffix}")
     for r in results:
         if r.survivors:
