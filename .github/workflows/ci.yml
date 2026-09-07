@@ -569,6 +569,15 @@ jobs:
       - uses: ./.github/actions/bootstrap
       - run: uv run ruff check src/
       - run: uv run ruff format --check src/
+      # `tests/unit` is where contributors add code every day, and it was
+      # ungated -- so it had already drifted (two unsorted import blocks and
+      # one unformatted file, fixed alongside this). Scoped to `tests/unit`
+      # rather than all of `tests/`: the fixture generators under
+      # `tests/fixtures` carry deliberate formatting the formatter would
+      # flatten, e.g. a `\U0001D11E` escape written to match the codepoint
+      # named in the comment above it.
+      - run: uv run ruff check tests/unit
+      - run: uv run ruff format --check tests/unit
       - name: Architecture contracts (import-linter)
         run: uv run lint-imports
       - name: Route broad-except policy (#1723)
