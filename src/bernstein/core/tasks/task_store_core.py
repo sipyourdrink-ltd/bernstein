@@ -41,7 +41,11 @@ from bernstein.core.tasks.models import (
     TaskType,
     UpgradeProposalDetails,
 )
-from bernstein.core.tasks.unreachable import blocking_dependency, unreachable_tasks
+from bernstein.core.tasks.unreachable import (
+    blocking_dependency,
+    satisfied_dependency_ids,
+    unreachable_tasks,
+)
 from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
@@ -1434,15 +1438,9 @@ class TaskStore:
         completed_tasks = list(self._by_status[TaskStatus.DONE].values()) + list(
             self._by_status[TaskStatus.CLOSED].values()
         )
-        done_ids = {done_task.id for done_task in completed_tasks}
-        for done_task in completed_tasks:
-            if isinstance(done_task.metadata, dict):
-                orig = done_task.metadata.get("original_task_id")
-                retry_of = done_task.metadata.get("retry_of")
-                if isinstance(orig, str) and orig:
-                    done_ids.add(orig)
-                if isinstance(retry_of, str) and retry_of:
-                    done_ids.add(retry_of)
+        # Shared with the orchestrator's readiness filter: the two carried
+        # separate copies of this lineage fold and only one of them had it.
+        done_ids = satisfied_dependency_ids(completed_tasks)
 
         # A dependency that ended without delivering never satisfies its
         # dependents (#3452). The classification lives in one place so a path

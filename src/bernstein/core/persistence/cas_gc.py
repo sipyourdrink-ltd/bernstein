@@ -16,6 +16,13 @@ The GC process:
   2. Sweep: delete unreferenced blobs older than retention window
   3. Receipt: write prune record to CAS store with counts and bytes
 
+A sweep is only as safe as its mark. A root that could not be read
+contributes no digests, and a blob whose only reference lived in that root
+is then indistinguishable from an unreferenced one. The mark phase
+therefore reports which roots it failed to read, and the sweep refuses to
+delete anything when that list is non-empty rather than deleting on a
+partial answer.
+
 Usage:
     from bernstein.core.persistence.cas_gc import prune_cas_store
     result = prune_cas_store(sdd_dir, retention_days=30)
@@ -23,12 +30,13 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.defaults import JANITOR
 from bernstein.core.persistence.cas_store import CASStore
@@ -52,7 +60,18 @@ class CASPruneResult:
         deleted_entries: Number of entries deleted.
         preserved_bytes: Bytes preserved (referenced or young).
         deleted_bytes: Bytes deleted.
-        errors: Human-readable error messages for any deletion failures.
+        errors: Human-readable reasons this sweep did not go cleanly: a
+            deletion that failed, or the refusal recorded when the mark
+            phase could not read every root. A refusal is not a deletion
+            failure, and both land here because both mean the caller
+            should not treat the run as a clean sweep.
+        root_set_hash: Digest of the root set this sweep was decided
+            against, so a reader can tell two sweeps apart by what each one
+            considered reachable rather than only by their counts.
+        unreadable_roots: Roots the mark phase could not read. When this is
+            non-empty nothing was deleted, whatever ``deleted_entries``
+            says: the counts describe what a complete mark would have
+            considered, the way they do for a dry run.
     """
 
     scanned_entries: int = 0
@@ -61,6 +80,8 @@ class CASPruneResult:
     preserved_bytes: int = 0
     deleted_bytes: int = 0
     errors: list[str] = field(default_factory=list[str])
+    root_set_hash: str = ""
+    unreadable_roots: tuple[str, ...] = ()
 
 
 def _digest_from_string(s: str) -> str | None:
@@ -95,10 +116,30 @@ def _extract_digests_from_obj(obj: Any) -> set[str]:
     return digests
 
 
-def _scan_wal_for_digests(sdd_dir: Path) -> set[str]:
+def _record_unreadable(collector: list[str] | None, root: str, path: Path, exc: Exception) -> None:
+    """Note that *path* could not be read, if the caller is collecting.
+
+    A scanner that swallows a per-file failure and carries on returns fewer
+    digests than the tree holds, and a sweep against that answer deletes
+    live blobs. The failure has to reach the caller, not only the log.
+    """
+    if collector is None:
+        return
+    collector.append(f"{root}: {path.name} ({type(exc).__name__})")
+
+
+def _scan_wal_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan WAL files for CAS digests.
 
-    Returns set of digests referenced in WAL entries.
+    Args:
+        sdd_dir: The ``.sdd`` directory root.
+        unreadable: Collector for files this scan could not read. A caller
+            deciding whether to sweep passes one; without it a per-file
+            failure is logged and lost, and the mark looks complete when it
+            is not.
+
+    Returns:
+        Set of digests referenced in WAL entries.
     """
     wal_dir = sdd_dir / "runtime" / "wal"
     digests: set[str] = set()
@@ -123,6 +164,7 @@ def _scan_wal_for_digests(sdd_dir: Path) -> set[str]:
                         continue
         except OSError as exc:
             logger.warning("Failed to read WAL file %s: %s", wal_file, exc)
+            _record_unreadable(unreadable, "WAL", wal_file, exc)
 
     return digests
 
@@ -141,7 +183,7 @@ def _scan_snapshots_for_digests(sdd_dir: Path) -> set[str]:
     return set()
 
 
-def _scan_audit_seals_for_digests(sdd_dir: Path) -> set[str]:
+def _scan_audit_seals_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan audit Merkle seals for CAS digests.
 
     Each seal contains a Merkle tree over CAS blobs, so we extract the leaf
@@ -174,11 +216,12 @@ def _scan_audit_seals_for_digests(sdd_dir: Path) -> set[str]:
                     digests.add(digest)
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("Failed to read audit seal %s: %s", seal_file, exc)
+            _record_unreadable(unreadable, "Audit seals", seal_file, exc)
 
     return digests
 
 
-def _scan_lineage_for_digests(sdd_dir: Path) -> set[str]:
+def _scan_lineage_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan lineage spines for CAS digests.
 
     Lineage entries store content_hash which is sha256: prefixed CAS digest.
@@ -198,22 +241,33 @@ def _scan_lineage_for_digests(sdd_dir: Path) -> set[str]:
                         continue
                     try:
                         data = json.loads(line)
-                        # Extract content_hash which is sha256: prefixed
-                        content_hash = data.get("content_hash", "")
-                        if content_hash.startswith("sha256:"):
-                            digest = content_hash[7:]  # Remove 'sha256:' prefix
-                            if re.fullmatch(r"[0-9a-f]{64}", digest):
-                                digests.add(digest)
-                    except (json.JSONDecodeError, KeyError, TypeError):
-                        # Skip malformed lines
+                    except json.JSONDecodeError:
+                        # Skip malformed lines.
                         continue
+                    # A line that is not an object, or whose content_hash is
+                    # not a string, is skipped rather than left to raise
+                    # AttributeError. Nothing here catches that, so it used to
+                    # escape the scanner entirely and take the whole lineage
+                    # root out of the mark phase: one odd line in one spine,
+                    # and every lineage reference disappeared at once.
+                    if not isinstance(data, dict):
+                        continue
+                    content_hash = cast("dict[str, Any]", data).get("content_hash", "")
+                    if not isinstance(content_hash, str):
+                        continue
+                    # Extract content_hash which is sha256: prefixed
+                    if content_hash.startswith("sha256:"):
+                        digest = content_hash[7:]  # Remove 'sha256:' prefix
+                        if re.fullmatch(r"[0-9a-f]{64}", digest):
+                            digests.add(digest)
         except OSError as exc:
             logger.warning("Failed to read lineage spine %s: %s", spine_file, exc)
+            _record_unreadable(unreadable, "Lineage", spine_file, exc)
 
     return digests
 
 
-def _scan_backlog_for_digests(sdd_dir: Path) -> set[str]:
+def _scan_backlog_for_digests(sdd_dir: Path, *, unreadable: list[str] | None = None) -> set[str]:
     """Scan backlog YAML files for CAS digests.
 
     Backlog tasks may reference CAS digests in their metadata or parameters.
@@ -236,17 +290,71 @@ def _scan_backlog_for_digests(sdd_dir: Path) -> set[str]:
                     digests.update(_extract_digests_from_obj(data))
                 except OSError as exc:
                     logger.warning("Failed to read backlog file %s: %s", yaml_file, exc)
+                    _record_unreadable(unreadable, "Backlog", yaml_file, exc)
 
     return digests
 
 
-def collect_referenced_digests(sdd_dir: Path) -> set[str]:
-    """Collect all CAS digests referenced from durable roots.
+@dataclass(frozen=True)
+class RootSet:
+    """What the mark phase found, and whether it found all of it.
 
-    Returns a set of digests that are still referenced and should be preserved.
+    Attributes:
+        digests: Every CAS digest reachable from a durable root that was
+            read successfully.
+        unreadable_roots: Names of the roots whose scan raised. A non-empty
+            tuple makes ``digests`` a lower bound on the reachable set
+            rather than the reachable set, which is the difference between
+            a safe sweep and a data-loss one.
+    """
+
+    digests: frozenset[str]
+    unreadable_roots: tuple[str, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        """True when every root was read, so a sweep can trust the answer."""
+        return not self.unreadable_roots
+
+    def content_hash(self) -> str:
+        """Return a digest over the root set, for the prune receipt.
+
+        Sorted before hashing so the value depends on which digests were
+        reachable and not on the order the scanners happened to yield them.
+
+        The unreadable roots are hashed in too. Without them a partial-and-
+        empty root set and a complete-and-empty one produce the same value,
+        and ``CASPruneResult.root_set_hash`` is public and is populated on a
+        refusal, so a reader comparing two sweeps could not tell those apart.
+        """
+        payload = "\n".join(["digests", *sorted(self.digests), "unreadable", *sorted(self.unreadable_roots)]).encode(
+            "utf-8"
+        )
+        return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def collect_root_set(sdd_dir: Path) -> RootSet:
+    """Walk every durable root and report what is reachable, and what failed.
+
+    A scanner that raises is recorded rather than only logged. Its digests
+    are missing from the result either way, but the caller now knows they
+    are missing and can refuse to sweep instead of treating a partial mark
+    as a complete one.
+
+    Args:
+        sdd_dir: The ``.sdd`` directory root.
+
+    Returns:
+        The reachable digests together with the roots that could not be read.
     """
     logger.debug("Scanning durable roots for CAS digests")
     all_digests: set[str] = set()
+    # Two ways a root goes unread, and both have to land here. A scanner
+    # raising all the way out is the loud one; a per-file OSError swallowed
+    # inside it is the one that actually happens - a permissions problem, a
+    # transient I/O error, a network-filesystem hiccup on a single spine
+    # file - and it used to leave the mark looking complete.
+    unreadable: list[str] = []
 
     # Scan each root type
     roots = [
@@ -259,14 +367,27 @@ def collect_referenced_digests(sdd_dir: Path) -> set[str]:
 
     for name, scanner in roots:
         try:
-            digests = scanner(sdd_dir)
+            digests = scanner(sdd_dir, unreadable=unreadable)
             logger.debug("Found %d digests in %s", len(digests), name)
             all_digests.update(digests)
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Failed to scan %s for CAS digests: %s", name, exc)
+            unreadable.append(name)
 
     logger.info("Total referenced CAS digests: %d", len(all_digests))
-    return all_digests
+    return RootSet(digests=frozenset(all_digests), unreadable_roots=tuple(unreadable))
+
+
+def collect_referenced_digests(sdd_dir: Path) -> set[str]:
+    """Collect all CAS digests referenced from durable roots.
+
+    Returns a set of digests that are still referenced and should be preserved.
+
+    This is the digests-only view of :func:`collect_root_set`. A caller
+    deciding whether to delete anything wants that function instead: this
+    one cannot say whether the set is complete.
+    """
+    return set(collect_root_set(sdd_dir).digests)
 
 
 def prune_cas_store(
@@ -284,6 +405,12 @@ def prune_cas_store(
         dry_run: If True, only report what would be deleted without
             actually deleting anything.
 
+    A root the mark phase could not read makes the reachable set a lower
+    bound, and a blob whose only reference lived there looks exactly like an
+    unreferenced one. When that happens nothing is deleted: the result
+    reports the unreadable roots and the counts describe what a complete
+    mark would have considered, the same way they do for a dry run.
+
     Returns:
         :class:`CASPruneResult` summarizing the prune operation.
     """
@@ -291,7 +418,8 @@ def prune_cas_store(
     cutoff_time = time.time() - (keep_days * 86400)
 
     store = CASStore(sdd_dir / "cas")
-    referenced = collect_referenced_digests(sdd_dir)
+    root_set = collect_root_set(sdd_dir)
+    referenced = root_set.digests
 
     scanned_entries = 0
     preserved_entries = 0
@@ -306,6 +434,17 @@ def prune_cas_store(
         time.ctime(cutoff_time),
         len(referenced),
     )
+
+    deleting = not dry_run and root_set.complete
+    if not root_set.complete:
+        refusal = (
+            "refusing to delete: the mark phase could not read "
+            f"{', '.join(root_set.unreadable_roots)}, so a blob whose only "
+            "reference lives in an unscanned root cannot be told apart from "
+            "an unreferenced one"
+        )
+        logger.error(refusal)
+        errors.append(refusal)
 
     # Scan all CAS entries
     for entry in store.list_entries():
@@ -340,7 +479,7 @@ def prune_cas_store(
                 (time.time() - entry_time) / 86400,
             )
 
-            if not dry_run:
+            if deleting:
                 try:
                     if store.delete(entry.digest):
                         logger.debug("Deleted CAS entry %s", entry.digest[:12])
@@ -358,9 +497,12 @@ def prune_cas_store(
         preserved_bytes=preserved_bytes,
         deleted_bytes=deleted_bytes,
         errors=errors,
+        root_set_hash=root_set.content_hash(),
+        unreadable_roots=root_set.unreadable_roots,
     )
     logger.info(
-        "CAS GC complete: scanned=%d, preserved=%d (%d bytes), deleted=%d (%d bytes)",
+        "CAS GC %s: scanned=%d, preserved=%d (%d bytes), deleted=%d (%d bytes)",
+        "complete" if deleting or dry_run else "refused (mark incomplete)",
         result.scanned_entries,
         result.preserved_entries,
         result.preserved_bytes,
@@ -368,8 +510,10 @@ def prune_cas_store(
         result.deleted_bytes,
     )
 
-    if result.deleted_entries > 0 and not dry_run:
-        # Write a prune receipt to the CAS store itself
+    if result.deleted_entries > 0 and deleting:
+        # Write a prune receipt to the CAS store itself. Reaching here means
+        # the mark phase was complete, so the receipt always attests a sweep
+        # decided against every root.
         _write_prune_receipt(store, result)
 
     return result
@@ -378,19 +522,26 @@ def prune_cas_store(
 def _write_prune_receipt(store: CASStore, result: CASPruneResult) -> None:
     """Write a prune receipt to the CAS store for verification.
 
-    The receipt documents what was pruned and why it was safe.
+    The receipt documents what was pruned and why it was safe. ``why it was
+    safe`` is the root-set hash: the counts say how much went, and the hash
+    says which reachable set the sweep decided that against. A receipt is
+    only written for a sweep whose mark phase read every root, so the hash
+    is always over a complete answer.
+
+    Version 2 fills ``root_set_hash``; version 1 always wrote ``null``, so a
+    reader cannot tell which root set a v1 receipt was taken over.
     """
     try:
         receipt_data = {
-            "version": 1,
+            "version": 2,
             "timestamp": time.time(),
             "scanned_entries": result.scanned_entries,
             "preserved_entries": result.preserved_entries,
             "deleted_entries": result.deleted_entries,
             "preserved_bytes": result.preserved_bytes,
             "deleted_bytes": result.deleted_bytes,
-            # Include a hash of the root set for verification
-            "root_set_hash": None,  # TODO: compute hash of actual root set
+            # The reachable set this sweep was decided against.
+            "root_set_hash": result.root_set_hash,
         }
         receipt_json = json.dumps(receipt_data, indent=2)
         digest = store.put(
@@ -443,6 +594,15 @@ def run_cas_gc_cli(
             f"[DRY RUN] Would delete {result.deleted_entries} CAS entries "
             f"({result.deleted_bytes} bytes), preserve {result.preserved_entries} "
             f"({result.preserved_bytes} bytes)"
+        )
+    elif result.unreadable_roots:
+        # Nothing was deleted. The headline line is what a log scraper reads,
+        # so it must not say "deleted N" when the sweep refused.
+        print(
+            f"CAS GC refused: nothing deleted, because the mark phase could not read "
+            f"{', '.join(result.unreadable_roots)}. "
+            f"{result.deleted_entries} entries ({result.deleted_bytes} bytes) would have "
+            f"been considered once every root is readable."
         )
     else:
         print(
