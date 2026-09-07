@@ -15,7 +15,8 @@ mutations in that file. A module is "passing" when
     kill_rate >= threshold
 
 where ``kill_rate = killed / total`` and ``total = killed + survivors``
-(timeouts count as kills - an infinite loop is a meaningful signal).
+(timeouts are recorded separately and do not affect the kill rate;
+a material fraction of timeouts marks the run as unmeasured).
 
 CLI:
 
