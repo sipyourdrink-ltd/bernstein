@@ -108,9 +108,17 @@ class SubmissionBundle:
     # Install identity fingerprint (public-key fingerprint of the signer).
     signer_fingerprint: str = ""
     holdout_hash: str = ""
+    harness_settings: dict[str, Any] = field(default_factory=dict)
+    harness_fingerprint: str = ""
 
     # Computed lazily.
     _bundle_hash: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.harness_settings and not self.harness_fingerprint:
+            from bernstein.eval.bench.fingerprint import compute_harness_fingerprint
+
+            self.harness_fingerprint = compute_harness_fingerprint(self.harness_settings)
 
     # ------------------------------------------------------------------
     # Derived metrics
@@ -147,6 +155,10 @@ class SubmissionBundle:
         }
         if self.holdout_hash:
             payload_dict["holdout_hash"] = self.holdout_hash
+        if self.harness_fingerprint:
+            payload_dict["harness_fingerprint"] = self.harness_fingerprint
+        if self.harness_settings:
+            payload_dict["harness_settings"] = self.harness_settings
         payload = json.dumps(
             payload_dict,
             sort_keys=True,
@@ -173,6 +185,10 @@ class SubmissionBundle:
         }
         if self.holdout_hash:
             d["holdout_hash"] = self.holdout_hash
+        if self.harness_fingerprint:
+            d["harness_fingerprint"] = self.harness_fingerprint
+        if self.harness_settings:
+            d["harness_settings"] = self.harness_settings
         return d
 
     def save(self, path: Path) -> None:
@@ -217,6 +233,8 @@ class SubmissionBundle:
             signature=raw.get("signature", ""),
             signer_fingerprint=raw.get("signer_fingerprint", ""),
             holdout_hash=raw.get("holdout_hash", ""),
+            harness_settings=raw.get("harness_settings", {}),
+            harness_fingerprint=raw.get("harness_fingerprint", ""),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:

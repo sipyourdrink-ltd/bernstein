@@ -193,6 +193,39 @@ def bench_verify(bundle: str, suite: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# bernstein bench compare
+# ---------------------------------------------------------------------------
+
+
+@bench_group.command(name="compare")
+@click.argument("bundle_a", type=click.Path(exists=True, dir_okay=False))
+@click.argument("bundle_b", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--allow-harness-drift",
+    is_flag=True,
+    default=False,
+    help="Allow ranking bundles from different harness configurations.",
+)
+def bench_compare(bundle_a: str, bundle_b: str, allow_harness_drift: bool) -> None:
+    """Compare two submission bundles.
+
+    Refuses to rank if harness fingerprints differ unless --allow-harness-drift is passed.
+    """
+    from bernstein.eval.bench.bundle import SubmissionBundle
+    from bernstein.eval.bench.compare import HarnessDriftError, compare_bundles
+
+    b_a = SubmissionBundle.load(Path(bundle_a))
+    b_b = SubmissionBundle.load(Path(bundle_b))
+
+    try:
+        res = compare_bundles(b_a, b_b, allow_harness_drift=allow_harness_drift)
+    except HarnessDriftError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(res.report())
+
+
+# ---------------------------------------------------------------------------
 # Reliability: pass^k floor (issue #2933)
 # ---------------------------------------------------------------------------
 

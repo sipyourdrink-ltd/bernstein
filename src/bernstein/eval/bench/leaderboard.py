@@ -38,6 +38,7 @@ class LeaderboardEntry:
     signer_fingerprint: str = ""
     # Path to the bundle file (relative to the leaderboard root).
     bundle_path: str = ""
+    harness_fingerprint: str = ""
 
     def submitted_at_iso(self) -> str:
         import datetime
@@ -56,6 +57,7 @@ class LeaderboardEntry:
             "submitted_at_iso": self.submitted_at_iso(),
             "signer_fingerprint": self.signer_fingerprint,
             "bundle_path": self.bundle_path,
+            "harness_fingerprint": self.harness_fingerprint,
         }
 
 
@@ -116,6 +118,7 @@ class Leaderboard:
                 submitted_at=e["submitted_at"],
                 signer_fingerprint=e.get("signer_fingerprint", ""),
                 bundle_path=e.get("bundle_path", ""),
+                harness_fingerprint=e.get("harness_fingerprint", ""),
             )
             for e in raw.get("entries", [])
         ]
@@ -124,6 +127,13 @@ class Leaderboard:
             suite_version=raw["suite_version"],
             entries=entries,
         )
+
+    def groups_by_fingerprint(self) -> dict[str, list[LeaderboardEntry]]:
+        """Group leaderboard entries by their harness fingerprint, preserving ranking order."""
+        groups: dict[str, list[LeaderboardEntry]] = {}
+        for entry in self.entries:
+            groups.setdefault(entry.harness_fingerprint, []).append(entry)
+        return groups
 
     def check_rotation_due(self, threshold: float = 0.9, consecutive_required: int = 3) -> RotationStatus:
         """Check if rotation is due based on saturation of baseline submissions."""
@@ -163,8 +173,8 @@ class Leaderboard:
             f"Suite version: **{self.suite_version}**  ",
             f"Suite hash: `{self.suite_hash}`",
             "",
-            "| Rank | Score | Pass rate | Tasks | Submitted | Bundle hash |",
-            "|------|------:|----------:|------:|-----------|-------------|",
+            "| Rank | Score | Pass rate | Tasks | Harness | Submitted | Bundle hash |",
+            "|------|------:|----------:|------:|:-------:|-----------|-------------|",
         ]
 
         for rank, entry in enumerate(self.entries, start=1):
@@ -172,11 +182,13 @@ class Leaderboard:
             pass_pct = f"{entry.pass_rate * 100:.1f}%"
             short_hash = entry.bundle_hash[:16]
             bundle_link = f"[`{short_hash}…`]({entry.bundle_path})" if entry.bundle_path else f"`{short_hash}…`"
+            fp_prefix = f"`{entry.harness_fingerprint[:8]}`" if entry.harness_fingerprint else "-"
             lines.append(
                 f"| {rank} "
                 f"| {score_pct} "
                 f"| {pass_pct} "
                 f"| {entry.num_tasks} "
+                f"| {fp_prefix} "
                 f"| {entry.submitted_at_iso()} "
                 f"| {bundle_link} |"
             )

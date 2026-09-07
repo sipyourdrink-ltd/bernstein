@@ -195,6 +195,16 @@ Two runners on the same `suite_hash` provably ran the same task set.
       "harness_output": {"...": "..."}
     }
   ],
+  "harness_fingerprint": "<sha256 of canonical harness settings>",
+  "harness_settings": {
+    "decomposition": null,
+    "effort": "high",
+    "prompt_templates": {},
+    "retry_policy": {},
+    "sandbox": "none",
+    "timeouts": {},
+    "tool_allowlist": []
+  },
   "signature": "<Ed25519 JWS>",
   "signer_fingerprint": "..."
 }
@@ -203,6 +213,20 @@ Two runners on the same `suite_hash` provably ran the same task set.
 The `receipt` is the replay substrate.  The `score` only means something
 because the receipt exists to replay it.  Removing or corrupting the receipt
 makes the entire bundle fail verification.
+
+### Harness fingerprint and drift prevention
+
+To prevent attributing harness or prompt variations to model capability shifts, bundles compute a `harness_fingerprint` (SHA-256) over canonical run settings:
+- `decomposition`: task decomposition configuration
+- `effort`: reasoning / thinking effort tier
+- `prompt_templates`: mapping of prompt template names to content hashes
+- `retry_policy`: retry parameters and bounds
+- `sandbox`: execution sandbox isolation profile
+- `timeouts`: per-task and per-step timeouts
+- `tool_allowlist`: permitted tools (sorted)
+
+`bernstein bench compare <bundle_a> <bundle_b>` compares two bundles and refuses to rank them if their harness fingerprints differ, reporting the differing keys, unless `--allow-harness-drift` is passed.
+
 
 ---
 
