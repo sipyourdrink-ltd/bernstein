@@ -32,6 +32,11 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
 
 #: The module that is supposed to own the rename.
