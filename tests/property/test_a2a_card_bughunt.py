@@ -725,22 +725,20 @@ def test_jwks_rotation_grace_window_publishes_the_retired_key(tmp_path: Path) ->
         _reset_signing_keypair_for_tests()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Finding #6, remaining half. A card is signed under the stable kid "
-        "(_tenant_kid -> 'agent-bernstein-orchestrator') while an archived key "
-        "is published under a timestamped one (ArchivedKey.kid). After a "
-        "rotation the stable kid resolves to the NEW key, so a verifier that "
-        "routes by kid - which well_known.agent_json_keys' docstring says is "
-        "supported - fetches the wrong key and still fails. Only a verifier "
-        "that tries every key is rescued by the grace window. "
-        "identity/http_signing.py keys archived JWKs on the thumbprint the "
-        "signature carries, which is the shape that works."
-    ),
-)
 def test_jwks_routes_the_signing_kid_to_the_retired_key(tmp_path: Path) -> None:
-    """The kid on an in-flight card must resolve to the key that signed it."""
+    """FIXED: the kid on an in-flight card resolves to the key that signed it.
+
+    This was an ``xfail(strict=True)`` - finding #6, remaining half. A card
+    was signed under a fixed per-tenant kid while archived keys were
+    published under timestamped ones, so after a rotation the kid a card
+    carried resolved to the *new* key and a verifier routing by kid fetched
+    the wrong one. Only a verifier that tried every published key was rescued
+    by the grace window, and that is the fallback rather than the contract.
+
+    Cards are now signed under the RFC 7638 thumbprint of the signing key -
+    the shape ``identity/http_signing.py`` already used - and archived keys
+    are published under theirs, so the kid changes exactly when the key does.
+    """
     from bernstein.core.routes.well_known import (
         _get_keystore,
         _get_signing_keypair,

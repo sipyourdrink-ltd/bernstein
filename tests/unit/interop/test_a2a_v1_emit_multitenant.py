@@ -43,7 +43,16 @@ def test_default_emitted_card_passes_v1_conformance(client: TestClient) -> None:
     card, jwks = _card_and_jwks(client)
     report = check_agent_card_v1_conformance(card, jwks=jwks)
     assert report.ok, [c.detail for c in report.checks if not c.passed]
-    assert report.kid == "agent-bernstein-orchestrator"
+    # The signing kid is the RFC 7638 thumbprint of the signing key, not a
+    # fixed per-tenant string: a fixed string names the tenant, so after a
+    # rotation it resolves to the new key while cards signed minutes earlier
+    # still carry it. What matters to a verifier is that the kid the card
+    # carries resolves in the JWKS it fetched, which is what this asserts.
+    advertised = {jwk["kid"] for jwk in jwks["keys"]}
+    assert report.kid in advertised
+    # The historical fixed kid stays advertised, mapping to the current key,
+    # so a verifier that cached it keeps resolving exactly what it does today.
+    assert "agent-bernstein-orchestrator" in advertised
 
 
 # ---------------------------------------------------------------------------
@@ -60,9 +69,16 @@ def test_two_tenants_serve_distinct_cards_and_keys(client: TestClient) -> None:
     assert report_a.ok, [c.detail for c in report_a.checks if not c.passed]
     assert report_b.ok, [c.detail for c in report_b.checks if not c.passed]
 
-    # Distinct identities: distinct kids and distinct key fingerprints.
-    assert report_a.kid == "agent-bernstein-orchestrator-acme"
-    assert report_b.kid == "agent-bernstein-orchestrator-globex"
+    # Distinct identities: distinct kids and distinct key fingerprints. The
+    # kids are now key-derived, so distinctness follows from the keys being
+    # distinct rather than from the tenant id being pasted into a string -
+    # which is the stronger property this test was reaching for.
+    assert report_a.kid != report_b.kid
+    assert report_a.kid in {jwk["kid"] for jwk in jwks_a["keys"]}
+    assert report_b.kid in {jwk["kid"] for jwk in jwks_b["keys"]}
+    # The per-tenant legacy aliases remain advertised for cached verifiers.
+    assert "agent-bernstein-orchestrator-acme" in {jwk["kid"] for jwk in jwks_a["keys"]}
+    assert "agent-bernstein-orchestrator-globex" in {jwk["kid"] for jwk in jwks_b["keys"]}
     assert report_a.fingerprint != report_b.fingerprint
     assert card_a["tenantId"] == "acme"
     assert card_b["tenantId"] == "globex"
