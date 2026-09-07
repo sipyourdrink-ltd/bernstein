@@ -33,23 +33,129 @@ class RoadmapCursor:
     task_index: int = 0
 
 
+#: Closed set of reasons a wave produced what it produced.
+#:
+#: Every exit from :func:`emit_roadmap_wave_outcome` carries one, so a tick
+#: that emits nothing is never silent about why (issue #5573).
+WAVE_REASONS: frozenset[str] = frozenset(
+    {
+        # Tickets were written.
+        "emitted",
+        # ``.sdd/backlog/open`` does not exist: nowhere to put a ticket.
+        "backlog-missing",
+        # Already at or over the open-ticket ceiling.
+        "ticket-ceiling",
+        # No scenario library: nothing exists to sequence.
+        "no-scenarios",
+        # Scenarios exist, but no ``.sdd/roadmaps/open`` sequences them.
+        # This is the fresh-workspace case: the library was found and is
+        # unreachable, which used to be indistinguishable from an empty one.
+        "no-roadmap",
+        # Roadmaps and scenarios both exist, but no roadmap entry resolved
+        # to a ticket this tick (cursor exhausted, ids absent from the
+        # library, or every file failed to parse).
+        "no-eligible-scenarios",
+    }
+)
+
+
+@dataclass(frozen=True)
+class RoadmapWaveOutcome:
+    """What one wave did, and -- when it did nothing -- why.
+
+    ``emit_roadmap_wave`` returns only the emitted paths, so an empty list
+    conflated six different situations. Callers that need to tell them apart
+    read this instead.
+
+    Attributes:
+        emitted: Ticket files written this wave, in emission order.
+        reason: A member of :data:`WAVE_REASONS`.
+        scenarios_found: Scenarios loaded from ``.bernstein/scenarios``.
+            Non-zero with ``reason="no-roadmap"`` is the case worth
+            reporting: the operator wrote scenarios that nothing consumes.
+        detail: One sentence a human can act on.
+    """
+
+    emitted: tuple[Path, ...]
+    reason: str
+    scenarios_found: int
+    detail: str
+
+    def __post_init__(self) -> None:
+        """Keep ``reason`` inside the closed set it advertises."""
+        if self.reason not in WAVE_REASONS:
+            raise ValueError(f"RoadmapWaveOutcome.reason={self.reason!r} is not in WAVE_REASONS={sorted(WAVE_REASONS)}")
+
+
 def emit_roadmap_wave(workdir: Path, *, max_open_tickets: int = 10) -> list[Path]:
-    """Emit next wave of roadmap tickets into ``.sdd/backlog/open``."""
+    """Emit next wave of roadmap tickets into ``.sdd/backlog/open``.
+
+    Thin wrapper kept for the existing call sites; see
+    :func:`emit_roadmap_wave_outcome` for the reason a wave was empty.
+    """
+    return list(emit_roadmap_wave_outcome(workdir, max_open_tickets=max_open_tickets).emitted)
+
+
+def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> RoadmapWaveOutcome:
+    """Emit the next wave and report what happened, including nothing.
+
+    The scenario library is loaded *before* the roadmap-directory check.
+    That ordering is the fix for #5573: a fresh workspace has no
+    ``.sdd/roadmaps/open``, so the old order returned at that guard and the
+    library on the next line was never read. An operator following the
+    documentation, writing scenarios into ``.bernstein/scenarios``, got an
+    empty list and no indication that the directory the product told them to
+    fill is not reachable from where they are.
+
+    The two capacity guards still run first and are still cheap: a missing
+    backlog directory or a full one means there is nowhere to put a ticket,
+    which is true whatever the library holds. They no longer exit silently
+    either -- each names itself in the outcome.
+    """
     backlog_open = workdir / ".sdd" / "backlog" / "open"
     if not backlog_open.exists():
-        return []
+        return RoadmapWaveOutcome(
+            emitted=(),
+            reason="backlog-missing",
+            scenarios_found=0,
+            detail=f"{backlog_open} does not exist, so there is nowhere to write a ticket.",
+        )
     current_open = len(list(backlog_open.glob("*.yaml")))
     if current_open >= max_open_tickets:
-        return []
-
-    roadmaps_dir = workdir / ".sdd" / "roadmaps" / "open"
-    if not roadmaps_dir.exists():
-        return []
+        return RoadmapWaveOutcome(
+            emitted=(),
+            reason="ticket-ceiling",
+            scenarios_found=0,
+            detail=(
+                f"{current_open} open ticket(s) at a ceiling of {max_open_tickets}; "
+                "close or complete some before the next wave."
+            ),
+        )
 
     library_root = workdir / ".bernstein" / "scenarios"
     library = load_scenario_library(library_root)
+    scenarios_found = len(library.scenarios)
+
+    roadmaps_dir = workdir / ".sdd" / "roadmaps" / "open"
+    if not roadmaps_dir.exists():
+        return RoadmapWaveOutcome(
+            emitted=(),
+            reason="no-roadmap",
+            scenarios_found=scenarios_found,
+            detail=(
+                f"Found {scenarios_found} scenario(s) under {library_root} and skipped "
+                f"them: {roadmaps_dir} does not exist, and a scenario is only emitted "
+                "as a ticket when a roadmap sequences it."
+            ),
+        )
+
     if not library.scenarios:
-        return []
+        return RoadmapWaveOutcome(
+            emitted=(),
+            reason="no-scenarios",
+            scenarios_found=0,
+            detail=f"No scenarios under {library_root}, so the roadmaps have nothing to sequence.",
+        )
 
     runtime_dir = workdir / ".sdd" / "runtime" / "roadmaps"
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +172,23 @@ def emit_roadmap_wave(workdir: Path, *, max_open_tickets: int = 10) -> list[Path
         new_files = _emit_for_spec(spec, cursor, cursor_path, library, backlog_open, max_items=available_slots)
         emitted.extend(new_files)
         available_slots -= len(new_files)
-    return emitted
+    if not emitted:
+        return RoadmapWaveOutcome(
+            emitted=(),
+            reason="no-eligible-scenarios",
+            scenarios_found=scenarios_found,
+            detail=(
+                f"{len(list(roadmaps_dir.glob('*.yaml')) + list(roadmaps_dir.glob('*.yml')))} "
+                f"roadmap file(s) and {scenarios_found} scenario(s), but no entry resolved to a "
+                "ticket: every cursor is exhausted, or the ids they name are absent from the library."
+            ),
+        )
+    return RoadmapWaveOutcome(
+        emitted=tuple(emitted),
+        reason="emitted",
+        scenarios_found=scenarios_found,
+        detail=f"Emitted {len(emitted)} ticket(s) into {backlog_open}.",
+    )
 
 
 def _emit_for_spec(
