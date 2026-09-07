@@ -139,7 +139,7 @@ adapters at a glance.
 | `cody` | unsupported | unsupported | text-signals |
 | `composio` | unsupported | unsupported | hooks |
 | `continue` | unsupported | unsupported | text-signals |
-| `copilot` | unsupported | unsupported | text-signals |
+| `copilot` | unsupported | cli-flag | text-signals |
 | `cursor` | unsupported | cli-flag | stream-json |
 | `devin_terminal` | unsupported | unsupported | poll-pty |
 | `droid` | unsupported | unsupported | text-signals |
@@ -151,10 +151,10 @@ adapters at a glance.
 | `hermes` | unsupported | always-on | text-signals |
 | `iac` | unsupported | unsupported | text-signals |
 | `junie` | unsupported | unsupported | text-signals |
-| `kilo` | unsupported | unsupported | text-signals |
+| `kilo` | unsupported | unsupported | acp |
 | `kimi` | unsupported | cli-flag | text-signals |
 | `kiro` | unsupported | unsupported | text-signals |
-| `letta_code` | unsupported | cli-flag | text-signals |
+| `letta_code` | unsupported | cli-flag | stream-json |
 | `mistral` | unsupported | unsupported | text-signals |
 | `mock` | unsupported | unsupported | text-signals |
 | `muse` | unsupported | cli-flag | text-signals |
