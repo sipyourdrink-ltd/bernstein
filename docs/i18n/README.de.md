@@ -53,7 +53,7 @@ Vier Eigenschaften zeichnen es aus; alles Weitere sind Details.
 Die vollständige Liste befindet sich auf der [Funktionsübersicht](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); die [Feature-Matrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) bietet den vollständigen Index.
 
 ### wie ein Lauf aussieht
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Eine einzige YAML-Datei deklariert den Lauf: Phasen, Rollen, Abhängigkeiten und die Bedingungen, unter denen ein Knoten überhaupt läuft. Der Scheduler führt sie als reines Python aus - nichts in der Datei ist ein Prompt, und kein Modell entscheidet, was als Nächstes passiert. Dieser Graph erzeugt ein Audit-Evidence-Pack; die vollständige Datei liegt unter [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

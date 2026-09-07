@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
+import bernstein.core.roadmap_runtime as roadmap_runtime
 import pytest
 from bernstein.core.roadmap_runtime import (
     RoadmapWaveOutcome,
@@ -93,6 +95,7 @@ def test_scenarios_without_a_roadmap_are_reported_not_swallowed(tmp_path: Path) 
     assert outcome.reason == "no-roadmap"
     assert outcome.scenarios_found == 1, "the library must be read before the roadmap guard"
     assert "roadmaps" in outcome.detail and "skipped" in outcome.detail
+    assert not (tmp_path / ".sdd" / "runtime" / "roadmaps").exists()
 
 
 def test_an_empty_library_is_distinguishable_from_an_unreachable_one(tmp_path: Path) -> None:
@@ -115,7 +118,9 @@ def test_a_missing_backlog_directory_names_itself(tmp_path: Path) -> None:
     outcome = emit_roadmap_wave_outcome(tmp_path)
 
     assert outcome.reason == "backlog-missing"
+    assert outcome.scenarios_found == 1, "the library must be read before the backlog guard"
     assert str(tmp_path / ".sdd" / "backlog" / "open") in outcome.detail
+    assert not (tmp_path / ".sdd" / "runtime" / "roadmaps").exists()
 
 
 def test_the_ticket_ceiling_names_itself_and_the_ceiling(tmp_path: Path) -> None:
@@ -128,7 +133,23 @@ def test_the_ticket_ceiling_names_itself_and_the_ceiling(tmp_path: Path) -> None
     outcome = emit_roadmap_wave_outcome(tmp_path, max_open_tickets=1)
 
     assert outcome.reason == "ticket-ceiling"
+    assert outcome.scenarios_found == 1, "the library must be read before the ticket-ceiling guard"
     assert "1" in outcome.detail
+    assert not (tmp_path / ".sdd" / "runtime" / "roadmaps").exists()
+
+
+def test_an_empty_roadmaps_directory_reports_no_roadmap_without_runtime_state(tmp_path: Path) -> None:
+    _seed_backlog(tmp_path)
+    _seed_scenario(tmp_path)
+    (tmp_path / ".sdd" / "roadmaps" / "open").mkdir(parents=True, exist_ok=True)
+
+    outcome = emit_roadmap_wave_outcome(tmp_path)
+
+    assert outcome.reason == "no-roadmap"
+    assert outcome.scenarios_found == 1
+    assert "contains no roadmap YAML definitions" in outcome.detail
+    assert outcome.emitted == ()
+    assert not (tmp_path / ".sdd" / "runtime" / "roadmaps").exists()
 
 
 def test_a_roadmap_with_no_library_reports_no_scenarios(tmp_path: Path) -> None:
@@ -189,3 +210,19 @@ def test_the_wrapper_still_returns_a_plain_list_of_paths(tmp_path: Path) -> None
 
     assert isinstance(emitted, list)
     assert len(emitted) == 1
+
+
+def test_scenario_skip_warnings_are_deduplicated_by_workspace_and_reason(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        roadmap_runtime._warn_scenarios_skipped(tmp_path, "no-roadmap", "first reason")
+        roadmap_runtime._warn_scenarios_skipped(tmp_path, "no-roadmap", "duplicate reason")
+        roadmap_runtime._warn_scenarios_skipped(tmp_path, "ticket-ceiling", "second reason")
+
+    messages = [record.getMessage() for record in caplog.records if "Found workspace scenarios" in record.getMessage()]
+    assert messages == [
+        "Found workspace scenarios but skipped roadmap emission: first reason",
+        "Found workspace scenarios but skipped roadmap emission: second reason",
+    ]

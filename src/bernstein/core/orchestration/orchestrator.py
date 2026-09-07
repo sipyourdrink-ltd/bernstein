@@ -1655,7 +1655,10 @@ class Orchestrator:
         #    Gated behind _run_normal - no need to scan 300 files every tick.
         if _run_normal:
             try:
-                from bernstein.core.roadmap_runtime import emit_roadmap_wave_outcome
+                from bernstein.core.planning.roadmap_runtime import (
+                    _warn_scenarios_skipped,  # pyright: ignore[reportPrivateUsage]
+                    emit_roadmap_wave_outcome,
+                )
 
                 outcome = emit_roadmap_wave_outcome(self._workdir)
                 if outcome.emitted:
@@ -1665,7 +1668,7 @@ class Orchestrator:
                     # whole point of #5573: the old code returned an empty
                     # list here and an operator who had written scenarios saw
                     # no difference from having written none.
-                    logger.warning("roadmap wave emitted nothing (%s): %s", outcome.reason, outcome.detail)
+                    _warn_scenarios_skipped(self._workdir, outcome.reason, outcome.detail)
                 else:
                     logger.debug("roadmap wave emitted nothing (%s): %s", outcome.reason, outcome.detail)
             except (OSError, ValueError) as exc:

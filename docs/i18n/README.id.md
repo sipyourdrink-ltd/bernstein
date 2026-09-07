@@ -53,7 +53,7 @@ Empat hal membedakannya dari yang lain; selebihnya adalah detail.
 Daftar lengkap ada di [halaman kemampuan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [matriks fitur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) adalah indeks lengkapnya.
 
 ### seperti apa sebuah run
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Satu file YAML mendeklarasikan seluruh run: fase, peran, dependensi, dan kondisi kapan sebuah node dijalankan. Penjadwal mengeksekusinya sebagai Python murni - tidak ada yang berupa prompt di file itu, dan tidak ada model yang memutuskan langkah berikutnya. Graf ini menghasilkan paket bukti audit; file lengkapnya ada di [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

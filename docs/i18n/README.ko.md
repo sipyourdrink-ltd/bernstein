@@ -53,7 +53,7 @@ Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
 
 ### 실행은 이렇게 생겼다
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 YAML 파일 하나가 실행 전체를 선언합니다: 페이즈, 역할, 의존성, 그리고 노드가 실행되는 조건까지. 스케줄러는 이를 순수 Python으로 실행합니다 - 파일 안에 프롬프트는 하나도 없고, 다음에 무슨 일이 일어날지 모델이 결정하지도 않습니다. 이 그래프는 감사 증적 패키지를 만듭니다. 전체 파일은 [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)에 있습니다.
 
