@@ -76,6 +76,13 @@ This is not ceremonial. An area with a name against it gets a second
 reader who knows it; an area with nobody against it accumulates
 whatever the last person in a hurry did.
 
+Area stewardship and committer status are related but separate: a steward
+reviews pull requests in one area; a committer merges pull requests in any
+area, under the quorum in the [review charter](docs/governance/review-charter.md).
+Sustained work in an area is exactly the kind of record the charter's
+nomination floor looks for, so stewardship is usually the path there, not
+a separate track to start over on.
+
 ## Testing
 
 ```bash

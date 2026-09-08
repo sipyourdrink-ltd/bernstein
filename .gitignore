@@ -205,8 +205,10 @@ docs/_internal/observability/*
 *.rej
 
 # Per-run review scratch. These are written into the work tree by the review
-# pass and are not part of any change.
-REVIEW-*.md
+# pass and are not part of any change. Root-scoped like its neighbors below —
+# unscoped, it also matched docs/governance/review-charter.md on a
+# case-insensitive filesystem (REVIEW-*.md vs. review-charter.md).
+/REVIEW-*.md
 
 # Working notes agents write at the repository root while resolving an
 # issue. All three shapes have been committed by runs; none is ever part

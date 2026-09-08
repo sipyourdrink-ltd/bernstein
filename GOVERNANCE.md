@@ -29,6 +29,15 @@ here reaches the release workflows and their publishing credentials. The
 [CODEOWNERS](.github/CODEOWNERS) entry comes with the write grant, since
 GitHub only honors code owners who hold write.
 
+**Committers.** Review capacity is wider than the maintainer alone.
+Committers hold write and merge pull requests through the queue under a
+quorum; core reviewers are the code owners for the tree. Neither role
+touches the boundary above — the maintainer still holds the final call,
+protected paths, releases, and the rosters themselves. The mechanics —
+quorum size, protected paths, nomination floor, what happens when a merge
+should not have — are in the [review charter](docs/governance/review-charter.md),
+which is where this changes, not here.
+
 **Licensing.** Apache-2.0 ([LICENSE](LICENSE)); by contributing you agree
 your contributions are licensed under it. There is no CLA and no sign-off
 requirement — opening the pull request is the whole ceremony. The project
