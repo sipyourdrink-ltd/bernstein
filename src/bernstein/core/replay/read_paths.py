@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.replay.journal import (
     PATH_FIELDS,
+    PAYLOAD_CARRIERS,
     JournalParseError,
     load_events,
     verify_events,
@@ -145,10 +146,26 @@ def derive_read_paths(journal_path: Path, worktree_root: Path) -> ReadPathSet:
     read_paths: set[str] = set()
     out_of_tree: set[str] = set()
     for row in loaded.events:
-        for field in PATH_FIELDS:
-            raw = row.get(field)
-            if not isinstance(raw, str) or not raw:
-                continue
+        # Collect every raw path string this row records: scan top-level
+        # PATH_FIELDS first, then each known nested payload carrier (e.g.
+        # "args" in tool_call rows, "frame" in ACP sink rows).  No
+        # production code emits path or file_path at the top level, so
+        # without the carrier descent the read set is empty on every real
+        # run and the merge-admission gate never fires.
+        raw_paths: list[str] = []
+        for f in PATH_FIELDS:
+            val = row.get(f)
+            if isinstance(val, str) and val:
+                raw_paths.append(val)
+        for carrier in PAYLOAD_CARRIERS:
+            nested = row.get(carrier)
+            if isinstance(nested, dict):
+                for f in PATH_FIELDS:
+                    val = nested.get(f)
+                    if isinstance(val, str) and val:
+                        raw_paths.append(val)
+
+        for raw in raw_paths:
             candidate = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(root_norm, raw))
             try:
                 relative = os.path.relpath(candidate, root_norm)

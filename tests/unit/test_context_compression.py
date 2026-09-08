@@ -380,3 +380,12 @@ class TestPromptCompressor:
         reduction = 1.0 - compressed_tok / max(1, orig)
         assert reduction >= 0.30, f"Expected ≥30% reduction, got {reduction:.1%}"
         assert len(dropped) >= 1
+
+
+def test_context_compressor_has_no_embedding_scorer_attribute(project: Path) -> None:
+    """Regression test for #5672: embedding scorer was removed as dead code."""
+    from bernstein.core.context_compression import ContextCompressor
+
+    compressor = ContextCompressor(project)
+    assert not hasattr(compressor, "embedding_scorer")
+
