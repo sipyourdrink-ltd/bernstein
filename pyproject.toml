@@ -791,7 +791,7 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 "he" = "@chernistry"
 "id" = "@chernistry"
 "vi" = "@chernistry"
-"th" = "@chernistry"
+"th" = "@thegoodengineer"
 
 [tool.pytest.ini_options]
 minversion = "8.0"
