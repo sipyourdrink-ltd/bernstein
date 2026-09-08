@@ -273,3 +273,24 @@ class TestFormatTrustWarning:
         )
         result = format_trust_warning(trust)
         assert "WARNING" not in result
+
+    def test_labels_do_not_claim_unperformed_cryptographic_verification(self) -> None:
+        trust = PluginTrust(
+            plugin_name="safe",
+            risk_level="trusted",
+            signed=True,
+            source_verified=True,
+            has_readme=True,
+            has_tests=True,
+            trust_score=100,
+        )
+        result = format_trust_warning(trust)
+        assert "Signature file present:" in result
+        assert "Metadata present:" in result
+        assert "Cryptographic signature" not in result
+        assert "Source verified" not in result
+
+    def test_docstring_does_not_claim_unperformed_cryptographic_verification(self) -> None:
+        doc = PluginTrust.__doc__ or ""
+        assert "valid cryptographic signature" not in doc
+        assert "verified provenance" not in doc

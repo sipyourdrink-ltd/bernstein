@@ -27,8 +27,9 @@ class PluginTrust:
     Attributes:
         plugin_name: Plugin display name, extracted from metadata or directory name.
         risk_level: One of ``"trusted"``, ``"verified"``, ``"community"``, or ``"unknown"``.
-        signed: Whether the plugin has a valid cryptographic signature.
-        source_verified: Whether the source code includes verified provenance.
+        signed: Whether a signature file (``.signature``) is present in the plugin directory.
+        source_verified: Whether the plugin defines basic package metadata
+            (name, version, author in ``pyproject.toml``).
         has_readme: Whether a README file is present.
         has_tests: Whether a ``tests/`` directory or ``test_*.py`` files exist.
         trust_score: Integer 0-100 computed from trust signals.
@@ -231,8 +232,8 @@ def format_trust_warning(trust: PluginTrust) -> str:
         f"[bold]Trust score:[/bold] {trust.trust_score}/100",
         "",
         "[bold]Signals:[/bold]",
-        f"  Cryptographic signature: {_yes_no(trust.signed)}",
-        f"  Source verified:         {_yes_no(trust.source_verified)}",
+        f"  Signature file present:  {_yes_no(trust.signed)}",
+        f"  Metadata present:        {_yes_no(trust.source_verified)}",
         f"  README present:          {_yes_no(trust.has_readme)}",
         f"  Tests present:           {_yes_no(trust.has_tests)}",
     ]
