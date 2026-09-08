@@ -43,6 +43,7 @@ jobs:
   bump:
     name: Bump diff-coverage floor and open review PR
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 10
     if: >-
       github.event_name == 'workflow_dispatch' ||
