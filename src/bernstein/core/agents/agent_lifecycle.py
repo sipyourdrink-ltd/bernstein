@@ -2676,7 +2676,11 @@ _ORCHESTRATOR_WORKTREE_FILES: frozenset[str] = frozenset(
         "bernstein.yml",
     }
 )
-_ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/", "attestations/", "auth/")
+# Keep this scoped to ``.sdd/``: identities land in ``.sdd/auth`` and
+# attestations in ``.sdd/attestations``, both covered here.  Bare ``auth/``
+# or ``attestations/`` prefixes hide legitimate target-repo work and can cause
+# a false "no changes" completion; see :mod:`bernstein.core.git.git_basic`.
+_ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/",)
 
 
 def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
@@ -2699,15 +2703,14 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
     worktree reads dirty on every clean exit through
     ``.claude/settings.local.json`` alone.
 
-    Any failure returns an empty list: this only ever suppresses an
-    auto-completion, and guessing "dirty" from a broken git call would fail
-    healthy tasks.
+    Any exception or nonzero Git exit returns an empty list, preserving the
+    previous behaviour when status cannot be read.
     """
     if worktree_path is None:
         return []
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
             cwd=str(worktree_path),
             capture_output=True,
             text=True,
@@ -2720,8 +2723,14 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
     if result.returncode != 0:
         return []
     paths: list[str] = []
-    for line in result.stdout.splitlines():
-        path = line[3:].strip().strip('"').rsplit(" -> ", 1)[-1]
+    records = iter(result.stdout.split("\0"))
+    for record in records:
+        if not record:
+            continue
+        status = record[:2]
+        path = record.removeprefix(f"{status} ")
+        if "R" in status or "C" in status:
+            next(records, None)
         if not path:
             continue
         if path in _ORCHESTRATOR_WORKTREE_FILES or path.startswith(_ORCHESTRATOR_WORKTREE_DIRS):

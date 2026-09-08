@@ -10,7 +10,7 @@ reads the worktree's uncommitted paths before that verdict and fails the task
 as unverified instead, so its retry can land the work as a real commit. The
 orchestrator's own worktree files - runtime state under `.sdd/`, the generated
 `CLAUDE.md`, the adapter's `.claude` settings - are filtered out, and any
-failure to read the status leaves the previous behaviour in place, so this can
-only ever suppress an auto-completion and never fail a healthy task.
+exception or nonzero Git exit while reading status returns no uncommitted paths
+and leaves the previous behaviour in place.
 
 (#5619)

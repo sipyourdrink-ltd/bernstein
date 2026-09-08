@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from bernstein.core.models import AgentSession, ModelConfig
 
 from bernstein.core.agents.agent_lifecycle import _uncommitted_work_paths
@@ -55,6 +56,35 @@ def test_tracked_edits_are_reported(tmp_path: Path) -> None:
     assert _uncommitted_work_paths(repo) != []
 
 
+@pytest.mark.parametrize("directory", ["auth", "attestations"])
+def test_tracked_edits_in_target_repo_runtime_named_directories_are_reported(tmp_path: Path, directory: str) -> None:
+    repo = _repo(tmp_path)
+    path = repo / directory / "service.py"
+    path.parent.mkdir()
+    path.write_text("before\n", encoding="utf-8")
+    _run(["git", "add", str(path.relative_to(repo))], repo)
+    _run(["git", "commit", "-m", f"add {directory} service"], repo)
+    path.write_text("after\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == [f"{directory}/service.py"]
+
+
+def test_untracked_file_in_target_repo_auth_directory_is_reported(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    path = repo / "auth" / "service.py"
+    path.parent.mkdir()
+    path.write_text("new\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == ["auth/service.py"]
+
+
+def test_staged_add_in_target_repo_auth_directory_is_reported(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    path = repo / "auth" / "service.py"
+    path.parent.mkdir()
+    path.write_text("new\n", encoding="utf-8")
+    _run(["git", "add", "auth/service.py"], repo)
+    assert _uncommitted_work_paths(repo) == ["auth/service.py"]
+
+
 def test_gitignored_files_are_not_work(tmp_path: Path) -> None:
     """git status --porcelain already honours .gitignore; build junk is not a deliverable."""
     repo = _repo(tmp_path)
@@ -75,20 +105,51 @@ def test_a_missing_or_broken_path_never_claims_dirty(tmp_path: Path) -> None:
     assert _uncommitted_work_paths(plain) == []
 
 
-def test_orchestrator_worktree_artefacts_are_not_work(tmp_path: Path) -> None:
-    """A target repo need not ignore bernstein's own runtime state.
-
-    ``.claude/settings.local.json`` is written into every worktree by the
-    Claude adapter before the agent starts. Without this filter the guard
-    fires on every clean exit in any repo that does not gitignore it.
-    """
+def test_sdd_runtime_files_are_ignored_when_tracked_or_untracked(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    (repo / ".claude").mkdir()
-    (repo / ".claude" / "settings.local.json").write_text("{}\n", encoding="utf-8")
-    (repo / ".sdd" / "runtime").mkdir(parents=True)
-    (repo / ".sdd" / "runtime" / "a.log").write_text("x", encoding="utf-8")
-    (repo / "CLAUDE.md").write_text("task context\n", encoding="utf-8")
+    runtime = repo / ".sdd" / "runtime"
+    runtime.mkdir(parents=True)
+    tracked = runtime / "tracked.log"
+    tracked.write_text("before\n", encoding="utf-8")
+    _run(["git", "add", ".sdd/runtime/tracked.log"], repo)
+    _run(["git", "commit", "-m", "add runtime file"], repo)
+    tracked.write_text("after\n", encoding="utf-8")
+    (runtime / "untracked.log").write_text("new\n", encoding="utf-8")
     assert _uncommitted_work_paths(repo) == []
+
+
+@pytest.mark.parametrize("path", ["CLAUDE.md", ".claude/settings.local.json"])
+@pytest.mark.parametrize("status", ["untracked", "staged", "tracked"])
+def test_exact_orchestrator_files_are_ignored_regardless_of_git_status(tmp_path: Path, path: str, status: str) -> None:
+    repo = _repo(tmp_path)
+    artifact = repo / path
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("before\n", encoding="utf-8")
+    if status == "staged":
+        _run(["git", "add", "-f", path], repo)
+    elif status == "tracked":
+        _run(["git", "add", "-f", path], repo)
+        _run(["git", "commit", "-m", f"add {artifact.name}"], repo)
+        artifact.write_text("after\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == []
+
+
+def test_rename_with_spaced_paths_reports_destination_once(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    source = repo / "old name.py"
+    source.write_text("before\n", encoding="utf-8")
+    _run(["git", "add", "old name.py"], repo)
+    _run(["git", "commit", "-m", "add spaced path"], repo)
+    _run(["git", "mv", "old name.py", "new name.py"], repo)
+    assert _uncommitted_work_paths(repo) == ["new name.py"]
+
+
+def test_untracked_path_containing_rename_arrow_is_not_misparsed(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    path = repo / "foo -> auth" / "x.py"
+    path.parent.mkdir()
+    path.write_text("new\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == ["foo -> auth/x.py"]
 
 
 def test_a_new_directory_counts_every_file_in_it(tmp_path: Path) -> None:
