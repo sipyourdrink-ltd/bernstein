@@ -35,6 +35,7 @@ jobs:
     name: "${{ inputs.bump }} release"
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    environment: pypi
     permissions:
       contents: write
       pull-requests: write

@@ -246,6 +246,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 10
+    environment: pypi
     permissions:
       contents: write
       # actions: write is required to dispatch the release follow-up workflows
@@ -339,6 +340,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 15
+    environment: pypi
     permissions:
       contents: read
     steps:
@@ -504,6 +506,7 @@ jobs:
     # Comfortably above COPR_WATCH_SECONDS below, so the watch always ends on
     # its own deadline rather than being cancelled part-way through.
     timeout-minutes: 30
+    environment: pypi
     permissions:
       contents: read
     env:
@@ -602,6 +605,7 @@ jobs:
     # publish-docker.yml, up to ~14 min) before submitting.
     timeout-minutes: 25
     continue-on-error: true
+    environment: pypi
     permissions:
       contents: read
       id-token: write
