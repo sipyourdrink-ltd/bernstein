@@ -47,6 +47,7 @@ jobs:
   canary:
     name: Canary matrix
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 20
     permissions:
       contents: write        # push the last-green regeneration branch
