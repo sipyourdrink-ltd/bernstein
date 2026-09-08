@@ -46,6 +46,7 @@ jobs:
   audit:
     name: Branch protection audit
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 5
     permissions:
       contents: read
