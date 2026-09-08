@@ -28,6 +28,7 @@ jobs:
   sweep:
     name: Open drift-sweep PR if mirrors drifted
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 15
     permissions:
       contents: write
