@@ -347,17 +347,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.apply:
         ensure_labels(args.repo)
 
+    # Every rule runs over the FULL open-PR set, always - over-wip and
+    # duplicate are inherently cross-PR (an author's total count, a second
+    # PR against the same issue) and give a wrong, weaker answer if the
+    # input is pre-filtered to one PR. --pr only narrows what gets
+    # printed/acted on afterward, never what the rules can see.
     prs = fetch_open_prs(args.repo)
-    if args.pr is not None:
-        prs = [p for p in prs if p.number == args.pr]
-        if not prs:
-            print(f"PR #{args.pr} not found among open PRs.", file=sys.stderr)
-            return 2
 
     rule_over_wip(prs)
     rule_duplicate(prs)
     rule_needs_committer_review(prs)
     rule_changes_requested_timeout(args.repo, prs)
+
+    if args.pr is not None:
+        prs = [p for p in prs if p.number == args.pr]
+        if not prs:
+            print(f"PR #{args.pr} not found among open PRs.", file=sys.stderr)
+            return 2
 
     acted = 0
     for pr in sorted(prs, key=lambda p: p.number):
