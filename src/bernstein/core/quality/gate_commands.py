@@ -118,15 +118,15 @@ def _build_registry_from_config(config: Any) -> tuple[FormatterConfig, ...]:
 
 
 class GateRunnerCommandsMixin:
-    """Mixin providing all individual gate implementations for GateRunner.
+    """Individual gate command implementations and helpers for gate execution.
 
-    This mixin is combined with :class:`~bernstein.core.gate_pipeline.GateRunner`
-    at runtime.  Methods here reference ``self._config``, ``self._workdir``,
-    ``self._base_ref``, ``self._changed_files_resolved``, and helper methods
-    from the cache mixin via the GateRunner instance.
+    Note: This class is not composed into
+    :class:`~bernstein.core.gate_pipeline.GateRunner` (``GateRunner`` does not
+    inherit this mixin). Static helpers (such as ``_build_dead_code_result``)
+    are referenced directly by qualified name.
     """
 
-    # -- mixin initialiser (called from GateRunner.__init__) -----------------
+    # -- mixin initialiser ---------------------------------------------------
 
     @staticmethod
     def __init_commands__(instance: object) -> None:
