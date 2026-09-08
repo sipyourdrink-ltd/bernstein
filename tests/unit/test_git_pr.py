@@ -182,9 +182,7 @@ def test_merge_with_conflict_detection_returns_the_commit_sha(
     orig_fake = fake
     expected_sha = "deadbeef" * 5
 
-    def _fake_with_commit_and_rev_parse(
-        args: list[str], cwd: Path, timeout: int = 30, **kwargs: object
-    ) -> GitResult:
+    def _fake_with_commit_and_rev_parse(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
         if args[:1] == ["commit"]:
             return GitResult(returncode=0, stdout="", stderr="")
         if args[:2] == ["rev-parse", "HEAD"]:
