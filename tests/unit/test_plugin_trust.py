@@ -273,3 +273,24 @@ class TestFormatTrustWarning:
         )
         result = format_trust_warning(trust)
         assert "WARNING" not in result
+
+    def test_panel_does_not_claim_cryptographic_or_provenance_verification(self) -> None:
+        """Regression for #5676: `signed` is file presence, not signature validity.
+
+        `source_verified` is metadata-field presence, not provenance
+        attestation. The panel a plugin author or operator reads must not
+        claim either check is something it is not.
+        """
+        trust = PluginTrust(
+            plugin_name="safe",
+            risk_level="trusted",
+            signed=True,
+            source_verified=True,
+            has_readme=True,
+            has_tests=True,
+            trust_score=100,
+        )
+        result = format_trust_warning(trust)
+        assert "Cryptographic signature" not in result
+        assert "Source verified" not in result
+        assert "never checked against a key" in result
