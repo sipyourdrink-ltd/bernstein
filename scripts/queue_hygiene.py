@@ -50,7 +50,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 DEFAULT_REPO = "sipyourdrink-ltd/bernstein"
@@ -71,9 +71,7 @@ _CLOSES_RE = re.compile(
 
 
 def gh_json(*args: str) -> Any:
-    result = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, check=True
-    )
+    result = subprocess.run(["gh", *args], capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
 
 
@@ -102,7 +100,7 @@ def parse_pr(raw: dict[str, Any]) -> PullRequest:
         author=(raw.get("author") or {}).get("login", "unknown"),
         created_at=datetime.fromisoformat(raw["createdAt"].replace("Z", "+00:00")),
         is_draft=raw["isDraft"],
-        labels={l["name"] for l in raw.get("labels", [])},
+        labels={label["name"] for label in raw.get("labels", [])},
         review_decision=raw.get("reviewDecision") or "",
         body=raw.get("body") or "",
         checks_pass=False,  # filled in by required_checks_pass() below
@@ -121,8 +119,14 @@ def required_checks_pass(repo: str, pr_number: int) -> bool:
     call per PR instead, which is slower but does not fall over.
     """
     checks = gh_json(
-        "pr", "checks", str(pr_number), "--repo", repo,
-        "--required", "--json", "bucket,name",
+        "pr",
+        "checks",
+        str(pr_number),
+        "--repo",
+        repo,
+        "--required",
+        "--json",
+        "bucket,name",
     )
     if not checks:
         # Nothing required has reported yet - not the same as "nothing
@@ -133,7 +137,14 @@ def required_checks_pass(repo: str, pr_number: int) -> bool:
 
 def fetch_open_prs(repo: str) -> list[PullRequest]:
     raw = gh_json(
-        "pr", "list", "--repo", repo, "--state", "open", "--limit", "300",
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "300",
         "--json",
         "number,title,author,createdAt,isDraft,labels,reviewDecision,body",
     )
@@ -167,8 +178,7 @@ def rule_over_wip(prs: list[PullRequest]) -> None:
         for pr in authored[WIP_CAP:]:
             if OVER_WIP_LABEL not in pr.labels:
                 pr.intents.append(
-                    f"add:{OVER_WIP_LABEL} ({author} has "
-                    f"{len(authored)} open, this is past the oldest {WIP_CAP})"
+                    f"add:{OVER_WIP_LABEL} ({author} has {len(authored)} open, this is past the oldest {WIP_CAP})"
                 )
 
 
@@ -188,18 +198,13 @@ def rule_duplicate(prs: list[PullRequest]) -> None:
         for pr in rest:
             if DUPLICATE_LABEL not in pr.labels:
                 pr.intents.append(
-                    f"add:{DUPLICATE_LABEL} + comment (closes #{issue_number}, "
-                    f"same as #{first.number} opened first)"
+                    f"add:{DUPLICATE_LABEL} + comment (closes #{issue_number}, same as #{first.number} opened first)"
                 )
 
 
 def rule_needs_committer_review(prs: list[PullRequest]) -> None:
     for pr in prs:
-        should_have = (
-            not pr.is_draft
-            and pr.checks_pass
-            and pr.review_decision != "CHANGES_REQUESTED"
-        )
+        should_have = not pr.is_draft and pr.checks_pass and pr.review_decision != "CHANGES_REQUESTED"
         has = NEEDS_REVIEW_LABEL in pr.labels
         if should_have and not has:
             pr.intents.append(f"add:{NEEDS_REVIEW_LABEL}")
@@ -207,20 +212,14 @@ def rule_needs_committer_review(prs: list[PullRequest]) -> None:
             pr.intents.append(f"remove:{NEEDS_REVIEW_LABEL}")
 
 
-def last_changes_requested_without_push(
-    repo: str, pr: PullRequest
-) -> datetime | None:
+def last_changes_requested_without_push(repo: str, pr: PullRequest) -> datetime | None:
     """Return the timestamp of the most recent 'changes requested' review
     if no commit has landed since, else None."""
-    reviews = gh_json(
-        "api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate"
-    )
+    reviews = gh_json("api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate")
     changes_requested_at: datetime | None = None
     for r in reviews:
         if r.get("state") == "CHANGES_REQUESTED":
-            ts = datetime.fromisoformat(
-                r["submitted_at"].replace("Z", "+00:00")
-            )
+            ts = datetime.fromisoformat(r["submitted_at"].replace("Z", "+00:00"))
             if changes_requested_at is None or ts > changes_requested_at:
                 changes_requested_at = ts
         elif r.get("state") == "APPROVED":
@@ -231,9 +230,7 @@ def last_changes_requested_without_push(
             pass
     if changes_requested_at is None:
         return None
-    commits = gh_json(
-        "api", f"repos/{repo}/pulls/{pr.number}/commits", "--paginate"
-    )
+    commits = gh_json("api", f"repos/{repo}/pulls/{pr.number}/commits", "--paginate")
     for c in commits:
         date_str = c.get("commit", {}).get("committer", {}).get("date")
         if not date_str:
@@ -245,7 +242,7 @@ def last_changes_requested_without_push(
 
 
 def rule_changes_requested_timeout(repo: str, prs: list[PullRequest]) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for pr in prs:
         if pr.review_decision != "CHANGES_REQUESTED":
             continue
@@ -256,9 +253,7 @@ def rule_changes_requested_timeout(repo: str, prs: list[PullRequest]) -> None:
             continue
         age = now - since
         if age >= timedelta(days=CHANGES_REQUESTED_TIMEOUT_DAYS):
-            pr.intents.append(
-                f"close ({age.days}d since changes-requested, no push)"
-            )
+            pr.intents.append(f"close ({age.days}d since changes-requested, no push)")
 
 
 # (name, color, description) for every label this script can apply that
@@ -286,16 +281,22 @@ def ensure_labels(repo: str) -> None:
             continue
         try:
             gh(
-                "label", "create", name, "--repo", repo,
-                "--color", color, "--description", description,
+                "label",
+                "create",
+                name,
+                "--repo",
+                repo,
+                "--color",
+                color,
+                "--description",
+                description,
             )
             print(f"created missing label: {name}")
         except subprocess.CalledProcessError as exc:
             # Idempotent by design: a race with another run creating the
             # same label between our list and our create is fine to ignore.
             print(
-                f"warning: could not create label {name!r}: "
-                f"{exc.stderr.strip() if exc.stderr else exc}",
+                f"warning: could not create label {name!r}: {exc.stderr.strip() if exc.stderr else exc}",
                 file=sys.stderr,
             )
 
@@ -311,7 +312,12 @@ def apply_intents(repo: str, pr: PullRequest) -> None:
             issue_ref = intent.split("closes #", 1)[1].split(",", 1)[0]
             first_ref = intent.rsplit("#", 1)[1].rstrip(")")
             gh(
-                "pr", "comment", str(pr.number), "--repo", repo, "--body",
+                "pr",
+                "comment",
+                str(pr.number),
+                "--repo",
+                repo,
+                "--body",
                 f"This closes the same issue (#{issue_ref}) as #{first_ref}, "
                 "which was opened first. Marking as a duplicate per the "
                 "review charter's queue rules "
@@ -325,7 +331,12 @@ def apply_intents(repo: str, pr: PullRequest) -> None:
             gh("pr", "edit", str(pr.number), "--repo", repo, "--remove-label", NEEDS_REVIEW_LABEL)
         elif intent.startswith("close ("):
             gh(
-                "pr", "close", str(pr.number), "--repo", repo, "--comment",
+                "pr",
+                "close",
+                str(pr.number),
+                "--repo",
+                repo,
+                "--comment",
                 "Closing per the review charter's queue rules: changes were "
                 "requested and there has been no push for "
                 f"{CHANGES_REQUESTED_TIMEOUT_DAYS} days "
@@ -339,7 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--pr", type=int, default=None, help="limit to one PR number")
     parser.add_argument(
-        "--apply", action="store_true",
+        "--apply",
+        action="store_true",
         help="actually label/comment/close instead of only printing intent",
     )
     args = parser.parse_args(argv)
