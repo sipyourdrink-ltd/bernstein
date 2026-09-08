@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.replay.journal import (
     PATH_FIELDS,
@@ -33,6 +33,7 @@ from bernstein.core.replay.journal import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 
@@ -145,10 +146,7 @@ def derive_read_paths(journal_path: Path, worktree_root: Path) -> ReadPathSet:
     read_paths: set[str] = set()
     out_of_tree: set[str] = set()
     for row in loaded.events:
-        for field in PATH_FIELDS:
-            raw = row.get(field)
-            if not isinstance(raw, str) or not raw:
-                continue
+        for raw in _extract_raw_paths(row):
             candidate = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(root_norm, raw))
             try:
                 relative = os.path.relpath(candidate, root_norm)
@@ -168,6 +166,35 @@ def derive_read_paths(journal_path: Path, worktree_root: Path) -> ReadPathSet:
         read_paths=frozenset(read_paths),
         out_of_tree=frozenset(out_of_tree),
     )
+
+
+def _extract_raw_paths(row: Mapping[str, Any]) -> list[str]:
+    """Extract accessed filesystem path strings from a journal row.
+
+    Inspects top-level fields (``path``, ``file_path``) as well as known
+    payload carriers (``args``, ``frame``) where tool calls and protocol frames
+    nest path parameters (#5646).
+    """
+    raw_paths: list[str] = []
+
+    def _collect(obj: Any) -> None:
+        if not isinstance(obj, dict):
+            return
+        for field in PATH_FIELDS:
+            val = obj.get(field)
+            if isinstance(val, str) and val:
+                raw_paths.append(val)
+
+    _collect(row)
+    for container_key in ("args", "frame"):
+        container = row.get(container_key)
+        if isinstance(container, dict):
+            _collect(container)
+            sub = container.get("args")
+            if isinstance(sub, dict):
+                _collect(sub)
+
+    return raw_paths
 
 
 def _posix(path: str) -> str:

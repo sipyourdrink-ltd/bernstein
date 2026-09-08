@@ -196,7 +196,32 @@ def test_out_of_tree_path_lands_in_separate_set(tmp_path: Path) -> None:
     result = derive_read_paths(path, tmp_path)
 
     assert result.read_paths == frozenset({"src/foo.py"})
-    assert result.out_of_tree == frozenset({str(outside)})
+    assert result.out_of_tree == frozenset({outside.as_posix()})
+
+
+def test_nested_payload_carriers_args_and_frame_are_extracted(tmp_path: Path) -> None:
+    """Tool calls and protocol frames nesting paths under args/frame are extracted (#5646)."""
+    path = _journal(
+        tmp_path,
+        [
+            {"event": "tool_call", "tool": "fs.read", "args": {"path": "README.md"}},
+            {"event": "tool_call", "tool": "editor.open", "args": {"file_path": "src/app.py"}},
+            {"event": "acp_event", "frame": {"path": "docs/guide.md"}},
+            {"event": "acp_event", "frame": {"args": {"path": "config/settings.yaml"}}},
+            {"event": "read", "path": "src/alpha.py"},
+        ],
+    )
+
+    result = derive_read_paths(path, tmp_path)
+
+    assert result.read_paths == frozenset({
+        "README.md",
+        "src/app.py",
+        "docs/guide.md",
+        "config/settings.yaml",
+        "src/alpha.py",
+    })
+    assert result.out_of_tree == frozenset()
 
 
 def test_determinism_across_insertion_orders(tmp_path: Path) -> None:
