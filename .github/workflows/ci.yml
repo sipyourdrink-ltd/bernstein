@@ -2175,6 +2175,7 @@ jobs:
       # Single source of truth for the shard count, mirrors
       # TEST_SHARD_COUNT in the `test` job above.
       MACOS_SHARD_COUNT: "4"
+      BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
     strategy:
       fail-fast: false
       matrix:
