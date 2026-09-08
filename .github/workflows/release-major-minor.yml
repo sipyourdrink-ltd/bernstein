@@ -34,6 +34,7 @@ jobs:
   release:
     name: "${{ inputs.bump }} release"
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 60
     permissions:
       contents: write
