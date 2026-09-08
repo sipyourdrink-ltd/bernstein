@@ -213,6 +213,7 @@ jobs:
     needs: triage
     if: needs.triage.outputs.existing_pr == '' && needs.triage.outputs.safe_for_gemini == 'true'
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 20
     permissions:
       contents: write
