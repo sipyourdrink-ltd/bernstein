@@ -135,6 +135,7 @@ reproduces each one byte for byte.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -952,23 +953,175 @@ def test_card_does_not_verify_with_post_rotation_pubkey() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Finding #10 - no on-disk rotation today, so no archive directory "
-        "to grow. Once persistence lands, repeated rotation MUST garbage-"
-        "collect old archived PEMs after the grace window expires; "
-        "otherwise an attacker who can force rotations exhausts disk."
-    ),
-    strict=True,
-)
-def test_repeated_rotation_does_not_grow_archive_unboundedly() -> None:
-    from pathlib import Path
+class _ManualClock:
+    """``datetime``-shaped clock that only moves when the test moves it.
 
-    archive = Path(".sdd/security/keys/agent_signing/archive")
-    assert archive.exists(), "persistence not landed - nothing to bound"
-    # Once persistence lands: simulate N rotations and assert the archive
-    # size stays under a fixed bound (e.g. grace_window_keys + 1).
-    raise AssertionError("rotation archive bound not implemented")
+    ``AgentCardKeystore`` takes a ``clock`` for exactly this. Two reasons it
+    has to be manual rather than auto-advancing:
+
+    * Rotations driven by the *real* clock all land in the same second, which
+      is indistinguishable from a working prune when what you are measuring is
+      how many archive directories survive.
+    * A clock that advanced on every read would place ``_archive_existing``
+      and the prune that follows it at different instants inside a single
+      ``rotate()``, so the freshly-archived key would be judged against a
+      cutoff taken from its own future and deleted immediately. Real time does
+      not do that, and a test that models it that way measures the model.
+    """
+
+    def __init__(self, start: _dt.datetime | None = None) -> None:
+        self._now = start or _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
+
+    def advance(self, delta: _dt.timedelta) -> None:
+        self._now += delta
+
+    def now(self, tz: _dt.tzinfo | None = None) -> _dt.datetime:
+        return self._now.astimezone(tz) if tz else self._now
+
+
+def test_repeated_rotation_does_not_grow_archive_unboundedly(tmp_path: Path) -> None:
+    """FIXED: rotation prunes the archives the grace window has closed.
+
+    This was an ``xfail(strict=True)`` on the premise "no on-disk rotation
+    today, so no archive directory to grow". Persistence landed:
+    ``AgentCardKeystore._archive_existing`` moves the retired keypair to
+    ``archive/<utc-stamp>/``. Nothing removed it. ``list_archived`` only
+    *skips* entries past the window - its docstring said they "may be GC'd by
+    the operator out-of-band" - so every rotation left another directory
+    behind for good.
+
+    It is not only disk. ``_archive_existing`` archives the retired
+    **private** key next to the public one, so an unbounded archive is an
+    unbounded set of retired signing keys sitting on disk long after they
+    stop being published.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    # A clock that advances an hour per rotation. Real wall-clock time would
+    # put every rotation in the same second, which on main collapses them
+    # into one directory through a *separate* bug - and this test would then
+    # pass for that reason instead of for the pruning it is checking.
+    clock = _ManualClock()
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=90 * 60, clock=clock)
+    keystore.load_or_generate()
+    archive = tmp_path / "keys" / "archive"
+
+    for _ in range(6):
+        keystore.rotate()
+        clock.advance(_dt.timedelta(hours=1))
+
+    assert archive.is_dir()
+    # A 90-minute window over hourly rotations holds at most two archives,
+    # however many rotations happened before them.
+    assert len(list(archive.iterdir())) <= 2
+
+
+def test_a_key_inside_the_grace_window_is_not_pruned(tmp_path: Path) -> None:
+    """The bound must not eat a key the JWKS is still advertising.
+
+    Asserted through ``list_archived`` rather than by counting directories:
+    what matters is that the published set is intact, and that is exactly
+    what a too-eager prune would break.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600)
+    keystore.load_or_generate()
+    keystore.rotate()
+    keystore.rotate()
+
+    assert len(keystore.list_archived()) == 2
+
+
+def test_two_rotations_in_one_second_archive_separately(tmp_path: Path) -> None:
+    """The archive stamp is second-resolution, so rapid rotations collided.
+
+    Both landed in the same ``%Y%m%dT%H%M%SZ`` directory and ``Path.replace``
+    overwrote the keypair already archived there. The write succeeds, so
+    nothing surfaced - a verifier still inside its grace window simply lost
+    the key it was cached on. Found while writing the grace-window test
+    above, which failed on main for this reason rather than for the pruning
+    one it was written for.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600)
+    keystore.load_or_generate()
+    keystore.rotate()
+    keystore.rotate()
+
+    archived = keystore.list_archived()
+    assert len(archived) == 2, "a rotation overwrote the previously archived keypair"
+    assert archived[0].public_pem != archived[1].public_pem
+
+
+def test_a_collision_suffixed_archive_still_reports_its_rotation_time(tmp_path: Path) -> None:
+    """The ``-N`` suffix must not break the directory-name date fallback.
+
+    ``_read_rotated_at`` parses the folder name when ``rotated_at.txt`` is
+    missing, which is how archives written by older versions are dated. A
+    suffix it could not parse would make such an entry undatable - and an
+    undatable entry is never published and never pruned.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600)
+    keystore.load_or_generate()
+    keystore.rotate()
+    keystore.rotate()
+
+    archive = tmp_path / "keys" / "archive"
+    suffixed = [d for d in archive.iterdir() if "-" in d.name]
+    assert suffixed, "expected a collision-suffixed directory"
+    for directory in suffixed:
+        (directory / "rotated_at.txt").unlink()
+
+    assert len(keystore.list_archived()) == 2
+
+
+def test_pruning_removes_the_retired_private_key_too(tmp_path: Path) -> None:
+    """Leaving the private half behind would defeat the point.
+
+    The archive holds ``private.pem`` beside ``public.pem``; the reason to
+    delete an expired entry at all is that the private key is the part worth
+    not keeping.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    clock = _ManualClock()
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=60, clock=clock)
+    keystore.load_or_generate()
+    for _ in range(4):
+        keystore.rotate()
+        clock.advance(_dt.timedelta(hours=1))
+
+    # The archived private key is ``agent-card.ed25519``; the public half is
+    # ``agent-card.ed25519.pub``. Globbing for "*private*" matches neither,
+    # which is how the first draft of this test passed against main.
+    archive = tmp_path / "keys" / "archive"
+    leftover_private = [p for p in archive.rglob("agent-card.ed25519") if p.is_file()]
+    assert leftover_private, "the glob matches nothing - this test would pass vacuously"
+    assert len(leftover_private) <= 1, f"retired private keys left on disk: {leftover_private}"
+
+
+def test_an_archive_with_no_readable_timestamp_is_left_alone(tmp_path: Path) -> None:
+    """Deleting a directory this code cannot date is the one unsafe move.
+
+    Such an entry is not published either, so it costs space and nothing
+    more - which is a far better outcome than destroying key material whose
+    age is unknown.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=0, clock=_ManualClock())
+    keystore.load_or_generate()
+    undatable = tmp_path / "keys" / "archive" / "not-a-timestamp"
+    undatable.mkdir(parents=True)
+    (undatable / "public.pem").write_bytes(b"x")
+
+    keystore.rotate()
+
+    assert undatable.is_dir()
 
 
 # ---------------------------------------------------------------------------
