@@ -14,6 +14,7 @@ jobs:
   snapshot:
     name: Capture snapshot
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 15
     permissions:
       contents: write
