@@ -103,6 +103,73 @@ class Ed25519FileKeySigner:
             format=serialization.PublicFormat.Raw,
         )
 
+    def public_key_jwk(self) -> dict[str, str]:
+        """Return the verifying key as an RFC 7517 JWK.
+
+        Every :class:`~bernstein.core.security.key_custody.KMSAdapter`
+        advertises its key this way, and :func:`signer_from_config` can hand
+        back either one of those or this class depending on which config
+        shape the operator wrote. Without this method the same key on the
+        same disk exposed a different surface depending on whether it was
+        reached through ``key_path=`` or through ``kms_adapter='file'``, and
+        an auditor's JWK-based attestation flow worked or broke on that
+        distinction alone.
+
+        Delegates to the same encoder the adapters use, so the two paths
+        cannot drift into disagreeing about the encoding: RFC 8037 CFRG
+        curves, ``kty='OKP'``, ``crv='Ed25519'``, ``x`` base64url-no-pad.
+
+        Returns:
+            The JWK, with ``kid`` set to the key file's name so an auditor
+            handed several keys can tell them apart.
+        """
+        from bernstein.core.security.key_custody import public_key_jwk_for
+
+        return public_key_jwk_for(self._private_key.public_key(), kid=self.key_path.name)
+
+
+class HSMSigner:
+    """Named stub for an HSM-backed lineage signer. Signing always raises.
+
+    This exists so ``key_kind='hsm'`` has something to *point at*. The
+    Phase-1 dispatcher used to reject it with the same generic
+    "unsupported key_kind" error it gives a typo, which left an operator
+    unable to tell "HSM is not implemented yet" from "HSM is refused on
+    purpose". Those warrant different next steps.
+
+    The real integration shape lives in
+    :class:`~bernstein.core.security.key_custody.HSMKMSAdapter` - PKCS#11
+    token URI, ``C_Login`` with an operator-supplied PIN, ``C_Sign`` over an
+    Ed25519 key handle - and is delivered by subclassing *that* class and
+    selecting it with ``kms_adapter='hsm'``.
+
+    Deliberately **not** a subclass of ``HSMKMSAdapter``.
+    ``_resolve_hsm_subclass`` discovers a customer's integration through
+    ``HSMKMSAdapter.__subclasses__()``, which returns direct subclasses only.
+    A customer who subclassed this class instead would be invisible to that
+    lookup and would silently fall back to the stub. Being a peer that
+    satisfies :class:`LineageSigner` structurally keeps that discovery
+    working and costs nothing - ``LineageSigner`` is a Protocol.
+    """
+
+    __slots__ = ()
+
+    def sign(self, payload: bytes) -> bytes:
+        """Always raise: there is no HSM behind this object.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        del payload  # named stub: never actually used
+        raise NotImplementedError(
+            "HSMSigner is a named stub, not an HSM client. Bernstein ships no "
+            "PKCS#11 / Cloud-KMS integration because the token layout, PIN "
+            "delivery and FIPS mode are customer-specific. Deliver yours as a "
+            "subclass of bernstein.core.security.key_custody.HSMKMSAdapter "
+            "that overrides sign() and public_key_jwk(), import it before "
+            "config load, and select it with lineage.kms_adapter='hsm'.",
+        )
+
 
 class Ed25519PublicKeyVerifier:
     """Verifier paired with :class:`Ed25519FileKeySigner`.
@@ -276,6 +343,18 @@ def signer_from_config(
     # Phase-1 path: file key by default.
     if key_path is None:
         raise LineageSignerError("lineage.customer_signing.enabled=true requires key_path")
+    if key_kind.lower().strip() == "hsm":
+        # Distinguished from a typo on purpose. "Not implemented yet" and
+        # "not a thing" send an operator to different places, and the generic
+        # error below sent both to the same one.
+        raise LineageSignerError(
+            "lineage.customer_signing.key_kind='hsm' is not implemented on the Phase-1 "
+            "key_path route: HSMSigner is a named stub whose sign() raises. Deliver an "
+            "integration as a subclass of "
+            "bernstein.core.security.key_custody.HSMKMSAdapter and select it with "
+            "lineage.kms_adapter='hsm' (plus lineage.kms_adapter_token_uri), which is the "
+            "Phase-2 route that dispatches to it.",
+        )
     if key_kind != "ed25519":
         raise LineageSignerError(
             f"unsupported lineage.customer_signing.key_kind: {key_kind!r} (only 'ed25519' is implemented in Phase 1)",

@@ -138,7 +138,7 @@ class KMSAdapter(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def _public_key_jwk(public_key: Ed25519PublicKey, *, kid: str | None = None) -> dict[str, str]:
+def public_key_jwk_for(public_key: Ed25519PublicKey, *, kid: str | None = None) -> dict[str, str]:
     """Return the RFC 7517 JWK encoding for *public_key*.
 
     The encoding follows RFC 8037 (CFRG curves in JOSE) -- ``kty='OKP'``,
@@ -200,7 +200,7 @@ class FileBasedKMSAdapter:
         # the signer -- means the lineage_signer module stays at a
         # narrower contract (sign/verify only).
         public_key = self._signer._private_key.public_key()
-        return _public_key_jwk(public_key, kid=self.kid or self.key_path.name)
+        return public_key_jwk_for(public_key, kid=self.kid or self.key_path.name)
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ class EnvBasedKMSAdapter:
         return self._signer.sign(payload)
 
     def public_key_jwk(self) -> dict[str, str]:
-        return _public_key_jwk(self._signer.public_key(), kid=self.kid or self.env_var)
+        return public_key_jwk_for(self._signer.public_key(), kid=self.kid or self.env_var)
 
 
 def _decode_env_key(raw: str) -> bytes:
@@ -494,10 +494,16 @@ def _resolve_hsm_subclass() -> type[HSMKMSAdapter] | None:
     return subclasses[0]
 
 
+#: Historical private spelling of :func:`public_key_jwk_for`. The encoder is
+#: now shared with ``persistence.lineage_signer``, which should not have to
+#: import a private name to agree with the adapters about the encoding.
+_public_key_jwk = public_key_jwk_for
+
 __all__ = [
     "EnvBasedKMSAdapter",
     "FileBasedKMSAdapter",
     "HSMKMSAdapter",
     "KMSAdapter",
     "kms_adapter_from_config",
+    "public_key_jwk_for",
 ]
