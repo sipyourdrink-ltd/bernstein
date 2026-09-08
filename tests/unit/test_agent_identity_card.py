@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.identity.agent_card import (
     AgentIdentityCard,
     check_capability,
@@ -96,3 +98,64 @@ class TestInScope:
         card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api/"])
         assert card.in_scope("/src/api/users.py")
         assert not card.in_scope("/src/auth/")
+
+    def test_a_sibling_that_shares_a_prefix_is_not_in_scope(self) -> None:
+        """``"/src/api-internal".startswith("/src/api")`` is True and wrong.
+
+        This is the same defect ``guardrail_pipeline`` fixed for the
+        modified-file manifest; ``in_scope`` was the remaining prefix test.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api"])
+
+        assert not card.in_scope("/src/api-internal/keys.pem")
+        assert not card.in_scope("/src/apikeys")
+        assert card.in_scope("/src/api/users.py")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/src/api/../../etc/passwd",
+            "/src/api/../secrets.env",
+            r"/src/api\..\..\etc\passwd",
+        ],
+    )
+    def test_a_traversal_out_of_scope_is_refused(self, path: str) -> None:
+        """Prefix-true, but the path resolves outside the scope entirely.
+
+        The backslash case is refused on POSIX too: a scope is written on one
+        host and read on another.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api"])
+
+        assert not card.in_scope(path)
+
+    def test_a_scope_entry_naming_no_segment_contains_nothing(self) -> None:
+        """Otherwise one stray "/" silently unrestricts the card.
+
+        An entry that splits to no segments would be a zero-length prefix,
+        and a zero-length prefix matches every path.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/"])
+
+        assert not card.in_scope("/etc/passwd")
+
+    def test_a_scope_of_only_unusable_entries_admits_nothing(self) -> None:
+        """Fail closed, matching the choice ``guardrail_pipeline`` made.
+
+        A non-empty scope means the operator asked for a restriction; it must
+        not collapse into "unrestricted" the way an empty scope does.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/", ""])
+
+        assert not card.in_scope("/anything")
+
+    def test_redundant_separators_and_dots_still_match(self) -> None:
+        """Normalisation must not turn an ordinary spelling into a refusal."""
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src//./api/"])
+
+        assert card.in_scope("src/api/users.py")
+
+    def test_a_scope_entry_matches_the_directory_itself(self) -> None:
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api"])
+
+        assert card.in_scope("/src/api")

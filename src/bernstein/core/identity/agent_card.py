@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -195,6 +196,28 @@ class Signature:
     jws: str = ""
 
 
+#: Either platform's separator: a scope is written on one host and read on
+#: another, so ``src\..\etc`` has to be seen as a traversal on POSIX too.
+_PATH_SEPARATOR_RE = re.compile(r"[\/]+")
+
+
+def _path_segments(value: str) -> tuple[str, ...] | None:
+    """Split *value* into path segments, or ``None`` if it escapes upward.
+
+    ``None`` means the value carries a ``..`` component and so cannot be
+    placed under any scope: the caller treats it as out of scope rather than
+    trying to normalise it, so a traversal is refused instead of compared.
+
+    Leading, trailing and doubled separators contribute no segment, and ``.``
+    is dropped as redundant - ``"/src/api/"`` and ``"src/./api"`` both yield
+    ``("src", "api")``.
+    """
+    segments = tuple(part for part in _PATH_SEPARATOR_RE.split(value) if part not in ("", "."))
+    if any(part == ".." for part in segments):
+        return None
+    return segments
+
+
 @dataclass
 class AgentIdentityCard:
     agent_id: str
@@ -290,9 +313,44 @@ class AgentIdentityCard:
         return name in self.capabilities
 
     def in_scope(self, path: str) -> bool:
+        """Is *path* inside one of this card's scope entries?
+
+        Membership is decided on whole path segments. A raw string prefix
+        answers a different question, and gets it wrong in both directions
+        that matter::
+
+            "/src/api-internal/keys.pem".startswith("/src/api")  # True, elsewhere
+            "/src/api/../../etc/passwd".startswith("/src/api")   # True, outside the tree
+
+        ``core/security/guardrail_pipeline.py`` moved to segment matching for
+        exactly this reason; this method was the remaining prefix test on the
+        same idea. Both separators are examined, because a scope written on
+        one host is read on another.
+
+        An entry that names no segment at all (``"/"``, ``""``) contains
+        nothing rather than everything - otherwise a single stray ``"/"`` in a
+        scope list would silently unrestrict the card. A scope that is
+        entirely such entries therefore admits nothing, which is the
+        fail-closed direction and matches the choice made in
+        ``guardrail_pipeline``.
+
+        Args:
+            path: The path to test.
+
+        Returns:
+            True when *path* sits at or under a scope entry. An empty scope
+            is unrestricted, unchanged.
+        """
         if not self.scope:
             return True  # empty scope = unrestricted
-        return any(path.startswith(prefix) for prefix in self.scope)
+        candidate = _path_segments(path)
+        if candidate is None:
+            return False
+        for entry in self.scope:
+            allowed = _path_segments(entry)
+            if allowed and candidate[: len(allowed)] == allowed:
+                return True
+        return False
 
     def is_expired(self) -> bool:
         return self.expires_at > 0 and time.time() > self.expires_at
