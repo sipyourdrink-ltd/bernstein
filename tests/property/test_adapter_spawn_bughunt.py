@@ -434,22 +434,40 @@ def test_fork_cache_key_stable_for_same_prefix() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "BERNSTEIN_RUN_ID is not currently part of the spawn contract - "
-        "the audit brief calls for an injected per-run identifier in the "
-        "child env-var set, but no adapter or env_isolation surface emits "
-        "it today.  Tracking via xfail until the contract is added."
-    ),
-    strict=True,
-)
-def test_xfail_bernstein_run_id_in_child_env() -> None:
-    """Audit brief item: every spawned process should see BERNSTEIN_RUN_ID."""
+def test_bernstein_run_id_reaches_the_child_env() -> None:
+    """FIXED: a filtered child env carries the run id the orchestrator set.
+
+    This was an ``xfail(strict=True)`` claiming "no adapter or env_isolation
+    surface emits it today". That stopped being true: ``BERNSTEIN_RUN_ID`` is
+    in ``env_isolation._BASE_ALLOWLIST`` with a comment explaining why an
+    agent that loses it writes its instrumentation under a literal
+    ``"unknown"`` run id.
+
+    The xfail never noticed, because the test could not pass either way. The
+    assertion sat *outside* the ``patch.dict`` block, so by the time it ran
+    the patch had been reverted and ``os.environ["BERNSTEIN_RUN_ID"]`` raised
+    ``KeyError`` - on a machine where the variable is not already set, which
+    is every machine that is not mid-run. A strict xfail turned that into a
+    green tick and kept asserting a gap that had been closed.
+    """
     import os
 
     with patch.dict("os.environ", {"BERNSTEIN_RUN_ID": "run-xyz"}, clear=False):
         env = build_filtered_env(["ANTHROPIC_API_KEY"])
-    assert env.get("BERNSTEIN_RUN_ID") == os.environ["BERNSTEIN_RUN_ID"]
+        assert env.get("BERNSTEIN_RUN_ID") == os.environ["BERNSTEIN_RUN_ID"]
+    assert env["BERNSTEIN_RUN_ID"] == "run-xyz"
+
+
+def test_a_child_env_has_no_run_id_when_the_orchestrator_set_none() -> None:
+    """The allowlist admits the variable; it does not invent one.
+
+    Without this, the test above would still pass against a
+    ``build_filtered_env`` that hard-coded the key.
+    """
+    with patch.dict("os.environ", {}, clear=True):
+        env = build_filtered_env([])
+
+    assert "BERNSTEIN_RUN_ID" not in env
 
 
 @pytest.mark.xfail(
