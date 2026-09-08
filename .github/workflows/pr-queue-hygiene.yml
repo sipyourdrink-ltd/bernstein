@@ -1,0 +1,70 @@
+name: PR queue hygiene
+
+# The four rules in scripts/queue_hygiene.py: over-wip, duplicate,
+# needs-committer-review, and closing a PR left with changes-requested and
+# no push for 14 days. Separate from pr-labels.yml (area + size labels,
+# driven by pull_request_target on each PR event) because these four rules
+# need to look across ALL open pull requests at once (an author's total
+# open count, a second PR closing the same issue as an earlier one) rather
+# than react to a single PR's own event, so a schedule sweep is the right
+# shape rather than a per-PR trigger.
+#
+# Runs on a schedule only - no pull_request_target, so it only ever
+# executes trusted code from the base ref against the API. Nothing here
+# checks out or runs anything from a PR head.
+#
+# Dry-run by default. Flip the repository variable QUEUE_HYGIENE_ARMED to
+# "true" to let it actually label/comment/close; until then it only prints
+# what it would do, in the job log, every run.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Limit to one PR number (optional)"
+        required: false
+        type: string
+
+concurrency:
+  group: pr-queue-hygiene
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          sparse-checkout: |
+            scripts/queue_hygiene.py
+          sparse-checkout-cone-mode: false
+      - name: Run queue hygiene
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUEUE_HYGIENE_ARMED: ${{ vars.QUEUE_HYGIENE_ARMED }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "${{ inputs.pr }}" != "" ]; then
+            ARGS+=(--pr "${{ inputs.pr }}")
+          fi
+          if [ "${QUEUE_HYGIENE_ARMED}" = "true" ]; then
+            echo "QUEUE_HYGIENE_ARMED=true - running live."
+            python3 scripts/queue_hygiene.py --apply "${ARGS[@]}"
+          else
+            echo "QUEUE_HYGIENE_ARMED is not 'true' - dry run only. Nothing will be changed."
+            python3 scripts/queue_hygiene.py "${ARGS[@]}"
+          fi

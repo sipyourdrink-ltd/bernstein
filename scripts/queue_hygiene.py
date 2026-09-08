@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+"""Apply the review charter's queue-hygiene rules to open pull requests.
+
+Four rules, each independent of the others:
+
+``over-wip``
+    An author with more than five open, non-draft pull requests gets the
+    label on every one past their oldest five. The oldest five are never
+    labelled, however many total the author has open.
+
+``duplicate``
+    A second (or later) open pull request that closes the same issue as an
+    earlier one gets the label plus a comment pointing at the earlier PR.
+    The earliest PR against a given issue is never the one labelled.
+
+``needs-committer-review``
+    Set when a pull request is not a draft, every check in its status
+    rollup succeeded (or was neutral/skipped — nothing pending or failed),
+    and nobody has requested changes. Removed the moment any of that
+    stops being true.
+
+``changes-requested timeout``
+    A pull request whose most recent review is "changes requested", with
+    no commit pushed since, for fourteen days or more, is closed with a
+    comment on how to reopen it. Exempt labels: pinned, do-not-close,
+    work-in-progress — the same convention stale.yml already uses.
+
+Dry-run by default: every rule always computes and prints what it WOULD do
+for every open pull request. Nothing is labelled, commented on, or closed
+unless ``--apply`` is passed. The workflow that calls this script only
+passes ``--apply`` when the repository variable QUEUE_HYGIENE_ARMED is
+exactly "true" — see .github/workflows/pr-queue-hygiene.yml. Run it by
+hand first:
+
+    python scripts/queue_hygiene.py                    # dry run, all PRs
+    python scripts/queue_hygiene.py --apply             # live
+    python scripts/queue_hygiene.py --pr 5701            # one PR, dry run
+
+This does not touch area or size labels (.github/workflows/pr-labels.yml
+already owns those) and does not touch the sixty-day generic inactivity
+sweep (.github/workflows/stale.yml already owns that) — this script is
+specifically the four rules above, no more.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+DEFAULT_REPO = "sipyourdrink-ltd/bernstein"
+WIP_CAP = 5
+CHANGES_REQUESTED_TIMEOUT_DAYS = 14
+EXEMPT_LABELS = {"pinned", "do-not-close", "work-in-progress"}
+OVER_WIP_LABEL = "over-wip"
+DUPLICATE_LABEL = "duplicate"
+NEEDS_REVIEW_LABEL = "needs-committer-review"
+
+# GitHub's own closing-keyword set (case-insensitive), singular or plural,
+# with or without a colon, per
+# https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue
+_CLOSES_RE = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)",
+    re.IGNORECASE,
+)
+
+
+def gh_json(*args: str) -> Any:
+    result = subprocess.run(
+        ["gh", *args], capture_output=True, text=True, check=True
+    )
+    return json.loads(result.stdout)
+
+
+def gh(*args: str) -> None:
+    subprocess.run(["gh", *args], check=True, capture_output=True, text=True)
+
+
+@dataclass
+class PullRequest:
+    number: int
+    title: str
+    author: str
+    created_at: datetime
+    is_draft: bool
+    labels: set[str]
+    review_decision: str
+    body: str
+    checks_pass: bool
+    intents: list[str] = field(default_factory=list)
+
+
+def parse_pr(raw: dict[str, Any]) -> PullRequest:
+    return PullRequest(
+        number=raw["number"],
+        title=raw["title"],
+        author=(raw.get("author") or {}).get("login", "unknown"),
+        created_at=datetime.fromisoformat(raw["createdAt"].replace("Z", "+00:00")),
+        is_draft=raw["isDraft"],
+        labels={l["name"] for l in raw.get("labels", [])},
+        review_decision=raw.get("reviewDecision") or "",
+        body=raw.get("body") or "",
+        checks_pass=False,  # filled in by required_checks_pass() below
+    )
+
+
+def required_checks_pass(repo: str, pr_number: int) -> bool:
+    """True only when every REQUIRED check (not every job - this repo runs
+    27+ jobs and only two are required contexts) has reported and passed.
+
+    Deliberately per-PR rather than pulling statusCheckRollup in the bulk
+    `gh pr list` call: with ~90 open PRs and this many workflow jobs, the
+    rollup field on the list query is expensive enough on GitHub's side to
+    time out (HTTP 504) - confirmed against the live repo while building
+    this script, not a hypothetical. `gh pr checks --required` costs one
+    call per PR instead, which is slower but does not fall over.
+    """
+    checks = gh_json(
+        "pr", "checks", str(pr_number), "--repo", repo,
+        "--required", "--json", "bucket,name",
+    )
+    if not checks:
+        # Nothing required has reported yet - not the same as "nothing
+        # required exists". Treat as not ready rather than vacuously ready.
+        return False
+    return all(c.get("bucket") == "pass" for c in checks)
+
+
+def fetch_open_prs(repo: str) -> list[PullRequest]:
+    raw = gh_json(
+        "pr", "list", "--repo", repo, "--state", "open", "--limit", "300",
+        "--json",
+        "number,title,author,createdAt,isDraft,labels,reviewDecision,body",
+    )
+    prs = [parse_pr(r) for r in raw]
+    for pr in prs:
+        if pr.is_draft:
+            continue  # drafts never need needs-committer-review; skip the call
+        try:
+            pr.checks_pass = required_checks_pass(repo, pr.number)
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"warning: could not read required checks for #{pr.number}: "
+                f"{exc.stderr.strip() if exc.stderr else exc}",
+                file=sys.stderr,
+            )
+            pr.checks_pass = False
+    return prs
+
+
+def rule_over_wip(prs: list[PullRequest]) -> None:
+    by_author: dict[str, list[PullRequest]] = {}
+    for pr in prs:
+        if pr.is_draft:
+            continue
+        by_author.setdefault(pr.author, []).append(pr)
+    for author, authored in by_author.items():
+        authored.sort(key=lambda p: p.created_at)
+        for pr in authored[:WIP_CAP]:
+            if OVER_WIP_LABEL in pr.labels:
+                pr.intents.append(f"remove:{OVER_WIP_LABEL} (within cap)")
+        for pr in authored[WIP_CAP:]:
+            if OVER_WIP_LABEL not in pr.labels:
+                pr.intents.append(
+                    f"add:{OVER_WIP_LABEL} ({author} has "
+                    f"{len(authored)} open, this is past the oldest {WIP_CAP})"
+                )
+
+
+def rule_duplicate(prs: list[PullRequest]) -> None:
+    by_issue: dict[int, list[PullRequest]] = {}
+    for pr in prs:
+        for m in _CLOSES_RE.finditer(pr.body):
+            by_issue.setdefault(int(m.group(1)), []).append(pr)
+    for issue_number, referring in by_issue.items():
+        if len(referring) < 2:
+            continue
+        deduped = {p.number: p for p in referring}
+        referring = sorted(deduped.values(), key=lambda p: p.created_at)
+        if len(referring) < 2:
+            continue
+        first, rest = referring[0], referring[1:]
+        for pr in rest:
+            if DUPLICATE_LABEL not in pr.labels:
+                pr.intents.append(
+                    f"add:{DUPLICATE_LABEL} + comment (closes #{issue_number}, "
+                    f"same as #{first.number} opened first)"
+                )
+
+
+def rule_needs_committer_review(prs: list[PullRequest]) -> None:
+    for pr in prs:
+        should_have = (
+            not pr.is_draft
+            and pr.checks_pass
+            and pr.review_decision != "CHANGES_REQUESTED"
+        )
+        has = NEEDS_REVIEW_LABEL in pr.labels
+        if should_have and not has:
+            pr.intents.append(f"add:{NEEDS_REVIEW_LABEL}")
+        elif has and not should_have:
+            pr.intents.append(f"remove:{NEEDS_REVIEW_LABEL}")
+
+
+def last_changes_requested_without_push(
+    repo: str, pr: PullRequest
+) -> datetime | None:
+    """Return the timestamp of the most recent 'changes requested' review
+    if no commit has landed since, else None."""
+    reviews = gh_json(
+        "api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate"
+    )
+    changes_requested_at: datetime | None = None
+    for r in reviews:
+        if r.get("state") == "CHANGES_REQUESTED":
+            ts = datetime.fromisoformat(
+                r["submitted_at"].replace("Z", "+00:00")
+            )
+            if changes_requested_at is None or ts > changes_requested_at:
+                changes_requested_at = ts
+        elif r.get("state") == "APPROVED":
+            # An approval after the last changes-requested does not clear
+            # it by itself (the rule is about a *push*), but a later
+            # changes-requested from someone else supersedes an earlier one
+            # regardless - handled by the max() above since we scan all.
+            pass
+    if changes_requested_at is None:
+        return None
+    commits = gh_json(
+        "api", f"repos/{repo}/pulls/{pr.number}/commits", "--paginate"
+    )
+    for c in commits:
+        date_str = c.get("commit", {}).get("committer", {}).get("date")
+        if not date_str:
+            continue
+        pushed_at = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        if pushed_at > changes_requested_at:
+            return None  # a push happened after the request - timer reset
+    return changes_requested_at
+
+
+def rule_changes_requested_timeout(repo: str, prs: list[PullRequest]) -> None:
+    now = datetime.now(timezone.utc)
+    for pr in prs:
+        if pr.review_decision != "CHANGES_REQUESTED":
+            continue
+        if pr.labels & EXEMPT_LABELS:
+            continue
+        since = last_changes_requested_without_push(repo, pr)
+        if since is None:
+            continue
+        age = now - since
+        if age >= timedelta(days=CHANGES_REQUESTED_TIMEOUT_DAYS):
+            pr.intents.append(
+                f"close ({age.days}d since changes-requested, no push)"
+            )
+
+
+# (name, color, description) for every label this script can apply that
+# does not already exist in the repo today (checked against the live
+# label list while building this script - `duplicate` already exists,
+# these five do not). Created idempotently on the first --apply run, not
+# by anyone running this PR's setup by hand, and not during a dry run.
+_LABELS_TO_ENSURE = (
+    (OVER_WIP_LABEL, "d4c5f9", "More than 5 open PRs by this author - past the oldest 5"),
+    (NEEDS_REVIEW_LABEL, "0e8a16", "CI green, not draft, nothing blocking - ready for a committer"),
+    # stale.yml already lists these three as exempt-pr-labels; they were
+    # never created, so that exemption has been a silent no-op. Creating
+    # them here makes stale.yml's existing config do what it already says.
+    ("pinned", "b60205", "Exempt from stale/queue-hygiene auto-close"),
+    ("do-not-close", "b60205", "Exempt from stale/queue-hygiene auto-close"),
+    ("work-in-progress", "fbca04", "Exempt from stale/queue-hygiene auto-close"),
+)
+
+
+def ensure_labels(repo: str) -> None:
+    existing = set(gh_json("label", "list", "--repo", repo, "--limit", "300", "--json", "name"))
+    existing_names = {e["name"] for e in existing} if existing and isinstance(existing, list) else set()
+    for name, color, description in _LABELS_TO_ENSURE:
+        if name in existing_names:
+            continue
+        try:
+            gh(
+                "label", "create", name, "--repo", repo,
+                "--color", color, "--description", description,
+            )
+            print(f"created missing label: {name}")
+        except subprocess.CalledProcessError as exc:
+            # Idempotent by design: a race with another run creating the
+            # same label between our list and our create is fine to ignore.
+            print(
+                f"warning: could not create label {name!r}: "
+                f"{exc.stderr.strip() if exc.stderr else exc}",
+                file=sys.stderr,
+            )
+
+
+def apply_intents(repo: str, pr: PullRequest) -> None:
+    for intent in pr.intents:
+        if intent.startswith(f"add:{OVER_WIP_LABEL}"):
+            gh("pr", "edit", str(pr.number), "--repo", repo, "--add-label", OVER_WIP_LABEL)
+        elif intent.startswith(f"remove:{OVER_WIP_LABEL}"):
+            gh("pr", "edit", str(pr.number), "--repo", repo, "--remove-label", OVER_WIP_LABEL)
+        elif intent.startswith(f"add:{DUPLICATE_LABEL}"):
+            gh("pr", "edit", str(pr.number), "--repo", repo, "--add-label", DUPLICATE_LABEL)
+            issue_ref = intent.split("closes #", 1)[1].split(",", 1)[0]
+            first_ref = intent.rsplit("#", 1)[1].rstrip(")")
+            gh(
+                "pr", "comment", str(pr.number), "--repo", repo, "--body",
+                f"This closes the same issue (#{issue_ref}) as #{first_ref}, "
+                "which was opened first. Marking as a duplicate per the "
+                "review charter's queue rules "
+                "(docs/governance/review-charter.md#5-queue-rules). If #"
+                f"{first_ref} is abandoned, say so here and a committer will "
+                "remove the label.",
+            )
+        elif intent.startswith(f"add:{NEEDS_REVIEW_LABEL}"):
+            gh("pr", "edit", str(pr.number), "--repo", repo, "--add-label", NEEDS_REVIEW_LABEL)
+        elif intent.startswith(f"remove:{NEEDS_REVIEW_LABEL}"):
+            gh("pr", "edit", str(pr.number), "--repo", repo, "--remove-label", NEEDS_REVIEW_LABEL)
+        elif intent.startswith("close ("):
+            gh(
+                "pr", "close", str(pr.number), "--repo", repo, "--comment",
+                "Closing per the review charter's queue rules: changes were "
+                "requested and there has been no push for "
+                f"{CHANGES_REQUESTED_TIMEOUT_DAYS} days "
+                "(docs/governance/review-charter.md#5-queue-rules). Push a "
+                "new commit and comment here to ask a committer to reopen.",
+            )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", default=DEFAULT_REPO)
+    parser.add_argument("--pr", type=int, default=None, help="limit to one PR number")
+    parser.add_argument(
+        "--apply", action="store_true",
+        help="actually label/comment/close instead of only printing intent",
+    )
+    args = parser.parse_args(argv)
+
+    if args.apply:
+        ensure_labels(args.repo)
+
+    prs = fetch_open_prs(args.repo)
+    if args.pr is not None:
+        prs = [p for p in prs if p.number == args.pr]
+        if not prs:
+            print(f"PR #{args.pr} not found among open PRs.", file=sys.stderr)
+            return 2
+
+    rule_over_wip(prs)
+    rule_duplicate(prs)
+    rule_needs_committer_review(prs)
+    rule_changes_requested_timeout(args.repo, prs)
+
+    acted = 0
+    for pr in sorted(prs, key=lambda p: p.number):
+        if not pr.intents:
+            continue
+        acted += 1
+        mode = "APPLY" if args.apply else "DRY-RUN"
+        print(f"[{mode}] #{pr.number} ({pr.author}) {pr.title!r}:")
+        for intent in pr.intents:
+            print(f"    {intent}")
+        if args.apply:
+            apply_intents(args.repo, pr)
+
+    print(f"\n{acted}/{len(prs)} open pull requests have an intent this run.")
+    if not args.apply:
+        print("Dry run only - nothing was changed. Pass --apply to act.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
