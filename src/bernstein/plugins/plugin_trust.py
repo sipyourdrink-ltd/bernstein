@@ -24,12 +24,24 @@ _MANIFEST_FIELDS = frozenset({"name", "version", "author"})
 class PluginTrust:
     """Trust assessment for a Bernstein plugin.
 
+    None of these signals involve cryptographic verification. ``signed``
+    means a file named ``.signature`` exists in the plugin directory --
+    its bytes are hashed, never checked against a key or trust anchor, so
+    any plugin author can create one. ``source_verified`` means
+    ``pyproject.toml`` contains the literal substrings ``name``,
+    ``version`` and ``author`` in a recognised section -- it has nothing
+    to do with provenance attestation. A ``"trusted"`` risk level is
+    therefore a statement about which *metadata files are present*, not
+    a statement that the plugin's authorship or integrity was verified.
+
     Attributes:
         plugin_name: Plugin display name, extracted from metadata or directory name.
         risk_level: One of ``"trusted"``, ``"verified"``, ``"community"``, or ``"unknown"``.
-        signed: Whether a signature file (``.signature``) is present in the plugin directory.
-        source_verified: Whether the plugin defines basic package metadata
-            (name, version, author in ``pyproject.toml``).
+        signed: Whether a ``.signature`` file is present in the plugin directory.
+            Presence only -- not verified against any key.
+        source_verified: Whether ``pyproject.toml`` declares the minimum expected
+            metadata fields (``name``, ``version``, ``author``). Presence of
+            those fields only -- not a provenance attestation.
         has_readme: Whether a README file is present.
         has_tests: Whether a ``tests/`` directory or ``test_*.py`` files exist.
         trust_score: Integer 0-100 computed from trust signals.
@@ -233,9 +245,12 @@ def format_trust_warning(trust: PluginTrust) -> str:
         "",
         "[bold]Signals:[/bold]",
         f"  Signature file present:  {_yes_no(trust.signed)}",
-        f"  Metadata present:        {_yes_no(trust.source_verified)}",
+        f"  Package metadata present:{_yes_no(trust.source_verified)}",
         f"  README present:          {_yes_no(trust.has_readme)}",
         f"  Tests present:           {_yes_no(trust.has_tests)}",
+        "",
+        "[dim]None of these are cryptographic checks -- a signature file's bytes are hashed, "
+        "never checked against a key, and metadata presence is not a provenance attestation.[/dim]",
     ]
 
     if trust.risk_level in ("unknown", "community"):
