@@ -158,6 +158,15 @@ same line the way appending to `docs/release-notes/unreleased.md` did.
 Editing `unreleased.md` directly still works during the transition; see
 `docs/release-notes/README.md`.
 
+### Why a green pull request can be ejected from the merge queue
+
+Bernstein uses a GitHub merge queue configured with `ALLGREEN` grouping (see [merge-queue.md](docs/operations/merge-queue.md)). Under this setting:
+
+- Pull requests are tested together in speculative batches on top of `main` (on a `merge_group` ref).
+- A batch merges only if every entry in the combination passes. This ensures `main` never breaks from unexpected interactions between individually green changes.
+- If a pull request in the batch fails, the entire batch fails. If your PR was ejected despite having green checks on its own branch, this is not necessarily a flake: it usually means an earlier queued PR failed in combination. The queue automatically bisects and ejects the failing PR, re-queueing the remaining entries. Check the `merge_group` Actions run log to see which change caused the combined failure.
+
+
 ### Pre-push hook
 
 Install the versioned pre-push hook to catch lint and architecture-contract

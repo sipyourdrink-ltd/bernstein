@@ -1252,6 +1252,30 @@ _ORCHESTRATOR_GONE_CONFIRM_WINDOW_S = 3.0 * WATCHDOG_POLL_S
 #: pause -- would count towards the window just as if it had been.
 _ORCHESTRATOR_GONE_MAX_OBSERVATION_GAP_S = 2.0 * WATCHDOG_POLL_S
 
+#: Monotonic seconds a quiescent board that still holds a FAILED task must be
+#: re-observed across before the run is believed over.
+#:
+#: Sized from where the gap comes from, not from one stopwatch reading. The
+#: tick loop's retry sweep (step 4b) iterates the snapshot fetched at step 1,
+#: so a task the reap fails LATER in the same tick is first offered to
+#: ``maybe_retry_task`` on the NEXT tick: the gap is one whole tick's WALL
+#: duration, not ``ORCHESTRATOR.tick_interval_s`` (3.0s), and a tick that runs
+#: git hygiene and worktree GC is far longer than its sleep - which is why
+#: this is not derived from the tick period. Measured 2026-09-03: a task
+#: failed at 01:30:04, its retry was created at 01:30:28, and the CLI called
+#: the run terminal 2s into that 24s window and exited while the run went on
+#: retrying until 01:57:15. 45s is that gap with roughly 2x headroom.
+#:
+#: Soft by construction: a pathologically long tick can outlast it, and the
+#: cost of that is the old defect at much lower probability. The cost of a
+#: longer window is every already-finished run's CLI waiting it out, since a
+#: task that exhausted its retries stays ``failed`` for the rest of the run.
+#:
+#: Unlike the "orchestrator gone" verdict this window needs no
+#: observation-gap guard: each confirming poll is a POSITIVE reading of the
+#: whole board, not an inference from a process's absence.
+_QUIESCENCE_RETRY_CONFIRM_WINDOW_S = 45.0
+
 
 def _looks_like_status_histogram(payload: dict[str, Any]) -> bool:
     """Whether *payload* is recognisably a per-status task histogram.
@@ -1296,6 +1320,27 @@ def _incomplete_declared_counts(status_payload: dict[str, Any]) -> tuple[int, di
     return count_incomplete_declared(status_payload), None
 
 
+def _retry_may_still_be_queued(status_payload: dict[str, Any], full_counts: dict[str, Any] | None) -> bool:
+    """Does the run hold a FAILED task whose retry may still be queued?
+
+    ``failed`` is the only bucket that answers this. The tick loop's retry
+    sweep (step 4b) offers ``maybe_retry_task`` the ``failed`` list and nothing
+    else, so a cancelled, refused or abandoned task - and either blocked-by-*
+    state - can never grow new work on a later tick and must not hold a
+    finished run open. ``orphaned`` never reaches this test at all: it is in
+    ``_INCOMPLETE_DECLARED_STATUSES``, so the histogram veto in
+    :func:`_is_quiescent` has already answered "not quiescent".
+
+    Unlike ``in_progress``/``orphaned``, ``failed`` HAS a bucket in the
+    ``/status`` payload, so the fallback is a real count rather than the
+    structural zero that makes an undercount dangerous elsewhere in this
+    module. The check therefore keeps working when ``/tasks/counts`` is
+    unavailable, which is the poll the original defect fired on.
+    """
+    counts = full_counts if isinstance(full_counts, dict) else status_payload
+    return int(counts.get("failed", 0) or 0) > 0
+
+
 def _is_quiescent(
     *,
     total: int,
@@ -1308,7 +1353,11 @@ def _is_quiescent(
     """Whether every declared task has reached a terminal outcome, right now.
 
     One definition, shared by the waiting path and the single-poll path, so the
-    two cannot drift into disagreeing about whether a run has finished.
+    two cannot drift into disagreeing about whether a run has finished. The
+    waiting path adds one confirmation on top: a quiescent board that still
+    holds a failed task is re-observed across
+    ``_QUIESCENCE_RETRY_CONFIRM_WINDOW_S`` before it is believed, because the
+    retry of a just-failed task is created on a later orchestrator tick.
 
     The ``open``/``claimed`` test alone calls a run finished while a task sits
     in ``in_progress`` or ``orphaned``, because ``/status`` has no bucket for
@@ -1517,6 +1566,7 @@ def _wait_for_run_completion(
     gone_last_seen: float | None = None
     gone_polls = 0
     gone_pid: int | None = None
+    quiescent_since: float | None = None
 
     def _reset_streak(reason: str, **fields: Any) -> None:
         nonlocal gone_since, gone_last_seen, gone_polls, gone_pid
@@ -1572,6 +1622,20 @@ def _wait_for_run_completion(
                     "/status) - continuing to wait",
                     n_incomplete,
                 )
+            if quiescent and _retry_may_still_be_queued(status_payload, full_counts):
+                if quiescent_since is None:
+                    quiescent_since = mono
+                    logger.info(
+                        "run_quiescent_pending_retry_confirmation: the board is quiescent but holds a "
+                        "failed task, whose retry is queued on a later tick - re-observing for %.0fs",
+                        _QUIESCENCE_RETRY_CONFIRM_WINDOW_S,
+                    )
+                    quiescent = False
+                elif mono - quiescent_since < _QUIESCENCE_RETRY_CONFIRM_WINDOW_S:
+                    quiescent = False
+            elif not quiescent:
+                quiescent_since = None
+
             if quiescent:
                 logger.info(
                     "run_completion_detected: total=%d open=%d claimed=%d agent_count=%d "

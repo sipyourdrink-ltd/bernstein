@@ -1255,11 +1255,33 @@ def _handle_failure_detection(
 ) -> bool:
     """Detect fatal failure signatures in the agent log and handle them.
 
+    A session that exited 0 is never handled here: log patterns are evidence
+    only for a session that actually died.
+
     Returns True if handled (task already failed/retried/compacted - caller
     must not fall through to the generic orphan-no-signals path).
     """
     _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
     if _rl_tracker is None or not session.provider:
+        return False
+
+    # A process that exited 0 did not die of anything. The scanner greps the
+    # agent's transcript for risky substrings ("401", "rate limit", "timeout"),
+    # and an agent MENTIONING one is not an agent that failed on one: a task
+    # about auth code legitimately prints "HTTP 401" in its final message. On
+    # 2026-09-02 that failed a task whose work had already merged, twice
+    # retried it and DLQ'd it. Log patterns are evidence only for a session
+    # that actually died. A clean exit is handed to the ordinary orphan path
+    # instead, which decides on commits, the completion data and the fast-exit
+    # probe - and still fails it as clean_exit_unverified where the probe says
+    # so. This suppresses one wrong verdict; it does not auto-complete
+    # anything on its own.
+    if session.exit_code == 0:
+        logger.info(
+            "_handle_failure_detection: session %s exited 0 (task=%s); not failing on log patterns",
+            session.id,
+            task_id,
+        )
         return False
 
     _log_path = _resolve_agent_log_path(orch._workdir, session)

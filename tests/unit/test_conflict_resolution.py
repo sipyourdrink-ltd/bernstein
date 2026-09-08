@@ -97,6 +97,11 @@ class TestMergeWithConflictDetection:
     # commit, diff --stat. These tests used to mock a 7-call sequence
     # from the old rebase-first implementation, so the stdout for
     # ``diff --stat`` landed at index 6 and was never reached.
+    #
+    # Issue #5271 added a 6th call after a successful commit -- rev-parse
+    # HEAD, to read the merge commit sha onto MergeResult -- so every
+    # clean-merge mock sequence below carries one more entry than it used
+    # to.
 
     @patch("bernstein.core.git.git_pr.run_git")
     def test_clean_merge(self, mock: MagicMock) -> None:
@@ -106,11 +111,13 @@ class TestMergeWithConflictDetection:
             GitResult(0, "src/foo.py\n", ""),  # _verify_merge_staging_is_safe: staged files
             GitResult(0, "", ""),  # commit -m <msg>
             GitResult(0, "1 file changed\n", ""),  # diff HEAD~1 --stat
+            GitResult(0, "abc1234\n", ""),  # rev-parse HEAD (issue #5271)
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
         assert result.conflicting_files == []
         assert "1 file changed" in result.merge_diff
+        assert result.merge_commit == "abc1234"
 
     @patch("bernstein.core.git.git_pr.run_git")
     def test_clean_merge_custom_message(self, mock: MagicMock) -> None:
@@ -120,6 +127,7 @@ class TestMergeWithConflictDetection:
             GitResult(0, "src/foo.py\n", ""),  # _verify_merge_staging_is_safe
             GitResult(0, "", ""),  # commit
             GitResult(0, "", ""),  # diff --stat
+            GitResult(0, "", ""),  # rev-parse HEAD (issue #5271)
         ]
         merge_with_conflict_detection(REPO, "feature/x", message="Custom merge msg")
         # Verify the commit used the custom message. Sequence: merge (0),

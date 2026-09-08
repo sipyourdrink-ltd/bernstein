@@ -526,6 +526,14 @@ network:
 Localhost (127.0.0.1, ::1) is always allowed. Health check endpoints (`/healthz`) are
 exempt from IP restrictions.
 
+A range that does not parse is dropped with a warning, so the rest of the list still
+applies. If *every* configured range is dropped the allowlist cannot be enforced at all,
+and the server answers `500` on non-exempt paths rather than serving them unrestricted -
+a typo in a CIDR must not silently turn the allowlist off. Health endpoints stay
+reachable in that state so the container is not killed before the log line naming the bad
+range can be read. An empty or omitted `allowed_ips` is unchanged: it means no
+restriction was asked for.
+
 ## API authentication
 
 ### JWT authentication (recommended for single-tenant)
