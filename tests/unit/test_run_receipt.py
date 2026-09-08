@@ -561,6 +561,157 @@ def test_receipt_without_audit_range_binding_bytes_unchanged(tmp_path: Path) -> 
     assert _canonical_json_bytes(block_100) == _canonical_json_bytes(block_110)
 
 
+# ---------------------------------------------------------------------------
+# Hash profile (RFC 8785 / jcs-v2, issue #5274 slice 1)
+# ---------------------------------------------------------------------------
+
+
+def _seed_run_with_unicode_endpoint(sdd_dir: Path, run_id: str = _RUN_ID) -> None:
+    """Like ``_seed_run``, plus one ``agent_spawned`` event with a non-ASCII model name."""
+    journal = EventJournal(run_id=run_id, sdd_dir=sdd_dir)
+    journal.record("run_started", run_id=run_id)
+    journal.record(
+        "agent_spawned",
+        endpoint_adapter_name="mockcli",
+        endpoint_model="задача \U0001f680",
+        endpoint_base_url="",
+        endpoint_profile_name="",
+    )
+    journal.record("run_completed", run_id=run_id, ticks=1)
+    spine = LineageSpine(sdd_dir / "lineage", run_id=run_id, hmac_key=_HMAC_KEY)
+    spine.record(
+        artifact_path="src/app.py",
+        content=b"print('hi')\n",
+        actor="backend",
+        step_id="T-1",
+        model="m1",
+        timestamp=1111,
+    )
+
+
+def test_receipt_binding_bytes_are_jcs_under_v2() -> None:
+    """Under hash_profile=jcs-v2 the binding bytes are RFC 8785, not json.dumps.
+
+    A non-ASCII property value is where the two profiles diverge: legacy
+    json.dumps escapes it to \\uXXXX (ensure_ascii defaults True), RFC 8785
+    keeps it as raw UTF-8. Pins that divergence rather than asserting the
+    dispatcher merely delegated somewhere.
+    """
+    from bernstein.core.replay.run_receipt import _binding_block, _canonical_bytes_for_profile
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+    block = _binding_block(
+        run_id="run-1",
+        journal_head="h1",
+        journal_count=1,
+        spine_head="s1",
+        spine_count=1,
+        audit_head_sha256=None,
+        endpoint_identities=[{"adapter": "a", "model": "задача \U0001f680", "base_url": "", "profile": ""}],
+        hash_profile="jcs-v2",
+    )
+    jcs_bytes = _canonical_bytes_for_profile(block, "jcs-v2")
+    legacy_bytes = _canonical_bytes_for_profile(block, "py-json-v1")
+
+    assert jcs_bytes == canonicalize_jcs(block)
+    assert "задача \U0001f680".encode() in jcs_bytes
+    assert "задача \U0001f680".encode() not in legacy_bytes
+    assert b"\\u0437" in legacy_bytes  # Cyrillic 'з' (U+0437), still \u-escaped under the legacy profile
+
+
+def test_canonical_bytes_for_profile_rejects_unknown_profile() -> None:
+    """The dispatcher itself refuses a third profile name rather than silently defaulting."""
+    from bernstein.core.replay.run_receipt import _canonical_bytes_for_profile
+
+    with pytest.raises(ValueError, match="unknown hash_profile"):
+        _canonical_bytes_for_profile({"a": 1}, "py-json-v2")
+
+
+def test_default_hash_profile_binding_bytes_unchanged(tmp_path: Path) -> None:
+    """Not passing hash_profile produces byte-identical output to before this field existed."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    default_build = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False)
+    explicit_legacy = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="py-json-v1")
+    assert default_build.receipt_bytes == explicit_legacy.receipt_bytes
+    assert "hash_profile" not in default_build.receipt
+    assert default_build.receipt["subject"] == explicit_legacy.receipt["subject"]
+
+
+def test_hash_profile_jcs_v2_round_trips_through_build_and_verify(tmp_path: Path) -> None:
+    """A jcs-v2 receipt carrying non-ASCII endpoint data builds and verifies offline."""
+    sdd = tmp_path / ".sdd"
+    _seed_run_with_unicode_endpoint(sdd)
+    receipt = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="jcs-v2")
+    assert receipt.receipt["hash_profile"] == "jcs-v2"
+    models = [row.get("endpoint_model") for row in receipt.receipt["journal"]["events"]]
+    assert "задача \U0001f680" in models
+
+    result = verify_run_receipt(receipt.receipt_bytes)
+    assert result.ok, result.errors
+    assert result.status == "ok"
+
+
+def test_hash_profile_jcs_v2_fails_under_legacy_recompute() -> None:
+    """Sanity check the round trip is testing something: legacy recompute must reject it.
+
+    Rebuilds the same binding under py-json-v1 and confirms the digest it
+    produces differs from the one the jcs-v2 build actually signed, i.e. the
+    profile genuinely changes the signed bytes rather than being decorative.
+    """
+    from bernstein.core.replay.run_receipt import _binding_block, _canonical_bytes_for_profile
+
+    identities = [{"adapter": "a", "model": "задача \U0001f680", "base_url": "", "profile": ""}]
+    block = _binding_block(
+        run_id="run-1",
+        journal_head="h1",
+        journal_count=1,
+        spine_head="s1",
+        spine_count=1,
+        audit_head_sha256=None,
+        endpoint_identities=identities,
+        hash_profile="jcs-v2",
+    )
+    signed_bytes = _canonical_bytes_for_profile(block, "jcs-v2")
+    legacy_recompute = _canonical_bytes_for_profile(block, "py-json-v1")
+    assert hashlib.sha256(signed_bytes).hexdigest() != hashlib.sha256(legacy_recompute).hexdigest()
+
+
+def test_unknown_hash_profile_fails_closed_at_verify(tmp_path: Path) -> None:
+    """A receipt claiming a hash_profile this verifier does not know is malformed, not skipped."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    receipt = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False)
+    doc = dict(receipt.receipt)
+    doc["hash_profile"] = "py-json-v2"
+
+    result = verify_run_receipt(_reserialize(doc))
+    assert result.ok is False
+    assert result.status == "malformed"
+    assert "hash_profile" in "; ".join(result.errors)
+
+
+def test_tampered_hash_profile_field_fails_verification(tmp_path: Path) -> None:
+    """Relabelling a signed jcs-v2 receipt back to py-json-v1 post-signing collapses verification."""
+    sdd = tmp_path / ".sdd"
+    _seed_run_with_unicode_endpoint(sdd)
+    receipt = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="jcs-v2")
+    doc = dict(receipt.receipt)
+    doc["hash_profile"] = "py-json-v1"
+
+    result = verify_run_receipt(_reserialize(doc))
+    assert result.ok is False
+    assert result.status == "tampered"
+
+
+def test_build_run_receipt_rejects_unknown_hash_profile(tmp_path: Path) -> None:
+    """The writer validates hash_profile up front rather than signing under a typo'd name."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    with pytest.raises(RunReceiptError, match="unknown hash_profile"):
+        build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="jcs-v3")
+
+
 def test_audit_range_requires_build_inputs(tmp_path: Path) -> None:
     """include_audit_range without key/window is refused, never half-built."""
     sdd = tmp_path / ".sdd"

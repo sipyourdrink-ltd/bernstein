@@ -119,6 +119,34 @@ any leaderboard entry is written.
 The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
 each row linking its bundle hash so anyone can re-verify.
 
+### 4. Compare two bundles
+
+```bash
+bernstein bench compare a.json b.json
+```
+
+`bench compare` ranks two bundles by score, but only when they were
+produced by the **same harness settings**.  Every bundle carries a
+`harness_fingerprint` (see [Bundle format](#bundle-format)) — a SHA-256
+over the canonical JSON of the `scheduler_config` mapping that shaped
+the run.  When the fingerprints differ, `compare` prints which settings
+keys differ and **refuses to rank**, because a score gap across
+differing harness settings is a harness change, not a model change:
+
+```text
+Harness fingerprints differ: 9f1c48d0aa21… vs 5b07d39c88fe…
+Differing harness settings: prompt_template
+Refusing to rank: a score gap across differing harness settings is a
+harness change, not a model change.  Pass --allow-harness-drift to rank
+anyway.
+```
+
+Pass `--allow-harness-drift` to rank anyway (the differing keys are
+still printed).  The stored fingerprint is recomputed from the raw
+`scheduler_config` beside it before it is trusted; a bundle whose stored
+fingerprint does not match its own settings fails with an integrity
+error even with the flag.
+
 ---
 
 ## Reliability floor (`--reliability k`)
@@ -177,6 +205,7 @@ Two runners on the same `suite_hash` provably ran the same task set.
   "suite_version": "golden-v1",
   "submitted_at": 1753000000.0,
   "scheduler_config": {"...": "..."},
+  "harness_fingerprint": "<sha256 of canonical scheduler_config JSON>",
   "overall_score": 0.95,
   "pass_rate": 1.0,
   "task_results": [
@@ -203,6 +232,18 @@ Two runners on the same `suite_hash` provably ran the same task set.
 The `receipt` is the replay substrate.  The `score` only means something
 because the receipt exists to replay it.  Removing or corrupting the receipt
 makes the entire bundle fail verification.
+
+`harness_fingerprint` is a SHA-256 over the canonical JSON (sorted keys,
+no whitespace) of the full `scheduler_config` mapping.  It is a pure
+projection of the settings carried beside it — it does not participate
+in `bundle_hash` — and is recomputed by `bench compare` before it is
+trusted.  The whole mapping is hashed rather than a named-key allowlist,
+so a setting nobody thought to list still changes the fingerprint instead
+of silently drifting two runs onto one identity; wall-clock time, paths,
+and run identity are excluded because they are not harness settings.
+Bundles emitted before the field existed load unchanged (the fingerprint
+is derived on load), and comparing against one reads as drift requiring
+`--allow-harness-drift`.
 
 ---
 

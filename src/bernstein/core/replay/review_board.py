@@ -439,7 +439,13 @@ def list_board_runs(sdd_dir: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def record_task_merged(recorder: EventJournal | None, *, task_id: str, agent_id: str | None) -> None:
+def record_task_merged(
+    recorder: EventJournal | None,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    merge_commit: str | None = None,
+) -> None:
     """Record a ``task_merged`` event into the run journal.
 
     Called by the task lifecycle right after a verified task's work is
@@ -451,10 +457,18 @@ def record_task_merged(recorder: EventJournal | None, *, task_id: str, agent_id:
         recorder: The run's :class:`EventJournal` (or ``None``).
         task_id: The merged task's identifier.
         agent_id: The producing agent session id, when known.
+        merge_commit: The sha of the commit the merge produced on the
+            integration branch (issue #5271), when one exists -- a merge
+            that found nothing to commit (branches already identical)
+            produced none. Optional and keyword-only so existing callers
+            keep compiling; omitted from the row entirely rather than
+            recorded as an empty string, so an older journal reader that
+            does not know the field sees exactly what it saw before.
     """
     if recorder is None:
         return
-    recorder.record(EVENT_TASK_MERGED, task_id=task_id, agent_id=agent_id)
+    extra: dict[str, Any] = {"merge_commit": merge_commit} if merge_commit else {}
+    recorder.record(EVENT_TASK_MERGED, task_id=task_id, agent_id=agent_id, **extra)
 
 
 # ---------------------------------------------------------------------------

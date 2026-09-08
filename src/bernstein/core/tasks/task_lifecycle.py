@@ -3830,7 +3830,15 @@ def _reap_and_cleanup_session(
         # issue #2365: chain the merge decision into the run journal so the
         # review board's merged column is a projection of the journal, not a
         # side inference. No-op when the orchestrator has no recorder.
-        record_task_merged(getattr(orch, "_recorder", None), task_id=task.id, agent_id=session.id)
+        # issue #5271: carry the merge commit sha so the row can be tied back
+        # to the git object it actually produced, not just to "a merge
+        # happened". None when the merge found nothing to commit.
+        record_task_merged(
+            getattr(orch, "_recorder", None),
+            task_id=task.id,
+            agent_id=session.id,
+            merge_commit=getattr(merge_result, "merge_commit", None),
+        )
 
     # issue #2559: reconcile what the task declared it would produce against what
     # this run's spine actually carries, and record an artifact-keyed attempt for

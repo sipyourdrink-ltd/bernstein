@@ -154,6 +154,7 @@ def _drop_full_deny_list_runtime_state(worktree_path: Path, session_id: str) -> 
     claude_dir = worktree_path / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     (claude_dir / "mcp.json").write_text("{}\n", encoding="utf-8")
+    (claude_dir / "settings.local.json").write_text("{}\n", encoding="utf-8")
 
 
 def _make_task() -> Task:
@@ -192,6 +193,7 @@ def test_create_writes_worktree_scoped_excludes_not_a_tracked_gitignore(tmp_path
     assert "/.claude/mcp.json" in lines
     assert "/CLAUDE.md" in lines
     assert "/.claude/scheduled_tasks.json" in lines
+    assert "/.claude/settings.local.json" in lines
 
     # Must not blanket-ignore the whole .claude/ tree -- that would drop a
     # legitimate .claude/ deliverable (e.g. a skill or command).
@@ -246,6 +248,22 @@ def test_git_add_dash_a_does_not_stage_full_deny_list_paths(tmp_path: Path, repo
     denied_staged = [p for p in staged if git_pr._is_forbidden_for_merge(p)]
     assert denied_staged == [], f"deny-listed paths must never be staged, got: {denied_staged}"
     assert "src/feature.py" in staged, "the agent's real work must still be staged"
+
+
+def test_claude_settings_local_json_is_not_staged(tmp_path: Path, repo: Path) -> None:
+    """Regression for #5620: adapters/claude.py writes settings.local.json into
+    <worktree>/.claude/, which must not be staged by git add -A."""
+    mgr = WorktreeManager(repo_root=repo)
+    session_id = "sess-claude-settings"
+    worktree_path = mgr.create(session_id)
+
+    claude_dir = worktree_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / "settings.local.json").write_text('{"autoApprove": []}\n', encoding="utf-8")
+
+    _git(worktree_path, "add", "-A")
+    staged = _staged(worktree_path)
+    assert ".claude/settings.local.json" not in staged
 
 
 def test_generated_session_claude_md_is_not_staged(tmp_path: Path, repo: Path) -> None:

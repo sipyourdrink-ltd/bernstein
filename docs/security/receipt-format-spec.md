@@ -188,6 +188,26 @@ a canonical subject dictionary:
 - Under schema `1.1.0`, embedding an audit range binds `audit_range_since`,
   `audit_range_until`, `audit_range_event_count`, and `audit_range_head_hmac`
   alongside `audit_range_head_sha256` to prevent post-signing window relabelling.
+
+#### Canonicalization profile
+
+The binding block above is turned into bytes by one of two profiles, named by
+a top-level `hash_profile` field on the receipt and echoed into the binding
+block itself:
+
+- `py-json-v1` (default): `json.dumps(obj, sort_keys=True, separators=(",",
+  ":"))`, the profile every run receipt used before this field existed.
+  `ensure_ascii` defaults to `True`, so a non-ASCII property value is escaped
+  as `\uXXXX`.
+- `jcs-v2`: RFC 8785 (JCS) via the same `canonicalize_jcs` the TRACE
+  projection and audit-chain digests already use. Non-ASCII text is emitted
+  as raw UTF-8, and numbers follow the ECMAScript `Number::toString` rule.
+
+A receipt carrying no `hash_profile` field is `py-json-v1` - the field is
+added only when a receipt is signed under `jcs-v2`, so a `py-json-v1` receipt
+is byte-identical to one built before this field existed. A verifier that
+reads an unrecognised `hash_profile` value fails closed (`status:
+"malformed"`) rather than guessing a profile to recompute under.
 - Under legacy schema `1.0.0`, only `audit_range_head_sha256` is bound. Legacy
   receipts verify with a warning (`"audit window unbound in schema 1.0.0"`).
 

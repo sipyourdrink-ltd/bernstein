@@ -358,6 +358,21 @@ and the Step 1 payload from becoming three different answers.
 | `min_entries_to_merge_wait_minutes` | 0 | **0** | With `max_entries_to_merge = 1` there is no batch to fill, so any wait is pure added latency |
 | `check_response_timeout_minutes` | 30 | **240** | Re-measured 2026-07-27 over the last 30 successful `CI` runs on `main` (`run_started_at` -> `updated_at`): p50 **49** min, p90 **214** min, max **243** min, and **30 of 30 exceeded 30 minutes**. The earlier figures in this row (p50 38 / p90 58 / max 105) are stale. At the shipped `30`, *every* entry is ejected as timed out. At `120`, 9 of those 30 runs would still have been ejected. `240` covers all but the single 243-minute outlier. Re-measure in Step 0 before flipping - this value tracks runner-pool contention, not the test suite. |
 
+### Grouping strategy: ALLGREEN vs HEADGREEN tradeoff
+
+The merge queue is configured with `grouping_strategy: ALLGREEN`.
+
+**The Tradeoff Stated Plainly:**
+- `ALLGREEN` is the strictest setting: every entry in a batch is tested together, and the batch merges only if the entire batch passes. This ensures the exact tree tested is the exact tree that lands on `main`. However, under cumulative batching, an entry at position 1 or 2 that fails only in the combined tree will fail every group containing it, stalling all queued PRs behind it.
+- `HEADGREEN` merges the longest passing prefix (`e1..eN-1`), which prevents a poison entry from blocking PRs queued behind it, but at the cost of merging a prefix whose combination was not the exact tested tree.
+
+**Measured Cost of ALLGREEN:**
+- On 2026-09-04 between 19:58Z and 22:19Z (2h21m), the queue held 7 PRs with CI green on each PR's branch, but produced zero merges because 2 entries failed in the combined tree. Six consecutive merge-group builds produced no merge. Once the failing entries were dequeued by hand, 9 merges landed in 4 minutes.
+- A second episode occurred overnight with #5234 (ejected and re-queued 5 times, each cycle a full group build, costing ~3 hours of queue capacity).
+
+**Decision:**
+The strategy remains `ALLGREEN`. A slow queue is preferable to an untested merge on `main`. Whole-tree guards on PRs (#5428) and baseline snapshot freshness (#5503) address the supply of poison pills directly. Until then, operators resolve stalls using the bisection runbook below.
+
 ## Blockers to the flip
 
 **Both cleared 2026-08-14; the queue was flipped the same day.** The
@@ -572,6 +587,22 @@ checks. Any PRs sitting in the queue are released back to normal merge.
 | Entries ejected as timed out | `check_response_timeout_minutes` below the real CI wall time | Raise it; see the measured distribution in Tunables |
 | Merges land but no release is tagged | The post-merge `push` CI run did not reach the dispatcher | Confirm a `push` run on `main` exists at the merged SHA, then that `post-ci-dispatcher.yml` ran off it; check `pyproject.toml` is still absent from `ci.yml`'s `push.paths-ignore` |
 | Queue throughput too low | Build concurrency, not batching | Raise `max_entries_to_build`. Do **not** raise `max_entries_to_merge` - see Tunables |
+| Queue produces no merge for >1h with queued PRs | A single entry fails alone in the merged tree, failing all stacked groups (`ALLGREEN`) | Follow the bisection runbook below: identify the failing entry from the single-member batch and dequeue it |
+
+### Stalled queue bisection (handling poison entries)
+
+When the merge queue has entries queued but produces no merge for an hour:
+
+1. **Inspect the single-member batch:** The queue always builds position 1 alone as a single-member batch. Check `gh run list --event merge_group --limit 10`:
+   - If the single-member batch for PR #N is failing, PR #N is failing alone on top of `main`.
+   - If position 1 passes alone but stacked groups fail, the conflict is between two specific entries in the stack.
+2. **Identify the culprit:**
+   - Look at the failed `CI gate` check on the `merge_group` run.
+   - Trace the first group in the stack that transitioned from green to red.
+3. **Dequeue the poison entry:**
+   - Disable auto-merge on the culprit PR: `gh pr merge <number> --disable-auto`.
+   - The queue will automatically eject that entry and immediately re-form the remaining queue into new groups without having to drain or pause the ruleset.
+
 
 The `merge_group` path is guarded by regression tests in
 `tests/unit/test_required_check_canary_workflow_yaml.py` (required-context
