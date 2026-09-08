@@ -1,8 +1,5 @@
-## Accurate GateRunnerCommandsMixin docstring on composition and initialization
+## The GateRunnerCommandsMixin composition claim is pinned by a test
 
-`GateRunnerCommandsMixin`'s docstring previously claimed that it was combined
-with `GateRunner` at runtime and that `__init_commands__` was called from
-`GateRunner.__init__`. In reality, `GateRunner` does not inherit or compose the
-mixin, and static helpers (such as `_build_dead_code_result`) are referenced
-directly by qualified name. The docstrings and comments now accurately document
-this relationship without claiming nonexistent runtime composition (#5682).
+`GateRunnerCommandsMixin`'s docstring used to claim it was combined with `GateRunner` at runtime and that `__init_commands__` was called from `GateRunner.__init__`. Neither is true: `GateRunner.__mro__` is `(GateRunner, object)`, and no call site for `__init_commands__` exists. The docstring now says so.
+
+Nothing stopped it drifting back. Two tests pin the claim to the code it describes - one asserting `GateRunnerCommandsMixin` is genuinely absent from `GateRunner.__mro__`, one asserting the docstring does not reassert runtime composition - so a future edit that reintroduces the claim without reintroducing the composition fails rather than misleading the next reader (#5682).

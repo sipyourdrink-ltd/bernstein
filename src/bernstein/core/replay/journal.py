@@ -96,6 +96,13 @@ _NON_DETERMINISTIC_FIELDS = frozenset({"ts", "elapsed_s", "index", "prev_hash", 
 #: run touched).
 PATH_FIELDS = ("path", "file_path")
 
+#: Known nested payload carriers whose sub-dicts are also scanned for
+#: :data:`PATH_FIELDS`.  ``args`` is the standard tool-call argument map
+#: (e.g. ``{"type": "tool_call", "args": {"path": "README.md"}}``);
+#: ``frame`` wraps entire ACP events emitted by ``ACPEventJournalSink``.
+#: Extending this tuple makes new carriers visible to *all* consumers.
+PAYLOAD_CARRIERS: tuple[str, ...] = ("args", "frame")
+
 _GENESIS_HASH = ""
 
 #: A run_id names exactly one journal directory and must be a single safe path
