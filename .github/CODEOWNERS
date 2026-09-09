@@ -18,10 +18,17 @@
 /proto/ @chernistry
 /pyproject.toml @chernistry
 /uv.lock @chernistry
+/SECURITY.md @chernistry
+/GOVERNANCE.md @chernistry
+/MAINTAINERS.md @chernistry
+/AGENTS.md @chernistry
+/docs/governance/ @chernistry
+/docs/decisions/ @chernistry
 
-# Lockfiles outside the root, for the same reason as /uv.lock (charter, s4).
-/sdk/python/uv.lock @chernistry
+# Manifests and lockfiles outside the root, for the same reason as
+# /pyproject.toml and /uv.lock above (charter, s4).
 /sdk/python/pyproject.toml @chernistry
+/sdk/python/uv.lock @chernistry
 /sdk/typescript/package-lock.json @chernistry
 /web/package-lock.json @chernistry
 /packages/vscode/package-lock.json @chernistry
@@ -37,13 +44,6 @@
 # Container images are in scope in SECURITY.md (charter, s4).
 /Dockerfile @chernistry
 /docker-compose.yaml @chernistry
-
-/SECURITY.md @chernistry
-/GOVERNANCE.md @chernistry
-/MAINTAINERS.md @chernistry
-/AGENTS.md @chernistry
-/docs/governance/ @chernistry
-/docs/decisions/ @chernistry
 
 # The review roster and the two scripts that enforce this file and the
 # charter. `.github/` above already covers the roster; these are the pieces
