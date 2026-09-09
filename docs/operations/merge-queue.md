@@ -235,16 +235,25 @@ docs-only.
 
 ## macOS coverage under the queue
 
-The macOS matrix (`test-macos`, `adapter-integration-macos`) is **gated**:
-it runs on `push` to `main`, on macOS-sensitive diffs, and on the
-`macos-needed` label. On a queued group the label and `push` branches cannot
-fire, so `macos_sensitive` - computed from the group's combined diff - is what
-decides: a group touching a macOS-sensitive path runs the macOS cells in the
-queue, and a group that does not skips them. The `CI gate` roll-up tolerates
-exactly that skip (see `MACOS_SKIP_EVENTS` in `ci.yml`). Coverage is preserved
-because the **post-merge `push` to `main`** runs the full macOS suite
-un-gated, and `ci-macos-nightly.yml` is the daily safety net. The queue
-validates the integrated combination; the merged commit validates macOS.
+The macOS matrix (`test-macos`, `adapter-integration-macos`) **never runs in
+the queue**. Both jobs carry `github.event_name != 'merge_group'`.
+
+The reason is that a queue build cannot observe anything new on that surface.
+The group's merge commit is the tree that lands on `main`, and the
+**post-merge `push` to `main`** re-runs the same platform checks against it
+minutes later. Running them inside the group buys a duplicate of a result the
+push produces anyway, while the group sits at the head of the queue and every
+entry behind it waits.
+
+The `CI gate` roll-up tolerates the skip unconditionally on this event -- see
+`MACOS_UNCONDITIONAL_SKIP_EVENTS` in `ci.yml`, a subset of `MACOS_SKIP_EVENTS`
+-- so a queued group is never wedged waiting on a job that cannot start.
+
+Coverage on what actually lands: the post-merge push runs
+`adapter-integration-macos` on every commit and the `test-macos` shards
+whenever the diff touches a macOS-sensitive path, and `ci-macos-nightly.yml`
+re-runs the whole macOS suite at 06:00 UTC daily. The queue validates the
+integrated combination; the merged commit validates macOS.
 
 ## Auto-release through the queue
 
