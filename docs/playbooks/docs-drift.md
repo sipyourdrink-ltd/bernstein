@@ -50,6 +50,15 @@ Drift remediation paths used by the rows below:
 
 ### Governance
 
+`check_docs_drift.py` compares no content. Per row it asserts that each
+recognised source exists, that the doc exists, and it fails a pull request
+that deletes a recognised source. So editing a threshold in
+`scripts/quorum_check.py`, or adding a name to `.github/quorum-roster.toml`,
+leaves every file in place and reports clean. The drift signals below are
+the cue for the reviewer of that change, not something CI detects. "Any new
+top-level directory" on the `.github/CODEOWNERS` row has no detector at all
+- it is a standing instruction to decide ownership when one appears.
+
 | Doc | Source of truth | Drift signal | Remediation |
 |-----|-----------------|--------------|-------------|
 | `GOVERNANCE.md` | `docs/governance/`, `.github/CODEOWNERS`, `./MAINTAINERS.md` | Maintainer model changes, protected-path ownership changes, or the committer/maintainer roster changes | `manual-prose` |
