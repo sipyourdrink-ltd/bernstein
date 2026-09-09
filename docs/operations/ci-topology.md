@@ -71,7 +71,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/rendering-lane.yml | Rendering lane | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "rendering-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| format('branch-{0}-{1}', github.ref, github.sha) }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 1 |
+| .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 2 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-weekly.yml | soc2-evidence-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
@@ -105,7 +105,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/bisect-on-red.yml | bisect: Identify culprit PR |
 | .github/workflows/branch-protection-audit.yml | audit: Branch protection audit |
 | .github/workflows/ci-gate-stub.yml | ci-gate: ${{ needs.classify.outputs.all_ignored == 'true' && 'CI gate' \|\| 'CI gate stub (not applicable)' }}<br>classify: Classify diff against ci.yml paths-ignore |
-| .github/workflows/ci-macos-nightly.yml | open-failure-issue: Open / update macOS nightly failure issue<br>test-macos-nightly: Test (macos-latest, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }}) |
+| .github/workflows/ci-macos-nightly.yml | open-failure-issue: Open / update macOS nightly failure issue<br>test-macos-nightly: Test (macOS, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }}) |
 | .github/workflows/ci-topology-heal.yml | heal: Regenerate topology report |
 | .github/workflows/ci-weekly-digest.yml | digest: Build and publish weekly digest |
 | .github/workflows/ci.yml | actionlint: Workflow lint<br>adapter-conformance-windows: Adapter conformance + e2e (windows)<br>adapter-integration: Adapter integration (fake-CLI)<br>adapter-integration-macos: Adapter integration (fake-CLI, macOS)<br>bandit: Bandit (security)<br>beartype: Beartype (type contracts)<br>ci-gate: CI gate<br>close-ci-issues: Close resolved CI issues<br>coverage-report: Coverage report<br>dead-code: Dead code (Vulture)<br>determine-changes: Determine changes<br>diff-coverage: Diff coverage report<br>dist-size: Package size check<br>install-smoke-pipx: Install smoke - pipx (${{ matrix.os }}, Python ${{ matrix.python-version }})<br>install-smoke-rpm: Install smoke - RPM (${{ matrix.image }})<br>install-smoke-uv: Install smoke - uv tool (${{ matrix.os }})<br>integration-tests: Integration tests<br>lineage-gate: Lineage Gate<br>lint: Lint<br>mutmut-diff: Mutation report (diff-only)<br>mypy-strict-zone: mypy strict (lineage substrate)<br>pip-audit: pip-audit (deps)<br>property-tests: Property tests (Hypothesis smoke)<br>proto-drift: Proto codegen drift<br>pyright-strict-zone: Pyright strict (security + cluster)<br>repo-hygiene: Repo hygiene<br>schemathesis-smoke: Schemathesis smoke<br>semgrep: Semgrep (custom rules)<br>snapshot-tests: Snapshot tests (syrupy)<br>spelling: Spelling (typos)<br>test: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})<br>test-macos: Test (macos-latest, Python 3.13, shard ${{ matrix.shard }})<br>typecheck: Type check report |
@@ -151,7 +151,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/rendering-lane.yml | rendering: Rendering fetcher (browser-backed) |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
-| .github/workflows/runner-canary.yml | canary: Runner canary |
+| .github/workflows/runner-canary.yml | canary: Runner canary<br>macos-canary: macOS runner canary |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/soc2-evidence-weekly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |

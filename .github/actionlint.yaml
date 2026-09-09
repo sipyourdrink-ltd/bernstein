@@ -3,3 +3,4 @@
 self-hosted-runner:
   labels:
     - vps
+    - mac-night
