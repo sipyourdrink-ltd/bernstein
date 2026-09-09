@@ -248,8 +248,13 @@ def rule_needs_committer_review(prs: list[PullRequest]) -> None:
             pr.intents.append(f"remove:{NEEDS_REVIEW_LABEL}")
 
 
-def _is_bot(login: str) -> bool:
-    return login.endswith("[bot]") or login.startswith("app/")
+def _is_bot(review: dict[str, Any]) -> bool:
+    """Ask the type, never the spelling. REST carries ``user.type == "Bot"``;
+    GraphQL returns an app's login with no ``[bot]`` suffix, which is why a
+    suffix-only check is fragile - this endpoint is REST, so the reliable
+    field is free."""
+    user = review.get("user") or {}
+    return user.get("type") == "Bot" or (user.get("login") or "").endswith("[bot]")
 
 
 def standing_approvals(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -291,7 +296,7 @@ def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
             r
             for r in standing_approvals(reviews)
             if r["user"]["login"] not in APPROVAL_SHAPE_EXEMPT_LOGINS
-            and not _is_bot(r["user"]["login"])
+            and not _is_bot(r)
             and r["user"]["login"] not in already_dismissed_logins
         ]
         if not approvals:

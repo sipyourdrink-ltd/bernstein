@@ -251,8 +251,13 @@ def test_changes_requested_timeout_respects_exempt_labels(qh: ModuleType, monkey
 # --- approval-shape ---------------------------------------------------------
 
 
-def _review(review_id: int, login: str, state: str, at: str, *, body: str = "") -> dict:
-    return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at, "body": body}
+def _review(
+    review_id: int, login: str, state: str, at: str, *, body: str = "", user_type: str | None = None
+) -> dict:
+    user = {"login": login}
+    if user_type is not None:
+        user["type"] = user_type
+    return {"id": review_id, "user": user, "state": state, "submitted_at": at, "body": body}
 
 
 def _install_review_api(monkeypatch: pytest.MonkeyPatch, qh: ModuleType, reviews: list, comments: list) -> None:
@@ -378,9 +383,14 @@ def test_approval_shape_exempts_the_maintainer_and_bots(qh: ModuleType, monkeypa
         monkeypatch,
         qh,
         [
-            _review(10, maintainer, "APPROVED", "2026-09-09T10:00:00Z"),
-            _review(11, "renovate[bot]", "APPROVED", "2026-09-09T10:00:00Z"),
-            _review(12, "app/some-app", "APPROVED", "2026-09-09T10:00:00Z"),
+            _review(10, maintainer, "APPROVED", "2026-09-10T10:00:00Z"),
+            # Suffix-recognized bot (renovate[bot]) ...
+            _review(11, "renovate[bot]", "APPROVED", "2026-09-10T10:00:00Z"),
+            # ... and a REST app user with no [bot] suffix at all - recognized
+            # only because the endpoint carries user.type == "Bot". Dated on
+            # or after the cutoff so this exercises the bot check itself,
+            # not the effective-date filter.
+            _review(12, "some-ci-bot", "APPROVED", "2026-09-10T10:00:00Z", user_type="Bot"),
         ],
         [],
     )
