@@ -8,7 +8,7 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -109,6 +109,11 @@ def run_git(
         subprocess.CalledProcessError: When *check* is True and the command fails.
         subprocess.TimeoutExpired: When the command exceeds *timeout*.
     """
+    # ``env`` is passed only when a caller supplied one, so the subprocess
+    # call for the other ~200 call sites is byte-identical to before. Several
+    # tests assert the exact kwargs of this call; an unconditional
+    # ``env=None`` would change all of them for no behavioural reason.
+    extra: dict[str, Any] = {"env": dict(env)} if env is not None else {}
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -118,7 +123,7 @@ def run_git(
         errors="replace",
         timeout=timeout,
         input=input_data,
-        env=dict(env) if env is not None else None,
+        **extra,
     )
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(
