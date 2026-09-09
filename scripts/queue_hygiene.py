@@ -16,8 +16,9 @@ Five rules, each independent of the others:
 ``needs-committer-review``
     Set when a pull request is not a draft, every check in its status
     rollup succeeded (or was neutral/skipped — nothing pending or failed),
-    it has no merge conflict, and nobody has requested changes. Removed the
-    moment any of that stops being true.
+    GitHub has confirmed it is mergeable (an unresolved ``UNKNOWN`` status is
+    treated as not ready, not as vacuously clear), and nobody has requested
+    changes. Removed the moment any of that stops being true.
 
 ``approval-shape``
     The charter (section 3) says an approval on a non-trivial change means
@@ -237,7 +238,7 @@ def rule_needs_committer_review(prs: list[PullRequest]) -> None:
         should_have = (
             not pr.is_draft
             and pr.checks_pass
-            and pr.mergeable != "CONFLICTING"
+            and pr.mergeable == "MERGEABLE"
             and pr.review_decision != "CHANGES_REQUESTED"
         )
         has = NEEDS_REVIEW_LABEL in pr.labels

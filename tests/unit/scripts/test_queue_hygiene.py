@@ -179,6 +179,15 @@ def test_needs_review_not_added_on_a_merge_conflict(qh: ModuleType) -> None:
     assert not any(i.startswith("add:needs-committer-review") for i in pr.intents)
 
 
+def test_needs_review_not_added_while_mergeable_is_unknown(qh: ModuleType) -> None:
+    # mergeable is computed asynchronously by GitHub and reads UNKNOWN until
+    # it catches up (and every merge to the base branch invalidates it again) -
+    # that is not the same as a confirmed absence of a conflict.
+    pr = _pr(qh, 1, mergeable="UNKNOWN")
+    qh.rule_needs_committer_review([pr])
+    assert not any(i.startswith("add:needs-committer-review") for i in pr.intents)
+
+
 def test_needs_review_removed_once_a_conflict_appears(qh: ModuleType) -> None:
     pr = _pr(qh, 1, mergeable="CONFLICTING", labels={"needs-committer-review"})
     qh.rule_needs_committer_review([pr])
