@@ -73,6 +73,10 @@ NEEDS_REVIEW_LABEL = "needs-committer-review"
 # approval-shape: below this many changed lines an approval may reasonably
 # carry no line comment (a one-line fix, a version bump).
 APPROVAL_SHAPE_MIN_CHANGED_LINES = 40
+# Approvals already standing before this rule is armed must not all be
+# dismissed on the first run - only approvals given at or after this
+# timestamp are ever in scope.
+APPROVAL_SHAPE_EFFECTIVE_FROM = "2026-09-10T00:00:00Z"
 # The maintainer's approval is a protected-path requirement in its own right
 # (charter, section 4), not a quorum vote, so it is not held to the shape rule.
 APPROVAL_SHAPE_EXEMPT_LOGINS = frozenset({"chernistry"})
@@ -267,6 +271,11 @@ def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
     for pr in prs:
         if pr.is_draft or pr.changed_lines <= APPROVAL_SHAPE_MIN_CHANGED_LINES:
             continue
+        # Same exemption the changes-requested timeout already honors: pinned,
+        # do-not-close and work-in-progress protect a PR from an automated
+        # dismissal just as they protect it from an automated close.
+        if pr.labels & EXEMPT_LABELS:
+            continue
         reviews = gh_json("api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate")
         approvals = [
             r
@@ -281,6 +290,8 @@ def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
         comments = gh_json("api", f"repos/{repo}/pulls/{pr.number}/comments", "--paginate")
         commented_by = {(c.get("user") or {}).get("login") for c in comments}
         for review in approvals:
+            if (review.get("submitted_at") or "") < APPROVAL_SHAPE_EFFECTIVE_FROM:
+                continue
             login = review["user"]["login"]
             if login in commented_by or (review.get("body") or "").strip():
                 continue

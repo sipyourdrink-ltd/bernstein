@@ -259,7 +259,7 @@ def _install_review_api(monkeypatch: pytest.MonkeyPatch, qh: ModuleType, reviews
 def test_approval_shape_dismisses_a_bare_approval_on_a_non_trivial_change(
     qh: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _install_review_api(monkeypatch, qh, [_review(10, "alice", "APPROVED", "2026-09-09T10:00:00Z")], [])
+    _install_review_api(monkeypatch, qh, [_review(10, "alice", "APPROVED", "2026-09-10T10:00:00Z")], [])
     pr = _pr(qh, 1, changed_lines=120)
     qh.rule_approval_shape("owner/repo", [pr])
     assert pr.intents == ["dismiss:10 (alice: approval without a line comment on 120 changed lines)"]
@@ -273,7 +273,7 @@ def test_approval_shape_keeps_an_approval_whose_author_left_a_line_comment(
     _install_review_api(
         monkeypatch,
         qh,
-        [_review(10, "alice", "APPROVED", "2026-09-09T10:00:00Z")],
+        [_review(10, "alice", "APPROVED", "2026-09-10T10:00:00Z")],
         [{"user": {"login": "alice"}, "pull_request_review_id": 11}],
     )
     pr = _pr(qh, 1, changed_lines=120)
@@ -294,13 +294,40 @@ def test_approval_shape_keeps_an_approval_whose_body_is_non_blank(
                 10,
                 "alice",
                 "APPROVED",
-                "2026-09-09T10:00:00Z",
+                "2026-09-10T10:00:00Z",
                 body="Ran the suite locally, checked the migration path, LGTM",
             )
         ],
         [],
     )
     pr = _pr(qh, 1, changed_lines=120)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
+def test_approval_shape_keeps_an_approval_from_before_the_effective_date(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # First arming must not re-litigate every approval already standing on the
+    # open queue - only approvals given at or after APPROVAL_SHAPE_EFFECTIVE_FROM
+    # are ever dismissed.
+    before_cutoff = "2026-09-09T23:59:59Z"
+    assert before_cutoff < qh.APPROVAL_SHAPE_EFFECTIVE_FROM
+    _install_review_api(monkeypatch, qh, [_review(10, "alice", "APPROVED", before_cutoff)], [])
+    pr = _pr(qh, 1, changed_lines=120)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
+def test_approval_shape_respects_exempt_labels(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Same convention the changes-requested timeout already honors - pinned,
+    # do-not-close and work-in-progress must protect a PR from an automated
+    # dismissal too, not only from an automated close.
+    def fake_gh_json(*args: str) -> object:
+        raise AssertionError("must not call the API for an exempt PR")
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
+    pr = _pr(qh, 1, changed_lines=200, labels={"pinned"})
     qh.rule_approval_shape("owner/repo", [pr])
     assert not pr.intents
 
@@ -337,14 +364,14 @@ def test_approval_shape_exempts_the_maintainer_and_bots(qh: ModuleType, monkeypa
 def test_approval_shape_uses_each_users_latest_verdict(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     reviews = [
         # alice approved bare, then requested changes: nothing standing to dismiss
-        _review(10, "alice", "APPROVED", "2026-09-09T10:00:00Z"),
-        _review(11, "alice", "CHANGES_REQUESTED", "2026-09-09T11:00:00Z"),
+        _review(10, "alice", "APPROVED", "2026-09-11T10:00:00Z"),
+        _review(11, "alice", "CHANGES_REQUESTED", "2026-09-11T11:00:00Z"),
         # bob approved bare, then re-approved and left a line note: the fresh one stands
-        _review(20, "bob", "APPROVED", "2026-09-09T10:00:00Z"),
-        _review(21, "bob", "APPROVED", "2026-09-09T12:00:00Z"),
+        _review(20, "bob", "APPROVED", "2026-09-11T10:00:00Z"),
+        _review(21, "bob", "APPROVED", "2026-09-11T12:00:00Z"),
         # carol approved bare, then only commented: GitHub keeps her approval standing
-        _review(30, "carol", "APPROVED", "2026-09-09T10:00:00Z"),
-        _review(31, "carol", "COMMENTED", "2026-09-09T13:00:00Z"),
+        _review(30, "carol", "APPROVED", "2026-09-11T10:00:00Z"),
+        _review(31, "carol", "COMMENTED", "2026-09-11T13:00:00Z"),
     ]
     comments = [{"user": {"login": "bob"}, "pull_request_review_id": 21}]
     _install_review_api(monkeypatch, qh, reviews, comments)
