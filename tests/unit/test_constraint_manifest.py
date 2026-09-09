@@ -48,7 +48,6 @@ def _make_proposal(
     )
 
 
-
 def _covered_by_specific_pattern(entry: str, owner_patterns: list[str]) -> bool:
     """True when a CODEOWNERS pattern other than the `*` catch-all covers ``entry``.
 
@@ -63,6 +62,7 @@ def _covered_by_specific_pattern(entry: str, owner_patterns: list[str]) -> bool:
         if prefix and norm_entry.startswith(prefix):
             return True
     return False
+
 
 class TestConstraintLayerRejection:
     """Proposal fixture touching core/audit rejected at L0, L1, L2, L3 with the same reason."""
