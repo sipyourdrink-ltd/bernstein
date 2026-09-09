@@ -26,7 +26,7 @@ permissions: {}
 jobs:
   track:
     name: Detect hotfix-begets-hotfix
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     # Only run on commits that look like CI hotfixes. Conventional
     # commit prefix `fix(ci):` matches the established pattern used by
