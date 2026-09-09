@@ -18,6 +18,23 @@
 /proto/ @chernistry
 /pyproject.toml @chernistry
 /uv.lock @chernistry
+
+# Lockfiles outside the root, for the same reason as /uv.lock (charter, s4).
+/sdk/python/uv.lock @chernistry
+/sdk/typescript/package-lock.json @chernistry
+/web/package-lock.json @chernistry
+/packages/vscode/package-lock.json @chernistry
+
+# Agent configuration files at the repository root (charter, s4).
+/CLAUDE.md @chernistry
+/.aider.conf.yml @chernistry
+/.goosehints @chernistry
+/.mcp.json @chernistry
+/.cursor/ @chernistry
+
+# Container images are in scope in SECURITY.md (charter, s4).
+/Dockerfile @chernistry
+/docker-compose.yaml @chernistry
 /SECURITY.md @chernistry
 /GOVERNANCE.md @chernistry
 /MAINTAINERS.md @chernistry

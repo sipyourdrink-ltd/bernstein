@@ -68,9 +68,12 @@ adapters, the web dashboard, the terminal UI, docs, and packaging.
 Stewardship starts at triage rather than write, because write access
 on this repository reaches the release workflows and their publishing
 credentials, and that surface is kept least-privilege. After a
-stretch of established stewardship the write grant follows, and with
-it your entry in [CODEOWNERS](.github/CODEOWNERS) - GitHub only
-honors code owners who hold write.
+stretch of established stewardship the maintainer can confirm you as a
+committer, which is the write grant, and on a record of reviews that
+found real problems as a core reviewer for the area, which is what an
+entry in [CODEOWNERS](.github/CODEOWNERS) means - GitHub only honors
+code owners who hold write. Both roles, and the floor for each, are
+defined in the [review charter](docs/governance/review-charter.md#7-becoming-and-remaining-a-committer).
 
 This is not ceremonial. An area with a name against it gets a second
 reader who knows it; an area with nobody against it accumulates
@@ -112,7 +115,11 @@ All three must pass before committing. No exceptions, no "fix later."
 4. Commit with a clear message
 5. Open a PR against `main`
 
-All non-trivial changes land via PR with at least one approving review. Security-touching changes need two approvals or operator-only push. Full process and reviewer expectations: [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md).
+Every change lands through the merge queue with the approvals the
+[review charter](docs/governance/review-charter.md) requires: two, from
+committers who are not the author, at least one of them a code owner.
+Protected paths also need the maintainer. Reviewer expectations:
+[docs/CODE_REVIEW.md](docs/CODE_REVIEW.md).
 
 ### If you cannot open a pull request
 

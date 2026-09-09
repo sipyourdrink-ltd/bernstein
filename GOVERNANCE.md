@@ -21,13 +21,16 @@ in-scope table). State the problem, the option chosen, and what it costs.
 Everything else — bug fixes, docs, tests, a new adapter — goes straight
 to a pull request.
 
-**Becoming a maintainer.** Stewardship is earned by sustained merged work
-in one area, not by application; the mechanics are in
-[CONTRIBUTING.md](CONTRIBUTING.md#areas). Write access follows a stretch
-of established stewardship rather than arriving with it, because write
-here reaches the release workflows and their publishing credentials. The
-[CODEOWNERS](.github/CODEOWNERS) entry comes with the write grant, since
-GitHub only honors code owners who hold write.
+**Becoming a committer or a core reviewer.** The roles, and the floor for
+each, are defined in the [review charter](docs/governance/review-charter.md#7-becoming-and-remaining-a-committer):
+anyone may nominate anyone, including themselves, in an issue, and the
+maintainer confirms. Area stewardship
+([CONTRIBUTING.md](CONTRIBUTING.md#areas)) is the triage-level path that
+usually comes first. Write access reaches the release workflows and their
+publishing credentials, so it follows an established record rather than
+arriving with a request. A [CODEOWNERS](.github/CODEOWNERS) entry is what
+core reviewer means in GitHub's terms, and GitHub only honors code owners
+who hold write. The project stays single-maintainer, as above.
 
 **Licensing.** Apache-2.0 ([LICENSE](LICENSE)); by contributing you agree
 your contributions are licensed under it. There is no CLA and no sign-off
