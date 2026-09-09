@@ -1824,8 +1824,8 @@ def _wait_for_replay_completion(
     poll_interval_s: float = 1.0,
 ) -> dict[str, Any] | None:
     """Poll the task server until a replayed task reaches a terminal state."""
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         task = server_get(f"/tasks/{task_id}")
         if task is None:
             return None
