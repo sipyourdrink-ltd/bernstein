@@ -92,7 +92,7 @@ jobs:
           # directory that belongs to the machine hosting the VM.
           for entry in /Users/*; do
             case "$(basename "$entry")" in
-              admin|Shared|Guest|.localized) ;;
+              admin|runner|Shared|Guest|.localized) ;;
               \*) ;;
               *) echo "::error::an unexpected home directory is visible to the runner"; exit 1 ;;
             esac
