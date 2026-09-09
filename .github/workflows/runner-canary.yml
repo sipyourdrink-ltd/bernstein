@@ -4,6 +4,14 @@
 # checks out nothing: it exists to prove that the runner picks up a
 # job quickly, runs as an unprivileged user, and has no access to a
 # container socket. Job-level `permissions: {}` keeps the token inert.
+#
+# The rule for the runner group this job proves out: a workflow may run
+# there only if it has no pull-request trigger of any kind and checks out
+# no ref it did not author. A self-hosted runner executes whatever a pull
+# request carries, and on a public repository that is anyone's code. Every
+# scheduled job moved onto the group has to keep both properties; this
+# file is the reference, and it deliberately prints nothing about the host
+# beyond pass or fail.
 name: Runner canary
 
 on:
@@ -19,18 +27,18 @@ jobs:
     runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     steps:
-      - name: Report host facts
-        run: |
-          uname -a
-          id
-          echo "work=$(pwd)"
       - name: Assert no container socket
         run: |
-          if [ -e /var/run/docker.sock ]; then
-            echo "::error::container socket is visible inside the runner"
-            exit 1
-          fi
-          echo "no-docker-sock"
+          for sock in /var/run/docker.sock /run/docker.sock \
+                      /run/podman/podman.sock /run/containerd/containerd.sock \
+                      "${XDG_RUNTIME_DIR:-/nonexistent}/docker.sock" \
+                      "${XDG_RUNTIME_DIR:-/nonexistent}/podman/podman.sock"; do
+            if [ -e "$sock" ]; then
+              echo "::error::container socket is visible inside the runner: $sock"
+              exit 1
+            fi
+          done
+          echo "no-container-socket"
       - name: Assert unprivileged user
         run: |
           if [ "$(id -u)" -eq 0 ]; then
@@ -38,4 +46,6 @@ jobs:
             exit 1
           fi
       - name: Reach the API
-        run: curl -sSI https://api.github.com | head -1
+        run: |
+          set -o pipefail
+          curl -fsSI https://api.github.com | head -1

@@ -388,3 +388,4 @@ def test_context_compressor_has_no_embedding_scorer_attribute(project: Path) -> 
 
     compressor = ContextCompressor(project)
     assert not hasattr(compressor, "embedding_scorer")
+
