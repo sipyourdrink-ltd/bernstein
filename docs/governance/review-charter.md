@@ -1,8 +1,8 @@
 # Review charter
 
 How changes reach `main` when more than one person can merge. This page is the
-rulebook; [GOVERNANCE.md](../../GOVERNANCE.md) says who holds the final call,
-[MAINTAINERS.md](../../MAINTAINERS.md) lists the people. If the three disagree,
+rulebook; [GOVERNANCE.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/GOVERNANCE.md) says who holds the final call,
+[MAINTAINERS.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/MAINTAINERS.md) lists the people. If the three disagree,
 this page wins for review questions and GOVERNANCE.md wins for everything else.
 
 ## 1. Roles
@@ -44,7 +44,7 @@ A merge that fails any of these is reverted first and discussed second. The reve
 
 Changes here need the maintainer's approval in addition to the quorum:
 
-`.github/` · `src/bernstein/core/` · `src/bernstein/evolution/` · `src/bernstein/adapters/` · `pyproject.toml` and lockfiles · `schemas/` · `proto/` · `SECURITY.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, this page, `.github/CODEOWNERS` · `docs/decisions/` · agent configuration files at the repository root · every path listed as in scope in [SECURITY.md](../../SECURITY.md).
+`.github/` · `src/bernstein/core/` · `src/bernstein/evolution/` · `src/bernstein/adapters/` · `pyproject.toml` and lockfiles · `schemas/` · `proto/` · `SECURITY.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, this page, `.github/CODEOWNERS` · `docs/decisions/` · agent configuration files at the repository root · every path listed as in scope in [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md).
 
 Reserved to the maintainer: creating tags and releases, changing repository settings or rulesets, changing rosters, running the publishing workflows, answering security reports, imposing sanctions.
 
@@ -86,7 +86,7 @@ Sanctions are proportional and recorded in the thread where the decision is made
 ## 9. Incidents
 
 - **Red `main`.** Revert the merge that reddened it; do not stack fixes on a red trunk.
-- **A leaked credential** in a commit, log, or comment: report privately per [SECURITY.md](../../SECURITY.md); the maintainer rotates it; the pull request is closed, not amended.
+- **A leaked credential** in a commit, log, or comment: report privately per [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md); the maintainer rotates it; the pull request is closed, not amended.
 - **A compromised account.** Anyone who suspects it tells the maintainer privately; the maintainer removes the account from all rosters immediately and restores it after the owner proves control. Merges made by the account since the suspected time are reviewed and reverted if in doubt.
 - **A merge that should not have happened** (section 2 failed): revert first, then a thread naming what failed and what changes so it cannot recur.
 - **Security fixes** are prepared privately with the maintainer and land through the normal queue once the fix is public.
