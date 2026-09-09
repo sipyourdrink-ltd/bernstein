@@ -30,9 +30,13 @@ confirms. Area stewardship
 ([CONTRIBUTING.md](CONTRIBUTING.md#areas)) is the triage-level path that
 usually comes first. Write access reaches the release workflows and their
 publishing credentials, so it follows an established record rather than
-arriving with a request. A [CODEOWNERS](.github/CODEOWNERS) entry is what
-core reviewer means in GitHub's terms, and GitHub only honors code owners
-who hold write. The project stays single-maintainer, as above.
+arriving with a request. Both roles are recorded in
+[.github/quorum-roster.toml](.github/quorum-roster.toml), which is the
+roster the merge gate reads and the one the charter's lapse rule is
+evaluated against; a core reviewer is additionally listed in
+[CODEOWNERS](.github/CODEOWNERS), which is how GitHub requests them on the
+paths they own, and GitHub only honors code owners who hold write. Adding
+someone means both files. The project stays single-maintainer, as above.
 
 **Licensing.** Apache-2.0 ([LICENSE](LICENSE)); by contributing you agree
 your contributions are licensed under it. There is no CLA and no sign-off
