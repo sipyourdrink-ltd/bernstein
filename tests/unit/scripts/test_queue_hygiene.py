@@ -251,9 +251,7 @@ def test_changes_requested_timeout_respects_exempt_labels(qh: ModuleType, monkey
 # --- approval-shape ---------------------------------------------------------
 
 
-def _review(
-    review_id: int, login: str, state: str, at: str, *, body: str = "", user_type: str | None = None
-) -> dict:
+def _review(review_id: int, login: str, state: str, at: str, *, body: str = "", user_type: str | None = None) -> dict:
     user = {"login": login}
     if user_type is not None:
         user["type"] = user_type
@@ -347,9 +345,7 @@ def test_approval_shape_respects_exempt_labels(qh: ModuleType, monkeypatch: pyte
     assert not pr.intents
 
 
-def test_approval_shape_does_not_redismiss_a_bare_re_approval(
-    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_approval_shape_does_not_redismiss_a_bare_re_approval(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     # carol's original bare approval was dismissed by an earlier run - dismissing
     # a review sets its own body to the dismissal message, so that history is
     # still visible as a DISMISSED review carrying it. She re-approved bare
