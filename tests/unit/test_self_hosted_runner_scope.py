@@ -8,8 +8,9 @@ triggers a job may combine with a self-hosted ``runs-on`` are ``schedule``,
 ``workflow_call``, ``issue_comment`` -- can carry a contributor's revision and
 is refused here, so the mistake is caught in review rather than on the box.
 
-No workflow uses a self-hosted runner today; this pins the rule for the first
-one that does.
+Every workflow moved onto the project's own runner is covered here, so a
+later edit that widens its triggers reddens this test instead of silently
+exposing the box.
 """
 
 from __future__ import annotations
