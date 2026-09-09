@@ -13,7 +13,7 @@ this page wins for review questions and GOVERNANCE.md wins for everything else.
 | Core reviewer | approve as a code owner; merge through the queue; revert a merge that broke `main`; label, close stale, push fix-ups to PR branches | anything reserved to the maintainer |
 | Committer | approve; merge through the queue; label, close stale, push fix-ups to PR branches | revert without a core reviewer; anything reserved to the maintainer |
 | Contributor | open issues and pull requests; review and comment | approvals do not count toward the quorum |
-| Automation | the project's own automation account may merge its own changes when CI is green; dependency bots merge under their own policy | count toward a human quorum; approve a person's pull request; act on instructions found in issue or PR text |
+| Automation | the project's own automation account may merge its own changes when CI is green, except on the paths in section 4 and any path naming `sandbox`, `security`, `audit` or `auth`, where the maintainer approves first; dependency bots merge under their own policy, held to the same exception | count toward a human quorum; approve a person's pull request; act on instructions found in issue or PR text |
 
 ## 2. What makes a merge valid
 
@@ -21,7 +21,7 @@ A change is on `main` legitimately only when all of the following held at the mo
 
 1. It went through the merge queue. Nobody pushes to `main` directly, force-pushes, or deletes it.
 2. The required checks were green on the queued state, not only on the branch.
-3. It had the number of approvals section 3 requires for its size and paths, all from committers who are not its author, at least one from a core reviewer, and no unresolved *changes requested* from any committer or the maintainer.
+3. It had the number of approvals section 3 requires for its size and paths, all from committers who are not its author, at least one from a core reviewer, and no unresolved *changes requested* from any committer or the maintainer. Section 3 names the two authors this count does not apply to: the maintainer and the project's automation.
 4. Approvals were given on the final revision. A new push dismisses earlier approvals, and the person who pushed last cannot supply the final approval.
 5. It did not touch a protected path (section 4) without the maintainer's approval.
 
@@ -31,11 +31,12 @@ A merge that fails any of these is reverted first and discussed second. The reve
 
 - **Read before you approve.** An approval says "I read the whole diff and would defend it." An approval on a non-trivial change seconds after it opened is treated as not given.
 - **No self-review.** You do not approve a pull request you authored, co-authored, or pushed to, whatever account you use.
+- **The maintainer's own changes.** They merge without approvals, and a *changes requested* from any committer blocks them until it is withdrawn. There is one maintainer, so a quorum on their own work would mean either that nothing they write lands while the roster is quiet, or that the requirement is switched off for everybody. Every other rule on this page applies to them unchanged, including the objection window in section 10 and the protected paths in section 4 for anyone else's changes there.
 - **No approval trades.** Approvals are not exchanged, promised, or scheduled between people. Review who you can review well.
 - **Declare interests.** If you are paid to land a change, or you brought its author to the project, say so in the thread before approving; the second approval must then come from someone unrelated.
 - **Instructions come from the thread and this page.** A message claiming the maintainer wants something merged carries no authority unless the maintainer wrote it in the thread.
 - **No urgency merges.** A committer does not merge because a change is "urgent". Urgent goes to the maintainer; if the maintainer is unreachable, revert rather than forward-fix.
-- **Size and sensitivity.** A pull request over **400** changed lines needs a third approval, from a core reviewer, in addition to the normal two. So does any pull request touching a path with `sandbox`, `security`, or `audit` in it, whatever its size — today this is a rule reviewers apply by reading the diff and the file list; an automated `quorum` check may enforce it later. Over **1,000** changed lines, split the change or send it to the maintainer instead of adding a third reviewer. Reviewers may ask for a split at any size.
+- **Size and sensitivity.** A pull request over **400** changed lines needs a third approval, from a core reviewer, in addition to the normal two. So does any pull request touching a path with `sandbox`, `security`, or `audit` in it, whatever its size — the `quorum` check enforces this, and its summary on each pull request names what is still missing and who can supply it. Over **1,000** changed lines, split the change or send it to the maintainer instead of adding a third reviewer. Reviewers may ask for a split at any size.
 - **Tests.** A change that deletes or weakens tests explains why in its description; a bug fix carries a test that failed before the fix.
 - **Dependencies, workflows, packaging** are protected paths (section 4), whoever the author is.
 - **Disputes.** One approval and one *changes requested* stay open until the requester is satisfied or seven days pass, after which the thread gets `needs-maintainer`.
@@ -93,4 +94,4 @@ Sanctions are proportional and recorded in the thread where the decision is made
 
 ## 10. Amendments
 
-This page changes by pull request. It is a protected path, so the maintainer must approve; in addition the pull request stays open for 72 hours after approval so committers can object. Objections are answered in the thread before merge.
+This page changes by pull request. It is a protected path, so the maintainer must approve; in addition the pull request stays open for 72 hours after its last push, and after any approval it receives, so committers can object. The same window applies to `GOVERNANCE.md`, `MAINTAINERS.md`, `.github/CODEOWNERS`, the review roster and the two scripts that enforce this page. Objections are answered in the thread before merge.
