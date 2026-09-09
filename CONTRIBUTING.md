@@ -118,7 +118,7 @@ All three must pass before committing. No exceptions, no "fix later."
 Every change lands through the merge queue with the approvals the
 [review charter](docs/governance/review-charter.md) requires: two, from
 committers who are not the author, at least one of them a code owner.
-Protected paths also need the maintainer. Reviewer expectations:
+Protected paths also need the maintainer. Reviewer checklist:
 [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md).
 
 ### If you cannot open a pull request

@@ -680,7 +680,7 @@ nav:
   - Contribute:
       - contributing/index.md
       - Project pulse: project-pulse.md
-      - Code review process: CODE_REVIEW.md
+      - Code review: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md
       - Git hooks: contributing/git-hooks.md
