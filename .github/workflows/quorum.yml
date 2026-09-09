@@ -67,6 +67,20 @@ jobs:
           INPUT_PR: ${{ inputs.pr }}
         run: |
           set -euo pipefail
+          # The checkout above is the base branch, so on the pull request that
+          # first adds this check -- and on any branch whose base predates it --
+          # there is nothing to run. Say so and pass: the rules in force on that
+          # base are whatever branch protection already enforces there, and this
+          # job cannot invent an opinion it has no code for. Once the script is
+          # on the base branch a pull request cannot remove it this way, because
+          # deleting it still has to pass the copy that is still on the base.
+          if [ ! -f scripts/quorum_check.py ]; then
+            echo "The base branch does not carry scripts/quorum_check.py yet; nothing to check."
+            echo "### quorum: not applicable" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "The base branch does not carry \`scripts/quorum_check.py\` yet, so this run has no rules to apply." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "${INPUT_PR:-}" != "" ]; then
             python3 scripts/quorum_check.py --pr "$INPUT_PR"
           else
