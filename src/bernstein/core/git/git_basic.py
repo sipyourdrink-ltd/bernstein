@@ -8,6 +8,10 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +86,7 @@ def run_git(
     timeout: int = 30,
     input_data: str | None = None,
     check: bool = False,
+    env: Mapping[str, str] | None = None,
 ) -> GitResult:
     """Execute a git command and return structured output.
 
@@ -91,6 +96,11 @@ def run_git(
         timeout: Seconds before the command is killed.
         input_data: Optional stdin content.
         check: If True, raise on non-zero exit code.
+        env: Complete environment for the child. ``None`` inherits this
+            process's. Callers needing one extra variable pass
+            ``os.environ | {...}`` - the parameter exists so wanting a custom
+            environment is not a reason to drop out of this wrapper and lose
+            the timeout with it.
 
     Returns:
         GitResult with returncode, stdout, stderr.
@@ -108,6 +118,7 @@ def run_git(
         errors="replace",
         timeout=timeout,
         input=input_data,
+        env=dict(env) if env is not None else None,
     )
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(
