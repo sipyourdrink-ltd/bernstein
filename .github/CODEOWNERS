@@ -5,7 +5,8 @@
 # reserves to the maintainer sit below it.
 
 # Every change needs an approving review from a core reviewer (charter, s2).
-* @sipyourdrink-ltd/reviewers-core
+# Any one of them satisfies the requirement.
+* @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e
 
 # Paths the charter reserves to the maintainer (s4): these need the
 # maintainer's approval in addition to the usual quorum.
