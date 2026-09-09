@@ -1842,7 +1842,14 @@ jobs:
         # macOS-sensitive, the PR carries the `macos-needed` label, or
         # the event is a push. ci-macos-nightly.yml provides a daily
         # safety-net run of the full macOS matrix.
-        os: [ubuntu-latest, windows-latest]
+        # The merge-queue lane runs the ubuntu cells only. Every entry in the
+        # queue already passed the Windows cells on its own pull request, and
+        # push-to-main runs them again minutes after the merge, so the queue
+        # build was paying four Windows jobs per entry to re-check a
+        # combination the push run checks anyway. A Windows-only regression
+        # that only appears in the combination surfaces one merge later and
+        # is answered with a revert.
+        os: ${{ github.event_name == 'merge_group' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         # Only push-to-main runs the full interpreter matrix; PR and
         # merge-queue lanes run the primary interpreter (3.13) alone. The
         # queue ran both rows, which doubled its ubuntu shard fan-out to
