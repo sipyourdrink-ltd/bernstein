@@ -335,3 +335,22 @@ def test_the_roster_and_codeowners_on_this_branch_load(qc: ModuleType) -> None:
     owners = qc.load_codeowners(str(REPO_ROOT))
     assert owners and owners[0][0] == "*"
     assert qc.owners_for(".github/workflows/ci.yml", owners) == ([loaded.maintainer], True)
+
+
+def test_annotation_names_the_first_unmet_requirement(qc: ModuleType) -> None:
+    verdict = qc.Verdict(passed=False, title="2 requirement(s) missing")
+    verdict.requirements.append(
+        qc.Requirement("2 approvals, 1 from a core reviewer (40 changed lines)", False, "@a, @b")
+    )
+    verdict.requirements.append(qc.Requirement("approval from the owner of `x.py`", False, "@m"))
+    assert qc.annotation(verdict) == (
+        "waiting for: 2 approvals, 1 from a core reviewer (40 changed lines) - @a, @b (+1 more in the job summary)"
+    )
+
+
+def test_annotation_strips_backticks_and_handles_a_single_gap(qc: ModuleType) -> None:
+    verdict = qc.Verdict(passed=False, title="1 requirement(s) missing")
+    verdict.requirements.append(
+        qc.Requirement("72 hours open for objections (touches `GOVERNANCE.md`)", False, "nobody")
+    )
+    assert qc.annotation(verdict) == "waiting for: 72 hours open for objections (touches GOVERNANCE.md) - nobody"

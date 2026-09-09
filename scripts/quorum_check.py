@@ -446,6 +446,21 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
     return verdict
 
 
+def annotation(verdict: Verdict) -> str:
+    """The one line GitHub shows next to the red check.
+
+    It names the first unmet requirement and who can meet it, so a contributor
+    reads "waiting for two approvals" rather than "something is missing". The
+    full table stays in the job summary.
+    """
+    unmet = [req for req in verdict.requirements if not req.met]
+    if not unmet:
+        return verdict.title
+    first = unmet[0]
+    rest = f" (+{len(unmet) - 1} more in the job summary)" if len(unmet) > 1 else ""
+    return f"waiting for: {first.text} - {first.who}{rest}".replace("`", "")
+
+
 def pr_number_from_env(env: dict[str, str]) -> int | None:
     """The pull request under test, for each event that can trigger this.
 
@@ -487,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         with open(summary_path, "a", encoding="utf-8") as handle:
             handle.write(summary + "\n")
     if not verdict.passed:
-        print(f"::error title=quorum::{verdict.title} - see the job summary for what is missing")
+        print(f"::error title=quorum::{annotation(verdict)}")
         return 1
     return 0
 
