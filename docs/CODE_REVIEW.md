@@ -34,9 +34,8 @@ An approval says "I read the whole diff and would defend it". Before approving:
 3. Flag any new dependency, new outbound network call, or new credential read
    in the conversation before approving.
 4. Leave at least one line-level comment on a change over about 40 lines: a
-   finding, or a note of what you ran. Queue hygiene dismisses an approval that
-   carries none, for everyone equally, with a note on how to re-approve. A
-   summary without one is welcome as a comment.
+   finding, or a note of what you ran. A summary without one is welcome as a
+   comment.
 
 ## Escalation
 
