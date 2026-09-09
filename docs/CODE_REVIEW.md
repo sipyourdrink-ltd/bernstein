@@ -12,10 +12,13 @@ same answer.
 
 Every change goes through the merge queue; nobody pushes to `main` directly. A
 pull request merges with two approving reviews from committers who are not its
-author, at least one of them from a code owner (`.github/CODEOWNERS`), green
-required checks on the queued state, and no unresolved *changes requested*. A
-new push dismisses earlier approvals, and the person who pushed last cannot
-supply the final one. A change over 400 lines, or one touching a path with
+author, at least one of them from a core reviewer, green required checks on the
+queued state, and no unresolved *changes requested*. The roster that says who is
+a core reviewer is `.github/quorum-roster.toml`. Ownership is a second, separate
+requirement: every path with a named owner in `.github/CODEOWNERS` needs that
+owner's approval too, so a core reviewer's approval does not stand in for a code
+owner's on a path the owner holds. A new push dismisses earlier approvals, and
+the person who pushed last cannot supply the final one. A change over 400 lines, or one touching a path with
 `sandbox`, `security`, or `audit` in it, needs a third approval from a core
 reviewer, and over 1,000 lines gets split or sent to the maintainer instead.
 Protected paths (charter section 4, including the `.github/` directory, `core`,
