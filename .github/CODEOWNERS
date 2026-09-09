@@ -35,9 +35,11 @@
 
 # Agent configuration files at the repository root (charter, s4).
 /CLAUDE.md @chernistry
+/CONVENTIONS.md @chernistry
 /.aider.conf.yml @chernistry
 /.goosehints @chernistry
 /.mcp.json @chernistry
+/mcp.json @chernistry
 /.cursor/ @chernistry
 /.qwen/ @chernistry
 
