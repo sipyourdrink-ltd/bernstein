@@ -1,0 +1,74 @@
+name: quorum
+
+# Does this pull request have the review the charter asks for?
+#
+# docs/governance/review-charter.md section 3 anticipated this check; the
+# reasoning for having it at all, and each rule it applies, is written at the
+# top of scripts/quorum_check.py. In short: GitHub's required-approvals rule
+# applies one number to everybody and ignores its own bypass list when a pull
+# request enters the merge queue, so it cannot express a charter that exempts
+# automation, lets the maintainer merge while committers keep their veto, and
+# asks for a third approval on large or sensitive changes.
+#
+# The check only reads. It takes no token beyond the read-only GITHUB_TOKEN
+# and never runs anything from the branch under review: the checkout below is
+# pinned to the BASE commit, so the roster and CODEOWNERS it reads are the
+# ones already on the target branch and a pull request cannot promote its own
+# author by editing them.
+#
+# This workflow is pinned by an organization ruleset as a required workflow,
+# which is what makes it non-forgeable: a branch cannot swap in its own
+# version of it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  merge_group: {}
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to check"
+        required: true
+        type: string
+
+concurrency:
+  group: quorum-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quorum:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          # The base commit, never the pull request's own tree: the roster and
+          # CODEOWNERS have to be the ones already trusted on the target branch.
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/quorum_check.py
+            .github/quorum-roster.toml
+            .github/CODEOWNERS
+          sparse-checkout-cone-mode: false
+      - name: Check the review quorum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          if [ "${INPUT_PR:-}" != "" ]; then
+            python3 scripts/quorum_check.py --pr "$INPUT_PR"
+          else
+            python3 scripts/quorum_check.py
+          fi
