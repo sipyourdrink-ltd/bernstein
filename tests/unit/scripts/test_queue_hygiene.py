@@ -241,8 +241,8 @@ def test_changes_requested_timeout_respects_exempt_labels(qh: ModuleType, monkey
 # --- approval-shape ---------------------------------------------------------
 
 
-def _review(review_id: int, login: str, state: str, at: str) -> dict:
-    return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at}
+def _review(review_id: int, login: str, state: str, at: str, *, body: str = "") -> dict:
+    return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at, "body": body}
 
 
 def _install_review_api(monkeypatch: pytest.MonkeyPatch, qh: ModuleType, reviews: list, comments: list) -> None:
@@ -275,6 +275,30 @@ def test_approval_shape_keeps_an_approval_whose_author_left_a_line_comment(
         qh,
         [_review(10, "alice", "APPROVED", "2026-09-09T10:00:00Z")],
         [{"user": {"login": "alice"}, "pull_request_review_id": 11}],
+    )
+    pr = _pr(qh, 1, changed_lines=120)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
+def test_approval_shape_keeps_an_approval_whose_body_is_non_blank(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No line comment anywhere, but the review's own body is a real note - the
+    # charter's criterion is "any comment", not specifically a line-level one.
+    _install_review_api(
+        monkeypatch,
+        qh,
+        [
+            _review(
+                10,
+                "alice",
+                "APPROVED",
+                "2026-09-09T10:00:00Z",
+                body="Ran the suite locally, checked the migration path, LGTM",
+            )
+        ],
+        [],
     )
     pr = _pr(qh, 1, changed_lines=120)
     qh.rule_approval_shape("owner/repo", [pr])

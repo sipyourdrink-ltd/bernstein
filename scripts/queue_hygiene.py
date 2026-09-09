@@ -282,7 +282,7 @@ def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
         commented_by = {(c.get("user") or {}).get("login") for c in comments}
         for review in approvals:
             login = review["user"]["login"]
-            if login in commented_by:
+            if login in commented_by or (review.get("body") or "").strip():
                 continue
             pr.intents.append(
                 f"dismiss:{review['id']} ({login}: approval without a line comment on {pr.changed_lines} changed lines)"
