@@ -56,6 +56,7 @@ Reserved to the maintainer: creating tags and releases, changing repository sett
 - `needs-committer-review` is set when CI is green, the request is not a draft, and nothing blocks it. That label is the work list. Oldest first.
 - When `main` is red, only fixes and reverts merge. Everything else waits.
 - A required check is re-run at most twice. If it fails again, the failure is treated as real or the test goes through the [flake process](../contributing/flake-handling.md); it is not re-run until green.
+- An approval on a change of more than forty lines that carries neither a line comment nor a sentence in its body is set aside by the queue sweep, with a note asking for one. Approving again with a sentence restores it. This is a request for evidence, not a finding: section 8 remains the only route to consequences, and the rule applies to every approver, the maintainer included.
 
 ## 6. When the maintainer is away
 
