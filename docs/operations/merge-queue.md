@@ -95,6 +95,18 @@ required-context coverage by
 | `typecheck (packages/vscode)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (web)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (templates/cloudflare-mcp-server)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
+| `quorum` | `quorum.yml` :: `quorum` | Yes - `merge_group: {}` | **Through an organization ruleset, not a context name** |
+
+`quorum` is required differently from everything else in this table. A
+required *context* is matched by name, and a branch can publish that name
+from a workflow of its own; the review verdict is the one check where that
+would be the whole attack. So it is pinned as a required workflow in an
+organization ruleset instead: GitHub runs the file from the ref the ruleset
+names, and nothing on the branch can substitute for it. Requiring the
+`quorum` context by name as well would add nothing and could be satisfied by
+a branch, so this table lists it as reporting rather than requirable. What it
+decides, and why the branch rule cannot decide it instead, is written at the
+top of `scripts/quorum_check.py`.
 
 `typecheck-ts` occupies four rows because it publishes four contexts: its
 job is `typecheck (${{ matrix.package }})` and branch protection matches a

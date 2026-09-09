@@ -310,7 +310,11 @@ def test_the_merge_group_ref_names_the_queued_pull_request(qc: ModuleType) -> No
     assert qc.pr_number_from_env(env) == 5737
 
 
-def test_no_pull_request_in_the_event_is_not_a_failure(qc: ModuleType) -> None:
+def test_no_pull_request_in_the_event_is_not_a_failure(qc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The variables have to go: this suite also runs inside Actions, where a
+    # real pull request event would otherwise be picked up and called.
+    for name in ("GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "GITHUB_REF", "GITHUB_REPOSITORY"):
+        monkeypatch.delenv(name, raising=False)
     assert qc.main(["--repo", "o/r", "--root", str(REPO_ROOT)]) == 0
 
 
