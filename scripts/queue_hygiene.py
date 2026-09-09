@@ -431,14 +431,27 @@ def apply_intents(repo: str, pr: PullRequest) -> None:
             gh("pr", "edit", str(pr.number), "--repo", repo, "--remove-label", NEEDS_REVIEW_LABEL)
         elif intent.startswith("dismiss:"):
             review_id = intent.split(":", 1)[1].split(" ", 1)[0]
-            gh(
-                "api",
-                "-X",
-                "PUT",
-                f"repos/{repo}/pulls/{pr.number}/reviews/{review_id}/dismissals",
-                "-f",
-                f"message={DISMISSAL_MESSAGE}",
-            )
+            try:
+                gh(
+                    "api",
+                    "-X",
+                    "PUT",
+                    f"repos/{repo}/pulls/{pr.number}/reviews/{review_id}/dismissals",
+                    "-f",
+                    f"message={DISMISSAL_MESSAGE}",
+                )
+            except subprocess.CalledProcessError as exc:
+                # A dismissal can individually fail - branch protection
+                # restricting who may dismiss reviews, or one someone already
+                # dismissed by hand - and PRs are processed in order, so one
+                # bad review must not block every intent queued after it, the
+                # same as ensure_labels and fetch_open_prs already treat their
+                # own per-item calls.
+                print(
+                    f"warning: could not dismiss review {review_id} on #{pr.number}: "
+                    f"{exc.stderr.strip() if exc.stderr else exc}",
+                    file=sys.stderr,
+                )
         elif intent.startswith("close ("):
             gh(
                 "pr",

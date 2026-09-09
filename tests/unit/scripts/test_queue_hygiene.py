@@ -17,6 +17,7 @@ for how that was found.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -426,6 +427,27 @@ def test_apply_dismisses_through_the_review_dismissal_endpoint(qh: ModuleType, m
     assert len(calls) == 1
     assert calls[0][:4] == ("api", "-X", "PUT", "repos/owner/repo/pulls/7/reviews/10/dismissals")
     assert calls[0][-1].startswith("message=Dismissed by queue hygiene")
+
+
+def test_a_failing_dismissal_does_not_stop_later_intents(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A dismissal can individually fail (branch protection restricting who may
+    # dismiss, or a review someone already dismissed by hand) - one bad review
+    # must not block the other intents queued after it in the same run.
+    calls: list[tuple[str, ...]] = []
+
+    def fake_gh(*args: str) -> None:
+        calls.append(args)
+        if args[0] == "api":
+            raise subprocess.CalledProcessError(1, args, output="", stderr="422 already dismissed")
+
+    monkeypatch.setattr(qh, "gh", fake_gh)
+    pr = _pr(qh, 7)
+    pr.intents.append("dismiss:10 (alice: approval without a line comment on 120 changed lines)")
+    pr.intents.append(f"add:{qh.NEEDS_REVIEW_LABEL}")
+    qh.apply_intents("owner/repo", pr)  # must not raise
+    assert len(calls) == 2
+    assert calls[0][:3] == ("api", "-X", "PUT")
+    assert calls[1] == ("pr", "edit", "7", "--repo", "owner/repo", "--add-label", qh.NEEDS_REVIEW_LABEL)
 
 
 # --- --pr must narrow the OUTPUT, never the rules' INPUT --------------------
