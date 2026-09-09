@@ -1,0 +1,41 @@
+# Smoke check for the project's own scheduled-job runner.
+#
+# Runs only on schedule or by hand, never on pull-request events, and
+# checks out nothing: it exists to prove that the runner picks up a
+# job quickly, runs as an unprivileged user, and has no access to a
+# container socket. Job-level `permissions: {}` keeps the token inert.
+name: Runner canary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions: {}
+
+jobs:
+  canary:
+    name: Runner canary
+    runs-on: [self-hosted, linux, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Report host facts
+        run: |
+          uname -a
+          id
+          echo "work=$(pwd)"
+      - name: Assert no container socket
+        run: |
+          if [ -e /var/run/docker.sock ]; then
+            echo "::error::container socket is visible inside the runner"
+            exit 1
+          fi
+          echo "no-docker-sock"
+      - name: Assert unprivileged user
+        run: |
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "::error::runner is executing as root"
+            exit 1
+          fi
+      - name: Reach the API
+        run: curl -sSI https://api.github.com | head -1
