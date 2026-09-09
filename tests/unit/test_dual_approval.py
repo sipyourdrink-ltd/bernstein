@@ -201,3 +201,115 @@ class TestFormatApprovalPrompt:
         output = format_approval_prompt(req)
         assert "cli" in output
         assert "slack" in output
+
+
+# ---------------------------------------------------------------------------
+# Two approvals have to be two
+# ---------------------------------------------------------------------------
+#
+# ``govern/apply.py`` gates every removal-class change on an ApprovalStatus
+# from here, and says it delegates "rather than re-implementing approval
+# semantics". So whatever this function counts is what stands between a plan
+# and a destructive change.
+
+
+def _response(
+    *,
+    request_id: str = "req-1",
+    channel: ApprovalChannel = ApprovalChannel.CLI,
+    approver: str = "bob",
+    approved: bool = True,
+) -> ApprovalResponse:
+    return ApprovalResponse(
+        request_id=request_id,
+        channel=channel,
+        approver=approver,
+        approved=approved,
+        timestamp=datetime.now(tz=UTC).isoformat(),
+    )
+
+
+def test_one_approver_clicking_twice_is_not_two_approvals() -> None:
+    """Two rows on one channel are one party's say-so.
+
+    This is the whole point of the module: a destructive operation needs a
+    second sign-off. Counting responses instead of channels let a single
+    compromised Slack account satisfy the gate by itself.
+    """
+    request = create_approval_request("git push --force", requester="alice")
+    twice = [
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="mallory"),
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="mallory"),
+    ]
+
+    assert evaluate_approval(request, twice).is_approved is False
+
+
+def test_approvals_on_two_channels_are_two_approvals() -> None:
+    """The control: the documented happy path still approves."""
+    request = create_approval_request("git push --force", requester="alice")
+    both = [
+        _response(request_id=request.request_id, channel=ApprovalChannel.CLI, approver="bob"),
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="carol"),
+    ]
+
+    assert evaluate_approval(request, both).is_approved is True
+
+
+def test_approvals_for_a_different_request_do_not_count() -> None:
+    """``request_id`` exists to bind a response to what it approves.
+
+    Ignoring it meant approvals collected for one operation satisfied the gate
+    on another - a "delete branch" sign-off standing in for a production
+    deploy.
+    """
+    request = create_approval_request("production deploy", requester="alice")
+    elsewhere = [
+        _response(request_id="some-other-request", channel=ApprovalChannel.CLI, approver="bob"),
+        _response(request_id="yet-another", channel=ApprovalChannel.SLACK, approver="carol"),
+    ]
+
+    assert evaluate_approval(request, elsewhere).is_approved is False
+
+
+def test_a_denial_for_a_different_request_does_not_veto_this_one() -> None:
+    """Binding cuts both ways, or it is not binding.
+
+    A filter applied only to approvals would let an unrelated denial veto a
+    properly approved request - the same confusion, pointed the other way.
+    """
+    request = create_approval_request("production deploy", requester="alice")
+    mixed = [
+        _response(request_id=request.request_id, channel=ApprovalChannel.CLI, approver="bob"),
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="carol"),
+        _response(request_id="unrelated", channel=ApprovalChannel.EMAIL, approver="dave", approved=False),
+    ]
+
+    status = evaluate_approval(request, mixed)
+    assert status.is_denied is False
+    assert status.is_approved is True
+
+
+def test_a_denial_on_this_request_still_vetoes() -> None:
+    """The existing veto rule is unchanged, now scoped to the right request."""
+    request = create_approval_request("production deploy", requester="alice")
+    mixed = [
+        _response(request_id=request.request_id, channel=ApprovalChannel.CLI, approver="bob"),
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="carol"),
+        _response(request_id=request.request_id, channel=ApprovalChannel.EMAIL, approver="dave", approved=False),
+    ]
+
+    status = evaluate_approval(request, mixed)
+    assert status.is_denied is True
+    assert status.is_approved is False
+
+
+def test_the_status_still_reports_every_submitted_response() -> None:
+    """Filtering decides the verdict; it must not hide what was submitted."""
+    request = create_approval_request("production deploy", requester="alice")
+    submitted = [
+        _response(request_id=request.request_id, channel=ApprovalChannel.CLI),
+        _response(request_id="unrelated", channel=ApprovalChannel.SLACK),
+    ]
+
+    assert evaluate_approval(request, submitted).responses == submitted

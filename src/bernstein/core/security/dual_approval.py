@@ -146,28 +146,50 @@ def evaluate_approval(
 ) -> ApprovalStatus:
     """Evaluate whether *request* has been approved, denied, or expired.
 
+    Only responses whose ``request_id`` matches *request* are considered. The
+    field exists to bind a response to the operation it approves; a response
+    carrying a different id is evidence about a different decision.
+
     Rules:
-    * **Denied** - any single response with ``approved=False`` vetoes the
-      entire request.
+    * **Denied** - any single matching response with ``approved=False`` vetoes
+      the entire request.
     * **Expired** - ``expires_at`` is in the past (UTC).
-    * **Approved** - at least ``required_approvals`` responses with
-      ``approved=True`` and neither denied nor expired.
+    * **Approved** - approvals arrive on at least ``required_approvals``
+      *distinct channels*, and the request is neither denied nor expired.
+
+    Approvals are counted per channel rather than per response. The point of
+    this module is that a destructive operation needs more than one
+    independent sign-off, and repeated responses on one channel are one
+    party's say-so however many rows they produce.
 
     Args:
         request: The original approval request.
-        responses: Collected approval/denial responses so far.
+        responses: Collected approval/denial responses. Responses for other
+            requests are ignored rather than rejected, so a caller may pass a
+            whole inbox.
 
     Returns:
-        An :class:`ApprovalStatus` snapshot.
+        An :class:`ApprovalStatus` snapshot. ``responses`` on the result is
+        the full input list, unfiltered, so a caller can still see what was
+        submitted.
     """
     now = datetime.now(tz=UTC)
     expires_at = datetime.fromisoformat(request.expires_at)
     is_expired = now >= expires_at
 
-    is_denied = any(not r.approved for r in responses)
+    # Only responses issued against *this* request count. ``request_id`` is on
+    # ApprovalResponse to bind the two together; ignoring it let approvals
+    # collected for one operation satisfy the gate on a different one.
+    own = [r for r in responses if r.request_id == request.request_id]
 
-    approved_count = sum(1 for r in responses if r.approved)
-    is_approved = approved_count >= request.required_approvals and not is_denied and not is_expired
+    is_denied = any(not r.approved for r in own)
+
+    # Counted per channel, not per response. Two approvals are only two if
+    # they are independent, and the module's contract is "via different
+    # channels" - counting rows instead let one approver clicking twice in
+    # Slack satisfy a gate that exists to require a second party.
+    approving_channels = {r.channel for r in own if r.approved}
+    is_approved = len(approving_channels) >= request.required_approvals and not is_denied and not is_expired
 
     return ApprovalStatus(
         request=request,
