@@ -78,9 +78,6 @@ APPROVAL_SHAPE_MIN_CHANGED_LINES = 40
 # dismissed on the first run - only approvals given at or after this
 # timestamp are ever in scope.
 APPROVAL_SHAPE_EFFECTIVE_FROM = "2026-09-10T00:00:00Z"
-# The maintainer's approval is a protected-path requirement in its own right
-# (charter, section 4), not a quorum vote, so it is not held to the shape rule.
-APPROVAL_SHAPE_EXEMPT_LOGINS = frozenset({"chernistry"})
 DISMISSAL_MESSAGE = (
     "Dismissed by queue hygiene: the review charter "
     "(docs/governance/review-charter.md, section 3) asks an approval on a "
@@ -283,7 +280,11 @@ def _fetch_reviews(repo: str, pr_number: int, cache: dict[int, list[dict[str, An
 
 
 def rule_approval_shape(
-    repo: str, prs: list[PullRequest], reviews_cache: dict[int, list[dict[str, Any]]] | None = None
+    repo: str,
+    prs: list[PullRequest],
+    reviews_cache: dict[int, list[dict[str, Any]]] | None = None,
+    *,
+    maintainer: str,
 ) -> None:
     cache = reviews_cache if reviews_cache is not None else {}
     for pr in prs:
@@ -307,7 +308,10 @@ def rule_approval_shape(
         approvals = [
             r
             for r in standing_approvals(reviews)
-            if r["user"]["login"] not in APPROVAL_SHAPE_EXEMPT_LOGINS
+            # The maintainer's approval is a protected-path requirement in its
+            # own right (charter, section 4), not a quorum vote, so it is not
+            # held to the shape rule.
+            if r["user"]["login"] != maintainer
             and not _is_bot(r)
             and r["user"]["login"] not in already_dismissed_logins
         ]
@@ -494,6 +498,12 @@ def apply_intents(repo: str, pr: PullRequest) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=DEFAULT_REPO)
+    parser.add_argument(
+        "--maintainer",
+        default="chernistry",
+        help="login whose approval is exempt from the approval-shape rule (protected-path "
+        "requirement, not a quorum vote)",
+    )
     parser.add_argument("--pr", type=int, default=None, help="limit to one PR number")
     parser.add_argument(
         "--apply",
@@ -519,7 +529,7 @@ def main(argv: list[str] | None = None) -> int:
     rule_over_wip(prs)
     rule_duplicate(prs)
     rule_needs_committer_review(prs)
-    rule_approval_shape(args.repo, prs, reviews_cache)
+    rule_approval_shape(args.repo, prs, reviews_cache, maintainer=args.maintainer)
     rule_changes_requested_timeout(args.repo, prs, reviews_cache)
 
     if args.pr is not None:

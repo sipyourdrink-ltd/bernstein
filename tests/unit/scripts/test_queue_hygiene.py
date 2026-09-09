@@ -276,7 +276,7 @@ def test_approval_shape_dismisses_a_bare_approval_on_a_non_trivial_change(
 ) -> None:
     _install_review_api(monkeypatch, qh, [_review(10, "alice", "APPROVED", "2026-09-10T10:00:00Z")], [])
     pr = _pr(qh, 1, changed_lines=120)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert pr.intents == ["dismiss:10 (alice: approval without a line comment on 120 changed lines)"]
 
 
@@ -292,7 +292,7 @@ def test_approval_shape_keeps_an_approval_whose_author_left_a_line_comment(
         [{"user": {"login": "alice"}}],
     )
     pr = _pr(qh, 1, changed_lines=120)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 
 
@@ -316,7 +316,7 @@ def test_approval_shape_keeps_an_approval_whose_body_is_non_blank(
         [],
     )
     pr = _pr(qh, 1, changed_lines=120)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 
 
@@ -330,7 +330,7 @@ def test_approval_shape_keeps_an_approval_from_before_the_effective_date(
     assert before_cutoff < qh.APPROVAL_SHAPE_EFFECTIVE_FROM
     _install_review_api(monkeypatch, qh, [_review(10, "alice", "APPROVED", before_cutoff)], [])
     pr = _pr(qh, 1, changed_lines=120)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 
 
@@ -343,7 +343,7 @@ def test_approval_shape_respects_exempt_labels(qh: ModuleType, monkeypatch: pyte
 
     monkeypatch.setattr(qh, "gh_json", fake_gh_json)
     pr = _pr(qh, 1, changed_lines=200, labels={"pinned"})
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 
 
@@ -361,7 +361,7 @@ def test_approval_shape_does_not_redismiss_a_bare_re_approval(
     ]
     _install_review_api(monkeypatch, qh, reviews, [])
     pr = _pr(qh, 1, changed_lines=200)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 
 
@@ -373,12 +373,15 @@ def test_approval_shape_ignores_small_changes_without_calling_the_api(
 
     monkeypatch.setattr(qh, "gh_json", fake_gh_json)
     pr = _pr(qh, 1, changed_lines=qh.APPROVAL_SHAPE_MIN_CHANGED_LINES)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 
 
 def test_approval_shape_exempts_the_maintainer_and_bots(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    maintainer = next(iter(qh.APPROVAL_SHAPE_EXEMPT_LOGINS))
+    # "chernistry" is the script's own --maintainer default (main()'s argparse);
+    # the rule itself takes whatever login is threaded in, so this test states
+    # the value explicitly rather than reading it back off the module.
+    maintainer = "chernistry"
     _install_review_api(
         monkeypatch,
         qh,
@@ -395,7 +398,7 @@ def test_approval_shape_exempts_the_maintainer_and_bots(qh: ModuleType, monkeypa
         [],
     )
     pr = _pr(qh, 1, changed_lines=500)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer=maintainer)
     assert not pr.intents
 
 
@@ -414,7 +417,7 @@ def test_approval_shape_uses_each_users_latest_verdict(qh: ModuleType, monkeypat
     comments = [{"user": {"login": "bob"}}]
     _install_review_api(monkeypatch, qh, reviews, comments)
     pr = _pr(qh, 1, changed_lines=200)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert pr.intents == ["dismiss:30 (carol: approval without a line comment on 200 changed lines)"]
 
 
@@ -424,7 +427,7 @@ def test_approval_shape_skips_drafts(qh: ModuleType, monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(qh, "gh_json", fake_gh_json)
     pr = _pr(qh, 1, is_draft=True, changed_lines=999)
-    qh.rule_approval_shape("owner/repo", [pr])
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 
 
@@ -486,7 +489,7 @@ def test_reviews_are_fetched_once_per_pr_when_the_cache_is_shared(
     monkeypatch.setattr(qh, "gh_json", fake_gh_json)
     pr = _pr(qh, 1, changed_lines=200, review_decision="CHANGES_REQUESTED")
     reviews_cache: dict[int, list[dict]] = {}
-    qh.rule_approval_shape("owner/repo", [pr], reviews_cache)
+    qh.rule_approval_shape("owner/repo", [pr], reviews_cache, maintainer="chernistry")
     qh.rule_changes_requested_timeout("owner/repo", [pr], reviews_cache)
 
     review_calls = [e for e in endpoints_called if e.endswith("/reviews")]
