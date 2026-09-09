@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       actions: write
     steps:
       - name: Harden runner (audit mode)
@@ -81,3 +81,18 @@ jobs:
                             or . == "scripts/quorum_check.py" or . == "scripts/queue_hygiene.py"))
                         | .number' \
             | while read -r pr; do rerun_for "$pr"; done
+
+      # The sweep also asks for what the check says is missing. Only the base
+      # branch is checked out, so this stays safe under the privileged trigger.
+      - name: Check out the scripts
+        if: github.event_name != 'pull_request_review'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Ask the roster for the reviews still missing
+        if: github.event_name != 'pull_request_review'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          QUORUM_REQUEST_REVIEWS: ${{ vars.QUORUM_REQUEST_REVIEWS }}
+        run: python3 scripts/quorum_request_reviews.py
