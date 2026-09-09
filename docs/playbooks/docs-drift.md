@@ -52,9 +52,9 @@ Drift remediation paths used by the rows below:
 
 | Doc | Source of truth | Drift signal | Remediation |
 |-----|-----------------|--------------|-------------|
-| `GOVERNANCE.md` | `docs/governance/`, `.github/CODEOWNERS`, `MAINTAINERS.md` | Maintainer model changes, protected-path ownership changes, or the committer/maintainer roster changes | `manual-prose` |
+| `GOVERNANCE.md` | `docs/governance/`, `.github/CODEOWNERS`, `./MAINTAINERS.md` | Maintainer model changes, protected-path ownership changes, or the committer/maintainer roster changes | `manual-prose` |
 | `docs/governance/review-charter.md` | `.github/CODEOWNERS`, `.github/quorum-roster.toml`, `scripts/quorum_check.py`, `scripts/queue_hygiene.py`, `docs/CODE_REVIEW.md` | Ownership rules, the quorum roster, or the queue/quorum automation change without a matching charter update | `manual-prose` |
-| `.github/CODEOWNERS` | `SECURITY.md`, `docs/governance/review-charter.md`, and any new top-level directory | The security scope changes, the charter's protected-paths list changes, or a new top-level directory needs an ownership decision | `manual-prose` |
+| `.github/CODEOWNERS` | `./SECURITY.md`, `docs/governance/review-charter.md`, and any new top-level directory | The security scope changes, the charter's protected-paths list changes, or a new top-level directory needs an ownership decision | `manual-prose` |
 
 ### `docs/` top-level
 

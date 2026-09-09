@@ -67,6 +67,25 @@ def test_deleting_a_documented_source_is_reported() -> None:
     assert [src for _, src in hits] == [REAL_DELETED_SOURCE]
 
 
+def test_a_root_level_source_is_parsed_and_normalised() -> None:
+    """``./NAME`` is how a root file survives the path filter.
+
+    Without the prefix the token has no ``/`` and no ``.py``/``.toml``
+    suffix, so the parser drops it and the row's own source is invisible to
+    both checks. With it, the prefix has to come back off: ``git diff
+    --name-only`` prints ``MAINTAINERS.md``, not ``./MAINTAINERS.md``.
+    """
+    row = _row("`./MAINTAINERS.md`, `.github/CODEOWNERS`")
+    assert row.source_paths == ["MAINTAINERS.md", ".github/CODEOWNERS"]
+    hits = _script().sources_deleted_by(["MAINTAINERS.md"], [row])
+    assert [src for _, src in hits] == ["MAINTAINERS.md"]
+
+
+def test_a_bare_root_level_source_is_still_dropped() -> None:
+    """The filter is unchanged for tokens without the prefix."""
+    assert _row("`MAINTAINERS.md`").source_paths == []
+
+
 def test_deleting_an_undocumented_path_is_not_reported() -> None:
     """Deletions unrelated to any doc must not block the change."""
     mod = _script()
