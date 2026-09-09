@@ -277,10 +277,21 @@ def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
         if pr.labels & EXEMPT_LABELS:
             continue
         reviews = gh_json("api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate")
+        # Once-only: dismissing a review sets its own body to DISMISSAL_MESSAGE,
+        # so a login that already carries a DISMISSED review with that body has
+        # had its one warning. A bare re-approval from the same person is a new
+        # review id and would otherwise be re-dismissed every run.
+        already_dismissed_logins = {
+            (r.get("user") or {}).get("login")
+            for r in reviews
+            if r.get("state") == "DISMISSED" and (r.get("body") or "") == DISMISSAL_MESSAGE
+        }
         approvals = [
             r
             for r in standing_approvals(reviews)
-            if r["user"]["login"] not in APPROVAL_SHAPE_EXEMPT_LOGINS and not _is_bot(r["user"]["login"])
+            if r["user"]["login"] not in APPROVAL_SHAPE_EXEMPT_LOGINS
+            and not _is_bot(r["user"]["login"])
+            and r["user"]["login"] not in already_dismissed_logins
         ]
         if not approvals:
             continue

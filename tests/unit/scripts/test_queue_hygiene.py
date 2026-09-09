@@ -332,6 +332,24 @@ def test_approval_shape_respects_exempt_labels(qh: ModuleType, monkeypatch: pyte
     assert not pr.intents
 
 
+def test_approval_shape_does_not_redismiss_a_bare_re_approval(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # carol's original bare approval was dismissed by an earlier run - dismissing
+    # a review sets its own body to the dismissal message, so that history is
+    # still visible as a DISMISSED review carrying it. She re-approved bare
+    # again without adding a comment; the once-only guard must leave the new
+    # review alone rather than dismiss it too.
+    reviews = [
+        _review(10, "carol", "DISMISSED", "2026-09-10T09:00:00Z", body=qh.DISMISSAL_MESSAGE),
+        _review(11, "carol", "APPROVED", "2026-09-11T09:00:00Z"),
+    ]
+    _install_review_api(monkeypatch, qh, reviews, [])
+    pr = _pr(qh, 1, changed_lines=200)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
 def test_approval_shape_ignores_small_changes_without_calling_the_api(
     qh: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
