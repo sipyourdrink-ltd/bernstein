@@ -1,12 +1,25 @@
-# Default: repo owner reviews everything
-* @chernistry
+# Review ownership. The rules these encode are written out in
+# docs/governance/review-charter.md; this file is how GitHub enforces them.
+#
+# Later entries win, so the default sits at the top and the paths the charter
+# reserves to the maintainer sit below it.
 
-# Core orchestration
+# Every change needs an approving review from a core reviewer (charter, s2).
+* @sipyourdrink-ltd/reviewers-core
+
+# Paths the charter reserves to the maintainer (s4): these need the
+# maintainer's approval in addition to the usual quorum.
+/.github/ @chernistry
 /src/bernstein/core/ @chernistry
 /src/bernstein/evolution/ @chernistry
-
-# Adapters
 /src/bernstein/adapters/ @chernistry
-
-# CI/CD
-/.github/ @chernistry
+/schemas/ @chernistry
+/proto/ @chernistry
+/pyproject.toml @chernistry
+/uv.lock @chernistry
+/SECURITY.md @chernistry
+/GOVERNANCE.md @chernistry
+/MAINTAINERS.md @chernistry
+/AGENTS.md @chernistry
+/docs/governance/ @chernistry
+/docs/decisions/ @chernistry
