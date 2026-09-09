@@ -172,3 +172,40 @@ def test_worktree_manager_list_active(manager: WorktreeManager, repo_root: Path)
 
         active = manager.list_active()
         assert sorted(active) == ["session-1", "session-2"]
+
+
+def test_list_active_ignores_a_sibling_directory_sharing_the_base_prefix(
+    manager: WorktreeManager, repo_root: Path
+) -> None:
+    """``.sdd/worktrees-archive`` starts with ``.sdd/worktrees`` but is not it.
+
+    A bare prefix test accepted it and reported ``archived-1`` as a managed
+    session. That answer does not stay in a listing: ``bernstein cleanup``
+    takes ``list_active()``, subtracts the sessions the task store knows are
+    live, and calls ``manager.cleanup()`` on the rest - so a name harvested
+    from someone else's directory becomes a removal target under
+    ``.sdd/worktrees/``.
+    """
+    base_dir = repo_root / ".sdd/worktrees"
+    sibling = repo_root / ".sdd/worktrees-archive"
+    with patch("bernstein.core.git.worktree.worktree_list") as mock_list:
+        mock_list.return_value = (
+            f"worktree {base_dir / 'session-1'}\n"
+            f"worktree {sibling / 'archived-1'}\n"
+            f"worktree {repo_root / '.sdd/worktreesX'}\n"
+        )
+
+        assert manager.list_active() == ["session-1"]
+
+
+def test_list_active_ignores_the_base_directory_itself(manager: WorktreeManager, repo_root: Path) -> None:
+    """The base is not a session, and its ``.name`` would be ``worktrees``.
+
+    Without the trailing separator the base path matched its own prefix, so a
+    base registered as a worktree yielded a session id of ``worktrees``.
+    """
+    base_dir = repo_root / ".sdd/worktrees"
+    with patch("bernstein.core.git.worktree.worktree_list") as mock_list:
+        mock_list.return_value = f"worktree {base_dir}\nworktree {base_dir / 'session-1'}\n"
+
+        assert manager.list_active() == ["session-1"]

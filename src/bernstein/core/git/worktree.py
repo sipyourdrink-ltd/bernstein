@@ -1400,13 +1400,19 @@ class WorktreeManager:
             return []
 
         session_ids: list[str] = []
-        base_str = str(self._base_dir)
+        # Trailing separator: a bare prefix test also accepts a *sibling*
+        # whose name starts with the base - ``.sdd/worktrees-archive/s1``
+        # starts with ``.sdd/worktrees`` - and would report ``s1`` as a
+        # managed session. That answer reaches ``bernstein cleanup``, which
+        # calls ``cleanup(session_id)`` on it, so the mistake lands on a
+        # destructive path rather than in a listing.
+        base_prefix = os.path.join(str(self._base_dir), "")
 
         for line in output.splitlines():
             if not line.startswith("worktree "):
                 continue
             wt_path = line[len("worktree ") :].strip()
-            if wt_path.startswith(base_str):
+            if wt_path.startswith(base_prefix):
                 session_id = Path(wt_path).name
                 session_ids.append(session_id)
 
