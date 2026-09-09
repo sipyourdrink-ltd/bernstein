@@ -26,7 +26,9 @@ Protected paths (charter section 4, including the `.github/` directory, `core`,
 governance documents, agent configuration files) also need the maintainer's
 approval. The project's own automation merges its own changes when CI is green;
 dependency bots merge under their own policy. Neither counts toward a human
-quorum.
+quorum, and neither self-merges a change whose paths carry `sandbox`,
+`security`, `audit` or `auth`, or sit under `.github/`, `schemas/` or `proto/`
+- those wait for the maintainer's approval like anyone else's.
 
 ## Reviewer checklist
 
