@@ -46,7 +46,8 @@ An approval says "I read the whole diff and would defend it". Before approving:
 ## Escalation
 
 A dispute, one approval against one *changes requested*, stays open until the
-requester is satisfied or seven days pass; then the thread gets
-`needs-maintainer`. Disagreements on security-sensitive changes are resolved by
+requester is satisfied or seven days pass; then anyone on the thread applies
+`needs-maintainer` by hand. No script sets that label today, so nothing marks
+the thread if nobody does. Disagreements on security-sensitive changes are resolved by
 the maintainer, and when the outcome settles a boundary it is recorded in
 `docs/decisions/`.
