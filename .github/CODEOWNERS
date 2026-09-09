@@ -1,12 +1,14 @@
 # Review ownership. The rules these encode are written out in
 # docs/governance/review-charter.md; this file is how GitHub enforces them.
 #
-# Later entries win, so the default sits at the top and the paths the charter
-# reserves to the maintainer sit below it.
-
-# Every change needs an approving review from a core reviewer (charter, s2).
-# Any one of them satisfies the requirement.
-* @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e
+# There is no catch-all line on purpose. The approval counts the charter
+# asks for (s2) are checked by scripts/quorum_check.py against
+# .github/quorum-roster.toml, and the reviews a change still needs are
+# requested from the roster by the hourly sweep, so a catch-all here would
+# only route every pull request to every core reviewer at once.
+#
+# Later entries win. The entries below are the paths the charter reserves
+# to the maintainer.
 
 # Paths the charter reserves to the maintainer (s4): these need the
 # maintainer's approval in addition to the usual quorum.
