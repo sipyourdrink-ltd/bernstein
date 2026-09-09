@@ -1829,7 +1829,11 @@ jobs:
       # Single source of truth for the shard count. The `--shard i/N`
       # denominator below and the per-shard slice both key off this; bump
       # it (and the `shard:` list) together to rescale the fan-out.
-      TEST_SHARD_COUNT: "4"
+      # The merge-queue lane fans out over eight shards: each queue build is
+      # on the critical path of every entry behind it, and the per-shard
+      # suite is the longest job in the run. Pull requests and pushes keep
+      # four; their shards run alongside other work rather than ahead of it.
+      TEST_SHARD_COUNT: ${{ github.event_name == 'merge_group' && '8' || '4' }}
       # Main push coverage runs are slower than local file runs; keep the
       # per-file guard, but allow heavy adapter contract files to finish.
       BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
@@ -1855,7 +1859,7 @@ jobs:
         python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["3.12", "3.13"]') || fromJSON('["3.13"]') }}
         # Fan the per-file suite out across 4 deterministic shards per
         # cell. Keep this list in sync with TEST_SHARD_COUNT above.
-        shard: [1, 2, 3, 4]
+        shard: ${{ github.event_name == 'merge_group' && fromJSON('[1, 2, 3, 4, 5, 6, 7, 8]') || fromJSON('[1, 2, 3, 4]') }}
         exclude:
           # Coverage/JUnit upload only on ubuntu; skip duplicate slow jobs on Windows for 3.12
           - os: windows-latest
