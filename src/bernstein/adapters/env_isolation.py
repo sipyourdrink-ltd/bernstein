@@ -65,6 +65,8 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
         "LC_ALL",
         "LC_CTYPE",
         "LC_MESSAGES",
+        "PYTHONUTF8",
+        "PYTHONIOENCODING",
         # --- User identity ---
         # git uses USER/LOGNAME as fallback for commit authorship
         "USER",

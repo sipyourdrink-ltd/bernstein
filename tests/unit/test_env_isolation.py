@@ -52,6 +52,33 @@ class TestBuildFilteredEnv:
         # unrelated secret still stripped
         assert "DATABASE_URL" not in result
 
+    def test_python_encoding_vars_in_allowlist(self) -> None:
+        """Python UTF-8/stdio encoding controls are preserved across filtered spawns."""
+        assert "PYTHONUTF8" in _BASE_ALLOWLIST
+        assert "PYTHONIOENCODING" in _BASE_ALLOWLIST
+
+    def test_python_encoding_vars_pass_through_build_filtered_env(self) -> None:
+        """Operator-set Python encoding values pass through unchanged."""
+        for python_utf8, python_io_encoding in (("1", "utf-8"), ("0", "cp1252:replace")):
+            fake_env = {
+                "PATH": r"C:\Python312",
+                "PYTHONUTF8": python_utf8,
+                "PYTHONIOENCODING": python_io_encoding,
+                "DATABASE_URL": "postgres://user:pass@host/db",
+            }
+            with patch("bernstein.adapters.env_isolation.os.environ", fake_env):
+                result = build_filtered_env()
+            assert result["PYTHONUTF8"] == python_utf8
+            assert result["PYTHONIOENCODING"] == python_io_encoding
+            assert "DATABASE_URL" not in result
+
+    def test_python_encoding_vars_are_not_synthesized(self) -> None:
+        """Missing Python encoding controls stay absent from the filtered env."""
+        with patch("bernstein.adapters.env_isolation.os.environ", {"PATH": r"C:\Python312"}):
+            result = build_filtered_env()
+        assert "PYTHONUTF8" not in result
+        assert "PYTHONIOENCODING" not in result
+
     def test_secrets_excluded(self) -> None:
         """Database credentials, CI tokens and unrelated keys are stripped."""
         sensitive = {
