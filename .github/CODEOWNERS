@@ -52,9 +52,16 @@
 /.cursor/ @chernistry
 /.qwen/ @chernistry
 
-# Container images are in scope in SECURITY.md (charter, s4).
+# The two published images, `bernstein:latest` and `bernstein:sandbox`, are
+# in scope in SECURITY.md (charter, s4), and the researcher sandbox is where
+# SECURITY.md promises egress blocking and an ephemeral filesystem - so the
+# files that build it are reserved too. The rigs under docker/demo/,
+# docker/volunteer-hub/ and docker/volunteer-rig/ publish no image and carry
+# no such promise; they stay on the normal quorum.
 /Dockerfile @chernistry
 /docker-compose.yaml @chernistry
+/docker/sandbox/ @chernistry
+/scripts/researcher_sandbox.sh @chernistry
 
 # The review roster and the two scripts that enforce this file and the
 # charter. `.github/` above already covers the roster; these are the pieces
