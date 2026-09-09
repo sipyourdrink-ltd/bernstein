@@ -44,7 +44,9 @@ A merge that fails any of these is reverted first and discussed second. The reve
 
 Changes here need the maintainer's approval in addition to the quorum:
 
-`.github/` · `src/bernstein/core/` · `src/bernstein/evolution/` · `src/bernstein/adapters/` · `pyproject.toml` and lockfiles · `schemas/` · `proto/` · `SECURITY.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, this page, `.github/CODEOWNERS` · `docs/decisions/` · agent configuration files at the repository root · every path listed as in scope in [SECURITY.md](../../SECURITY.md).
+`.github/` · `src/bernstein/core/` · `src/bernstein/evolution/` · `src/bernstein/adapters/` · `pyproject.toml` and lockfiles · `schemas/` · `proto/` · `SECURITY.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, this page, `.github/CODEOWNERS` · `docs/decisions/` · agent configuration files at the repository root · the container images (`Dockerfile`, `docker-compose.yaml`).
+
+The scope table in [SECURITY.md](../../SECURITY.md) names attack surfaces, not paths. The code behind it that is not already under `src/bernstein/core/` follows the third-approval rule in section 3 rather than this list. `.github/CODEOWNERS` is the enforced form of this list; when the two differ, fix CODEOWNERS.
 
 Reserved to the maintainer: creating tags and releases, changing repository settings or rulesets, changing rosters, running the publishing workflows, answering security reports, imposing sanctions.
 
