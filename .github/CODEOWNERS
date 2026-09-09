@@ -34,6 +34,15 @@
 /packages/vscode/package-lock.json @chernistry
 
 # Agent configuration files at the repository root (charter, s4).
+#
+# CLAUDE.md, CONVENTIONS.md, .goosehints and .cursor/rules/*.mdc are written
+# by `bernstein agents-md sync`, which pr-policy.yml runs on every pull
+# request and pushes back onto the branch. So a change to the canonical
+# source under .sdd/agents-md/, or to the src/bernstein/ package layout it
+# derives from, regenerates them and picks up this requirement. That is
+# intended - the charter reserves these files whoever or whatever wrote
+# them - but it means a pull request can acquire the requirement without
+# naming any of these paths itself.
 /CLAUDE.md @chernistry
 /CONVENTIONS.md @chernistry
 /.aider.conf.yml @chernistry
