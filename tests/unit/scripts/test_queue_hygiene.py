@@ -460,6 +460,39 @@ def test_a_failing_dismissal_does_not_stop_later_intents(qh: ModuleType, monkeyp
     assert calls[1] == ("pr", "edit", "7", "--repo", "owner/repo", "--add-label", qh.NEEDS_REVIEW_LABEL)
 
 
+# --- reviews are fetched once per PR, shared across rules ------------------
+
+
+def test_reviews_are_fetched_once_per_pr_when_the_cache_is_shared(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A PR that is both over the approval-shape line threshold and currently
+    # CHANGES_REQUESTED qualifies for both rules, each of which used to fetch
+    # /reviews on its own - count the stub calls to prove a shared cache
+    # collapses that to one call.
+    recent = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    endpoints_called: list[str] = []
+
+    def fake_gh_json(*args: str) -> object:
+        endpoints_called.append(args[1])
+        if args[1].endswith("/reviews"):
+            return [_review(10, "alice", "CHANGES_REQUESTED", recent)]
+        if args[1].endswith("/comments"):
+            return []
+        if args[1].endswith("/commits"):
+            return []
+        raise AssertionError(f"unexpected call {args}")
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
+    pr = _pr(qh, 1, changed_lines=200, review_decision="CHANGES_REQUESTED")
+    reviews_cache: dict[int, list[dict]] = {}
+    qh.rule_approval_shape("owner/repo", [pr], reviews_cache)
+    qh.rule_changes_requested_timeout("owner/repo", [pr], reviews_cache)
+
+    review_calls = [e for e in endpoints_called if e.endswith("/reviews")]
+    assert len(review_calls) == 1
+
+
 # --- --pr must narrow the OUTPUT, never the rules' INPUT --------------------
 
 

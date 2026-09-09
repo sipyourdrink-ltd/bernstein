@@ -273,7 +273,19 @@ def standing_approvals(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [r for r in latest.values() if r.get("state") == "APPROVED"]
 
 
-def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
+def _fetch_reviews(repo: str, pr_number: int, cache: dict[int, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Reviews for one pull request, fetched once and shared - approval-shape
+    and the changes-requested timeout both need the same endpoint, so a PR
+    that qualifies for both must not pay for it twice in one sweep."""
+    if pr_number not in cache:
+        cache[pr_number] = gh_json("api", f"repos/{repo}/pulls/{pr_number}/reviews", "--paginate")
+    return cache[pr_number]
+
+
+def rule_approval_shape(
+    repo: str, prs: list[PullRequest], reviews_cache: dict[int, list[dict[str, Any]]] | None = None
+) -> None:
+    cache = reviews_cache if reviews_cache is not None else {}
     for pr in prs:
         if pr.is_draft or pr.changed_lines <= APPROVAL_SHAPE_MIN_CHANGED_LINES:
             continue
@@ -282,7 +294,7 @@ def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
         # dismissal just as they protect it from an automated close.
         if pr.labels & EXEMPT_LABELS:
             continue
-        reviews = gh_json("api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate")
+        reviews = _fetch_reviews(repo, pr.number, cache)
         # Once-only: dismissing a review sets its own body to DISMISSAL_MESSAGE,
         # so a login that already carries a DISMISSED review with that body has
         # had its one warning. A bare re-approval from the same person is a new
@@ -317,10 +329,13 @@ def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
             )
 
 
-def last_changes_requested_without_push(repo: str, pr: PullRequest) -> datetime | None:
+def last_changes_requested_without_push(
+    repo: str, pr: PullRequest, reviews_cache: dict[int, list[dict[str, Any]]] | None = None
+) -> datetime | None:
     """Return the timestamp of the most recent 'changes requested' review
     if no commit has landed since, else None."""
-    reviews = gh_json("api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate")
+    cache = reviews_cache if reviews_cache is not None else {}
+    reviews = _fetch_reviews(repo, pr.number, cache)
     changes_requested_at: datetime | None = None
     for r in reviews:
         if r.get("state") == "CHANGES_REQUESTED":
@@ -346,14 +361,17 @@ def last_changes_requested_without_push(repo: str, pr: PullRequest) -> datetime 
     return changes_requested_at
 
 
-def rule_changes_requested_timeout(repo: str, prs: list[PullRequest]) -> None:
+def rule_changes_requested_timeout(
+    repo: str, prs: list[PullRequest], reviews_cache: dict[int, list[dict[str, Any]]] | None = None
+) -> None:
+    cache = reviews_cache if reviews_cache is not None else {}
     now = datetime.now(UTC)
     for pr in prs:
         if pr.review_decision != "CHANGES_REQUESTED":
             continue
         if pr.labels & EXEMPT_LABELS:
             continue
-        since = last_changes_requested_without_push(repo, pr)
+        since = last_changes_requested_without_push(repo, pr, cache)
         if since is None:
             continue
         age = now - since
@@ -494,11 +512,15 @@ def main(argv: list[str] | None = None) -> int:
     # printed/acted on afterward, never what the rules can see.
     prs = fetch_open_prs(args.repo)
 
+    # Shared across the two rules that both read pull-request reviews, so a
+    # PR that qualifies for both is not fetched twice in the same run.
+    reviews_cache: dict[int, list[dict[str, Any]]] = {}
+
     rule_over_wip(prs)
     rule_duplicate(prs)
     rule_needs_committer_review(prs)
-    rule_approval_shape(args.repo, prs)
-    rule_changes_requested_timeout(args.repo, prs)
+    rule_approval_shape(args.repo, prs, reviews_cache)
+    rule_changes_requested_timeout(args.repo, prs, reviews_cache)
 
     if args.pr is not None:
         prs = [p for p in prs if p.number == args.pr]
