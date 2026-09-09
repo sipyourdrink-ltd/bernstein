@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 5
     # Only run on commits that look like CI hotfixes. Conventional
     # commit prefix `fix(ci):` matches the established pattern used by
-    # bernstein-ci-fix and auto-heal.
+    # auto-heal.
     if: contains(github.event.head_commit.message, 'fix(ci):')
     permissions:
       contents: read
