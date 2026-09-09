@@ -40,8 +40,14 @@ An approval says "I read the whole diff and would defend it". Before approving:
 3. Flag any new dependency, new outbound network call, or new credential read
    in the conversation before approving.
 4. Leave at least one line-level comment on a change over about 40 lines: a
-   finding, or a note of what you ran. A summary without one is welcome as a
-   comment.
+   finding, or a note of what you ran. A review that says only "looks good"
+   still counts as an approval; the comment is what makes it reviewable by
+   anyone reading the thread later.
+
+Item 4 is the one rule on this page that the charter does not yet carry.
+It is proposed for charter section 5 in #5746 with the same threshold and
+the same shape; until that lands, read it as guidance rather than a merge
+condition.
 
 ## Escalation
 
