@@ -437,6 +437,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Review charter: governance/review-charter.md
           - Inventory topology: operations/govern-inventory.md
           - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md
