@@ -258,12 +258,21 @@ def _review(review_id: int, login: str, state: str, at: str, *, body: str = "", 
     return {"id": review_id, "user": user, "state": state, "submitted_at": at, "body": body}
 
 
-def _install_review_api(monkeypatch: pytest.MonkeyPatch, qh: ModuleType, reviews: list, comments: list) -> None:
+def _install_review_api(
+    monkeypatch: pytest.MonkeyPatch, qh: ModuleType, reviews: list, comments: list, timeline: list | None = None
+) -> None:
+    # timeline defaults to empty: no prior dismissal for this rule to find,
+    # which is what every test not specifically about the once-only guard
+    # wants.
+    timeline = timeline if timeline is not None else []
+
     def fake_gh_json(*args: str) -> object:
         if args[1].endswith("/reviews"):
             return reviews
         if args[1].endswith("/comments"):
             return comments
+        if args[1].endswith("/timeline"):
+            return timeline
         raise AssertionError(f"unexpected call {args}")
 
     monkeypatch.setattr(qh, "gh_json", fake_gh_json)
@@ -346,17 +355,58 @@ def test_approval_shape_respects_exempt_labels(qh: ModuleType, monkeypatch: pyte
 
 
 def test_approval_shape_does_not_redismiss_a_bare_re_approval(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    # carol's original bare approval was dismissed by an earlier run - dismissing
-    # a review sets its own body to the dismissal message, so that history is
-    # still visible as a DISMISSED review carrying it. She re-approved bare
-    # again without adding a comment; the once-only guard must leave the new
-    # review alone rather than dismiss it too.
+    # carol's original bare approval (review 10) was dismissed by an earlier
+    # run. The review itself keeps its original (blank) body - GitHub records
+    # the dismissal message on a separate 'review_dismissed' timeline event
+    # instead, linked back by review_id - so that event is what carries the
+    # history forward. She re-approved bare again without adding a comment
+    # (review 11, a new id); the once-only guard must leave it alone rather
+    # than dismiss it too.
     reviews = [
-        _review(10, "carol", "DISMISSED", "2026-09-10T09:00:00Z", body=qh.DISMISSAL_MESSAGE),
+        _review(10, "carol", "DISMISSED", "2026-09-10T09:00:00Z"),
         _review(11, "carol", "APPROVED", "2026-09-11T09:00:00Z"),
     ]
-    _install_review_api(monkeypatch, qh, reviews, [])
+    timeline = [
+        {"event": "commented"},
+        {
+            "event": "review_dismissed",
+            "dismissed_review": {"review_id": 10, "dismissal_message": qh.DISMISSAL_MESSAGE},
+        },
+    ]
+
+    def fake_gh_json(*args: str) -> object:
+        if args[1].endswith("/reviews"):
+            return reviews
+        if args[1].endswith("/comments"):
+            return []
+        if args[1].endswith("/timeline"):
+            return timeline
+        raise AssertionError(f"unexpected call {args}")
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
     pr = _pr(qh, 1, changed_lines=200)
+    qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
+    assert not pr.intents
+
+
+def test_approval_shape_does_not_check_the_timeline_when_nothing_is_bare(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The once-only check costs an extra API call - it must only be paid when
+    # there is an actual bare-approval candidate to check, not on every PR
+    # that clears the line-count gate.
+    reviews = [_review(10, "alice", "APPROVED", "2026-09-10T10:00:00Z")]
+    comments = [{"user": {"login": "alice"}}]
+
+    def fake_gh_json(*args: str) -> object:
+        if args[1].endswith("/reviews"):
+            return reviews
+        if args[1].endswith("/comments"):
+            return comments
+        raise AssertionError(f"must not check the timeline when nothing is bare: {args}")
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
+    pr = _pr(qh, 1, changed_lines=120)
     qh.rule_approval_shape("owner/repo", [pr], maintainer="chernistry")
     assert not pr.intents
 

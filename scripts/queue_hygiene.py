@@ -279,6 +279,31 @@ def _fetch_reviews(repo: str, pr_number: int, cache: dict[int, list[dict[str, An
     return cache[pr_number]
 
 
+def _already_dismissed_logins(repo: str, pr_number: int, reviews: list[dict[str, Any]]) -> set[str]:
+    """Logins this rule has already dismissed a bare approval from on this PR.
+
+    Dismissing a review does not touch the review's own body - it keeps
+    whatever the original reviewer wrote (nothing, for the bare approvals
+    this rule targets) - GitHub records the dismissal message on a separate
+    'review_dismissed' timeline event instead, linked back to the review by
+    id. Cross-reference that against the reviews already fetched to recover
+    the login.
+    """
+    review_logins = {r.get("id"): (r.get("user") or {}).get("login") for r in reviews}
+    timeline = gh_json("api", f"repos/{repo}/issues/{pr_number}/timeline", "--paginate")
+    logins = set()
+    for event in timeline:
+        if event.get("event") != "review_dismissed":
+            continue
+        dismissal = event.get("dismissed_review") or {}
+        if dismissal.get("dismissal_message") != DISMISSAL_MESSAGE:
+            continue
+        login = review_logins.get(dismissal.get("review_id"))
+        if login:
+            logins.add(login)
+    return logins
+
+
 def rule_approval_shape(
     repo: str,
     prs: list[PullRequest],
@@ -296,24 +321,13 @@ def rule_approval_shape(
         if pr.labels & EXEMPT_LABELS:
             continue
         reviews = _fetch_reviews(repo, pr.number, cache)
-        # Once-only: dismissing a review sets its own body to DISMISSAL_MESSAGE,
-        # so a login that already carries a DISMISSED review with that body has
-        # had its one warning. A bare re-approval from the same person is a new
-        # review id and would otherwise be re-dismissed every run.
-        already_dismissed_logins = {
-            (r.get("user") or {}).get("login")
-            for r in reviews
-            if r.get("state") == "DISMISSED" and (r.get("body") or "") == DISMISSAL_MESSAGE
-        }
         approvals = [
             r
             for r in standing_approvals(reviews)
             # The maintainer's approval is a protected-path requirement in its
             # own right (charter, section 4), not a quorum vote, so it is not
             # held to the shape rule.
-            if r["user"]["login"] != maintainer
-            and not _is_bot(r)
-            and r["user"]["login"] not in already_dismissed_logins
+            if r["user"]["login"] != maintainer and not _is_bot(r)
         ]
         if not approvals:
             continue
@@ -322,11 +336,23 @@ def rule_approval_shape(
         # then adds a line note in a separate comment has still read it.
         comments = gh_json("api", f"repos/{repo}/pulls/{pr.number}/comments", "--paginate")
         commented_by = {(c.get("user") or {}).get("login") for c in comments}
+        candidates = []
         for review in approvals:
             if (review.get("submitted_at") or "") < APPROVAL_SHAPE_EFFECTIVE_FROM:
                 continue
             login = review["user"]["login"]
             if login in commented_by or (review.get("body") or "").strip():
+                continue
+            candidates.append((login, review))
+        if not candidates:
+            continue
+        # Once-only, checked only once there is actually something to dismiss:
+        # a login already dismissed for this exact message has had its one
+        # warning, and a bare re-approval from the same person - a new review
+        # id - must not be dismissed again every run.
+        already_dismissed = _already_dismissed_logins(repo, pr.number, reviews)
+        for login, review in candidates:
+            if login in already_dismissed:
                 continue
             pr.intents.append(
                 f"dismiss:{review['id']} ({login}: approval without a line comment on {pr.changed_lines} changed lines)"
