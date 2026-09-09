@@ -10,14 +10,15 @@ same answer.
 
 ## The rules, in one paragraph
 
-Every change goes through the merge queue; nobody pushes to `main` directly.
-A pull request merges with two approving reviews from committers who are not
-its author, at least one of them from a code owner (`.github/CODEOWNERS`),
-green required checks on the queued state, and no unresolved *changes
-requested*. A new push dismisses earlier approvals, and the person who pushed
-last cannot supply the final one. A change over 400 lines, or one touching a
-path with `sandbox`, `security`, or `audit` in it, needs a third approval from
-a core reviewer. Protected paths (charter section 4: workflows, `core`,
+Every change goes through the merge queue; nobody pushes to `main` directly. A
+pull request merges with two approving reviews from committers who are not its
+author, at least one of them from a code owner (`.github/CODEOWNERS`), green
+required checks on the queued state, and no unresolved *changes requested*. A
+new push dismisses earlier approvals, and the person who pushed last cannot
+supply the final one. A change over 400 lines, or one touching a path with
+`sandbox`, `security`, or `audit` in it, needs a third approval from a core
+reviewer, and over 1,000 lines gets split or sent to the maintainer instead.
+Protected paths (charter section 4, including the `.github/` directory, `core`,
 `evolution`, `adapters`, dependency lockfiles, schemas, the security and
 governance documents, agent configuration files) also need the maintainer's
 approval. The project's own automation merges its own changes when CI is green;
