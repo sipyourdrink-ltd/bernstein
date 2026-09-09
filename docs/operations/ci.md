@@ -379,7 +379,7 @@ to git, and both are accepted:
 
 | Shape | Lanes | How git gets the token |
 |-------|-------|------------------------|
-| Persisted checkout credential | `adapter-conformance-canary`, `bernstein-ci-fix`, `nightly-drift-sweep` | `actions/checkout` is given the same `token:` expression and leaves it in `.git/config` |
+| Persisted checkout credential | `adapter-conformance-canary`, `nightly-drift-sweep` | `actions/checkout` is given the same `token:` expression and leaves it in `.git/config` |
 | Explicit auth header | `auto-heal`, `bernstein-issues-decompose` | the step checks out with `persist-credentials: false`, then sets `http.https://github.com/.extraheader` from `$GH_TOKEN` and unsets it on exit |
 
 Passing `persist-credentials: false` without setting the header leaves the
