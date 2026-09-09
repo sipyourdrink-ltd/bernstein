@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Apply the review charter's queue-hygiene rules to open pull requests.
 
-Four rules, each independent of the others:
+Five rules, each independent of the others:
 
 ``over-wip``
     An author with more than five open, non-draft pull requests gets the
@@ -16,8 +16,17 @@ Four rules, each independent of the others:
 ``needs-committer-review``
     Set when a pull request is not a draft, every check in its status
     rollup succeeded (or was neutral/skipped — nothing pending or failed),
-    and nobody has requested changes. Removed the moment any of that
-    stops being true.
+    it has no merge conflict, and nobody has requested changes. Removed the
+    moment any of that stops being true.
+
+``approval-shape``
+    The charter (section 3) says an approval on a non-trivial change means
+    "I read the whole diff and would defend it". A standing approval on a
+    pull request over 40 changed lines whose author left no line-level
+    comment anywhere on the request is dismissed, with a note on how to
+    re-approve. Applies to every human approver except the maintainer,
+    whose approval on a protected path is a separate requirement; bot
+    reviews are never counted as approvals in the first place.
 
 ``changes-requested timeout``
     A pull request whose most recent review is "changes requested", with
@@ -39,7 +48,7 @@ hand first:
 This does not touch area or size labels (.github/workflows/pr-labels.yml
 already owns those) and does not touch the sixty-day generic inactivity
 sweep (.github/workflows/stale.yml already owns that) — this script is
-specifically the four rules above, no more.
+specifically the five rules above, no more.
 """
 
 from __future__ import annotations
@@ -60,6 +69,19 @@ EXEMPT_LABELS = {"pinned", "do-not-close", "work-in-progress"}
 OVER_WIP_LABEL = "over-wip"
 DUPLICATE_LABEL = "duplicate"
 NEEDS_REVIEW_LABEL = "needs-committer-review"
+
+# approval-shape: below this many changed lines an approval may reasonably
+# carry no line comment (a one-line fix, a version bump).
+APPROVAL_SHAPE_MIN_CHANGED_LINES = 40
+# The maintainer's approval is a protected-path requirement in its own right
+# (charter, section 4), not a quorum vote, so it is not held to the shape rule.
+APPROVAL_SHAPE_EXEMPT_LOGINS = frozenset({"chernistry"})
+DISMISSAL_MESSAGE = (
+    "Dismissed by queue hygiene: the review charter "
+    "(docs/governance/review-charter.md, section 3) asks an approval on a "
+    "change of this size to carry at least one line-level comment, a finding "
+    "or a note of what you ran. Re-approve with one and it stands."
+)
 
 # GitHub's own closing-keyword set (case-insensitive), singular or plural,
 # with or without a colon, per
@@ -90,6 +112,8 @@ class PullRequest:
     review_decision: str
     body: str
     checks_pass: bool
+    mergeable: str = ""  # MERGEABLE / CONFLICTING / UNKNOWN as GitHub reports it
+    changed_lines: int = 0  # additions + deletions
     intents: list[str] = field(default_factory=list)
 
 
@@ -104,6 +128,8 @@ def parse_pr(raw: dict[str, Any]) -> PullRequest:
         review_decision=raw.get("reviewDecision") or "",
         body=raw.get("body") or "",
         checks_pass=False,  # filled in by required_checks_pass() below
+        mergeable=raw.get("mergeable") or "",
+        changed_lines=int(raw.get("additions") or 0) + int(raw.get("deletions") or 0),
     )
 
 
@@ -146,7 +172,7 @@ def fetch_open_prs(repo: str) -> list[PullRequest]:
         "--limit",
         "300",
         "--json",
-        "number,title,author,createdAt,isDraft,labels,reviewDecision,body",
+        "number,title,author,createdAt,isDraft,labels,reviewDecision,body,mergeable,additions,deletions",
     )
     prs = [parse_pr(r) for r in raw]
     for pr in prs:
@@ -204,12 +230,63 @@ def rule_duplicate(prs: list[PullRequest]) -> None:
 
 def rule_needs_committer_review(prs: list[PullRequest]) -> None:
     for pr in prs:
-        should_have = not pr.is_draft and pr.checks_pass and pr.review_decision != "CHANGES_REQUESTED"
+        should_have = (
+            not pr.is_draft
+            and pr.checks_pass
+            and pr.mergeable != "CONFLICTING"
+            and pr.review_decision != "CHANGES_REQUESTED"
+        )
         has = NEEDS_REVIEW_LABEL in pr.labels
         if should_have and not has:
             pr.intents.append(f"add:{NEEDS_REVIEW_LABEL}")
         elif has and not should_have:
             pr.intents.append(f"remove:{NEEDS_REVIEW_LABEL}")
+
+
+def _is_bot(login: str) -> bool:
+    return login.endswith("[bot]") or login.startswith("app/")
+
+
+def standing_approvals(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The approvals GitHub still counts: each user's latest verdict, where a
+    comment-only review does not replace an earlier verdict (GitHub keeps
+    the approval standing through later COMMENTED reviews) but a later
+    CHANGES_REQUESTED, DISMISSED or fresh APPROVED does."""
+    latest: dict[str, dict[str, Any]] = {}
+    for review in reviews:
+        login = (review.get("user") or {}).get("login") or ""
+        if not login or review.get("state") in ("COMMENTED", "PENDING"):
+            continue
+        prev = latest.get(login)
+        if prev is None or (review.get("submitted_at") or "") >= (prev.get("submitted_at") or ""):
+            latest[login] = review
+    return [r for r in latest.values() if r.get("state") == "APPROVED"]
+
+
+def rule_approval_shape(repo: str, prs: list[PullRequest]) -> None:
+    for pr in prs:
+        if pr.is_draft or pr.changed_lines <= APPROVAL_SHAPE_MIN_CHANGED_LINES:
+            continue
+        reviews = gh_json("api", f"repos/{repo}/pulls/{pr.number}/reviews", "--paginate")
+        approvals = [
+            r
+            for r in standing_approvals(reviews)
+            if r["user"]["login"] not in APPROVAL_SHAPE_EXEMPT_LOGINS and not _is_bot(r["user"]["login"])
+        ]
+        if not approvals:
+            continue
+        # Any line comment by the approver anywhere on the request counts,
+        # whichever review it was attached to: a reviewer who approves and
+        # then adds a line note in a separate comment has still read it.
+        comments = gh_json("api", f"repos/{repo}/pulls/{pr.number}/comments", "--paginate")
+        commented_by = {(c.get("user") or {}).get("login") for c in comments}
+        for review in approvals:
+            login = review["user"]["login"]
+            if login in commented_by:
+                continue
+            pr.intents.append(
+                f"dismiss:{review['id']} ({login}: approval without a line comment on {pr.changed_lines} changed lines)"
+            )
 
 
 def last_changes_requested_without_push(repo: str, pr: PullRequest) -> datetime | None:
@@ -329,6 +406,16 @@ def apply_intents(repo: str, pr: PullRequest) -> None:
             gh("pr", "edit", str(pr.number), "--repo", repo, "--add-label", NEEDS_REVIEW_LABEL)
         elif intent.startswith(f"remove:{NEEDS_REVIEW_LABEL}"):
             gh("pr", "edit", str(pr.number), "--repo", repo, "--remove-label", NEEDS_REVIEW_LABEL)
+        elif intent.startswith("dismiss:"):
+            review_id = intent.split(":", 1)[1].split(" ", 1)[0]
+            gh(
+                "api",
+                "-X",
+                "PUT",
+                f"repos/{repo}/pulls/{pr.number}/reviews/{review_id}/dismissals",
+                "-f",
+                f"message={DISMISSAL_MESSAGE}",
+            )
         elif intent.startswith("close ("):
             gh(
                 "pr",
@@ -369,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
     rule_over_wip(prs)
     rule_duplicate(prs)
     rule_needs_committer_review(prs)
+    rule_approval_shape(args.repo, prs)
     rule_changes_requested_timeout(args.repo, prs)
 
     if args.pr is not None:

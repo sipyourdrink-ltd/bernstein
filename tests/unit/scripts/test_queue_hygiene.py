@@ -50,6 +50,8 @@ def _pr(
     review_decision: str = "",
     body: str = "",
     checks_pass: bool = True,
+    mergeable: str = "MERGEABLE",
+    changed_lines: int = 100,
 ) -> object:
     """Build a ``PullRequest`` with sane defaults, oldest-first by age_days."""
     now = datetime.now(UTC)
@@ -63,6 +65,8 @@ def _pr(
         review_decision=review_decision,
         body=body,
         checks_pass=checks_pass,
+        mergeable=mergeable,
+        changed_lines=changed_lines,
     )
 
 
@@ -169,6 +173,18 @@ def test_needs_review_not_added_when_blocked(qh: ModuleType, kwargs: dict) -> No
     assert not any(i.startswith("add:needs-committer-review") for i in pr.intents)
 
 
+def test_needs_review_not_added_on_a_merge_conflict(qh: ModuleType) -> None:
+    pr = _pr(qh, 1, mergeable="CONFLICTING")
+    qh.rule_needs_committer_review([pr])
+    assert not any(i.startswith("add:needs-committer-review") for i in pr.intents)
+
+
+def test_needs_review_removed_once_a_conflict_appears(qh: ModuleType) -> None:
+    pr = _pr(qh, 1, mergeable="CONFLICTING", labels={"needs-committer-review"})
+    qh.rule_needs_committer_review([pr])
+    assert any(i.startswith("remove:needs-committer-review") for i in pr.intents)
+
+
 def test_needs_review_removed_once_no_longer_eligible(qh: ModuleType) -> None:
     pr = _pr(qh, 1, checks_pass=False, labels={"needs-committer-review"})
     qh.rule_needs_committer_review([pr])
@@ -220,6 +236,118 @@ def test_changes_requested_timeout_respects_exempt_labels(qh: ModuleType, monkey
     pr = _pr(qh, 1, review_decision="CHANGES_REQUESTED", labels={"work-in-progress"})
     qh.rule_changes_requested_timeout("owner/repo", [pr])
     assert not pr.intents
+
+
+# --- approval-shape ---------------------------------------------------------
+
+
+def _review(review_id: int, login: str, state: str, at: str) -> dict:
+    return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at}
+
+
+def _install_review_api(monkeypatch: pytest.MonkeyPatch, qh: ModuleType, reviews: list, comments: list) -> None:
+    def fake_gh_json(*args: str) -> object:
+        if args[1].endswith("/reviews"):
+            return reviews
+        if args[1].endswith("/comments"):
+            return comments
+        raise AssertionError(f"unexpected call {args}")
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
+
+
+def test_approval_shape_dismisses_a_bare_approval_on_a_non_trivial_change(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_review_api(monkeypatch, qh, [_review(10, "alice", "APPROVED", "2026-09-09T10:00:00Z")], [])
+    pr = _pr(qh, 1, changed_lines=120)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert pr.intents == ["dismiss:10 (alice: approval without a line comment on 120 changed lines)"]
+
+
+def test_approval_shape_keeps_an_approval_whose_author_left_a_line_comment(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The line comment sits on a different review id (added after approving):
+    # what matters is that the approver read a line, not which review carried it.
+    _install_review_api(
+        monkeypatch,
+        qh,
+        [_review(10, "alice", "APPROVED", "2026-09-09T10:00:00Z")],
+        [{"user": {"login": "alice"}, "pull_request_review_id": 11}],
+    )
+    pr = _pr(qh, 1, changed_lines=120)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
+def test_approval_shape_ignores_small_changes_without_calling_the_api(
+    qh: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_gh_json(*args: str) -> object:
+        raise AssertionError("must not call the API for a small change")
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
+    pr = _pr(qh, 1, changed_lines=qh.APPROVAL_SHAPE_MIN_CHANGED_LINES)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
+def test_approval_shape_exempts_the_maintainer_and_bots(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    maintainer = next(iter(qh.APPROVAL_SHAPE_EXEMPT_LOGINS))
+    _install_review_api(
+        monkeypatch,
+        qh,
+        [
+            _review(10, maintainer, "APPROVED", "2026-09-09T10:00:00Z"),
+            _review(11, "renovate[bot]", "APPROVED", "2026-09-09T10:00:00Z"),
+            _review(12, "app/some-app", "APPROVED", "2026-09-09T10:00:00Z"),
+        ],
+        [],
+    )
+    pr = _pr(qh, 1, changed_lines=500)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
+def test_approval_shape_uses_each_users_latest_verdict(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    reviews = [
+        # alice approved bare, then requested changes: nothing standing to dismiss
+        _review(10, "alice", "APPROVED", "2026-09-09T10:00:00Z"),
+        _review(11, "alice", "CHANGES_REQUESTED", "2026-09-09T11:00:00Z"),
+        # bob approved bare, then re-approved and left a line note: the fresh one stands
+        _review(20, "bob", "APPROVED", "2026-09-09T10:00:00Z"),
+        _review(21, "bob", "APPROVED", "2026-09-09T12:00:00Z"),
+        # carol approved bare, then only commented: GitHub keeps her approval standing
+        _review(30, "carol", "APPROVED", "2026-09-09T10:00:00Z"),
+        _review(31, "carol", "COMMENTED", "2026-09-09T13:00:00Z"),
+    ]
+    comments = [{"user": {"login": "bob"}, "pull_request_review_id": 21}]
+    _install_review_api(monkeypatch, qh, reviews, comments)
+    pr = _pr(qh, 1, changed_lines=200)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert pr.intents == ["dismiss:30 (carol: approval without a line comment on 200 changed lines)"]
+
+
+def test_approval_shape_skips_drafts(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_gh_json(*args: str) -> object:
+        raise AssertionError("must not call the API for a draft")
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
+    pr = _pr(qh, 1, is_draft=True, changed_lines=999)
+    qh.rule_approval_shape("owner/repo", [pr])
+    assert not pr.intents
+
+
+def test_apply_dismisses_through_the_review_dismissal_endpoint(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(qh, "gh", lambda *args: calls.append(args))
+    pr = _pr(qh, 7)
+    pr.intents.append("dismiss:10 (alice: approval without a line comment on 120 changed lines)")
+    qh.apply_intents("owner/repo", pr)
+    assert len(calls) == 1
+    assert calls[0][:4] == ("api", "-X", "PUT", "repos/owner/repo/pulls/7/reviews/10/dismissals")
+    assert calls[0][-1].startswith("message=Dismissed by queue hygiene")
 
 
 # --- --pr must narrow the OUTPUT, never the rules' INPUT --------------------
