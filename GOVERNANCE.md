@@ -21,10 +21,12 @@ in-scope table). State the problem, the option chosen, and what it costs.
 Everything else — bug fixes, docs, tests, a new adapter — goes straight
 to a pull request.
 
-**Becoming a committer or a core reviewer.** The roles, and the floor for
-each, are defined in the [review charter](docs/governance/review-charter.md#7-becoming-and-remaining-a-committer):
-anyone may nominate anyone, including themselves, in an issue, and the
-maintainer confirms. Area stewardship
+**Becoming a committer or a core reviewer.** Both roles are defined in the
+[review charter](docs/governance/review-charter.md#7-becoming-and-remaining-a-committer),
+which sets an objective floor for committer; core reviewer has no numeric
+floor, only a sustained record of reviews that found real problems. Anyone
+may nominate anyone, including themselves, in an issue, and the maintainer
+confirms. Area stewardship
 ([CONTRIBUTING.md](CONTRIBUTING.md#areas)) is the triage-level path that
 usually comes first. Write access reaches the release workflows and their
 publishing credentials, so it follows an established record rather than
