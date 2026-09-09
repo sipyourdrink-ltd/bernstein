@@ -289,7 +289,7 @@ def test_approval_shape_keeps_an_approval_whose_author_left_a_line_comment(
         monkeypatch,
         qh,
         [_review(10, "alice", "APPROVED", "2026-09-10T10:00:00Z")],
-        [{"user": {"login": "alice"}, "pull_request_review_id": 11}],
+        [{"user": {"login": "alice"}}],
     )
     pr = _pr(qh, 1, changed_lines=120)
     qh.rule_approval_shape("owner/repo", [pr])
@@ -411,7 +411,7 @@ def test_approval_shape_uses_each_users_latest_verdict(qh: ModuleType, monkeypat
         _review(30, "carol", "APPROVED", "2026-09-11T10:00:00Z"),
         _review(31, "carol", "COMMENTED", "2026-09-11T13:00:00Z"),
     ]
-    comments = [{"user": {"login": "bob"}, "pull_request_review_id": 21}]
+    comments = [{"user": {"login": "bob"}}]
     _install_review_api(monkeypatch, qh, reviews, comments)
     pr = _pr(qh, 1, changed_lines=200)
     qh.rule_approval_shape("owner/repo", [pr])
