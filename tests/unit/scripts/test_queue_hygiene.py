@@ -1,6 +1,6 @@
 """Unit tests for ``scripts/queue_hygiene.py``.
 
-Each of the four rules is exercised directly against constructed
+Each of the five rules is exercised directly against constructed
 ``PullRequest`` fixtures rather than through ``main()`` end to end, so a test
 failure points at the one rule that regressed instead of at "something in the
 gh subprocess chain broke". ``last_changes_requested_without_push`` is the one
