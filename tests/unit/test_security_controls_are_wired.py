@@ -34,6 +34,7 @@ in this package turns the guard into a deletion machine.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -106,6 +107,10 @@ def _module_aliases(tree: ast.AST) -> dict[str, str]:
     return aliases
 
 
+# The three helpers below each walk and parse the whole tree; six tests call them
+# eleven times between them. Cached, the file runs in a fraction of the isolated
+# runner's per-file budget instead of past it on the slower macOS lane.
+@functools.cache
 def _static_references() -> dict[str, set[str]]:
     """``{module_stem: {names reached through it statically}}``, alias-aware."""
     refs: dict[str, set[str]] = defaultdict(set)
@@ -134,6 +139,7 @@ def _static_references() -> dict[str, set[str]]:
     return refs
 
 
+@functools.cache
 def _written_anywhere() -> set[str]:
     """Every identifier-shaped token appearing outside `core/security/`.
 
@@ -153,6 +159,7 @@ def _written_anywhere() -> set[str]:
     return seen
 
 
+@functools.cache
 def _classify() -> tuple[set[str], set[str]]:
     """``(proved_uncalled, unproven)`` over public functions in `core/security/`."""
     refs = _static_references()
