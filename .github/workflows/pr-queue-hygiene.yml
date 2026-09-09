@@ -58,8 +58,8 @@ jobs:
         run: |
           set -euo pipefail
           ARGS=()
-          if [ "${{ inputs.pr }}" != "" ]; then
-            ARGS+=(--pr "${{ inputs.pr }}")
+          if [ "${INPUT_PR:-}" != "" ]; then
+            ARGS+=(--pr "$INPUT_PR")
           fi
           if [ "${QUEUE_HYGIENE_ARMED}" = "true" ]; then
             echo "QUEUE_HYGIENE_ARMED=true - running live."
