@@ -29,6 +29,11 @@ import pytest
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
 
+#: This file scans the whole source tree, so a source change anywhere can
+#: break it. The marker is what lets ``run_tests.py --affected`` select it;
+#: without it the guard only runs in the merge group.
+pytestmark = pytest.mark.whole_tree_guard
+
 
 # ---------------------------------------------------------------------------
 # Guard: no bounded wait reintroduces the wall clock
