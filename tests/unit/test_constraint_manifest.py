@@ -48,6 +48,22 @@ def _make_proposal(
     )
 
 
+
+def _covered_by_specific_pattern(entry: str, owner_patterns: list[str]) -> bool:
+    """True when a CODEOWNERS pattern other than the `*` catch-all covers ``entry``.
+
+    ``owner_patterns`` are CODEOWNERS path patterns with the leading ``/`` removed.
+    A pattern covers an entry when the entry starts with the pattern's literal
+    prefix (the part before any ``*``). A pattern whose prefix is empty (``*``,
+    ``**``) matches every path and is ignored here on purpose.
+    """
+    norm_entry = entry.lstrip("/")
+    for pattern in owner_patterns:
+        prefix = pattern.split("*", 1)[0]
+        if prefix and norm_entry.startswith(prefix):
+            return True
+    return False
+
 class TestConstraintLayerRejection:
     """Proposal fixture touching core/audit rejected at L0, L1, L2, L3 with the same reason."""
 
@@ -128,11 +144,22 @@ class TestCodeownersDrift:
             pattern = parts[0].lstrip("/")
             owner_patterns.append(pattern)
 
-        # Each entry in manifest must match at least one codeowner pattern
+        # Each entry in manifest must match a specific codeowner pattern; the
+        # `*` catch-all owns everything and therefore proves nothing.
         for entry in CONSTRAINT_MANIFEST:
-            norm_entry = entry.lstrip("/")
-            matched = any(norm_entry.startswith(p.rstrip("*")) or p == "*" for p in owner_patterns)
-            assert matched, f"Constraint manifest entry {entry!r} not covered by any pattern in {owner_patterns}"
+            assert _covered_by_specific_pattern(entry, owner_patterns), (
+                f"Constraint manifest entry {entry!r} not covered by any specific pattern in {owner_patterns}"
+            )
+
+    def test_catch_all_owner_is_not_coverage(self) -> None:
+        """A CODEOWNERS file that only has `*` covers nothing in particular."""
+        assert not _covered_by_specific_pattern("src/bernstein/core/security/policy.py", ["*"])
+        assert not _covered_by_specific_pattern("src/bernstein/core/security/policy.py", ["*", "docs/"])
+
+    def test_specific_prefix_is_coverage(self) -> None:
+        """A directory prefix or glob prefix from CODEOWNERS covers the entries under it."""
+        assert _covered_by_specific_pattern("src/bernstein/core/security/policy.py", ["*", "src/bernstein/core/"])
+        assert _covered_by_specific_pattern("src/bernstein/core/identity/**", ["src/bernstein/core/**"])
 
     def test_every_hash_locked_module_in_manifest(self) -> None:
         """Every module returned by resolve_locked_files / compute_invariants is in the manifest."""
