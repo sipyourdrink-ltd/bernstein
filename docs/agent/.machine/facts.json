@@ -9977,7 +9977,7 @@
         "path": "docs/release-notes/v3.8.4.md",
         "sha": "b473d8ec3b9d"
       },
-      "evidence": "- A tokenless or misconfigured worker join now fails fast with an actionable message namin",
+      "evidence": "- A tokenless or misconfigured worker join now fails fast with an actionable message",
       "rule": "`docs/release-notes/v3.8.4.md` is generated — do not hand-edit"
     },
     {
