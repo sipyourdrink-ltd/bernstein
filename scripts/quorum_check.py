@@ -94,12 +94,20 @@ AUTOMATION_STOP_PREFIXES = (".github/", "schemas/", "proto/")
 # anchors the window on the approval; for a change that needs no approval the
 # equivalent anchor is the last push, which is what this check uses.
 GOVERNANCE_WINDOW = timedelta(hours=72)
+# Literal paths rather than a `.github/workflows/` prefix rule: a prefix would
+# put every unrelated CI edit behind a three-day window, which is a cost the
+# gate does not need to pay to protect itself. Both quorum workflows are here
+# because both are invocation surface -- `quorum.yml` decides whether the check
+# runs at all, and `quorum-rerun.yml` is the only thing that closes the window
+# below, so a change silencing either one is a change to the gate.
 GOVERNANCE_PATHS = (
     "docs/governance/review-charter.md",
     "GOVERNANCE.md",
     "MAINTAINERS.md",
     ".github/CODEOWNERS",
     ".github/quorum-roster.toml",
+    ".github/workflows/quorum.yml",
+    ".github/workflows/quorum-rerun.yml",
     "scripts/quorum_check.py",
     "scripts/queue_hygiene.py",
 )
@@ -470,7 +478,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument("--pr", type=int, default=None)
     parser.add_argument("--root", default=".", help="where to read the roster and CODEOWNERS from")
+    parser.add_argument(
+        "--governance-paths",
+        action="store_true",
+        help="print the paths that carry the objection window, one per line, and exit",
+    )
     args = parser.parse_args(argv)
+
+    # The hourly sweep in quorum-rerun.yml needs this list to know which pull
+    # requests change verdict with the clock. It used to carry its own copy in a
+    # jq filter, which is a second place to forget.
+    if args.governance_paths:
+        print("\n".join(GOVERNANCE_PATHS))
+        return 0
 
     number = args.pr or pr_number_from_env(dict(os.environ))
     if number is None:

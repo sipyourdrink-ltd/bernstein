@@ -43,6 +43,13 @@ jobs:
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+      # The sweep also asks for what the check says is missing. Only the base
+      # branch is checked out, so this stays safe under the privileged trigger.
+      - name: Check out the scripts
+        if: github.event_name != 'pull_request_review'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Re-run quorum
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,24 +78,24 @@ jobs:
 
           # Hourly sweep: only the pull requests whose verdict moves with the
           # clock, i.e. the ones inside the governance objection window.
-          gh pr list --repo "$REPO" --state open --limit 100 \
-              --json number,isDraft,files \
-              --jq '.[] | select(.isDraft | not)
-                        | select([.files[].path] | any(
-                            . == "docs/governance/review-charter.md" or . == "GOVERNANCE.md"
-                            or . == "MAINTAINERS.md" or . == ".github/CODEOWNERS"
-                            or . == ".github/quorum-roster.toml"
-                            or . == "scripts/quorum_check.py" or . == "scripts/queue_hygiene.py"))
-                        | .number' \
+          #
+          # The list comes from the check itself. It used to be restated here as
+          # a jq literal, so a path added to the script was covered by the
+          # window and then never swept once the window closed -- the pull
+          # request sat red until somebody pushed to it.
+          mapfile -t GOVERNANCE_PATHS < <(python3 scripts/quorum_check.py --governance-paths)
+          [ "${#GOVERNANCE_PATHS[@]}" -gt 0 ] || { echo "no governance paths reported"; exit 1; }
+          PATHS_JSON=$(printf '%s\n' "${GOVERNANCE_PATHS[@]}" | jq -R . | jq -s .)
+
+          # Filtered with jq rather than `gh --jq`, which takes an expression but
+          # no `--argjson`, and the path list has to arrive as data.
+          gh pr list --repo "$REPO" --state open --limit 100 --json number,isDraft,files \
+            | jq -r --argjson governance "$PATHS_JSON" \
+                  '.[] | select(.isDraft | not)
+                       | select([.files[].path] | any(. as $p | $governance | index($p)))
+                       | .number' \
             | while read -r pr; do rerun_for "$pr"; done
 
-      # The sweep also asks for what the check says is missing. Only the base
-      # branch is checked out, so this stays safe under the privileged trigger.
-      - name: Check out the scripts
-        if: github.event_name != 'pull_request_review'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
       - name: Ask the roster for the reviews still missing
         if: github.event_name != 'pull_request_review'
         env:
