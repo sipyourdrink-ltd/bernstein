@@ -15,10 +15,7 @@ from rich.table import Table
 
 from bernstein.cli.helpers import console
 from bernstein.core.checks.contract import Verdict
-from bernstein.core.checks.registry import (
-    CheckRegistry,
-    populate_default_checks,
-)
+from bernstein.core.checks.registry import CheckRegistry, populate_default_checks
 
 
 @click.command("audit")
@@ -129,7 +126,7 @@ def govern_audit_cmd(
 
     has_failures = False
     for f in findings:
-        if f.verdict == Verdict.PASS or (f.passed is True):
+        if f.verdict == Verdict.PASS or f.passed:
             status_badge = "[bold green]PASS[/bold green]"
         elif f.verdict == Verdict.NOT_MEASURABLE:
             status_badge = "[bold yellow]UNMEASURED[/bold yellow]"
@@ -150,7 +147,7 @@ def govern_audit_cmd(
     console.print(table)
     console.print()
 
-    passed_count = sum(1 for f in findings if f.verdict == Verdict.PASS or f.passed is True)
+    passed_count = sum(1 for f in findings if f.verdict == Verdict.PASS or f.passed)
     console.print(
         f"Total: [bold]{len(findings)}[/bold] | "
         f"Passed: [bold green]{passed_count}[/bold green] | "
