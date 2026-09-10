@@ -37,7 +37,7 @@ concurrency:
 jobs:
   preflight:
     name: preflight (gate)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 1
     outputs:
       enabled: ${{ steps.gate.outputs.enabled }}
@@ -73,7 +73,7 @@ jobs:
     name: generate evidence pack
     needs: preflight
     if: needs.preflight.outputs.enabled == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     steps:
       - name: Harden runner (audit mode)
