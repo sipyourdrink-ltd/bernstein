@@ -98,6 +98,10 @@ class ArchivedKey:
 
     public_pem: bytes
     rotated_at: _dt.datetime
+    #: Name of the ``archive/`` directory this key was read from. It carries
+    #: the disambiguator ``_unique_archive_folder`` adds when two rotations
+    #: share a second, which is the only thing that distinguishes them.
+    archive_name: str = ""
 
     @property
     def kid(self) -> str:
@@ -106,14 +110,15 @@ class ArchivedKey:
         ``agent_json_keys`` keys archived JWKs on the RFC 7638 thumbprint of
         the key itself, because that is the ``kid`` a card signed by it
         carries. This label encodes the rotation moment instead, which
-        identifies the *archive* rather than the key - two rotations inside
-        one second share it.
+        identifies the *archive* rather than the key. It is built from
+        ``archive_name`` (unique by construction), not ``rotated_at``, whose
+        one-second resolution would collide for two rotations in one second.
 
         Kept for operator-facing listing and log lines. It is deliberately
         not a routing identity: a plausible-looking ``kid`` on this type is
         how the JWKS came to advertise keys under names no card referenced.
         """
-        stamp = self.rotated_at.strftime("%Y%m%dT%H%M%SZ")
+        stamp = self.archive_name or self.rotated_at.strftime("%Y%m%dT%H%M%SZ")
         return f"agent-bernstein-orchestrator-{stamp}"
 
 
@@ -217,7 +222,7 @@ class AgentCardKeystore:
             except OSError:  # pragma: no cover - filesystem flake
                 logger.warning("agent-card keystore: unreadable archived public key at %s", pub_path)
                 continue
-            out.append(ArchivedKey(public_pem=public_pem, rotated_at=rotated_at))
+            out.append(ArchivedKey(public_pem=public_pem, rotated_at=rotated_at, archive_name=entry.name))
         return out
 
     def rotate(self) -> tuple[bytes, bytes]:
@@ -415,6 +420,13 @@ class AgentCardKeystore:
         uses, so the two cannot disagree about which entries are live - a
         prune that ran even slightly ahead of the publisher would delete a key
         the JWKS was still advertising.
+
+        The two are not symmetric, though, and the asymmetry is worth stating:
+        skipping is reversible and deleting is not. If the clock steps
+        backwards between a prune and a later read - an NTP correction, a VM
+        restored from a snapshot - an entry :meth:`list_archived` would have
+        started publishing again is already gone. Sharing the expression makes
+        the *decision* identical; it does not make the consequences identical.
 
         An entry whose rotation timestamp cannot be read is left alone. It is
         not published either, so it is only wasted space; deleting a
