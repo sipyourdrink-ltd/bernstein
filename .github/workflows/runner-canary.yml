@@ -1,0 +1,114 @@
+# Smoke check for the project's own scheduled-job runner.
+#
+# Runs only on schedule or by hand, never on pull-request events, and
+# checks out nothing: it exists to prove that the runner picks up a
+# job quickly, runs as an unprivileged user, and has no access to a
+# container socket. Job-level `permissions: {}` keeps the token inert.
+#
+# The rule for the runner group this job proves out: a workflow may run
+# there only if it has no pull-request trigger of any kind and checks out
+# no ref it did not author. A self-hosted runner executes whatever a pull
+# request carries, and on a public repository that is anyone's code. Every
+# scheduled job moved onto the group has to keep both properties; this
+# file is the reference, and it deliberately prints nothing about the host
+# beyond pass or fail.
+#
+# A second job proves the macOS lane. That runner is a throwaway virtual
+# machine that exists only inside a nightly maintenance window, so the
+# job is dispatch-only: on a schedule it would queue against a machine
+# that is deliberately absent for most of the day. Its assertions are
+# containment assertions -- the job must be inside a VM, must not be the
+# account that owns the physical machine, must see no home directory but
+# its own, and must see no network share -- and, like the Linux canary,
+# it reports pass or fail rather than describing the host.
+name: Runner canary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions: {}
+
+jobs:
+  canary:
+    name: Runner canary
+    runs-on: [self-hosted, linux, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Assert no container socket
+        run: |
+          for sock in /var/run/docker.sock /run/docker.sock \
+                      /run/podman/podman.sock /run/containerd/containerd.sock \
+                      "${XDG_RUNTIME_DIR:-/nonexistent}/docker.sock" \
+                      "${XDG_RUNTIME_DIR:-/nonexistent}/podman/podman.sock"; do
+            if [ -e "$sock" ]; then
+              echo "::error::container socket is visible inside the runner: $sock"
+              exit 1
+            fi
+          done
+          echo "no-container-socket"
+      - name: Assert unprivileged user
+        run: |
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "::error::runner is executing as root"
+            exit 1
+          fi
+      - name: Reach the API
+        run: |
+          set -o pipefail
+          curl -fsSI https://api.github.com | head -1
+
+  macos-canary:
+    name: macOS runner canary
+    # Dispatch only: see the note at the top of the file.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, macOS, ARM64, mac-night]
+    timeout-minutes: 15
+    steps:
+      - name: Assert the runner is a virtual machine
+        run: |
+          set -eu
+          model="$(sysctl -n hw.model)"
+          case "$model" in
+            *VirtualMac*) echo "virtualised" ;;
+            *) echo "::error::runner is not a virtual machine"; exit 1 ;;
+          esac
+      - name: Assert the runner account is the image account
+        run: |
+          set -eu
+          if [ "$(whoami)" != "admin" ]; then
+            echo "::error::runner is not executing as the image account"
+            exit 1
+          fi
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "::error::runner is executing as root"
+            exit 1
+          fi
+      - name: Assert no home directory but the image account's is visible
+        run: |
+          set -eu
+          # Anything outside this set means the job can read a home
+          # directory that belongs to the machine hosting the VM.
+          for entry in /Users/*; do
+            case "$(basename "$entry")" in
+              admin|runner|Shared|Guest|.localized) ;;
+              \*) ;;
+              *) echo "::error::an unexpected home directory is visible to the runner"; exit 1 ;;
+            esac
+          done
+          echo "home-directories-confined"
+      - name: Assert no network share is mounted
+        run: |
+          set -eu
+          # A share belonging to the machine that hosts the VM would
+          # appear here as one of these filesystem types.
+          if mount | grep -Eq '\((smbfs|nfs|afpfs|webdav|ftp)[,)]'; then
+            echo "::error::a network share is mounted inside the runner"
+            exit 1
+          fi
+          echo "no-network-share"
+      - name: Reach the API
+        run: |
+          set -o pipefail
+          curl -fsSI https://api.github.com | head -1
