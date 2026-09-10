@@ -10,8 +10,12 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from bernstein.core.git.git_basic import GitResult
 
 from bernstein.core.git.snapshot import (
     SNAPSHOT_REF_PREFIX,
@@ -493,3 +497,67 @@ def test_every_git_in_the_module_is_bounded_the_same_way(repo: Path, monkeypatch
 
     with pytest.raises(SnapshotError, match="exceeded 30"):
         SnapshotStore(repo)
+
+
+def test_each_git_call_gets_the_timeout_it_was_meant_to_have(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 300s on ``git add`` is the real decision in this module.
+
+    It is the difference between "a large repository is slow" and "a large
+    repository's snapshots fail", and nothing held it in place: the overrun
+    test matches ``"exceeded 300"``, but that 300 comes from the fake
+    ``TimeoutExpired``, which raises identically for every git the code runs.
+    Swap the two constants at the call sites and every other test here still
+    passes.
+
+    This captures the ``timeout=`` each call actually receives.
+    """
+    from bernstein.core.git import snapshot as snapshot_module
+
+    seen: list[tuple[str, int]] = []
+    real_run_git = snapshot_module.run_git
+
+    def record(args: list[str], cwd: Path, **kwargs: object) -> GitResult:
+        timeout = kwargs.get("timeout")
+        seen.append((args[0], int(timeout) if isinstance(timeout, int) else -1))
+        return real_run_git(args, cwd, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(snapshot_module, "run_git", record)
+    (repo / "a.txt").write_text("x", encoding="utf-8")
+    SnapshotStore(repo).take(task_id="t-1")
+
+    by_command = dict(seen)
+    assert by_command["add"] == snapshot_module._GIT_ADD_TIMEOUT_S
+    assert by_command["add"] == 300, "the add bound is the decision this module makes; pin it"
+    assert by_command["write-tree"] == snapshot_module._GIT_TIMEOUT_S
+    assert by_command["write-tree"] == 30
+
+
+def test_a_killed_git_add_does_not_orphan_its_lock_file(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``subprocess.run``'s timeout path kills with SIGKILL, which git cannot catch.
+
+    Git's lockfile cleanup runs on SIGINT/SIGTERM and at exit, so a ``git
+    add`` killed at the bound leaves ``<tmp_index>.lock`` behind. That exit
+    did not exist before this module had a timeout at all, so the cleanup
+    block had never needed to cover it.
+    """
+    from bernstein.core.git import snapshot as snapshot_module
+
+    created: list[Path] = []
+    real_run_git = snapshot_module.run_git
+
+    def leave_a_lock(args: list[str], cwd: Path, **kwargs: object) -> GitResult:
+        if args[0] == "add":
+            index = Path(str(kwargs.get("env", {}).get("GIT_INDEX_FILE", "")))  # type: ignore[union-attr]
+            lock = index.with_name(index.name + ".lock")
+            lock.write_text("", encoding="utf-8")
+            created.append(lock)
+            raise subprocess.TimeoutExpired(cmd=["git", "add", "-A"], timeout=300)
+        return real_run_git(args, cwd, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(snapshot_module, "run_git", leave_a_lock)
+
+    with pytest.raises(SnapshotError):
+        SnapshotStore(repo).take(task_id="t-1")
+
+    assert created, "the fake never ran - the test proves nothing"
+    assert not created[0].exists(), f"orphaned lock file left behind: {created[0]}"

@@ -270,11 +270,20 @@ def _write_tree(cwd: Path) -> str:
             raise SnapshotError(f"git write-tree failed: {write.stderr.strip()}")
         return write.stdout.strip()
     finally:
-        if tmp_index.exists():
+        # The lock as well as the index. ``subprocess.run``'s timeout path
+        # kills with SIGKILL, which git cannot catch, so a ``git add`` killed
+        # at the bound leaves ``<tmp_index>.lock`` behind - an exit this
+        # module could not reach before it had a timeout at all. The index
+        # name carries ``time.time_ns()``, so a stale lock cannot block a
+        # later snapshot the way ``.git/index.lock`` would; it would just
+        # accumulate one file per timeout.
+        for stale in (tmp_index, tmp_index.with_name(tmp_index.name + ".lock")):
+            if not stale.exists():
+                continue
             try:
-                tmp_index.unlink()
+                stale.unlink()
             except OSError as exc:  # pragma: no cover - best-effort cleanup
-                logger.warning("failed to remove temp snapshot index %s: %s", tmp_index, exc)
+                logger.warning("failed to remove temp snapshot file %s: %s", stale, exc)
 
 
 def _update_ref(cwd: Path, ref: str, value: str) -> None:
@@ -515,7 +524,8 @@ class SnapshotStore:
         the typical operator question is *"what changed between these
         two snapshots?"*, and rendering full patch text in a terminal
         is rarely useful. Callers that want a full diff can call
-        ``_run_git(["diff", a_tree, b_tree])`` directly.
+        ``run_git(["diff", a_tree, b_tree])`` directly - ``_run_git`` is
+        module-private and is not reachable from outside this module.
         """
         snap_a = self.get(a)
         snap_b = self.get(b)
