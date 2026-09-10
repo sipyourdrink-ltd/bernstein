@@ -8,6 +8,7 @@ import pytest
 
 from bernstein.core.identity.agent_card import (
     AgentIdentityCard,
+    _path_segments,
     check_capability,
     issue_identity_card,
     load_identity_card,
@@ -128,6 +129,39 @@ class TestInScope:
         card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api"])
 
         assert not card.in_scope(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/src/api/../../etc/passwd",
+            r"/src/api\..\..\etc\passwd",
+        ],
+    )
+    def test_a_traversal_is_refused_by_the_dotdot_guard_not_by_a_mangled_segment(self, path: str) -> None:
+        r"""Refused *because* of ``..``, not because the tail failed to match.
+
+        The distinction is not academic. With the separator class written as
+        ``[\/]`` - an escaped forward slash, matching only ``/`` - a
+        backslash path split into a single segment
+        ``api\..\..\etc\passwd``, which is out of scope because it is not
+        equal to ``api``. The assertion held and the ``..`` guard was never
+        reached, so the test would have kept passing with Windows separators
+        unhandled.
+
+        Asserting on ``_path_segments`` directly pins the reason rather than
+        the outcome: ``None`` is only returned by the traversal guard.
+        """
+        assert _path_segments(path) is None
+
+    def test_a_backslash_path_splits_into_segments(self) -> None:
+        r"""The claim the separator class exists to make, stated on its own.
+
+        ``[\/]`` inside a character class is an escaped ``/``; only
+        ``[\/]`` matches a backslash. Nothing else in this file fails when
+        that is wrong, which is how it got in.
+        """
+        separator = chr(92)  # a literal backslash, spelled without escaping games
+        assert _path_segments(f"src{separator}api{separator}users.py") == ("src", "api", "users.py")
 
     def test_a_scope_entry_naming_no_segment_contains_nothing(self) -> None:
         """Otherwise one stray "/" silently unrestricts the card.

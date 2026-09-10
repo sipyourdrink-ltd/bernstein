@@ -198,7 +198,11 @@ class Signature:
 
 #: Either platform's separator: a scope is written on one host and read on
 #: another, so ``src\..\etc`` has to be seen as a traversal on POSIX too.
-_PATH_SEPARATOR_RE = re.compile(r"[\/]+")
+#:
+#: Both backslashes are required. Inside a character class ``[\/]`` is an
+#: *escaped* forward slash, so it matches ``/`` and nothing else - the class
+#: silently loses the separator it was written to add.
+_PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
 
 
 def _path_segments(value: str) -> tuple[str, ...] | None:
@@ -211,6 +215,13 @@ def _path_segments(value: str) -> tuple[str, ...] | None:
     Leading, trailing and doubled separators contribute no segment, and ``.``
     is dropped as redundant - ``"/src/api/"`` and ``"src/./api"`` both yield
     ``("src", "api")``.
+
+    A leading separator is therefore not significant: an absolute spelling and
+    its relative one collapse to the same scope. That is a deliberate choice
+    and the contract a caller gets - ``scope=["/src/api"]`` covers a path
+    reported as ``src/api/users.py`` and vice versa, because a card's scope
+    entries and the paths tested against them are written by different
+    producers and need not agree on a leading ``/``.
     """
     segments = tuple(part for part in _PATH_SEPARATOR_RE.split(value) if part not in ("", "."))
     if any(part == ".." for part in segments):
@@ -348,7 +359,13 @@ class AgentIdentityCard:
             return False
         for entry in self.scope:
             allowed = _path_segments(entry)
-            if allowed and candidate[: len(allowed)] == allowed:
+            # ``None`` (the entry carries ``..``) and ``()`` (it names no
+            # segment) are different refusals and are spelled separately: a
+            # truthiness test folds them together, and the docstring above
+            # treats them as distinct cases.
+            if allowed is None or not allowed:
+                continue
+            if candidate[: len(allowed)] == allowed:
                 return True
         return False
 
