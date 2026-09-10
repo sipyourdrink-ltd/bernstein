@@ -287,6 +287,56 @@ def test_the_window_applies_to_the_roster_and_to_this_script(qc: ModuleType, ros
         assert not _evaluate(qc, roster, pr).passed, path
 
 
+def test_the_window_applies_to_the_workflows_that_invoke_the_check(qc: ModuleType, roster) -> None:
+    """Changing whether the gate runs is a change to the gate.
+
+    A pull request editing only the workflow -- which events it fires on, which
+    checkout it evaluates, whether it fails closed when the script is missing --
+    used to merge under ordinary rules. Editing the script's *contents* needed
+    three days; editing whether the script ran at all needed none.
+    """
+    for path in (".github/workflows/quorum.yml", ".github/workflows/quorum-rerun.yml"):
+        pr = _pr(qc, author="owner", contributors={"owner"}, paths=[path], pushed_hours_ago=2)
+        verdict = _evaluate(qc, roster, pr)
+        assert not verdict.passed, path
+        assert path in verdict.requirements[0].text, path
+
+
+def test_an_unrelated_workflow_edit_is_not_held_for_three_days(qc: ModuleType, roster) -> None:
+    """The entries are literal paths, not a `.github/workflows/` prefix rule.
+
+    A prefix rule would catch a future `quorum-*.yml` for free, and would also
+    put every unrelated CI edit behind a 72-hour window. That is a cost the gate
+    does not have to pay to protect itself.
+    """
+    pr = _pr(
+        qc,
+        author="owner",
+        contributors={"owner"},
+        paths=[".github/workflows/ci.yml"],
+        pushed_hours_ago=2,
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_every_governance_path_exists_in_the_repository(qc: ModuleType) -> None:
+    """A path that no longer exists protects nothing, and reads as if it does."""
+    missing = [p for p in qc.GOVERNANCE_PATHS if not (REPO_ROOT / p).is_file()]
+    assert missing == []
+
+
+def test_the_paths_are_reportable_so_the_sweep_need_not_restate_them(qc: ModuleType, capsys) -> None:
+    """`quorum-rerun.yml` re-runs exactly these pull requests on its hourly sweep.
+
+    It used to carry its own copy of the list in a jq filter, so a path added
+    here was covered by the window and then never swept once the window closed:
+    the pull request stayed red until somebody pushed to it. The sweep now asks.
+    """
+    assert qc.main(["--governance-paths"]) == 0
+    printed = capsys.readouterr().out.splitlines()
+    assert printed == list(qc.GOVERNANCE_PATHS)
+
+
 # --- drafts and plumbing ----------------------------------------------------
 
 
