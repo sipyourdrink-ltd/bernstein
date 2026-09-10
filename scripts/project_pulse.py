@@ -102,6 +102,10 @@ SEARCH_RESULT_CAP = 1000
 #: requests per minute; a full collection issues roughly 25.
 SEARCH_INTERVAL_SECONDS = 2.5
 
+#: A server-directed retry is useful for a transient Search API allowance, but
+#: it must not turn a weekly job into an unbounded sleep.
+RATE_LIMIT_RETRY_LIMIT = 3
+
 #: The maintainer account. Its merged pull requests are counted separately
 #: from outside contributions so the outside number is not flattered by them.
 MAINTAINER_LOGIN = "chernistry"
@@ -171,27 +175,44 @@ class GitHubClient:
 
     def get(self, path: str, params: dict[str, str] | None = None) -> tuple[Any, dict[str, str]]:
         """GET *path*, returning ``(decoded_body, response_headers)``."""
-        self._throttle()
         url = f"{API_ROOT}/{path.lstrip('/')}"
         if params:
             url = f"{url}?{urllib.parse.urlencode(params)}"
-        request = urllib.request.Request(
-            url,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": USER_AGENT,
-            },
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                raw = response.read()
-                headers = {k.lower(): v for k, v in response.headers.items()}
-        except urllib.error.HTTPError as exc:
-            raise PulseError(f"GitHub API {exc.code} for {url}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise PulseError(f"GitHub API request failed for {url}: {exc}") from exc
+        rate_limit_retries = 0
+        while True:
+            self._throttle()
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": USER_AGENT,
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    raw = response.read()
+                    headers = {k.lower(): v for k, v in response.headers.items()}
+                break
+            except urllib.error.HTTPError as exc:
+                retry_after = exc.headers.get("retry-after")
+                if exc.code != 403 or retry_after is None:
+                    raise PulseError(f"GitHub API {exc.code} for {url}") from exc
+                try:
+                    delay = float(retry_after)
+                except ValueError as parse_error:
+                    raise PulseError(f"GitHub API 403 has invalid retry-after for {url}") from parse_error
+                if not math.isfinite(delay) or delay < 0:
+                    raise PulseError(f"GitHub API 403 has invalid retry-after for {url}") from exc
+                if rate_limit_retries >= RATE_LIMIT_RETRY_LIMIT:
+                    reset = exc.headers.get("x-ratelimit-reset", f"retry-after {delay:g}s")
+                    message = f"GitHub API 403 rate limit retry budget exhausted for {url}; reset at {reset}"
+                    raise PulseError(message) from exc
+                time.sleep(delay)
+                rate_limit_retries += 1
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise PulseError(f"GitHub API request failed for {url}: {exc}") from exc
         try:
             return json.loads(raw.decode("utf-8")), headers
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
