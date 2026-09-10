@@ -959,9 +959,10 @@ class _ManualClock:
     ``AgentCardKeystore`` takes a ``clock`` for exactly this. Two reasons it
     has to be manual rather than auto-advancing:
 
-    * Rotations driven by the *real* clock all land in the same second, which
-      is indistinguishable from a working prune when what you are measuring is
-      how many archive directories survive.
+    * Rotations driven by the *real* clock land in the same second only if the
+      runner is fast enough, so a test that needs them to collide - or needs
+      them not to - is measuring the machine. Freezing the clock makes both
+      deterministic.
     * A clock that advanced on every read would place ``_archive_existing``
       and the prune that follows it at different instants inside a single
       ``rotate()``, so the freshly-archived key would be judged against a
@@ -1045,7 +1046,9 @@ def test_two_rotations_in_one_second_archive_separately(tmp_path: Path) -> None:
     """
     from bernstein.core.security.agent_card_keystore import AgentCardKeystore
 
-    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600)
+    # Frozen, so both rotations land in the same second deterministically
+    # rather than only when the runner happens to be fast.
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600, clock=_ManualClock())
     keystore.load_or_generate()
     keystore.rotate()
     keystore.rotate()
@@ -1053,6 +1056,11 @@ def test_two_rotations_in_one_second_archive_separately(tmp_path: Path) -> None:
     archived = keystore.list_archived()
     assert len(archived) == 2, "a rotation overwrote the previously archived keypair"
     assert archived[0].public_pem != archived[1].public_pem
+    # Distinct *published identities*, not just distinct directories. Two
+    # entries sharing a kid is what a verifier actually trips over:
+    # ``resolve_jwk`` returns the first match, so routing by that kid picks
+    # whichever sorted first, for the whole grace window.
+    assert archived[0].kid != archived[1].kid, "two archived keys published under one kid"
 
 
 def test_a_collision_suffixed_archive_still_reports_its_rotation_time(tmp_path: Path) -> None:
@@ -1065,7 +1073,7 @@ def test_a_collision_suffixed_archive_still_reports_its_rotation_time(tmp_path: 
     """
     from bernstein.core.security.agent_card_keystore import AgentCardKeystore
 
-    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600)
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600, clock=_ManualClock())
     keystore.load_or_generate()
     keystore.rotate()
     keystore.rotate()

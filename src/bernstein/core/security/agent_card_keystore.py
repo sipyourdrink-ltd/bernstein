@@ -98,16 +98,32 @@ class ArchivedKey:
 
     public_pem: bytes
     rotated_at: _dt.datetime
+    #: Name of the ``archive/`` directory this key was read from. It carries
+    #: the disambiguator ``_unique_archive_folder`` adds when two rotations
+    #: share a second, which is the only thing that distinguishes them.
+    archive_name: str = ""
 
     @property
     def kid(self) -> str:
-        """Stable kid for the archived key, derived from the rotation timestamp.
+        """Unique kid for the archived key, derived from its archive directory.
 
         The kid encodes the moment the key was rotated out so verifiers
         seeing both the current and archived key in the JWKS can route by
         ``kid`` without ambiguity.
+
+        It is built from ``archive_name`` rather than from ``rotated_at``
+        alone because ``rotated_at`` has one-second resolution. Two rotations
+        inside one second used to be impossible to observe - the second
+        overwrote the first - but once both survive they share a timestamp,
+        and a kid derived from it would be shared too. The JWKS would then
+        carry two entries with one ``kid`` and different keys, and
+        ``a2a_conformance.resolve_jwk`` returns the first match: a verifier
+        routing by that kid gets whichever sorted first, for the whole grace
+        window.
+
+        ``archive_name`` is unique by construction, so the kid is.
         """
-        stamp = self.rotated_at.strftime("%Y%m%dT%H%M%SZ")
+        stamp = self.archive_name or self.rotated_at.strftime("%Y%m%dT%H%M%SZ")
         return f"agent-bernstein-orchestrator-{stamp}"
 
 
@@ -211,7 +227,7 @@ class AgentCardKeystore:
             except OSError:  # pragma: no cover - filesystem flake
                 logger.warning("agent-card keystore: unreadable archived public key at %s", pub_path)
                 continue
-            out.append(ArchivedKey(public_pem=public_pem, rotated_at=rotated_at))
+            out.append(ArchivedKey(public_pem=public_pem, rotated_at=rotated_at, archive_name=entry.name))
         return out
 
     def rotate(self) -> tuple[bytes, bytes]:
@@ -409,6 +425,13 @@ class AgentCardKeystore:
         uses, so the two cannot disagree about which entries are live - a
         prune that ran even slightly ahead of the publisher would delete a key
         the JWKS was still advertising.
+
+        The two are not symmetric, though, and the asymmetry is worth stating:
+        skipping is reversible and deleting is not. If the clock steps
+        backwards between a prune and a later read - an NTP correction, a VM
+        restored from a snapshot - an entry :meth:`list_archived` would have
+        started publishing again is already gone. Sharing the expression makes
+        the *decision* identical; it does not make the consequences identical.
 
         An entry whose rotation timestamp cannot be read is left alone. It is
         not published either, so it is only wasted space; deleting a
