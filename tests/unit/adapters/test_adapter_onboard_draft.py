@@ -26,11 +26,24 @@ from pathlib import Path
 
 import pytest
 
+from bernstein.adapters import onboarding
+
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "probe"
 
 
 def _read_evidence(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _run_python_fixture(monkeypatch: pytest.MonkeyPatch, fixture: Path) -> None:
+    """Execute one Python fixture without changing the logical probe command."""
+    run_capture = onboarding._run_capture
+
+    def run_fixture(cmd: list[str], *, timeout: int, env: dict[str, str] | None = None) -> tuple[int, str]:
+        assert cmd[0] == str(fixture)
+        return run_capture([sys.executable, *cmd], timeout=timeout, env=env)
+
+    monkeypatch.setattr(onboarding, "_run_capture", run_fixture)
 
 
 def _load_fixture_help_text(fixture_name: str) -> str:
@@ -167,17 +180,18 @@ def test_draft_argv_reconstructable_from_evidence_backed_fields(tmp_path: Path) 
 RECORDABLE_FIXTURE = FIXTURES / "probe_recordable.py"
 
 
-def test_draft_from_probe_wires_a_real_probe_into_drafting(tmp_path: Path) -> None:
+def test_draft_from_probe_wires_a_real_probe_into_drafting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """draft_from_probe() runs a real probe subprocess and drafts from its --help capture.
 
-    Uses the already-executable ``probe_recordable.py`` fixture directly (no
-    fixture-file rewrite): a real subprocess is spawned, real evidence files
-    land on disk under ``evidence_dir``, and the draft built from them is
-    identical in shape to one built from a hand-written evidence file.
+    Uses ``probe_recordable.py`` through the current Python interpreter: a real
+    subprocess is spawned, real evidence files land on disk under
+    ``evidence_dir``, and the draft built from them is identical in shape to one
+    built from a hand-written evidence file.
     """
     from bernstein.adapters.onboarding import draft_from_probe
 
     evidence_dir = tmp_path / "evidence"
+    _run_python_fixture(monkeypatch, RECORDABLE_FIXTURE)
     draft = draft_from_probe(str(RECORDABLE_FIXTURE), evidence_dir)
 
     assert draft.invocation.binary == str(RECORDABLE_FIXTURE)
@@ -191,17 +205,21 @@ def test_draft_from_probe_wires_a_real_probe_into_drafting(tmp_path: Path) -> No
     assert len(evidence_files) >= 2, f"expected real probe evidence on disk, found {evidence_files}"
 
 
-def test_draft_from_probe_refuses_naming_the_missing_field_from_a_real_probe(tmp_path: Path) -> None:
+def test_draft_from_probe_refuses_naming_the_missing_field_from_a_real_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """draft_from_probe() forwards required_fields and refuses on a real probe with no --model.
 
-    ``probe_ok.py`` is a real, directly-executable fixture whose --help text
-    carries no model flag; asking drafting to require one must refuse and
-    name it, not silently return a profile with model_flag=None.
+    ``probe_ok.py`` is a real Python fixture whose --help text carries no model
+    flag; asking drafting to require one must refuse and name it, not silently
+    return a profile with model_flag=None.
     """
     from bernstein.adapters.onboarding import draft_from_probe
 
-    binary = str(FIXTURES / "probe_ok.py")
+    fixture = FIXTURES / "probe_ok.py"
+    binary = str(fixture)
     evidence_dir = tmp_path / "evidence"
+    _run_python_fixture(monkeypatch, fixture)
 
     with pytest.raises(Exception) as exc_info:
         draft_from_probe(binary, evidence_dir, required_fields={"model_flag"})

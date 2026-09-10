@@ -1115,16 +1115,15 @@ _PINNED_HALTED_STATUS_HASH_V2 = "fd879e56b1572468c9fa2ee778e814971cc66960f61a717
 def _become_host(monkeypatch: pytest.MonkeyPatch, home: str) -> None:
     """Point the process at a different $HOME, as a second machine would.
 
-    The redactor compiles the $HOME pattern once into a module global, so
-    setting the environment variable alone leaves the first host's pattern
-    live and hides any host dependence entirely. Clearing that cache is what
-    makes this equivalent to a fresh process on another machine -- without it
-    these tests pass even against the defective code they exist to catch.
+    The redactor used to compile the $HOME pattern once into a module global,
+    so setting the environment variable alone left the first host's pattern
+    live and hid any host dependence entirely -- these tests passed even
+    against the defective code they exist to catch, until the cache was
+    cleared by hand here. The cache is now keyed on the home value it was
+    built from, so a changed $HOME recompiles on its own and the environment
+    variable is the whole of the setup again.
     """
-    from bernstein.core.security import redactor
-
     monkeypatch.setenv("HOME", home)
-    monkeypatch.setattr(redactor, "_HOME_RE", None, raising=False)
 
 
 def test_receipt_hash_is_independent_of_home(monkeypatch: pytest.MonkeyPatch) -> None:

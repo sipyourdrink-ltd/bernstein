@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -142,6 +143,25 @@ class GatePipelineStep:
     command_override: str | None = None
 
 
+#: Closed set of confidence levels a :class:`VerificationScope` may declare.
+#:
+#: Kept deliberately small (issue #5395 leaves the members to this slice).
+#: The set exists so a later check can ask "is a required oracle kind
+#: actually absent?" and get an honest answer, which needs exactly three
+#: distinctions:
+#:
+#: - ``"high"``   — the oracle exercised each entry in ``checked`` directly.
+#: - ``"partial"`` — it exercised them indirectly or incompletely (a subset,
+#:   a proxy, a sampled run). Coverage exists but does not stand alone.
+#: - ``"none"``   — the oracle ran and established nothing usable. A required
+#:   kind covered only by ``"none"`` scopes is absent in substance, which is
+#:   the case a two-member set could not express without lying.
+#:
+#: Widening this set needs its own issue: every consumer that branches on a
+#: member has to decide what a new one means.
+SCOPE_CONFIDENCE_LEVELS: frozenset[str] = frozenset({"high", "partial", "none"})
+
+
 @dataclass(frozen=True)
 class VerificationScope:
     """What a gate actually exercised, and what it explicitly could not.
@@ -150,9 +170,17 @@ class VerificationScope:
     examined. ``VerificationScope`` is the structured, attestable claim
     of that coverage: which oracle produced the verdict (``oracle_id``),
     what kind of check it was (``kind``), the concrete paths or
-    property names the gate evaluated (``checked``), and the known
-    blind spots the gate could not evaluate (``cannot_check`` — e.g.
-    generated or vendored files the gate was configured to skip).
+    property names the gate evaluated (``checked``), the known blind
+    spots it could not evaluate (``cannot_check`` — e.g. generated or
+    vendored files the gate was configured to skip), how far the claim
+    reaches (``confidence``), and where the underlying evidence lives
+    (``evidence_ref``).
+
+    The value serialises canonically -- sorted keys, compact separators,
+    the convention ``merge_receipt._canonical_bytes`` already uses -- so
+    two equal scopes produce identical bytes regardless of the order
+    their fields were built in, and a scope can be folded into a hashed
+    subject later without a second serialisation convention appearing.
 
     Attributes:
         oracle_id: Stable identifier of the oracle (tool, harness,
@@ -167,14 +195,98 @@ class VerificationScope:
             deterministically enumerate what they covered.
         cannot_check: Ordered tuple of known blind spots the gate could
             not evaluate. Tuples are ordered to match ``checked``.
+        confidence: How far the claim reaches, drawn from
+            :data:`SCOPE_CONFIDENCE_LEVELS`. Defaults to ``"high"``:
+            a gate that names what it checked and says nothing further
+            is claiming it checked those things.
+        evidence_ref: Pointer to the evidence behind the claim (a log
+            path, an artefact digest, a report id). Empty string when
+            the gate has no durable evidence to cite -- an honest empty
+            reference, not a missing field.
 
-    Issue #5397.
+    Issues #5397 (the type) and #5395 (confidence, evidence and
+    canonical serialisation).
     """
 
     oracle_id: str | None
     kind: str | None
     checked: tuple[str, ...]
     cannot_check: tuple[str, ...]
+    confidence: str = "high"
+    evidence_ref: str = ""
+
+    def __post_init__(self) -> None:
+        """Reject values the type cannot honestly represent.
+
+        Mirrors the ``status``/``reason`` invariant ``GateResult``
+        already enforces: a closed set is only closed if construction
+        checks it.
+
+        Two failures are worth catching separately. A ``confidence``
+        outside the closed set is a typo or an un-migrated caller. A
+        bare ``str`` passed for ``checked`` or ``cannot_check`` is worse
+        than either, because ``str`` is iterable: ``checked="a.py"``
+        would silently become seven single-character "paths" and the
+        scope would claim coverage of files named ``a``, ``.`` and
+        ``p``.
+        """
+        if self.confidence not in SCOPE_CONFIDENCE_LEVELS:
+            raise ValueError(
+                f"VerificationScope.confidence={self.confidence!r} is not in "
+                f"the closed set SCOPE_CONFIDENCE_LEVELS="
+                f"{sorted(SCOPE_CONFIDENCE_LEVELS)}"
+            )
+        for field_name in ("checked", "cannot_check"):
+            value = getattr(self, field_name)
+            if isinstance(value, str):
+                raise TypeError(
+                    f"VerificationScope.{field_name} must be a tuple of "
+                    f"strings, not a bare str (got {value!r}); a str would "
+                    "be iterated character by character"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON-serialisable dict form, lists for the tuples."""
+        return {
+            "oracle_id": self.oracle_id,
+            "kind": self.kind,
+            "checked": list(self.checked),
+            "cannot_check": list(self.cannot_check),
+            "confidence": self.confidence,
+            "evidence_ref": self.evidence_ref,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> VerificationScope:
+        """Rebuild a scope from :meth:`to_dict`, preserving every field.
+
+        Sequences come back as tuples, so a round trip through JSON
+        yields a value equal to the original rather than one that merely
+        looks like it.
+        """
+        return cls(
+            oracle_id=payload["oracle_id"],
+            kind=payload["kind"],
+            checked=tuple(payload["checked"]),
+            cannot_check=tuple(payload["cannot_check"]),
+            confidence=payload.get("confidence", "high"),
+            evidence_ref=payload.get("evidence_ref", ""),
+        )
+
+    def canonical_bytes(self) -> bytes:
+        """Canonical JSON bytes: sorted keys, minimal separators, UTF-8.
+
+        The same convention as ``merge_receipt._canonical_bytes``, so a
+        scope folded into a signed subject later hashes the way the rest
+        of the receipt family already does. Deliberately not a second
+        convention (issue #5395).
+        """
+        return json.dumps(
+            self.to_dict(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
 
 
 @dataclass

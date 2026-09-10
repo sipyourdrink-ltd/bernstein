@@ -1,6 +1,6 @@
 """bernstein-bench: runnable, reproducibility-gated evaluation harness."""
 
-from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult, harness_fingerprint
 from bernstein.eval.bench.contamination import (
     ContaminationVerdict,
     admit_task,
@@ -89,6 +89,7 @@ __all__ = [
     "coordination_projection",
     "extract_ngrams",
     "first_divergent_coordination_field",
+    "harness_fingerprint",
     "reliability_check",
     "validate_run_receipt",
 ]

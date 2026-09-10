@@ -5,7 +5,7 @@ definitions living outside the built-in role templates under
 `templates/roles/`. Every entry contributes `CatalogAgent` records to a
 `CatalogRegistry`; when a task's role matches a loaded agent, that agent's
 system prompt replaces the built-in role template for that spawn (see
-[role_model_policy](CONFIG.md#role_model_policy---per-role-agent-configuration)
+[role_model_policy](CONFIG.md#role_model_policy-per-role-agent-configuration)
 for the adapter/model side of per-role configuration - catalogs control the
 *prompt*, not the CLI/model).
 

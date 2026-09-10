@@ -11,7 +11,10 @@ keeps the collected count stable and stays green without an override.
 
 Base and head are collected under the **same** isolated temp environment
 (``git show`` bytes into sibling files, one pytest invocation style) so the
-delta measures the diff, not the ambient tree.
+delta measures the diff, not the ambient tree. ``PYTHONPATH`` is pointed at
+the real repo checkout so a module that imports a sibling ``tests/`` helper
+by its repo-relative dotted path still resolves; the tempdir itself stays a
+single-file island so ambient conftest / fixture drift cannot leak in.
 
 Outcome words (never collapse these)::
 
@@ -222,8 +225,19 @@ def _parse_collect_output(result: subprocess.CompletedProcess[str]) -> CollectRe
     return CollectResult(status="ok", count=len(lines))
 
 
-def pytest_collect_file(path: Path, *, python: str, cwd: Path) -> CollectResult:
-    """Run collect-only on *path* with cwd=*cwd* (shared isolation root)."""
+def pytest_collect_file(path: Path, *, python: str, cwd: Path, import_root: Path) -> CollectResult:
+    """Run collect-only on *path* with cwd=*cwd* (shared isolation root).
+
+    ``import_root`` (the real repo checkout) goes on ``PYTHONPATH`` so a module
+    that imports a sibling test helper by its repo-relative dotted path (e.g.
+    ``from tests.unit._adapter_test_helpers import ...``, ~20 files do this
+    today) still resolves. The isolation tempdir holds only this one
+    materialised file with no ``tests`` package around it, so without this the
+    import fails and a stable module reads as every case having disappeared.
+    """
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(import_root), existing]))
     result = subprocess.run(
         [
             python,
@@ -236,6 +250,7 @@ def pytest_collect_file(path: Path, *, python: str, cwd: Path) -> CollectResult:
             "--no-cov",
         ],
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -279,12 +294,12 @@ def collect_pair(
             base_result = CollectResult(status="missing")
         else:
             base_path.write_bytes(base_bytes)
-            base_result = pytest_collect_file(base_path, python=python, cwd=root)
+            base_result = pytest_collect_file(base_path, python=python, cwd=root, import_root=repo)
         if head_bytes is None:
             head_result = CollectResult(status="missing")
         else:
             head_path.write_bytes(head_bytes)
-            head_result = pytest_collect_file(head_path, python=python, cwd=root)
+            head_result = pytest_collect_file(head_path, python=python, cwd=root, import_root=repo)
         return base_result, head_result
 
 

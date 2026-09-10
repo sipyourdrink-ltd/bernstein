@@ -15,7 +15,8 @@ mutations in that file. A module is "passing" when
     kill_rate >= threshold
 
 where ``kill_rate = killed / total`` and ``total = killed + survivors``
-(timeouts count as kills - an infinite loop is a meaningful signal).
+(timeouts are recorded separately and do not affect the kill rate;
+a material fraction of timeouts marks the run as unmeasured).
 
 CLI:
 
@@ -28,7 +29,8 @@ Exit codes:
 
     0 - every module met its threshold
     1 - at least one module below threshold (gate failed)
-    2 - baseline tests fail (cannot trust mutation results)
+    2 - baseline tests fail (cannot trust mutation results); a timed-out
+        baseline exits the same way with ``baseline_timeout`` in the JSON
 """
 
 from __future__ import annotations
@@ -42,6 +44,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+#: Per-mutant pytest cap. The baseline run gets a share of the module's
+#: own ``budget_seconds`` (see :func:`_mutate_module`) instead of this
+#: constant: a baseline is one run, a mutant run is one of many, and one
+#: constant for both is what made a slow suite fatal (issue #5570).
+_MUTANT_RUN_TIMEOUT = 180
 
 
 @dataclass(frozen=True)
@@ -215,6 +223,7 @@ class ModuleResult:
     elapsed_seconds: float = 0.0
     threshold: float = 0.0
     baseline_ok: bool = True
+    baseline_timeout: bool = False  # baseline run exceeded its budget (distinct from a failing baseline)
     timed_out: bool = False  # wall-clock budget exceeded mid-run
 
     @property
@@ -222,8 +231,17 @@ class ModuleResult:
         return (self.killed / self.total) if self.total else 0.0
 
     @property
+    def timeout_rate(self) -> float:
+        return (self.timeouts / self.total) if self.total else 0.0
+
+    @property
+    def unmeasured(self) -> bool:
+        """A run with a material fraction of timed-out mutants (>= 20%) is untrustworthy."""
+        return self.total > 0 and self.timeout_rate >= 0.20
+
+    @property
     def passed(self) -> bool:
-        return self.baseline_ok and self.kill_rate >= self.threshold
+        return self.baseline_ok and not self.unmeasured and self.kill_rate >= self.threshold
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -236,12 +254,14 @@ class ModuleResult:
             "threshold": self.threshold,
             "passed": self.passed,
             "baseline_ok": self.baseline_ok,
+            "baseline_timeout": self.baseline_timeout,
+            "unmeasured": self.unmeasured,
             "elapsed_seconds": round(self.elapsed_seconds, 1),
             "budget_exceeded": self.timed_out,
         }
 
 
-def _run_tests(test_paths: tuple[str, ...]) -> bool:
+def _run_tests(test_paths: tuple[str, ...], timeout: int = _MUTANT_RUN_TIMEOUT) -> bool:
     """Return True iff tests pass (i.e. mutation NOT killed)."""
     res = subprocess.run(
         [
@@ -258,9 +278,32 @@ def _run_tests(test_paths: tuple[str, ...]) -> bool:
         cwd=str(REPO),
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=timeout,
     )
     return res.returncode == 0
+
+
+def _baseline_timeout_seconds(mod: Module) -> int:
+    """Wall-clock budget for a module's baseline pytest run.
+
+    A quarter of the module's own ``budget_seconds`` - a baseline is one
+    run of the suite, while a mutant run is one of many inside the same
+    budget - floored at the per-mutant cap so the baseline never gets a
+    smaller allowance than a single mutant (issue #5570).
+    """
+
+    return max(mod.budget_seconds // 4, _MUTANT_RUN_TIMEOUT)
+
+
+def _mutant_timeout_seconds(mod: Module) -> int:
+    """Wall-clock budget for an individual mutant pytest run.
+
+    Derived from the module's own ``budget_seconds`` floored at the
+    per-mutant cap, matching the baseline allowance so a slow suite is not
+    capped at a flat constant (issue #5621).
+    """
+
+    return max(mod.budget_seconds // 4, _MUTANT_RUN_TIMEOUT)
 
 
 def _candidates(target: Path, limit: int) -> list[tuple[int, str, str, str]]:
@@ -298,7 +341,14 @@ def _mutate_module(mod: Module, *, verbose: bool = True) -> ModuleResult:
 
     if verbose:
         print(f"[{mod.key}] baseline tests: {mod.tests}", flush=True)
-    if not _run_tests(mod.tests):
+    try:
+        baseline_passed = _run_tests(mod.tests, timeout=_baseline_timeout_seconds(mod))
+    except subprocess.TimeoutExpired:
+        print(f"[{mod.key}] baseline timed out - cannot trust mutation run", file=sys.stderr)
+        res.baseline_ok = False
+        res.baseline_timeout = True
+        return res
+    if not baseline_passed:
         print(f"[{mod.key}] baseline fails - cannot trust mutation run", file=sys.stderr)
         res.baseline_ok = False
         return res
@@ -321,10 +371,11 @@ def _mutate_module(mod: Module, *, verbose: bool = True) -> ModuleResult:
             lines[line_no] = new_line
             target.write_text("".join(lines))
             try:
-                survived = _run_tests(mod.tests)
+                survived = _run_tests(mod.tests, timeout=_mutant_timeout_seconds(mod))
             except subprocess.TimeoutExpired:
                 res.timeouts += 1
-                res.killed += 1
+                if verbose:
+                    print(f"  [{idx + 1}/{len(candidates)}] TIMEOUT line {line_no + 1}", flush=True)
                 continue
             if survived:
                 res.survivors.append(f"{mod.source}:{line_no + 1} '{search}' -> '{replace}': {line.rstrip()}")
@@ -344,10 +395,20 @@ def _print_summary(results: list[ModuleResult]) -> None:
     print("=== Mutation gate summary ===")
     print(f"{'module':<20} {'kill rate':>10} {'thr':>6} {'status':>8}  notes")
     for r in results:
-        status = "PASS" if r.passed else ("BASE-FAIL" if not r.baseline_ok else "FAIL")
+        status = (
+            "PASS" if r.passed else ("BASE-FAIL" if not r.baseline_ok else ("UNTRUSTED" if r.unmeasured else "FAIL"))
+        )
         rate = f"{100 * r.kill_rate:5.1f}%" if r.total else "  n/a"
         thr = f"{100 * r.threshold:4.0f}%"
-        suffix = " (budget exceeded)" if r.timed_out else ""
+        suffix = (
+            " (baseline timed out)"
+            if r.baseline_timeout
+            else (
+                f" ({r.timeouts} timed out - unmeasured)"
+                if r.unmeasured
+                else (f" ({r.timeouts} timed out)" if r.timeouts else (" (budget exceeded)" if r.timed_out else ""))
+            )
+        )
         print(f"{r.key:<20} {rate:>10} {thr:>6} {status:>8}  {r.killed}/{r.total} killed{suffix}")
     for r in results:
         if r.survivors:

@@ -154,6 +154,20 @@ def test_detect_forks_n_way() -> None:
     assert len(forks[0].child_hashes) == 5
 
 
+def test_one_child_is_never_a_fork_whatever_its_content() -> None:
+    """A single child cannot fork, and the content check alone is what says so.
+
+    `detect_forks` used to guard `len(children) < 2` before comparing content hashes. That guard
+    could never decide anything: one child contributes one content hash, so the distinct-content
+    check below it already rejects the case. The mutation gate reported it as an unkillable
+    survivor for exactly that reason -- there was no observable difference to write a test
+    against. This pins the property the removal rests on (#5595 measurement).
+    """
+    g = _mk("a.py", _h("1"), [], ts_ns=1)
+    only_child = _mk("a.py", _h("2"), [entry_hash(g)], ts_ns=2)
+    assert detect_forks([g, only_child]) == []
+
+
 def test_fork_requires_distinct_content() -> None:
     # Two entries with same parent AND same content_hash → NOT a fork (idempotent re-record)
     g = _mk("a.py", _h("1"), [], ts_ns=1)

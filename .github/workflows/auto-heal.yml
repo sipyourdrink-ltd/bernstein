@@ -28,9 +28,9 @@ name: Auto-heal v2
 # via workflow_call. The dispatcher reads the upstream CI run metadata
 # once and routes here together with the other post-CI children, so we
 # no longer pay an independent workflow_run cold start per fanout child.
-# The dispatcher also serialises auto-heal with bernstein-ci-fix via
-# the `heal_outcome` workflow output below: bernstein-ci-fix runs only
-# when this heal did not open a PR.
+# The `heal_outcome` workflow output below reports what this heal did,
+# so the dispatcher and any future child can route on the result
+# instead of re-deriving it.
 on:
   workflow_call:
     inputs:
@@ -61,8 +61,8 @@ on:
       heal_outcome:
         description: >-
           Outcome label of the heal attempt: applied, skipped_no_jobs, or
-          failed_validation. Consumed by post-ci-dispatcher to decide
-          whether bernstein-ci-fix should run as a fallback fixer.
+          failed_validation. Consumed by post-ci-dispatcher so downstream
+          routing can react to what this heal actually did.
         value: ${{ jobs.heal.outputs.outcome }}
 
 permissions: {}
@@ -99,7 +99,7 @@ jobs:
       idempotent_skip: ${{ steps.idempotency.outputs.skip }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -280,6 +280,7 @@ jobs:
       needs.triage.outputs.should_heal == 'true' &&
       needs.triage.outputs.idempotent_skip != 'true'
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 25
     permissions:
       contents: write
@@ -298,7 +299,7 @@ jobs:
       HAS_TRIGGERING_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN != '' }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 

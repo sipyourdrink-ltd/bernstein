@@ -1,0 +1,98 @@
+name: quorum rerun
+
+# Re-runs the `quorum` check when its answer can have changed without a push.
+#
+# Two cases. A review is submitted, edited or dismissed: `pull_request` does
+# not fire for that, so the last quorum run still shows the old verdict and an
+# approval would otherwise sit unnoticed until the next push. And the 72-hour
+# objection window on governance files (charter, section 10) closes with the
+# clock rather than with an event, so an hourly sweep re-runs those - only
+# those, because they are the only pull requests whose verdict changes on its
+# own, and re-running everything hourly would spend runner slots the queue
+# needs.
+#
+# `pull_request_review` is a privileged trigger: it runs the workflow from the
+# base branch with a writable token, including for pull requests from forks.
+# That is safe here because nothing from the pull request is checked out or
+# executed - the job only asks the API to re-run an existing workflow run.
+
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: quorum-rerun-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rerun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Re-run quorum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REVIEWED_PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          rerun_for () {  # rerun_for <pr-number>
+            local pr="$1" head run
+            head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)
+            run=$(gh run list --repo "$REPO" --workflow quorum.yml --commit "$head" \
+                    --limit 1 --json databaseId,conclusion --jq '.[0] | select(.conclusion != "success") | .databaseId')
+            if [ -n "${run:-}" ]; then
+              echo "re-running quorum for #$pr (run $run, head ${head:0:9})"
+              gh run rerun "$run" --repo "$REPO" || echo "  rerun refused; the next push will re-evaluate"
+            else
+              echo "#$pr: quorum already green or never ran; nothing to do"
+            fi
+          }
+
+          if [ -n "${REVIEWED_PR:-}" ]; then
+            rerun_for "$REVIEWED_PR"
+            exit 0
+          fi
+
+          # Hourly sweep: only the pull requests whose verdict moves with the
+          # clock, i.e. the ones inside the governance objection window.
+          gh pr list --repo "$REPO" --state open --limit 100 \
+              --json number,isDraft,files \
+              --jq '.[] | select(.isDraft | not)
+                        | select([.files[].path] | any(
+                            . == "docs/governance/review-charter.md" or . == "GOVERNANCE.md"
+                            or . == "MAINTAINERS.md" or . == ".github/CODEOWNERS"
+                            or . == ".github/quorum-roster.toml"
+                            or . == "scripts/quorum_check.py" or . == "scripts/queue_hygiene.py"))
+                        | .number' \
+            | while read -r pr; do rerun_for "$pr"; done
+
+      # The sweep also asks for what the check says is missing. Only the base
+      # branch is checked out, so this stays safe under the privileged trigger.
+      - name: Check out the scripts
+        if: github.event_name != 'pull_request_review'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Ask the roster for the reviews still missing
+        if: github.event_name != 'pull_request_review'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          QUORUM_REQUEST_REVIEWS: ${{ vars.QUORUM_REQUEST_REVIEWS }}
+        run: python3 scripts/quorum_request_reviews.py

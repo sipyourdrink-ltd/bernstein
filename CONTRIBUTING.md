@@ -158,6 +158,15 @@ same line the way appending to `docs/release-notes/unreleased.md` did.
 Editing `unreleased.md` directly still works during the transition; see
 `docs/release-notes/README.md`.
 
+### Why a green pull request can be ejected from the merge queue
+
+Bernstein uses a GitHub merge queue configured with `ALLGREEN` grouping (see [merge-queue.md](docs/operations/merge-queue.md)). Under this setting:
+
+- Pull requests are tested together in speculative batches on top of `main` (on a `merge_group` ref).
+- A batch merges only if every entry in the combination passes. This ensures `main` never breaks from unexpected interactions between individually green changes.
+- If a pull request in the batch fails, the entire batch fails. If your PR was ejected despite having green checks on its own branch, this is not necessarily a flake: it usually means an earlier queued PR failed in combination. The queue automatically bisects and ejects the failing PR, re-queueing the remaining entries. Check the `merge_group` Actions run log to see which change caused the combined failure.
+
+
 ### Pre-push hook
 
 Install the versioned pre-push hook to catch lint and architecture-contract
@@ -177,14 +186,9 @@ importing a scheduler-internal module, e.g.
 
 ### Auto-heal on CI failure
 
-When CI fails on `main`, the `bernstein-ci-fix` workflow
-(`.github/workflows/bernstein-ci-fix.yml`) runs Bernstein in headless mode
-against the failing commit, opens an `auto-heal/<sha>` branch with the
-proposed fix, and creates an `auto-heal: fix CI on <sha>` PR for review.
-If Bernstein can't produce a clean diff in 3 iterations within \$5, the
-workflow falls back to opening a `ci-fix` issue. Auto-heal is gated by
-the `BERNSTEIN_CI_FIX_ENABLED` repo variable, refuses to recurse on
-`auto-heal:` PRs, and only fires for canonical-repo pushes (never forks).
+When CI fails on `main`, `.github/workflows/auto-heal.yml` - routed by
+the post-CI dispatcher - attempts a fix and opens an `auto-heal/<sha>`
+pull request for review; see `docs/operations/post-ci-dispatcher.md`.
 
 ## Code Style
 

@@ -1,12 +1,33 @@
-# Default: repo owner reviews everything
-* @chernistry
+# Review ownership. The rules these encode are written out in
+# docs/governance/review-charter.md; this file is how GitHub enforces them.
+#
+# Later entries win, so the default sits at the top and the paths the charter
+# reserves to the maintainer sit below it.
 
-# Core orchestration
+# Every change needs an approving review from a core reviewer (charter, s2).
+# Any one of them satisfies the requirement.
+* @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e
+
+# Paths the charter reserves to the maintainer (s4): these need the
+# maintainer's approval in addition to the usual quorum.
+/.github/ @chernistry
 /src/bernstein/core/ @chernistry
 /src/bernstein/evolution/ @chernistry
-
-# Adapters
 /src/bernstein/adapters/ @chernistry
+/schemas/ @chernistry
+/proto/ @chernistry
+/pyproject.toml @chernistry
+/uv.lock @chernistry
+/SECURITY.md @chernistry
+/GOVERNANCE.md @chernistry
+/MAINTAINERS.md @chernistry
+/AGENTS.md @chernistry
+/docs/governance/ @chernistry
+/docs/decisions/ @chernistry
 
-# CI/CD
-/.github/ @chernistry
+# The review roster and the two scripts that enforce this file and the
+# charter. `.github/` above already covers the roster; these are the pieces
+# that live outside it (charter, s10).
+/scripts/quorum_check.py @chernistry
+/scripts/queue_hygiene.py @chernistry
+/renovate.json @chernistry

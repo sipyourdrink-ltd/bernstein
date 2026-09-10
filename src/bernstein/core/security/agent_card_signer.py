@@ -39,7 +39,7 @@ if TYPE_CHECKING:
         Ed25519PrivateKey,
     )
 
-    from .agent_identity import AgentIdentityCard
+    from bernstein.core.identity.agent_card import AgentIdentityCard
 
 __all__ = [
     "AGENT_CARD_V1_TYP",

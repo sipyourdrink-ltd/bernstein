@@ -39,6 +39,7 @@ Drift remediation paths used by the rows below:
 | Doc | Source of truth | Drift signal | Remediation |
 |-----|-----------------|--------------|-------------|
 | `README.md` | `src/bernstein/cli/main.py`, `src/bernstein/cli/commands/`, `src/bernstein/adapters/registry.py`, `pyproject.toml` (`[project.scripts]`, `[project.optional-dependencies]`) | New top-level command, adapter added or removed, install method changed, optional extra added | `manual-prose` |
+| `00-AGENT.md` | `docs/agent/00-AGENT.md`, `src/bernstein/` | New package layout, commands, or core invariant change | `manual-prose` |
 | `AGENTS.md` | `src/bernstein/` package layout (auto-derived); curated content under `.sdd/agents-md/` | New top-level package or module under `src/bernstein/`; any change to the canonical IR | `agents-md-sync` |
 | `CLAUDE.md` | Mirror of canonical IR via `bernstein agents-md sync` | Drift versus AGENTS.md canonical | `agents-md-sync` |
 | `CONVENTIONS.md` | Mirror of canonical IR for Aider via `bernstein agents-md sync` | Drift versus AGENTS.md canonical | `agents-md-sync` |

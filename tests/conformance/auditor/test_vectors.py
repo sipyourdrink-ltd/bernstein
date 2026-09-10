@@ -1,7 +1,7 @@
 """The 21 auditor questions, as vectors over the recorded bundle.
 
-Six vectors are implemented: question 17, and the integrity group,
-questions 15, 16, 18, 19 and 20. The rest are named in
+Six vectors are implemented here: question 17 and the integrity group
+(15, 16, 18, 19, 20). Data/endpoint vectors live in test_data_endpoint_vectors.py. The rest are named in
 :mod:`tests.conformance.auditor.questions` and land in their own slices;
 until then the scoreboard reports them as unanswered, which is the honest
 reading of the evidence rather than a weak assertion that passes.

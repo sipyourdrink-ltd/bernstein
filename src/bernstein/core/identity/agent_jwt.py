@@ -667,7 +667,7 @@ class AgentIdentityStore:
                 raise TypeError(msg)
             return AgentIdentity.from_dict(cast("dict[str, Any]", data))
         except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
-            logger.warning("Skipping corrupt identity file: %s", path)
+            logger.warning("Skipping corrupt identity file: %s", sanitize_log(str(path)))
             return None
 
     def _load(self, identity_id: str) -> AgentIdentity | None:

@@ -503,6 +503,8 @@ class BernsteinApp(App[None]):
             self._write_activity("system", message)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if not self.is_running:
+            return
         worker: Worker[dict[str, Any]] = event.worker  # type: ignore[assignment]
         if worker.group != "poll" or event.state != WorkerState.SUCCESS:
             return

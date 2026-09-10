@@ -428,3 +428,37 @@ def test_type_check_command_no_extra_files_when_no_importers(tmp_path: Path) -> 
     assert "utils.py" in cmd
     # other.py does not import utils.py - it must not be included
     assert "other.py" not in cmd
+
+
+def test_dead_code_gate_runs_to_completion_instead_of_crashing(tmp_path: Path) -> None:
+    """Regression for #5572: the dead-code gate must not raise AttributeError.
+
+    ``GateRunner._run_dead_code_gate_sync`` called ``self._build_dead_code_result``,
+    a method ``GateRunner`` never defined or inherited -- ``GateRunnerCommandsMixin``
+    defines it, but nothing composes that mixin into ``GateRunner`` (confirmed:
+    ``GateRunner.__mro__`` is just ``(GateRunner, object)``). The gate is disabled
+    by default (``dead_code_check=False``), which is why this went unnoticed: any
+    operator who turned it on would have hit this on the very first run. This test
+    fails before the fix (an unhandled ``AttributeError`` propagates out of
+    ``run_all``) and passes after.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "module.py").write_text("def f() -> int:\n    return 1\n", encoding="utf-8")
+
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="dead_code", required=False, condition="python_changed")],
+        cache_enabled=False,
+    )
+    runner = GateRunner(config, tmp_path)
+    task = _make_task(owned_files=["src/module.py"])
+
+    def fake_run(_command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str, int]:
+        return True, "(no output)", 0
+
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
+        report = asyncio.run(runner.run_all(task, tmp_path))
+
+    assert report.gates_run == ["dead_code"]
+    (result,) = report.results
+    assert result.status in ("pass", "fail", "warn")

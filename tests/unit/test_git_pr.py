@@ -167,6 +167,60 @@ def test_merge_with_conflict_detection_allows_pure_deliverable_staged_set(
     assert result.refused_forbidden_files == []
 
 
+def test_merge_with_conflict_detection_returns_the_commit_sha(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A successful commit-producing merge reports the sha it produced (issue #5271).
+
+    Without this, neither ``MergeResult`` nor the ``task_merged`` journal
+    row it feeds could be tied back to the git object the merge actually
+    created.
+    """
+    staged = ["src/bernstein/cli/cli.py"]
+    fake = _make_clean_merge_fake(staged)
+    orig_fake = fake
+    expected_sha = "deadbeef" * 5
+
+    def _fake_with_commit_and_rev_parse(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
+        if args[:1] == ["commit"]:
+            return GitResult(returncode=0, stdout="", stderr="")
+        if args[:2] == ["rev-parse", "HEAD"]:
+            return GitResult(returncode=0, stdout=f"{expected_sha}\n", stderr="")
+        return orig_fake(args, cwd, timeout=timeout, **kwargs)
+
+    _fake_with_commit_and_rev_parse.seen = orig_fake.seen  # type: ignore[attr-defined]
+    monkeypatch.setattr(git_pr, "run_git", _fake_with_commit_and_rev_parse)
+
+    result = git_pr.merge_with_conflict_detection(tmp_path, "agent/qa-aa55cebb")
+
+    assert result.success is True
+    assert result.merge_commit == expected_sha
+
+
+def test_merge_with_conflict_detection_leaves_commit_empty_on_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A conflicting merge -- no commit ever produced -- reports no merge_commit."""
+
+    def _fake_run_git(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
+        if args[:3] == ["merge", "--no-commit", "--no-ff"]:
+            return GitResult(returncode=1, stdout="", stderr="merge failed")
+        if args[:2] == ["status", "--porcelain"]:
+            return GitResult(returncode=0, stdout="UU src/demo.py\n", stderr="")
+        if args[:2] == ["merge", "--abort"]:
+            return GitResult(returncode=0, stdout="", stderr="")
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr(git_pr, "run_git", _fake_run_git)
+
+    result = git_pr.merge_with_conflict_detection(tmp_path, "agent/qa-aa55cebb")
+
+    assert result.success is False
+    assert result.merge_commit == ""
+
+
 def test_is_forbidden_for_merge_matches_deny_list() -> None:
     """Unit-level coverage of the deny-list predicate.  This is the
     cheap "no ``git add -A`` in main repo" canary: every path that the

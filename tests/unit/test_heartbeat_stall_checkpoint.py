@@ -23,12 +23,12 @@ from unittest.mock import MagicMock, patch
 
 from bernstein.cli.commands.resume_cmd import prepare_resume
 from bernstein.core.agents.heartbeat import (
-    AGENT,
     StallProfile,
     _escalate_heartbeat,
     _escalate_stall_profiled,
     _escalate_stall_simple,
 )
+from bernstein.core.defaults import AGENT
 from bernstein.core.orchestration.supervisor_receipt import StallReason
 from bernstein.core.persistence.task_resume import load_checkpoint
 from bernstein.core.tasks.models import AgentSession, ModelConfig

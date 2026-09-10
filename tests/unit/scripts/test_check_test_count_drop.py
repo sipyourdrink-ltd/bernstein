@@ -227,6 +227,49 @@ def test_guard_discriminates_when_a_drop_exists(check_module: ModuleType, tmp_pa
     assert report.drops, "a real drop must surface; otherwise the guard is vacuous"
 
 
+def test_sibling_helper_import_does_not_false_positive(check_module: ModuleType, tmp_path: Path) -> None:
+    """A touched module that imports a sibling tests/ helper must still collect (#5575, #5565).
+
+    ``collect_pair`` materialises only the touched file into an isolated tempdir and
+    collects it from there. Real repos route shared test setup through helper modules
+    imported by repo-relative dotted path (``from tests.unit._helper import ...`), the
+    same way ``tests/unit/_adapter_test_helpers.py`` is imported by ~20 files today. The
+    isolated tempdir has no ``tests`` package on its import path, so that import fails
+    and the guard misreads a stable refactor as every case in the file disappearing.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    unit_dir = repo / "tests" / "unit"
+    unit_dir.mkdir(parents=True)
+    (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+    (unit_dir / "__init__.py").write_text("", encoding="utf-8")
+    (unit_dir / "test_uses_helper.py").write_text(
+        "def test_a():\n    assert True\n\ndef test_b():\n    assert True\n\ndef test_c():\n    assert True\n",
+        encoding="utf-8",
+    )
+    base = _commit_all(repo, "three inline tests, no shared helper yet")
+
+    # Refactor to share case data via a sibling helper module - collected count
+    # stays 3, but only if the import resolves.
+    (unit_dir / "_helper.py").write_text("CASES = [1, 2, 3]\n", encoding="utf-8")
+    (unit_dir / "test_uses_helper.py").write_text(
+        "import pytest\n\n"
+        "from tests.unit._helper import CASES\n\n\n"
+        "@pytest.mark.parametrize('n', CASES)\n"
+        "def test_uses_shared_case(n):\n"
+        "    assert n in CASES\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "share case data through tests.unit._helper")
+
+    report = check_module.build_report(repo, base=base, python=sys.executable)
+    assert report.drops == [], check_module.format_report(report)
+    assert report.checked == 1
+    assert check_module.format_report(report).startswith("OK:")
+    assert check_module.main(["--root", str(repo), "--base", base]) == 0
+
+
 def test_override_in_a_commit_message_is_read_when_the_pr_body_is_empty(
     check_module: ModuleType, tmp_path: Path
 ) -> None:
