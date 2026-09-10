@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from bernstein.core.govern.reconcile_apply import (
     apply_reconcile_diff,
     apply_reconcile_entry,
