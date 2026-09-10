@@ -48,11 +48,17 @@ def test_default_emitted_card_passes_v1_conformance(client: TestClient) -> None:
     # rotation it resolves to the new key while cards signed minutes earlier
     # still carry it. What matters to a verifier is that the kid the card
     # carries resolves in the JWKS it fetched, which is what this asserts.
-    advertised = {jwk["kid"] for jwk in jwks["keys"]}
-    assert report.kid in advertised
+    by_kid = {jwk["kid"]: jwk["x"] for jwk in jwks["keys"]}
+    # "the kid is one of the ones we publish" passed on main too - the legacy
+    # alias is advertised and, absent a rotation, resolves correctly. What
+    # this change establishes is that the kid *names the signing key*, so it
+    # has to be distinguishable from the tenant alias.
+    assert report.kid != "agent-bernstein-orchestrator", "the card is signed under the tenant alias"
+    assert report.kid in by_kid
     # The historical fixed kid stays advertised, mapping to the current key,
     # so a verifier that cached it keeps resolving exactly what it does today.
-    assert "agent-bernstein-orchestrator" in advertised
+    assert "agent-bernstein-orchestrator" in by_kid
+    assert by_kid["agent-bernstein-orchestrator"] == by_kid[report.kid]
 
 
 # ---------------------------------------------------------------------------
@@ -73,9 +79,15 @@ def test_two_tenants_serve_distinct_cards_and_keys(client: TestClient) -> None:
     # kids are now key-derived, so distinctness follows from the keys being
     # distinct rather than from the tenant id being pasted into a string -
     # which is the stronger property this test was reaching for.
+    # Distinctness alone held on main - the two tenants had distinct *legacy*
+    # kids already. What is new is that each kid is derived from its tenant's
+    # key, so neither is the alias and neither resolves in the other's JWKS.
     assert report_a.kid != report_b.kid
+    assert report_a.kid != "agent-bernstein-orchestrator-acme"
+    assert report_b.kid != "agent-bernstein-orchestrator-globex"
     assert report_a.kid in {jwk["kid"] for jwk in jwks_a["keys"]}
     assert report_b.kid in {jwk["kid"] for jwk in jwks_b["keys"]}
+    assert report_a.kid not in {jwk["kid"] for jwk in jwks_b["keys"]}
     # The per-tenant legacy aliases remain advertised for cached verifiers.
     assert "agent-bernstein-orchestrator-acme" in {jwk["kid"] for jwk in jwks_a["keys"]}
     assert "agent-bernstein-orchestrator-globex" in {jwk["kid"] for jwk in jwks_b["keys"]}

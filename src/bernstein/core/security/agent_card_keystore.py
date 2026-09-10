@@ -100,11 +100,17 @@ class ArchivedKey:
 
     @property
     def kid(self) -> str:
-        """Stable kid for the archived key, derived from the rotation timestamp.
+        """Archive directory label. **Not** what the JWKS publishes.
 
-        The kid encodes the moment the key was rotated out so verifiers
-        seeing both the current and archived key in the JWKS can route by
-        ``kid`` without ambiguity.
+        ``agent_json_keys`` keys archived JWKs on the RFC 7638 thumbprint of
+        the key itself, because that is the ``kid`` a card signed by it
+        carries. This label encodes the rotation moment instead, which
+        identifies the *archive* rather than the key - two rotations inside
+        one second share it.
+
+        Kept for operator-facing listing and log lines. It is deliberately
+        not a routing identity: a plausible-looking ``kid`` on this type is
+        how the JWKS came to advertise keys under names no card referenced.
         """
         stamp = self.rotated_at.strftime("%Y%m%dT%H%M%SZ")
         return f"agent-bernstein-orchestrator-{stamp}"

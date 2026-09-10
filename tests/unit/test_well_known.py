@@ -140,9 +140,22 @@ def test_agent_json_signature_present(client: TestClient) -> None:
     # than against a recomputed thumbprint, so this cannot pass by both sides
     # making the same mistake.
     jwks = client.get("/.well-known/agent.json/keys").json()
-    assert sig["kid"] in {jwk["kid"] for jwk in jwks["keys"]}
+    by_kid = {jwk["kid"]: jwk["x"] for jwk in jwks["keys"]}
+
+    # Not "the kid is one of the ones we publish" - that was satisfied on main
+    # too, because the legacy alias is still advertised and, absent a
+    # rotation, still resolves to the right key. The property this change
+    # exists to establish is that the kid *names the key that signed the
+    # card*, so it is resolved and compared against the current key.
+    assert sig["kid"] != _DEFAULT_KID, "the card is signed under the tenant alias, not a key identity"
+    assert sig["kid"] in by_kid
+    from bernstein.core.routes.well_known import _get_signing_keypair
+
+    current_x = ed25519_public_jwk(_get_signing_keypair()[1], kid="x")["x"]
+    assert by_kid[sig["kid"]] == current_x
+
     # The historical fixed kid stays advertised for verifiers that cached it.
-    assert _DEFAULT_KID in {jwk["kid"] for jwk in jwks["keys"]}
+    assert _DEFAULT_KID in by_kid
     # Detached JWS - header..signature shape.
     parts = sig["jws"].split(".")
     assert len(parts) == 3
