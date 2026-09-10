@@ -590,12 +590,12 @@ jobs:
             --build-id "${BUILD_ID}" \
             --deadline-seconds "${COPR_WATCH_SECONDS}"
 
-  # MCP registry listing (#2369). Regenerated from pyproject.toml by
-  # scripts/gen_distribution_manifests.py so the listing can never drift
-  # from the released package version; the check step blocks the publish
-  # on drift instead of shipping a stale manifest. Registry submission is
-  # not on the release critical path (external review latency), so a
-  # registry outage cannot fail the release itself.
+  # MCP registry listing (#2369). server.json is regenerated from
+  # pyproject.toml by scripts/gen_distribution_manifests.py, so the listing
+  # cannot drift from the released package version; the version check below
+  # blocks the submission rather than shipping a stale manifest. Registry
+  # submission is not on the release critical path (external review
+  # latency), so a registry outage cannot fail the release itself.
   publish-mcp-registry:
     name: Publish MCP registry listing
     runs-on: ubuntu-latest
@@ -618,10 +618,20 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
-      - name: Check manifest sync with release version
+      # Stdlib only, on purpose: this job installs no dependencies, so a
+      # step here must not import the package. Regenerating the manifests
+      # does import it (scripts/gen_distribution_manifests.py reaches
+      # src/bernstein/core/skills/, which needs the project environment),
+      # and that regeneration is already covered before the tag exists --
+      # by the "Distribution manifest drift check" step of the Repo hygiene
+      # job in ci.yml, which bootstraps the environment first. Repo hygiene
+      # is a `needs` of the required "CI gate" check, so a drifted manifest
+      # cannot reach main and therefore cannot be tagged. What is left for
+      # release time is the one thing CI cannot know: whether the listing
+      # about to be submitted carries the version being released.
+      - name: Check server.json version matches the release tag
         run: |
           set -euo pipefail
-          python3 scripts/gen_distribution_manifests.py --check
           VERSION="${RELEASE_TAG#v}"
           MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('server.json'))['version'])")
           if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
