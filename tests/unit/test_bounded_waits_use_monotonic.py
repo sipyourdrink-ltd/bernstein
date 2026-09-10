@@ -16,7 +16,7 @@ A loop written as::
 therefore has no bound. A clock stepped backwards by an hour turns a 30-second
 drain into an hour-long one; a step forwards ends the wait before the work it
 was waiting for could finish. ``time.monotonic()`` is defined to only move
-forward and is what the other fifteen bounded waits in this tree already use.
+forward and is what the other bounded waits in this tree already use.
 """
 
 from __future__ import annotations
@@ -40,60 +40,144 @@ pytestmark = pytest.mark.whole_tree_guard
 # ---------------------------------------------------------------------------
 
 
-def _wall_clock_waits() -> list[str]:
-    """Return ``path:line`` for every ``while`` loop testing ``time.time()``.
+def _is_wall_clock_read(node: ast.AST) -> bool:
+    """Is *node* a ``time.time()`` call?"""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "time"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "time"
+    )
 
-    Scoped to loop *conditions* on purpose. ``time.time()`` compared against a
-    stored absolute instant - ``expires_at``, a JWT ``exp`` - is correct and
-    common in this tree; it is only measuring one's own elapsed time that
-    needs a clock guaranteed to move forward.
+
+def _bounding_reads(loop: ast.While) -> bool:
+    """Does *loop* bound itself on the wall clock?
+
+    Three shapes, because a bounded wait can be written any of these ways and
+    only the first is visible in the loop's test::
+
+        while time.time() < deadline:              # in the condition
+        while True:
+            ...
+            if time.time() >= deadline: break      # in an if that breaks
+        while True:
+            now = time.time()
+            if now >= deadline: break              # read, then compared
+
+    The second and third are what this guard originally missed, and both were
+    live in ``cli/run_bootstrap.py`` - one of them directly beneath a comment
+    asserting the timing there was monotonic.
+
+    A body read only counts when the loop can exit on a comparison, so an
+    ordinary ``time.time()`` used for a timestamp or a log line inside a loop
+    is not mistaken for a bound.
+    """
+    if any(_is_wall_clock_read(child) for child in ast.walk(loop.test)):
+        return True
+
+    if not any(isinstance(node, ast.Break) for node in ast.walk(loop)):
+        return False
+
+    # Names bound to a wall-clock read anywhere in the body.
+    wall_clock_names: set[str] = set()
+    for node in ast.walk(loop):
+        if isinstance(node, ast.Assign) and _is_wall_clock_read(node.value):
+            wall_clock_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+
+    for node in ast.walk(loop):
+        if not isinstance(node, ast.If):
+            continue
+        if not any(isinstance(stmt, ast.Break) for stmt in ast.walk(node)):
+            continue
+        for child in ast.walk(node.test):
+            if _is_wall_clock_read(child):
+                return True
+            if isinstance(child, ast.Name) and child.id in wall_clock_names:
+                return True
+    return False
+
+
+def _wall_clock_waits() -> tuple[list[str], int]:
+    """Return offending ``path:line`` values and the number of files scanned.
+
+    ``time.time()`` compared against a stored absolute instant - ``expires_at``,
+    a JWT ``exp`` - is correct and common in this tree, so only reads that
+    *bound a loop* count. Measuring your own elapsed time needs a clock
+    guaranteed to move forward; comparing against someone else's timestamp
+    does not.
+
+    The file count comes back so a caller can prove the corpus was not empty.
+    A scan that silently walks nothing passes every assertion below.
     """
     offenders: list[str] = []
+    scanned = 0
     for path in sorted(SRC.rglob("*.py")):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except (OSError, SyntaxError):  # pragma: no cover - unreadable file
             continue
+        scanned += 1
         for node in ast.walk(tree):
-            if not isinstance(node, ast.While):
-                continue
-            for child in ast.walk(node.test):
-                if (
-                    isinstance(child, ast.Call)
-                    and isinstance(child.func, ast.Attribute)
-                    and child.func.attr == "time"
-                    and isinstance(child.func.value, ast.Name)
-                    and child.func.value.id == "time"
-                ):
-                    offenders.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}")
-    return offenders
+            if isinstance(node, ast.While) and _bounding_reads(node):
+                offenders.append(f"{path.relative_to(SRC).as_posix()}:{node.lineno}")
+    return offenders, scanned
 
 
 def test_no_bounded_wait_loops_on_the_wall_clock() -> None:
     """A wall clock can move backwards, so a loop bounded by one is not bounded."""
-    offenders = _wall_clock_waits()
+    offenders, _scanned = _wall_clock_waits()
     assert offenders == [], (
         "these loops bound themselves with time.time(), which NTP or an "
         "operator can step backwards mid-wait; use time.monotonic(): " + ", ".join(offenders)
     )
 
 
-def test_the_guard_can_see_a_wall_clock_wait() -> None:
-    """A scan that matched nothing would pass the guard for the wrong reason."""
-    tree = ast.parse("import time\ndeadline = time.time() + 5\nwhile time.time() < deadline:\n    pass\n")
-    whiles = [n for n in ast.walk(tree) if isinstance(n, ast.While)]
+def test_the_guard_actually_scanned_the_source_tree() -> None:
+    """An empty corpus passes the assertion above for the wrong reason.
 
-    assert len(whiles) == 1
-    found = [
-        child
-        for child in ast.walk(whiles[0].test)
-        if isinstance(child, ast.Call)
-        and isinstance(child.func, ast.Attribute)
-        and child.func.attr == "time"
-        and isinstance(child.func.value, ast.Name)
-        and child.func.value.id == "time"
-    ]
-    assert found, "the detector no longer recognises the shape it exists to find"
+    ``SRC`` is built from ``__file__``; a move of this file, or a layout
+    change, turns the scan into a walk over nothing and the guard goes quietly
+    green forever. The detector self-test below cannot notice that - it uses a
+    synthetic AST and never touches ``SRC``.
+    """
+    _offenders, scanned = _wall_clock_waits()
+
+    assert SRC.is_dir(), f"{SRC} is not a directory - the guard is scanning nothing"
+    assert scanned > 500, f"only {scanned} files parsed; the corpus looks wrong"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("while time.time() < deadline:\n    pass\n", True),
+        ("while True:\n    if time.time() >= deadline:\n        break\n", True),
+        ("while True:\n    now = time.time()\n    if now >= deadline:\n        break\n", True),
+        ("while True:\n    if time.monotonic() >= deadline:\n        break\n", False),
+        ("while True:\n    now = time.monotonic()\n    if now >= deadline:\n        break\n", False),
+        # A timestamp taken inside a loop that never exits on it is not a bound.
+        ("while True:\n    stamp = time.time()\n    if done:\n        break\n", False),
+        ("while running:\n    pass\n", False),
+    ],
+    ids=[
+        "condition",
+        "body-break-direct",
+        "body-break-via-name",
+        "body-break-monotonic",
+        "body-break-via-name-monotonic",
+        "timestamp-not-a-bound",
+        "no-clock",
+    ],
+)
+def test_the_detector_recognises_every_shape(source: str, expected: bool) -> None:
+    """All three spellings of a bounded wait, and the things that only look like one.
+
+    The two body-break cases are what this guard originally missed, so they
+    are pinned here rather than left to the corpus scan to notice.
+    """
+    loop = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.While))
+
+    assert _bounding_reads(loop) is expected
 
 
 # ---------------------------------------------------------------------------
