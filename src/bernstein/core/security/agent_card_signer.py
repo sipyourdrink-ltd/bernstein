@@ -448,7 +448,7 @@ def verify_agent_card(
             *historical* attestation passes the time that attestation recorded,
             because a run from last year was signed under a card that has since
             expired and must still verify - see
-            ``IdentitySpawnAnchor.verify_historical``.
+            ``IdentitySpawnAnchor.reconstruct``.
 
     Returns:
         True iff the signature verifies under *public_key_pem* and the card is

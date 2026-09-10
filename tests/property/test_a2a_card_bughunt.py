@@ -30,10 +30,15 @@ surface. Findings:
     ``canonicalize_jcs`` now sorts property names by UTF-16 code units, so
     ``test_rfc_8785_utf16_keysort`` below is a positive assertion.
 
-#4 (operational, xfail - verifier accepts expired cards):
-    ``verify_agent_card`` does not consult ``card.is_expired()`` -
-    integrators must remember to call it themselves. Replay-by-stale-card
-    is not addressed at the cryptographic verifier layer.
+#4 (FIXED - verifier accepts expired cards):
+    ``verify_agent_card`` used to check the signature and stop, so an
+    expired card was indistinguishable from a current one and anyone who
+    captured a card once could replay it for the life of the issuing key.
+    It now also requires the card to be inside its validity window - both
+    ends of it, via ``AgentIdentityCard.is_valid_at`` - defaulting to now.
+    ``at_time`` selects a different instant, which is what
+    ``IdentitySpawnAnchor.reconstruct`` passes so an attestation recorded
+    under a since-expired card still replays.
 
 #5 (operational, documented - ephemeral per-process keypair):
     Each orchestrator process mints a fresh keypair on first JWKS hit. A
@@ -388,7 +393,7 @@ def test_expired_card_signature_should_be_rejected() -> None:
 def test_an_expired_card_still_verifies_at_the_time_it_was_valid() -> None:
     """The escape hatch that keeps historical replay working.
 
-    ``IdentitySpawnAnchor.verify_historical`` re-checks a run recorded months
+    ``IdentitySpawnAnchor.reconstruct`` re-checks a run recorded months
     ago, under a card that has since expired. If the window were judged at
     "now" with no way to say otherwise, every old attestation would become
     unverifiable - the fix would have traded a replay hole for an audit trail
