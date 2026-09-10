@@ -1656,20 +1656,15 @@ class Orchestrator:
         if _run_normal:
             try:
                 from bernstein.core.planning.roadmap_runtime import (
-                    _warn_scenarios_skipped,  # pyright: ignore[reportPrivateUsage]
                     emit_roadmap_wave_outcome,
+                    report_outcome,
                 )
 
                 outcome = emit_roadmap_wave_outcome(self._workdir)
+                reported = report_outcome(self._workdir, outcome)
                 if outcome.emitted:
                     logger.info("Emitted %d roadmap ticket(s) into backlog/open", len(outcome.emitted))
-                elif outcome.scenarios_found:
-                    # Scenarios exist and produced nothing. Saying so is the
-                    # whole point of #5573: the old code returned an empty
-                    # list here and an operator who had written scenarios saw
-                    # no difference from having written none.
-                    _warn_scenarios_skipped(self._workdir, outcome.reason, outcome.detail)
-                else:
+                elif not reported:
                     logger.debug("roadmap wave emitted nothing (%s): %s", outcome.reason, outcome.detail)
             except (OSError, ValueError) as exc:
                 logger.warning("roadmap wave emission failed: %s", exc)

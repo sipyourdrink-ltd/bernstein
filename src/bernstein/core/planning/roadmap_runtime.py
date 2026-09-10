@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -18,10 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Roadmap emission runs on every normal orchestrator tick. Keep a scenario that
-# cannot currently be consumed visible without repeating the same warning until
-# the process exits. A different workspace or blocking reason remains visible.
-_WARNED_SCENARIO_SKIPS: set[tuple[str, str]] = set()
+_SCENARIO_SKIP_WARNING_COOLDOWN_S = 300.0
+_SCENARIO_SKIP_WARNING_STATE: dict[str, tuple[str, float]] = {}
 
 
 @dataclass(frozen=True)
@@ -56,10 +55,11 @@ WAVE_REASONS: frozenset[str] = frozenset(
         "ticket-ceiling",
         # No scenario library: nothing exists to sequence.
         "no-scenarios",
-        # Scenarios exist, but no ``.sdd/roadmaps/open`` sequences them.
-        # This is the fresh-workspace case: the library was found and is
-        # unreachable, which used to be indistinguishable from an empty one.
-        "no-roadmap",
+        # Scenarios exist, but ``.sdd/roadmaps/open`` does not.
+        "roadmap-dir-missing",
+        # Scenarios exist and the roadmap directory exists, but it has no
+        # YAML roadmap definitions to sequence them.
+        "no-roadmap-files",
         # Roadmaps and scenarios both exist, but no roadmap entry resolved
         # to a ticket this tick (cursor exhausted, ids absent from the
         # library, or every file failed to parse).
@@ -73,15 +73,17 @@ class RoadmapWaveOutcome:
     """What one wave did, and -- when it did nothing -- why.
 
     ``emit_roadmap_wave`` returns only the emitted paths, so an empty list
-    conflated six different situations. Callers that need to tell them apart
+    conflated seven different situations. Callers that need to tell them apart
     read this instead.
 
     Attributes:
         emitted: Ticket files written this wave, in emission order.
         reason: A member of :data:`WAVE_REASONS`.
-        scenarios_found: Scenarios loaded from ``.bernstein/scenarios``.
-            Non-zero with ``reason="no-roadmap"`` is the case worth
-            reporting: the operator wrote scenarios that nothing consumes.
+        scenarios_found: For ``backlog-missing`` and ``ticket-ceiling``, a
+            0/1 indicator that at least one ``.yaml`` or ``.yml`` scenario
+            candidate exists; these capacity guards do not parse the library.
+            For later outcomes, the number of scenarios successfully loaded
+            from ``.bernstein/scenarios``.
         detail: One sentence a human can act on.
     """
 
@@ -103,31 +105,25 @@ def emit_roadmap_wave(workdir: Path, *, max_open_tickets: int = 10) -> list[Path
     :func:`emit_roadmap_wave_outcome` for the reason a wave was empty.
     """
     outcome = emit_roadmap_wave_outcome(workdir, max_open_tickets=max_open_tickets)
-    if not outcome.emitted and outcome.scenarios_found:
-        _warn_scenarios_skipped(workdir, outcome.reason, outcome.detail)
+    report_outcome(workdir, outcome)
     return list(outcome.emitted)
 
 
 def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> RoadmapWaveOutcome:
     """Emit the next wave and report what happened, including nothing.
 
-    The scenario library is loaded before every roadmap-emission precondition.
-    That ordering is the fix for #5573: a fresh workspace can contain valid
-    scenarios while still lacking the backlog or roadmap directories needed to
-    emit them. The guards retain their original order and meaning after
-    discovery, and each names itself in the outcome instead of hiding a library
-    that was never read.
+    Capacity guards only probe for scenario candidates, avoiding YAML parsing
+    when no ticket can be emitted. Once capacity exists, the full scenario
+    library is loaded before roadmap availability is evaluated, so workspace
+    scenarios cannot disappear behind the roadmap guards (#5573).
     """
     library_root = workdir / ".bernstein" / "scenarios"
-    library = load_scenario_library(library_root)
-    scenarios_found = len(library.scenarios)
-
     backlog_open = workdir / ".sdd" / "backlog" / "open"
     if not backlog_open.exists():
         return RoadmapWaveOutcome(
             emitted=(),
             reason="backlog-missing",
-            scenarios_found=scenarios_found,
+            scenarios_found=_scenario_candidate_presence(library_root),
             detail=f"{backlog_open} does not exist, so there is nowhere to write a ticket.",
         )
     current_open = len(list(backlog_open.glob("*.yaml")))
@@ -135,18 +131,21 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
         return RoadmapWaveOutcome(
             emitted=(),
             reason="ticket-ceiling",
-            scenarios_found=scenarios_found,
+            scenarios_found=_scenario_candidate_presence(library_root),
             detail=(
                 f"{current_open} open ticket(s) at a ceiling of {max_open_tickets}; "
                 "close or complete some before the next wave."
             ),
         )
 
+    library = load_scenario_library(library_root)
+    scenarios_found = len(library.scenarios)
+
     roadmaps_dir = workdir / ".sdd" / "roadmaps" / "open"
     if not roadmaps_dir.exists():
         return RoadmapWaveOutcome(
             emitted=(),
-            reason="no-roadmap",
+            reason="roadmap-dir-missing",
             scenarios_found=scenarios_found,
             detail=(
                 f"Found {scenarios_found} scenario(s) under {library_root} and skipped "
@@ -166,7 +165,7 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
     if not roadmap_files:
         return RoadmapWaveOutcome(
             emitted=(),
-            reason="no-roadmap",
+            reason="no-roadmap-files",
             scenarios_found=scenarios_found,
             detail=(
                 f"Found {scenarios_found} scenario(s) under {library_root} and skipped them: "
@@ -175,7 +174,6 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
         )
 
     runtime_dir = workdir / ".sdd" / "runtime" / "roadmaps"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
     emitted: list[Path] = []
     available_slots = max(0, max_open_tickets - current_open)
     for roadmap_file in roadmap_files:
@@ -208,13 +206,44 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
     )
 
 
-def _warn_scenarios_skipped(workdir: Path, reason: str, detail: str) -> None:
-    """Warn once when discovered scenarios cannot reach roadmap emission."""
-    key = (str(workdir.absolute()), reason)
-    if key in _WARNED_SCENARIO_SKIPS:
-        return
-    _WARNED_SCENARIO_SKIPS.add(key)
-    logger.warning("Found workspace scenarios but skipped roadmap emission: %s", detail)
+def report_outcome(workdir: Path, outcome: RoadmapWaveOutcome) -> bool:
+    """Report a skipped scenario outcome with a bounded warning cadence.
+
+    Args:
+        workdir: Workspace whose roadmap wave produced ``outcome``.
+        outcome: Structured result returned by :func:`emit_roadmap_wave_outcome`.
+
+    Returns:
+        ``True`` when scenarios exist and emission was skipped, including a
+        repeat currently suppressed by the warning cooldown; otherwise
+        ``False``.
+    """
+    workspace = str(workdir.absolute())
+    if outcome.emitted or outcome.scenarios_found <= 0:
+        _SCENARIO_SKIP_WARNING_STATE.pop(workspace, None)
+        return False
+
+    now = time.monotonic()
+    previous = _SCENARIO_SKIP_WARNING_STATE.get(workspace)
+    if previous is not None:
+        previous_reason, warned_at = previous
+        if previous_reason == outcome.reason and now - warned_at < _SCENARIO_SKIP_WARNING_COOLDOWN_S:
+            return True
+
+    _SCENARIO_SKIP_WARNING_STATE[workspace] = (outcome.reason, now)
+    logger.warning(
+        "Found workspace scenarios but skipped roadmap emission: %s: %s",
+        outcome.reason,
+        outcome.detail,
+    )
+    return True
+
+
+def _scenario_candidate_presence(library_root: Path) -> int:
+    """Return 1 when a scenario YAML candidate exists, otherwise 0."""
+    if next(library_root.rglob("*.yaml"), None) is not None:
+        return 1
+    return int(next(library_root.rglob("*.yml"), None) is not None)
 
 
 def _emit_for_spec(
@@ -249,7 +278,9 @@ def _emit_for_spec(
             cursor.scenario_index += 1
             cursor.task_index = 0
 
-    _save_cursor(cursor_path, cursor)
+    if emitted:
+        cursor_path.parent.mkdir(parents=True, exist_ok=True)
+        _save_cursor(cursor_path, cursor)
     return emitted
 
 

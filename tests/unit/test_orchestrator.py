@@ -301,6 +301,45 @@ tasks:
     assert str(tmp_path / ".sdd" / "backlog" / "open") in warnings[0]
 
 
+def test_orchestrator_clears_scenario_skip_warning_after_emission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from bernstein.core.planning import roadmap_runtime
+
+    roadmap_runtime._SCENARIO_SKIP_WARNING_STATE.clear()
+    outcomes = iter(
+        [
+            roadmap_runtime.RoadmapWaveOutcome((), "backlog-missing", 1, "blocked"),
+            roadmap_runtime.RoadmapWaveOutcome((tmp_path / "ticket.yaml",), "emitted", 1, "emitted"),
+            roadmap_runtime.RoadmapWaveOutcome((), "backlog-missing", 1, "blocked again"),
+        ]
+    )
+    monkeypatch.setattr(roadmap_runtime, "emit_roadmap_wave_outcome", lambda _workdir: next(outcomes))
+    transport = _mock_transport(
+        {
+            "GET /status": httpx.Response(200, json={"status": "ok"}),
+            "GET /tasks": httpx.Response(200, json=[]),
+        }
+    )
+    orch = _build_orchestrator(tmp_path, transport)
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            orch._tick_count = ORCHESTRATOR.normal_tick_phase - 1
+            orch.tick()
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Found workspace scenarios but skipped roadmap emission:")
+    ]
+    assert len(warnings) == 2
+    assert "backlog-missing" in warnings[0]
+    assert "backlog-missing" in warnings[1]
+
+
 # --- Task.from_dict ---
 
 
