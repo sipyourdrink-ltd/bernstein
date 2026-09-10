@@ -311,9 +311,7 @@ click==8.5.0 \
 colorama==0.4.6 \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
-    # via
-    #   mkdocs
-    #   mkdocs-material
+    # via mkdocs-material
 csscompressor==0.9.5 \
     --hash=sha256:afa22badbcf3120a4f392e4d22f9fff485c044a1feda4a950ecc5eba9dd31a05
     # via mkdocs-minify-plugin

@@ -213,6 +213,7 @@ jobs:
     needs: triage
     if: needs.triage.outputs.existing_pr == '' && needs.triage.outputs.safe_for_gemini == 'true'
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 20
     permissions:
       contents: write
@@ -468,7 +469,7 @@ jobs:
       - name: Set up Python via uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          version: "0.12.8"
+          version: "0.12.9"
       - name: Capture failing log tail
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

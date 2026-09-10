@@ -152,9 +152,19 @@ async def _export(payload: dict[str, object], frozen_now: float) -> str:
     ):
         app = dashboard_app.BernsteinApp()
         async with app.run_test(size=TERMINAL_SIZE) as pilot:
-            # One pause starts the poll worker; the rest let its result land
-            # and the widgets repaint before the screen is captured.
-            for _ in range(6):
+            # The first pause starts the poll worker. How many more it takes
+            # for the result to land depends on the machine: six were enough
+            # here and not always on a busy CI runner, where the screen was
+            # captured with the sparkline still on its placeholder. Wait for
+            # the applied result itself, then let the widgets repaint. A poll
+            # that never lands is not an error here: the teardown test drives
+            # this same loop with a poll that completes after the screens close,
+            # and the freshness gate reports the resulting drift on its own.
+            for _ in range(120):
+                await pilot.pause()
+                if app._history:
+                    break
+            for _ in range(3):
                 await pilot.pause()
             return app.export_screenshot()
 

@@ -280,6 +280,7 @@ jobs:
       needs.triage.outputs.should_heal == 'true' &&
       needs.triage.outputs.idempotent_skip != 'true'
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 25
     permissions:
       contents: write

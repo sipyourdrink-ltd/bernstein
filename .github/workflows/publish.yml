@@ -338,6 +338,7 @@ jobs:
   publish-npm:
     name: Publish npm wrapper
     runs-on: ubuntu-latest
+    environment: pypi
     needs: build
     timeout-minutes: 15
     environment: pypi
@@ -496,6 +497,7 @@ jobs:
   publish-copr:
     name: Publish RPM to Copr
     runs-on: ubuntu-latest
+    environment: pypi
     needs: [publish, rpm-install-smoke]
     # `always()` so a channel-only republish still runs with the upstream
     # release graph skipped; the PyPI result still gates the normal tag path.

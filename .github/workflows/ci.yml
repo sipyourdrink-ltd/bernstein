@@ -1722,12 +1722,20 @@ jobs:
     #      cross-platform work that the path filter cannot detect).
     # Otherwise this job is skipped on PRs and ci-macos-nightly.yml
     # provides the safety net.
+    #
+    # `merge_group` is excluded outright. A queued group re-checks the
+    # same platform surface that the post-merge push to `main` checks
+    # minutes later on the very same tree, so the queue copy cannot
+    # observe a regression the push copy does not. The `CI gate` roll-up
+    # tolerates the skip unconditionally on that event
+    # (MACOS_UNCONDITIONAL_SKIP_EVENTS).
     name: Adapter integration (fake-CLI, macOS)
     needs: [lint, determine-changes]
     if: >-
-      github.event_name == 'push' ||
-      needs.determine-changes.outputs.macos_sensitive == 'true' ||
-      contains(github.event.pull_request.labels.*.name, 'macos-needed')
+      github.event_name != 'merge_group' &&
+      (github.event_name == 'push' ||
+       needs.determine-changes.outputs.macos_sensitive == 'true' ||
+       contains(github.event.pull_request.labels.*.name, 'macos-needed'))
     runs-on: macos-latest
     timeout-minutes: 15
     permissions:
@@ -1829,7 +1837,11 @@ jobs:
       # Single source of truth for the shard count. The `--shard i/N`
       # denominator below and the per-shard slice both key off this; bump
       # it (and the `shard:` list) together to rescale the fan-out.
-      TEST_SHARD_COUNT: "4"
+      # The merge-queue lane fans out over eight shards: each queue build is
+      # on the critical path of every entry behind it, and the per-shard
+      # suite is the longest job in the run. Pull requests and pushes keep
+      # four; their shards run alongside other work rather than ahead of it.
+      TEST_SHARD_COUNT: ${{ github.event_name == 'merge_group' && '8' || '4' }}
       # Main push coverage runs are slower than local file runs; keep the
       # per-file guard, but allow heavy adapter contract files to finish.
       BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
@@ -1842,7 +1854,14 @@ jobs:
         # macOS-sensitive, the PR carries the `macos-needed` label, or
         # the event is a push. ci-macos-nightly.yml provides a daily
         # safety-net run of the full macOS matrix.
-        os: [ubuntu-latest, windows-latest]
+        # The merge-queue lane runs the ubuntu cells only. Every entry in the
+        # queue already passed the Windows cells on its own pull request, and
+        # push-to-main runs them again minutes after the merge, so the queue
+        # build was paying four Windows jobs per entry to re-check a
+        # combination the push run checks anyway. A Windows-only regression
+        # that only appears in the combination surfaces one merge later and
+        # is answered with a revert.
+        os: ${{ github.event_name == 'merge_group' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         # Only push-to-main runs the full interpreter matrix; PR and
         # merge-queue lanes run the primary interpreter (3.13) alone. The
         # queue ran both rows, which doubled its ubuntu shard fan-out to
@@ -1855,7 +1874,7 @@ jobs:
         python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["3.12", "3.13"]') || fromJSON('["3.13"]') }}
         # Fan the per-file suite out across 4 deterministic shards per
         # cell. Keep this list in sync with TEST_SHARD_COUNT above.
-        shard: [1, 2, 3, 4]
+        shard: ${{ github.event_name == 'merge_group' && fromJSON('[1, 2, 3, 4, 5, 6, 7, 8]') || fromJSON('[1, 2, 3, 4]') }}
         exclude:
           # Coverage/JUnit upload only on ubuntu; skip duplicate slow jobs on Windows for 3.12
           - os: windows-latest
@@ -2126,9 +2145,10 @@ jobs:
 
   test-macos:
     # macOS half of the test matrix, split out for #1468 (macOS hosted
-    # runner saturation). Runs unconditionally on push (so every commit
-    # that reaches main has a fresh macOS signal), and on PRs only when
-    # one of the gate conditions is met:
+    # runner saturation). Four sharded macOS runners, so this is the
+    # most expensive leg in the workflow; it runs only where it can
+    # observe something the cheaper legs cannot. The gate is the same
+    # on every event that runs it:
     #   - the planner classified the diff as macos_sensitive (touched
     #     a module with `sys.platform == "darwin"` branches, the
     #     tunnels driver layer, the daemon installer, the runtime
@@ -2136,11 +2156,16 @@ jobs:
     #     ci.yml / ci-macos-nightly.yml themselves);
     #   - the PR carries the `macos-needed` label (operator opt-in for
     #     cross-platform work the path filter cannot detect).
-    # Otherwise this job is skipped on the PR and ci-macos-nightly.yml
-    # provides the safety-net coverage at 06:00 UTC each day. The merge
-    # queue (merge_group) skips this job entirely (see the ci-gate
-    # MACOS_SKIP_EVENTS handling) - the post-merge push carries the
-    # macOS signal for a queued group.
+    # A push to `main` whose diff touches none of the platform paths no
+    # longer runs these shards: the non-platform diff is already covered
+    # by the ubuntu/windows `test` matrix on the same commit, and
+    # ci-macos-nightly.yml re-runs the whole macOS suite at 06:00 UTC
+    # daily, so the shards were re-asserting a result nothing in the
+    # diff could have changed. `CI gate` tolerates that skip through
+    # MACOS_PUSH_GATED.
+    # The merge queue (merge_group) never runs this job: the `if:`
+    # excludes the event, and the post-merge push carries whatever macOS
+    # signal a queued group's diff earns.
     #
     # Coverage / JUnit / Codecov uploads are NOT mirrored here; they
     # remain ubuntu-only (matches the previous matrix gating).
@@ -2164,9 +2189,9 @@ jobs:
     name: Test (macos-latest, Python 3.13, shard ${{ matrix.shard }})
     needs: [lint, determine-changes]
     if: >-
-      github.event_name == 'push' ||
-      needs.determine-changes.outputs.macos_sensitive == 'true' ||
-      contains(github.event.pull_request.labels.*.name, 'macos-needed')
+      github.event_name != 'merge_group' &&
+      (needs.determine-changes.outputs.macos_sensitive == 'true' ||
+       contains(github.event.pull_request.labels.*.name, 'macos-needed'))
     runs-on: macos-latest
     timeout-minutes: 90
     permissions:
@@ -2416,8 +2441,19 @@ jobs:
           }
           # macOS-gated jobs (see #1468): on PRs these are skipped unless
           # the diff is macos_sensitive or the PR carries the
-          # `macos-needed` label. Always run on push events.
+          # `macos-needed` label.
           MACOS_GATED = {"test-macos", "adapter-integration-macos"}
+          # `test-macos` is the four-shard macOS test matrix, and it is
+          # gated on `push` too: it runs on a push to `main` only when the
+          # planner flags the diff as macos_sensitive. A push whose diff
+          # touches none of the platform paths cannot regress what those
+          # shards check that the ubuntu/windows `test` matrix on the same
+          # commit does not already check, and ci-macos-nightly.yml re-runs
+          # the full macOS suite daily. adapter-integration-macos is
+          # deliberately not in this set: it is one short job, so it keeps
+          # running on every push and every merged commit still gets a
+          # macOS signal.
+          MACOS_PUSH_GATED = {"test-macos"}
           # Push-only jobs are required on native main pushes but skip
           # intentionally on PR, workflow_dispatch, and merge_group runs.
           PUSH_ONLY = {"coverage-report"}
@@ -2431,21 +2467,21 @@ jobs:
           # install-smoke-rpm-nightly.yml is the safety net that still
           # exercises the released artifact on days nothing here changes.
           RPM_SMOKE_SKIPPABLE = {"install-smoke-rpm"}
-          # Events under which a macOS-gated skip is intentional. PRs and
-          # manual dispatch already gate macOS behind macos_sensitive /
-          # label. merge_group must be included too: a merge queue runs CI
-          # on a synthetic merge_group ref where `github.event.pull_request`
-          # is null, so the `macos-needed` label and `push`-only branches of
-          # the job `if:` can never be true there. The remaining branch,
-          # `macos_sensitive`, is computed by `determine-changes` from the
-          # group's combined diff, so a macOS-sensitive group still runs the
-          # macOS jobs in the queue and this tolerance does not apply. A group
-          # that touches nothing macOS-sensitive skips them: the merged commit
-          # still triggers a native `push` to main that runs the full macOS
-          # suite un-gated, and ci-macos-nightly.yml covers regression -- so
-          # tolerating that skip is what keeps the queue from wedging without
-          # losing macOS coverage on what actually lands.
+          # Events under which a macOS-gated skip can be intentional. PRs
+          # and manual dispatch gate macOS behind macos_sensitive / label;
+          # merge_group excludes the macOS jobs outright.
           MACOS_SKIP_EVENTS = ("pull_request", "workflow_dispatch", "merge_group")
+          # The subset of the above where the skip needs no further
+          # justification, because the job `if:` refuses the event whatever
+          # the planner said. Both macOS jobs carry
+          # `github.event_name != 'merge_group'`: a queued group re-checks
+          # the same platform surface the post-merge push to `main` checks
+          # minutes later on the very same tree, so the queue copy cannot
+          # observe a regression the push copy does not. Coverage on what
+          # actually lands is unchanged -- the merged commit triggers a
+          # native `push` to main, and ci-macos-nightly.yml is the daily
+          # safety net for the rest.
+          MACOS_UNCONDITIONAL_SKIP_EVENTS = ("merge_group",)
 
           docs_only = plan.get("docs_only") == "true"
           macos_sensitive = plan.get("macos_sensitive") == "true"
@@ -2478,20 +2514,26 @@ jobs:
                   if name in RPM_SMOKE_SKIPPABLE and not rpm_relevant_changed:
                       continue
                   # macOS-gated jobs are allowed to skip on:
+                  #  - merge_group (merge-queue ref), unconditionally: the
+                  #    job `if:` excludes the event, and the post-merge
+                  #    push re-checks the same tree.
                   #  - PRs when diff is not macos_sensitive AND no
                   #    `macos-needed` label.
                   #  - workflow_dispatch (manual re-runs from hotfix
                   #    agents) when diff is not macos_sensitive.
-                  #  - merge_group (merge-queue ref) where the label/push
-                  #    branches of the job `if:` cannot be true; the
-                  #    post-merge push to main runs macOS un-gated.
-                  # On native push events macOS must run.
                   # Nightly ci-macos-nightly.yml covers regression.
+                  if name in MACOS_GATED and event in MACOS_SKIP_EVENTS:
+                      if event in MACOS_UNCONDITIONAL_SKIP_EVENTS:
+                          continue
+                      if not macos_sensitive and not macos_labelled:
+                          continue
+                  # On a native push, adapter-integration-macos must run,
+                  # but the test-macos shards run only for a
+                  # macos_sensitive diff (see MACOS_PUSH_GATED).
                   if (
-                      name in MACOS_GATED
-                      and event in MACOS_SKIP_EVENTS
+                      name in MACOS_PUSH_GATED
+                      and event == "push"
                       and not macos_sensitive
-                      and not macos_labelled
                   ):
                       continue
               bad.append((name, r))

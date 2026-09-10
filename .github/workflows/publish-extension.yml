@@ -23,6 +23,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: pypi
     timeout-minutes: 30
     environment: pypi
     permissions:

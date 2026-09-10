@@ -59,15 +59,19 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | PR labels | pull_request_target | {"cancel-in-progress": "true", "group": "pr-labels-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/pr-observability-summary.yml | PR observability summary | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "pr-observability-${{ github.event.pull_request.number \|\| github.event.inputs.pr_number }}"} | 1 |
 | .github/workflows/pr-policy.yml | PR policy | pull_request | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "pr-policy-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/pr-queue-hygiene.yml | PR queue hygiene | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "pr-queue-hygiene"} | 1 |
 | .github/workflows/project-pulse.yml | Project pulse | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "project-pulse"} | 1 |
 | .github/workflows/publish-docker.yml | Publish Docker Image | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-docker-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-extension.yml | Publish VS Code Extension | push, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-extension-${{ github.ref }}"} | 1 |
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
 | .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 10 |
+| .github/workflows/quorum-rerun.yml | quorum rerun | pull_request_review, schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "quorum-rerun-${{ github.event.pull_request.number \|\| 'sweep' }}"} | 1 |
+| .github/workflows/quorum.yml | quorum | merge_group, pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "quorum-${{ github.event.pull_request.number \|\| github.event.merge_group.head_ref \|\| github.ref }}"} | 1 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/rendering-lane.yml | Rendering lane | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "rendering-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| format('branch-{0}-{1}', github.ref, github.sha) }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
+| .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 2 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-weekly.yml | soc2-evidence-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
@@ -101,7 +105,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/bisect-on-red.yml | bisect: Identify culprit PR |
 | .github/workflows/branch-protection-audit.yml | audit: Branch protection audit |
 | .github/workflows/ci-gate-stub.yml | ci-gate: ${{ needs.classify.outputs.all_ignored == 'true' && 'CI gate' \|\| 'CI gate stub (not applicable)' }}<br>classify: Classify diff against ci.yml paths-ignore |
-| .github/workflows/ci-macos-nightly.yml | open-failure-issue: Open / update macOS nightly failure issue<br>test-macos-nightly: Test (macos-latest, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }}) |
+| .github/workflows/ci-macos-nightly.yml | open-failure-issue: Open / update macOS nightly failure issue<br>test-macos-nightly: Test (macOS, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }}) |
 | .github/workflows/ci-topology-heal.yml | heal: Regenerate topology report |
 | .github/workflows/ci-weekly-digest.yml | digest: Build and publish weekly digest |
 | .github/workflows/ci.yml | actionlint: Workflow lint<br>adapter-conformance-windows: Adapter conformance + e2e (windows)<br>adapter-integration: Adapter integration (fake-CLI)<br>adapter-integration-macos: Adapter integration (fake-CLI, macOS)<br>bandit: Bandit (security)<br>beartype: Beartype (type contracts)<br>ci-gate: CI gate<br>close-ci-issues: Close resolved CI issues<br>coverage-report: Coverage report<br>dead-code: Dead code (Vulture)<br>determine-changes: Determine changes<br>diff-coverage: Diff coverage report<br>dist-size: Package size check<br>install-smoke-pipx: Install smoke - pipx (${{ matrix.os }}, Python ${{ matrix.python-version }})<br>install-smoke-rpm: Install smoke - RPM (${{ matrix.image }})<br>install-smoke-uv: Install smoke - uv tool (${{ matrix.os }})<br>integration-tests: Integration tests<br>lineage-gate: Lineage Gate<br>lint: Lint<br>mutmut-diff: Mutation report (diff-only)<br>mypy-strict-zone: mypy strict (lineage substrate)<br>pip-audit: pip-audit (deps)<br>property-tests: Property tests (Hypothesis smoke)<br>proto-drift: Proto codegen drift<br>pyright-strict-zone: Pyright strict (security + cluster)<br>repo-hygiene: Repo hygiene<br>schemathesis-smoke: Schemathesis smoke<br>semgrep: Semgrep (custom rules)<br>snapshot-tests: Snapshot tests (syrupy)<br>spelling: Spelling (typos)<br>test: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})<br>test-macos: Test (macos-latest, Python 3.13, shard ${{ matrix.shard }})<br>typecheck: Type check report |
@@ -135,15 +139,19 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | label |
 | .github/workflows/pr-observability-summary.yml | summary: Sticky observability comment |
 | .github/workflows/pr-policy.yml | pr-policy: PR policy |
+| .github/workflows/pr-queue-hygiene.yml | hygiene |
 | .github/workflows/project-pulse.yml | pulse: Collect and publish the project pulse |
 | .github/workflows/publish-docker.yml | publish: Build and push image to GHCR |
 | .github/workflows/publish-extension.yml | publish |
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
 | .github/workflows/publish.yml | build: Build<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-copr: Publish RPM to Copr<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>rpm-install-smoke: RPM install smoke (${{ matrix.image }})<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
+| .github/workflows/quorum-rerun.yml | rerun |
+| .github/workflows/quorum.yml | quorum |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs published channels |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/rendering-lane.yml | rendering: Rendering fetcher (browser-backed) |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
+| .github/workflows/runner-canary.yml | canary: Runner canary<br>macos-canary: macOS runner canary |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/soc2-evidence-weekly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
@@ -211,15 +219,19 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/pr-labels.yml | workflow: {"contents": "read"}<br>label: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/pr-observability-summary.yml | workflow: {"contents": "read"}<br>summary: {"checks": "read", "contents": "read", "pull-requests": "write", "security-events": "read"} | GITHUB_TOKEN |
 | .github/workflows/pr-policy.yml | workflow: {"contents": "read"}<br>pr-policy: {"actions": "read", "contents": "write", "issues": "read", "pull-requests": "read"} | BERNSTEIN_AUTOSYNC_TOKEN |
+| .github/workflows/pr-queue-hygiene.yml | workflow: {"contents": "read"}<br>hygiene: {"contents": "read", "issues": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/project-pulse.yml | pulse: {"contents": "write", "issues": "write", "pull-requests": "read"} | - |
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
 | .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"actions": "write", "contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read"}<br>rpm-install-smoke: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN, NPM_TOKEN |
+| .github/workflows/quorum-rerun.yml | workflow: {"contents": "read"}<br>rerun: {"actions": "write", "contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
+| .github/workflows/quorum.yml | workflow: {"contents": "read"}<br>quorum: {"contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/release-major-minor.yml | workflow: {"contents": "read"}<br>release: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/rendering-lane.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/required-check-canary.yml | verify: {"contents": "read"} | - |
+| .github/workflows/runner-canary.yml | - | - |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
 | .github/workflows/soc2-evidence-weekly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED, SOC2_EVIDENCE_SINK |
