@@ -35,6 +35,11 @@ from bernstein.core.receipts.protocol import (
 )
 from bernstein.core.skills.catalog.signature import generate_signer_keypair
 
+#: Scans the whole source tree, so no diff produces an import edge to this
+#: file and the affected-set selector would never pick it. The marker puts it
+#: in every pull request's slice (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 _SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
 
 #: The one module allowed to define the protocol's three names.

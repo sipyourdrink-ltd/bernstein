@@ -26,6 +26,13 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SOURCE_ROOT = REPO_ROOT / "src" / "bernstein"
 

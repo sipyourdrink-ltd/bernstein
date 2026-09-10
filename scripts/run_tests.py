@@ -22,16 +22,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping
+    from multiprocessing.sharedctypes import Synchronized
 
 # Changed paths for which an empty affected set is a coverage hole rather than
 # a legitimate no-op, so the shards fail closed instead of reporting green.
@@ -109,6 +113,65 @@ MEMORY_HEAVY_FILES: frozenset[str] = frozenset(
         "test_volunteer_sandbox_egress.py",
     }
 )
+
+# pytest builds every ``tmp_path`` under ``$PYTEST_DEBUG_TEMPROOT`` and keeps a
+# ``pytest-current`` symlink in the ``pytest-of-<user>`` directory it creates
+# there. Workers that inherit one root rewrite that symlink concurrently and
+# the loser fails on whichever test was building a ``tmp_path`` at the time
+# (issue #5777), so each worker is handed a root of its own instead.
+PYTEST_TEMPROOT_ENV = "PYTEST_DEBUG_TEMPROOT"
+
+#: Prefix of the run-unique parent directory holding one root per worker.
+TEMP_ROOT_PREFIX = "bernstein-tests-"
+
+#: This pool worker's own temporary root, claimed once by
+#: ``_bind_worker_temp_root`` and read by every ``run_file`` call it serves.
+_WORKER_TEMP_ROOT: Path | None = None
+
+
+def create_run_temp_parent() -> Path:
+    """Create the run-unique parent directory that holds every worker root."""
+    return Path(tempfile.mkdtemp(prefix=TEMP_ROOT_PREFIX))
+
+
+def worker_temp_root(parent: Path, index: int) -> Path:
+    """Create and return worker *index*'s own pytest temporary root."""
+    root = parent / f"w{index}"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def remove_run_temp_parent(parent: Path | None) -> None:
+    """Remove the run parent, and with it every worker root beneath it."""
+    if parent is None:
+        return
+    shutil.rmtree(parent, ignore_errors=True)
+
+
+def worker_env(temp_root: Path | None) -> dict[str, str]:
+    """Return the child environment for a worker owning *temp_root*.
+
+    A copy, never the live mapping: the parent process keeps whatever
+    ``PYTEST_DEBUG_TEMPROOT`` it was started with.
+    """
+    env = dict(os.environ)
+    if temp_root is not None:
+        env[PYTEST_TEMPROOT_ENV] = str(temp_root)
+    return env
+
+
+def _bind_worker_temp_root(parent: str, counter: Synchronized[int]) -> None:
+    """Pool initializer: claim the next worker index under *parent*.
+
+    ``counter`` is shared across the pool so the index is unique per worker
+    rather than per submitted file: a worker outlives the file it was started
+    for, so a per-file index would let two live workers share a root.
+    """
+    global _WORKER_TEMP_ROOT
+    with counter.get_lock():
+        index = counter.value
+        counter.value = index + 1
+    _WORKER_TEMP_ROOT = worker_temp_root(Path(parent), index)
 
 
 def split_memory_heavy(files: list[Path]) -> tuple[list[Path], list[Path]]:
@@ -385,11 +448,20 @@ def shard_files(
     return [f for j, f in enumerate(files) if j % shard_count == shard_index - 1]
 
 
-def run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple[Path, int, float, str]:
+def run_file(
+    path: Path,
+    extra_args: list[str],
+    coverage: bool = False,
+    temp_root: Path | None = None,
+) -> tuple[Path, int, float, str]:
     """Run a single test file in a subprocess. Returns (path, exitcode, duration, output).
 
     When ``coverage`` is True, the process is wrapped in ``coverage run`` with a
     parallel-safe data file so that many subprocesses can be combined later.
+
+    ``temp_root`` overrides the pytest temporary root for this subprocess; it
+    defaults to the root bound to the calling pool worker, or to whatever the
+    parent inherited when there is none.
     """
     if coverage:
         cmd = [
@@ -424,7 +496,13 @@ def run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple
             *extra_args,
         ]
     start = time.monotonic()
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=test_file_timeout_seconds())
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=test_file_timeout_seconds(),
+        env=worker_env(temp_root if temp_root is not None else _WORKER_TEMP_ROOT),
+    )
     duration = time.monotonic() - start
     output = result.stdout + result.stderr
     return path, result.returncode, duration, output
@@ -597,90 +675,101 @@ def run_parallel(
 
     print(f"  Workers: {workers}")
 
-    normal_files, heavy_files = split_memory_heavy(files)
-    total = len(files)
+    # One temporary root per worker, all under a single run-unique parent so
+    # the whole run is torn down by one rmtree below (issue #5777).
+    temp_parent = create_run_temp_parent()
+    try:
+        normal_files, heavy_files = split_memory_heavy(files)
+        total = len(files)
 
-    # Run normal files in parallel
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(run_file, f, extra_args, coverage): f for f in normal_files}
-        for future in as_completed(futures):
-            if abort:
-                future.cancel()
-                continue
-            try:
-                fpath, code, duration, output = future.result(timeout=360)
-            except Exception as exc:
-                fpath = futures[future]
+        # Run normal files in parallel
+        counter = multiprocessing.Value("i", 0)
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_bind_worker_temp_root,
+            initargs=(str(temp_parent), counter),
+        ) as pool:
+            futures = {pool.submit(run_file, f, extra_args, coverage): f for f in normal_files}
+            for future in as_completed(futures):
+                if abort:
+                    future.cancel()
+                    continue
+                try:
+                    fpath, code, duration, output = future.result(timeout=360)
+                except Exception as exc:
+                    fpath = futures[future]
+                    done += 1
+                    print(f"  ERROR [{done}/{total}] {durations_key(fpath)}: {exc}")
+                    failed += 1
+                    if fail_fast:
+                        abort = True
+                        for f in futures:
+                            f.cancel()
+                    continue
+
+                retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
+                if retry is not None:
+                    print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
+                    code, duration, output = retry
+
                 done += 1
-                print(f"  ERROR [{done}/{total}] {durations_key(fpath)}: {exc}")
-                failed += 1
-                if fail_fast:
-                    abort = True
-                    for f in futures:
-                        f.cancel()
-                continue
+                label = f"[{done}/{total}] {durations_key(fpath)}"
+                if recorded_durations is not None:
+                    recorded_durations[durations_key(fpath)] = duration
+                outcome = _report_file_result(label, code, duration, output)
+                if outcome == OUTCOME_PASSED:
+                    passed += 1
+                elif outcome == OUTCOME_NO_TESTS:
+                    no_tests.append(fpath)
+                else:
+                    failed += 1
+                    if fail_fast:
+                        abort = True
+                        for f in futures:
+                            f.cancel()
 
-            retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
-            if retry is not None:
-                print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
-                code, duration, output = retry
+        # Run memory-heavy files sequentially to avoid OOM
+        if heavy_files:
+            print("  Running memory-heavy files sequentially...")
+            for f in heavy_files:
+                if abort:
+                    break
+                try:
+                    fpath, code, duration, output = run_file(f, extra_args, coverage)
+                except Exception as exc:
+                    done += 1
+                    print(f"  ERROR [{done}/{total}] {durations_key(f)}: {exc}")
+                    failed += 1
+                    if fail_fast:
+                        abort = True
+                    continue
 
-            done += 1
-            label = f"[{done}/{total}] {durations_key(fpath)}"
-            if recorded_durations is not None:
-                recorded_durations[durations_key(fpath)] = duration
-            outcome = _report_file_result(label, code, duration, output)
-            if outcome == OUTCOME_PASSED:
-                passed += 1
-            elif outcome == OUTCOME_NO_TESTS:
-                no_tests.append(fpath)
-            else:
-                failed += 1
-                if fail_fast:
-                    abort = True
-                    for f in futures:
-                        f.cancel()
+                retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
+                if retry is not None:
+                    print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
+                    code, duration, output = retry
 
-    # Run memory-heavy files sequentially to avoid OOM
-    if heavy_files:
-        print("  Running memory-heavy files sequentially...")
-        for f in heavy_files:
-            if abort:
-                break
-            try:
-                fpath, code, duration, output = run_file(f, extra_args, coverage)
-            except Exception as exc:
                 done += 1
-                print(f"  ERROR [{done}/{total}] {durations_key(f)}: {exc}")
-                failed += 1
-                if fail_fast:
-                    abort = True
-                continue
+                label = f"[{done}/{total}] {durations_key(f)}"
+                if recorded_durations is not None:
+                    recorded_durations[durations_key(fpath)] = duration
+                outcome = _report_file_result(label, code, duration, output)
+                if outcome == OUTCOME_PASSED:
+                    passed += 1
+                elif outcome == OUTCOME_NO_TESTS:
+                    no_tests.append(fpath)
+                else:
+                    failed += 1
+                    if fail_fast:
+                        abort = True
 
-            retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
-            if retry is not None:
-                print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
-                code, duration, output = retry
-
-            done += 1
-            label = f"[{done}/{total}] {durations_key(f)}"
-            if recorded_durations is not None:
-                recorded_durations[durations_key(fpath)] = duration
-            outcome = _report_file_result(label, code, duration, output)
-            if outcome == OUTCOME_PASSED:
-                passed += 1
-            elif outcome == OUTCOME_NO_TESTS:
-                no_tests.append(fpath)
-            else:
-                failed += 1
-                if fail_fast:
-                    abort = True
-
-    wall_time = time.monotonic() - wall_start
-    print(f"\n{'=' * 60}")
-    _print_totals(passed, failed, no_tests, total)
-    print(f"Wall:  {wall_time:.1f}s ({workers} workers)")
-    return 1 if failed else 0
+        wall_time = time.monotonic() - wall_start
+        print(f"\n{'=' * 60}")
+        _print_totals(passed, failed, no_tests, total)
+        print(f"Wall:  {wall_time:.1f}s ({workers} workers)")
+        return 1 if failed else 0
+    finally:
+        remove_run_temp_parent(temp_parent)
 
 
 def _describe_rev(rev: str) -> str:
@@ -758,6 +847,48 @@ def discover_affected_files(base: str) -> list[Path]:
         sys.exit(result.returncode)
     paths = [Path(p.strip()) for p in result.stdout.splitlines() if p.strip()]
     return sorted(paths)
+
+
+#: Suites the guard-discovery scan walks. A whole-tree guard lives beside the
+#: unit tests it is collected with; nothing outside these needs indexing.
+_GUARD_SEARCH_DIRS = ("tests/unit", "tests/integration")
+
+#: How a file declares itself a whole-tree guard. Matched as source text rather
+#: than by importing the module: discovery runs before pytest starts, and a
+#: guard that fails to import must still be selected so the failure is seen.
+_GUARD_MARKER = re.compile(r"@pytest\.mark\.whole_tree_guard\b|pytest\.mark\.whole_tree_guard\b")
+
+
+def discover_whole_tree_guard_files(root: Path | None = None) -> list[Path]:
+    """Return every test file carrying the ``whole_tree_guard`` marker.
+
+    A whole-tree guard asserts an invariant by *scanning* the source tree - no
+    module under ``core/`` is unreachable, exactly one receipt-verify protocol
+    exists - rather than by importing the code it checks. The affected-set
+    selector builds its map from import edges, so no diff ever produces one to
+    a guard, and a pull request that adds the very thing a guard forbids runs
+    green on its own checks and reds in the merge group instead (#5428).
+
+    Args:
+        root: Repository root to search under. Defaults to this script's repo.
+
+    Returns:
+        Repo-relative paths, sorted, so a run's selection is reproducible.
+    """
+    base = root if root is not None else Path(__file__).resolve().parent.parent
+    found: list[Path] = []
+    for search_dir in _GUARD_SEARCH_DIRS:
+        directory = base / search_dir
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("test_*.py"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:  # pragma: no cover - unreadable file is not a guard
+                continue
+            if _GUARD_MARKER.search(text):
+                found.append(path.relative_to(base))
+    return sorted(found)
 
 
 def discover_changed_files(base: str, diff_filter: str | None = None) -> list[str]:
@@ -932,23 +1063,45 @@ def main() -> None:
 
     if args.affected is not None:
         affected_files = discover_affected_files(args.affected)
-        files = affected_files
+        # The fail-closed decision is a statement about the *affected* set, so
+        # it is taken before the guards are unioned in. Guards are selected on
+        # every run and would otherwise make the set unconditionally non-empty,
+        # which would retire the gate rather than satisfy it.
+        if not affected_files:
+            changed_files = discover_changed_files(args.affected)
+            deleted_files = discover_changed_files(args.affected, diff_filter="D")
+            if changed_files_require_tests(changed_files, deleted_files):
+                print(
+                    "No affected tests found for code or workflow changes; failing closed. "
+                    f"Compared {_compared_range(args.affected)}."
+                )
+                for changed_file in changed_files:
+                    print(f"  {changed_file}")
+                sys.exit(1)
+        # Whole-tree guards scan the tree instead of importing it, so no diff
+        # produces an import edge to them and the affected set never contains
+        # one. They run on every pull request rather than first failing in the
+        # merge group (#5428).
+        #
+        # The set is fixed and small, so it is carried by the FIRST shard
+        # rather than distributed: copying it into every shard would multiply a
+        # constant cost by the shard count, and adding it to every shard's
+        # slice would mean a shard whose affected set is empty is no longer
+        # empty - the contract
+        # ``test_empty_affected_shard_remains_success_when_other_shards_have_tests``
+        # pins. Unsharded runs take the whole set.
+        carries_guards = shard is None or shard[0] == 1
+        guard_files = (
+            [f for f in discover_whole_tree_guard_files() if f not in set(affected_files)] if carries_guards else []
+        )
         if args.keyword:
-            files = [f for f in files if args.keyword in f.stem]
-        if shard is not None:
-            files = shard_files(files, *shard, durations=shard_durations or None)
+            affected_files = [f for f in affected_files if args.keyword in f.stem]
+            guard_files = [f for f in guard_files if args.keyword in f.stem]
+        files = shard_files(affected_files, *shard, durations=shard_durations or None) if shard else affected_files
+        if guard_files:
+            print(f"Including {len(guard_files)} whole-tree guard test file(s) regardless of the diff")
+        files = sorted(set(files) | set(guard_files))
         if not files:
-            if not affected_files:
-                changed_files = discover_changed_files(args.affected)
-                deleted_files = discover_changed_files(args.affected, diff_filter="D")
-                if changed_files_require_tests(changed_files, deleted_files):
-                    print(
-                        "No affected tests found for code or workflow changes; failing closed. "
-                        f"Compared {_compared_range(args.affected)}."
-                    )
-                    for changed_file in changed_files:
-                        print(f"  {changed_file}")
-                    sys.exit(1)
             _report_empty_selection(shard, context="affected ", base=args.affected)
             sys.exit(0)
         shard_label = f" [shard {shard[0]}/{shard[1]}]" if shard else ""

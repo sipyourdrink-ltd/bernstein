@@ -36,13 +36,13 @@ concurrency:
 jobs:
   preflight:
     name: preflight (gate)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 1
     outputs:
       enabled: ${{ steps.gate.outputs.enabled }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
       - id: gate
@@ -69,11 +69,11 @@ jobs:
     name: smoke (synthetic)
     needs: preflight
     if: needs.preflight.outputs.enabled == 'smoke'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -110,7 +110,7 @@ jobs:
     name: bench (full)
     needs: preflight
     if: needs.preflight.outputs.enabled == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 240
     env:
       # Per-suite budget cap protects against runaway spend.
@@ -119,7 +119,7 @@ jobs:
       EVAL_ADAPTERS: ${{ vars.EVAL_ADAPTERS || 'claude,codex,ollama' }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

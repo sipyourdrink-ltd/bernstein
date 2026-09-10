@@ -464,6 +464,10 @@ artifacts = [
     # it on each release. Loader:
     # bernstein.cli.doctor.suggest_docs.load_unanswered_topics.
     "src/bernstein/_default_templates/docs/*.json",
+    # Tracker ingest event-type catalogue (#5132). Schema-validated YAML of
+    # canonical event names; GitHub/GitLab parsers map through it only.
+    # Loader: bernstein.core.trackers.event_catalogue.load_event_catalogue.
+    "src/bernstein/core/trackers/event_catalogue.yaml",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
@@ -768,26 +772,26 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 "zh-Hans" = "@chernistry"
 "zh-TW" = "@chernistry"
 "ja" = "@chernistry"
-"ko" = "@chernistry"
-"hi" = "@chernistry"
+"ko" = "@Bhumika-1432006"
+"hi" = "@vaibhav8a"
 "bn" = "@chernistry"
-"ru" = "@chernistry"
-"es" = "@chernistry"
-"pt" = "@chernistry"
-"de" = "@chernistry"
+"ru" = "@thegoodengineer"
+"es" = "@thegoodengineer"
+"pt" = "@thegoodengineer"
+"de" = "@thegoodengineer"
 "fr" = "@atirna"
-"it" = "@chernistry"
-"nl" = "@chernistry"
-"pl" = "@chernistry"
-"sv" = "@chernistry"
-"fi" = "@chernistry"
-"uk" = "@chernistry"
+"it" = "@Bhumika-1432006"
+"nl" = "@thegoodengineer"
+"pl" = "@Bhumika-1432006"
+"sv" = "@thegoodengineer"
+"fi" = "@Bhumika-1432006"
+"uk" = "@thegoodengineer"
 "tr" = "@chernistry"
-"ar" = "@chernistry"
-"he" = "@chernistry"
-"id" = "@chernistry"
+"ar" = "@thegoodengineer"
+"he" = "@Bhumika-1432006"
+"id" = "@thegoodengineer"
 "vi" = "@chernistry"
-"th" = "@chernistry"
+"th" = "@thegoodengineer"
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -811,6 +815,7 @@ markers = [
     "allow_network: opt out of the autouse unit no-network guard (rare; a genuine integration test belongs in tests/integration/ instead)",
     "protocol: protocol compatibility tests; applied to every item under tests/protocol/ by that directory's conftest, and run by the publish workflow's release gate",
     "auditor_question: binds one conformance vector under tests/integration/conformance/auditor/ to the question it answers; the argument is a question number registered in that suite's questions.py",
+    "whole_tree_guard: asserts an invariant over the whole source tree by scanning it; no diff produces an import edge to these, so `scripts/run_tests.py --affected` selects them on every pull request regardless of what changed",
 ]
 # Visible warnings without converting to errors; individual tests or runs
 # can tighten via `pytest -W error::DeprecationWarning`.

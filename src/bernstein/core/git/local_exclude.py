@@ -50,7 +50,10 @@ EXCLUDE_BLOCK_HEADER: Final[str] = "# bernstein: run-scoped excludes (see core/g
 #: In-tree paths a run must write for a child process to find, anchored to the
 #: repository root with a leading ``/`` so they cannot shadow a same-named
 #: path a target project legitimately keeps elsewhere.
-RUN_EXCLUDE_ENTRIES: Final[tuple[str, ...]] = ("/.claude/mcp.json",)
+RUN_EXCLUDE_ENTRIES: Final[tuple[str, ...]] = (
+    "/.claude/mcp.json",
+    "/.claude/settings.local.json",
+)
 
 
 def resolve_info_exclude_path(workdir: Path) -> Path | None:

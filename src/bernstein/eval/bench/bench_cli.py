@@ -193,6 +193,85 @@ def bench_verify(bundle: str, suite: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# bernstein bench compare
+# ---------------------------------------------------------------------------
+
+
+@bench_group.command(name="compare")
+@click.argument("a")
+@click.argument("b")
+@click.option(
+    "--allow-harness-drift",
+    is_flag=True,
+    default=False,
+    help="Rank even when the two bundles' harness fingerprints differ.",
+)
+def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
+    """Compare two submission bundles, ranking by score.
+
+    A and B are paths to submission bundle .json files.
+
+    The harness fingerprint is recomputed from each bundle's raw
+    scheduler_config before it is trusted.  Bundles from different
+    harnesses are not ranked against each other unless
+    --allow-harness-drift is passed: a score gap across differing
+    harness settings is a harness change, not a model change.
+
+    Exits 0 when the bundles are ranked, 1 on harness mismatch without
+    the flag or on a fingerprint integrity failure.
+    """
+    from bernstein.eval.bench.bundle import SubmissionBundle, harness_fingerprint
+
+    path_a, path_b = Path(a), Path(b)
+    for path in (path_a, path_b):
+        if not path.exists():
+            raise click.ClickException(f"Bundle file not found: {path}")
+
+    bundle_a = SubmissionBundle.load(path_a)
+    bundle_b = SubmissionBundle.load(path_b)
+
+    # Recompute before trust: a stored fingerprint that disagrees with
+    # the settings beside it is an integrity failure, not drift.
+    expected_a = harness_fingerprint(bundle_a.scheduler_config)
+    expected_b = harness_fingerprint(bundle_b.scheduler_config)
+    for path, bundle, expected in ((path_a, bundle_a, expected_a), (path_b, bundle_b, expected_b)):
+        if bundle.harness_fingerprint != expected:
+            raise click.ClickException(
+                f"Harness fingerprint integrity failure: {path} stores "
+                f"{bundle.harness_fingerprint[:12]}… but its scheduler_config "
+                f"hashes to {expected[:12]}…."
+            )
+
+    fp_a, fp_b = bundle_a.harness_fingerprint, bundle_b.harness_fingerprint
+    if fp_a != fp_b:
+        differing = sorted(
+            key
+            for key in set(bundle_a.scheduler_config) | set(bundle_b.scheduler_config)
+            if bundle_a.scheduler_config.get(key) != bundle_b.scheduler_config.get(key)
+        )
+        click.echo(f"Harness fingerprints differ: {fp_a[:12]}… vs {fp_b[:12]}…")
+        click.echo(f"Differing harness settings: {', '.join(differing)}")
+        if not allow_harness_drift:
+            click.echo(
+                "Refusing to rank: a score gap across differing harness settings "
+                "is a harness change, not a model change. "
+                "Pass --allow-harness-drift to rank anyway."
+            )
+            sys.exit(1)
+        click.echo("--allow-harness-drift: ranking anyway.")
+    else:
+        click.echo(f"Harness fingerprint: {fp_a} (match)")
+
+    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -p[1].overall_score)
+    click.echo("")
+    for rank, (path, bundle) in enumerate(ordered, start=1):
+        click.echo(
+            f"{rank}. {path.name}: score {bundle.overall_score * 100:.1f}%, "
+            f"pass rate {bundle.pass_rate * 100:.1f}%, {len(bundle.task_results)} tasks"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Reliability: pass^k floor (issue #2933)
 # ---------------------------------------------------------------------------
 

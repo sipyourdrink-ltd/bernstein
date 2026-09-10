@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from bernstein.core import defaults as _defaults
 from bernstein.core import heartbeat as heartbeat_protocol  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.cost import price_model_usage
 from bernstein.core.lifecycle import transition_agent
@@ -1254,11 +1255,33 @@ def _handle_failure_detection(
 ) -> bool:
     """Detect fatal failure signatures in the agent log and handle them.
 
+    A session that exited 0 is never handled here: log patterns are evidence
+    only for a session that actually died.
+
     Returns True if handled (task already failed/retried/compacted - caller
     must not fall through to the generic orphan-no-signals path).
     """
     _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
     if _rl_tracker is None or not session.provider:
+        return False
+
+    # A process that exited 0 did not die of anything. The scanner greps the
+    # agent's transcript for risky substrings ("401", "rate limit", "timeout"),
+    # and an agent MENTIONING one is not an agent that failed on one: a task
+    # about auth code legitimately prints "HTTP 401" in its final message. On
+    # 2026-09-02 that failed a task whose work had already merged, twice
+    # retried it and DLQ'd it. Log patterns are evidence only for a session
+    # that actually died. A clean exit is handed to the ordinary orphan path
+    # instead, which decides on commits, the completion data and the fast-exit
+    # probe - and still fails it as clean_exit_unverified where the probe says
+    # so. This suppresses one wrong verdict; it does not auto-complete
+    # anything on its own.
+    if session.exit_code == 0:
+        logger.info(
+            "_handle_failure_detection: session %s exited 0 (task=%s); not failing on log patterns",
+            session.id,
+            task_id,
+        )
         return False
 
     _log_path = _resolve_agent_log_path(orch._workdir, session)
@@ -1675,6 +1698,30 @@ def _probe_fast_exit(
 _ORPHAN_LIVENESS_GRACE_S = 90.0
 
 
+def _orphan_liveness_grace_s() -> float:
+    """Resolve the liveness grace window at CALL time, honouring operator tuning.
+
+    ``tuning.agent.liveness_grace_s`` documents itself as the window in which a
+    fresh log/git mtime proves an agent alive, and ``AgentDefaults`` says it
+    mirrors ``_ORPHAN_LIVENESS_GRACE_S`` -- but the constant above was read
+    directly, so the configured value reached the config snapshot and nothing
+    that kills. Measured 2026-09-03 (finding X): with ``liveness_grace_s: 600``
+    set, this probe still logged ``grace_s=90 verdict=DEAD`` for agents whose
+    log had moved 126-142s ago, and four healthy agents were SIGTERMed.
+
+    Read through the module (``_defaults.AGENT``), never a name captured with
+    ``from ... import``: bernstein.yaml is parsed long after this module is
+    imported and ``defaults.override`` REBINDS the singleton rather than
+    mutating the frozen instance.
+
+    The shipped 90s is kept as a FLOOR. It is a measured safety minimum for
+    double-forked runners (see the constant's docstring above), so lowering the
+    tunable must not make this probe judge agents dead sooner; raising it is
+    honoured in full.
+    """
+    return max(float(_defaults.AGENT.liveness_grace_s), _ORPHAN_LIVENESS_GRACE_S)
+
+
 def _mtime_age(path: Path, now: float) -> float | None:
     """Return seconds since ``path`` was last modified, or None if unreadable/missing."""
     with contextlib.suppress(OSError):
@@ -1744,7 +1791,8 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
     git_path = (_wt_dir / ".git") if _wt_dir is not None else None
     git_age = _mtime_age(git_path, now) if git_path is not None else None
 
-    fresh_ages = [a for a in (heartbeat_age, log_age, git_age) if a is not None and a < _ORPHAN_LIVENESS_GRACE_S]
+    grace_s = _orphan_liveness_grace_s()
+    fresh_ages = [a for a in (heartbeat_age, log_age, git_age) if a is not None and a < grace_s]
     has_fresh_signal = bool(fresh_ages)
     verdict = "ALIVE (fresh signal found)" if has_fresh_signal else "DEAD (no fresh signal)"
     reason = (
@@ -1766,7 +1814,7 @@ def _probe_liveness_signals(orch: Any, session: AgentSession, now: float) -> dic
         f"{log_age:.1f}" if log_age is not None else "missing",
         git_path if git_path is not None else "no-per-agent-worktree",
         f"{git_age:.1f}" if git_age is not None else "missing",
-        _ORPHAN_LIVENESS_GRACE_S,
+        grace_s,
         verdict,
         reason,
     )
@@ -1954,6 +2002,41 @@ def _handle_orphan_no_signals(
         )
         return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
     if clean_exit:
+        # The reads above never see a file on disk: "empty diff" is
+        # ``files_modified``, scraped from the agent's log, and "no commits"
+        # is committed state. An agent that wrote its deliverable and died
+        # before committing is not an agent that decided nothing needed
+        # changing. Auto-completing it records a verified deliverable for
+        # work no one verified, while the actual bytes reach the branch a
+        # few lines later through ``_save_partial_work``'s ``[WIP]`` commit,
+        # which no journal row accounts for (#5271). Measured 2026-09-03.
+        _uncommitted = _uncommitted_work_paths(worktree_path)
+        if _uncommitted:
+            logger.warning(
+                "NOT auto-completing task %s: agent %s exited cleanly with no commits, but its "
+                "worktree holds %d uncommitted path(s) - the work was written and never landed on "
+                "any ref. Failing it as unverified so the retry can finish the job. First paths: %s",
+                task_id,
+                session.id,
+                len(_uncommitted),
+                _uncommitted[:5],
+            )
+            try:
+                retry_or_fail_task(
+                    task_id,
+                    f"Agent {session.id} exited cleanly leaving {len(_uncommitted)} uncommitted "
+                    f"path(s) in its worktree - the deliverable was written but never committed",
+                    client=orch._client,
+                    server_url=base,
+                    max_task_retries=orch._config.max_task_retries,
+                    retried_task_ids=orch._retried_task_ids,
+                    workdir=getattr(orch, "_workdir", None),
+                    **_retry_escalation_context(orch),
+                )
+            except httpx.HTTPError as exc:
+                logger.error("Failed to retry/fail uncommitted clean-exit task %s: %s", task_id, exc)
+            return False, "clean_exit_uncommitted_work"
+
         # A clean exit (code 0) with an empty diff and no completion signals is
         # only a genuine "no changes needed" completion when the agent actually
         # ran long enough to have done the work. _probe_fast_exit() flags a
@@ -2070,7 +2153,7 @@ def _handle_orphan_no_signals(
             _liveness["heartbeat_age_s"],
             _liveness["log_age_s"],
             _liveness["git_age_s"],
-            _ORPHAN_LIVENESS_GRACE_S,
+            _orphan_liveness_grace_s(),
         )
         # The session backing this deferral is transitioned to "dead" and its
         # worktree cleaned up in this same tick (_handle_dead_agent), so it
@@ -2189,6 +2272,27 @@ def handle_orphaned_task(
     if task_id in task_by_id:
         task = task_by_id[task_id]
         logger.debug("handle_orphaned_task %s: resolved from tick snapshot", task_id)
+        # The snapshot is fetched once at the top of the tick, so it can be
+        # seconds stale by the time an orphan is judged - long enough for the
+        # task to have reached done and had its branch merged. Acting on the
+        # stale copy reopens a finished task (2026-09-02: a task merged at
+        # 22:25:39 was resumed 33 s later). Re-read it live so the
+        # already-resolved check below sees the real status; the snapshot copy
+        # stays the fallback when the server cannot be reached.
+        try:
+            _fresh = orch._client.get(f"{base}/tasks/{task_id}")
+            _fresh.raise_for_status()
+            task = Task.from_dict(_fresh.json())
+        # Broad: the re-fetch is a freshness improvement over a copy we already
+        # hold, so ANY failure to obtain or parse it (transport, malformed body,
+        # a stubbed client) must degrade to the snapshot - the pre-patch
+        # behaviour - and never abort the orphan path.
+        except Exception as exc:
+            logger.warning(
+                "handle_orphaned_task %s: live re-fetch failed (%s); using the tick snapshot",
+                task_id,
+                exc,
+            )
     else:
         # Not in snapshot -- fall back to a live fetch
         try:
@@ -2573,6 +2677,88 @@ def check_stale_agents(orch: Any) -> None:
 def check_stalled_tasks(orch: Any) -> None:
     """Delegate stall checks to the shared heartbeat module."""
     heartbeat_protocol.check_stalled_tasks(orch)
+
+
+#: Paths the orchestrator itself writes into every executor worktree before
+#: the agent starts. ``_ensure_worktree_local_excludes`` normally hides them
+#: from that worktree's index, but that wiring is best-effort and a target
+#: repo has no reason to ignore bernstein's runtime state on its own, so a
+#: status read can carry them on an exit where the agent changed nothing.
+#: Matched on the exact path so a ``.claude/`` skill an agent was tasked to
+#: author still counts as work.
+_ORCHESTRATOR_WORKTREE_FILES: frozenset[str] = frozenset(
+    {
+        "CLAUDE.md",
+        ".claude/settings.local.json",
+        ".claude/mcp.json",
+        ".claude/scheduled_tasks.json",
+        ".mcp.json",
+        ".env",
+        "bernstein.yaml",
+        "bernstein.yml",
+    }
+)
+# Keep this scoped to ``.sdd/``: identities land in ``.sdd/auth`` and
+# attestations in ``.sdd/attestations``, both covered here.  Bare ``auth/``
+# or ``attestations/`` prefixes hide legitimate target-repo work and can cause
+# a false "no changes" completion; see :mod:`bernstein.core.git.git_basic`.
+_ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/",)
+
+
+def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
+    """Return worktree paths the agent wrote and never committed.
+
+    ``files_modified`` is scraped from the agent's own log - the aggregator
+    matches lines beginning ``Modified:``/``Created:``/``Wrote:``/``Updated:``
+    - and ``_has_git_commits_on_branch`` reads committed state. Neither sees a
+    file on disk, so an agent that wrote its whole deliverable and died before
+    committing looks identical to one that decided nothing needed changing.
+    Measured 2026-09-03: such an agent was auto-completed on an "empty diff
+    (exit code 0)" while its worktree still held the files it had written.
+
+    ``--untracked-files=all`` lists each file rather than collapsing a new
+    directory to a single entry, so the count is real and the orchestrator's
+    own worktree artefacts can be dropped by path. Those artefacts are
+    written into every worktree before the agent starts and are normally
+    hidden by the per-worktree excludes, but that wiring is best-effort and
+    a target repo need not ignore them - without this filter a Claude-adapter
+    worktree reads dirty on every clean exit through
+    ``.claude/settings.local.json`` alone.
+
+    Any exception or nonzero Git exit returns an empty list, preserving the
+    previous behaviour when status cannot be read.
+    """
+    if worktree_path is None:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except Exception:
+        return []
+    if result.returncode != 0:
+        return []
+    paths: list[str] = []
+    records = iter(result.stdout.split("\0"))
+    for record in records:
+        if not record:
+            continue
+        status = record[:2]
+        path = record.removeprefix(f"{status} ")
+        if "R" in status or "C" in status:
+            next(records, None)
+        if not path:
+            continue
+        if path in _ORCHESTRATOR_WORKTREE_FILES or path.startswith(_ORCHESTRATOR_WORKTREE_DIRS):
+            continue
+        paths.append(path)
+    return paths
 
 
 def _has_git_commits_on_branch(worktree_path: Path, since_ts: float) -> bool:

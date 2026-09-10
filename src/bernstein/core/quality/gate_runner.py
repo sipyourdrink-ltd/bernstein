@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bernstein.core.quality.gate_commands import (
+    GateRunnerCommandsMixin,
     _module_name_from_path,
     _resolve_import_from,
 )
@@ -33,11 +34,15 @@ from bernstein.core.quality.gate_pipeline import (
     VALID_GATE_NAMES,
     GatePipelineStep,
     GateReport,
-    GateResult,
     GateStatus,
     build_default_pipeline,
     normalize_gate_condition,
 )
+
+# Explicitly re-exported: `gate_plugins` and other callers import `GateResult`
+# through this module rather than from `gate_pipeline`, and a plain `import`
+# is not a re-export under `--no-implicit-reexport` (issue #5395).
+from bernstein.core.quality.gate_pipeline import GateResult as GateResult
 from bernstein.core.quality.gate_pipeline import (
     is_dep_file as _is_dep_file,
 )
@@ -686,7 +691,7 @@ class GateRunner:
             logger.warning("dead_code_detector.analyse failed: %s", exc)
             report = dead_code_detector.DeadCodeReport()
 
-        return self._build_dead_code_result(step, command, ok, vulture_detail, report)
+        return GateRunnerCommandsMixin._build_dead_code_result(step, command, ok, vulture_detail, report)
 
     def _run_comment_quality_gate_sync(
         self,

@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from bernstein.core import defaults as _defaults
 from bernstein.core.agents.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
 from bernstein.core.agents.agent_signals import AgentSignalManager
 from bernstein.core.agents.heartbeat_escalation import (
@@ -22,14 +23,13 @@ from bernstein.core.agents.heartbeat_escalation import (
     EscalationTier,
     HeartbeatEscalationLadder,
 )
-from bernstein.core.defaults import AGENT
 from bernstein.core.models import AgentHeartbeat, ProgressSnapshot, Task
 from bernstein.core.orchestration.supervisor_receipt import StallReason
 
 logger = logging.getLogger(__name__)
 
 # Idle agent detection thresholds - sourced from defaults
-IDLE_LOG_AGE_THRESHOLD_SECONDS = int(AGENT.idle_log_age_threshold_s)
+IDLE_LOG_AGE_THRESHOLD_SECONDS = int(_defaults.AGENT.idle_log_age_threshold_s)
 
 
 @dataclass(frozen=True)
@@ -67,9 +67,12 @@ class StallProfile:
 class HeartbeatMonitor:
     """Monitor agent liveness via heartbeat files."""
 
-    def __init__(self, workdir: Path, *, timeout_s: float = AGENT.heartbeat_stale_s) -> None:
+    def __init__(self, workdir: Path, *, timeout_s: float | None = None) -> None:
         self._workdir = workdir
-        self._timeout_s = timeout_s
+        # Resolved here, not as a default argument: a default expression is
+        # evaluated once at import, which is always before bernstein.yaml's
+        # ``tuning:`` block is parsed into ``defaults``.
+        self._timeout_s = float(timeout_s) if timeout_s is not None else float(_defaults.AGENT.heartbeat_stale_s)
         self._signal_mgr = AgentSignalManager(workdir)
 
     def check(self, session_id: str) -> HeartbeatStatus:
@@ -353,6 +356,12 @@ def _session_task_title(session: Any) -> str:
     return ", ".join(session.task_ids) if session.task_ids else "unknown task"
 
 
+#: The shipped ``AGENT.escalation_sigterm_s``. Compared against the live value so
+#: "operator raised the signal deadline" is distinguishable from "left at the
+#: default", which must keep ``check_stale_agents`` behaving byte-identically.
+_SHIPPED_ESCALATION_SIGTERM_S = 120.0
+
+
 def _heartbeat_escalation_ladder(
     orch: Any,
     sigterm_threshold: float,
@@ -413,7 +422,7 @@ def _liveness_signal_may_defer(heartbeat_age_s: float) -> bool:
     continuous heartbeat silence the mtime no longer counts as evidence of
     work and the ladder escalates normally (issue #3058).
     """
-    return heartbeat_age_s < AGENT.liveness_suppression_cap_s
+    return heartbeat_age_s < _defaults.AGENT.liveness_suppression_cap_s
 
 
 def _agent_has_fresh_liveness_signal(orch: Any, session: Any) -> bool:
@@ -447,7 +456,7 @@ def _agent_has_fresh_liveness_signal(orch: Any, session: Any) -> bool:
         result = _probe_liveness_signals(orch, session, time.time())
     except Exception:
         return False
-    grace_s = AGENT.liveness_grace_s
+    grace_s = _defaults.AGENT.liveness_grace_s
     return any(age is not None and age < grace_s for age in (result.get("log_age_s"), result.get("git_age_s")))
 
 
@@ -680,7 +689,7 @@ def _escalate_heartbeat(
 
     That gate is a bounded deferral, not an exemption (issue #3058): it stops
     applying once the heartbeat has been silent for
-    ``AGENT.liveness_suppression_cap_s``. See ``_liveness_signal_may_defer``.
+    ``_defaults.AGENT.liveness_suppression_cap_s``. See ``_liveness_signal_may_defer``.
     """
     signal_mgr = orch._signal_mgr
     task_title = _session_task_title(session)
@@ -703,7 +712,7 @@ def _escalate_heartbeat(
             "suppression cap",
             session.id,
             age,
-            AGENT.liveness_suppression_cap_s,
+            _defaults.AGENT.liveness_suppression_cap_s,
         )
         return
     else:
@@ -763,10 +772,10 @@ def _check_stale_agents_simple(orch: Any) -> None:
             session,
             age,
             elapsed,
-            AGENT.escalation_sigterm_s,
-            AGENT.escalation_warn_s,
+            _defaults.AGENT.escalation_sigterm_s,
+            _defaults.AGENT.escalation_warn_s,
             "no_heartbeat_120s",
-            AGENT.escalation_sigkill_s,
+            _defaults.AGENT.escalation_sigkill_s,
         )
 
 
@@ -781,12 +790,23 @@ def check_stale_agents(orch: Any) -> None:
         _check_stale_agents_simple(orch)
         return
 
-    timeout_s = float(getattr(config, "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
-    wakeup_after_s = max(timeout_s / 2.0, AGENT.escalation_warn_s)
+    agent = _defaults.AGENT
+    timeout_s = float(getattr(config, "heartbeat_timeout_s", agent.heartbeat_stale_s))
+    # ``tuning.agent.escalation_sigterm_s`` is the operator's statement of how
+    # long an agent may go silent before it is signalled, but the SHUTDOWN /
+    # SIGTERM tier here was armed from ``heartbeat_timeout_s`` alone, which
+    # derives from ``heartbeat_stale_s`` (120s) and never consults it. Measured
+    # 2026-09-03 (finding X): with ``escalation_sigterm_s: 1200`` configured,
+    # four healthy agents still took ``Sent SIGTERM ... heartbeat stale for
+    # 125s``. Applied as a FLOOR - a raised tier lifts the deadline, and left at
+    # the shipped default the arithmetic below is byte-identical.
+    if float(agent.escalation_sigterm_s) > _SHIPPED_ESCALATION_SIGTERM_S:
+        timeout_s = max(timeout_s, float(agent.escalation_sigterm_s))
+    wakeup_after_s = max(timeout_s / 2.0, agent.escalation_warn_s)
     # Terminal (SIGKILL) threshold sits a fixed grace past the SHUTDOWN
     # threshold so the configured heartbeat timeout is honoured while still
     # forcing a kill on a heartbeat that never advances (issue #2796).
-    kill_grace_s = max(AGENT.escalation_sigkill_s - AGENT.escalation_sigterm_s, 1.0)
+    kill_grace_s = max(agent.escalation_sigkill_s - agent.escalation_sigterm_s, 1.0)
     kill_after_s = timeout_s + kill_grace_s
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     for session in orch._agents.values():
@@ -883,14 +903,14 @@ def _escalate_stall_simple(
 ) -> None:
     """Apply simple fixed-threshold stall escalation (no workdir mode)."""
     elapsed = time.time() - session.spawn_ts
-    if count >= AGENT.escalation_kill_count:
+    if count >= _defaults.AGENT.escalation_kill_count:
         _emit_stall_verdict(
             orch,
             session,
             reason=StallReason.NO_PROGRESS,
             detector="stall_simple",
             identical_snapshot_count=count,
-            threshold=AGENT.escalation_kill_count,
+            threshold=_defaults.AGENT.escalation_kill_count,
         )
         _write_stall_checkpoint(
             orch,
@@ -908,10 +928,10 @@ def _escalate_stall_simple(
         )
         _reap_session_heartbeat_loop(orch, session, reason="stall_kill")
         orch._stall_counts[task_id] = 0
-    elif count >= AGENT.escalation_high_count:
+    elif count >= _defaults.AGENT.escalation_high_count:
         with contextlib.suppress(OSError):
             orch._signal_mgr.write_shutdown(session.id, reason="stalled_5min", task_title=task_id)
-    elif count >= AGENT.escalation_med_count:
+    elif count >= _defaults.AGENT.escalation_med_count:
         with contextlib.suppress(OSError):
             orch._signal_mgr.write_wakeup(
                 session.id,
@@ -1046,7 +1066,7 @@ def check_stalled_tasks(orch: Any) -> None:
         _check_stalled_tasks_simple(orch)
         return
 
-    timeout_s = float(getattr(getattr(orch, "_config", None), "heartbeat_timeout_s", AGENT.heartbeat_stale_s))
+    timeout_s = float(getattr(getattr(orch, "_config", None), "heartbeat_timeout_s", _defaults.AGENT.heartbeat_stale_s))
     monitor = HeartbeatMonitor(workdir, timeout_s=timeout_s)
     aggregator = AgentLogAggregator(workdir)
     base = orch._config.server_url

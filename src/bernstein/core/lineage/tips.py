@@ -84,9 +84,12 @@ def detect_forks(entries: Iterable[LineageEntry]) -> list[Fork]:
                 continue
             by_parent.setdefault(e.parent_hashes[0], []).append(e)
         for parent_hash, children in by_parent.items():
-            # Need >= 2 children AND at least two distinct content_hashes.
-            if len(children) < 2:
-                continue
+            # Two distinct content hashes IS the fork condition, and it already implies two
+            # children: a single child contributes one hash, so the set can never reach two
+            # without them. The separate `len(children) < 2` guard that used to sit here was
+            # therefore unreachable as a decision -- mutating it to `< 1` changed no behaviour,
+            # which is exactly how the mutation gate reported it: a survivor that could not be
+            # killed, because there was no observable difference to write a test against.
             distinct_content = {c.content_hash for c in children}
             if len(distinct_content) < 2:
                 continue

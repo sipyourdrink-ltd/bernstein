@@ -26,6 +26,13 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 _REPO = Path(__file__).resolve().parents[2]
 _SRC = _REPO / "src" / "bernstein"
 

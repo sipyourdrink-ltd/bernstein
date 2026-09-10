@@ -21,7 +21,14 @@ import ast
 from functools import lru_cache
 from pathlib import Path
 
+import pytest
+
 from bernstein.core import _REDIRECT_MAP
+
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOKENS_DIR = REPO_ROOT / "src" / "bernstein" / "core" / "tokens"
@@ -48,8 +55,12 @@ KNOWN_ORPHANS = frozenset(
 )
 
 
-def _module_names() -> list[str]:
-    return sorted(p.stem for p in TOKENS_DIR.glob("*.py") if p.name != "__init__.py")
+def _tokens_dir_under(root: Path) -> Path:
+    return root / "src" / "bernstein" / "core" / "tokens"
+
+
+def _module_names(root: Path = REPO_ROOT) -> list[str]:
+    return sorted(p.stem for p in _tokens_dir_under(root).glob("*.py") if p.name != "__init__.py")
 
 
 def _import_targets(module: str) -> set[str]:
@@ -62,21 +73,29 @@ def _import_targets(module: str) -> set[str]:
     return targets
 
 
-def _scanned_files() -> list[Path]:
-    return [p for p in (REPO_ROOT / "src").rglob("*.py") if p not in EXCLUDED_FROM_SCAN]
+def _excluded_from_scan_under(root: Path) -> set[Path]:
+    return {root / "src" / "bernstein" / "core" / "__init__.py"}
 
 
-@lru_cache(maxsize=1)
-def _import_index() -> tuple[dict[str, list[Path]], dict[tuple[str, str], list[Path]]]:
+def _scanned_files(root: Path) -> list[Path]:
+    excluded = _excluded_from_scan_under(root)
+    return [p for p in (root / "src").rglob("*.py") if p not in excluded]
+
+
+@lru_cache(maxsize=8)
+def _import_index(root: Path) -> tuple[dict[str, list[Path]], dict[tuple[str, str], list[Path]]]:
     """One AST pass over ``src`` instead of one per module.
 
-    Rebuilt per test session; the naive shape re-parsed the whole tree for
-    each of the 30-odd modules and cost over a minute of CI wall time.
+    Cached per ``root`` (rather than a bare no-argument cache) so scanning an
+    alternate worktree for #5552's branch-only comparison does not evict or
+    collide with the result for ``REPO_ROOT``. Rebuilt once per session per
+    root; the naive shape re-parsed the whole tree for each of the 30-odd
+    modules and cost over a minute of CI wall time.
     """
     dotted: dict[str, list[Path]] = {}
     from_package: dict[tuple[str, str], list[Path]] = {}
 
-    for path in _scanned_files():
+    for path in _scanned_files(root):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
@@ -94,11 +113,11 @@ def _import_index() -> tuple[dict[str, list[Path]], dict[tuple[str, str], list[P
     return dotted, from_package
 
 
-def _importer_of(module: str) -> Path | None:
+def _importer_of(module: str, root: Path = REPO_ROOT) -> Path | None:
     targets = _import_targets(module)
     packages = {t.rsplit(".", 1)[0] for t in targets}
-    own_file = TOKENS_DIR / f"{module}.py"
-    dotted, from_package = _import_index()
+    own_file = _tokens_dir_under(root) / f"{module}.py"
+    dotted, from_package = _import_index(root)
 
     for target in targets:
         for path in dotted.get(target, ()):
@@ -111,12 +130,12 @@ def _importer_of(module: str) -> Path | None:
     return None
 
 
-def _importers_of(module: str) -> set[Path]:
+def _importers_of(module: str, root: Path = REPO_ROOT) -> set[Path]:
     """Every file that imports `module`, by any of its resolvable paths."""
     targets = _import_targets(module)
     packages = {t.rsplit(".", 1)[0] for t in targets}
-    own_file = TOKENS_DIR / f"{module}.py"
-    dotted, from_package = _import_index()
+    own_file = _tokens_dir_under(root) / f"{module}.py"
+    dotted, from_package = _import_index(root)
 
     found: set[Path] = set()
     for target in targets:
@@ -126,7 +145,7 @@ def _importers_of(module: str) -> set[Path]:
     return found
 
 
-def reachable_modules(importers: dict[str, set[Path]]) -> set[str]:
+def reachable_modules(importers: dict[str, set[Path]], tokens_dir: Path = TOKENS_DIR) -> set[str]:
     """Modules reachable from a caller outside ``core/tokens/``.
 
     Having an importer is not the same as being reachable: two dead modules
@@ -134,40 +153,57 @@ def reachable_modules(importers: dict[str, set[Path]]) -> set[str]:
     imports it" reports both as live. Seed from callers outside the package
     and close over intra-package edges instead.
     """
-    reachable = {name for name, paths in importers.items() if any(TOKENS_DIR not in path.parents for path in paths)}
+    reachable = {name for name, paths in importers.items() if any(tokens_dir not in path.parents for path in paths)}
     grew = True
     while grew:
         grew = False
         for name, paths in importers.items():
             if name in reachable:
                 continue
-            if any(p.parent == TOKENS_DIR and p.stem in reachable for p in paths):
+            if any(p.parent == tokens_dir and p.stem in reachable for p in paths):
                 reachable.add(name)
                 grew = True
     return reachable
 
 
-def _current_orphans() -> set[str]:
-    importers = {name: _importers_of(name) for name in _module_names()}
-    return set(importers) - reachable_modules(importers)
+def _current_orphans(root: Path = REPO_ROOT) -> set[str]:
+    importers = {name: _importers_of(name, root) for name in _module_names(root)}
+    return set(importers) - reachable_modules(importers, tokens_dir=_tokens_dir_under(root))
 
 
 def test_no_new_orphan_token_modules() -> None:
-    """The set of caller-less modules may shrink, never grow."""
+    """The set of caller-less modules may shrink, never grow (#5552).
+
+    Reports both drift directions in one message, and -- when the branch's
+    own pre-merge tip is resolvable (see ``_orphan_scan.py``) -- states
+    plainly when the drift belongs to the default branch rather than to
+    this change.
+
+    The ``_orphan_scan`` import is deferred to inside this function rather
+    than sitting at module level: ``scripts/check_test_count_drop.py``
+    collects a touched test module in isolation, as a lone file with no
+    sibling ``tests/unit/`` package around it, so a module-level cross-file
+    import would fail under ``--collect-only`` even though it resolves fine
+    in the real tree -- reported as a false "test count dropped to zero"
+    rather than the import-path artefact it actually is. A local import runs
+    only when the test executes, which collection never does.
+    """
+    from tests.unit._orphan_scan import describe_ratchet_drift, resolve_branch_only_ref, scan_at_ref
+
     current = _current_orphans()
 
-    appeared = sorted(current - KNOWN_ORPHANS)
-    assert not appeared, (
-        f"new caller-less modules under core/tokens/: {appeared}. Wire each one to a "
-        "consumer that exists today, or delete the module together with its tests and "
-        "its bernstein/core/__init__.py alias entry."
-    )
+    branch_ref = resolve_branch_only_ref(REPO_ROOT)
+    branch_only = scan_at_ref(branch_ref, REPO_ROOT, _current_orphans) if branch_ref else None
 
-    removed = sorted(KNOWN_ORPHANS - current)
-    assert not removed, (
-        f"{removed} now has a caller or is gone from the tree; strike it from "
-        "KNOWN_ORPHANS so the list keeps shrinking."
+    message = describe_ratchet_drift(
+        baseline=KNOWN_ORPHANS,
+        current=current,
+        branch_only=branch_only,
+        guard_name="core/tokens/",
+        wire_hint="Wire it to a consumer that exists today, or delete the module together "
+        "with its tests and its bernstein/core/__init__.py alias entry.",
     )
+    assert message is None, message
 
 
 def test_a_wired_module_is_seen_through_its_legacy_alias() -> None:
