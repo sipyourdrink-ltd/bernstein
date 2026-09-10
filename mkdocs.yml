@@ -256,6 +256,17 @@ nav:
           - Plugin SDK: integrations/plugin-sdk.md
           - Agent sessions: integrations/agent-session.md
           - agents-md sync: agents-md.md
+          - Agent docs (00-AGENT):
+              - Overview: agent/00-AGENT.md
+              - Repo map: agent/10-map.md
+              - Verification commands: agent/20-commands.md
+              - CI & testing: agent/30-ci.md
+              - Environment: agent/40-env.md
+              - Invariants: agent/50-invariants.md
+              - Deep notes:
+                  - Governance architecture: agent/90-notes/governance-architecture.md
+                  - Adapter isolation: agent/90-notes/adapter-isolation.md
+                  - Receipt lineage: agent/90-notes/receipt-lineage.md
           - Agent catalogs: operations/agent-catalogs.md
           - Skills catalog: operations/skills-catalog.md
           - Skill lint: operations/skill-lint.md
@@ -437,6 +448,7 @@ nav:
           - Security operations: operations/security.md
           - Hardening: security/security-hardening.md
           - Governance: operations/governance.md
+          - Review charter: governance/review-charter.md
           - Inventory topology: operations/govern-inventory.md
           - Govern ingest: operations/govern-ingest.md
           - Secrets & creds: operations/secrets.md

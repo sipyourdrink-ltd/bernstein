@@ -186,14 +186,9 @@ importing a scheduler-internal module, e.g.
 
 ### Auto-heal on CI failure
 
-When CI fails on `main`, the `bernstein-ci-fix` workflow
-(`.github/workflows/bernstein-ci-fix.yml`) runs Bernstein in headless mode
-against the failing commit, opens an `auto-heal/<sha>` branch with the
-proposed fix, and creates an `auto-heal: fix CI on <sha>` PR for review.
-If Bernstein can't produce a clean diff in 3 iterations within \$5, the
-workflow falls back to opening a `ci-fix` issue. Auto-heal is gated by
-the `BERNSTEIN_CI_FIX_ENABLED` repo variable, refuses to recurse on
-`auto-heal:` PRs, and only fires for canonical-repo pushes (never forks).
+When CI fails on `main`, `.github/workflows/auto-heal.yml` - routed by
+the post-CI dispatcher - attempts a fix and opens an `auto-heal/<sha>`
+pull request for review; see `docs/operations/post-ci-dispatcher.md`.
 
 ## Code Style
 
