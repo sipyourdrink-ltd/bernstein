@@ -69,7 +69,63 @@ def master_default_clone(tmp_path: Path) -> Path:
     # Add a stray local ``main`` that is NOT the real trunk.
     _git(clone, "branch", "main")
 
+    # State the machine-wide default the regression depends on instead of
+    # inheriting it: the Apple-supplied git sets ``init.defaultBranch=main``
+    # system-wide, a Homebrew git leaves it unset.
+    _git(clone, "config", "init.defaultBranch", "main")
+
     # The real trunk (master) is checked out.
+    assert current_branch(clone) == "master"
+    return clone
+
+
+@pytest.fixture
+def main_default_clone(tmp_path: Path) -> Path:
+    """Mirror image: real default ``main``, origin/HEAD deleted, a stray local
+    ``master`` branch, and ``init.defaultBranch=master`` in the config.
+    """
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-q", "-b", "main")
+    _git(upstream, "config", "user.email", "test@example.com")
+    _git(upstream, "config", "user.name", "Test")
+    (upstream / "README.md").write_text("# upstream\n", encoding="utf-8")
+    _git(upstream, "add", "README.md")
+    _git(upstream, "commit", "-q", "-m", "initial")
+
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(upstream), str(clone))
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "remote", "set-head", "origin", "-d")
+    _git(clone, "branch", "master")
+    _git(clone, "config", "init.defaultBranch", "master")
+    assert current_branch(clone) == "main"
+    return clone
+
+
+@pytest.fixture
+def two_trunks_clone(tmp_path: Path) -> Path:
+    """Genuinely ambiguous: the remote publishes BOTH ``main`` and ``master``,
+    origin/HEAD is deleted, both exist locally, ``init.defaultBranch=main``.
+    """
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-q", "-b", "master")
+    _git(upstream, "config", "user.email", "test@example.com")
+    _git(upstream, "config", "user.name", "Test")
+    (upstream / "README.md").write_text("# upstream\n", encoding="utf-8")
+    _git(upstream, "add", "README.md")
+    _git(upstream, "commit", "-q", "-m", "initial")
+    _git(upstream, "branch", "main")
+
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(upstream), str(clone))
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "remote", "set-head", "origin", "-d")
+    _git(clone, "branch", "main", "origin/main")
+    _git(clone, "config", "init.defaultBranch", "main")
     assert current_branch(clone) == "master"
     return clone
 
@@ -80,6 +136,24 @@ def test_resolve_default_branch_prefers_master_when_origin_head_unset(
     # Prior behaviour resolved "main" (the stray local branch); now we resolve
     # the real trunk via the origin/master remote-tracking ref.
     assert resolve_default_branch(master_default_clone) == "master"
+
+
+def test_resolve_default_branch_prefers_main_when_origin_head_unset(
+    main_default_clone: Path,
+) -> None:
+    # Mirror image of the case above: the stray local ``master`` plus
+    # ``init.defaultBranch=master`` must not beat the real ``origin/main``.
+    assert resolve_default_branch(main_default_clone) == "main"
+
+
+def test_resolve_default_branch_falls_through_when_both_remote_refs_exist(
+    two_trunks_clone: Path,
+) -> None:
+    # Two remote-tracking trunks give no evidence either way, so resolution
+    # falls through to ``init.defaultBranch`` (set to ``main`` here) exactly as
+    # it did before the remote-tracking probe was added.
+    assert resolve_default_branch(two_trunks_clone) == "main"
+    assert protected_default_branches(two_trunks_clone) == frozenset({"main", "master"})
 
 
 def test_protected_branches_fail_closed_on_ambiguous_default(
