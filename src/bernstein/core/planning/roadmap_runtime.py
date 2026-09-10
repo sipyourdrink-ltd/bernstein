@@ -154,14 +154,15 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
             ),
         )
 
-    roadmap_files = sorted(list(roadmaps_dir.glob("*.yaml")) + list(roadmaps_dir.glob("*.yml")))
     if not library.scenarios:
         return RoadmapWaveOutcome(
             emitted=(),
             reason="no-scenarios",
-            scenarios_found=0,
+            scenarios_found=scenarios_found,
             detail=f"No scenarios under {library_root}, so the roadmaps have nothing to sequence.",
         )
+
+    roadmap_files = sorted(list(roadmaps_dir.glob("*.yaml")) + list(roadmaps_dir.glob("*.yml")))
     if not roadmap_files:
         return RoadmapWaveOutcome(
             emitted=(),
@@ -237,6 +238,11 @@ def report_outcome(workdir: Path, outcome: RoadmapWaveOutcome) -> bool:
         outcome.detail,
     )
     return True
+
+
+def _reset_scenario_skip_warning_state_for_tests() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Clear process-global scenario skip warning state for test isolation."""
+    _SCENARIO_SKIP_WARNING_STATE.clear()
 
 
 def _scenario_candidate_presence(library_root: Path) -> int:

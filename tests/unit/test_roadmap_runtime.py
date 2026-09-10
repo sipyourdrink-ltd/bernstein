@@ -13,12 +13,13 @@ from bernstein.core.roadmap_runtime import (
 import bernstein.core.planning.roadmap_runtime as roadmap_runtime
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
 def _reset_scenario_skip_warning_state() -> None:
-    roadmap_runtime._SCENARIO_SKIP_WARNING_STATE.clear()
+    roadmap_runtime._reset_scenario_skip_warning_state_for_tests()
 
 
 def _seed_scenario(root: Path, *, suffix: str = ".yaml") -> None:
@@ -174,11 +175,23 @@ def test_an_empty_roadmaps_directory_reports_no_roadmap_without_runtime_state(tm
     assert not (tmp_path / ".sdd" / "runtime" / "roadmaps").exists()
 
 
-def test_a_roadmap_with_no_library_reports_no_scenarios(tmp_path: Path) -> None:
+def test_a_roadmap_with_no_library_reports_no_scenarios(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Roadmaps present, library empty: the roadmaps have nothing to sequence."""
     _seed_backlog(tmp_path)
     _seed_roadmap(tmp_path)
+    roadmaps_dir = tmp_path / ".sdd" / "roadmaps" / "open"
+    path_type = type(tmp_path)
+    original_glob = path_type.glob
 
+    def guarded_glob(path: Path, pattern: str) -> Iterator[Path]:
+        if path == roadmaps_dir:
+            raise AssertionError("empty scenario libraries must return before roadmap enumeration")
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(path_type, "glob", guarded_glob)
     outcome = emit_roadmap_wave_outcome(tmp_path)
 
     assert outcome.reason == "no-scenarios"

@@ -308,7 +308,7 @@ def test_orchestrator_clears_scenario_skip_warning_after_emission(
 ) -> None:
     from bernstein.core.planning import roadmap_runtime
 
-    roadmap_runtime._SCENARIO_SKIP_WARNING_STATE.clear()
+    roadmap_runtime._reset_scenario_skip_warning_state_for_tests()
     outcomes = iter(
         [
             roadmap_runtime.RoadmapWaveOutcome((), "backlog-missing", 1, "blocked"),
