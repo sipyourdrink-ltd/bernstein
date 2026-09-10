@@ -46,7 +46,17 @@ permissions:
 jobs:
   canary:
     name: Canary matrix
-    runs-on: [self-hosted, linux, vps]
+    # Hosted, unlike the rest of the scheduled lane: this job pushes the
+    # last-green branch, and on the project's own runner the credential
+    # `actions/checkout` persists is never applied to `git push`. The
+    # checkout writes it to a side config file wired in through
+    # `includeIf.gitdir:`, which stops matching once the runner's work
+    # directory resolves to a different real path than the one recorded.
+    # `git fetch` still succeeds -- the repository is public, so the fetch
+    # needs no credential at all -- so the job gets all the way to the push
+    # and only then fails with "could not read Username for
+    # https://github.com".
+    runs-on: ubuntu-latest
     environment: automation
     timeout-minutes: 20
     permissions:
