@@ -33,7 +33,7 @@ permissions:
 jobs:
   release:
     name: "${{ inputs.bump }} release"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 60
     permissions:
       contents: write

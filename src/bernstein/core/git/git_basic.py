@@ -550,12 +550,17 @@ def resolve_default_branch(cwd: Path, remote: str = "origin") -> str:
     """Resolve the repository's default branch (the protected trunk).
 
     Resolution order: ``<remote>/HEAD`` first (the authoritative signal), then
-    ``init.defaultBranch`` from git config, then the ``<remote>/master``
-    remote-tracking ref, then the conventional ``main``/``master`` local probe,
-    and finally ``"main"`` as a last resort. Consulting ``init.defaultBranch``
-    and ``<remote>/master`` BEFORE the hard-coded ``main``-first local probe
-    means a repo whose real trunk is ``master`` is not mis-resolved to a stray
-    local ``main`` when ``<remote>/HEAD`` is unavailable. Never raises.
+    the ``<remote>/main`` / ``<remote>/master`` remote-tracking refs when
+    exactly one of them exists, then ``init.defaultBranch`` from git config,
+    then the conventional ``main``/``master`` local probe, and finally
+    ``"main"`` as a last resort. The remote-tracking refs are evidence from
+    the repository in hand, so they are consulted BEFORE ``init.defaultBranch``,
+    which is a machine-wide preference that says nothing about this clone: a
+    repo whose real trunk is ``master`` must not resolve to a stray local
+    ``main`` just because the machine's git config sets
+    ``init.defaultBranch=main``. When both remote-tracking refs exist the
+    trunk is genuinely ambiguous and resolution falls through to the config
+    and local probes as before. Never raises.
 
     Args:
         cwd: Repository root.
@@ -568,15 +573,19 @@ def resolve_default_branch(cwd: Path, remote: str = "origin") -> str:
     if from_head is not None:
         return from_head
 
+    tracked = [
+        candidate
+        for candidate in ("main", "master")
+        if _run_git_quiet(["rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{candidate}"], cwd).ok
+    ]
+    if len(tracked) == 1:
+        return tracked[0]
+
     cfg = _run_git_quiet(["config", "--get", "init.defaultBranch"], cwd)
     if cfg.ok and cfg.stdout.strip():
         configured = cfg.stdout.strip()
         if _branch_exists(cwd, configured):
             return configured
-
-    master_tracking = _run_git_quiet(["rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/master"], cwd)
-    if master_tracking.ok:
-        return "master"
 
     for candidate in ("main", "master"):
         if _branch_exists(cwd, candidate):

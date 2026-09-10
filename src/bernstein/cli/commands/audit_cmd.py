@@ -921,7 +921,10 @@ def _verify_grant_chains() -> bool:
                 sweep_findings.append(f"run {run_id}: {finding['summary']}")
 
     console.print()
-    if not failures:
+    # A chain whose every signature and HMAC verifies can still carry a grant
+    # the sweep marks as revoked-but-present. That is a failing grant state,
+    # so the sweep findings block the pass verdict exactly like a chain error.
+    if not failures and not sweep_findings:
         console.print(
             Panel("[bold green]Grant Chain Verification Passed[/bold green]", border_style="green", expand=False)
         )
