@@ -32,5 +32,5 @@ without Graphviz; `dot` still ships on demand.
 Exit codes: `0` emitted, `1` store unreadable or not a JSON object, `2` usage
 (missing `--render` / `--store`).
 
-See also [`bernstein graph tasks --format mermaid`](cli-reference.md) (task DAG,
+See also [`bernstein graph tasks --format mermaid`](../reference/cli-reference.md) (task DAG,
 not this store) and [governance verify](governance.md).

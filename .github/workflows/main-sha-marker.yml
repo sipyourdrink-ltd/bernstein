@@ -18,7 +18,7 @@ concurrency:
 jobs:
   marker:
     name: Main SHA marker
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 2
     steps:
       - name: Record exact SHA marker
