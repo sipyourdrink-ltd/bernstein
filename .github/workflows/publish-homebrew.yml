@@ -23,7 +23,11 @@ jobs:
   update-formula:
     name: Update Homebrew formula
     runs-on: ubuntu-latest
-    environment: pypi
+    # Approval lives on publish.yml's `publish` job (PyPI trusted
+    # publishing, OIDC-scoped to the pypi environment). This job pushes to
+    # the tap with HOMEBREW_TAP_TOKEN instead, so it has no environment-
+    # scoped credential that the approval was protecting.
+    environment: release-channels
     timeout-minutes: 15
     permissions:
       contents: read

@@ -28,7 +28,13 @@ jobs:
     name: Build and push image to GHCR
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: pypi
+    # Approval lives on publish.yml's `publish` job (PyPI trusted
+    # publishing, OIDC-scoped to the pypi environment). This job logs in to
+    # GHCR with GITHUB_TOKEN and its id-token: write is for the Sigstore
+    # build-provenance attestation below -- a different, unrelated OIDC
+    # audience -- so pinning it to the same environment only added an
+    # approval click without adding protection.
+    environment: release-channels
     permissions:
       contents: read
       packages: write
