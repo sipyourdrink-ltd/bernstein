@@ -153,14 +153,46 @@ class TestCIWorkflowExists:
         fetch_steps = [step for step in steps if step.get("name") == "Fetch base commit for impacted-test selection"]
         assert len(fetch_steps) == 1
         fetch_step = fetch_steps[0]
-        assert fetch_step.get("if") == "github.event_name == 'pull_request' && runner.os != 'Windows'"
+        condition = " ".join(str(fetch_step.get("if", "")).split())
+        # Both selecting lanes, each taking its own payload sha. The queue lane
+        # selects against the GROUP's base, which is the same input
+        # determine-changes already reads (#5793).
+        assert "github.event_name == 'pull_request'" in condition
+        assert "github.event_name == 'merge_group'" in condition
+        assert "runner.os != 'Windows'" in condition
         env = fetch_step.get("env") or {}
-        assert env.get("BASE_SHA") == "${{ github.event.pull_request.base.sha }}", (
+        base_sha = " ".join(str(env.get("BASE_SHA", "")).split())
+        assert base_sha.startswith("${{") and base_sha.endswith("}}"), (
             "BASE_SHA must be bound via env: to avoid template injection (zizmor)"
         )
+        assert "github.event.pull_request.base.sha" in base_sha
+        assert "github.event.merge_group.base_sha" in base_sha
         run_script = fetch_step.get("run", "")
         assert "${BASE_SHA}:refs/remotes/origin/pr-base" in run_script
         assert "refs/heads/" not in run_script
+
+    def test_the_merge_queue_selects_impacted_tests_like_the_pull_request_lane(self) -> None:
+        """The queue lane ran the whole discovered list where the selector would do.
+
+        Measured 2026-09-03..09-10: the pull-request shards took a 4.7 min
+        median with impacted selection, the merge-queue shards 26.6 min without
+        it -- same runner image, same shard count, 5.7x apart -- and one of
+        those shards is the critical path of every entry behind it in the queue
+        (#5793).
+        """
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        unix = next(
+            step
+            for step in steps
+            if "Linux/macOS" in (step.get("name") or "")
+            and (step.get("name") or "").startswith("Run isolated test suite")
+        )
+        run_script = unix.get("run", "")
+        assert 'EVENT_NAME}" = "merge_group"' in run_script, "the merge-queue lane does not reach the --affected branch"
+        # The fallback is what keeps a missing ref from selecting against
+        # nothing: it must still exist, and still run the full list.
+        assert "git rev-parse --verify refs/remotes/origin/pr-base" in run_script
 
     def test_pull_request_test_job_fetches_head_commit_for_orphan_ratchet_inspection(self) -> None:
         """The PR head commit is fetched by sha, so orphan-ratchet inspection can see it.
