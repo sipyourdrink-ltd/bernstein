@@ -1,8 +1,15 @@
 # Tier-3 OpenRouter shadow-mode escalation
 
-**TL;DR.** Tier-3 picks up the failing-on-main cases that Tier-1
-(`contract-drift-autofix.yml`) and Tier-2 (`bernstein-ci-fix.yml`)
-both produced nothing on. It runs a free-tier OpenRouter model under
+**Status: retired in CI.** The Tier-2 CI fixer workflow and the Tier-3
+shadow job it hosted have been removed, so nothing schedules a Tier-3
+capture automatically any more. The escalation logic itself still ships
+in `src/bernstein/core/autofix/tier3.py` and
+`scripts/run_tier3_shadow.py`, and the sections below describe how that
+code behaves when it is invoked directly.
+
+**TL;DR.** Tier-3 picked up the failing-on-main cases that Tier-1
+(`contract-drift-autofix.yml`) and the retired Tier-2 CI fixer both
+produced nothing on. It runs a free-tier OpenRouter model under
 the `bernstein run --cli qwen` adapter, captures a unified-diff plus
 a lineage / decision-log / envelope row, and **exits without
 pushing**. Promotion stays governed by a second env var that is off

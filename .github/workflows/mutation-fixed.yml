@@ -55,7 +55,7 @@ concurrency:
 jobs:
   mutate:
     name: ${{ matrix.module }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     # Hard total cap; per-module budgets enforced inside the harness.
     timeout-minutes: 30
     # Per-module, driven by matrix.advisory below - not a blanket flag.

@@ -59,7 +59,8 @@ permissions:
 jobs:
   heal:
     name: Regenerate topology report
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
+    environment: automation
     timeout-minutes: 10
     permissions:
       contents: write

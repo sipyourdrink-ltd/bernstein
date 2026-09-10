@@ -23,6 +23,7 @@ jobs:
   update-formula:
     name: Update Homebrew formula
     runs-on: ubuntu-latest
+    environment: pypi
     timeout-minutes: 15
     permissions:
       contents: read

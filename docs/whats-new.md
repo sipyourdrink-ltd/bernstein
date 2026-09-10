@@ -7,7 +7,7 @@ description: >-
 
 # What's New
 
-Per-release notes live in [`docs/release-notes/`](release-notes/), one file
+Per-release notes live in [`docs/release-notes/`](release-notes/README.md), one file
 per tag (for example [`v3.12.0.md`](release-notes/v3.12.0.md) for the
 current release), plus [Unreleased](release-notes/unreleased.md) for changes
 merged to `main` since the newest tag. For the full aggregated history, see
