@@ -22,9 +22,12 @@ Source: `src/bernstein/cli/commands/resume_cmd.py`,
 
 ```text
 bernstein resume TASK_ID
-  [--workdir DIR]   project root; defaults to cwd
-  [--json]          emit machine-readable JSON instead of the Rich summary
-  [--dry-run]       validate, bump resume_count, print plan; do not re-spawn
+  [--workdir DIR]              project root; defaults to cwd
+  [--json]                     emit machine-readable JSON instead of the Rich summary
+  [--dry-run]                  validate, bump resume_count, print plan; do not re-spawn
+  [--override-interpreter]     resume even though adapter/model moved since suspend
+  [--override-observations]    resume even though source bytes moved since suspend
+  [--discard]                  drop checkpoint first to run fresh instead of continuing
 ```
 
 Re-spawn is dispatched by writing a signal file under
@@ -40,6 +43,8 @@ claims it. If no worker is running, the signal persists until
 | 2 | No checkpoint on disk for `task_id` |
 | 3 | Checkpoint corrupt or failed schema validation |
 | 4 | `task.resume` lifecycle hook failed |
+| 5 | Grant mismatch — role narrowed, task reassigned, or parent cancelled |
+| 6 | Observations moved — discard and respawn, or `--override-observations` |
 
 ## Checkpoint layout
 

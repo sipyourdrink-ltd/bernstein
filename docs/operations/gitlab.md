@@ -84,7 +84,7 @@ table; rendering is snapshot-tested against fixtures under
 Smoke-test the webhook from a host that already has the env set:
 
 ```bash
-curl -X POST http://localhost:8000/webhooks/gitlab \
+curl -X POST http://localhost:8052/webhooks/gitlab \
   -H "X-Gitlab-Event: Merge Request Hook" \
   -H "X-Gitlab-Token: $GITLAB_WEBHOOK_TOKEN" \
   -H "Content-Type: application/json" \

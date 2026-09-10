@@ -34,6 +34,7 @@ import asyncio
 import difflib
 import hashlib
 import html
+import itertools
 import json
 import re
 import sys
@@ -64,6 +65,11 @@ TERMINAL_SIZE = (120, 40)
 #: Panel titles the dashboard draws. Each is centred over its panel, so their
 #: coordinates are what a changed cell is attributed against.
 REGION_TITLES = ("AGENTS", "TASKS", "ACTIVITY")
+
+#: The one widget whose drawn shape depends on how much data has reached it
+#: rather than only on what the data says, so the wait before the export is
+#: expressed against it directly.
+_SPARKLINE_SELECTOR = "#spark"
 
 _TEXT_NODE = re.compile(r"<text[^>]*\bx=\"([\d.]+)\"[^>]*\by=\"([\d.]+)\"[^>]*>([^<]*)</text>")
 
@@ -124,6 +130,8 @@ class _FrozenDatetime(datetime):
 
 async def _export(payload: dict[str, object], frozen_now: float) -> str:
     """Drive the dashboard headless against *payload* and export its screen."""
+    from textual.widgets import Sparkline
+
     import bernstein.cli.dashboard_app as dashboard_app
     import bernstein.tui.agent_log as agent_log
 
@@ -131,6 +139,21 @@ async def _export(payload: dict[str, object], frozen_now: float) -> str:
     # fixture seam - no HTTP, no server, no task store.
     def fetch() -> dict[str, object]:
         return json.loads(json.dumps(payload))
+
+    # The dashboard re-polls once a second and every applied result appends a
+    # sample to the history the sparkline draws. Textual draws a one-sample
+    # series as a full bar in the max colour and two identical samples as the
+    # minimum bar in the min colour, so leaving the timer running would record
+    # in the exported bytes how many times a one-second timer happened to fire
+    # while the screen was being driven - that is, how busy the machine was.
+    # Letting exactly one poll through makes the frame a property of the
+    # fixture instead.
+    schedule_poll = dashboard_app.BernsteinApp._schedule_poll
+    polls_scheduled = itertools.count()
+
+    def schedule_first_poll_only(app_under_test: object) -> None:
+        if next(polls_scheduled) == 0:
+            schedule_poll(app_under_test)
 
     _FrozenDatetime._frozen = frozen_now
 
@@ -146,15 +169,24 @@ async def _export(payload: dict[str, object], frozen_now: float) -> str:
 
     with (
         patch.object(dashboard_app, "_fetch_all", fetch),
+        patch.object(dashboard_app.BernsteinApp, "_schedule_poll", schedule_first_poll_only),
         patch.object(agent_log, "datetime", _FrozenDatetime),
         patch("time.strftime", frozen_strftime),
         patch("time.time", lambda: frozen_now),
     ):
         app = dashboard_app.BernsteinApp()
         async with app.run_test(size=TERMINAL_SIZE) as pilot:
-            # One pause starts the poll worker; the rest let its result land
-            # and the widgets repaint before the screen is captured.
-            for _ in range(6):
+            # Wait for the state the export depends on rather than counting
+            # pauses: the poll has to have been applied, and the sparkline has
+            # to be holding the sample that poll produced. A poll that never
+            # lands is not an error here: the teardown test drives this same
+            # loop with a poll that completes after the screens close, and the
+            # freshness gate reports the resulting drift on its own.
+            for _ in range(120):
+                await pilot.pause()
+                if app._history and app.query_one(_SPARKLINE_SELECTOR, Sparkline).data:
+                    break
+            for _ in range(3):
                 await pilot.pause()
             return app.export_screenshot()
 

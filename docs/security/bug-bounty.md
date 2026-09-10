@@ -148,7 +148,7 @@ has one unpaid maintainer, and that is the whole reason.
 You may disclose 90 days after your report, whether or not a fix has shipped,
 without asking. Earlier is fine if we agree on it.
 
-The terms that govern are in [`SECURITY.md`](../../SECURITY.md); this page is
+The terms that govern are in [`SECURITY.md`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md); this page is
 the sandbox guide.
 
 ---

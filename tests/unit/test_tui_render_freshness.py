@@ -14,19 +14,27 @@ one implementation rather than two that agree today.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import re
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 import yaml
+from textual.pilot import Pilot
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "render_tui_snapshot.py"
 RENDER_PATH = REPO_ROOT / "docs" / "assets" / "tui-live.svg"
 FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "tui_live_frame.json"
+
+#: The dashboard polls on a one-second interval. Two pauses this long straddle
+#: it, which is what makes the slow-machine render a second poll's worth of
+#: history behind rather than merely late.
+_LONGER_THAN_ONE_POLL = 0.8
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +78,47 @@ def test_the_committed_render_matches_what_the_dashboard_draws(snapshot: Any) ->
         "docs/assets/tui-live.svg no longer matches the dashboard.\n"
         f"{snapshot.drift_report(committed, current)}\n"
         "Regenerate with: uv run python scripts/render_tui_snapshot.py --update"
+    )
+
+
+def test_two_renders_in_one_process_agree(snapshot: Any) -> None:
+    """A byte gate is only meaningful if the render is a function of the fixture.
+
+    Cheap half of the determinism check: anything left over from a previous
+    render inside the same interpreter shows up here.
+    """
+    assert snapshot.render() == snapshot.render()
+
+
+def test_the_render_does_not_depend_on_how_fast_the_machine_is(snapshot: Any) -> None:
+    """The render must not record how many times a background timer fired.
+
+    The dashboard re-polls once a second and every applied result appends a
+    sample to the history the sparkline draws. Textual draws a one-sample
+    series as a full bar in its max colour and two identical samples as the
+    minimum bar in its min colour, so a screen driven slowly enough for the
+    timer to fire twice exports different bytes - and different CSS class
+    numbering after it - than the same screen driven quickly. That is how this
+    gate failed on a loaded runner while passing on every developer machine.
+
+    Slowing every pause down past the poll interval is the cheapest way to be
+    that loaded runner on purpose. The assertion is on the published bytes,
+    because those are what the gate compares.
+    """
+    committed = RENDER_PATH.read_text(encoding="utf-8")
+    real_pause = Pilot.pause
+
+    async def pause_slower_than_the_poll_interval(self: Pilot, delay: float | None = None) -> None:
+        await real_pause(self, delay)
+        await asyncio.sleep(_LONGER_THAN_ONE_POLL / 2)
+
+    with patch.object(Pilot, "pause", pause_slower_than_the_poll_interval):
+        slow = snapshot.render()
+
+    assert slow == committed, (
+        "the render moved when the machine was slowed down, so the byte gate is "
+        "reporting machine speed rather than what the dashboard draws.\n"
+        f"{snapshot.drift_report(committed, slow)}"
     )
 
 

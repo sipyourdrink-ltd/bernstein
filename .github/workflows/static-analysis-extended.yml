@@ -76,7 +76,7 @@ jobs:
     # lane covers the broader community ruleset and uses the git
     # baseline so only NEW findings fail PRs.
     name: Semgrep (CE rules)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -162,7 +162,7 @@ jobs:
     # secrets across the repo. HIGH/CRITICAL fails the job; lower
     # severities surface in Code Scanning but do not block.
     name: Trivy (filesystem)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -245,7 +245,7 @@ jobs:
     # kustomize. Misconfigurations like missing USER directive,
     # privileged containers, latest tags, etc.
     name: Trivy (IaC)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -312,7 +312,7 @@ jobs:
     # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: vulture (dead code)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -377,7 +377,7 @@ jobs:
     # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: refurb (idioms)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -460,7 +460,7 @@ jobs:
     # Advisory lane: weekly schedule + manual dispatch only (#2764).
     name: perflint (hot-path antipatterns)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
       contents: read

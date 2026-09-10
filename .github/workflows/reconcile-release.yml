@@ -36,7 +36,7 @@ permissions: {}
 jobs:
   reconcile:
     name: Compare pyproject.toml vs published channels
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     permissions:
       contents: read

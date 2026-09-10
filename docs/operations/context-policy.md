@@ -139,5 +139,5 @@ command reads the working tree rather than the chain.
   of the receipt record.
 - [Deterministic replay](deterministic-replay.md) — How context receipts enable
   reproducible runs.
-- [Run receipts](run-receipts.md) — Overview of run-level receipts and
+- [Receipts](../reference/receipt.md) — Overview of run-level receipts and
   attestation.
