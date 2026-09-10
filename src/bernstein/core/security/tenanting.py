@@ -17,6 +17,36 @@ if TYPE_CHECKING:
 DEFAULT_TENANT_ID = "default"
 
 
+class _UnspecifiedTenantSentinel:
+    """Explicit sentinel indicating an unspecified tenant.
+
+    Distinguishable from a tenant literally named 'default', and treated
+    as *not a tenant* by isolation and normalisation checks (#5028).
+    """
+
+    _instance: _UnspecifiedTenantSentinel | None = None
+
+    def __new__(cls) -> _UnspecifiedTenantSentinel:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "UNSPECIFIED_TENANT"
+
+    def __str__(self) -> str:
+        return "<unspecified>"
+
+    def __eq__(self, other: object) -> bool:
+        return other is self or isinstance(other, _UnspecifiedTenantSentinel)
+
+    def __hash__(self) -> int:
+        return hash("UNSPECIFIED_TENANT")
+
+
+UNSPECIFIED_TENANT: Final = _UnspecifiedTenantSentinel()
+
+
 @dataclass(frozen=True)
 class TenantConfig:
     """Configured tenant boundary.
@@ -163,11 +193,13 @@ def _describe_tenant_id(value: str) -> str:
     return repr(shown)
 
 
-def normalize_tenant_id(raw: str | None) -> str:
+def normalize_tenant_id(raw: str | object | None) -> str:
     """Normalize a raw tenant ID into a stable non-empty value.
 
     Absent or blank input keeps its established meaning and resolves to
     `DEFAULT_TENANT_ID`; callers that are simply tenant-unaware rely on that.
+    An explicit unspecified sentinel (`UNSPECIFIED_TENANT` or `"<unspecified>"`)
+    is rejected: a real tenant is required (#5028).
     A value that is present but not a usable path segment is a caller error
     rather than a default, so it is refused.
 
@@ -178,8 +210,15 @@ def normalize_tenant_id(raw: str | None) -> str:
         The normalized tenant ID, or `DEFAULT_TENANT_ID` when *raw* is blank.
 
     Raises:
-        InvalidTenantIdError: If *raw* is non-blank and not a valid tenant ID.
+        InvalidTenantIdError: If *raw* is non-blank and not a valid tenant ID,
+            or if *raw* is the unspecified tenant sentinel.
     """
+    if raw is UNSPECIFIED_TENANT or (isinstance(raw, str) and raw.strip() == "<unspecified>"):
+        raise InvalidTenantIdError(
+            f"unspecified tenant sentinel {raw!r} cannot name a tenant: a real tenant is required (#5028)"
+        )
+    if raw is not None and not isinstance(raw, str):
+        raise InvalidTenantIdError(f"invalid tenant id {raw!r}: expected string, got {type(raw).__name__}")
 
     value = (raw or "").strip()
     if not value:
@@ -222,7 +261,8 @@ def try_normalize_tenant_id(raw: object) -> str | None:
     Returns:
         The normalized tenant ID, or None if it cannot be normalized.
     """
-
+    if raw is UNSPECIFIED_TENANT or raw == "<unspecified>":
+        return None
     if raw is not None and not isinstance(raw, str):
         return None
     try:
