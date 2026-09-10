@@ -158,11 +158,14 @@ The offline check is a deterministic projection of the two manifests. With
 `--online` it additionally runs `gh attestation verify oci://<ref>` against the
 live Sigstore attestation (when the `gh` CLI and a network are available; absent
 tooling leaves the offline verdict standing). The same consistency check is a
-release gate: `scripts/gen_distribution_manifests.py --check` -- run in the
-publish workflow before the registry listing is pushed -- fails the release if
-the listing and the catalog disagree or the tag does not pin the version. Exit
-codes: `0` consistent (and, with `--online`, attestation verified or tooling
-unavailable), `2` a manifest mismatch or a failed online attestation.
+merge gate: `scripts/gen_distribution_manifests.py --check` -- run by the `Repo
+hygiene` job in `.github/workflows/ci.yml`, which `CI gate` requires -- fails
+the pull request if the listing and the catalog disagree or the version is not
+pinned, so no such commit can be tagged. The publish workflow then re-asserts
+the version agreement on its own, with the standard library alone, before the
+registry listing is pushed. Exit codes: `0` consistent (and, with `--online`,
+attestation verified or tooling unavailable), `2` a manifest mismatch or a
+failed online attestation.
 
 ## The plugin bundle
 

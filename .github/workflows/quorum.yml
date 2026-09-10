@@ -12,9 +12,17 @@ name: quorum
 #
 # The check only reads. It takes no token beyond the read-only GITHUB_TOKEN
 # and never runs anything from the branch under review: the checkout below is
-# pinned to the BASE commit, so the roster and CODEOWNERS it reads are the
-# ones already on the target branch and a pull request cannot promote its own
-# author by editing them.
+# pinned to the default branch, so the script, the roster and CODEOWNERS it
+# reads are the ones in force on the target branch and a pull request cannot
+# promote its own author, unown a path, or delete the script by editing its
+# own tree.
+#
+# The default branch, and not the commit a pull request records as its base:
+# a base commit older than the rules carries no copy of the script at all, so
+# the job had no rules to apply and said so. A check that applies no rule must
+# not read as a review that happened, so a missing script now fails the job
+# instead of passing it. The rules a pull request is measured against are
+# therefore always the current ones, whenever it was opened.
 #
 # This workflow is pinned by an organization ruleset as a required workflow,
 # which is what makes it non-forgeable: a branch cannot swap in its own
@@ -52,9 +60,11 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
-          # The base commit, never the pull request's own tree: the roster and
-          # CODEOWNERS have to be the ones already trusted on the target branch.
-          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          # The default branch, never the pull request's own tree: the script,
+          # the roster and CODEOWNERS have to be the ones in force on the
+          # target branch, and they have to be the current ones rather than
+          # whatever the pull request happens to record as its base commit.
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: |
             scripts/quorum_check.py
@@ -67,19 +77,19 @@ jobs:
           INPUT_PR: ${{ inputs.pr }}
         run: |
           set -euo pipefail
-          # The checkout above is the base branch, so on the pull request that
-          # first adds this check -- and on any branch whose base predates it --
-          # there is nothing to run. Say so and pass: the rules in force on that
-          # base are whatever branch protection already enforces there, and this
-          # job cannot invent an opinion it has no code for. Once the script is
-          # on the base branch a pull request cannot remove it this way, because
-          # deleting it still has to pass the copy that is still on the base.
+          # The checkout above is the default branch, so the script is there
+          # whenever the rules are in force. If it is not, this job has no
+          # rules to apply and cannot answer the review question -- and a
+          # green check that applied no rule is worse than a red one, because
+          # it is indistinguishable from a review that happened. Fail closed.
           if [ ! -f scripts/quorum_check.py ]; then
-            echo "The base branch does not carry scripts/quorum_check.py yet; nothing to check."
-            echo "### quorum: not applicable" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "The base branch does not carry \`scripts/quorum_check.py\` yet, so this run has no rules to apply." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "scripts/quorum_check.py is not present in the default branch checkout; no rule could be applied."
+            {
+              echo "### quorum: not evaluated"
+              echo ""
+              echo "\`scripts/quorum_check.py\` is not present in the default branch checkout, so this run had no rules to apply and fails rather than passing without applying any."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           if [ "${INPUT_PR:-}" != "" ]; then
             python3 scripts/quorum_check.py --pr "$INPUT_PR"
