@@ -22,6 +22,18 @@ on:
         required: false
         default: false
         type: boolean
+      # Same idea as copr_only, for the other channel most likely to need a
+      # solo replay: the registry listing depends on the Docker image that
+      # publish-docker.yml builds, so it is the one publish step most likely
+      # to still be missing after the other three channels have already gone
+      # out. Replaying the full graph in that case would re-upload release
+      # assets and resubmit the RPM build instead of just retrying the
+      # listing.
+      registry_only:
+        description: "Run only the MCP registry publish for the given tag"
+        required: false
+        default: false
+        type: boolean
 
 # Permissions are declared per-job so that each job gets only what it
 # needs (Sonar S8264). The default permission for any job that does not
@@ -42,7 +54,7 @@ jobs:
     # A single-channel republish re-releases nothing, so the release gates
     # have nothing to gate. Skipping the three root jobs skips the whole
     # build/publish graph with them - every other job reaches it via `needs`.
-    if: ${{ !inputs.copr_only }}
+    if: ${{ !inputs.copr_only && !inputs.registry_only }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -130,7 +142,7 @@ jobs:
   test:
     name: Verify tests pass
     runs-on: ubuntu-latest
-    if: ${{ !inputs.copr_only }}
+    if: ${{ !inputs.copr_only && !inputs.registry_only }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -154,7 +166,7 @@ jobs:
   version-check:
     name: Verify tag matches pyproject.toml
     runs-on: ubuntu-latest
-    if: ${{ !inputs.copr_only }}
+    if: ${{ !inputs.copr_only && !inputs.registry_only }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -600,6 +612,10 @@ jobs:
     name: Publish MCP registry listing
     runs-on: ubuntu-latest
     needs: publish
+    # Mirrors the publish-copr condition: run on the tag path once PyPI has
+    # published, and on a registry-only republish where the upstream graph
+    # is skipped.
+    if: ${{ always() && (inputs.registry_only || needs.publish.result == 'success') }}
     # Wider than the other publish jobs: the GHCR-image wait step below polls
     # for the OCI image the listing pins (built in parallel by
     # publish-docker.yml, up to ~14 min) before submitting.
@@ -639,32 +655,47 @@ jobs:
             exit 1
           fi
       - name: Check docker-mcp catalog source.commit matches the release commit
+        env:
+          REGISTRY_ONLY: ${{ inputs.registry_only }}
         run: |
           set -euo pipefail
           # server.yaml is hand-maintained: the commit hash cannot be known
           # before the release commit exists, so nothing regenerates it. This
           # step catches a forgotten refresh before the catalog PR ships a
           # source.commit that does not point at the release being submitted.
+          #
+          # The docker-mcp catalog is a separate channel from the registry
+          # listing this job submits, so it does not get to block a
+          # registry-only republish -- a stale pin here is worth flagging,
+          # not worth losing the listing over.
           python3 - <<'PY'
+          import os
           import re
           import subprocess
           from pathlib import Path
 
+          registry_only = os.environ.get("REGISTRY_ONLY") == "true"
+          annotation = "warning" if registry_only else "error"
+
+          def report(message: str) -> None:
+              print(f"::{annotation}::{message}")
+              if not registry_only:
+                  raise SystemExit(1)
+
           text = Path("packaging/docker-mcp/server.yaml").read_text(encoding="utf-8")
           match = re.search(r"^  commit:\s*([0-9a-f]{40})\s*$", text, re.MULTILINE)
           if not match:
-              print("::error::packaging/docker-mcp/server.yaml has no valid source.commit (40-char lowercase hex SHA)")
-              raise SystemExit(1)
-          pinned = match.group(1)
-          head = subprocess.run(
-              ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-          ).stdout.strip()
-          if pinned != head:
-              print(
-                  f"::error::packaging/docker-mcp/server.yaml source.commit {pinned} does not match "
-                  f"the release commit {head}; refresh it before opening the catalog PR"
-              )
-              raise SystemExit(1)
+              report("packaging/docker-mcp/server.yaml has no valid source.commit (40-char lowercase hex SHA)")
+          else:
+              pinned = match.group(1)
+              head = subprocess.run(
+                  ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+              ).stdout.strip()
+              if pinned != head:
+                  report(
+                      f"packaging/docker-mcp/server.yaml source.commit {pinned} does not match "
+                      f"the release commit {head}; refresh it before opening the catalog PR"
+                  )
           PY
       - name: Install mcp-publisher
         env:
