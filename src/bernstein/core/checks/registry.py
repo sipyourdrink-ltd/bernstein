@@ -11,11 +11,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from bernstein.core.checks.contract import Check, Finding, Verdict
+from bernstein.core.checks.contract import Finding, Verdict
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from pathlib import Path
+
+    from bernstein.core.checks.contract import Check
 
 logger = logging.getLogger(__name__)
 

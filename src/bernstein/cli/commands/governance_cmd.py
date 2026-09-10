@@ -54,7 +54,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from bernstein.cli.commands.govern_audit_cmd import govern_audit_cmd
+from bernstein.cli.commands.govern_audit_cmd import govern_audit_cmd as govern_audit_contract_cmd
 from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
 from bernstein.cli.helpers import console
 from bernstein.core.govern import collect_remediation as _collect_remediation
@@ -1016,7 +1016,7 @@ def _run_verifier_key_staleness_check() -> None:
 
 
 # Audit check contract runner (#5072)
-govern_group.add_command(govern_audit_cmd, "audit")
+govern_group.add_command(govern_audit_contract_cmd, "audit")
 
 
 @govern_group.command("audit-keys")
