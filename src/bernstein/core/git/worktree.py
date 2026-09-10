@@ -1400,21 +1400,34 @@ class WorktreeManager:
             return []
 
         session_ids: list[str] = []
-        # Trailing separator: a bare prefix test also accepts a *sibling*
-        # whose name starts with the base - ``.sdd/worktrees-archive/s1``
-        # starts with ``.sdd/worktrees`` - and would report ``s1`` as a
-        # managed session. That answer reaches ``bernstein cleanup``, which
-        # calls ``cleanup(session_id)`` on it, so the mistake lands on a
-        # destructive path rather than in a listing.
-        base_prefix = os.path.join(str(self._base_dir), "")
 
         for line in output.splitlines():
             if not line.startswith("worktree "):
                 continue
             wt_path = line[len("worktree ") :].strip()
-            if wt_path.startswith(base_prefix):
-                session_id = Path(wt_path).name
-                session_ids.append(session_id)
+            # Containment, not a prefix. ``cleanup`` can only ever act on
+            # ``self._base_dir / session_id``, one level down, so a worktree
+            # at any other depth is by construction not one this manager
+            # owns. A prefix test admits three things this does not:
+            #
+            # * a sibling - ``.sdd/worktrees-archive/s1`` starts with
+            #   ``.sdd/worktrees``;
+            # * a nested path - ``.sdd/worktrees/session-1/vendor`` yields
+            #   ``vendor``, an id that does not round-trip;
+            # * nothing at all on Windows, where ``git worktree list``
+            #   emits forward slashes and a locally built prefix does not.
+            #
+            # None of those stays in a listing. ``bernstein cleanup`` feeds
+            # this straight into ``cleanup(session_id)``, which removes
+            # ``.sdd/worktrees/<id>`` *and* deletes branch ``agent/<id>`` -
+            # so a harvested name can delete a branch that does exist even
+            # when the worktree it names does not.
+            #
+            # Comparing paths rather than strings also makes the ``.name``
+            # below provably the session id: once the parent is the base, the
+            # name is what ``cleanup`` joins back on.
+            if Path(wt_path).parent == self._base_dir:
+                session_ids.append(Path(wt_path).name)
 
         return session_ids
 

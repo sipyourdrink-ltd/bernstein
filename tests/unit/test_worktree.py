@@ -198,6 +198,40 @@ def test_list_active_ignores_a_sibling_directory_sharing_the_base_prefix(
         assert manager.list_active() == ["session-1"]
 
 
+def test_list_active_ignores_a_worktree_nested_below_a_session(manager: WorktreeManager, repo_root: Path) -> None:
+    """``.sdd/worktrees/session-1/vendor`` is not a session named ``vendor``.
+
+    A prefix test accepts it and takes the last component, producing an id
+    that does not round-trip: ``cleanup("vendor")`` looks for
+    ``.sdd/worktrees/vendor``, which does not exist, and deletes branch
+    ``agent/vendor``, which might.
+
+    ``cleanup`` can only act one level below the base, so depth-exact
+    containment is the right rule rather than a stricter-looking one.
+    """
+    base_dir = repo_root / ".sdd/worktrees"
+    with patch("bernstein.core.git.worktree.worktree_list") as mock_list:
+        mock_list.return_value = f"worktree {base_dir / 'session-1'}\nworktree {base_dir / 'session-1' / 'vendor'}\n"
+
+        assert manager.list_active() == ["session-1"]
+
+
+def test_list_active_reads_the_forward_slash_paths_git_emits(manager: WorktreeManager, repo_root: Path) -> None:
+    """``git worktree list`` emits forward slashes, including on Windows.
+
+    A prefix built locally with ``os.path.join`` is backslash-separated
+    there, so it matches nothing and ``list_active`` returns an empty list -
+    every worktree silently unmanaged. Comparing paths normalises the
+    separator instead of having to agree on it.
+    """
+    base_dir = repo_root / ".sdd/worktrees"
+    posix_style = (base_dir / "session-1").as_posix()
+    with patch("bernstein.core.git.worktree.worktree_list") as mock_list:
+        mock_list.return_value = f"worktree {posix_style}\n"
+
+        assert manager.list_active() == ["session-1"]
+
+
 def test_list_active_ignores_the_base_directory_itself(manager: WorktreeManager, repo_root: Path) -> None:
     """The base is not a session, and its ``.name`` would be ``worktrees``.
 
