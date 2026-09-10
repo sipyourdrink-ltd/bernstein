@@ -17,6 +17,8 @@ from bernstein.core.checks.registry import (
     clear,
     get_check,
     iter_checks,
+    list_checks,
+    populate_default_checks,
     register,
     run_all,
     unregister,
@@ -33,7 +35,10 @@ __all__ = [
     "clear",
     "get_check",
     "iter_checks",
+    "list_checks",
+    "populate_default_checks",
     "register",
     "run_all",
     "unregister",
 ]
+
