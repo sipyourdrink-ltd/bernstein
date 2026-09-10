@@ -15,9 +15,13 @@ Usage::
     python scripts/gen_distribution_manifests.py            # rewrite in place
     python scripts/gen_distribution_manifests.py --check    # exit 1 on drift
 
-``--check`` is wired into the unit suite and the publish workflow, so a
-stale ``server.json`` blocks the registry publish step instead of shipping
-a listing that resolves to the wrong package version.
+``--check`` needs the project environment (it imports the package), so it
+is wired into the unit suite and into the ``Repo hygiene`` job of
+``.github/workflows/ci.yml``, which bootstraps that environment. Repo
+hygiene is a ``needs`` of the required ``CI gate`` check, so a stale
+``server.json`` cannot reach ``main`` and therefore cannot be tagged. The
+publish workflow re-asserts only the version agreement, with the standard
+library alone, immediately before the registry submission.
 """
 
 from __future__ import annotations
