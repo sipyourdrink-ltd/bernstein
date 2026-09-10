@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bernstein.core.dual_approval import (
+from bernstein.core.security.dual_approval import (
     ApprovalChannel,
     ApprovalRequest,
     ApprovalResponse,
@@ -230,11 +230,11 @@ def _response(
 
 
 def test_one_approver_clicking_twice_is_not_two_approvals() -> None:
-    """Two rows on one channel are one party's say-so.
+    """Two rows from one person are one party's say-so.
 
     This is the whole point of the module: a destructive operation needs a
-    second sign-off. Counting responses instead of channels let a single
-    compromised Slack account satisfy the gate by itself.
+    second sign-off. Counting responses let a single compromised account
+    satisfy the gate by itself.
     """
     request = create_approval_request("git push --force", requester="alice")
     twice = [
@@ -245,7 +245,39 @@ def test_one_approver_clicking_twice_is_not_two_approvals() -> None:
     assert evaluate_approval(request, twice).is_approved is False
 
 
-def test_approvals_on_two_channels_are_two_approvals() -> None:
+def test_one_approver_using_two_channels_is_still_one_approval() -> None:
+    """Counting channels does not measure independence.
+
+    It was this PR's first answer and it is wrong in both directions: the
+    same party reaching for CLI and Slack clears a two-party gate, which is
+    exactly the scenario the module exists to stop.
+    """
+    request = create_approval_request("git push --force", requester="alice")
+    two_channels = [
+        _response(request_id=request.request_id, channel=ApprovalChannel.CLI, approver="mallory"),
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="mallory"),
+    ]
+
+    assert evaluate_approval(request, two_channels).is_approved is False
+
+
+def test_two_approvers_sharing_a_channel_are_two_approvals() -> None:
+    """The other direction, and a regression counting channels introduced.
+
+    Two people who both happen to reply in Slack are two sign-offs. Refusing
+    them makes the gate wrong in the safe-looking direction, which is still
+    wrong - and it is the case a busy team hits first.
+    """
+    request = create_approval_request("git push --force", requester="alice")
+    same_channel = [
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="bob"),
+        _response(request_id=request.request_id, channel=ApprovalChannel.SLACK, approver="carol"),
+    ]
+
+    assert evaluate_approval(request, same_channel).is_approved is True
+
+
+def test_approvals_from_two_approvers_are_two_approvals() -> None:
     """The control: the documented happy path still approves."""
     request = create_approval_request("git push --force", requester="alice")
     both = [

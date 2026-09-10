@@ -1,7 +1,7 @@
 """Two-factor approval for destructive operations.
 
-Requires two independent approvals (via different channels) before any
-destructive operation is allowed to proceed.  Channels include CLI
+Requires two independent approvals - from two different approvers - before
+any destructive operation is allowed to proceed.  Channels include CLI
 confirmation, Slack, webhook callbacks, and email.
 
 Approval requests carry a TTL (default 300 s) after which they expire
@@ -154,13 +154,15 @@ def evaluate_approval(
     * **Denied** - any single matching response with ``approved=False`` vetoes
       the entire request.
     * **Expired** - ``expires_at`` is in the past (UTC).
-    * **Approved** - approvals arrive on at least ``required_approvals``
-      *distinct channels*, and the request is neither denied nor expired.
+    * **Approved** - approvals arrive from at least ``required_approvals``
+      *distinct approvers*, and the request is neither denied nor expired.
 
-    Approvals are counted per channel rather than per response. The point of
-    this module is that a destructive operation needs more than one
-    independent sign-off, and repeated responses on one channel are one
-    party's say-so however many rows they produce.
+    Approvals are counted per approver rather than per response or per
+    channel. The point of this module is that a destructive operation needs
+    more than one independent sign-off, and independence is a property of
+    people: repeated responses are one party's say-so however many rows or
+    channels they produce, while two genuine approvers who both happen to
+    reply in Slack are still two.
 
     Args:
         request: The original approval request.
@@ -184,12 +186,13 @@ def evaluate_approval(
 
     is_denied = any(not r.approved for r in own)
 
-    # Counted per channel, not per response. Two approvals are only two if
-    # they are independent, and the module's contract is "via different
-    # channels" - counting rows instead let one approver clicking twice in
-    # Slack satisfy a gate that exists to require a second party.
-    approving_channels = {r.channel for r in own if r.approved}
-    is_approved = len(approving_channels) >= request.required_approvals and not is_denied and not is_expired
+    # Counted per approver. Independence is a property of *people*, and
+    # neither of the other two candidates measures it: counting rows lets one
+    # approver click twice, and counting channels lets the same approver use
+    # two of them - the very scenario this gate exists to stop - while
+    # refusing two genuine approvers who happen to share a channel.
+    approvers = {r.approver for r in own if r.approved}
+    is_approved = len(approvers) >= request.required_approvals and not is_denied and not is_expired
 
     return ApprovalStatus(
         request=request,
