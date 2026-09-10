@@ -25,7 +25,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     timeout-minutes: 15
-    environment: pypi
     permissions:
       contents: read
     steps:

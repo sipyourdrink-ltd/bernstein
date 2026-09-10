@@ -341,7 +341,6 @@ jobs:
     environment: pypi
     needs: build
     timeout-minutes: 15
-    environment: pypi
     permissions:
       contents: read
     steps:
@@ -508,7 +507,6 @@ jobs:
     # Comfortably above COPR_WATCH_SECONDS below, so the watch always ends on
     # its own deadline rather than being cancelled part-way through.
     timeout-minutes: 30
-    environment: pypi
     permissions:
       contents: read
     env:
