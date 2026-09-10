@@ -143,6 +143,12 @@ class HSMSigner:
     Ed25519 key handle - and is delivered by subclassing *that* class and
     selecting it with ``kms_adapter='hsm'``.
 
+    Documentation only. Nothing in ``src/`` constructs one and no dispatcher
+    returns one - ``signer_from_config`` raises for ``key_kind='hsm'`` rather
+    than handing this back, because an object that explodes on the first WAL
+    emit is a worse outcome than a startup error. It exists so the error above
+    has something to name, and so the integration shape has a home.
+
     Deliberately **not** a subclass of ``HSMKMSAdapter``.
     ``_resolve_hsm_subclass`` discovers a customer's integration through
     ``HSMKMSAdapter.__subclasses__()``, which returns direct subclasses only.
@@ -340,13 +346,17 @@ def signer_from_config(
             token_uri=kms_token_uri,
             kid=kms_kid,
         )
-    # Phase-1 path: file key by default.
-    if key_path is None:
-        raise LineageSignerError("lineage.customer_signing.enabled=true requires key_path")
-    if key_kind.lower().strip() == "hsm":
-        # Distinguished from a typo on purpose. "Not implemented yet" and
-        # "not a thing" send an operator to different places, and the generic
-        # error below sent both to the same one.
+    # Phase-1 path: file key by default. ``key_kind`` is normalised once -
+    # the two checks below used to compare it differently, so ``key_kind: HSM``
+    # took the typo branch while ``hsm`` took the other.
+    kind = key_kind.lower().strip()
+    # Before the key_path guard, deliberately. An operator choosing an HSM is
+    # by definition not pointing at a private key file on disk, so they set no
+    # key_path - and answering "requires key_path" sends them to create the
+    # file key they were trying to avoid. Ordered the other way, the message
+    # only reached someone who set key_kind='hsm' *and* a key_path, which is a
+    # config nobody writes on purpose.
+    if kind == "hsm":
         raise LineageSignerError(
             "lineage.customer_signing.key_kind='hsm' is not implemented on the Phase-1 "
             "key_path route: HSMSigner is a named stub whose sign() raises. Deliver an "
@@ -355,8 +365,10 @@ def signer_from_config(
             "lineage.kms_adapter='hsm' (plus lineage.kms_adapter_token_uri), which is the "
             "Phase-2 route that dispatches to it.",
         )
-    if key_kind != "ed25519":
+    if kind != "ed25519":
         raise LineageSignerError(
             f"unsupported lineage.customer_signing.key_kind: {key_kind!r} (only 'ed25519' is implemented in Phase 1)",
         )
+    if key_path is None:
+        raise LineageSignerError("lineage.customer_signing.enabled=true requires key_path")
     return Ed25519FileKeySigner.from_path(Path(key_path))

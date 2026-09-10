@@ -195,10 +195,13 @@ class FileBasedKMSAdapter:
         return self._signer.sign(payload)
 
     def public_key_jwk(self) -> dict[str, str]:
-        # Reach into the underlying signer's private key to derive the
-        # public key once. Keeping the JWK derivation here -- not on
-        # the signer -- means the lineage_signer module stays at a
-        # narrower contract (sign/verify only).
+        # ``Ed25519FileKeySigner`` advertises the same JWK, through the same
+        # encoder. It has to: ``signer_from_config`` hands back either that
+        # signer or one of these depending on which config shape the operator
+        # wrote, and a single key on a single file should not expose two
+        # different surfaces. This delegates for its own key rather than
+        # calling the signer's method only because it already holds the
+        # private key and the kid convention here is the adapter's.
         public_key = self._signer._private_key.public_key()
         return public_key_jwk_for(public_key, kid=self.kid or self.key_path.name)
 

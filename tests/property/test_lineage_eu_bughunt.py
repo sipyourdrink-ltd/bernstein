@@ -958,3 +958,30 @@ class TestMixedEndpointHandling:
         """Catching the parse error must not swallow the addresses that work."""
         adapter = OllamaAdapter()
         assert adapter._is_self_hosted_endpoint(url) is True, url
+
+
+def test_the_hsm_error_reaches_the_config_an_operator_actually_writes() -> None:
+    """``key_kind: hsm`` with no ``key_path`` is the whole point.
+
+    Choosing an HSM means *not* pointing at a private key file on disk, so
+    that operator sets no ``key_path``. With the guards ordered the other way
+    they were told "requires key_path" - the one instruction that sends them
+    to build the file key they were avoiding - and the HSM message only
+    reached someone who supplied both, a config nobody writes on purpose.
+    """
+    with pytest.raises(LineageSignerError, match="not implemented"):
+        signer_from_config(enabled=True, key_kind="hsm")
+
+
+def test_the_hsm_check_normalises_key_kind_the_same_way_the_typo_check_does() -> None:
+    """The two comparisons used to differ, so ``HSM`` took the typo branch."""
+    with pytest.raises(LineageSignerError, match="not implemented"):
+        signer_from_config(enabled=True, key_kind="HSM")
+    with pytest.raises(LineageSignerError, match="not implemented"):
+        signer_from_config(enabled=True, key_kind="  hsm  ")
+
+
+def test_a_missing_key_path_still_reports_itself_for_the_file_route() -> None:
+    """Reordering must not lose the guard it moved past."""
+    with pytest.raises(LineageSignerError, match="requires key_path"):
+        signer_from_config(enabled=True, key_kind="ed25519")
