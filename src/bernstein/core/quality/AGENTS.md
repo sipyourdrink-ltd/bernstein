@@ -6,7 +6,8 @@ The verification layer between a worker's diff and merge or human review: a conf
 
 | File | Purpose |
 |---|---|
-| `gate_pipeline.py` | `VALID_GATE_NAMES` registry, `GateStatus`, pipeline dataclasses |
+| `gate_pipeline.py` | `VALID_GATE_NAMES` registry, `GateStatus`, pipeline dataclasses; `VerificationScope` (line 166) declares a gate's confidence, evidence, and canonical bytes (#5395) |
+| `merge_receipt.py` | Produces the signed merge receipt that binds a gate-run's `VerificationScope` to the commit digest; `_canonical_bytes` convention is shared with `gate_pipeline.py` |
 | `gate_runner.py` | Gate dispatch and execution (subprocess discipline, timeouts) |
 | `quality_gates.py` | `QualityGatesConfig` plus the core gate implementations |
 | `janitor.py` | Claim verification: did the agent do what its result claims |
