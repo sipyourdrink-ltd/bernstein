@@ -5993,18 +5993,9 @@ class AgentSpawner:
         """
         assert self._container_mgr is not None
 
-        # Build environment for the container from the adapter's filtered env
-        from bernstein.adapters.env_isolation import build_filtered_env
+        from bernstein.core.agents.spawner_env import build_spawner_env
 
-        adapter_name = adapter.name().lower()
-        extra_keys: list[str] = []
-        if "claude" in adapter_name:
-            extra_keys.append("ANTHROPIC_API_KEY")
-        elif "gemini" in adapter_name:
-            extra_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
-        elif "codex" in adapter_name:
-            extra_keys.append("OPENAI_API_KEY")
-        container_env = build_filtered_env(extra_keys)
+        container_env = build_spawner_env(adapter.name())
 
         # Write the prompt to a temp file inside the workspace so the
         # container can read it
@@ -6132,17 +6123,10 @@ class AgentSpawner:
         """
         assert self._sandbox is not None
 
-        from bernstein.adapters.env_isolation import build_filtered_env
+        from bernstein.core.agents.spawner_env import build_spawner_env
 
         adapter_name = adapter.name().lower()
-        extra_keys: list[str] = []
-        if "claude" in adapter_name:
-            extra_keys.append("ANTHROPIC_API_KEY")
-        elif "gemini" in adapter_name:
-            extra_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
-        elif "codex" in adapter_name:
-            extra_keys.append("OPENAI_API_KEY")
-        sandbox_env = build_filtered_env(extra_keys)
+        sandbox_env = build_spawner_env(adapter_name)
 
         prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
         prompt_file.parent.mkdir(parents=True, exist_ok=True)

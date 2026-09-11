@@ -14,8 +14,12 @@ import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from bernstein.core.defaults import QWEN_INSTALL_HINT
 
@@ -64,11 +68,12 @@ _QWEN_API_KEY_VARS: tuple[str, ...] = (
 )
 
 
-def _check_binary(cli: str) -> None:
+def _check_binary(cli: str, *, env: Mapping[str, str] | None = None) -> None:
     """Exit with an actionable message if the CLI binary is not in PATH.
 
     Args:
         cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
+        env: Optional environment mapping containing PATH to resolve binary from.
 
     Raises:
         SystemExit: If the binary is not found.
@@ -76,7 +81,8 @@ def _check_binary(cli: str) -> None:
     from bernstein.cli.errors import BernsteinError
 
     binary = cli  # binary name matches adapter name for all supported adapters
-    if shutil.which(binary) is None:
+    path_val = env.get("PATH") if env is not None else None
+    if shutil.which(binary, path=path_val) is None:
         hint = _CLI_INSTALL_HINT.get(cli, f"See documentation for {binary!r}")
         BernsteinError(
             what=f"{binary!r} not found in PATH",
@@ -86,7 +92,7 @@ def _check_binary(cli: str) -> None:
         raise SystemExit(1)
 
 
-def _claude_has_oauth_session() -> bool:
+def _claude_has_oauth_session(*, env: Mapping[str, str] | None = None) -> bool:
     """Check if Claude Code has an active OAuth session (no API key needed)."""
     try:
         result = subprocess.run(
@@ -94,6 +100,7 @@ def _claude_has_oauth_session() -> bool:
             capture_output=True,
             text=True,
             timeout=5,
+            env=dict(env) if env is not None else None,
         )
         # If claude --version works, the binary is functional.
         # Claude Code with OAuth doesn't need ANTHROPIC_API_KEY.
@@ -126,7 +133,7 @@ def _gemini_has_gcloud_auth() -> bool:
     return False
 
 
-def gemini_has_auth() -> tuple[bool, str]:
+def gemini_has_auth(env: Mapping[str, str] | None = None) -> tuple[bool, str]:
     """Check all supported Gemini authentication methods.
 
     Checks (in order):
@@ -139,12 +146,13 @@ def gemini_has_auth() -> tuple[bool, str]:
     Returns:
         Tuple of (authenticated, method_description).
     """
-    if os.environ.get("GEMINI_API_KEY"):
+    source_env = env if env is not None else os.environ
+    if source_env.get("GEMINI_API_KEY"):
         return True, "GEMINI_API_KEY"
-    if os.environ.get("GOOGLE_API_KEY"):
+    if source_env.get("GOOGLE_API_KEY"):
         return True, "GOOGLE_API_KEY"
-    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-        creds_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+    if source_env.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        creds_path = source_env["GOOGLE_APPLICATION_CREDENTIALS"]
         if Path(creds_path).exists():
             return True, "GOOGLE_APPLICATION_CREDENTIALS"
     if _gemini_has_gcloud_auth():
@@ -215,7 +223,7 @@ def _codex_has_config_toml() -> tuple[bool, str | None]:
     return False, None
 
 
-def _codex_has_auth() -> tuple[bool, str]:
+def _codex_has_auth(env: Mapping[str, str] | None = None) -> tuple[bool, str]:
     """Check all supported Codex authentication methods.
 
     Checks (in order):
@@ -226,7 +234,8 @@ def _codex_has_auth() -> tuple[bool, str]:
     Returns:
         Tuple of (authenticated, method_description).
     """
-    if os.environ.get("OPENAI_API_KEY"):
+    source_env = env if env is not None else os.environ
+    if source_env.get("OPENAI_API_KEY"):
         return True, "OPENAI_API_KEY"
     if _codex_has_login():
         return True, "ChatGPT login"
@@ -236,7 +245,7 @@ def _codex_has_auth() -> tuple[bool, str]:
     return False, ""
 
 
-def _check_api_key(cli: str) -> None:
+def _check_api_key(cli: str, *, env: Mapping[str, str] | None = None) -> None:
     """Exit with an actionable message if the required API key is not set.
 
     For Claude Code: skips the check if an OAuth session is active (no API key
@@ -244,21 +253,23 @@ def _check_api_key(cli: str) -> None:
 
     Args:
         cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
+        env: Optional environment mapping.
 
     Raises:
         SystemExit: If the required API key env var is missing.
     """
     from bernstein.cli.errors import BernsteinError
 
-    error = _get_api_key_error(cli)
+    error = _get_api_key_error(cli, env=env)
     if error is not None:
         BernsteinError(what=error[0], why=error[1], fix=error[2]).print()
         raise SystemExit(1)
 
 
-def _check_qwen_auth() -> tuple[str, str, str] | None:
+def _check_qwen_auth(env: Mapping[str, str] | None = None) -> tuple[str, str, str] | None:
     """Check Qwen API key availability."""
-    if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
+    source_env = env if env is not None else os.environ
+    if not any(source_env.get(v) for v in _QWEN_API_KEY_VARS):
         return (
             "No API key configured for qwen",
             "Qwen requires one of: " + ", ".join(_QWEN_API_KEY_VARS),
@@ -267,9 +278,10 @@ def _check_qwen_auth() -> tuple[str, str, str] | None:
     return None
 
 
-def _check_claude_auth() -> tuple[str, str, str] | None:
+def _check_claude_auth(env: Mapping[str, str] | None = None) -> tuple[str, str, str] | None:
     """Check Claude authentication."""
-    if not os.environ.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session():
+    source_env = env if env is not None else os.environ
+    if not source_env.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session(env=env):
         return (
             "No Claude authentication found",
             "Neither ANTHROPIC_API_KEY nor an active OAuth session was detected",
@@ -278,9 +290,9 @@ def _check_claude_auth() -> tuple[str, str, str] | None:
     return None
 
 
-def _check_gemini_auth() -> tuple[str, str, str] | None:
+def _check_gemini_auth(env: Mapping[str, str] | None = None) -> tuple[str, str, str] | None:
     """Check Gemini authentication."""
-    authenticated, _method = gemini_has_auth()
+    authenticated, _method = gemini_has_auth(env=env)
     if not authenticated:
         return (
             "No Gemini authentication found",
@@ -292,9 +304,9 @@ def _check_gemini_auth() -> tuple[str, str, str] | None:
     return None
 
 
-def _check_codex_auth() -> tuple[str, str, str] | None:
+def _check_codex_auth(env: Mapping[str, str] | None = None) -> tuple[str, str, str] | None:
     """Check Codex authentication."""
-    authenticated, _method = _codex_has_auth()
+    authenticated, _method = _codex_has_auth(env=env)
     if not authenticated:
         return (
             "No Codex authentication found",
@@ -304,21 +316,22 @@ def _check_codex_auth() -> tuple[str, str, str] | None:
     return None
 
 
-def _get_api_key_error(cli: str) -> tuple[str, str, str] | None:
+def _get_api_key_error(cli: str, *, env: Mapping[str, str] | None = None) -> tuple[str, str, str] | None:
     """Return (what, why, fix) tuple if API key check fails, or None if OK."""
     _CLI_AUTH_CHECKS: dict[str, object] = {
-        "qwen": _check_qwen_auth,
-        "claude": _check_claude_auth,
-        "gemini": _check_gemini_auth,
-        "codex": _check_codex_auth,
+        "qwen": lambda: _check_qwen_auth(env=env),
+        "claude": lambda: _check_claude_auth(env=env),
+        "gemini": lambda: _check_gemini_auth(env=env),
+        "codex": lambda: _check_codex_auth(env=env),
     }
 
     check_fn = _CLI_AUTH_CHECKS.get(cli)
     if check_fn is not None:
         return check_fn()  # type: ignore[operator]
 
+    source_env = env if env is not None else os.environ
     env_var = _CLI_API_KEY_ENV.get(cli)
-    if env_var and not os.environ.get(env_var):
+    if env_var and not source_env.get(env_var):
         return (
             f"{cli} adapter requires an API key",
             f"Environment variable {env_var} is not set",
@@ -396,7 +409,13 @@ def _check_port_free(port: int) -> None:
     raise SystemExit(1)
 
 
-def preflight_checks(cli: str, port: int) -> None:
+def preflight_checks(
+    cli: str,
+    port: int,
+    *,
+    unattended: bool | None = None,
+    env: Mapping[str, str] | None = None,
+) -> None:
     """Run pre-flight checks before starting the server.
 
     Verifies that:
@@ -407,17 +426,26 @@ def preflight_checks(cli: str, port: int) -> None:
     Args:
         cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen", "mock").
         port: TCP port the server will bind to.
+        unattended: Whether to run in unattended mode (defaults to True when stdin is not a TTY).
+        env: Optional environment mapping used to resolve PATH and auth.
 
     Raises:
         SystemExit: On any pre-flight failure, with an actionable message.
     """
+    if unattended is None:
+        unattended = not sys.stdin.isatty()
+    if unattended and env is None:
+        from bernstein.core.agents.spawner import build_spawner_env
+
+        env = build_spawner_env(cli if cli not in ("mock", "auto") else None)
+
     if cli == "mock":
         console.print(f"[green]{_CHECK}[/green] Mock adapter ready (no API key needed)")
     elif cli == "auto":
         _preflight_auto_mode()
     else:
-        _check_binary(cli)
-        _check_api_key(cli)
+        _check_binary(cli, env=env)
+        _check_api_key(cli, env=env)
     _check_port_free(port)
 
 

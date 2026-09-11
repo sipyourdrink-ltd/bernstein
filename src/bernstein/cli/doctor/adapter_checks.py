@@ -76,6 +76,7 @@ async def check_adapter_binary(
     declared_binary: str,
     *,
     timeout: float = _VERSION_TIMEOUT_SECONDS,
+    env: Mapping[str, str] | None = None,
 ) -> DoctorResult:
     """Check that the declared binary is on PATH and responds to ``--version``.
 
@@ -83,6 +84,7 @@ async def check_adapter_binary(
         adapter_name: Adapter identifier as used in ``bernstein.yaml``.
         declared_binary: Executable to look up via :func:`shutil.which`.
         timeout: How long to wait for ``--version`` before warning.
+        env: Optional environment mapping for PATH and execution.
 
     Returns:
         DoctorResult with status ``ok`` (version captured), ``warn``
@@ -99,7 +101,7 @@ async def check_adapter_binary(
             remediation=f"Add a binary mapping for `{adapter_name}` or remove it from bernstein.yaml",
         )
 
-    path = shutil.which(declared_binary)
+    path = shutil.which(declared_binary, path=env.get("PATH") if env else None)
     if path is None:
         return DoctorResult(
             name=name,
@@ -117,6 +119,7 @@ async def check_adapter_binary(
             "--version",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=dict(env) if env is not None else None,
         )
     except (OSError, asyncio.CancelledError) as exc:  # pragma: no cover - rare
         return DoctorResult(
@@ -165,6 +168,8 @@ async def run_adapter_checks(
     *,
     binaries: Mapping[str, str] | None = None,
     config_path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    unattended: bool = False,
 ) -> list[DoctorResult]:
     """Run binary checks for the requested adapters in parallel.
 
@@ -173,6 +178,11 @@ async def run_adapter_checks(
     adapters). Unknown adapters are still checked - the report will mark
     them missing rather than silently skipping.
     """
+    if unattended and env is None:
+        from bernstein.core.agents.spawner import build_spawner_env
+
+        env = build_spawner_env()
+
     table = dict(binaries) if binaries is not None else ADAPTER_BINARIES.copy()
     names = (
         list(adapter_names)
@@ -190,7 +200,7 @@ async def run_adapter_checks(
             )
         ]
 
-    coros = [check_adapter_binary(n, table.get(n, n)) for n in names]
+    coros = [check_adapter_binary(n, table.get(n, n), env=env) for n in names]
     return list(await asyncio.gather(*coros))
 
 
