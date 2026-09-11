@@ -17,6 +17,7 @@ repeat. Coordination is plain Python, never an LLM (ADR-006).
 | `run_closure_owner.py` | Universal authenticated run closure owner |
 | `issue_claim.py` | Claim etiquette for coordinator-free issue intake: recognises a run's own claim, detects a stale one |
 | `quiescence.py` | Answers whether every process the run spawned had exited before it was sealed; produces a verified/unverified record rather than acting on stragglers (#5272) |
+| `controller_state.py` | Sidecar persisting adaptive-parallelism and claim-conflict backoff state to `.sdd/runtime/controllers.json`, restored on startup |
 
 Heavy lifting lives in siblings: `../tasks/task_lifecycle.py` (claim, spawn, retry, completion) and `../agents/` (spawner, heartbeat, crash detection, reaping).
 
