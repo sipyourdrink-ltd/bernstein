@@ -561,9 +561,10 @@ class RepeatedCommandDetector:
     """Detects repeated identical commands with identical exit codes in a task (#5439).
 
     Same command + same exit code >= N times in one task triggers a stall.
+    Uses O(1) frequency counting to maintain bounded memory and constant-time lookup.
     """
 
-    task_commands: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
+    task_commands: dict[str, dict[tuple[str, int], int]] = field(default_factory=dict)
 
     def record_command(
         self,
@@ -579,10 +580,11 @@ class RepeatedCommandDetector:
             Tuple of (is_stalled, reason). When stalled, the reason names the
             command, exit code, and repetition count.
         """
-        history = self.task_commands.setdefault(task_id, [])
-        history.append((command, exit_code))
+        counts = self.task_commands.setdefault(task_id, {})
+        key = (command, exit_code)
+        count = counts.get(key, 0) + 1
+        counts[key] = count
 
-        count = sum(1 for (cmd, code) in history if cmd == command and code == exit_code)
         if count >= threshold:
             reason = (
                 f"Task {task_id} stalled: command '{command}' with exit code {exit_code} "
@@ -606,21 +608,13 @@ class FanOutController:
     halved: bool = False
     audit_records: list[dict[str, Any]] = field(default_factory=list)
 
-    def can_admit_task(
+    def check_and_degrade(
         self,
-        active_task_count: int,
         no_progress_task_count: int,
         *,
         audit_callback: Callable[[dict[str, Any]], None] | None = None,
-    ) -> tuple[bool, str]:
-        """Check whether a new task can be admitted under the current fan-out ceiling.
-
-        If >= degrade_threshold tasks are in no-progress state and the ceiling has
-        not yet halved, it halves the ceiling for the run and records the decision.
-
-        Returns:
-            Tuple of (admitted, reason).
-        """
+    ) -> bool:
+        """Degrade ceiling if no-progress tasks reach the threshold. Returns True if halved."""
         if not self.halved and no_progress_task_count >= self.degrade_threshold:
             old_ceiling = self.ceiling
             self.ceiling = max(1, self.ceiling // 2)
@@ -635,6 +629,21 @@ class FanOutController:
             self.audit_records.append(decision)
             if audit_callback is not None:
                 audit_callback(decision)
+            return True
+        return False
+
+    def can_admit_task(
+        self,
+        active_task_count: int,
+        no_progress_task_count: int = 0,
+        *,
+        audit_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[bool, str]:
+        """Check whether a new task can be admitted under the current fan-out ceiling.
+
+        Separates degradation evaluation from admission query.
+        """
+        self.check_and_degrade(no_progress_task_count, audit_callback=audit_callback)
 
         if active_task_count >= self.ceiling:
             reason = f"Fan-out ceiling reached: {active_task_count} active tasks >= ceiling {self.ceiling}"
