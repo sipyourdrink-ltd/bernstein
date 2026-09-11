@@ -601,6 +601,8 @@ def _spiffe_socket_reachable(endpoint: str) -> bool:
         mode = Path(path).stat().st_mode
     except OSError:
         return False
+    if not _stat.S_ISSOCK(mode):
+        return False
     af_unix = getattr(socket, "AF_UNIX", None)
     if af_unix is None:
         return False
