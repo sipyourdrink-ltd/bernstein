@@ -162,13 +162,20 @@ jobs:
   auto-heal:
     name: Auto-heal v2
     needs: meta
+    # GITHUB_TOKEN-backed workflow_dispatch runs are authored by
+    # github-actions[bot]. The post-merge cadence uses exactly that path to
+    # launch the canonical full suite on main, so those failures must retain
+    # the same auto-heal route as human-authored main failures. Bot-authored
+    # push runs remain excluded, and the display-title guards below continue
+    # to stop heal-generated recursion.
     if: >-
       needs.meta.outputs.conclusion == 'failure' &&
       needs.meta.outputs.head_branch == 'main' &&
       needs.meta.outputs.head_repo == github.repository &&
       !startsWith(needs.meta.outputs.display_title, 'fix(ci-heal-v2):') &&
       !startsWith(needs.meta.outputs.display_title, 'fix(ci-heal):') &&
-      needs.meta.outputs.actor_login != 'github-actions[bot]'
+      (needs.meta.outputs.actor_login != 'github-actions[bot]' ||
+       needs.meta.outputs.event == 'workflow_dispatch')
     # Union of permissions the called workflow's jobs request: it pushes
     # heal branches and opens heal PRs (contents:write,
     # pull-requests:write), attests provenance on the heal commit

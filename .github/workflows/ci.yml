@@ -1816,13 +1816,15 @@ jobs:
     # disjoint slice) cuts each runner to ~1/4 of the files. The matrix
     # `.result` ci-gate reads is `failure` if ANY shard cell fails, so all
     # shards are still required - no shard can silently skip.
-    # Skips only when a merge-queue group's combined diff is docs-only
-    # (determine-changes computes it from the group's base; its failure
-    # mode is over-broad, never over-narrow). The roll-up tolerates the
-    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
-    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
-    # and push runs everything, so main keeps the full suite.
-    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
+    # Ordinary pushes to main leave this expensive suite to the 45-minute
+    # post-merge cadence controller. Release pushes still run immediately,
+    # and workflow_dispatch is the cadence controller's full-suite entrypoint.
+    # Merge-queue docs-only skips retain their existing policy.
+    if: >-
+      ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') &&
+          (github.event_name != 'push' ||
+           startsWith(github.event.head_commit.message, 'chore(release)') ||
+           startsWith(github.event.head_commit.message, 'release:')) }}
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
     needs: [determine-changes, lint]  # fast-fail: don't waste 45min if lint fails
     runs-on: ${{ matrix.os }}
@@ -1878,15 +1880,16 @@ jobs:
         # that only appears in the combination surfaces one merge later and
         # is answered with a revert.
         os: ${{ github.event_name == 'merge_group' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
-        # Only push-to-main runs the full interpreter matrix; PR and
-        # merge-queue lanes run the primary interpreter (3.13) alone. The
+        # Release pushes and workflow_dispatch run the full interpreter
+        # matrix; PR and merge-queue lanes run the primary interpreter
+        # (3.13) alone. Ordinary main pushes skip this job and are covered by
+        # the cadence workflow_dispatch. The
         # queue ran both rows, which doubled its ubuntu shard fan-out to
         # buy nothing the push run does not already buy: every merged
-        # commit still gets the 3.12 row minutes later on the push event,
-        # so a 3.12-only regression surfaces at most one merge later and
-        # is answered with a revert. dispatch runs the full matrix: an
-        # operator invoking the workflow by hand is asking for coverage,
-        # not queue throughput.
+        # commit still gets the 3.12 row on the next cadence dispatch, so a
+        # 3.12-only regression is localized post-merge and answered with a
+        # revert. dispatch runs the full matrix: an operator invoking the
+        # workflow by hand is asking for coverage, not queue throughput.
         python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["3.12", "3.13"]') || fromJSON('["3.13"]') }}
         # Fan the per-file suite out across deterministic shards per cell.
         # The list is the WIDEST row (ubuntu, 8); windows drops 5-8 in
@@ -1991,7 +1994,8 @@ jobs:
           # affected set is sharded too, so each runner runs ~1/N of the
           # impacted files.
           coverage_args=()
-          if [ "${EVENT_NAME}" = "push" ] && [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
+          if { [ "${EVENT_NAME}" = "push" ] || { [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; } && \
+             [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
             coverage_args=(--coverage)
           fi
           if [ "${EVENT_NAME}" = "pull_request" ] && \
@@ -2042,7 +2046,10 @@ jobs:
           uv run pytest tests/integration/test_capability_matrix_spawn_refusal.py `
             -x -q --tb=short --timeout=120
       - name: Prepare coverage shard artifact
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' && github.event_name == 'push'
+        if: >-
+          matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' &&
+          (github.event_name == 'push' ||
+           (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
         run: |
           if [ ! -f .coverage ]; then
             echo "::error::.coverage was not generated for shard ${{ matrix.shard }}"
@@ -2050,7 +2057,10 @@ jobs:
           fi
           mv .coverage ".coverage.${{ matrix.shard }}"
       - name: Upload coverage shard artifact
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' && github.event_name == 'push'
+        if: >-
+          matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' &&
+          (github.event_name == 'push' ||
+           (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-data-${{ matrix.shard }}
@@ -2118,7 +2128,12 @@ jobs:
   coverage-report:
     name: Coverage report
     needs: [test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' &&
+        (startsWith(github.event.head_commit.message, 'chore(release)') ||
+         startsWith(github.event.head_commit.message, 'release:'))))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -2157,11 +2172,10 @@ jobs:
           name: coverage-report
           path: coverage.xml
           if-no-files-found: error
-          # The coverage-ratchet workflow pulls this artifact from the most
-          # recent main CI run. Under the cancel-in-progress merge cadence
-          # main can go several days without a new successful run, so
-          # retention must outlive that gap; at 1 day the artifact expires
-          # and the ratchet has no coverage figure to compare against. The
+          # The coverage-ratchet workflow pulls this artifact from the
+          # completed full-suite main CI run. Retention outlives gaps in
+          # cadence coverage so operators can still trace the measurement.
+          # The
           # per-shard coverage-data-* artifacts above are consumed within
           # the same run and keep 1-day retention.
           retention-days: 14
@@ -2321,7 +2335,10 @@ jobs:
       success() &&
       needs.ci-gate.result == 'success' &&
       github.ref == 'refs/heads/main' &&
-      github.event_name == 'push'
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' &&
+        (startsWith(github.event.head_commit.message, 'chore(release)') ||
+         startsWith(github.event.head_commit.message, 'release:'))))
     timeout-minutes: 5
     permissions:
       contents: read
@@ -2431,6 +2448,8 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           PLAN_JSON: ${{ toJSON(needs.determine-changes.outputs) }}
           EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           # Write JSONs to disk so the python heredoc can read them
           # without worrying about shell quoting on multiline content.
@@ -2441,6 +2460,8 @@ jobs:
           data = json.load(open("results.json"))
           plan = json.load(open("plan.json"))
           event = os.environ.get("EVENT_NAME", "")
+          ref = os.environ.get("REF_NAME", "")
+          head_commit_message = os.environ.get("HEAD_COMMIT_MESSAGE", "")
 
           # Jobs that intentionally skip on docs-only changes (no python
           # / tests / workflows touched). Mirrors paths-ignore at the top.
@@ -2484,9 +2505,10 @@ jobs:
           # running on every push and every merged commit still gets a
           # macOS signal.
           MACOS_PUSH_GATED = {"test-macos"}
-          # Push-only jobs are required on native main pushes but skip
-          # intentionally on PR, workflow_dispatch, and merge_group runs.
-          PUSH_ONLY = {"coverage-report"}
+          # The expensive unit suite and its coverage report intentionally
+          # skip on ordinary post-merge pushes. They remain required on the
+          # cadence workflow_dispatch and on immediate release pushes.
+          POST_MERGE_PUSH_SKIPPABLE = {"test", "coverage-report"}
           # install-smoke-rpm installs the newest *released* PyPI version,
           # not this tree's source (#3947), so an ordinary src/ or tests/
           # change cannot regress what it checks. It skips whenever the
@@ -2516,6 +2538,14 @@ jobs:
           docs_only = plan.get("docs_only") == "true"
           macos_sensitive = plan.get("macos_sensitive") == "true"
           rpm_relevant_changed = plan.get("rpm_relevant_changed") == "true"
+          is_release_push = event == "push" and (
+              head_commit_message.startswith("chore(release)")
+              or head_commit_message.startswith("release:")
+          )
+          ordinary_main_push = event == "push" and not is_release_push
+          coverage_required = is_release_push or (
+              event == "workflow_dispatch" and ref == "refs/heads/main"
+          )
           # Read the PR labels via the event payload. The aggregator
           # runs inside ci.yml so the same event.pull_request.labels
           # array used by the job `if:` is available here too. The
@@ -2537,7 +2567,9 @@ jobs:
               if r == "success":
                   continue
               if r == "skipped":
-                  if name in PUSH_ONLY and event != "push":
+                  if ordinary_main_push and name in POST_MERGE_PUSH_SKIPPABLE:
+                      continue
+                  if name == "coverage-report" and not coverage_required:
                       continue
                   if docs_only and name in DOCS_ONLY_SKIPPABLE:
                       continue

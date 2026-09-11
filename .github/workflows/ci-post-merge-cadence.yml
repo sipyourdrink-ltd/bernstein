@@ -1,0 +1,64 @@
+name: CI post-merge cadence
+
+# Keep the expensive main-branch unit suite off the per-merge push path.
+# ci.yml's push paths-ignore remains the demand signal: if a main movement is
+# docs-only there is no CI push run here to observe, so no full-suite dispatch
+# is created for it. Each scheduled tick looks only at CI-relevant main pushes.
+on:
+  schedule:
+    # Exactly every 45 minutes while avoiding the top of the hour, where
+    # GitHub documents the highest scheduled-workflow load.
+    - cron: "7,52 0-21/3 * * *"
+    - cron: "37 1-22/3 * * *"
+    - cron: "22 2-23/3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-post-merge-cadence
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  dispatch:
+    name: Dispatch full main CI if needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch current main after new CI-relevant pushes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          latest_push=$(gh api \
+            "repos/${REPO}/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=1" \
+            --jq '.workflow_runs[0].created_at // empty')
+          if [ -z "${latest_push}" ]; then
+            echo "No CI-relevant push to main exists; nothing to dispatch."
+            exit 0
+          fi
+
+          # Any queued/in-progress dispatch, or any completed dispatch that
+          # reached a real verdict, satisfies demand from pushes at or before
+          # its start. Cancelled/skipped attempts deliberately do not: the next
+          # cadence tick retries them.
+          blocking_run=$(gh api \
+            "repos/${REPO}/actions/workflows/ci.yml/runs?branch=main&event=workflow_dispatch&per_page=100" \
+            --jq ".workflow_runs
+              | map(select(.created_at >= \"${latest_push}\"))
+              | map(select(.status != \"completed\" or
+                           (.conclusion != \"cancelled\" and .conclusion != \"skipped\")))
+              | first
+              | .id // empty")
+
+          if [ -n "${blocking_run}" ]; then
+            echo "Full main CI run ${blocking_run} already covers the latest relevant push (${latest_push})."
+            exit 0
+          fi
+
+          echo "Dispatching full CI for current main; latest relevant push was ${latest_push}."
+          gh workflow run ci.yml --repo "${REPO}" --ref main

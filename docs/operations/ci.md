@@ -9,13 +9,14 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 | Topic | Status | Where |
 |-------|--------|-------|
 | Per-PR macOS matrix | Gated (#1468) | `.github/workflows/ci.yml` |
-| Per-PR Python matrix | 3.13 only; 3.12 on push | `.github/workflows/ci.yml` |
+| Per-PR Python matrix | 3.13 only; 3.12 on cadenced full-main runs | `.github/workflows/ci.yml` |
 | Per-PR install smoke | 1 pipx + 1 uv cell; full 6 on push | `.github/workflows/ci.yml` |
 | `install-smoke-rpm` gating | Path-gated (#3947); skips diffs it cannot regress | `.github/workflows/ci.yml` |
 | RPM smoke safety net | Daily, regardless of diff | `.github/workflows/install-smoke-rpm-nightly.yml` |
 | macOS safety net | Nightly + push-on-sensitive | `.github/workflows/ci-macos-nightly.yml` |
 | Required check | Single `CI gate` job | `.github/workflows/ci.yml` |
-| Concurrency | PR-scoped cancel, push-scoped non-cancel | `.github/workflows/ci.yml` |
+| Post-merge full suite | Current `main`, every 45 minutes when CI-relevant pushes landed | `.github/workflows/ci-post-merge-cadence.yml` |
+| Concurrency | PR + ordinary main push cancel stale runs; full-suite dispatches do not | `.github/workflows/ci.yml` |
 | Integration suite | Whole directory, every event, via `integration-tests` | `.github/workflows/ci.yml` |
 | Collection completeness | Guard test, fails on an uncollected test file | `scripts/check_test_collection.py` |
 | Feature-matrix drift | Advisory; fails on a registered command with no matrix row | `.github/workflows/feature-matrix-drift.yml` |
@@ -29,7 +30,7 @@ Every test file must be reachable from a CI lane. The mapping:
 | Directory | Lane | Events | Selection |
 |---|---|---|---|
 | `tests/unit/**` | `test` (4 shards x os x python) | pull_request | impacted slice only (`--affected`) |
-| `tests/unit/**` | `test` (4 shards x os x python) | push, merge_group, workflow_dispatch | whole directory |
+| `tests/unit/**` | `test` (8 ubuntu / 4 windows shards x python) | merge_group, workflow_dispatch, release push | whole directory |
 | `tests/integration/**` | `test` (4 shards x os x python) | pull_request | impacted slice only (`--affected`) |
 | `tests/integration/**` | `integration-tests` | all | whole directory |
 | `tests/property/**` | `property-tests` | all | whole directory |
@@ -45,9 +46,10 @@ Two things this table is deliberately explicit about:
 
 - On `pull_request` the `test` job runs `scripts/run_tests.py --affected`,
   which selects only the files the impact map ties to the changed sources.
-  The whole `tests/unit/**` directory runs on push, in the merge queue and
-  on manual dispatch, not on a PR. A file that no lane other than the
-  affected slice covers is therefore not guaranteed to run before a merge.
+  The whole `tests/unit/**` directory runs in the merge queue and on full
+  workflow dispatches (plus immediate release pushes), not on an ordinary
+  post-merge push. A file that no lane other than the affected slice covers
+  is therefore not guaranteed to run before a merge.
 - `tests/chaos/**` (11 files), `tests/perf/**` (1 file) and
   `tests/test_worktree.py` are collected by no lane at all. `tests/protocol`,
   `tests/pentest` and `tests/stress` do run, but in workflows that do not
@@ -170,18 +172,20 @@ operator-driven feedback loop quiet.
 The `test`, `install-smoke-pipx`, and `install-smoke-uv` matrices are
 event-conditional (via `fromJSON` expressions on `github.event_name`):
 
-| Job | PR lane | push / merge_group / dispatch |
-|-----|---------|-------------------------------|
-| `test` | ubuntu + windows, Python 3.13, 4 shards each (8 jobs) | full matrix incl. the ubuntu 3.12 row (12 jobs) |
-| `install-smoke-pipx` | ubuntu / 3.13 (1 cell) | ubuntu + macos x 3.12 + 3.13 (4 cells) |
-| `install-smoke-uv` | ubuntu (1 cell) | ubuntu + macos (2 cells) |
+| Job | PR lane | merge_group | ordinary main push | workflow_dispatch / release push |
+|-----|---------|-------------|--------------------|----------------------------------|
+| `test` | ubuntu + windows, Python 3.13 (12 jobs) | ubuntu, Python 3.13 (8 jobs) | skipped | ubuntu 3.12 + 3.13 and windows 3.13 (20 jobs) |
+| `install-smoke-pipx` | ubuntu / 3.13 (1 cell) | ubuntu / 3.13 (1 cell) | ubuntu + macos x 3.12 + 3.13 (4 cells) | same as ordinary main push |
+| `install-smoke-uv` | ubuntu (1 cell) | ubuntu (1 cell) | ubuntu + macos (2 cells) | same as ordinary main push |
 
-Rationale: PR pushes are the high-frequency event on the shared
-runner pool, and the slimmed rows re-run on every push to main, so a
-row-specific regression (a 3.12-only failure, a macOS packaging
-break) surfaces at most one merge later and is attributable to a
-single commit. `ci-macos-nightly.yml` and `nightly-deep-tests.yml`
-remain the scheduled safety nets.
+Rationale: the sharded `test` suite takes longer than the observed interval
+between main pushes, so branch-scoped cancellation prevented most per-merge
+runs from reaching a verdict. Ordinary main pushes now keep the cheaper jobs
+and `CI gate`, while `.github/workflows/ci-post-merge-cadence.yml` dispatches
+the full suite against current `main` every 45 minutes when a CI-relevant push
+has landed since the previous full run. Release pushes remain immediate. The
+install-smoke rows stay on every main push, and `ci-macos-nightly.yml` plus
+`nightly-deep-tests.yml` remain scheduled safety nets.
 
 The CI gate aggregation is unchanged: `ci-gate` still rolls up
 `needs.*.result` for every job (all remaining matrix cells included)
@@ -249,30 +253,28 @@ omission.
 | Event | Group key | `cancel-in-progress` |
 |-------|-----------|----------------------|
 | `pull_request` | PR number | true |
-| push to `main`, `merge_group`, `workflow_dispatch` | branch + `github.sha` | false |
+| ordinary push to `main` | branch | true |
+| release push to `main` | branch + `github.sha` | false |
+| `merge_group`, `workflow_dispatch` | branch + `github.sha` | false |
 
 Per-PR runs share a group keyed by PR number, stable across pushes
 to the same PR. A new commit cancels the older run, so reviewers
 only ever wait on the latest push and we don't burn minutes on
 stale SHAs.
 
-Push-to-main runs are keyed per-SHA and never cancel. Every commit
-that lands on main runs its own full-matrix CI to completion, so
-the commit history carries a real per-commit pass/fail signal
-instead of a run of "cancelled" markers left behind when a burst of
-merges supersedes each other. A cancelled run on an already-merged
-commit reads as red forever and hides genuine failures behind
-noise; keying main by SHA removes that class of false red.
+Ordinary push-to-main runs remain branch-scoped and cancellable, but they no
+longer own the long-running `test` / coverage path. The cadence controller
+observes those CI-relevant push runs as demand and dispatches `ci.yml --ref
+main` at most once for each demand period. A queued, in-progress or completed
+full dispatch started after the latest relevant push suppresses a duplicate;
+cancelled/skipped dispatches are retried on the next tick.
 
-Tradeoff: a rapid merge wave now keeps N full main runs alive
-instead of one. The branch-scoped policy this replaces was chosen
-after a May 2026 wave of 13 merges in 90 minutes saturated the
-runner queue. The load stays bounded because main pushes are merged
-PRs, far fewer than PR-branch pushes, and PR-branch pushes still
-cancel, so the saturation source stays capped. The durable fix for
-burst load is the merge queue: `ci.yml` already triggers on
-`merge_group`, which tests each batch once on the prospective
-merged SHA.
+`workflow_dispatch` stays per-SHA and non-cancelling, so once the expensive
+full suite starts it can reach a readable verdict even if more merges land.
+Release pushes (`chore(release)` / `release:`) retain the same per-SHA,
+non-cancelling treatment and run the full suite immediately. The 45-minute
+schedule avoids the top of the hour; GitHub schedules remain best-effort, so
+operators should measure actual completed-verdict spacing after rollout.
 
 Background: see issue #1273 for the wave-merge race and the
 PR-vs-push split. The rationale is restated in the comment block
@@ -485,7 +487,9 @@ rolls up `needs.*.result` for all upstream jobs and applies
 intentional-skip allow-lists. The aggregator understands:
 
 - `docs_only` skips for content-only changes
-- `PR_ONLY` / `PUSH_ONLY` event-gated jobs
+- `POST_MERGE_PUSH_SKIPPABLE` for `test` / `coverage-report` on ordinary
+  main pushes; those skips are not accepted on full main dispatches or release
+  pushes
 - `MACOS_GATED` jobs that legitimately skip on non-macOS-sensitive PRs,
   and unconditionally on a `merge_group` ref
   (`MACOS_UNCONDITIONAL_SKIP_EVENTS`)

@@ -55,6 +55,18 @@ def test_close_ci_issues_waits_for_ci_gate(workflow: dict[str, object]) -> None:
     assert "needs.ci-gate.result == 'success'" in " ".join(condition.split())
 
 
+def test_close_ci_issues_requires_a_full_main_suite(workflow: dict[str, object]) -> None:
+    """A cheap ordinary push must not close issues raised by a full-suite failure."""
+    close_issues = _mapping(_jobs(workflow).get("close-ci-issues"))
+    condition = " ".join(str(close_issues.get("if", "")).split())
+
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "github.event_name == 'push'" in condition
+    assert "chore(release)" in condition
+    assert "release:" in condition
+    assert "refs/heads/main" in condition
+
+
 def test_close_ci_issues_comment_reports_gate_and_run_url(workflow: dict[str, object]) -> None:
     """Issue closure comments must point at the exact successful aggregate run."""
     close_issues = _mapping(_jobs(workflow).get("close-ci-issues"))
