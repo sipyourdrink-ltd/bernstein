@@ -115,7 +115,7 @@ class DuplicateGuard:
             existing_module = self._modules.get(key)
             if existing_module is not None:
                 raise error_type(
-                    f"{self._registry_name} {key!r} is already registered from "
+                    f"Duplicate {self._registry_name}: {key!r} is already registered from "
                     f"{existing_module!r}; refusing second registration from {module_path!r}"
                 )
             self._modules[key] = module_path

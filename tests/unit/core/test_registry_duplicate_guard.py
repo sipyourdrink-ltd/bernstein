@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from typing import Any
 
 import pytest
 from bernstein.core.models import ModelConfig
@@ -153,3 +154,89 @@ def test_duplicate_id_registration_raises_at_import() -> None:
     message = str(excinfo.value)
     assert f"{_FIXTURE_PACKAGE}.first" in message
     assert f"{_FIXTURE_PACKAGE}.second" in message
+
+
+# --- Slices migrated under issue #5104 ---
+
+
+def _dummy_tracker_factory(**kwargs: Any) -> Any:
+    return None
+
+
+class TestTrackersRegistryDuplicateGuard:
+    def test_tracker_registry_duplicate_raises_duplicate_tracker_error(self) -> None:
+        from bernstein.core.trackers.registry import DuplicateTrackerError, TrackerRegistry
+
+        registry = TrackerRegistry()
+        registry.register("test-tracker", _dummy_tracker_factory)
+
+        with pytest.raises(DuplicateTrackerError) as excinfo:
+            registry.register("test-tracker", _dummy_tracker_factory)
+
+        assert "test-tracker" in str(excinfo.value)
+        assert __name__ in str(excinfo.value)
+
+    def test_tracker_registry_overwrite_allows_reregistration(self) -> None:
+        from bernstein.core.trackers.registry import TrackerRegistry
+
+        registry = TrackerRegistry()
+        registry.register("test-tracker", _dummy_tracker_factory, summary="first")
+        registry.register("test-tracker", _dummy_tracker_factory, summary="second", overwrite=True)
+        assert registry.get("test-tracker").summary == "second"
+
+    def test_tracker_registry_unregister_allows_reregistration(self) -> None:
+        from bernstein.core.trackers.registry import TrackerRegistry
+
+        registry = TrackerRegistry()
+        registry.register("test-tracker", _dummy_tracker_factory)
+        registry.unregister("test-tracker")
+        registry.register("test-tracker", _dummy_tracker_factory)  # must not raise
+        assert registry.get("test-tracker") is not None
+
+
+class TestSandboxRegistryDuplicateGuard:
+    def test_sandbox_registry_duplicate_raises(self) -> None:
+        from bernstein.core.sandbox.registry import _Registry
+
+        registry = _Registry()
+        dummy_backend = object()  # type: ignore[arg-type]
+        registry.register("test-sandbox", dummy_backend)
+
+        with pytest.raises(DuplicateRegistrationError) as excinfo:
+            registry.register("test-sandbox", dummy_backend)
+
+        assert "Duplicate sandbox backend" in str(excinfo.value)
+        assert "test-sandbox" in str(excinfo.value)
+
+    def test_sandbox_registry_unregister_allows_reregistration(self) -> None:
+        from bernstein.core.sandbox.registry import _Registry
+
+        registry = _Registry()
+        dummy_backend = object()  # type: ignore[arg-type]
+        registry.register("test-sandbox", dummy_backend)
+        registry.unregister("test-sandbox")
+        registry.register("test-sandbox", dummy_backend)  # must not raise
+
+
+class TestStorageRegistryDuplicateGuard:
+    def test_storage_registry_duplicate_raises(self) -> None:
+        from bernstein.core.storage.registry import _Registry
+
+        registry = _Registry()
+        dummy_sink = object()  # type: ignore[arg-type]
+        registry.register("test-sink", dummy_sink)
+
+        with pytest.raises(DuplicateRegistrationError) as excinfo:
+            registry.register("test-sink", dummy_sink)
+
+        assert "Duplicate artifact sink" in str(excinfo.value)
+        assert "test-sink" in str(excinfo.value)
+
+    def test_storage_registry_unregister_allows_reregistration(self) -> None:
+        from bernstein.core.storage.registry import _Registry
+
+        registry = _Registry()
+        dummy_sink = object()  # type: ignore[arg-type]
+        registry.register("test-sink", dummy_sink)
+        registry.unregister("test-sink")
+        registry.register("test-sink", dummy_sink)  # must not raise
