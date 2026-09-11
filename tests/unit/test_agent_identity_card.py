@@ -111,6 +111,7 @@ class TestInScope:
         assert not card.in_scope("/src/api-internal/keys.pem")
         assert not card.in_scope("/src/apikeys")
         assert card.in_scope("/src/api/users.py")
+        assert card.in_scope(r"/src/api\users.py")
 
     @pytest.mark.parametrize(
         "path",
