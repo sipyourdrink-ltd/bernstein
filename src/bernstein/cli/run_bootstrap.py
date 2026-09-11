@@ -1750,6 +1750,7 @@ def _await_first_spawn_outcome(
     timeout_s: float = _FIRST_SPAWN_WAIT_S,
     poll_interval_s: float = _FIRST_SPAWN_POLL_S,
     narrate_wait: bool = False,
+    on_poll: Any = None,
 ) -> tuple[str, str | None]:
     """Briefly poll the task server for the outcome of the first agent spawn.
 
@@ -1772,6 +1773,8 @@ def _await_first_spawn_outcome(
             already reports an agent -- stays silent. Off by default so the
             non-interactive detach branch and ``--quiet`` keep today's
             chatter-free behaviour.
+        on_poll: Optional callable invoked on each polling iteration to
+            observe task progress before detach.
 
     Returns:
         ``("spawned", None)`` once at least one agent is live,
@@ -1785,6 +1788,9 @@ def _await_first_spawn_outcome(
 
     def _poll_once() -> tuple[str, str | None] | None:
         nonlocal unreachable_polls, transient_reason
+        if on_poll is not None:
+            with suppress(Exception):
+                on_poll()
         health = server_get("/health")
         if not isinstance(health, dict):
             unreachable_polls += 1

@@ -359,6 +359,8 @@ def _status_task_items(tasks: list[Task], now: float) -> list[dict[str, Any]]:
                 "retry_count": task.retry_count,
                 "blocked_reason": blocked_reason,
                 "model": task.model or "",
+                "adapter": task.cli or str(task.metadata.get("adapter") or ""),
+                "cli": task.cli or "",
                 "progress": _task_progress_pct(task),
                 "depends_on_count": len(task.depends_on),
                 "verification_count": task.verification_count,
