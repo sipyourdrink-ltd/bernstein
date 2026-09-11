@@ -1836,12 +1836,28 @@ jobs:
     env:
       # Single source of truth for the shard count. The `--shard i/N`
       # denominator below and the per-shard slice both key off this; bump
-      # it (and the `shard:` list) together to rescale the fan-out.
-      # The merge-queue lane fans out over eight shards: each queue build is
-      # on the critical path of every entry behind it, and the per-shard
-      # suite is the longest job in the run. Pull requests and pushes keep
-      # four; their shards run alongside other work rather than ahead of it.
-      TEST_SHARD_COUNT: ${{ github.event_name == 'merge_group' && '8' || '4' }}
+      # it (and the `shard:` list, plus the windows `exclude` rows) together
+      # to rescale the fan-out.
+      #
+      # Eight on ubuntu, four on windows -- keyed on the ROW rather than the
+      # event (#5794). The merge queue took eight first, because each queue
+      # build sits on the critical path of every entry behind it. The same
+      # argument turned out to hold for push: measured 2026-09-03..09-10, a
+      # single ubuntu shard was the critical path of every trunk run at a
+      # 28.7 min median against a 30.8 min median to `CI gate` -- under three
+      # minutes of everything else.
+      #
+      # "Their shards run alongside other work rather than ahead of it" was
+      # the reason to keep four, and the concurrency numbers do not support
+      # it: peak was 80 simultaneous hosted jobs, and the repository spent
+      # only 1.5% of that window at 60 or more. The suite runs each file in
+      # its own subprocess, so per-shard wall is close to linear in file
+      # count and doubling the fan-out roughly halves it.
+      #
+      # Windows stays at four: it is not on the critical path (the ubuntu
+      # row is slower), and a windows runner-minute is dearer than a linux
+      # one. See the `exclude` rows that drop shards 5-8 there.
+      TEST_SHARD_COUNT: ${{ matrix.os == 'windows-latest' && '4' || '8' }}
       # Main push coverage runs are slower than local file runs; keep the
       # per-file guard, but allow heavy adapter contract files to finish.
       BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
@@ -1872,13 +1888,26 @@ jobs:
         # operator invoking the workflow by hand is asking for coverage,
         # not queue throughput.
         python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["3.12", "3.13"]') || fromJSON('["3.13"]') }}
-        # Fan the per-file suite out across 4 deterministic shards per
-        # cell. Keep this list in sync with TEST_SHARD_COUNT above.
-        shard: ${{ github.event_name == 'merge_group' && fromJSON('[1, 2, 3, 4, 5, 6, 7, 8]') || fromJSON('[1, 2, 3, 4]') }}
+        # Fan the per-file suite out across deterministic shards per cell.
+        # The list is the WIDEST row (ubuntu, 8); windows drops 5-8 in
+        # `exclude` below because a matrix dimension cannot be computed from
+        # another dimension. Keep all three in sync with TEST_SHARD_COUNT.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
         exclude:
           # Coverage/JUnit upload only on ubuntu; skip duplicate slow jobs on Windows for 3.12
           - os: windows-latest
             python-version: "3.12"
+          # Windows runs four shards, so its TEST_SHARD_COUNT is 4 and shards
+          # 5-8 do not exist there. Without these rows they would run
+          # `--shard 5/4` and either fail or silently test nothing.
+          - os: windows-latest
+            shard: 5
+          - os: windows-latest
+            shard: 6
+          - os: windows-latest
+            shard: 7
+          - os: windows-latest
+            shard: 8
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -2200,6 +2229,7 @@ jobs:
       # Single source of truth for the shard count, mirrors
       # TEST_SHARD_COUNT in the `test` job above.
       MACOS_SHARD_COUNT: "4"
+      BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
     strategy:
       fail-fast: false
       matrix:

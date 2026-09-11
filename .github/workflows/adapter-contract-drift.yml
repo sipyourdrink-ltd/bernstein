@@ -230,6 +230,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # The summariser below runs `python`. The project's own runner has no
+      # bare `python` on PATH, only `python3`, so the interpreter has to be
+      # provisioned here the way the matrix job above provisions it -- the
+      # aggregate job is otherwise the one step in this workflow that never
+      # sets one up, and it exited 127 the first night the workflow ran off
+      # a hosted runner.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: drift-out
