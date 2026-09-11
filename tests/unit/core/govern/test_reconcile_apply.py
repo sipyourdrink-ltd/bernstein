@@ -127,9 +127,11 @@ def test_resume_applies_only_unsatisfied_entries() -> None:
     state: dict[str, str | None] = {"adapter-1": "v0", "adapter-2": "v0", "adapter-3": "v0"}
 
     # Simulate run 1 where adapter-1 succeeded, adapter-2 failed, adapter-3 was not attempted
+    c1 = compute_idempotency_key(entity_id="adapter-1", desired_value="v1")
+    c2 = compute_idempotency_key(entity_id="adapter-2", desired_value="v2")
     prior_attempts = (
         ChangeAttempt(
-            change_id="c1",
+            change_id=c1,
             change_type="mutate",
             target="adapter:adapter-1",
             attempted_at="2026-09-08T00:00:00Z",
@@ -137,7 +139,7 @@ def test_resume_applies_only_unsatisfied_entries() -> None:
             written_value="v1",
         ),
         ChangeAttempt(
-            change_id="c2",
+            change_id=c2,
             change_type="mutate",
             target="adapter:adapter-2",
             attempted_at="2026-09-08T00:00:00Z",
@@ -166,3 +168,67 @@ def test_resume_applies_only_unsatisfied_entries() -> None:
     assert len(resumed_attempts) == 3
     assert [a.outcome for a in resumed_attempts] == ["success", "success", "success"]
     assert state == {"adapter-1": "v1", "adapter-2": "v2", "adapter-3": "v3"}
+
+
+def test_resume_reapplies_when_policy_set_hash_changes() -> None:
+    """If policy_set_hash changes on resume, prior successes under the old policy are not skipped."""
+    entries = (_make_entry("adapter-1", declared="v1", observed="v0"),)
+    diff = ReconcileDiff(
+        run_id="reconcile-run-policy-change",
+        entries=entries,
+        inputs_hash="hash-xyz",
+        timestamp=1700000000,
+    )
+    state: dict[str, str | None] = {"adapter-1": "v0"}
+
+    old_c1 = compute_idempotency_key(entity_id="adapter-1", desired_value="v1", policy_set_hash="policy-v1")
+    prior_attempts = (
+        ChangeAttempt(
+            change_id=old_c1,
+            change_type="mutate",
+            target="adapter:adapter-1",
+            attempted_at="2026-09-08T00:00:00Z",
+            outcome="success",
+            written_value="v1",
+        ),
+    )
+
+    calls: list[str] = []
+
+    def applier(e: ReconcileEntry) -> tuple[str, str | None]:
+        calls.append(e.entity_id)
+        return ("v1-under-policy-v2", None)
+
+    # Resume with new policy_set_hash
+    resumed_attempts = apply_reconcile_diff(
+        diff,
+        state,
+        applier_fn=applier,
+        prior_attempts=prior_attempts,
+        policy_set_hash="policy-v2",
+    )
+
+    # Because policy_set_hash changed, adapter-1 must NOT be skipped
+    assert calls == ["adapter-1"]
+    assert len(resumed_attempts) == 1
+    assert resumed_attempts[0].outcome == "success"
+    assert resumed_attempts[0].written_value == "v1-under-policy-v2"
+
+
+def test_entry_satisfied_when_both_declared_and_observed_are_none() -> None:
+    """An already-absent entity (declared None, observed None) is skipped as satisfied."""
+    entry = _make_entry("adapter-del", declared=None, observed=None, action=DiffAction.REMOVE)
+    applier_called = False
+
+    def applier(e: ReconcileEntry) -> tuple[str, str | None]:
+        nonlocal applier_called
+        applier_called = True
+        return ("", None)
+
+    attempt = apply_reconcile_entry(
+        entry=entry,
+        observed_value=None,
+        applier_fn=applier,
+    )
+    assert not applier_called
+    assert attempt.outcome == "skipped"

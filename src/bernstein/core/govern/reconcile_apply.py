@@ -69,7 +69,7 @@ def apply_reconcile_entry(
     is_satisfied = (
         entry.action is DiffAction.NONE
         or entry.status is EntityStatus.UNCHANGED
-        or (entry.declared_value is not None and observed_value == entry.declared_value)
+        or (observed_value == entry.declared_value)
     )
 
     if is_satisfied:
@@ -149,14 +149,20 @@ def apply_reconcile_diff(
     When a change succeeds, `current_state` is updated in place.
     """
     ts = timestamp or datetime.now(UTC).isoformat()
-    already_succeeded_targets = {attempt.target: attempt for attempt in prior_attempts if attempt.outcome == "success"}
+    already_succeeded_by_change_id = {
+        attempt.change_id: attempt for attempt in prior_attempts if attempt.outcome == "success"
+    }
 
     results: list[ChangeAttempt] = []
     for entry in diff.entries:
-        target = f"{entry.kind.value}:{entry.entity_id}"
-        # If this entry already succeeded in a prior partial run, reuse the prior successful attempt
-        if target in already_succeeded_targets:
-            results.append(already_succeeded_targets[target])
+        expected_change_id = compute_idempotency_key(
+            entity_id=entry.entity_id,
+            desired_value=entry.declared_value,
+            policy_set_hash=policy_set_hash,
+        )
+        # If this entry already succeeded under the same policy and desired value, reuse it
+        if expected_change_id in already_succeeded_by_change_id:
+            results.append(already_succeeded_by_change_id[expected_change_id])
             continue
 
         observed = current_state.get(entry.entity_id)
@@ -199,8 +205,8 @@ def build_reconcile_change_receipt(
     return ChangeReceipt(
         plan_id=diff.run_id,
         plan_digest=diff.inputs_hash,
-        playbook_digest=playbook_digest or diff.inputs_hash,
-        environment_digest=environment_digest or diff.inputs_hash,
+        playbook_digest=playbook_digest,
+        environment_digest=environment_digest,
         approver_identity=approver,
         changes=tuple(attempts),
         final_status=final_status,
