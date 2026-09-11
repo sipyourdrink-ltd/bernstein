@@ -4,9 +4,9 @@ One recorded run, one exported bundle, and 21 questions that must be
 answerable **from the bundle alone** by someone who never had access to
 the machine that produced it.
 
-The score is `n/21`. It is a progress instrument, not a claim: nine
-questions have vectors, of which three pass and six explicitly
-record missing evidence with strict expected failures. The other twelve
+The score is `n/21`. It is a progress instrument, not a claim: thirteen
+questions have vectors, of which five pass and eight explicitly
+record missing evidence with strict expected failures. The other eight
 have no vector yet. This describes the committed scenario, not coverage
 of every production run.
 
@@ -31,6 +31,7 @@ of every production run.
 | `scoreboard.py` | Pytest plugin that records which questions the run answered. |
 | `test_vectors.py` | Integrity and independence vectors (15–20), with supporting controls. |
 | `test_data_endpoint_vectors.py` | Data and endpoint vectors (8–10). |
+| `test_attribution_vectors.py` | Attribution vectors (1, 2, 7, 14). |
 | `test_harness.py` | Holds the instrument honest; answers no question. |
 
 ## Commands
@@ -41,7 +42,7 @@ uv run python scripts/auditor_conformance.py regenerate
 
 # Run the vectors and print the score
 uv run python scripts/auditor_conformance.py score
-#   -> auditor conformance: 3/21
+#   -> auditor conformance: 5/21
 
 # Run the whole suite, harness included
 uv run pytest tests/conformance/auditor -q
@@ -74,7 +75,8 @@ and endpoints (8, 9, 10), integrity and independence (15, 16, 18, 19,
 only passing question-marked
 vectors move the score. Questions 8 and 9 assert the recorded restricted
 file and delegated model endpoint in both receipts. Question 10 remains
-a strict expected failure for missing admission history (#5038). No
+a strict expected failure for missing admission history (#5038). Questions 1 and 2 pass; 7 and 14 remain strict expected failures (no
+identity presented to the tool, no agent code/config/toolset digest). No
 fixture fields were added to answer these questions. A
 weak assertion that passes is worse than an honest failure: it hides
 exactly the gap this suite exists to measure.
