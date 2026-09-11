@@ -648,7 +648,7 @@ class TestDocs:
         docs_path = repo_root / "docs" / "eval" / "reliability.md"
         if not docs_path.exists():
             pytest.skip("docs file missing — caught by test_reliability_docs_file_exists")
-        content = docs_path.read_text()
+        content = docs_path.read_text(encoding="utf-8")
         assert "--reliability" in content
         assert "reliability-verify" in content
         assert "reliability-check" in content
