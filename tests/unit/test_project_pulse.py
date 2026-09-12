@@ -23,12 +23,16 @@ unattended every week into an issue everyone can read:
 from __future__ import annotations
 
 import importlib.util
+import io
 import itertools
 import json
 import re
+import urllib.error
 import xml.etree.ElementTree as ET
+from email.message import Message
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -88,6 +92,86 @@ def _history(weeks: int) -> dict[str, Any]:
         data["pr_merged_within_24h_pct"] = 80.0 + i
         history = _MOD.append_history(history, data)
     return history
+
+
+class _Response:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self.headers = Message()
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _http_error(status: int, **headers: str) -> urllib.error.HTTPError:
+    response_headers = Message()
+    for name, value in headers.items():
+        response_headers[name] = value
+    return urllib.error.HTTPError(
+        "https://api.github.com/test",
+        status,
+        "test failure",
+        response_headers,
+        io.BytesIO(b"{}"),
+    )
+
+
+def _urlopen_sequence(monkeypatch: pytest.MonkeyPatch, *responses: object) -> Mock:
+    urlopen = Mock(side_effect=list(responses))
+    monkeypatch.setattr(_MOD.urllib.request, "urlopen", urlopen)
+    return urlopen
+
+
+# ---------------------------------------------------------------------------
+# HTTP layer: bounded server-directed rate-limit recovery
+# ---------------------------------------------------------------------------
+
+
+def test_get_retries_rate_limit_using_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    urlopen = _urlopen_sequence(
+        monkeypatch,
+        _http_error(403, **{"Retry-After": "7"}),
+        _Response(b'{"ok": true}'),
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr(_MOD.time, "sleep", sleeps.append)
+
+    body, _ = _MOD.GitHubClient("token", interval_seconds=0).get("test")
+
+    assert body == {"ok": True}
+    assert urlopen.call_count == 2
+    assert sleeps == [7.0]
+
+
+@pytest.mark.parametrize("status,headers", [(403, {}), (404, {}), (500, {})])
+def test_get_keeps_non_rate_limit_http_errors_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, status: int, headers: dict[str, str]
+) -> None:
+    urlopen = _urlopen_sequence(monkeypatch, _http_error(status, **headers))
+
+    with pytest.raises(_MOD.PulseError, match=f"GitHub API {status}"):
+        _MOD.GitHubClient("token", interval_seconds=0).get("test")
+
+    assert urlopen.call_count == 1
+
+
+def test_get_bounds_rate_limit_retries_and_reports_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = _http_error(403, **{"Retry-After": "1", "X-RateLimit-Reset": "1789060000"})
+    urlopen = _urlopen_sequence(monkeypatch, *([error] * (_MOD.RATE_LIMIT_RETRY_LIMIT + 1)))
+    sleeps: list[float] = []
+    monkeypatch.setattr(_MOD.time, "sleep", sleeps.append)
+
+    with pytest.raises(_MOD.PulseError, match="reset at 1789060000"):
+        _MOD.GitHubClient("token", interval_seconds=0).get("test")
+
+    assert urlopen.call_count == _MOD.RATE_LIMIT_RETRY_LIMIT + 1
+    assert sleeps == [1.0] * _MOD.RATE_LIMIT_RETRY_LIMIT
 
 
 # ---------------------------------------------------------------------------

@@ -351,3 +351,23 @@ class TestBuildDefaultPipeline:
         steps = build_default_pipeline(NestedConfig())
         names = {s.name for s in steps}
         assert "lint" in names
+
+
+# ---------------------------------------------------------------------------
+# GateRunnerCommandsMixin contract
+# ---------------------------------------------------------------------------
+
+
+class TestGateRunnerCommandsMixinContract:
+    def test_gaterunner_does_not_inherit_gaterunnercommandsmixin(self) -> None:
+        from bernstein.core.quality.gate_commands import GateRunnerCommandsMixin
+        from bernstein.core.quality.gate_runner import GateRunner
+
+        assert GateRunnerCommandsMixin not in GateRunner.__mro__
+
+    def test_gaterunnercommandsmixin_docstring_does_not_claim_runtime_composition(self) -> None:
+        from bernstein.core.quality.gate_commands import GateRunnerCommandsMixin
+
+        doc = GateRunnerCommandsMixin.__doc__ or ""
+        assert "combined with" not in doc
+        assert "at runtime" not in doc

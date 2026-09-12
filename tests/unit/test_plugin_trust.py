@@ -294,3 +294,14 @@ class TestFormatTrustWarning:
         assert "Cryptographic signature" not in result
         assert "Source verified" not in result
         assert "never checked against a key" in result
+
+    def test_docstring_does_not_claim_unperformed_cryptographic_verification(self) -> None:
+        """The panel is pinned above; the class docstring was not.
+
+        A reader reaching for ``PluginTrust`` in an editor sees the docstring,
+        not the rendered panel, so the same claim has to be false in both
+        places or the fix only holds where somebody happened to test it.
+        """
+        doc = PluginTrust.__doc__ or ""
+        assert "valid cryptographic signature" not in doc
+        assert "verified provenance" not in doc

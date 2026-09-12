@@ -341,12 +341,19 @@ jobs:
         with:
           egress-policy: audit
       # persist-credentials kept: this job pushes the release tag back to git.
+      #
+      # Pinned to the commit the decision was made about. Without `ref:` this
+      # checked out whatever `main` pointed at when the job started, which is
+      # roughly one CI run after the gate read `inputs.head_sha` -- so the
+      # version below, and the tag built from it, could come from a commit the
+      # gate never looked at.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
         with:
+          ref: ${{ inputs.head_sha }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Read current version
+      # Read current version -- from head_sha's tree, per the checkout above.
       - name: Get version
         id: ver
         run: |
@@ -426,8 +433,45 @@ jobs:
         if: steps.final.outputs.deferred != 'true'
         env:
           FINAL_VERSION: ${{ steps.final.outputs.version }}
+          HEAD_SHA: ${{ inputs.head_sha }}
         run: |
-          git tag "v${FINAL_VERSION}"
+          set -euo pipefail
+
+          # Tag the commit the release decision was made about, named
+          # explicitly rather than inherited from HEAD. Observed on v3.19.2:
+          # the version bump landed as 0345f137e, the queue merged an
+          # unrelated PR 55 seconds later as f569d3fde, and the tag was
+          # created on f569d3fde. That instance was harmless; the mechanism
+          # folds whatever lands in that window into the release, including a
+          # commit the release was never tested with.
+          git tag "v${FINAL_VERSION}" "${HEAD_SHA}"
+
+          # Assert it, rather than trusting the argument. A tag that resolves
+          # anywhere else is a release of untested code and must not be pushed.
+          TAGGED=$(git rev-parse "v${FINAL_VERSION}^{commit}")
+          if [ "${TAGGED}" != "${HEAD_SHA}" ]; then
+            echo "::error::v${FINAL_VERSION} resolves to ${TAGGED}, not the validated ${HEAD_SHA}"
+            exit 1
+          fi
+
+          # The tip may have moved on while CI ran. Tagging head_sha is still
+          # correct -- it is the commit that passed -- but the release notes
+          # are reconciled against reality by hand, so name what is missing.
+          git fetch --quiet origin main
+          TIP=$(git rev-parse origin/main)
+          if [ "${TIP}" != "${HEAD_SHA}" ]; then
+            {
+              echo "### Release tagged behind the tip of \`main\`"
+              echo
+              echo "\`v${FINAL_VERSION}\` is on \`${HEAD_SHA}\`, the commit CI validated."
+              echo "\`main\` has since moved to \`${TIP}\`. Commits in between, NOT in this release:"
+              echo
+              echo '```'
+              git log --oneline --no-decorate "${HEAD_SHA}..${TIP}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           git push origin "v${FINAL_VERSION}"
 
       # A tag pushed with GITHUB_TOKEN does not emit a `push: tags` event, so

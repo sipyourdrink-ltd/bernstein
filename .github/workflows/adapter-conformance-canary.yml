@@ -231,6 +231,7 @@ jobs:
           # that it ran. The GITHUB_TOKEN fallback keeps forks and
           # secret-less environments working; see docs/operations/ci.md.
           GH_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if git diff --quiet -- src/bernstein/adapters/last_green.json docs/adapters/conformance-canary.md; then
@@ -250,7 +251,20 @@ jobs:
           uv run python scripts/canary_propose_branch.py \
             --branch "$BRANCH" \
             --base-ref main
-          git push --force -u origin "$BRANCH"
+          # Authenticated on the command line rather than through the
+          # credential `actions/checkout` persists. That credential reaches
+          # `git push` only on a hosted runner: the checkout writes it to a
+          # side config file wired in with `includeIf.gitdir:`, and the
+          # condition stops matching on the project's own runner. Nothing
+          # earlier in the job notices, because the repository is public and
+          # every read the run makes -- including the script's own fetch --
+          # needs no credential at all, so the failure surfaces here as
+          # "could not read Username for https://github.com" (#5770 moved
+          # this lane onto that runner). Same form the pulse lane already
+          # pushes with, and the same token the `gh pr create` below uses,
+          # so the branch and the pull request still carry one identity.
+          git push --force --quiet "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            "HEAD:refs/heads/${BRANCH}"
           EXISTING=$(gh pr list \
             --repo "${{ github.repository }}" \
             --head "$BRANCH" \

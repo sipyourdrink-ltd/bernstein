@@ -117,11 +117,34 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="lineage_tips",
         source="src/bernstein/core/lineage/tips.py",
-        tests=("tests/unit/lineage/",),
+        # The five files that actually detect a break in tips.py, plus the two
+        # that import it. Measured, not guessed: seeding `compute_tips`,
+        # `detect_forks` and `_group_by_path` with degenerate returns and
+        # running the whole of tests/unit/lineage/ fails exactly
+        # test_tips, test_gate, test_cli, test_conflict_cli and
+        # test_artifact_uri_boundaries. test_merge and test_signed_write_golden
+        # import tips without asserting on it and are kept as headroom, so a
+        # mutation on a line none of the five reaches is still seen.
+        #
+        # The directory has 706 tests and takes ~92s; these seven have 158 and
+        # take ~11s. That gap is not the tests -- 76s of the 89s is per-test
+        # autouse-fixture teardown, ~108ms on every test, against 11.3s of
+        # actual test work. The baseline therefore paid for 548 tests that
+        # cannot kill a single mutant, once for the baseline and again for
+        # every mutant run (#5595).
+        tests=(
+            "tests/unit/lineage/test_tips.py",
+            "tests/unit/lineage/test_gate.py",
+            "tests/unit/lineage/test_cli.py",
+            "tests/unit/lineage/test_conflict_cli.py",
+            "tests/unit/lineage/test_artifact_uri_boundaries.py",
+            "tests/unit/lineage/test_merge.py",
+            "tests/unit/lineage/test_signed_write_golden.py",
+        ),
         threshold=0.75,
         budget_seconds=600,
         max_candidates=60,
-        note="Lineage v1 tip tracker.",
+        note="Lineage v1 tip tracker. Baseline ~11s over 158 tests (was ~92s over 706).",
     ),
     Module(
         key="lineage_merge",
