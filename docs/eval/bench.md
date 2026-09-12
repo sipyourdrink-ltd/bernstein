@@ -247,6 +247,24 @@ is derived on load), and comparing against one reads as drift requiring
 
 ---
 
+## Abstention scoring, $\lambda$ penalty, and the three rates
+
+When an agent cannot verify a task, guessing introduces dangerous defects into codebases.
+Bernstein evaluation suites decouple **attempt accuracy** from **abstention decisions**,
+penalizing confident wrong answers under parameter $\lambda$ (defaulting to 1.0).
+
+### Evaluation rates & Expected value
+
+| Metric | Formula | Description & Invariant |
+|---|---|---|
+| **Resolve rate** | $\frac{\text{resolved}}{\text{attempted}} = \frac{\text{resolved}}{\text{total} - \text{skipped} - \text{abstained}}$ | Measures success among tasks the agent actually attempted. Backwards-compatible: identical to pass rate when abstentions are 0. |
+| **Abstain rate** | $\frac{\text{abstained}}{\text{total} - \text{skipped}}$ | Fraction of non-skipped tasks the agent voluntarily declined with a declared reason. |
+| **Confident-error rate** | $\frac{\text{wrong}}{\text{wrong} + \text{resolved}}$ | Fraction of attempted tasks that resulted in incorrect answers or runtime errors. |
+| **Expected value** ($EV_\lambda$) | $\frac{\text{resolved} \cdot (+1) + \text{abstained} \cdot 0 + \text{wrong} \cdot (-\lambda)}{\text{total} - \text{skipped}}$ | Expected payoff per instance under penalty $\lambda$. Declining a task ($0$) strictly beats a wrong answer ($-\lambda$). |
+| **Brier score** | $\frac{1}{N} \sum (\text{confidence}_i - \text{outcome}_i)^2$ | Calibration quality of declared confidence against observed binary resolution outcome. |
+
+---
+
 ## Python API
 
 ```python

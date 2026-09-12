@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from pathlib import Path
 
-InstanceStatus = Literal["resolved", "failed", "error", "skipped"]
+InstanceStatus = Literal["resolved", "failed", "error", "skipped", "abstained"]
 SummarySourceType = Literal["mock", "eval"]
 
 
@@ -41,6 +41,8 @@ class InstanceResult:
     agent_traces: list[AgentTrace] = field(default_factory=list)
     error_message: str = ""
     patch: str = ""  # Final unified diff applied to the repo
+    confidence: float = 1.0  # Declared prediction confidence in [0.0, 1.0]
+    abstention_reason: str = ""  # Stored reason if status == "abstained"
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -61,12 +63,18 @@ class ScenarioSummary:
     failed: int
     errors: int
     skipped: int
-    resolve_rate: float  # resolved / (total_instances - skipped)
+    resolve_rate: float  # resolved / (total_instances - skipped - abstained)
     mean_wall_time_s: float
     median_wall_time_s: float
     total_cost_usd: float
     mean_cost_per_instance_usd: float
     mean_tokens_per_instance: float
+    abstained: int = 0
+    abstain_rate: float = 0.0  # abstained / (total_instances - skipped)
+    confident_error_rate: float = 0.0  # wrong / (wrong + resolved)
+    lambda_penalty: float = 1.0
+    expected_value: float = 0.0  # (resolved * 1.0 + abstained * 0.0 + wrong * -lambda) / attempted
+    brier_score: float = 0.0
     verified: bool = False
     source_type: SummarySourceType = "mock"
     dataset: str = "princeton-nlp/SWE-bench_Lite"
@@ -82,8 +90,8 @@ class ScenarioSummary:
 
     @property
     def attempted_instances(self) -> int:
-        """Return the number of non-skipped instances."""
-        return self.total_instances - self.skipped
+        """Return the number of evaluated (non-skipped, non-abstained) instances."""
+        return self.total_instances - self.skipped - self.abstained
 
     @property
     def is_verified_public_result(self) -> bool:
@@ -97,6 +105,12 @@ class ScenarioSummary:
         scenario_name = str(payload.get("scenario_name", ""))
         total_instances = _coerce_int(payload.get("total_instances", 0))
 
+        payload.setdefault("abstained", 0)
+        payload.setdefault("abstain_rate", 0.0)
+        payload.setdefault("confident_error_rate", 0.0)
+        payload.setdefault("lambda_penalty", 1.0)
+        payload.setdefault("expected_value", 0.0)
+        payload.setdefault("brier_score", 0.0)
         payload.setdefault("verified", False)
         payload.setdefault("source_type", "mock")
         payload.setdefault("dataset", "princeton-nlp/SWE-bench_Lite")
@@ -129,7 +143,7 @@ def _coerce_int(value: object) -> int:
     return 0
 
 
-def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
+def aggregate(results: list[InstanceResult], lambda_penalty: float = 1.0) -> ScenarioSummary:
     """Compute summary statistics for a list of instance results."""
     if not results:
         raise ValueError("Cannot aggregate empty results list")
@@ -137,21 +151,34 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
     scenario_name = results[0].scenario_name
     total = len(results)
     resolved = sum(1 for r in results if r.resolved)
+    abstained = sum(1 for r in results if r.status == "abstained")
     failed = sum(1 for r in results if r.status == "failed" and not r.resolved)
     errors = sum(1 for r in results if r.status == "error")
     skipped = sum(1 for r in results if r.status == "skipped")
-    attempted = total - skipped
+    non_skipped = total - skipped
+    attempted = non_skipped - abstained
 
     resolve_rate = resolved / attempted if attempted > 0 else 0.0
+    abstain_rate = abstained / non_skipped if non_skipped > 0 else 0.0
+    wrong = failed + errors
+    confident_error_rate = wrong / (wrong + resolved) if (wrong + resolved) > 0 else 0.0
+    expected_value = (
+        (resolved * 1.0 + abstained * 0.0 + wrong * (-lambda_penalty)) / non_skipped if non_skipped > 0 else 0.0
+    )
 
-    wall_times = [r.wall_time_s for r in results if r.status not in ("skipped", "error")]
+    eval_items = [r for r in results if r.status != "skipped"]
+    brier_score = (
+        statistics.mean([(r.confidence - (1.0 if r.resolved else 0.0)) ** 2 for r in eval_items]) if eval_items else 0.0
+    )
+
+    wall_times = [r.wall_time_s for r in results if r.status not in ("skipped", "error", "abstained")]
     mean_wall = statistics.mean(wall_times) if wall_times else 0.0
     median_wall = statistics.median(wall_times) if wall_times else 0.0
 
     total_cost = sum(r.total_cost_usd for r in results)
     mean_cost = total_cost / attempted if attempted > 0 else 0.0
     mean_tokens = (
-        statistics.mean([r.total_tokens for r in results if r.status not in ("skipped", "error")])
+        statistics.mean([r.total_tokens for r in results if r.status not in ("skipped", "error", "abstained")])
         if wall_times
         else 0.0
     )
@@ -169,6 +196,12 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         total_cost_usd=total_cost,
         mean_cost_per_instance_usd=mean_cost,
         mean_tokens_per_instance=mean_tokens,
+        abstained=abstained,
+        abstain_rate=abstain_rate,
+        confident_error_rate=confident_error_rate,
+        lambda_penalty=lambda_penalty,
+        expected_value=expected_value,
+        brier_score=brier_score,
         sample_size=total,
         scenarios=[scenario_name],
     )
