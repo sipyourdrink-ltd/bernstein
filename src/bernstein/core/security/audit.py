@@ -147,6 +147,21 @@ EVENT_CHAIN_TORN_RECORD = "chain.torn_record"
 #: acknowledgement authorises sealing past a conflicting chain checkpoint.
 EVENT_CHAIN_TEAR_ACKNOWLEDGED = "chain.tear_acknowledged"
 
+#: Emitted when a delivery gap is detected (e.g., batch not acknowledged by
+#: the SIEM target). Details carry ``target``, ``expected_sequence``,
+#: ``actual_sequence``, ``segment_receipt``, and ``sequence``.
+EVENT_FORWARDING_OUTAGE = "export.forwarding_outage"
+
+#: Emitted when an export gap is detected during reconciliation (e.g.,
+#: sequence number discontinuity). Details carry ``target``, ``expected_range``,
+#: ``actual_range``, and ``sequence``.
+EVENT_EXPORT_GAP_DETECTED = "export.gap_detected"
+
+#: Emitted when an export failure occurs (e.g., batch fails to deliver to the
+#: SIEM target). Details carry ``target``, ``entries_sent``, ``error``,
+#: ``segment_receipt``, and ``sequence``.
+EVENT_EXPORT_FAILURE = "export.failure"
+
 
 class AuditKeyPermissionError(RuntimeError):
     """Raised when the audit key file has permissions looser than 0600."""
