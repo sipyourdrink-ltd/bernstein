@@ -14,6 +14,7 @@ is observable.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from click.testing import CliRunner
 from bernstein.cli.main import cli
 
 _MAIN_PY = Path(__file__).resolve().parents[2] / "src" / "bernstein" / "cli" / "main.py"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
+NL = chr(10)
 # Explicit name form only: ``receiver.add_command(obj, "name")``. Derived-name
 # calls like ``cli.add_command(cancel)`` are out of scope (#5101).
 _EXPLICIT_ADD_COMMAND = re.compile(
@@ -49,6 +52,130 @@ def test_no_command_registered_twice_on_the_same_group() -> None:
         counts[pair] = counts.get(pair, 0) + 1
     duplicates = sorted(pair for pair, n in counts.items() if n > 1)
     assert duplicates == [], f"add_command registered the same (receiver, name) more than once: {duplicates}"
+
+
+def _registration_owner_map(tree: ast.Module, this_module: str) -> dict[str, str]:
+    """Map each identifier in *tree* to the module that owns the object it names.
+
+    A group imported with ``from x.y import g`` is owned by ``x.y``; a group
+    defined here with ``@click.group(...)`` or assigned here is owned by
+    *this_module*. Two files that each define their own ``catalog_group`` are
+    therefore two different groups, not one group registered twice.
+    """
+    owner: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for alias in node.names:
+                owner[alias.asname or alias.name] = node.module
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for deco in node.decorator_list:
+                func = deco.func if isinstance(deco, ast.Call) else deco
+                if (isinstance(func, ast.Attribute) and func.attr == "group") or (
+                    isinstance(func, ast.Name) and func.id == "group"
+                ):
+                    owner[node.name] = this_module
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    owner.setdefault(target.id, this_module)
+    return owner
+
+
+def _literal_name(call: ast.Call, positional_index: int) -> str | None:
+    """The explicit command name a ``.command(...)`` / ``.add_command(...)`` call gives, if literal."""
+    for keyword in call.keywords:
+        if keyword.arg == "name" and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+            return keyword.value.value
+    if len(call.args) > positional_index:
+        arg = call.args[positional_index]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value
+    return None
+
+
+def _tree_wide_registrations() -> dict[tuple[str, str, str], list[str]]:
+    """``(owning module, group identifier, command name) -> [file:line, ...]`` across ``src/bernstein``.
+
+    Both spellings count: ``@group.command("x")`` and ``group.add_command(obj, "x")``.
+    ``@click.command(...)`` is the standalone-command decorator, not a registration,
+    and is skipped.
+    """
+    registrations: dict[tuple[str, str, str], list[str]] = {}
+    for path in sorted(_SRC.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+        except SyntaxError:
+            continue
+        module = ".".join(path.relative_to(_SRC.parent).with_suffix("").parts)
+        owner = _registration_owner_map(tree, module)
+        rel = path.relative_to(_SRC.parents[1]).as_posix()
+
+        def record(
+            group: str,
+            name: str,
+            lineno: int,
+            *,
+            owner: dict[str, str] = owner,
+            module: str = module,
+            rel: str = rel,
+        ) -> None:
+            key = (owner.get(group, module), group, name)
+            registrations.setdefault(key, []).append(f"{rel}:{lineno}")
+
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_command"
+                and isinstance(node.func.value, ast.Name)
+            ):
+                name = _literal_name(node, 1)
+                if name:
+                    record(node.func.value.id, name, node.lineno)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for deco in node.decorator_list:
+                    if not (
+                        isinstance(deco, ast.Call)
+                        and isinstance(deco.func, ast.Attribute)
+                        and deco.func.attr == "command"
+                        and isinstance(deco.func.value, ast.Name)
+                        and deco.func.value.id != "click"
+                    ):
+                        continue
+                    name = _literal_name(deco, 0)
+                    if name:
+                        record(deco.func.value.id, name, deco.lineno)
+    return registrations
+
+
+def test_no_command_registered_twice_across_the_tree() -> None:
+    """No explicit name may be registered twice on the same group, anywhere under ``src/``.
+
+    ``test_no_command_registered_twice_on_the_same_group`` above reads only
+    ``main.py`` and only the ``add_command`` spelling. Three real collisions
+    slipped past it, each the same mechanism -- ``Group.add_command`` is a
+    dict assignment, so the later registration silently replaces the earlier
+    one with no error at import or at run time:
+
+    * two ``@bench_group.command(name="compare")`` in ``eval/bench/bench_cli.py``
+      (decorator spelling, not ``main.py``);
+    * ``govern_group.add_command(..., "audit")`` in ``cli/commands/governance_cmd.py``
+      on top of an existing ``@govern_group.command("audit")`` (not ``main.py``);
+    * two ``cli.add_command(govern_group, "govern")`` that only met after a
+      rebase, because each branch imported a *different* ``govern_group``.
+
+    The check resolves each group identifier to the module that owns it, so
+    two files that each define their own ``catalog_group`` are correctly two
+    groups. It is a source scan rather than a probe of the live ``cli``
+    object for the reason the sibling test gives: the live dict is blind to
+    the overwrite it just performed.
+    """
+    duplicates = {key: sites for key, sites in _tree_wide_registrations().items() if len(sites) > 1}
+    lines = [
+        f"  {owner}.{group} <- {name!r}" + "".join(f"{NL}    {site}" for site in sites)
+        for (owner, group, name), sites in sorted(duplicates.items())
+    ]
+    assert duplicates == {}, "the same command name is registered more than once on one group:" + NL + NL.join(lines)
 
 
 def _command_names() -> list[str]:
