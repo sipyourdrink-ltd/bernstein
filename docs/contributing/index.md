@@ -18,7 +18,7 @@ organized, and the contracts new adapters and hooks must satisfy.
 
     How review works and how the test suite is organized.
 
-    [:octicons-arrow-right-24: Code review process](../CODE_REVIEW.md)
+    [:octicons-arrow-right-24: Code review](../CODE_REVIEW.md)
     &middot;
     [Testing and CI hardening](testing.md)
     &middot;
