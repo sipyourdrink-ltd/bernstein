@@ -274,7 +274,7 @@ _LABELS_TO_ENSURE = (
 
 
 def ensure_labels(repo: str) -> None:
-    existing = set(gh_json("label", "list", "--repo", repo, "--limit", "300", "--json", "name"))
+    existing = gh_json("label", "list", "--repo", repo, "--limit", "300", "--json", "name")
     existing_names = {e["name"] for e in existing} if existing and isinstance(existing, list) else set()
     for name, color, description in _LABELS_TO_ENSURE:
         if name in existing_names:
