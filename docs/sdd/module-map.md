@@ -193,6 +193,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
 | `trivy.py`                  | Feed-pinned Trivy scanner adapter and SARIF normalization |
 | `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
+| `vault_lease_backend.py`    | Vault-lease-backed :class:`CredentialVault` implementation |
 | `ci/`                       | CI system adapters for log parsing and failure extraction |
 | `digest/`                   | Tool output digesters registry and ruleset models |
 | `directory/`                | Directory provisioning adapters |

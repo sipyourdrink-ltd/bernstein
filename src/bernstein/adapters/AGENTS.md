@@ -16,6 +16,7 @@ a task prompt becomes a CLI invocation and results stream back. One module per t
 | `http_429_classifier.py` | Classifies HTTP 429 errors into standing quotas vs. transient rate limits |
 | `onboarding.py` | Interactive probe and capability discovery for newly installed agent CLIs |
 | `mock.py` | Mock agent for zero-API-key demos; produces the same completion evidence real agents do (`Modified:` log lines plus a per-fix commit scoped to the mutated file) |
+| `vault_lease_backend.py` | HashiCorp Vault lease-backed credential vault — issues short-lived dynamic leases, no local secret storage |
 
 ## Invariants
 
