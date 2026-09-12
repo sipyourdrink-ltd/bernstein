@@ -43,9 +43,13 @@ def _task(make_task: Any, **overrides: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def test_sanitise_for_log_strips_crlf() -> None:
-    """CR and LF are removed so log lines cannot be forged."""
-    assert _sanitise_for_log("line1\nline2\rline3") == "line1line2line3"
+def test_sanitise_for_log_escapes_crlf() -> None:
+    """CR and LF are escaped, not stripped, so log lines cannot be forged.
+
+    Was strip-only before #5749 consolidated this onto sanitize_log(); the
+    value's content now survives (escaped) rather than silently vanishing.
+    """
+    assert _sanitise_for_log("line1\nline2\rline3") == "line1\\nline2\\rline3"
 
 
 def test_sanitise_for_log_empty_passthrough() -> None:

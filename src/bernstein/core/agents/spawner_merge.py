@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Final
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.models import AgentBackend, AgentSession
 from bernstein.core.prometheus import merge_duration
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace
 from bernstein.plugins.manager import get_plugin_manager
 
@@ -80,15 +81,16 @@ def _record_merge_refusal(
 
 
 def _sanitise_for_log(value: str) -> str:
-    """Strip CR/LF from ``value`` so attacker-controlled input cannot
-    inject fake log lines.
+    """Escape record-boundary and control characters in ``value`` so
+    attacker-controlled input cannot inject fake log lines.
 
     Used at every log site that touches data read out of the pending
     pushes file or subprocess stderr (CodeQL/Sonar py/log-injection
-    S5145). Keep this function cheap and side-effect-free -- it is
-    called inside the spawner hot path.
+    S5145). Delegates to :func:`sanitize_log` (issue #5749 -- one escaper,
+    not three) rather than this module's own CR/LF strip; kept as a
+    thin, module-private alias so every call site above is unchanged.
     """
-    return value.replace("\r", "").replace("\n", "") if value else value
+    return sanitize_log(value)
 
 
 # ---------------------------------------------------------------------------

@@ -134,6 +134,7 @@ from bernstein.core.security.executor_admission import (
     AdmissionPolicyError,
     AdmissionSubject,
 )
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
@@ -274,15 +275,17 @@ def emit_process_reap_receipt(
 
 
 def _sanitise_for_log(value: str) -> str:
-    """Strip CR/LF from ``value`` so attacker-controlled input cannot
-    inject fake log lines.
+    """Escape record-boundary and control characters in ``value`` so
+    attacker-controlled input cannot inject fake log lines.
 
     Used at every log site that touches data read out of the pending
     pushes file or subprocess stderr (CodeQL/Sonar py/log-injection
-    S5145). Keep this function cheap and side-effect-free - it is
-    called inside the spawner hot path.
+    S5145). Delegates to :func:`sanitize_log` (issue #5749 -- one escaper,
+    not three, and this was a fourth: identical to ``spawner_merge``'s copy,
+    unused within this module, and re-exported to callers through
+    ``spawner.py`` only).
     """
-    return value.replace("\r", "").replace("\n", "") if value else value
+    return sanitize_log(value)
 
 
 # ---------------------------------------------------------------------------
