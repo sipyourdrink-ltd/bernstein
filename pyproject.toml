@@ -133,6 +133,7 @@ dependencies = [
     # and ``bernstein doctor`` crashed with ModuleNotFoundError. Promoted to a
     # direct dependency so the resolver always installs it. Pure-Python.
     "packaging>=24",
+    "tzdata>=2026.2",
 ]
 
 [project.urls]
