@@ -76,6 +76,41 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def idempotency_key(entity_id: str, desired_value: str) -> str:
+    """Derive a stable idempotency key from an entity id and a desired value.
+
+    The key is ``sha256(entity_id + ":" + sha256(desired_value))`` so the
+    desired value is never stored in the key and the key is stable across
+    callers who hold the same entity_id and desired_value pair.
+
+    Args:
+        entity_id: The resource being changed (e.g. ``"iam.User:alice"``).
+        desired_value: The target value to write (pre-image; not stored).
+
+    Returns:
+        A hex-encoded SHA-256 digest string.
+    """
+    value_digest = _sha256_hex(desired_value.encode())
+    raw = f"{entity_id}:{value_digest}".encode()
+    return _sha256_hex(raw)
+
+
+def is_already_satisfied(observed_value: str, desired_value: str) -> bool:
+    """Return True when the observed value already equals the desired value.
+
+    A caller that finds ``True`` should record a ``ChangeAttempt`` with
+    ``outcome="skipped"`` and perform no side effect.
+
+    Args:
+        observed_value: The value currently on the target resource.
+        desired_value: The value the change would write.
+
+    Returns:
+        ``True`` when no write is needed, ``False`` otherwise.
+    """
+    return observed_value == desired_value
+
+
 def _sort_recursive(value: Any) -> Any:
     """Recursively reorder dict keys so canonical JSON is byte-stable."""
     if isinstance(value, dict):

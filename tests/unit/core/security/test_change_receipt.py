@@ -29,6 +29,8 @@ from bernstein.core.security.change_receipt import (
     ChangeReceipt,
     canonical_bytes,
     change_receipt_payload_errors,
+    idempotency_key,
+    is_already_satisfied,
 )
 from bernstein.core.skills.catalog.signature import generate_signer_keypair
 
@@ -335,6 +337,61 @@ class TestVerifyReceipt:
 # ---------------------------------------------------------------------------
 # canonical_bytes
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# idempotency_key and is_already_satisfied  (#5086 Slice 1)
+# ---------------------------------------------------------------------------
+
+
+class TestIdempotencyFunctions:
+    """Pure-function idempotency primitives for the apply loop (#5086)."""
+
+    def test_idempotency_key_is_stable_for_same_entity_and_desired_value(self) -> None:
+        """Same inputs always produce the same key."""
+        k1 = idempotency_key("iam.User:alice", "role:admin")
+        k2 = idempotency_key("iam.User:alice", "role:admin")
+        assert k1 == k2
+
+    def test_idempotency_key_changes_when_entity_id_changes(self) -> None:
+        """Different entity_id → different key even with the same desired value."""
+        k1 = idempotency_key("iam.User:alice", "role:admin")
+        k2 = idempotency_key("iam.User:bob", "role:admin")
+        assert k1 != k2
+
+    def test_idempotency_key_changes_when_desired_value_changes(self) -> None:
+        """Different desired_value → different key for the same entity."""
+        k1 = idempotency_key("iam.User:alice", "role:admin")
+        k2 = idempotency_key("iam.User:alice", "role:viewer")
+        assert k1 != k2
+
+    def test_idempotency_key_is_hex_string(self) -> None:
+        """The key is a 64-character lower-case hex string (SHA-256 output)."""
+        k = idempotency_key("target:x", "value")
+        assert len(k) == 64
+        assert all(c in "0123456789abcdef" for c in k)
+
+    def test_idempotency_key_does_not_contain_desired_value(self) -> None:
+        """The desired value is not embedded in the key (it is hashed, not concatenated)."""
+        desired = "super-secret-value"
+        k = idempotency_key("res:1", desired)
+        assert desired not in k
+
+    def test_is_already_satisfied_true_when_equal(self) -> None:
+        """Returns True when observed equals desired — no write needed."""
+        assert is_already_satisfied("role:admin", "role:admin") is True
+
+    def test_is_already_satisfied_false_when_different(self) -> None:
+        """Returns False when observed differs from desired — a write is needed."""
+        assert is_already_satisfied("role:viewer", "role:admin") is False
+
+    def test_is_already_satisfied_false_for_empty_vs_nonempty(self) -> None:
+        """A missing observed value is not the same as a non-empty desired value."""
+        assert is_already_satisfied("", "some-value") is False
+
+    def test_is_already_satisfied_true_for_both_empty(self) -> None:
+        """Two empty strings are equal — already satisfied."""
+        assert is_already_satisfied("", "") is True
 
 
 class TestCanonicalBytes:
