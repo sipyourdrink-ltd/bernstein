@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from bernstein.core.credential_scoping import AgentCredentialPolicy
     from bernstein.core.secrets import SecretsConfig
@@ -219,13 +219,14 @@ _EMBEDDED_TEAMS_DENY_SUFFIXES: tuple[str, ...] = (
 )
 
 
-def _embedded_teams_opt_in() -> bool:
+def _embedded_teams_opt_in(source_env: Mapping[str, str] | None = None) -> bool:
     """Return True only when the operator explicitly re-permits embedded teams.
 
     Truthy set is deliberately narrow (``1``/``true``/``yes``/``on``, case
     insensitive) so a stray empty or ``0`` value keeps deny-by-default.
     """
-    raw = os.environ.get(_EMBEDDED_TEAMS_OPT_IN_VAR, "")
+    env = source_env if source_env is not None else os.environ
+    raw = env.get(_EMBEDDED_TEAMS_OPT_IN_VAR, "")
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -286,6 +287,7 @@ def record_embedded_teams_opt_in(
 def build_filtered_env(
     extra_keys: Iterable[str] = (),
     *,
+    base_env: Mapping[str, str] | None = None,
     secrets_config: SecretsConfig | None = None,
     agent_id: str | None = None,
     role: str | None = None,
@@ -312,6 +314,8 @@ def build_filtered_env(
         extra_keys: Additional variable names to include beyond the base
             allowlist.  Pass the adapter-specific API key name(s) here,
             e.g. ``["ANTHROPIC_API_KEY"]``.
+        base_env: Optional source environment to filter from; defaults to
+            ``os.environ``.
         secrets_config: Optional secrets manager configuration. When set,
             API keys are loaded from the external provider instead of
             (or in addition to) environment variables.
@@ -373,7 +377,8 @@ def build_filtered_env(
         requested_extra = frozenset(scoped)
 
     allowed = _BASE_ALLOWLIST | requested_extra
-    env = {k: v for k, v in os.environ.items() if k in allowed}
+    source_env = base_env if base_env is not None else os.environ
+    env = {k: v for k, v in source_env.items() if k in allowed}
 
     # Deny-by-default: strip embedded agent-team spawning gates even if an
     # operator-widened allowlist (or a future permissive path) let one through.
@@ -382,7 +387,7 @@ def build_filtered_env(
     # rather than trusting every caller's ``extra_keys``.  An explicit host
     # opt-in re-permits it; the spawn path is expected to attest the decision
     # via :func:`record_embedded_teams_opt_in` so the team stays auditable.
-    if not _embedded_teams_opt_in():
+    if not _embedded_teams_opt_in(source_env):
         env = {k: v for k, v in env.items() if not _is_embedded_teams_gate(k)}
 
     # Ensure PYTHONPATH includes directories needed by bernstein's own
@@ -421,7 +426,7 @@ def build_filtered_env(
     # PYTHONPATH injection).  A secrets provider that returned an embedded
     # agent-team gate must not be able to reintroduce it past the earlier
     # strip; the deny-by-default posture holds right up to the return.
-    if not _embedded_teams_opt_in():
+    if not _embedded_teams_opt_in(source_env):
         env = {k: v for k, v in env.items() if not _is_embedded_teams_gate(k)}
 
     return env
