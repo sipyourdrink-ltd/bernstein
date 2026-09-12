@@ -1195,6 +1195,35 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
     _trace_show_task(task_id, traces_dir=traces_dir, as_json=as_json)
 
 
+def _ledger_entries_for_entity(sdd_dir: Path, entity_id: str) -> list[tuple[str, Any]]:
+    """Return ``(run_id, LedgerEntry)`` pairs from every run ledger referencing ``entity_id``.
+
+    A work ledger is scoped per run, under ``<sdd_dir>/runtime/ledger/<run_id>/``.
+    ``entity_id`` may name the run itself (the ledger directory) or a task
+    inside it (``LedgerEntry.task_id``), so both are checked. Deliberately
+    reads the ledger root path directly rather than going through
+    :func:`bernstein.core.persistence.work_ledger.default_ledger_root`, which
+    creates it on first use -- a read-only ``follow`` must not create a
+    ``.sdd/runtime/ledger/`` directory as a side effect of a query that finds
+    nothing.
+    """
+    from bernstein.core.persistence.work_ledger import LedgerReader
+
+    ledger_root = sdd_dir / "runtime" / "ledger"
+    if not ledger_root.is_dir():
+        return []
+    found: list[tuple[str, Any]] = []
+    for run_dir in sorted(p for p in ledger_root.iterdir() if p.is_dir()):
+        reader = LedgerReader(run_dir)
+        if not reader.exists():
+            continue
+        run_matches = run_dir.name == entity_id
+        for entry in reader.entries():
+            if run_matches or entry.task_id == entity_id:
+                found.append((run_dir.name, entry))
+    return found
+
+
 @trace_cmd.command("follow")
 @click.argument("entity_id")
 @click.option(
@@ -1206,13 +1235,15 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
 )
 @click.pass_context
 def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
-    """Show every trace entry that references ENTITY_ID, oldest first.
+    """Show every trace or ledger entry that references ENTITY_ID, oldest first.
 
     `trace show` globs filenames for one task id and prints whichever file
     matches, once. An entity id -- a task, a run, a grant -- appears across
-    several traces, and following it meant exporting and grepping.
+    several journals, and following it meant exporting and grepping each one
+    separately. This joins two of them by that id: the trace store and the
+    work ledger.
 
-    Ordering is by start time, and ties break on trace id, so a finished run
+    Ordering is by timestamp, with a total tie-break, so a finished run
     prints byte-identically on every invocation.
     """
     from bernstein.core.observability.trace_store import ContentAddressedTraceStore
@@ -1232,37 +1263,78 @@ def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
     # same finished run print differently after a rebuild.
     matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
 
-    if not matches:
+    ledger_entries = _ledger_entries_for_entity(traces_path.parent, entity_id)
+
+    if not matches and not ledger_entries:
         console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
         raise SystemExit(1)
 
     if as_json:
-        console.print_json(json.dumps([entry.to_dict() for entry in matches]))
+        rows: list[tuple[float, str, dict[str, Any]]] = [
+            (entry.started_at, f"trace:{entry.trace_id}", {**entry.to_dict(), "source": "trace"}) for entry in matches
+        ]
+        rows.extend(
+            (entry.ts, f"ledger:{run_id}:{entry.seq}", {**entry.to_dict(), "source": "ledger", "run_id": run_id})
+            for run_id, entry in ledger_entries
+        )
+        rows.sort(key=lambda row: (row[0], row[1]))
+        console.print_json(json.dumps([row[2] for row in rows]))
         return
 
     from rich.table import Table
 
-    table = Table(
-        title=f"Traces referencing {entity_id}",
-        show_header=True,
-        header_style="bold cyan",
-    )
-    table.add_column("Started")
-    table.add_column("Trace")
-    table.add_column("Task")
-    table.add_column("Model")
-    table.add_column("Bytes", justify="right")
-    for entry in matches:
-        table.add_row(
-            _trace_timestamp(entry.started_at),
-            entry.trace_id,
-            entry.task_id or "-",
-            entry.model or "-",
-            str(entry.byte_size),
+    if matches:
+        table = Table(
+            title=f"Traces referencing {entity_id}",
+            show_header=True,
+            header_style="bold cyan",
         )
-    console.print(table)
-    suffix = "y" if len(matches) == 1 else "ies"
-    console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
+        table.add_column("Started")
+        table.add_column("Trace")
+        table.add_column("Task")
+        table.add_column("Model")
+        table.add_column("Bytes", justify="right")
+        for entry in matches:
+            table.add_row(
+                _trace_timestamp(entry.started_at),
+                entry.trace_id,
+                entry.task_id or "-",
+                entry.model or "-",
+                str(entry.byte_size),
+            )
+        console.print(table)
+
+    if ledger_entries:
+        ledger_entries_sorted = sorted(ledger_entries, key=lambda pair: (pair[1].ts, pair[0], pair[1].seq))
+        ledger_table = Table(
+            title=f"Ledger entries referencing {entity_id}",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        ledger_table.add_column("Time")
+        ledger_table.add_column("Run")
+        ledger_table.add_column("Seq", justify="right")
+        ledger_table.add_column("Kind")
+        ledger_table.add_column("Task")
+        for run_id, entry in ledger_entries_sorted:
+            ledger_table.add_row(
+                _trace_timestamp(entry.ts),
+                run_id,
+                str(entry.seq),
+                entry.kind,
+                entry.task_id or "-",
+            )
+        console.print(ledger_table)
+
+    if ledger_entries:
+        trace_suffix = "y" if len(matches) == 1 else "ies"
+        ledger_suffix = "y" if len(ledger_entries) == 1 else "ies"
+        console.print(
+            f"[dim]{len(matches)} trace entr{trace_suffix}, {len(ledger_entries)} ledger entr{ledger_suffix}[/dim]"
+        )
+    else:
+        suffix = "y" if len(matches) == 1 else "ies"
+        console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
 
 
 def _trace_timestamp(epoch: float) -> str:
