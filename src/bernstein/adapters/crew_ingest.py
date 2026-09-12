@@ -33,10 +33,10 @@ from bernstein.plugins import hookimpl
 
 def _canonical_json(obj: Any) -> str:
     """Deterministic JSON string without whitespace, sorted keys."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
-def _digest_args(args: Mapping[str, Any] | str | None) -> str:
+def _digest_args(args: Any) -> str:
     """Compute sha256 digest of tool call arguments."""
     if args is None:
         raw = "{}"
@@ -53,7 +53,7 @@ class CrewToolCall:
 
     name: str
     tool_call_id: str
-    arguments: dict[str, Any]
+    arguments: Any
     arguments_digest: str
     output: Any = None
 
@@ -64,11 +64,12 @@ class CrewToolCall:
         raw_args = raw.get("args") or raw.get("arguments") or {}
         if isinstance(raw_args, str):
             try:
-                args = json.loads(raw_args)
+                parsed = json.loads(raw_args)
+                args = parsed if isinstance(parsed, (dict, list)) else {"raw": parsed}
             except Exception:
                 args = {"raw": raw_args}
-        elif isinstance(raw_args, dict):
-            args = dict(raw_args)
+        elif isinstance(raw_args, (dict, list)):
+            args = raw_args
         else:
             args = {"raw": str(raw_args)}
 
@@ -343,7 +344,7 @@ class CrewIngestAdapter:
         # If existing receipts cover all handoffs with matching hops, return them
         if existing_receipts and len(existing_receipts) == len(run.handoffs):
             matched = True
-            for receipt, handoff in zip(existing_receipts, run.handoffs, strict=False):
+            for receipt, handoff in zip(existing_receipts, run.handoffs, strict=True):
                 if receipt.issuer != f"role:{handoff.from_role}" or receipt.subject != f"role:{handoff.to_role}":
                     matched = False
                     break
@@ -396,11 +397,10 @@ class CrewIngestAdapter:
         ledger: DelegationLedger,
         run_id: str,
         *,
-        key: bytes | None = None,
+        key: bytes,
     ) -> ChainResult:
         """Verify the cryptographic delegation chain and authority of *run_id*."""
-        hmac_key = key if key is not None else ledger._key
-        return verify_run_chain(root=ledger.root, run_id=run_id, key=hmac_key)
+        return verify_run_chain(root=ledger.root, run_id=run_id, key=key)
 
 
 class CrewCallbackHandler:
@@ -410,7 +410,7 @@ class CrewCallbackHandler:
         self.run_id = run_id
         self.crew_id = crew_id
         self._roles: dict[str, dict[str, Any]] = {}
-        self._tasks: dict[str, dict[str, Any]] = {}
+        self._tasks: list[dict[str, Any]] = []
         self._handoffs: list[dict[str, Any]] = []
         self._current_role: str | None = None
 
@@ -430,35 +430,44 @@ class CrewCallbackHandler:
         self._current_role = role_id
         if role_id not in self._roles:
             self.register_role(role_id, role_id)
-        self._tasks[task_id] = {
-            "task_id": task_id,
-            "description": description,
-            "assigned_role": role_id,
-            "tool_calls": [],
-        }
+        occurrences = sum(1 for t in self._tasks if t.get("name") == task_id or t.get("task_id") == task_id)
+        effective_id = task_id if occurrences == 0 else f"{task_id}:{occurrences}"
+        self._tasks.append(
+            {
+                "task_id": effective_id,
+                "name": task_id,
+                "description": description,
+                "assigned_role": role_id,
+                "tool_calls": [],
+            }
+        )
 
     def on_tool_call(
         self,
         task_id: str,
         tool_name: str,
         call_id: str,
-        args: dict[str, Any],
+        args: Any,
         output: Any = None,
     ) -> None:
-        if task_id in self._tasks:
-            self._tasks[task_id]["tool_calls"].append(
-                {
-                    "name": tool_name,
-                    "id": call_id,
-                    "args": args,
-                    "arguments_digest": _digest_args(args),
-                    "output": output,
-                }
-            )
+        for task in reversed(self._tasks):
+            if task.get("task_id") == task_id or task.get("name") == task_id:
+                task["tool_calls"].append(
+                    {
+                        "name": tool_name,
+                        "id": call_id,
+                        "args": args,
+                        "arguments_digest": _digest_args(args),
+                        "output": output,
+                    }
+                )
+                break
 
     def on_task_complete(self, task_id: str, output: Any = None) -> None:
-        if task_id in self._tasks:
-            self._tasks[task_id]["output"] = output
+        for task in reversed(self._tasks):
+            if task.get("task_id") == task_id or task.get("name") == task_id:
+                task["output"] = output
+                break
 
     def on_task_finish(self, task_id: str, output: Any = None) -> None:
         """Alias for on_task_complete."""
@@ -489,7 +498,7 @@ class CrewCallbackHandler:
             "run_id": self.run_id,
             "crew_id": self.crew_id,
             "roles": list(self._roles.values()),
-            "tasks": list(self._tasks.values()),
+            "tasks": list(self._tasks),
             "handoffs": list(self._handoffs),
         }
 

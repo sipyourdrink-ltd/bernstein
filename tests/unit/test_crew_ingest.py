@@ -259,3 +259,36 @@ def test_ingest_validation_errors(adapter: CrewIngestAdapter) -> None:
 
     with pytest.raises(TypeError, match="Unsupported data type"):
         adapter.ingest_trace(12345)  # type: ignore[arg-type]
+
+
+def test_tool_call_non_serializable_args_handled_gracefully() -> None:
+    """Non-serializable argument objects (e.g. datetime) serialize gracefully without error."""
+    import datetime
+    from bernstein.adapters.crew_ingest import CrewToolCall
+
+    now = datetime.datetime(2026, 9, 12, 10, 0, 0)
+    tc = CrewToolCall.from_dict({
+        "name": "calendar_query",
+        "id": "tc-date-1",
+        "args": {"time": now, "items": [1, 2]},
+    })
+    assert "2026-09-12" in tc.arguments_digest or tc.arguments_digest.startswith("sha256:")
+
+
+def test_crew_callback_handler_handles_repeated_task_ids() -> None:
+    """Repeated task starts with the same task ID (retries/loops) preserve all executions."""
+    handler = CrewCallbackHandler(run_id="run-retry", crew_id="retry-crew")
+    handler.on_task_start(task_id="retry-task", description="attempt 1", role_id="worker")
+    handler.on_tool_call(task_id="retry-task", tool_name="tool_a", call_id="c1", args={"attempt": 1})
+    handler.on_task_complete(task_id="retry-task", output="failed")
+
+    handler.on_task_start(task_id="retry-task", description="attempt 2", role_id="worker")
+    handler.on_tool_call(task_id="retry-task", tool_name="tool_a", call_id="c2", args={"attempt": 2})
+    handler.on_task_complete(task_id="retry-task", output="success")
+
+    trace = handler.export_trace()
+    assert len(trace["tasks"]) == 2
+    assert trace["tasks"][0]["task_id"] == "retry-task"
+    assert trace["tasks"][1]["task_id"] == "retry-task:1"
+    assert trace["tasks"][0]["output"] == "failed"
+    assert trace["tasks"][1]["output"] == "success"
