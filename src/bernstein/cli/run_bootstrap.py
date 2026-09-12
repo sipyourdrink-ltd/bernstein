@@ -1789,8 +1789,10 @@ def _await_first_spawn_outcome(
     def _poll_once() -> tuple[str, str | None] | None:
         nonlocal unreachable_polls, transient_reason
         if on_poll is not None:
-            with suppress(Exception):
+            try:
                 on_poll()
+            except Exception as exc:
+                logger.warning("on_poll callback failed: %s", exc, exc_info=True)
         health = server_get("/health")
         if not isinstance(health, dict):
             unreachable_polls += 1

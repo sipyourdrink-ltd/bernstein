@@ -701,7 +701,7 @@ class TaskStateProgressTracker:
 
     @staticmethod
     def format_line(task_id: str, state: str, adapter: str, model: str, title: str) -> str:
-        clean_title = title.replace("\n", " ").strip()[:60]
+        clean_title = title.replace("\n", " ").replace('"', "'").strip()[:60]
         return f'task {task_id} {state} adapter={adapter} model={model} title="{clean_title}"'
 
     def update_tasks(self, tasks: list[dict[str, Any]]) -> list[str]:
@@ -739,7 +739,8 @@ class TaskStateProgressTracker:
                 status_data = server_get("/status")
                 tasks = _extract_tasks_from_payload(status_data)
             return self.update_tasks(tasks)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to poll task progress: %s", exc, exc_info=True)
             return []
 
 

@@ -123,6 +123,19 @@ def test_task_state_progress_tracker_format_and_no_paths_or_timestamps() -> None
     assert not re.search(r"\d{4}-\d{2}-\d{2}", line)
 
 
+def test_task_state_progress_tracker_escapes_double_quotes_in_title() -> None:
+    """Double quotes inside task title are converted to single quotes so log line format is preserved."""
+    tracker = TaskStateProgressTracker()
+    line = tracker.format_line(
+        task_id="task-43",
+        state="open",
+        adapter="codex",
+        model="o3-mini",
+        title='Fix the "critical" issue',
+    )
+    assert line == 'task task-43 open adapter=codex model=o3-mini title="Fix the \'critical\' issue"'
+
+
 def test_two_task_plan_with_fake_adapter_captures_planned_and_later_states() -> None:
     """With a fake adapter and a plan of two tasks, tracker captures planned and later state lines."""
     con = Console(record=True)
