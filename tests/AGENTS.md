@@ -3,7 +3,7 @@
 Layered pytest suite. `unit/` is the big one (2700+ files, no network);
 `conformance/` holds offline auditor conformance vectors; `integration/`
 needs a running server; `contract/` holds adapter capability contracts;
-plus `property/`, `snapshot/`, `golden/`, `perf/`, `chaos/`, `pentest/`, and `benchmarks/`.
+plus `property/`, `snapshot/`, `golden/`, `perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`.
 
 ## How to run
 
