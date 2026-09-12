@@ -52,6 +52,7 @@ from bernstein.core.approval.card import ApprovalCardV2, card_hash
 from bernstein.core.security.audit_chain import (
     EVENT_APPROVAL_CARD_ISSUED,
     EVENT_APPROVAL_CARD_REFUSED,
+    EVENT_APPROVAL_CARD_RELEASED,
     EVENT_APPROVAL_CARD_RESOLVED,
 )
 
@@ -77,6 +78,8 @@ __all__ = [
     "ApprovalCardHashMismatch",
     "ApprovalCardInvalidDecision",
     "ApprovalCardMissingApprover",
+    "ApprovalCardReleaseIdentityRequired",
+    "ApprovalCardReleased",
     "IssuedCard",
 ]
 
@@ -121,24 +124,39 @@ ALLOWED_DECISIONS = frozenset({"approve", "reject"})
 
 #: Refusal reasons that settle a card permanently.
 #:
-#: Only expiry qualifies. Expiry is monotone -- once the chain has seen a card
-#: pass its ``not_after`` no later clock reading can make it live again -- so
-#: replaying it is sound. The other reasons describe a rejected *attempt*, not a
-#: settled card: burning the card on a ``cross_worktree`` or ``hash_mismatch``
-#: refusal would hand any party who can reach the chat surface a denial of
-#: service against the legitimate operator's pending decision.
+#: Expiry is monotone -- once the chain has seen a card pass its ``not_after``
+#: no later clock reading can make it live again -- so replaying it is sound.
+#: A resolved card is also permanently terminal. The other reasons describe a
+#: rejected *attempt*, not a settled card: burning the card on a
+#: ``cross_worktree`` or ``hash_mismatch`` refusal would hand any party who can
+#: reach the chat surface a denial of service against the legitimate operator's
+#: pending decision.
 _TERMINAL_REFUSAL_REASONS = frozenset({REFUSAL_REASON_EXPIRED})
 
 
 def _is_terminal_event(event_type: str, details: dict[str, Any]) -> bool:
     """Return ``True`` when a chain event settles its card permanently.
 
-    A ``resolved`` event always settles. A ``refused`` event settles only when
-    its reason is in :data:`_TERMINAL_REFUSAL_REASONS`.
+    A ``resolved`` event always settles. A ``released`` event always settles.
+    A ``refused`` event settles only when its reason is in
+    :data:`_TERMINAL_REFUSAL_REASONS`.
     """
-    if event_type == EVENT_APPROVAL_CARD_RESOLVED:
+    if event_type in (EVENT_APPROVAL_CARD_RESOLVED, EVENT_APPROVAL_CARD_RELEASED):
         return True
     return event_type == EVENT_APPROVAL_CARD_REFUSED and str(details.get("reason", "")) in _TERMINAL_REFUSAL_REASONS
+
+
+def _is_terminal_refusal(event_type: str, details: dict[str, Any]) -> bool:
+    """Return ``True`` when a chain event is a terminal refusal (not a resolve)."""
+    return event_type == EVENT_APPROVAL_CARD_REFUSED and str(details.get("reason", "")) in _TERMINAL_REFUSAL_REASONS
+
+
+def _terminal_refusal_reason(details: dict[str, Any]) -> str | None:
+    """Return the refusal reason if *details* describes a terminal refusal, else ``None``."""
+    reason = str(details.get("reason", ""))
+    if reason in _TERMINAL_REFUSAL_REASONS:
+        return reason
+    return None
 
 
 class ApprovalCardHashMismatch(RuntimeError):
@@ -201,6 +219,25 @@ class ApprovalCardBindingMismatch(RuntimeError):
     A card issued into worktree ``W`` and conversation ``C`` commits to that
     origin. Settling it from elsewhere would let a party who observed the
     ``card_hash`` in one context exercise the approval in another.
+    """
+
+
+class ApprovalCardReleaseIdentityRequired(RuntimeError):
+    """Raised when a release names no operator identity.
+
+    The whole point of a release is to record *who* superseded a terminal-deny
+    outcome and why. A release that names nobody would turn the release path
+    into the chat-keyword hole it exists to close: an authorized-looking event
+    on the chain that identifies no one.
+    """
+
+
+class ApprovalCardReleased(RuntimeError):
+    """Raised when a resolve or a second release targets an already-released card.
+
+    Release is final. A card that was terminally denied and then released is
+    a recorded, operator-signed outcome; letting a later resolve re-settle it
+    or a later release re-release it would make the release record ambiguous.
     """
 
 
@@ -415,6 +452,141 @@ class ApprovalCardGate:
             )
             self._settled.add(echoed)
         return issued
+
+    # ------------------------------------------------------------------
+    # Release
+    # ------------------------------------------------------------------
+
+    def release(
+        self,
+        *,
+        card_hash: str,
+        released_by: str,
+        reason: str,
+        worktree_id: str = "",
+        thread_id: str = "",
+        now: float | None = None,
+    ) -> IssuedCard:
+        """Release a terminally-settled card, recorded on the audit chain.
+
+        A denied (or otherwise terminally-settled) card used to have no
+        authorized release path: the gate refused every further resolve and
+        the only reachable halt was a chat keyword that recorded nothing. A
+        release is the missing, recorded operator decision that a terminal
+        outcome is superseded -- it does not undo the denial, it records that
+        an operator with install-audit-key access acknowledged and released
+        the card, with cause.
+
+        The whole check-and-commit sequence runs under the gate lock, so two
+        concurrent releases on one ``card_hash`` cannot both append a release
+        event, and the released state is cached in the same critical section.
+
+        Checks, in order, each refused into the chain before raising:
+
+        1. the release names an operator identity,
+        2. the hash names an issued envelope,
+        3. the card is terminally settled (a release of a live card is
+           refused -- live cards still have their ordinary resolve path),
+        4. the card has not already been released.
+
+        Args:
+            card_hash: The ``card_hash`` echoed by the release. Must match an
+                issued envelope exactly.
+            released_by: Identifier of the operator releasing the card.
+                Required and non-blank: this is the identity the release event
+                is signed with.
+            reason: Cause for the release, recorded verbatim on the event.
+            worktree_id: Worktree the release was requested from, recorded on
+                the event.
+            thread_id: Conversation the release arrived on, recorded on the
+                event.
+            now: Injected clock for deterministic tests; defaults to
+                ``time.time()``.
+
+        Returns:
+            The :class:`IssuedCard` that was released.
+
+        Raises:
+            ApprovalCardReleaseIdentityRequired: When *released_by* is blank.
+            ApprovalCardHashMismatch: When *card_hash* matches no issued card.
+            ValueError: When the card is not terminally settled.
+            ApprovalCardReleased: When the card is already released.
+        """
+        current = time.time() if now is None else now
+        echoed = card_hash
+        with self._lock:
+            self._guard_release_identity(echoed, released_by=released_by)
+            _, _, _, denial_reason = self._chain_state(echoed)
+            issued, _settled = self._state_for(echoed)
+            if issued is None:
+                self._refuse(
+                    card_hash=echoed,
+                    reason=REFUSAL_REASON_HASH_MISMATCH,
+                    approver=released_by,
+                    worktree_id=worktree_id,
+                    expected_card_hash="",
+                )
+                raise ApprovalCardHashMismatch(
+                    f"echoed card_hash {echoed!r} matches no issued approval card; refusing to release",
+                )
+            if not _settled:
+                msg = (
+                    f"approval card {echoed!r} is not terminally settled on the audit chain; "
+                    f"release applies only to terminally-settled cards"
+                )
+                raise ValueError(msg)
+            if denial_reason is None:
+                msg = (
+                    f"approval card {echoed!r} is not terminally denied on the audit chain; "
+                    f"release applies only to terminally-deny (not resolved) cards"
+                )
+                raise ValueError(msg)
+            _, _, already_released, _ = self._chain_state(echoed)
+            if already_released:
+                self._refuse(
+                    card_hash=echoed,
+                    reason=REFUSAL_REASON_ALREADY_SETTLED,
+                    approver=released_by,
+                    worktree_id=worktree_id or issued.worktree_id,
+                    expected_card_hash=issued.card_hash,
+                )
+                raise ApprovalCardReleased(
+                    f"approval card {echoed!r} has already been released; refusing to release it a second time",
+                )
+            self._chain.log_with_prev_digest(
+                event_type=EVENT_APPROVAL_CARD_RELEASED,
+                actor=released_by,
+                resource_type="approval_card",
+                resource_id=echoed,
+                details={
+                    "card_hash": echoed,
+                    "released_by": released_by,
+                    "reason": reason,
+                    "worktree_id": worktree_id,
+                    "thread_id": thread_id,
+                    "released_at": current,
+                    "install_id": self._install_id,
+                    "session_id": self._session_id,
+                },
+            )
+            self._settled.add(echoed)
+        return issued
+
+    def _guard_release_identity(self, echoed: str, *, released_by: str) -> None:
+        """Refuse a release that names no operator identity."""
+        if released_by.strip():
+            return
+        self._refuse(
+            card_hash=echoed,
+            reason=REFUSAL_REASON_MISSING_APPROVER,
+            approver="",
+            worktree_id="",
+            expected_card_hash="",
+        )
+        raise ApprovalCardReleaseIdentityRequired(
+            f"a release of approval card {echoed!r} named no operator identity; refusing to record it "
+            f"rather than writing an authorized-looking event that identifies nobody",
+        )
 
     # ------------------------------------------------------------------
     # Resolve guards
@@ -645,17 +817,22 @@ class ApprovalCardGate:
             thread_id=str(details.get("thread_id", "")),
         )
 
-    def _chain_state(self, digest: str) -> tuple[IssuedCard | None, bool]:
-        """Return ``(issued_card, settled)`` for *digest* from the audit chain.
+    def _chain_state(self, digest: str) -> tuple[IssuedCard | None, bool, bool, str | None]:
+        """Return ``(issued_card, settled, released, denial_reason)`` for *digest* from the audit chain.
 
-        One ordered pass answers both questions. They are deliberately resolved
-        together: the settlement check cannot be served from memory alone (a
-        second process over the same audit dir may have settled the card), so
-        it always costs a chain read, and folding the issue lookup into the same
-        read keeps a resolve at one pass over the log instead of three.
+        One ordered pass answers all three questions. They are deliberately
+        resolved together: the settlement check cannot be served from memory
+        alone (a second process over the same audit dir may have settled the
+        card), so it always costs a chain read, and folding the issue lookup
+        into the same read keeps a resolve at one pass over the log instead
+        of three.
 
-        The read is scoped to this card's ``resource_id`` (every issue, resolve
-        and refuse event for the card is written with ``resource_id == digest``).
+        ``denial_reason`` is the refusal reason of the terminal refusal event,
+        if any; it is ``None`` when no terminal refusal has been recorded (the
+        card may be live, resolved, or released).
+
+        The read is scoped to this card's ``resource_id`` (every issue, resolve,
+        release and refuse event for the card is written with ``resource_id == digest``).
         The store rejects non-matching lines before parsing them, so a
         first-time resolve reads only this card's handful of events rather than
         scanning the whole log. Without that scope a stream of unknown
@@ -665,12 +842,10 @@ class ApprovalCardGate:
         """
         issued: IssuedCard | None = None
         settled = False
+        released = False
+        denial_reason: str | None = None
         for event in self._chain.query(resource_id=digest):
             details: dict[str, Any] = event.details
-            # Belt and braces: the query already scoped to resource_id == digest,
-            # but the settlement meaning is carried by details.card_hash, so a
-            # crafted event that reused the resource_id without matching the
-            # committed hash is not allowed to count as this card's.
             if str(details.get("card_hash", "")) != digest:
                 continue
             if event.event_type == EVENT_APPROVAL_CARD_ISSUED:
@@ -678,7 +853,11 @@ class ApprovalCardGate:
                     issued = self._rehydrate(digest, details)
             elif _is_terminal_event(event.event_type, details):
                 settled = True
-        return issued, settled
+            if event.event_type == EVENT_APPROVAL_CARD_RELEASED:
+                released = True
+            if _is_terminal_refusal(event.event_type, details):
+                denial_reason = _terminal_refusal_reason(details)
+        return issued, settled, released, denial_reason
 
     def _state_for(self, digest: str) -> tuple[IssuedCard | None, bool]:
         """Return ``(issued_card, settled)`` for *digest*, chain-backed.
@@ -695,8 +874,8 @@ class ApprovalCardGate:
             cached = self._issued.get(digest)
             if digest in self._settled:
                 return cached, True
-        scanned, settled = self._chain_state(digest)
-        issued = cached if cached is not None else scanned
+        scanned_issued, settled, _, _ = self._chain_state(digest)
+        issued = cached if cached is not None else scanned_issued
         with self._lock:
             if issued is not None:
                 self._issued.setdefault(digest, issued)
