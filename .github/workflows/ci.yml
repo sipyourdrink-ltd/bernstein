@@ -1941,9 +1941,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Fetch base commit for impacted-test selection
-        if: github.event_name == 'pull_request' && runner.os != 'Windows'
+        if: >-
+          (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+          && runner.os != 'Windows'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Each lane's own base, both taken from the event payload. On
+          # merge_group that is the commit the group was built on, which is the
+          # same input `determine-changes` already reads to compute the group's
+          # combined diff - so the queue lane selects against the group's base
+          # rather than dropping it and running the whole discovered list
+          # (#5793). The ref name is historical; it holds whichever base this
+          # lane is measured against.
+          BASE_SHA: >-
+            ${{ github.event_name == 'merge_group'
+                && github.event.merge_group.base_sha
+                || github.event.pull_request.base.sha }}
         run: |
           # Fetch the base by sha, never by branch name. `github.base_ref`
           # resolves when the step runs, and the shards of one run do not run
@@ -1954,7 +1966,9 @@ jobs:
           # files ran twice and others ran nowhere while every shard reported
           # success (#5421). The payload sha is fixed for the run, so every
           # shard - at any start time, in any re-run attempt - selects from
-          # one list and the slices are a partition of it again.
+          # one list and the slices are a partition of it again. That argument
+          # is why merge_group takes `merge_group.base_sha` here and not the
+          # tip of `main`, which moves under a queued group by construction.
           git fetch --no-tags --depth=1 origin \
             "${BASE_SHA}:refs/remotes/origin/pr-base"
       - name: Fetch PR head commit for orphan-ratchet inspection
@@ -1994,7 +2008,18 @@ jobs:
           if [ "${EVENT_NAME}" = "push" ] && [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
             coverage_args=(--coverage)
           fi
-          if [ "${EVENT_NAME}" = "pull_request" ] && \
+          # merge_group selects too. The group's diff is computed against the
+          # GROUP's own base, so anything that landed since a member pull
+          # request was opened is inside the impacted set -- the queue is not
+          # measuring a narrower change than the pull request did. The trunk
+          # lane still runs everything, and a regression that escapes is
+          # answered with a revert, which is the trade this workflow already
+          # makes for the 3.12 row and the Windows cells in the queue (#5793).
+          #
+          # Still guarded on the ref existing: if the fetch above did not run
+          # or the sha was unavailable, this falls back to the full list rather
+          # than selecting against a ref nothing wrote.
+          if { [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "merge_group" ]; } && \
              git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
             uv run python scripts/run_tests.py --parallel 6 \
               "${coverage_args[@]}" \
