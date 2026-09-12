@@ -276,19 +276,24 @@ def config_explain(key: str | None, project_dir: str, as_json: bool) -> None:
         CONFIG_PRECEDENCE,
         BernsteinHome,
         ConfigSource,
-        resolve_config,
+        resolve_config_bundle,
     )
 
     home = BernsteinHome.default()
-    keys = [key] if key else sorted(_DEFAULTS.keys())
     if key and key not in _DEFAULTS:
         console.print(f"[red]unknown config key:[/red] {key}")
         console.print(f"[dim]known keys: {', '.join(sorted(_DEFAULTS))}[/dim]")
         raise SystemExit(1)
 
+    # Same bundle call as ``config conflicts`` — provenance is already on each
+    # ConfigResolution; this command only renders it (#5110).
+    bundle = resolve_config_bundle(
+        home=home,
+        project_dir=Path(project_dir),
+        keys=(key,) if key else None,
+    )
     rows: list[dict[str, Any]] = []
-    for name in keys:
-        result = resolve_config(name, home=home, project_dir=Path(project_dir))
+    for name, result in bundle.items():
         # The redacted value is what gets printed. A resolution report is
         # exactly the output an operator pastes into an issue, so a secret
         # resolved from any layer must not be the thing that leaks.
