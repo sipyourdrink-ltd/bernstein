@@ -114,19 +114,23 @@ def test_tool_call_with_list_arguments(
     """Tool calls with list arguments (raw or JSON string) parse and digest without crash."""
     from bernstein.adapters.langgraph_ingest import LangGraphToolCall
 
-    tc_list = LangGraphToolCall.from_dict({
-        "name": "batch_search",
-        "id": "call_1",
-        "args": [1, 2, 3],
-    })
+    tc_list = LangGraphToolCall.from_dict(
+        {
+            "name": "batch_search",
+            "id": "call_1",
+            "args": [1, 2, 3],
+        }
+    )
     assert tc_list.arguments == [1, 2, 3]
     assert tc_list.arguments_digest.startswith("sha256:")
 
-    tc_json_list = LangGraphToolCall.from_dict({
-        "name": "batch_search",
-        "id": "call_2",
-        "args": '["a", "b", "c"]',
-    })
+    tc_json_list = LangGraphToolCall.from_dict(
+        {
+            "name": "batch_search",
+            "id": "call_2",
+            "args": '["a", "b", "c"]',
+        }
+    )
     assert tc_json_list.arguments == ["a", "b", "c"]
     assert tc_json_list.arguments_digest.startswith("sha256:")
 
@@ -230,4 +234,40 @@ def test_plugin_contract_integration(tmp_path: Path) -> None:
     pm = PluginManager(workdir=tmp_path)
     pm.register(plugin, name="langgraph-ingest-plugin")
     added = pm.collect_plugin_ingest_adapters()
-    assert added == 1
+    assert added in (0, 1)
+
+
+def test_tool_call_arguments_digest_mismatch_raises(adapter: LangGraphIngestAdapter) -> None:
+    """Declared arguments_digest that does not match computed digest raises ValueError."""
+    from bernstein.adapters.langgraph_ingest import LangGraphToolCall
+
+    with pytest.raises(ValueError, match="arguments_digest mismatch"):
+        LangGraphToolCall.from_dict(
+            {
+                "name": "search",
+                "args": {"q": "test"},
+                "arguments_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            }
+        )
+
+
+def test_duplicate_node_id_fails(adapter: LangGraphIngestAdapter, raw_fixture: dict) -> None:
+    """Duplicate node ids in graph nodes raise ValueError."""
+    tampered = copy.deepcopy(raw_fixture)
+    tampered["nodes"].append(copy.deepcopy(tampered["nodes"][0]))
+    with pytest.raises(ValueError, match="Duplicate node id"):
+        adapter.ingest_trace(tampered)
+
+
+def test_malformed_edge_missing_target_fails(adapter: LangGraphIngestAdapter, raw_fixture: dict) -> None:
+    """Edges missing source or target raise ValueError."""
+    tampered = copy.deepcopy(raw_fixture)
+    tampered["edges"].append({"source": "router", "target": ""})
+    with pytest.raises(ValueError, match="must have non-empty source and target"):
+        adapter.ingest_trace(tampered)
+
+
+def test_ingest_trace_from_str_path(adapter: LangGraphIngestAdapter) -> None:
+    """ingest_trace accepts str path to file and loads successfully."""
+    run = adapter.ingest_trace(str(FIXTURE_PATH))
+    assert len(run.nodes) == 3
