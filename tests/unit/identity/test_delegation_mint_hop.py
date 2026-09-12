@@ -144,21 +144,13 @@ def test_narrowing_grades_from_the_receipt_with_the_store_deleted(store, tmp_pat
 
 
 def test_removing_the_tail_receipt_yields_valid_true_and_one_fewer_hop(store, audit_root):
-    """AC4 holds for every receipt except the tail, which this model cannot detect (#5352).
+    """Without a chain-head sidecar, tail removal is still undetectable (#5352).
 
-    The loop removes each receipt in turn.  Removing the first or any interior
-    receipt breaks ``prev_hmac`` linkage and verification fails, which is AC4.
-    Removing the TAIL yields ``valid=True`` with ``hops == n - 1``: the shorter
-    chain is internally consistent, because no receipt records how many hops the
-    run should have had, so an end truncation is indistinguishable from a run
-    that simply delegated one fewer time.
-
-    This is a demonstrated limit of the existing receipt model, not a defect
-    introduced here and not something to engineer around.  Detecting it needs a
-    hop count, a terminator, a sidecar or some other completeness state on the
-    receipt, and #5047 excludes changing the receipt format.  The assertion is
-    written the way the behaviour actually is, so a future format change that
-    closes the gap will trip this test rather than pass unnoticed.
+    The sidecar written by record_chain_head is what closes the gap.  This
+    test covers the unsealed case: a chain that was never sealed with
+    record_chain_head behaves exactly as before — an end truncation is
+    indistinguishable from a run that delegated one fewer time.  All interior
+    and prefix removals are still caught by prev_hmac linkage.
     """
     parent = _mint_orchestrator(store)
     for index in range(3):
@@ -167,15 +159,65 @@ def test_removing_the_tail_receipt_yields_valid_true_and_one_fewer_hop(store, au
     assert len(original) == 3
     path = audit_root / "delegation" / f"{RUN}.jsonl"
 
+    # No call to ledger.record_chain_head — chain is NOT sealed.
     for removed in range(len(original)):
         kept = [line for index, line in enumerate(original) if index != removed]
         path.write_text("\n".join(kept) + "\n", encoding="utf-8")
         result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
+        assert result.sealed is None, "unsealed chain must not set sealed"
         if removed == len(original) - 1:
-            assert result.valid, "tail truncation is expected to remain undetectable"
+            assert result.valid, "tail truncation on an unsealed chain remains undetectable"
             assert result.hops == len(original) - 1
         else:
             assert not result.valid, f"removing receipt {removed} left the chain passing"
+
+
+def test_sealed_chain_detects_tail_truncation(store, audit_root):
+    """record_chain_head seals the chain; tail removal is then detected (#5352).
+
+    After sealing, removing the last receipt causes verify_run_chain to
+    compare the reconstructed hop count against the declared count and report
+    valid=False.  Interior removals still fail on prev_hmac linkage as before.
+    """
+    from bernstein.core.identity.delegation import DelegationLedger
+
+    ledger = DelegationLedger(root=audit_root, key=KEY)
+    parent = _mint_orchestrator(store)
+    for index in range(3):
+        _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"], allowed_files=["src/**"])
+
+    ledger.record_chain_head(RUN)  # seal the chain
+
+    original = _receipt_lines(audit_root)
+    assert len(original) == 3
+    path = audit_root / "delegation" / f"{RUN}.jsonl"
+
+    for removed in range(len(original)):
+        kept = [line for index, line in enumerate(original) if index != removed]
+        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
+        assert not result.valid, (
+            f"removing receipt {removed} from a sealed chain must be detected"
+        )
+        if removed == len(original) - 1:
+            assert result.sealed is False, "tail truncation must set sealed=False"
+            assert any("tail truncation" in e for e in result.errors), result.errors
+
+
+def test_sealed_chain_with_intact_receipts_reports_sealed_true(store, audit_root):
+    """An intact sealed chain reports valid=True and sealed=True."""
+    from bernstein.core.identity.delegation import DelegationLedger
+
+    ledger = DelegationLedger(root=audit_root, key=KEY)
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child-1", parent, task_ids=["t1"], allowed_files=["src/**"])
+
+    ledger.record_chain_head(RUN)
+
+    result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
+    assert result.valid
+    assert result.sealed is True
+    assert result.hops == 1
 
 
 def test_parentless_mint_writes_no_receipt_and_leaves_no_broken_chain(store, audit_root):
