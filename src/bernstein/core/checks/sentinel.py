@@ -127,7 +127,7 @@ def record_audit_run(
     journal_dir.mkdir(parents=True, exist_ok=True)
     journal_file = journal_dir / "events.jsonl"
 
-    failures = [f.to_dict() for f in findings if f.verdict == Verdict.FAIL or f.passed is False]
+    failures = [f.to_dict() for f in findings if f.verdict == Verdict.FAIL]
     sentinel_active = is_sentinel_active(workdir)
 
     entry = {
@@ -157,7 +157,7 @@ def notify_audit_failures(
     """
     notifications: list[dict[str, Any]] = []
     for f in findings:
-        if f.verdict == Verdict.FAIL or f.passed is False:
+        if f.verdict == Verdict.FAIL:
             notif = {
                 "check_id": f.id,
                 "verdict": f.verdict.value,
