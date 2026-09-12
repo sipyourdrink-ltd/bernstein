@@ -17,7 +17,7 @@ from bernstein.evolution.loop import EvolutionLoop, ExperimentResult
 from bernstein.evolution.proposals import (
     UpgradeProposal,
 )
-from bernstein.evolution.types import ProposalGenerationError, RiskLevel, SandboxValidationError
+from bernstein.evolution.types import ProposalGenerationError, ReplayVerdict, RiskLevel, SandboxValidationError
 from bernstein.evolution.types import SandboxResult as TypesSandboxResult
 
 if TYPE_CHECKING:
@@ -34,6 +34,7 @@ def _make_proposal(
     risk_level: str = "low",
     confidence: float = 0.95,
     category: UpgradeCategory = UpgradeCategory.POLICY_UPDATE,
+    replay_verdict: ReplayVerdict | None = ReplayVerdict.ACCEPT,
 ) -> UpgradeProposal:
     return UpgradeProposal(
         id=id,
@@ -48,6 +49,7 @@ def _make_proposal(
         cost_estimate_usd=0.0,
         expected_improvement="improve",
         confidence=confidence,
+        replay_verdict=replay_verdict,
     )
 
 
@@ -215,6 +217,114 @@ def test_run_cycle_with_opportunity_auto_approved(tmp_path: Path) -> None:
     assert experiments_path.exists()
     data = json.loads(experiments_path.read_text().strip())
     assert data["accepted"] is True
+
+
+def test_run_cycle_gated_on_missing_replay_verdict(tmp_path: Path) -> None:
+    """Proposal without a replay verdict is not applied."""
+    state_dir = tmp_path / ".sdd"
+    state_dir.mkdir()
+    loop = EvolutionLoop(state_dir, repo_root=tmp_path)
+
+    opportunity = _make_opportunity()
+    proposal = _make_proposal(replay_verdict=None)
+    sandbox_result = _make_sandbox_result(proposal_id=proposal.id)
+    decision = _make_approval_decision(proposal_id=proposal.id)
+
+    with (
+        patch.object(loop._aggregator, "run_full_analysis"),
+        patch.object(
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
+        ),
+        patch.object(loop, "_run_baseline", return_value=1.0),
+        patch.object(
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
+        ),
+        patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
+        patch.object(loop._gate, "route", return_value=decision),
+        patch.object(loop._sandbox, "validate", return_value=sandbox_result),
+        patch.object(loop._executor, "execute_upgrade") as execute_upgrade,
+    ):
+        result = loop.run_cycle()
+
+    assert result is not None
+    assert result.accepted is False
+    assert not execute_upgrade.called
+
+
+def test_run_cycle_gated_on_invariant_violated(tmp_path: Path) -> None:
+    """Proposal whose replay violated an invariant is not applied."""
+    state_dir = tmp_path / ".sdd"
+    state_dir.mkdir()
+    loop = EvolutionLoop(state_dir, repo_root=tmp_path)
+
+    opportunity = _make_opportunity()
+    proposal = _make_proposal(replay_verdict=ReplayVerdict.INVARIANT_VIOLATED)
+    sandbox_result = _make_sandbox_result(proposal_id=proposal.id)
+    decision = _make_approval_decision(proposal_id=proposal.id)
+
+    with (
+        patch.object(loop._aggregator, "run_full_analysis"),
+        patch.object(
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
+        ),
+        patch.object(loop, "_run_baseline", return_value=1.0),
+        patch.object(
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
+        ),
+        patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
+        patch.object(loop._gate, "route", return_value=decision),
+        patch.object(loop._sandbox, "validate", return_value=sandbox_result),
+        patch.object(loop._executor, "execute_upgrade") as execute_upgrade,
+    ):
+        result = loop.run_cycle()
+
+    assert result is not None
+    assert result.accepted is False
+    assert not execute_upgrade.called
+
+
+def test_run_cycle_gated_on_changed_unexpectedly(tmp_path: Path) -> None:
+    """Proposal whose replay produced an unexpected diff is not applied."""
+    state_dir = tmp_path / ".sdd"
+    state_dir.mkdir()
+    loop = EvolutionLoop(state_dir, repo_root=tmp_path)
+
+    opportunity = _make_opportunity()
+    proposal = _make_proposal(replay_verdict=ReplayVerdict.CHANGED_UNEXPECTEDLY)
+    sandbox_result = _make_sandbox_result(proposal_id=proposal.id)
+    decision = _make_approval_decision(proposal_id=proposal.id)
+
+    with (
+        patch.object(loop._aggregator, "run_full_analysis"),
+        patch.object(
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
+        ),
+        patch.object(loop, "_run_baseline", return_value=1.0),
+        patch.object(
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
+        ),
+        patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
+        patch.object(loop._gate, "route", return_value=decision),
+        patch.object(loop._sandbox, "validate", return_value=sandbox_result),
+        patch.object(loop._executor, "execute_upgrade") as execute_upgrade,
+    ):
+        result = loop.run_cycle()
+
+    assert result is not None
+    assert result.accepted is False
+    assert not execute_upgrade.called
 
 
 def test_run_cycle_circuit_breaker_blocks(tmp_path: Path) -> None:
@@ -1159,3 +1269,18 @@ def test_run_cycle_does_close_the_issue_when_an_upgrade_really_lands(tmp_path: P
     assert result.accepted is True
     gh_mock.close_issue.assert_called_once()
     assert "applied automatically" in gh_mock.close_issue.call_args.kwargs["comment"]
+
+
+@pytest.mark.parametrize(
+    "composite_risk",
+    [0.0, 0.05, 0.29, 0.3, 0.31, 0.45, 0.59, 0.6, 0.61, 0.85, 1.0],
+)
+def test_classify_risk_route_matches_proposal_scorer(composite_risk: float) -> None:
+    """Loop and ProposalScorer must agree on routing for the same risk score.
+
+    Both are expected to delegate to ``RiskScorer.classify_risk_route`` so
+    thresholds and labels stay in lockstep.
+    """
+    from bernstein.evolution.proposal_scorer import ProposalScorer
+
+    assert EvolutionLoop._classify_risk_route(composite_risk) == ProposalScorer().classify_risk_route(composite_risk)

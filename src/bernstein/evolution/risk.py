@@ -43,6 +43,16 @@ _W_BLAST = 0.20
 # Blast-radius normalisation: cap at this many files for scoring purposes
 _BLAST_CAP = 20
 
+# Risk-routing thresholds (canonical). All callers (EvolutionLoop and
+# ProposalScorer) delegate to ``RiskScorer.classify_risk_route``.
+FAST_TRACK_THRESHOLD: float = 0.3
+STANDARD_THRESHOLD: float = 0.6
+
+# Route labels returned by ``classify_risk_route``.
+ROUTE_SANDBOX_VERIFY: str = "sandbox_verify"
+ROUTE_STANDARD: str = "standard"
+ROUTE_FAST_TRACK: str = "fast_track"
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -88,14 +98,34 @@ class RiskScorer:
             diff_size=350,
             test_coverage_delta=-0.05,
         )
-        if scorer.is_high_risk(score):
-            route_to_sandbox(proposal)
-        else:
-            fast_track(proposal)
+        route = scorer.classify_risk_route(score.composite_risk)
+        if route == ROUTE_SANDBOX_VERIFY:
+            route_to_sandbox(proposal)  # apply gate runs after replay
     """
 
     # Default composite-risk threshold for high-risk classification
     DEFAULT_HIGH_RISK_THRESHOLD: float = 0.50
+
+    @staticmethod
+    def classify_risk_route(composite_risk: float) -> str:
+        """Map a composite risk score to a routing strategy.
+
+        Thresholds:
+          - composite_risk > 0.6 → ``sandbox_verify``  (forced sandbox)
+          - composite_risk 0.3-0.6 → ``standard``       (normal flow)
+          - composite_risk < 0.3 → ``fast_track``       (skip sandbox)
+
+        Args:
+            composite_risk: Composite risk score in [0.0, 1.0].
+
+        Returns:
+            One of ``"sandbox_verify"``, ``"standard"``, or ``"fast_track"``.
+        """
+        if composite_risk > STANDARD_THRESHOLD:
+            return ROUTE_SANDBOX_VERIFY
+        if composite_risk > FAST_TRACK_THRESHOLD:
+            return ROUTE_STANDARD
+        return ROUTE_FAST_TRACK
 
     def score_proposal(
         self,

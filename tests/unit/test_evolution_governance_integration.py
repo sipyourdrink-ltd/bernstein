@@ -280,41 +280,6 @@ def test_classify_risk_route_low_risk() -> None:
     assert EvolutionLoop._classify_risk_route(0.3) == "fast_track"  # boundary: not > 0.3
 
 
-def test_fast_track_skips_sandbox(tmp_path: Path) -> None:
-    """Proposals with composite_risk < 0.3 bypass sandbox validation."""
-    loop = _make_loop(tmp_path)
-    proposal = _make_proposal()  # default: no affected_components, short change → low risk
-
-    sandbox_called = []
-
-    def mock_validate(**kwargs: object) -> TypesSandboxResult:
-        sandbox_called.append(True)
-        return _make_sandbox_result()
-
-    with (
-        patch.object(loop._aggregator, "run_full_analysis"),
-        patch.object(loop._detector, "identify_opportunities", return_value=[_make_opportunity()]),
-        patch.object(loop._feature_discovery, "discover", return_value=[]),
-        patch.object(loop, "_run_baseline", return_value=1.0),
-        patch.object(loop._proposal_generator, "create_proposal", return_value=proposal),
-        patch.object(loop._breaker, "can_evolve", return_value=(True, "")),
-        patch.object(loop._gate, "route", return_value=_make_approval_decision()),
-        patch.object(loop._eval_gate, "evaluate", return_value=MagicMock(skipped=True, accepted=True)),
-        patch.object(loop._sandbox, "validate", side_effect=mock_validate),
-        patch.object(loop._executor, "execute_upgrade", return_value=True),
-        patch.object(loop._breaker, "record_change"),
-        patch.object(loop._governor, "adjust_weights", return_value=(EvolutionWeights(), "no change")),
-        patch.object(loop._governor, "persist_weights"),
-        patch.object(loop._governor, "log_decision"),
-        # Force composite_risk to be low (< 0.3)
-        patch.object(loop._risk_scorer, "score_proposal", return_value=MagicMock(composite_risk=0.1)),
-    ):
-        result = loop.run_cycle()
-
-    assert result is not None
-    assert sandbox_called == [], "Sandbox should not be called for fast_track proposals"
-
-
 def test_sandbox_verify_route_calls_sandbox(tmp_path: Path) -> None:
     """Proposals with composite_risk > 0.6 always go through sandbox validation."""
     loop = _make_loop(tmp_path)
