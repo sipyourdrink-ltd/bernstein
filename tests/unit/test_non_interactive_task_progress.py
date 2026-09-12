@@ -133,7 +133,7 @@ def test_task_state_progress_tracker_escapes_double_quotes_in_title() -> None:
         model="o3-mini",
         title='Fix the "critical" issue',
     )
-    assert line == 'task task-43 open adapter=codex model=o3-mini title="Fix the \'critical\' issue"'
+    assert line == "task task-43 open adapter=codex model=o3-mini title=\"Fix the 'critical' issue\""
 
 
 def test_two_task_plan_with_fake_adapter_captures_planned_and_later_states() -> None:
