@@ -1,13 +1,13 @@
 name: PR queue hygiene
 
-# The four rules in scripts/queue_hygiene.py: over-wip, duplicate,
-# needs-committer-review, and closing a PR left with changes-requested and
-# no push for 14 days. Separate from pr-labels.yml (area + size labels,
-# driven by pull_request_target on each PR event) because these four rules
-# need to look across ALL open pull requests at once (an author's total
-# open count, a second PR closing the same issue as an earlier one) rather
-# than react to a single PR's own event, so a schedule sweep is the right
-# shape rather than a per-PR trigger.
+# The five rules in scripts/queue_hygiene.py: over-wip, duplicate,
+# needs-committer-review, approval-shape, and closing a PR left with
+# changes-requested and no push for 14 days. Separate from pr-labels.yml
+# (area + size labels, driven by pull_request_target on each PR event)
+# because these five rules need to look across ALL open pull requests at
+# once (an author's total open count, a second PR closing the same issue
+# as an earlier one) rather than react to a single PR's own event, so a
+# schedule sweep is the right shape rather than a per-PR trigger.
 #
 # Runs on a schedule only - no pull_request_target, so it only ever
 # executes trusted code from the base ref against the API. Nothing here
@@ -56,6 +56,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           QUEUE_HYGIENE_ARMED: ${{ vars.QUEUE_HYGIENE_ARMED }}
+          INPUT_PR: ${{ inputs.pr }}
         run: |
           set -euo pipefail
           ARGS=()
