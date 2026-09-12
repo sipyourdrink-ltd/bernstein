@@ -127,6 +127,20 @@ def test_failure_routes_require_exactly_failure(dispatcher: dict) -> None:
         assert "needs.meta.outputs.conclusion == 'failure'" in condition
 
 
+def test_auto_heal_routes_bot_authored_main_workflow_dispatch_failure(dispatcher: dict) -> None:
+    """Cadenced full CI is a trusted bot-authored workflow_dispatch on main."""
+    condition = " ".join(dispatcher["jobs"]["auto-heal"]["if"].split())
+
+    assert "needs.meta.outputs.head_branch == 'main'" in condition
+    assert "needs.meta.outputs.head_repo == github.repository" in condition
+    assert "needs.meta.outputs.actor_login != 'github-actions[bot]'" in condition
+    assert "needs.meta.outputs.event == 'workflow_dispatch'" in condition
+    assert (
+        "(needs.meta.outputs.actor_login != 'github-actions[bot]' || "
+        "needs.meta.outputs.event == 'workflow_dispatch')" in condition
+    )
+
+
 def test_dispatcher_still_routes_to_every_child(dispatcher: dict) -> None:
     for job_name, path in CHILDREN.items():
         assert dispatcher["jobs"][job_name]["uses"] == path
