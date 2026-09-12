@@ -285,7 +285,7 @@ def config_explain(key: str | None, project_dir: str, as_json: bool) -> None:
         console.print(f"[dim]known keys: {', '.join(sorted(_DEFAULTS))}[/dim]")
         raise SystemExit(1)
 
-    # Same bundle call as ``config conflicts`` — provenance is already on each
+    # Same bundle call as ``config conflicts``: provenance is already on each
     # ConfigResolution; this command only renders it (#5110).
     bundle = resolve_config_bundle(
         home=home,
