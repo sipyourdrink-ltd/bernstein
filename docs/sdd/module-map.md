@@ -52,7 +52,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `knowledge/`                | knowledge sub-package |
 | `lifecycle/`                | Lifecycle-hooks subsystem |
 | `lineage/`                  | Lineage v1 - Sigstore-style per-artefact transparency log |
-| `memory/`                   | memory sub-package - persistent memory stores |
+| `memory/`                   | Persistent memory stores, tamper-evident chains, and signed recall receipts |
 | `notifications/`            | Outbound notification subsystem (release 1.9) |
 | `observability/`            | observability sub-package |
 | `orchestration/`            | orchestration sub-package |

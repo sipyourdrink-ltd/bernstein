@@ -55,7 +55,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]
@@ -75,6 +75,10 @@ MEMORY_CHAIN_ENTRY_VERSION = 1
 #: :meth:`MemoryChain.fold_bytes`. Separate from the entry version so the
 #: projection's shape can move without rewriting stored rows.
 MEMORY_FOLD_VERSION = 1
+
+#: Selector version used by the first chain-native recall surface.  The query
+#: is matched byte-for-byte against the live claim text in the folded prefix.
+RECALL_SELECTOR_CLAIM_EXACT_V1 = "claim-exact-v1"
 
 #: Entry kinds. A write asserts a claim; a tombstone marks a prior
 #: write's claim as forgotten without deleting it.
@@ -111,6 +115,10 @@ class MemoryScope(Enum):
 
 class MemoryNamespaceError(ValueError):
     """Raised when a ``namespace`` would escape its per-scope directory."""
+
+
+class MemoryReplayError(ValueError):
+    """Raised when a historical chain prefix cannot be replayed exactly."""
 
 
 def _validate_namespace(namespace: str) -> str:
@@ -172,6 +180,10 @@ def compute_entry_hash(
 
 def _canonical_body_bytes(body: dict[str, Any]) -> bytes:
     return json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
 def _compute_hmac(key: bytes, body: dict[str, Any]) -> str:
@@ -249,6 +261,26 @@ class MemoryOrigin:
     actor: str
     timestamp: int
     entry_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRecallSelection:
+    """Deterministic exact-recall projection from one chain prefix.
+
+    ``fold_head`` names the final record included in the replayed prefix,
+    ``fold_hash`` addresses the canonical folded state at that head, and
+    ``entries`` is the ordered subset selected by ``selector``.
+    """
+
+    selector: str
+    fold_head: str
+    fold_hash: str
+    entries: tuple[MemoryChainEntry, ...]
+
+    @property
+    def record_hashes(self) -> tuple[str, ...]:
+        """Return the selected entry hashes in append order."""
+        return tuple(entry.entry_hash for entry in self.entries)
 
 
 # ---------------------------------------------------------------------------
@@ -577,6 +609,91 @@ class MemoryChain:
                 logger.debug("memory chain: skipping row with bad shape in %s", path)
                 continue
 
+    def _snapshot_prefix(
+        self,
+        scope: MemoryScope,
+        namespace: str,
+        *,
+        fold_head: str | None,
+    ) -> tuple[str, tuple[MemoryChainEntry, ...]]:
+        """Return entries from one file snapshot through ``fold_head``."""
+        path = self.chain_path(scope, namespace)
+        raw = path.read_bytes().rstrip(b"\n") if path.exists() else b""
+        if not raw:
+            if fold_head is not None:
+                raise MemoryReplayError(f"fold head {fold_head!r} is not present")
+            return _GENESIS_HASH, ()
+        return self._snapshot_prefix_rows(raw, scope=scope, namespace=namespace, fold_head=fold_head)
+
+    def _snapshot_prefix_rows(
+        self,
+        raw: bytes,
+        *,
+        scope: MemoryScope,
+        namespace: str,
+        fold_head: str | None,
+    ) -> tuple[str, tuple[MemoryChainEntry, ...]]:
+        rows: list[MemoryChainEntry] = []
+        previous = _GENESIS_HASH
+        for line_no, line in enumerate(raw.split(b"\n"), start=1):
+            try:
+                data_raw = json.loads(line)
+                if not isinstance(data_raw, dict):
+                    raise TypeError
+                data = cast("dict[str, object]", data_raw)
+                row = MemoryChainEntry(
+                    v=int(str(data["v"])),
+                    prev_hash=str(data["prev_hash"]),
+                    source_hash=str(data["source_hash"]),
+                    actor=str(data["actor"]),
+                    claim=str(data["claim"]),
+                    model=str(data["model"]),
+                    timestamp=int(str(data["timestamp"])),
+                    scope=str(data["scope"]),
+                    namespace=str(data["namespace"]),
+                    kind=str(data["kind"]),
+                    tombstone_of=str(data["tombstone_of"]),
+                    run_id=str(data["run_id"]),
+                    step_id=str(data["step_id"]),
+                    entry_hash=str(data["entry_hash"]),
+                    hmac=str(data["hmac"]),
+                )
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise MemoryReplayError(f"line {line_no}: invalid memory chain row") from exc
+            if row.v != MEMORY_CHAIN_ENTRY_VERSION or row.scope != scope.value or row.namespace != namespace:
+                raise MemoryReplayError(f"line {line_no}: memory chain row identity mismatch")
+            if row.prev_hash != previous:
+                raise MemoryReplayError(f"line {line_no}: memory chain prefix is discontinuous")
+            self._check_snapshot_row_hash(row, line_no=line_no)
+            rows.append(row)
+            previous = row.entry_hash
+            if fold_head is not None and row.entry_hash == fold_head:
+                return fold_head, tuple(rows)
+        if fold_head is not None:
+            raise MemoryReplayError(f"fold head {fold_head!r} is not present")
+        return previous, tuple(rows)
+
+    def _check_snapshot_row_hash(self, row: MemoryChainEntry, *, line_no: int) -> None:
+        expected = compute_entry_hash(
+            prev_hash=row.prev_hash,
+            source_hash=row.source_hash,
+            actor=row.actor,
+            claim=row.claim,
+            model=row.model,
+            timestamp=row.timestamp,
+            scope=row.scope,
+            namespace=row.namespace,
+            kind=row.kind,
+            tombstone_of=row.tombstone_of,
+        )
+        if row.entry_hash != expected:
+            raise MemoryReplayError(f"line {line_no}: memory chain entry hash mismatch")
+
+    @staticmethod
+    def _fold_prefix(entries: tuple[MemoryChainEntry, ...]) -> tuple[MemoryChainEntry, ...]:
+        forgotten = {entry.tombstone_of for entry in entries if entry.kind == KIND_TOMBSTONE}
+        return tuple(entry for entry in entries if entry.kind == KIND_WRITE and entry.entry_hash not in forgotten)
+
     def forgotten_hashes(self, scope: MemoryScope, namespace: str) -> set[str]:
         """Return the set of entry hashes marked forgotten by a tombstone."""
         return {e.tombstone_of for e in self.iter_entries(scope, namespace) if e.kind == KIND_TOMBSTONE}
@@ -610,13 +727,42 @@ class MemoryChain:
         Two readers over the same chain file produce identical bytes,
         which makes the projection diffable and hashable.
         """
+        return self._fold_bytes_for_entries(scope, namespace, self.fold(scope, namespace))
+
+    @staticmethod
+    def _fold_bytes_for_entries(
+        scope: MemoryScope,
+        namespace: str,
+        entries: tuple[MemoryChainEntry, ...],
+    ) -> bytes:
         return _canonical_body_bytes(
             {
                 "v": MEMORY_FOLD_VERSION,
                 "scope": scope.value,
                 "namespace": _validate_namespace(namespace),
-                "entries": [entry.body() for entry in self.fold(scope, namespace)],
+                "entries": [entry.body() for entry in entries],
             }
+        )
+
+    def recall_exact(
+        self,
+        query: str,
+        *,
+        scope: MemoryScope,
+        namespace: str,
+        fold_head: str | None = None,
+    ) -> MemoryRecallSelection:
+        """Select live claims equal to ``query`` from one chain snapshot."""
+        resolved_head, prefix = self._snapshot_prefix(scope, namespace, fold_head=fold_head)
+        folded = self._fold_prefix(prefix)
+        folded_bytes = self._fold_bytes_for_entries(scope, namespace, folded)
+        fold_hash = _sha256_bytes(folded_bytes)
+        selected = tuple(entry for entry in folded if entry.claim == query)
+        return MemoryRecallSelection(
+            selector=RECALL_SELECTOR_CLAIM_EXACT_V1,
+            fold_head=resolved_head,
+            fold_hash=fold_hash,
+            entries=selected,
         )
 
     def why(
@@ -765,11 +911,14 @@ __all__ = [
     "KIND_WRITE",
     "MEMORY_CHAIN_ENTRY_VERSION",
     "MEMORY_FOLD_VERSION",
+    "RECALL_SELECTOR_CLAIM_EXACT_V1",
     "MemoryChain",
     "MemoryChainEntry",
     "MemoryChainStatus",
     "MemoryNamespaceError",
     "MemoryOrigin",
+    "MemoryRecallSelection",
+    "MemoryReplayError",
     "MemoryScope",
     "MemoryVerifyResult",
     "compute_entry_hash",

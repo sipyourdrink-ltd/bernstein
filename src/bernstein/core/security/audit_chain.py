@@ -137,6 +137,11 @@ EVENT_TEMPLATE_COMPRESSION_RESTORE = "template.compression.restore"
 #: content. See :mod:`bernstein.core.memory.chain`.
 EVENT_MEMORY_WRITE = "memory.write"
 
+#: Issue #2914 -- emitted when a chain-native memory recall is sealed. The
+#: event mirrors only hashes and identifiers; the query and recalled claim
+#: text stay in the signed receipt rather than the audit log.
+EVENT_MEMORY_RECALL = "memory.recall"
+
 #: Issue #2301 -- emitted once per skill install. The event carries the
 #: skill install receipt: the installed content hash, the authorising
 #: manifest hash, the install id, and the spine anchor (the entry hash of
@@ -1818,6 +1823,77 @@ def record_memory_write(
         actor=actor,
         resource_type="memory_write",
         resource_id=entry_hash,
+        details=payload,
+    )
+
+
+@dataclass(frozen=True)
+class MemoryRecallDetails:
+    """Structured payload for the ``memory.recall`` event."""
+
+    receipt_id: str
+    lineage_entry_hash: str
+    scope: str
+    namespace: str
+    run_id: str
+    step_id: str
+    query_hash: str
+    fold_head: str
+    fold_hash: str
+    records_hash: str
+    record_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "receipt_id": self.receipt_id,
+            "lineage_entry_hash": self.lineage_entry_hash,
+            "scope": self.scope,
+            "namespace": self.namespace,
+            "run_id": self.run_id,
+            "step_id": self.step_id,
+            "query_hash": self.query_hash,
+            "fold_head": self.fold_head,
+            "fold_hash": self.fold_hash,
+            "records_hash": self.records_hash,
+            "record_count": self.record_count,
+        }
+
+
+def record_memory_recall(
+    *,
+    chain: AuditChainStore,
+    receipt_id: str,
+    lineage_entry_hash: str,
+    scope: str,
+    namespace: str,
+    actor: str,
+    run_id: str,
+    step_id: str,
+    query_hash: str,
+    fold_head: str,
+    fold_hash: str,
+    records_hash: str,
+    record_count: int,
+) -> AuditEvent:
+    """Append a hashes-and-identifiers-only ``memory.recall`` event."""
+    payload = MemoryRecallDetails(
+        receipt_id=receipt_id,
+        lineage_entry_hash=lineage_entry_hash,
+        scope=scope,
+        namespace=namespace,
+        run_id=run_id,
+        step_id=step_id,
+        query_hash=query_hash,
+        fold_head=fold_head,
+        fold_hash=fold_hash,
+        records_hash=records_hash,
+        record_count=record_count,
+    ).to_dict()
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MEMORY_RECALL,
+        actor=actor,
+        resource_type="memory_recall",
+        resource_id=receipt_id,
         details=payload,
     )
 
@@ -9805,6 +9881,7 @@ __all__ = [
     "EVENT_MCP_CAPABILITY_DRIFT",
     "EVENT_MCP_STATELESS_CALL",
     "EVENT_MCP_TASK_HANDLE",
+    "EVENT_MEMORY_RECALL",
     "EVENT_MEMORY_WRITE",
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
@@ -9896,6 +9973,7 @@ __all__ = [
     "ForkSnapshotDetails",
     "MCPCapabilityDriftDetails",
     "MandateConsentReceiptDetails",
+    "MemoryRecallDetails",
     "MemoryWriteDetails",
     "ModelDriftObservationDetails",
     "MultimodalAttachDetails",
@@ -9965,6 +10043,7 @@ __all__ = [
     "record_mcp_capability_drift",
     "record_mcp_stateless_call",
     "record_mcp_task_handle",
+    "record_memory_recall",
     "record_memory_write",
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
