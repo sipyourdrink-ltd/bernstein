@@ -10,7 +10,6 @@ from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core import defaults as _defaults
-from bernstein.core.defaults import AGENT
 from bernstein.core.tasks.artifacts import ArtifactSpec
 
 if TYPE_CHECKING:
@@ -54,7 +53,7 @@ def _default_planning_window_s() -> float:
 
 
 def _default_max_agent_runtime_s() -> int:
-    """Return the current canonical agent wall-clock kill starting value.
+    """Return the current canonical agent runtime floor value.
 
     Reads from :mod:`bernstein.core.defaults` each call (same pattern as
     :func:`_default_poll_interval_s`) so that ``tuning.orchestrator.
@@ -1623,19 +1622,26 @@ class OrchestratorConfig:
     smtp: SmtpConfig | None = None
     # Unified with AGENT.heartbeat_stale_s. Previously 900s; now defaults to 120s.
     # Deployments that explicitly relied on the 900s value must set this field explicitly.
-    heartbeat_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_stale_s))
+    # Read THROUGH the module, like the ORCHESTRATOR-derived fields below: a name
+    # captured with ``from bernstein.core.defaults import AGENT`` is a snapshot
+    # taken at import, and ``defaults.override`` (how bernstein.yaml's ``tuning:``
+    # block lands) rebinds the module attribute instead of mutating the frozen
+    # instance. Measured 2026-09-03: with ``heartbeat_starting_timeout_s: 900``
+    # configured, this config still resolved 300 - so a judge slow to its first
+    # heartbeat kept the shipped window and could be reaped mid-first-turn.
+    heartbeat_timeout_s: int = field(default_factory=lambda: int(_defaults.AGENT.heartbeat_stale_s))
     # Time-to-first-turn cap for agents still in the `starting` phase. Kept
     # separate from (and larger than) ``heartbeat_timeout_s`` so a slow/free
     # model that takes >120s to its first turn is not reaped mid-work while a
     # non-heartbeat adapter has only its spawn-time heartbeat on disk (issue
     # #3012). Overridable via ``tuning.agent.heartbeat_starting_timeout_s``.
-    heartbeat_starting_timeout_s: int = field(default_factory=lambda: int(AGENT.heartbeat_starting_timeout_s))
+    heartbeat_starting_timeout_s: int = field(default_factory=lambda: int(_defaults.AGENT.heartbeat_starting_timeout_s))
     heartbeat_enabled: bool = True
-    # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical) so
-    # ``tuning.orchestrator.max_agent_runtime_s`` overrides the starting
-    # wall-clock kill deadline (agents need time for complex tasks; this
-    # self-extends up to a 5400s hard cap while heartbeating, see
-    # core/agents/agent_lifecycle.py - this is only the starting value).
+    # Derived from ORCHESTRATOR.max_agent_runtime_s (canonical). Values above
+    # the shipped 1800s default raise shorter scope/XL starting deadlines;
+    # values at or below the default never shorten those buckets. Heartbeat
+    # self-extension still tops out at 5400s, but does not clamp a longer
+    # initial deadline (see core/agents/agent_lifecycle.py).
     max_agent_runtime_s: int = field(default_factory=_default_max_agent_runtime_s)
     # Derived from ORCHESTRATOR.stalled_manager_threshold_s (canonical) so
     # ``tuning.orchestrator.stalled_manager_threshold_s`` overrides actually
@@ -2160,7 +2166,15 @@ class TriggerConfig:
 
 @dataclass
 class TriggerFireRecord:
-    """Audit record written when a trigger fires and creates a task."""
+    """Audit record written when a trigger fires and creates a task.
+
+    ``produced`` says whether the fire found real work. A routine that runs and
+    finds nothing is still recorded -- an operator needs to see that it ran --
+    but it does not reset the cooldown clock, because a check with an empty
+    result is otherwise indistinguishable from one that never happened
+    (issue #5113). Defaults to ``True`` so a record written before the field
+    existed, and every caller that does not pass it, means what it always did.
+    """
 
     trigger_name: str
     source: str
@@ -2168,6 +2182,7 @@ class TriggerFireRecord:
     task_id: str
     dedup_key: str
     event_summary: str = ""
+    produced: bool = True
 
 
 @dataclass(frozen=True)

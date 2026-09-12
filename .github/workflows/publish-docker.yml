@@ -28,6 +28,13 @@ jobs:
     name: Build and push image to GHCR
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Approval lives on publish.yml's `publish` job (PyPI trusted
+    # publishing, OIDC-scoped to the pypi environment). This job logs in to
+    # GHCR with GITHUB_TOKEN and its id-token: write is for the Sigstore
+    # build-provenance attestation below -- a different, unrelated OIDC
+    # audience -- so pinning it to the same environment only added an
+    # approval click without adding protection.
+    environment: release-channels
     permissions:
       contents: read
       packages: write
@@ -35,7 +42,7 @@ jobs:
       attestations: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -91,7 +98,7 @@ jobs:
             type=raw,value=latest,enable=${{ !contains(steps.ref.outputs.version, '-') }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4

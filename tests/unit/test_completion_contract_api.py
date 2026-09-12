@@ -100,6 +100,9 @@ def _completion_payload(**overrides: Any) -> dict[str, Any]:
         "summary": "Implemented and verified.",
         "files_changed": ["src/foo.py"],
         "verification": {"command": "pytest -q", "exit_code": 0},
+        # A verification names where its outcome was recorded (#5001); a
+        # payload carrying one without a receipt is refused at the boundary.
+        "receipt_ref": "lineage:task-9f3a",
     }
     base.update(overrides)
     return base

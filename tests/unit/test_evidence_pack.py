@@ -28,9 +28,11 @@ import pytest
 from bernstein.compliance.evidence_pack import (
     SUPPORTED_STANDARDS,
     EvidencePack,
+    _canonical_json,
     build_evidence_pack,
     get_standard_map,
 )
+from bernstein.core.security.evidence_envelope import canonical_envelope_bytes
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -247,6 +249,94 @@ class TestBuildEvidencePack:
                 sdd_dir=sdd_dir,
                 standard="iso-9000",
             )
+
+
+# ---------------------------------------------------------------------------
+# Canonicalisation (#5504): one encoder, and it is the RFC 8785 one
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalization:
+    def test_canonical_json_is_the_rfc8785_encoder_not_a_local_rule(self) -> None:
+        """``_canonical_json`` must not be a second, hand-configured ``json.dumps``.
+
+        Regression for #5504: the digested JSON artefacts (``manifest.json``,
+        ``controls.json``, ``audit-chain/data_catalog.json``) were previously
+        serialised with a local ``sort_keys=True, indent=2`` convention that
+        disagreed with the RFC 8785 (JCS) encoder the signed evidence-envelope
+        format already ships with golden vectors for. Both entry points must
+        now produce byte-identical output for the same payload.
+        """
+        payload = {"b": 1, "a": [1, 2, 3], "c": {"nested": True, "value": 1.0}}
+        assert _canonical_json(payload) == canonical_envelope_bytes(payload)
+
+    def test_pack_artefact_reencoded_by_canonical_envelope_bytes_matches_on_disk(
+        self,
+        sdd_dir: Path,
+    ) -> None:
+        """A pack's ``manifest.json``, re-encoded independently, is byte-identical.
+
+        This is the property a verifier who holds only the RFC 8785
+        specification (and not this source tree) relies on: re-canonicalising
+        the parsed JSON must reproduce exactly the bytes shipped in the zip.
+        """
+        pack = build_evidence_pack(sdd_dir=sdd_dir, standard="ai-act")
+        with zipfile.ZipFile(pack.archive_path) as zf:  # type: ignore[arg-type]
+            for name in ("manifest.json", "controls.json", "audit-chain/data_catalog.json"):
+                on_disk = zf.read(name)
+                assert canonical_envelope_bytes(json.loads(on_disk)) == on_disk, name
+
+    def test_non_ascii_key_round_trips_byte_for_byte(self, sdd_dir: Path) -> None:
+        """A resource id carrying non-ASCII text still round-trips exactly.
+
+        ``data_catalog.json`` keys resources by ``resource_type``/``resource_id``
+        taken straight from audit events, so a non-ASCII actor or resource id
+        exercises the encoder's UTF-8 string handling end to end, not just on
+        a hand-written fixture.
+        """
+        _write_jsonl(
+            sdd_dir / "audit" / "2026-03-01.jsonl",
+            [
+                {
+                    "timestamp": "2026-03-01T00:00:00+00:00",
+                    "event_type": "task.created",
+                    "actor": "étienne",
+                    "resource_type": "task",
+                    "resource_id": "日本-1",
+                    "details": {},
+                    "hmac": "d" * 64,
+                    "prev_hmac": "c" * 64,
+                },
+            ],
+        )
+        pack = build_evidence_pack(sdd_dir=sdd_dir, standard="ai-act")
+        with zipfile.ZipFile(pack.archive_path) as zf:  # type: ignore[arg-type]
+            on_disk = zf.read("audit-chain/data_catalog.json")
+        parsed = json.loads(on_disk)
+        assert "日本-1" in parsed["resources"]["task"]
+        assert canonical_envelope_bytes(parsed) == on_disk
+
+    def test_property_order_follows_utf16_code_units_not_code_points(self) -> None:
+        """RFC 8785 §3.2.3: property names sort as UTF-16 code units.
+
+        A name starting with a supplementary-plane character (U+10000, a
+        surrogate pair starting at U+D800) and a name in U+E000..U+FFFF sort
+        in the *opposite* order under UTF-16 code units than under Unicode
+        code points -- the one place the two orderings disagree. This proves
+        ``_canonical_json`` carries that rule through, not just code-point
+        ``sort_keys``.
+        """
+        supplementary = "\U00010000-name"  # code point U+10000
+        bmp_private_use = "-name"  # code point U+E000
+        payload = {supplementary: 1, bmp_private_use: 2}
+
+        # Code-point order: U+E000 (57344) < U+10000 (65536), so
+        # ``bmp_private_use`` would sort first.
+        # UTF-16 code-unit order (RFC 8785 3.2.3): the supplementary
+        # character encodes as a surrogate pair whose lead unit is U+D800
+        # (55296) < U+E000 (57344), so ``supplementary`` must sort first.
+        encoded = _canonical_json(payload).decode("utf-8")
+        assert encoded.index(supplementary) < encoded.index(bmp_private_use)
 
 
 # ---------------------------------------------------------------------------

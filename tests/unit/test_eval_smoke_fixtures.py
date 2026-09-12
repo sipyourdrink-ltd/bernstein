@@ -17,7 +17,14 @@ from __future__ import annotations
 from importlib import resources
 from pathlib import Path
 
+import pytest
+
 from bernstein.eval.golden import load_golden_tasks
+
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PACKAGED_SMOKE_DIR = _REPO_ROOT / "src" / "bernstein" / "eval" / "golden_data" / "smoke"

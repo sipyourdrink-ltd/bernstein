@@ -150,25 +150,20 @@ def test_scope_guardrail_rejects_prefix_collision_and_traversal() -> None:
     assert r2.passed is False, "src/../etc/passwd slipped through prefix check"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug: ASI01 goal-hijack misses zero-width-space/Cyrillic-homoglyph "
-        "obfuscations. Class affected: detect_asi01_goal_hijack. Severity: MEDIUM."
-    ),
-)
 def test_asi01_catches_homoglyph_and_zero_width_obfuscation() -> None:
-    """Bug: ASI01 detector is byte-literal regex only.
+    """ASI01 folds obfuscated spellings before matching (FIXED).
 
-    Root cause: pattern matches on canonical ASCII strings. Two trivial
-    obfuscations bypass it: (1) Cyrillic ``І`` (U+0406) replacing ASCII
-    ``I``; (2) zero-width space inside the keyword.
+    This was an ``xfail(strict=True)`` recording a MEDIUM-severity bypass:
+    the patterns were matched against the raw string, so two trivial
+    obfuscations walked past them. (1) Cyrillic U+0406 in place of ASCII
+    ``I``; (2) a zero-width space inside the keyword.
 
-    Attacker model: any actor controlling user prompt or retrieved
-    content (RAG, GitHub issue body, web fetch). Both obfuscations are
-    standard prompt-injection payloads documented across the OWASP
-    Top-10 for Agentic Apps. Pattern improvement: NFKC-normalise +
-    strip zero-width controls before regex match.
+    Attacker model: any actor controlling user prompt or retrieved content
+    (RAG, GitHub issue body, web fetch). Both are standard prompt-injection
+    payloads documented across the OWASP Top-10 for Agentic Apps. The
+    haystack now has its invisible codepoints dropped, is NFKC-normalised,
+    and has the confusables NFKC leaves alone mapped to ASCII, before the
+    patterns run.
     """
     # Use explicit unicode escapes so the test is lint-clean and the
     # obfuscation intent is loud in the source.
@@ -238,20 +233,13 @@ def test_asi04_rejects_non_list_iterables() -> None:
     assert detect_asi04_supply_chain(ctx_str).passed is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug: ASI06 memory-poisoning source check is case-sensitive. "
-        "`source='UNTRUSTED'` slips through. Severity: MEDIUM."
-    ),
-)
 def test_asi06_source_check_is_case_insensitive() -> None:
-    """Bug: ``write.get("source") == "untrusted"`` requires exact case.
+    """A trust label is compared as a label, not as bytes (FIXED).
 
-    Root cause: integration partners may emit ``"Untrusted"`` /
-    ``"UNTRUSTED"`` - e.g. coming from a JSON envelope where the case
-    is normalised by the upstream system. Pattern fix:
-    ``str(source).strip().casefold() == "untrusted"``.
+    This was an ``xfail(strict=True)``: ``write.get("source") ==
+    "untrusted"`` required exact case, so ``"Untrusted"`` and
+    ``"UNTRUSTED"`` read as trusted. Integration partners emit both, for
+    instance through a JSON envelope that case-normalises on the way.
     """
     ctx = {"memory_write": {"source": "UNTRUSTED", "content": "x"}}
     assert detect_asi06_memory_poisoning(ctx).passed is False

@@ -472,6 +472,47 @@ class TestCliScorecard:
         assert payload["ok"] is False
         assert "branch" in payload["description"]
 
+    def test_scorecard_verify_failure_output_is_only_the_envelope(self, pr_run: tuple[Path, str]) -> None:
+        """A failing ``--verify --json`` writes one JSON document and nothing else.
+
+        The mismatch is carried by ``ok`` and ``description`` inside the
+        envelope. Any additional diagnostic line -- however human-friendly --
+        lands after the closing brace and stops the output parsing as JSON,
+        which is the whole point of the ``--json`` mode.
+        """
+        root, run_id = pr_run
+        runner = CliRunner()
+        runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root)])
+        journal_path = run_ledger_dir(root / ".sdd", run_id) / "000000.jsonl"
+        raw = journal_path.read_text(encoding="utf-8")
+        journal_path.write_text(raw.replace('"branch":"fix/scorecard"', '"branch":"fix/wrong"', 1), encoding="utf-8")
+
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root), "--verify", "--json"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        # Round-tripping the parsed envelope must account for every byte the
+        # command emitted: no trailing "Error: ..." line, no second document.
+        assert json.loads(result.output.strip()) == payload
+        assert result.output.strip().endswith("}")
+
+    def test_scorecard_verify_failure_reports_once_on_the_human_path(self, pr_run: tuple[Path, str]) -> None:
+        """Without ``--json`` the mismatch is named once, by the FAIL line."""
+        root, run_id = pr_run
+        runner = CliRunner()
+        runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root)])
+        journal_path = run_ledger_dir(root / ".sdd", run_id) / "000000.jsonl"
+        raw = journal_path.read_text(encoding="utf-8")
+        journal_path.write_text(raw.replace('"branch":"fix/scorecard"', '"branch":"fix/wrong"', 1), encoding="utf-8")
+
+        result = runner.invoke(runs_group, ["scorecard", run_id, "--workdir", str(root), "--verify"])
+
+        assert result.exit_code == 1
+        assert "FAIL" in result.output
+        assert result.output.count("FAIL") == 1
+        assert "Error:" not in result.output
+
     def test_scorecard_missing_ledger_exits_nonzero(self, tmp_path: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(runs_group, ["scorecard", "no-such-run", "--workdir", str(tmp_path)])

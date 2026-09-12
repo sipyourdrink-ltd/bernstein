@@ -29,6 +29,13 @@ import ast
 import importlib
 from pathlib import Path
 
+import pytest
+
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 _SRC = Path(__file__).resolve().parents[3] / "src" / "bernstein"
 
 _FORBIDDEN_CTORS = {"LineageRecorder", "LineageWriter"}
@@ -43,7 +50,12 @@ _SIGNED_WRITE_MODULE = _SRC / "core" / "lineage" / "signed_write.py"
 _SEALING_NAMES = {"seal_write", "SignedLineageLog"}
 
 
+import functools
+
+
+@functools.cache
 def _iter_src_modules() -> list[tuple[Path, ast.Module]]:
+    """Parse and cache the AST for all src/ modules once per test session."""
     out: list[tuple[Path, ast.Module]] = []
     for py in sorted(_SRC.rglob("*.py")):
         try:

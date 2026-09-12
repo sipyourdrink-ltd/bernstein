@@ -39,6 +39,7 @@ class _FakeAdapter(CLIAdapter):
         self._name = adapter_name
         self.spawn_calls: list[tuple[str, Path]] = []
         self.spawn_system_addenda: list[str] = []
+        self.spawn_timeouts: list[int] = []
 
     def name(self) -> str:
         return self._name
@@ -56,10 +57,11 @@ class _FakeAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
     ) -> SpawnResult:
-        del model_config, session_id, mcp_config, timeout_seconds
+        del model_config, session_id, mcp_config
         del task_scope, budget_multiplier
         self.spawn_calls.append((prompt, workdir))
         self.spawn_system_addenda.append(system_addendum)
+        self.spawn_timeouts.append(timeout_seconds)
         return SpawnResult(pid=99, log_path=workdir / ".sdd" / "logs" / "direct.log")
 
     def is_alive(self, pid: int) -> bool:  # pragma: no cover - not used
@@ -409,7 +411,7 @@ def test_provisioning_failure_falls_back_to_direct_spawn(tmp_path: Path) -> None
     backend = _BrokenBackend(tmp_path)
     spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
 
-    agent_session = AgentSession(id="S-25", role="backend")
+    agent_session = AgentSession(id="S-25", role="backend", timeout_s=5400)
     result = spawner._spawn_via_sandbox_session(  # pyright: ignore[reportPrivateUsage]
         session_id="S-25",
         prompt="fallback",
@@ -421,6 +423,7 @@ def test_provisioning_failure_falls_back_to_direct_spawn(tmp_path: Path) -> None
     )
     assert result.pid == 99
     assert adapter.spawn_calls == [("fallback", tmp_path)]
+    assert adapter.spawn_timeouts == [5400]
     assert "S-25" not in spawner._sandbox_owned_sessions  # pyright: ignore[reportPrivateUsage]
 
 

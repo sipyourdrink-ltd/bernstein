@@ -43,8 +43,19 @@ A successful terminal payload:
 | `summary` | yes | Non-empty string, capped at 2000 characters. |
 | `files_changed` | no | List of non-empty path strings. |
 | `exports` | no | Content-addressed outputs as `{path, content_hash}` objects. Hashes use canonical `sha256:<64 lowercase hex>` form. |
-| `verification` | no | `{command, exit_code}` - a step the worker ran before completing. |
-| `receipt_ref` | no | Optional lineage/receipt reference. |
+| `verification` | no | `{command, exit_code}` - a step the worker ran before completing. Requires `receipt_ref`. |
+| `receipt_ref` | no | Lineage/receipt reference. **Required whenever `verification` is present.** |
+
+The last two are validated together. A completion may carry neither - not
+every task runs a verification - and it may carry `receipt_ref` alone. What it
+may not do is claim a verification ran without naming where the outcome was
+recorded: a payload with `verification` and no `receipt_ref` is rejected with
+`path == "$.receipt_ref"`.
+
+The reason is what a later reader can do with the record. A claim backed by a
+receipt and one the worker simply asserted used to serialize identically, so
+the orchestrator deciding whether a dependent task may start, and an operator
+reading the ledger, had no way to tell them apart (#5001).
 
 ### Refusal
 

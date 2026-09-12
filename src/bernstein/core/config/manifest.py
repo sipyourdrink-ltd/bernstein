@@ -106,6 +106,11 @@ class RunManifest:
         agent_adapter: CLI agent adapter configuration.
         provenance: Who/when/what-commit triggered the run.
         orchestrator_config: Snapshot of OrchestratorConfig values.
+        run_root_identity_id: Identity minted for the run root, the issuer every
+            top-level agent's delegation hop names.  Recorded here so
+            ``bernstein delegation verify <run>`` can anchor the chain without
+            reading the identity store back (#5047).  Empty when the run minted
+            no root, which is every manifest written before that existed.
         manifest_hash: SHA-256 digest computed over all other fields.
     """
 
@@ -118,6 +123,7 @@ class RunManifest:
     agent_adapter: AgentAdapterConfig = field(default_factory=AgentAdapterConfig)
     provenance: Provenance = field(default_factory=Provenance)
     orchestrator_config: dict[str, Any] = field(default_factory=dict)
+    run_root_identity_id: str = ""
     manifest_hash: str = ""
 
     # ------------------------------------------------------------------
@@ -182,6 +188,7 @@ class RunManifest:
                 commit_sha=str(data.get("provenance", {}).get("commit_sha", "")),
             ),
             orchestrator_config=dict(data.get("orchestrator_config", {})),
+            run_root_identity_id=str(data.get("run_root_identity_id", "")),
             manifest_hash=str(data.get("manifest_hash", "")),
         )
 
@@ -199,6 +206,7 @@ def build_manifest(
     model: str | None = None,
     workflow_name: str = "",
     workflow_definition_hash: str = "",
+    run_root_identity_id: str = "",
 ) -> RunManifest:
     """Build a RunManifest from orchestrator configuration.
 
@@ -264,6 +272,7 @@ def build_manifest(
         agent_adapter=agent_adapter,
         provenance=provenance,
         orchestrator_config=orch_snapshot,
+        run_root_identity_id=run_root_identity_id,
     )
 
     # Compute and attach the hash (frozen dataclass requires object.__setattr__)

@@ -1,0 +1,23 @@
+# Canonical tracker-ingest event-type catalogue (#5132).
+# Source adapters map raw event names through this file only — never by
+# string-literal comparison in ingest code. Unknown source events resolve to
+# ``unmapped_canonical`` and are counted.
+version: 1
+unmapped_canonical: unmapped
+entries:
+  - adapter: github
+    source_event: issues
+    canonical: github.issues
+  - adapter: github
+    source_event: issue_comment
+    canonical: github.issue_comment
+  - adapter: github
+    source_event: pull_request
+    canonical: github.pull_request
+  - adapter: gitlab
+    source_event: issue
+    canonical: gitlab.issue
+  - adapter: gitlab
+    source_event: note
+    canonical: gitlab.note
+    shape: note

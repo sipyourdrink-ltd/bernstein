@@ -27,6 +27,7 @@ import yaml
 
 CORPUS_PATH = Path(__file__).parent / "corpus" / "adversarial_pairs.json"
 POLICIES_DIR = Path(__file__).parent / "policies"
+REGOREPO_PATH = POLICIES_DIR / "regorepo.rego"
 
 
 @dataclass(frozen=True)
@@ -76,13 +77,15 @@ class ExperimentSummary:
 def _compute_intent_digest(intent_text: str) -> str:
     """Compute the intent digest for a declared intent string.
 
-    This is a deterministic SHA-256 over the canonical JSON of the intent text.
-    The digest is synthetic to the experiment: it covers only the declared_intent
-    field so that benign and harmful variants of the same tool call produce
-    different digests.  It does NOT match the production ToolCallIntent.digest()
-    computation (which also includes args_digest, method, request_id, scope_id,
-    server_name, span_id, tool_name).  The experiment uses this as a controlled
-    input to test whether intent binding adds discriminative value over args binding alone.
+    This is a controlled experiment input: a deterministic SHA-256 over the
+    canonical JSON of ``{"declared_intent": <text>}``. It is intentionally
+    simpler than the production ``ToolCallIntent.digest()`` computation,
+    which additionally includes ``args_digest``, ``method``, ``request_id``,
+    ``scope_id``, ``server_name``, ``span_id``, and ``tool_name``. By binding
+    only on ``declared_intent``, benign and harmful variants of the same
+    tool call (which share all other fields) produce different digests, so
+    the experiment can isolate whether intent binding adds discriminative
+    value over args binding alone.
     """
     canonical = json.dumps({"declared_intent": intent_text}, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(canonical).hexdigest()

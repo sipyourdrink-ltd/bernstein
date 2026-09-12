@@ -4,11 +4,11 @@ name: Post-CI dispatcher
 # DO NOT PRUNE THIS WORKFLOW FOR RUNNER CAPACITY.
 #
 # `.github/workflows/auto-release.yml` declares `on: workflow_call:` and
-# nothing else, and so do auto-heal.yml, bernstein-ci-fix.yml and
-# bisect-on-red.yml. This dispatcher is their ONLY invocation path. A
-# dispatcher run that is cancelled, disabled or filtered away takes the
-# release automation with it, and nothing anywhere reports a failing check
-# when that happens - the release simply does not occur.
+# nothing else, and so do auto-heal.yml and bisect-on-red.yml. This
+# dispatcher is their ONLY invocation path. A dispatcher run that is
+# cancelled, disabled or filtered away takes the release automation with
+# it, and nothing anywhere reports a failing check when that happens -
+# the release simply does not occur.
 #
 # Any change to the routing below has to keep `conclusion == 'success'` on
 # `main` reaching the auto-release job.
@@ -16,18 +16,14 @@ name: Post-CI dispatcher
 #
 # Single workflow_run: CI completed listener that consolidates the fanout
 # previously paid out across sibling workflows (auto-release, auto-heal,
-# bernstein-ci-fix, bisect-on-red). Each child is now a reusable workflow
-# (on: workflow_call:) and runs only when the dispatcher's routing logic
+# bisect-on-red). Each child is now a reusable workflow (on:
+# workflow_call:) and runs only when the dispatcher's routing logic
 # selects it.
 #
 # Routing summary:
 #   - auto-release       -> fires on the main branch only.
 #   - auto-heal          -> fires on failure on main, gated on canonical repo
 #                            and recursion guards.
-#   - bernstein-ci-fix   -> fires on failure on main only when auto-heal did
-#                            NOT open a heal PR. Prevents the parallel race
-#                            that previously caused both heals to fight over
-#                            the same SHA.
 #   - bisect-on-red      -> fires on failure on main.
 #
 # Each child reusable workflow re-checks its own preconditions, so the
@@ -76,10 +72,9 @@ jobs:
     # Every job in auto-release.yml gates on `inputs.conclusion == 'success'`
     # except its stale-trigger alert, which gates on the explicit list
     # ["failure", "timed_out", "action_required"] and documents `cancelled`
-    # as deliberately excluded. auto-heal, bernstein-ci-fix and bisect-on-red
-    # each require exactly `failure`. So `cancelled` and `skipped` route
-    # nothing: today they boot this job, resolve metadata, and every child
-    # then skips.
+    # as deliberately excluded. auto-heal and bisect-on-red each require
+    # exactly `failure`. So `cancelled` and `skipped` route nothing: today
+    # they boot this job, resolve metadata, and every child then skips.
     #
     # That is not a rare case. ci.yml keys push-to-main runs per SHA and
     # never cancels them, so a merge wave leaves a long tail of main CI runs
@@ -109,7 +104,7 @@ jobs:
       event: ${{ steps.out.outputs.event }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
       - name: Capture event metadata
@@ -199,61 +194,6 @@ jobs:
       head_sha: ${{ needs.meta.outputs.head_sha }}
       run_id: ${{ needs.meta.outputs.run_id }}
       display_title: ${{ needs.meta.outputs.display_title }}
-
-  bernstein-ci-fix:
-    name: Bernstein CI fix
-    needs: [meta, auto-heal]
-    # Run only on real CI failures on main from the canonical repo, and only
-    # when auto-heal did NOT open a heal PR. This serialises the two fixers
-    # so they no longer race on the same failing SHA (ticket acceptance:
-    # auto-heal and bernstein-ci-fix call each other via dispatcher when
-    # one fails instead of both firing in parallel).
-    if: >-
-      always() &&
-      needs.meta.outputs.conclusion == 'failure' &&
-      needs.meta.outputs.head_branch == 'main' &&
-      needs.meta.outputs.head_repo == github.repository &&
-      !startsWith(needs.meta.outputs.display_title, 'auto-heal:') &&
-      needs.meta.outputs.actor_login != 'bernstein[bot]' &&
-      needs.meta.outputs.actor_login != 'bernstein-orchestrator[bot]' &&
-      needs.meta.outputs.actor_login != 'github-actions[bot]' &&
-      (needs.auto-heal.result == 'skipped' ||
-        needs.auto-heal.outputs.heal_outcome == '' ||
-        needs.auto-heal.outputs.heal_outcome == 'skipped_no_jobs' ||
-        needs.auto-heal.outputs.heal_outcome == 'failed_validation')
-    # Union of permissions the called workflow's jobs request: it pushes
-    # auto-heal branches and opens auto-heal PRs (contents:write,
-    # pull-requests:write), opens fallback ci-fix issues (issues:write),
-    # and reads upstream CI run + PR metadata (actions:read).
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      actions: read
-    uses: ./.github/workflows/bernstein-ci-fix.yml
-    # bernstein-ci-fix uses GEMINI_API_KEY for the LLM triage agent.
-    # GITHUB_TOKEN is auto-provided. GEMINI_API_KEY is declared
-    # `required: false` on the called workflow so jobs that need it gate
-    # on a non-empty value rather than failing the whole reusable call.
-    secrets:
-      # See the auto-heal call above: a reusable workflow sees only what it
-      # is passed, so the pull-request token has to be forwarded explicitly.
-      BERNSTEIN_AUTOSYNC_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      # OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
-      # Re-enable the pass once OPENROUTER_API_KEY_FREE is defined on
-      # the repo. The Tier-3 shadow-mode job (#1715) gates on
-      # vars.BERNSTEIN_CI_SELF_DRIVE == 'tier3' (default off) so leaving
-      # the pass commented while the operator has not defined the secret
-      # is the documented graceful-degrade posture: Tier-3 records a
-      # flag_off / skipped outcome and the rest of the dispatcher chain
-      # continues to run.
-    with:
-      head_sha: ${{ needs.meta.outputs.head_sha }}
-      head_branch: ${{ needs.meta.outputs.head_branch }}
-      run_id: ${{ needs.meta.outputs.run_id }}
-      display_title: ${{ needs.meta.outputs.display_title }}
-      actor_login: ${{ needs.meta.outputs.actor_login }}
 
   bisect-on-red:
     name: Bisect on red

@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import json
 from typing import TYPE_CHECKING, Any
 
 import reportlab.rl_config
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 __all__ = [
+    "render_access_review_csv",
     "render_incident_csv",
     "render_incident_pdf",
     "render_oversight_csv",
@@ -213,3 +215,42 @@ def render_incident_pdf(*, org: str, timeline: dict[str, Any], gaps: list[dict[s
 def render_incident_csv(timeline: dict[str, Any]) -> str:
     fields = ("ts_ns", "kind", "detail")
     return _csv(fields, timeline.get("events", []))
+
+
+# ---------------------------------------------------------------------------
+# Access review
+# ---------------------------------------------------------------------------
+
+
+def render_access_review_csv(document: dict[str, Any]) -> str:
+    """Flatten a signed access-review body into one CSV row per reviewed fact.
+
+    The signed artefact is the review body itself; this is a reading of it for
+    someone who wants the rows in a spreadsheet. ``detail`` is emitted as
+    canonical JSON so the rendering stays lossless and byte-identical across
+    builds.
+    """
+    fields = (
+        "created",
+        "principal",
+        "event",
+        "authorized_by",
+        "chain",
+        "run_id",
+        "chain_event",
+        "detail",
+    )
+    rows = [
+        {
+            "created": row["created"],
+            "principal": row["principal"],
+            "event": row["event"],
+            "authorized_by": row["authorized_by"],
+            "chain": row["chain"],
+            "run_id": row["run_id"],
+            "chain_event": row["chain_event"],
+            "detail": json.dumps(row["detail"], sort_keys=True, separators=(",", ":")),
+        }
+        for row in document.get("rows", [])
+    ]
+    return _csv(fields, rows)

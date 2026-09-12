@@ -195,6 +195,30 @@ def _is_path_literal(value: str) -> bool:
     return "." in value.rsplit("/", 1)[-1]
 
 
+def _static_path_segments(node: ast.expr) -> list[str] | None:
+    """Return literal path segments from a ``Path``-style division chain.
+
+    A structural guard commonly anchors a scanned directory at ``REPO_ROOT``
+    and appends literal segments. The root is runtime-specific, but the
+    repository-relative directory is not.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+        return None
+
+    right = _static_path_segments(node.right)
+    if right is None:
+        return None
+    left = _static_path_segments(node.left)
+    return right if left is None else [*left, *right]
+
+
+def _is_directory_literal(value: str) -> bool:
+    """Return whether a static literal names a specific repository directory."""
+    return value.count("/") >= 2 and not value.startswith(".") and "." not in value.rsplit("/", 1)[-1]
+
+
 def extract_path_literals(path: Path) -> set[str]:
     """Return the repo paths a file names as string literals.
 
@@ -225,13 +249,23 @@ def extract_path_literals(path: Path) -> set[str]:
     except (OSError, SyntaxError, UnicodeDecodeError):
         return set()
 
-    return {
+    literals = {
         stripped
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
         for stripped in [node.value.strip().strip("/")]
         if _is_path_literal(stripped)
     }
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BinOp):
+            continue
+        segments = _static_path_segments(node)
+        if segments is None:
+            continue
+        literal = "/".join(segment.strip("/") for segment in segments if segment.strip("/"))
+        if _is_directory_literal(literal):
+            literals.add(literal)
+    return literals
 
 
 def _string_dict_literal(node: ast.expr) -> dict[str, str]:
@@ -497,10 +531,13 @@ def _path_match_keys(rel_path: str) -> set[str]:
     ``src/bernstein/core/security/AGENTS.md`` yields the whole path, then
     ``core/security/AGENTS.md`` down to ``AGENTS.md``. A guard that globs for a
     bare file name matches on the last key; one that pins a single file matches
-    only on the longer key it wrote, so pinning stays specific.
+    only on the longer key it wrote, so pinning stays specific. Static
+    directory declarations also match their descendants.
     """
     parts = Path(rel_path).as_posix().split("/")
-    return {"/".join(parts[index:]) for index in range(len(parts))}
+    suffixes = {"/".join(parts[index:]) for index in range(len(parts))}
+    ancestors = {"/".join(parts[:index]) for index in range(1, len(parts))}
+    return suffixes | ancestors
 
 
 def _tests_reading_changed_paths(

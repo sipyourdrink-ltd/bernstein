@@ -17,6 +17,7 @@ bernstein config list                  # show every known key, value, and source
 bernstein config diff                  # diff project bernstein.yaml against built-in defaults
 bernstein config validate              # validate project model policy / providers
 bernstein config conflicts             # show settings where sources disagree
+bernstein config explain [<key>]       # every effective value, its layer, and the file it came from
 bernstein config view-mode <mode>      # set dashboard detail level
 ```
 
@@ -52,6 +53,46 @@ Same resolution, applied to every key in the built-in defaults table
 (`cli`, `budget`, `max_agents`, `effort`, `model`), rendered as a table of
 key / value / source / full resolution chain. Same `--project-dir` flag as
 `get`.
+
+### `bernstein config explain [KEY]`
+
+Answers "why is this value what it is". With no `KEY`, every known key is
+listed; with one, the layers consulted for it are printed highest-precedence
+first.
+
+```bash
+bernstein config explain                # survey every key
+bernstein config explain cli            # one key, with the layers consulted
+bernstein config explain cli --json     # machine-readable
+```
+
+It differs from `config list` in two ways: it names the **file** each layer was
+read from, and `--json` emits a shape a CI check can gate on:
+
+```json
+{
+  "precedence": ["seed", "session", "project", "context", "global", "default"],
+  "settings": [
+    {
+      "key": "cli",
+      "value": "codex",
+      "layer": "project",
+      "path": "/srv/app/.sdd/config.yaml",
+      "chain": [{ "source": "project", "value": "codex", "path": "/srv/app/.sdd/config.yaml" },
+                { "source": "default", "value": "claude", "path": null }]
+    }
+  ]
+}
+```
+
+The payload carries the precedence it resolved by, so a caller does not have to
+hardcode the order. Values are the redacted ones -- a resolution report is what
+an operator pastes into an issue, so a secret must not be the thing that leaks.
+
+An unknown key exits non-zero and lists the known ones, rather than reporting
+the setting as unresolved.
+
+`--project-dir` selects which project's `.sdd/config.yaml` is consulted.
 
 ### `bernstein config diff`
 
@@ -93,7 +134,7 @@ full detail.
 
 ## Precedence
 
-`bernstein config get`/`list`/`conflicts` resolve a key across, from
+`bernstein config get`/`list`/`explain`/`conflicts` resolve a key across, from
 highest to lowest precedence:
 
 1. **seed** — the run-seed (`bernstein.yaml`) value actually enforced by the
@@ -111,8 +152,13 @@ highest to lowest precedence:
    `max_agents=6`, `effort=max`, `model=None`,
    `host_isolation_tier=none`, `host_isolation_evidence=""`).
 
-Only `bernstein config set`/`get`/`list`/`conflicts`/`view-mode` operate on
-this precedence chain. `bernstein config diff` is a separate, narrower tool
+In code this order has exactly one definition, `CONFIG_PRECEDENCE` in
+`src/bernstein/core/config/home.py`; `tests/unit/test_config_explain_cmd.py`
+fails if the resolver, the command, or the `ConfigSource` vocabulary parts ways
+with it.
+
+Only `bernstein config set`/`get`/`list`/`explain`/`conflicts`/`view-mode`
+operate on this precedence chain. `bernstein config diff` is a separate, narrower tool
 that only compares the project seed file to built-in defaults.
 
 ## Known config keys

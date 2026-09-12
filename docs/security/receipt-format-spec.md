@@ -161,6 +161,56 @@ retained events rather than trust the serialized values.
 > (a different document type). The run-attestation receipt binds only the
 > audit-chain witnesses listed above.
 
+### Run-receipt subject binding (schema 1.1.0)
+
+A run receipt (`https://bernstein.run/attestations/run-receipt/v1`) binds the
+recomputed heads and counts of the journal, spine, and optional audit range into
+a canonical subject dictionary:
+
+```json
+{
+  "audit_range_event_count": 2,
+  "audit_range_head_hmac": "<hex>",
+  "audit_range_head_sha256": "<hex>",
+  "audit_range_since": "2020-01-01T00:00:00.000000Z",
+  "audit_range_until": "2100-01-01T00:00:00.000000Z",
+  "endpoints": [{"adapter": "...", "base_url": "...", "model": "...", "profile": "..."}],
+  "journal_event_count": 3,
+  "journal_head": "<hex>",
+  "run_id": "<run-id>",
+  "spine_entry_count": 2,
+  "spine_head": "<hex>"
+}
+```
+
+- When `audit_range` is omitted, all `audit_range_*` keys are omitted from the
+  binding block, preserving byte-identity across versions.
+- Under schema `1.1.0`, embedding an audit range binds `audit_range_since`,
+  `audit_range_until`, `audit_range_event_count`, and `audit_range_head_hmac`
+  alongside `audit_range_head_sha256` to prevent post-signing window relabelling.
+
+#### Canonicalization profile
+
+The binding block above is turned into bytes by one of two profiles, named by
+a top-level `hash_profile` field on the receipt and echoed into the binding
+block itself:
+
+- `py-json-v1` (default): `json.dumps(obj, sort_keys=True, separators=(",",
+  ":"))`, the profile every run receipt used before this field existed.
+  `ensure_ascii` defaults to `True`, so a non-ASCII property value is escaped
+  as `\uXXXX`.
+- `jcs-v2`: RFC 8785 (JCS) via the same `canonicalize_jcs` the TRACE
+  projection and audit-chain digests already use. Non-ASCII text is emitted
+  as raw UTF-8, and numbers follow the ECMAScript `Number::toString` rule.
+
+A receipt carrying no `hash_profile` field is `py-json-v1` - the field is
+added only when a receipt is signed under `jcs-v2`, so a `py-json-v1` receipt
+is byte-identical to one built before this field existed. A verifier that
+reads an unrecognised `hash_profile` value fails closed (`status:
+"malformed"`) rather than guessing a profile to recompute under.
+- Under legacy schema `1.0.0`, only `audit_range_head_sha256` is bound. Legacy
+  receipts verify with a warning (`"audit window unbound in schema 1.0.0"`).
+
 ## Signing key
 
 Every format signs with the same Ed25519 key, embedded in the receipt as an

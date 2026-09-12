@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import shutil
-import tempfile
 import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.tunnels.protocol import (
     ProviderNotAvailable,
     TunnelHandle,
@@ -33,21 +32,17 @@ STATE_PATH = Path(".sdd/runtime/tunnels.json")
 
 
 def _atomic_write(path: Path, data: str) -> None:
-    """Write ``data`` to ``path`` atomically via a tempfile rename.
+    """Write ``data`` to ``path`` through the crash-safe write path.
+
+    The previous local version closed the temporary without ``fsync``, so a
+    crash could leave the registry naming tunnels whose entries never
+    reached the disk.
 
     Args:
         path: Destination file path.
         data: String contents to write.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(data)
-        os.replace(tmp, path)
-    except Exception:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    write_atomic_text(path, data)
 
 
 class TunnelRegistry:

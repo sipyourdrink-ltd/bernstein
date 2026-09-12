@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import threading
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from bernstein.core.wal import (
     GENESIS_HASH,
     ExecutionFingerprint,
+    UncommittedIndex,
     WALEntry,
     WALEntryDigest,
     WALReader,
@@ -660,6 +663,234 @@ class TestWALRecoveryScanAll:
 # ---------------------------------------------------------------------------
 
 
+class TestUncommittedIndexFastPath:
+    """The sidecar index decides which WALs recovery has to open at all."""
+
+    @staticmethod
+    def _parse_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+        """Count calls to the single line-parse path behind every reader."""
+        calls = {"n": 0}
+        real = WALReader._iter_parsed
+
+        def counting(self: WALReader, *args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(WALReader, "_iter_parsed", counting)
+        return calls
+
+    def test_a_run_the_index_does_not_name_is_never_opened(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for i in range(3):
+            writer = WALWriter(run_id=f"r{i}", sdd_dir=tmp_path)
+            for _ in range(20):
+                writer.append("noise", {}, {}, "actor", committed=True)
+
+        calls = self._parse_counter(monkeypatch)
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="current") == []
+        assert calls["n"] == 0
+
+    def test_an_uncommitted_entry_is_still_found_on_the_fast_path(self, tmp_path: Path) -> None:
+        """Speed is worth nothing if recovery stops finding what it is for."""
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+
+        found = WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other")
+        assert [(run_id, entry.inputs["task_id"]) for run_id, entry in found] == [("r1", "t-1")]
+
+    def test_mark_committed_takes_the_run_back_off_the_fast_path(self, tmp_path: Path) -> None:
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+        entry = writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other")
+
+        writer.mark_committed(entry.seq)
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other") == []
+
+    def test_a_wal_written_before_the_index_existed_is_still_recovered(self, tmp_path: Path) -> None:
+        """The upgrade case: uncommitted entries exist and no index names them.
+
+        Seeding the index from a scan rather than writing an empty file is
+        what keeps this safe. An empty seed would tell every later scan
+        there is nothing to recover.
+        """
+        writer = WALWriter(run_id="legacy", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-legacy"}, {}, "actor", committed=False)
+        UncommittedIndex(tmp_path).path.unlink()
+
+        # A new run starts, which is when the index gets seeded.
+        WALWriter(run_id="current", sdd_dir=tmp_path)
+
+        found = WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="current")
+        assert [run_id for run_id, _entry in found] == ["legacy"]
+
+    def test_a_missing_index_falls_back_and_rebuilds(self, tmp_path: Path) -> None:
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        index = UncommittedIndex(tmp_path)
+        index.path.unlink()
+
+        assert len(WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other")) == 1
+        assert [row[0] for row in index.load()] == ["r1"]
+
+    def test_an_unparseable_index_falls_back_and_rebuilds(self, tmp_path: Path) -> None:
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        index = UncommittedIndex(tmp_path)
+        index.path.write_text("this is not json\n", encoding="utf-8")
+
+        assert len(WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other")) == 1
+        assert [row[0] for row in index.load()] == ["r1"]
+
+    def test_a_rebuild_keeps_the_excluded_run_in_the_index(self, tmp_path: Path) -> None:
+        """The current run's own uncommitted rows belong in the index.
+
+        They are filtered out of the caller's result, not out of the
+        rebuild, or the next scan would inherit a short index.
+        """
+        writer = WALWriter(run_id="current", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        index = UncommittedIndex(tmp_path)
+        index.path.unlink()
+
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="current") == []
+        assert [row[0] for row in index.load()] == ["current"]
+
+    def test_a_closed_wal_is_still_skipped_on_the_fast_path(self, tmp_path: Path) -> None:
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        WALRecovery.close_wal("r1", tmp_path, reason="recovered")
+
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other") == []
+
+    def test_orphaned_claims_still_found_through_the_index(self, tmp_path: Path) -> None:
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+
+        orphans = WALRecovery.find_orphaned_claims(tmp_path, exclude_run_id="other")
+        assert [entry.inputs["task_id"] for _run_id, entry in orphans] == ["t-1"]
+
+    def test_orphan_scan_skips_a_run_the_index_does_not_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for i in range(3):
+            writer = WALWriter(run_id=f"r{i}", sdd_dir=tmp_path)
+            writer.append("task_claimed", {"task_id": f"t-{i}"}, {}, "actor", committed=True)
+
+        calls = self._parse_counter(monkeypatch)
+        assert WALRecovery.find_orphaned_claims(tmp_path, exclude_run_id="current") == []
+        assert calls["n"] == 0
+
+
+class TestUncommittedIndexInvalidation:
+    """An index that cannot record a row must stop being believed."""
+
+    def test_a_failed_add_invalidates_the_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Otherwise the index is well-formed, short, and trusted.
+
+        The append succeeds either way; the entry is on disk and a full
+        scan can always find it. What must not survive is an index that
+        parses cleanly while naming fewer runs than exist, because the
+        fast path would walk straight past this one.
+        """
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+        index = UncommittedIndex(tmp_path)
+        assert index.path.exists()
+
+        def boom(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(UncommittedIndex, "add", boom)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        monkeypatch.undo()
+
+        assert not index.path.exists(), "a short index survived a failed add"
+        found = WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other")
+        assert [entry.inputs["task_id"] for _run_id, entry in found] == ["t-1"]
+
+    def test_a_failed_add_does_not_fail_the_append(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        writer = WALWriter(run_id="r1", sdd_dir=tmp_path)
+
+        def boom(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(UncommittedIndex, "add", boom)
+        entry = writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        assert entry.committed is False
+        assert entry.inputs["task_id"] == "t-1"
+
+    def test_a_later_append_does_not_resurrect_the_invalidated_index(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Append mode creates what it opens, so "absent" has to be defended.
+
+        The failing add invalidates the index. The *next* successful
+        uncommitted append is the step that used to undo that: an append to a
+        missing file re-created it holding one row, short and parseable and
+        therefore trusted, and every other run's uncommitted entry became
+        invisible to recovery.
+        """
+        stranded = WALWriter(run_id="stranded", sdd_dir=tmp_path)
+        stranded.append("task_claimed", {"task_id": "t-stranded"}, {}, "actor", committed=False)
+
+        live = WALWriter(run_id="live", sdd_dir=tmp_path)
+        index = UncommittedIndex(tmp_path)
+
+        def boom(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(UncommittedIndex, "add", boom)
+        live.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+        monkeypatch.undo()
+
+        assert not index.path.exists(), "a short index survived a failed add"
+
+        # The step that used to resurrect it.
+        live.append("task_claimed", {"task_id": "t-2"}, {}, "actor", committed=False)
+
+        found = WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="none")
+        assert "stranded" in {run_id for run_id, _entry in found}, (
+            "a later append re-created a one-row index and recovery walked past the other run"
+        )
+
+    def test_add_is_a_no_op_when_the_index_is_absent(self, tmp_path: Path) -> None:
+        """Only rebuild may create the file."""
+        index = UncommittedIndex(tmp_path)
+        assert index.add("r1", 1, "a" * 64) is False
+        assert not index.path.exists()
+
+    def test_add_writes_when_the_index_is_present(self, tmp_path: Path) -> None:
+        """The guard must not turn the ordinary path into a no-op."""
+        index = UncommittedIndex(tmp_path)
+        index.rebuild([])
+        assert index.add("r1", 1, "a" * 64) is True
+        assert [row[0] for row in index.load()] == ["r1"]
+
+    def test_seeding_survives_a_log_that_is_not_utf8(self, tmp_path: Path) -> None:
+        """A torn write mid-multibyte must not stop the writer constructing.
+
+        The seed scan reads as UTF-8, and this path runs in
+        ``WALWriter.__init__`` ahead of the guard that wraps replay, so a
+        UnicodeDecodeError here would block the orchestrator over one
+        garbled log from a prior run.
+        """
+        wal_dir = tmp_path / "runtime" / "wal"
+        wal_dir.mkdir(parents=True)
+        (wal_dir / "garbled.wal.jsonl").write_bytes(b'{"seq": 1, "actor": "\xff\xfe"}\n')
+
+        writer = WALWriter(run_id="fresh", sdd_dir=tmp_path)
+        entry = writer.append("noise", {}, {}, "actor", committed=True)
+        assert entry.decision_type == "noise"
+
+    def test_invalidate_reports_whether_the_file_is_gone(self, tmp_path: Path) -> None:
+        index = UncommittedIndex(tmp_path)
+        index.rebuild([("r1", 1, "a" * 64)])
+        assert index.invalidate() is True
+        assert not index.path.exists()
+        # Idempotent: nothing there is also "gone".
+        assert index.invalidate() is True
+
+
 class TestWALRecoveryClosedMarker:
     """Tests for the ``.closed`` sidecar marker (audit-072).
 
@@ -986,3 +1217,179 @@ class TestFingerprintDivergence:
         d = WALEntryDigest(seq=0, decision_type="x", digest="a" * 64)
         with pytest.raises((AttributeError, TypeError)):
             d.seq = 1  # type: ignore[misc]
+
+
+class TestUncommittedIndexLocking:
+    """The lock is what makes load-modify-save safe against a bare append.
+
+    ``add`` appends. ``remove`` / ``remove_run`` / ``rebuild`` load, filter and
+    write the whole file back. Interleave them without a lock and the
+    write-back is computed from rows that predate the append, so the appended
+    row is silently dropped.
+
+    That cost nothing while recovery read every WAL - the row was a hint. It
+    costs a record now: an index that exists is authoritative, so a run missing
+    from it never has its WAL opened, and its uncommitted ``task_claimed`` is
+    never failed.
+
+    Both writers here are separate ``UncommittedIndex`` handles, which is what
+    two orchestrators on one ``.sdd`` are. ``flock`` and ``msvcrt.locking`` are
+    both per-descriptor, so two handles contend even inside one process.
+    """
+
+    @staticmethod
+    def _park_write_all(monkeypatch: pytest.MonkeyPatch) -> tuple[threading.Event, threading.Event]:
+        """Hold every ``_write_all`` open until told to proceed.
+
+        This is the load-modify-save window, widened until it is reliable to
+        interleave with. The window exists on every call; the test only makes
+        it long enough to aim at.
+
+        Returns ``(entered, release)``. ``entered`` is set from inside the
+        patched method, so a caller waits on the writer actually being parked
+        rather than on a sleep that assumes it.
+        """
+        entered = threading.Event()
+        release = threading.Event()
+        real_write_all = UncommittedIndex._write_all
+
+        def blocking_write_all(self: UncommittedIndex, rows: list[tuple[str, int, str]]) -> None:
+            entered.set()
+            release.wait(timeout=10)
+            real_write_all(self, rows)
+
+        monkeypatch.setattr(UncommittedIndex, "_write_all", blocking_write_all)
+        return entered, release
+
+    def _interleave_append_into_a_removal(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> bool:
+        """Append to the index while a removal is parked mid write-back.
+
+        Returns whether ``add`` reported success. The removal is started in a
+        thread and blocked inside ``_write_all`` - it has loaded its rows and,
+        when the lock is in place, still holds it.
+        """
+        entered, release = self._park_write_all(monkeypatch)
+        remover = threading.Thread(target=lambda: UncommittedIndex(tmp_path).remove("stranded", 7))
+        remover.start()
+        # Released from a timer, not after the append: with the lock in place
+        # the append *blocks* on the removal, so releasing afterwards would
+        # deadlock the test against the very mechanism it is checking. The
+        # delay only has to outlast the append's attempt to acquire, and it
+        # is far inside the index's own 5s lock timeout.
+        unparker = threading.Timer(0.2, release.set)
+        unparker.start()
+        try:
+            assert entered.wait(timeout=10), "the removal never reached its write-back"
+            return UncommittedIndex(tmp_path).add("live", 1, "b" * 64)
+        finally:
+            unparker.cancel()
+            release.set()
+            remover.join(timeout=10)
+
+    def test_an_append_during_a_removal_is_not_lost(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The assertion that goes red the moment ``_locked`` stops locking.
+
+        Replace ``_locked`` with ``nullcontext`` and ``remove`` writes back the
+        rows it loaded before the append, dropping ``live`` - the run whose WAL
+        recovery would then never open.
+        """
+        UncommittedIndex(tmp_path).rebuild([("stranded", 7, "a" * 64), ("keep", 1, "c" * 64)])
+
+        appended = self._interleave_append_into_a_removal(tmp_path, monkeypatch)
+
+        assert appended, "the append itself failed, so this proves nothing about the lock"
+        rows = UncommittedIndex(tmp_path).load()
+        assert ("live", 1, "b" * 64) in rows, "the appended row was overwritten by the removal's write-back"
+        assert ("stranded", 7, "a" * 64) not in rows, "the removal did not take effect"
+        assert ("keep", 1, "c" * 64) in rows
+
+    def test_the_lock_is_what_holds_it_together(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The same interleaving with the lock removed, asserted to lose the row.
+
+        Without this, the test above would keep passing if the lock were
+        deleted *and* the timing happened to stop overlapping - green for the
+        wrong reason. Here the loss is the expected result, so the pair
+        separates "the lock works" from "the threads did not race".
+        """
+        monkeypatch.setattr(UncommittedIndex, "_locked", lambda _self: contextlib.nullcontext())
+        UncommittedIndex(tmp_path).rebuild([("stranded", 7, "a" * 64)])
+
+        self._interleave_append_into_a_removal(tmp_path, monkeypatch)
+
+        assert ("live", 1, "b" * 64) not in UncommittedIndex(tmp_path).load()
+
+    def test_a_row_missing_from_the_index_costs_a_recovered_record(self, tmp_path: Path) -> None:
+        """Why the dropped row matters, at the level the fast path acts on.
+
+        A run absent from an index that exists is a run whose WAL is never
+        opened, so its uncommitted entry is not in ``scan_all_uncommitted``.
+        This is the consequence the two tests above exist to prevent, and it
+        is what makes a lost update cost a record rather than a WAL read.
+        """
+        writer = WALWriter(run_id="live", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-1"}, {}, "actor", committed=False)
+
+        index = UncommittedIndex(tmp_path)
+        rows = index.load()
+        assert any(r[0] == "live" for r in rows), "precondition: the writer indexed its uncommitted entry"
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other")
+
+        # Exactly what a lost update leaves behind: a well-formed index that
+        # simply does not name this run.
+        index.rebuild([r for r in rows if r[0] != "live"])
+
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other") == []
+
+    def test_an_append_during_a_seeding_scan_is_not_lost(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The seed's scan has to be inside the lock, not just its write.
+
+        While the index is absent ``add`` is a no-op by design, so a row
+        appended between the scan reading a run's WAL and the rebuild landing
+        would be in neither - and the index then exists, so it is believed.
+
+        Here the scan is parked mid-walk and a second handle appends. With the
+        lock around the whole operation the append waits and its row survives;
+        with the lock around the write alone it lands in the gap and the
+        rebuild publishes an index that does not name it.
+        """
+        writer = WALWriter(run_id="early", sdd_dir=tmp_path)
+        writer.append("task_claimed", {"task_id": "t-0"}, {}, "actor", committed=False)
+        index = UncommittedIndex(tmp_path)
+        assert index.invalidate(), "precondition: the seed only runs when the index is absent"
+
+        entered, release = self._park_write_all(monkeypatch)
+        unparker = threading.Timer(0.2, release.set)
+        unparker.start()
+        seeder = threading.Thread(target=lambda: WALWriter(run_id="seeder", sdd_dir=tmp_path))
+        seeder.start()
+        try:
+            assert entered.wait(timeout=10), "the seed never reached its write"
+            # add() is a no-op while the index is absent, so this is the
+            # rebuild's own row set that has to include the appended entry.
+            UncommittedIndex(tmp_path).add("late", 1, "d" * 64)
+        finally:
+            unparker.cancel()
+            release.set()
+            seeder.join(timeout=10)
+
+        assert any(r[0] == "early" for r in UncommittedIndex(tmp_path).load())
+        assert WALRecovery.scan_all_uncommitted(tmp_path, exclude_run_id="other")
+
+    def test_the_seed_does_not_overwrite_an_index_that_already_exists(self, tmp_path: Path) -> None:
+        """``only_if_absent`` is checked under the lock, not before taking it."""
+        index = UncommittedIndex(tmp_path)
+        index.rebuild([("kept", 3, "e" * 64)])
+
+        def scan() -> list[tuple[str, int, str]]:  # pragma: no cover - must not run
+            raise AssertionError("scanned an index that already existed")
+
+        assert index.rebuild_from_scan(scan, only_if_absent=True) is False
+        assert index.load() == [("kept", 3, "e" * 64)]
+
+    def test_a_rebuild_from_scan_replaces_an_unusable_index(self, tmp_path: Path) -> None:
+        """The fallback path: whatever is there is replaced by the scan."""
+        index = UncommittedIndex(tmp_path)
+        index.path.write_text("{ not json\n")
+
+        assert index.rebuild_from_scan(lambda: [("fresh", 1, "f" * 64)], only_if_absent=False) is True
+        assert index.load() == [("fresh", 1, "f" * 64)]

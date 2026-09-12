@@ -1,9 +1,28 @@
 """Compliance-as-code policy library with pre-built rules.
 
 Provides a library of pure-Python compliance checks that inspect the
-filesystem state of a Bernstein project (``project_root``).  Each check
-verifies a concrete control requirement - audit logging directories exist,
-auth is configured, encryption settings are present, etc.
+filesystem state of a Bernstein project (``project_root``).
+
+**What a pass here asserts.** Every check in this module reads configuration
+or looks for a file. A pass is therefore a statement about *declared posture* -
+what the operator wrote down - and never about what a run actually did. That is
+the honest ceiling for a lint that observes no execution, and it is a different
+class of claim from the EU AI Act surface in
+:mod:`bernstein.core.security.article12_bundle`, which walks every HMAC link in
+a recorded chain and aborts on a break.
+
+Fourteen of the twenty-three checks below are satisfied by key *presence*
+alone: ``check_auth_configured`` is ``"auth" in config``, so an empty ``auth:``
+section passes it. The other nine want a file to exist or a flag to be truthy,
+which is stronger and still a declaration - a file named ``PRIVACY.md`` is not a
+privacy programme.
+
+This is not a defect in the checks; their own evidence strings say "Auth
+section found in config", not "authentication verified". It is written here so
+that a caller rendering these results does not present them as evidence.
+``docs/operations/compliance.md`` carries the same distinction per framework,
+and ``tests/unit/test_compliance_assertion_classes.py`` measures it rather than
+restating it (#5056).
 
 Six compliance frameworks are supported:
 

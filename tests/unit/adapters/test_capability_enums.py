@@ -175,16 +175,22 @@ def test_stream_json_adapters_declared() -> None:
 
 
 def test_text_signal_default_for_plain_adapters() -> None:
-    for name in ("aider", "droid", "opencode"):
+    for name in ("aider", "droid"):
         assert strategy_for(name).event_channel is EventChannel.TEXT_SIGNALS
 
 
 def test_opencode_declares_native_resume_and_a_dangerous_mode_flag() -> None:
-    """Both axes are backed by flags the adapter passes; the event channel is not yet."""
+    """All three axes are backed by flags the adapter passes on every spawn.
+
+    ``event_channel`` names what the upstream CLI emits, not what Bernstein
+    currently parses (#3676): ``opencode.py`` passes ``--format json``, under
+    which the CLI emits NDJSON, so the declared channel is ``stream-json``
+    even though nothing consumes those events yet.
+    """
     strategy = strategy_for("opencode")
     assert strategy.resume is ResumeStrategy.FLAG
     assert strategy.dangerous_mode is DangerousModeStrategy.CLI_FLAG
-    assert strategy.event_channel is EventChannel.TEXT_SIGNALS
+    assert strategy.event_channel is EventChannel.STREAM_JSON
 
 
 def test_opencode_resume_declaration_drives_the_retry_surface() -> None:

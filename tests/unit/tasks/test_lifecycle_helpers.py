@@ -275,6 +275,21 @@ def test_batch_timeout_large_low_complexity_stays_large_bucket() -> None:
     assert _batch_timeout_seconds(batch) == 3600
 
 
+def test_batch_timeout_raised_runtime_floor_lifts_only_shorter_buckets() -> None:
+    assert _batch_timeout_seconds([_task(scope=Scope.SMALL)], 5400) == 5400
+    assert _batch_timeout_seconds([_task(scope=Scope.MEDIUM)], 5400) == 5400
+    assert _batch_timeout_seconds([_task(scope=Scope.LARGE, complexity=Complexity.LOW)], 5400) == 5400
+    assert _batch_timeout_seconds([_task(scope=Scope.LARGE, complexity=Complexity.HIGH)], 5400) == 7200
+
+
+def test_batch_timeout_default_or_lower_runtime_never_shortens_buckets() -> None:
+    for configured in (1800, 600):
+        assert _batch_timeout_seconds([_task(scope=Scope.SMALL)], configured) == 900
+        assert _batch_timeout_seconds([_task(scope=Scope.MEDIUM)], configured) == 1800
+        assert _batch_timeout_seconds([_task(scope=Scope.LARGE, complexity=Complexity.LOW)], configured) == 3600
+        assert _batch_timeout_seconds([_task(scope=Scope.LARGE, complexity=Complexity.HIGH)], configured) == 7200
+
+
 # ---------------------------------------------------------------------------
 # infer_affected_paths
 # ---------------------------------------------------------------------------

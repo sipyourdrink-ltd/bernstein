@@ -75,6 +75,31 @@ class TestSymlinksReadOnly:
         assert len(violations) == 1
         assert "mutable state" in violations[0].lower()
 
+    def test_symlink_within_own_worktree_passes(self, repo_root: Path) -> None:
+        # The production layout: worktrees live under ``<repo_root>/.sdd/worktrees``,
+        # so a link that stays inside one resolves under the parent's ``.sdd`` without
+        # reaching anything the parent owns. The fixture above sits outside the repo
+        # and never exercised this.
+        worktree = repo_root / ".sdd" / "worktrees" / "agent-abc123"
+        worktree.mkdir(parents=True)
+        (worktree / "AGENTS.md").write_text("project instructions")
+        (worktree / "CLAUDE.md").symlink_to("AGENTS.md")
+        assert check_symlinks_read_only(worktree, repo_root) == []
+
+    def test_symlink_into_parent_sdd_from_nested_worktree_fails(self, repo_root: Path) -> None:
+        worktree = repo_root / ".sdd" / "worktrees" / "agent-abc123"
+        worktree.mkdir(parents=True)
+        (worktree / "leaked").symlink_to(repo_root / ".sdd" / "state.json")
+        violations = check_symlinks_read_only(worktree, repo_root)
+        assert len(violations) == 1
+        assert "mutable state" in violations[0].lower()
+
+    def test_symlink_into_sibling_of_mutable_dir_passes(self, worktree_path: Path, repo_root: Path) -> None:
+        # ``.github`` shares a string prefix with ``.git`` but is not inside it.
+        (repo_root / ".github").mkdir()
+        (worktree_path / "workflows").symlink_to(repo_root / ".github")
+        assert check_symlinks_read_only(worktree_path, repo_root) == []
+
 
 # ---------------------------------------------------------------------------
 # check_no_hardlink_leaks

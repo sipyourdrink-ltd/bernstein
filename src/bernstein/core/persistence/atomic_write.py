@@ -76,7 +76,7 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
-def write_atomic_bytes(path: Path, data: bytes) -> None:
+def write_atomic_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     """Atomically write *data* to *path* via temp-file + ``os.replace``.
 
     The sequence is:
@@ -92,6 +92,11 @@ def write_atomic_bytes(path: Path, data: bytes) -> None:
     Args:
         path: Final destination file.
         data: Byte payload to write.
+        mode: Permission bits for the created file. The ``0o600`` default is
+            right for ``.sdd/runtime/`` state, which may carry task metadata
+            or session tokens. A caller writing something that has to stay
+            readable by another account -- templates shipped inside an
+            installed package, say -- passes ``0o644`` and says why.
 
     Raises:
         OSError: Propagated from the underlying filesystem calls after
@@ -101,12 +106,12 @@ def write_atomic_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path_for(path)
     try:
-        # 0o600 - owner-only. Runtime state may carry task metadata, session
-        # tokens, or other material that should not be world-readable.
+        # Owner-only by default. Runtime state may carry task metadata,
+        # session tokens, or other material that should not be world-readable.
         fd = os.open(
             str(tmp),
             os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            0o600,
+            mode,
         )
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
@@ -120,7 +125,7 @@ def write_atomic_bytes(path: Path, data: bytes) -> None:
     _fsync_dir(path.parent)
 
 
-def write_atomic_text(path: Path, data: str, *, encoding: str = "utf-8") -> None:
+def write_atomic_text(path: Path, data: str, *, encoding: str = "utf-8", mode: int = 0o600) -> None:
     """Atomically write *data* as text to *path*.
 
     Thin wrapper over :func:`write_atomic_bytes` that handles encoding.
@@ -129,8 +134,10 @@ def write_atomic_text(path: Path, data: str, *, encoding: str = "utf-8") -> None
         path: Final destination file.
         data: Text payload to write.
         encoding: Text encoding (default UTF-8).
+        mode: Permission bits for the created file; see
+            :func:`write_atomic_bytes`.
     """
-    write_atomic_bytes(path, data.encode(encoding))
+    write_atomic_bytes(path, data.encode(encoding), mode=mode)
 
 
 def promote_atomic(staged_path: Path, path: Path) -> None:

@@ -22,6 +22,7 @@ class FakeAdapter(CLIAdapter):
         self._name = adapter_name
         self.spawn_calls: list[tuple[str, Path]] = []
         self.spawn_system_addenda: list[str] = []
+        self.spawn_timeouts: list[int] = []
 
     def name(self) -> str:
         return self._name
@@ -39,9 +40,10 @@ class FakeAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
     ) -> SpawnResult:
-        del model_config, session_id, mcp_config, timeout_seconds, task_scope, budget_multiplier
+        del model_config, session_id, mcp_config, task_scope, budget_multiplier
         self.spawn_calls.append((prompt, workdir))
         self.spawn_system_addenda.append(system_addendum)
+        self.spawn_timeouts.append(timeout_seconds)
         return SpawnResult(pid=42, log_path=workdir / ".sdd" / "logs" / "fallback.log")
 
     def is_alive(self, pid: int) -> bool:  # pragma: no cover - not used here
@@ -99,7 +101,7 @@ def test_spawn_in_sandbox_falls_back_to_adapter_on_runtime_failure(
     monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
     adapter = FakeAdapter("codex")
     sandbox = DockerSandbox(enabled=True)
-    session = AgentSession(id="S-2", role="backend")
+    session = AgentSession(id="S-2", role="backend", timeout_s=5400)
 
     with (
         patch("bernstein.core.agents.spawner_core.get_registry", return_value=MagicMock()),
@@ -124,6 +126,7 @@ def test_spawn_in_sandbox_falls_back_to_adapter_on_runtime_failure(
 
     assert result.pid == 42
     assert adapter.spawn_calls == [("fallback", tmp_path)]
+    assert adapter.spawn_timeouts == [5400]
     assert session.container_id is None
     assert session.isolation == "worktree"
 

@@ -362,26 +362,26 @@ class TestExecuteFastPath:
         assert "get_cwd" in good.read_text(encoding="utf-8")
         assert outside.read_bytes() == original
 
-    def test_rename_no_task_fails(self) -> None:
+    def test_rename_no_task_fails(self, tmp_path: Path) -> None:
         result = execute_fast_path(
             FastPathAction.RENAME_SYMBOL,
-            Path("/tmp"),
+            tmp_path,
             ["some.py"],
             task=None,
         )
         assert result.success is False
 
-    def test_rename_unparseable_pattern_fails(self) -> None:
+    def test_rename_unparseable_pattern_fails(self, tmp_path: Path) -> None:
         task = _make_task(title="Do something weird", complexity=Complexity.LOW)
         result = execute_fast_path(
             FastPathAction.RENAME_SYMBOL,
-            Path("/tmp"),
+            tmp_path,
             ["some.py"],
             task=task,
         )
         assert result.success is False
 
-    def test_rename_no_owned_files_fails(self) -> None:
+    def test_rename_no_owned_files_fails(self, tmp_path: Path) -> None:
         task = _make_task(
             title="Rename foo to bar",
             complexity=Complexity.LOW,
@@ -389,13 +389,115 @@ class TestExecuteFastPath:
         )
         result = execute_fast_path(
             FastPathAction.RENAME_SYMBOL,
-            Path("/tmp"),
+            tmp_path,
             [],
             task=task,
         )
         assert result.success is False
 
-    def test_unknown_action_fails(self) -> None:
+    def test_ruff_format_refuses_system_temp_or_root_workdir(self) -> None:
+        """Running ruff format with unbounded targets on /tmp or root is refused."""
+        result = execute_fast_path(
+            FastPathAction.RUFF_FORMAT,
+            Path("/tmp"),
+            [],
+        )
+        assert result.success is False
+        assert "refusing to run ruff on root or system temp directory" in (result.error or "")
+
+    def test_ruff_fix_refuses_system_temp_or_root_workdir(self) -> None:
+        """Running ruff fix with unbounded targets on /tmp or root is refused."""
+        result = execute_fast_path(
+            FastPathAction.RUFF_FIX,
+            Path("/tmp"),
+            [],
+        )
+        assert result.success is False
+        assert "refusing to run ruff on root or system temp directory" in (result.error or "")
+
+    def test_sort_imports_refuses_system_temp_or_root_workdir(self) -> None:
+        """Running sort imports with unbounded targets on /tmp or root is refused."""
+        result = execute_fast_path(
+            FastPathAction.SORT_IMPORTS,
+            Path("/tmp"),
+            [],
+        )
+        assert result.success is False
+        assert "refusing to run ruff on root or system temp directory" in (result.error or "")
+
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
+    def test_ruff_format_ignores_outside_owned_files(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """Outside files in owned_files are filtered before invoking ruff."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "reformatted 1 file"
+        mock_proc.stderr = ""
+        mock_run.return_value = mock_proc
+
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        (workdir / "inside.py").write_text("x = 1\n", encoding="utf-8")
+
+        result = execute_fast_path(
+            FastPathAction.RUFF_FORMAT,
+            workdir,
+            ["../outside.py", "inside.py"],
+        )
+        assert result.success is True
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "inside.py" in cmd
+        assert "../outside.py" not in cmd
+
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
+    def test_ruff_fix_ignores_outside_owned_files(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """Outside files in owned_files are filtered before invoking ruff fix."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "Fixed 1 issue"
+        mock_proc.stderr = ""
+        mock_run.return_value = mock_proc
+
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        (workdir / "inside.py").write_text("x = 1\n", encoding="utf-8")
+
+        result = execute_fast_path(
+            FastPathAction.RUFF_FIX,
+            workdir,
+            ["/outside/path.py", "inside.py"],
+        )
+        assert result.success is True
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "inside.py" in cmd
+        assert "/outside/path.py" not in cmd
+
+    @patch("bernstein.core.quality.fast_path.subprocess.run")
+    def test_sort_imports_ignores_outside_owned_files(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """Outside files in owned_files are filtered before invoking sort imports."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "Fixed 1 issue"
+        mock_proc.stderr = ""
+        mock_run.return_value = mock_proc
+
+        workdir = tmp_path / "workdir"
+        workdir.mkdir()
+        (workdir / "inside.py").write_text("x = 1\n", encoding="utf-8")
+
+        result = execute_fast_path(
+            FastPathAction.SORT_IMPORTS,
+            workdir,
+            ["/outside/path.py", "inside.py"],
+        )
+        assert result.success is True
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "inside.py" in cmd
+        assert "/outside/path.py" not in cmd
+
+    def test_unknown_action_fails(self, tmp_path: Path) -> None:
         # Reach the "no executor" branch by creating a mock action value
         # We can't easily add a new enum, so test the execute_fast_path
         # function handles missing executors gracefully by verifying
@@ -403,7 +505,7 @@ class TestExecuteFastPath:
         for action in FastPathAction:
             result = execute_fast_path(
                 action,
-                Path("/tmp"),
+                tmp_path,
                 [],
                 task=_make_task(title="Rename foo to bar", complexity=Complexity.LOW),
             )
@@ -531,7 +633,7 @@ class TestL1ModelConfig:
 class TestTryFastPathBatch:
     """Tests for the orchestrator integration function."""
 
-    def test_multi_task_batch_skipped(self) -> None:
+    def test_multi_task_batch_skipped(self, tmp_path: Path) -> None:
         """Batches with >1 task are never fast-pathed."""
         tasks = [
             _make_task(title="Format code", complexity=Complexity.LOW),
@@ -540,20 +642,20 @@ class TestTryFastPathBatch:
         stats = FastPathStats()
         result = try_fast_path_batch(
             tasks,
-            Path("/tmp"),
+            tmp_path,
             MagicMock(),
             "http://localhost:8052",
             stats,
         )
         assert result is False
 
-    def test_l2_task_skipped(self) -> None:
+    def test_l2_task_skipped(self, tmp_path: Path) -> None:
         """L2 tasks are not handled by fast-path."""
         tasks = [_make_task(title="Implement WebSocket support")]
         stats = FastPathStats()
         result = try_fast_path_batch(
             tasks,
-            Path("/tmp"),
+            tmp_path,
             MagicMock(),
             "http://localhost:8052",
             stats,
@@ -562,7 +664,7 @@ class TestTryFastPathBatch:
 
     @patch("bernstein.core.quality.fast_path.execute_fast_path")
     @patch("bernstein.core.quality.fast_path.get_collector")
-    def test_l0_task_handled(self, mock_collector: MagicMock, mock_exec: MagicMock) -> None:
+    def test_l0_task_handled(self, mock_collector: MagicMock, mock_exec: MagicMock, tmp_path: Path) -> None:
         """L0 formatting task is handled and marked complete."""
         mock_exec.return_value = FastPathResult(
             success=True,
@@ -580,7 +682,7 @@ class TestTryFastPathBatch:
         stats = FastPathStats()
         result = try_fast_path_batch(
             [task],
-            Path("/tmp"),
+            tmp_path,
             mock_client,
             "http://localhost:8052",
             stats,

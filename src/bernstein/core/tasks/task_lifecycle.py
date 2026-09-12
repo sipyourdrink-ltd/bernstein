@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 
+from bernstein.core import defaults as _defaults
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.completion_budget import CompletionBudget
@@ -29,7 +30,7 @@ from bernstein.core.cross_model_verifier import (
     CrossModelVerifierConfig,
     run_cross_model_verification_sync,
 )
-from bernstein.core.defaults import TASK
+from bernstein.core.defaults import OrchestratorDefaults
 from bernstein.core.effectiveness import EffectivenessScorer
 from bernstein.core.evidence.completion_gate import seal_evidence_on_completion
 from bernstein.core.fast_path import (
@@ -84,6 +85,7 @@ else:
 logger = logging.getLogger(__name__)
 
 _XL_ROLES = frozenset({"architect", "security", "manager"})
+_SHIPPED_MAX_AGENT_RUNTIME_S = OrchestratorDefaults().max_agent_runtime_s
 
 # Bug 1 (2026-07-02, fix/claim-conflict-churn): bounds for the claim-conflict
 # recovery loop in ``_claim_task_with_conflict_retry`` / ``claim_and_spawn_batches``.
@@ -338,22 +340,35 @@ def _speculative_warm_pool_candidates(orch: Any, task_graph: Any, tasks: list[Ta
     return candidates
 
 
-def _batch_timeout_seconds(batch: list[Task]) -> int:
+def _batch_timeout_seconds(batch: list[Task], configured_max_agent_runtime_s: int | None = None) -> int:
     """Return the spawn timeout bucket for a task batch.
 
     The timeout contract is intentionally coarse-grained so operators can reason
-    about behavior without reconstructing adaptive multipliers:
-    small=15m, medium=30m, large=60m, xl=120m.
+    about behavior without reconstructing adaptive multipliers: small=15m,
+    medium=30m, large=60m, xl=120m. ``max_agent_runtime_s`` is an upward-only
+    floor when configured above its shipped default; lower values never shorten
+    a scope or XL bucket.
     """
-    bucket_seconds = max(TASK.scope_timeout_s.get(task.scope.value, 30 * 60) for task in batch)
+    # Read the tuning singleton THROUGH the module on every call. bernstein.yaml
+    # is parsed (``config/seed_parser._parse_tuning`` -> ``defaults.override``)
+    # long after this module is imported, and ``override`` rebinds the module
+    # attribute rather than mutating the frozen instance - so a name captured by
+    # ``from ... import TASK`` is a permanent snapshot of the shipped defaults,
+    # and ``tuning.task.scope_timeout_s`` / ``xl_timeout_s`` never reach the
+    # value the adapter watchdog is armed with.
+    task_defaults = _defaults.TASK
+    bucket_seconds = max(task_defaults.scope_timeout_s.get(task.scope.value, 30 * 60) for task in batch)
     xl_batch = any(task.role in _XL_ROLES for task in batch) or any(
         task.scope.value == "large" and task.complexity.value == "high" for task in batch
     )
-    # TASK.scope_timeout_s / xl_timeout_s are typed float (see defaults.py), but
+    # scope_timeout_s / xl_timeout_s are typed float (see defaults.py), but
     # every configured bucket is a whole second count and every downstream
     # consumer (AgentSession.timeout_s) is int - convert explicitly rather than
     # widen the return type and push the float onward.
-    return int(TASK.xl_timeout_s) if xl_batch else int(bucket_seconds)
+    resolved = int(task_defaults.xl_timeout_s) if xl_batch else int(bucket_seconds)
+    if configured_max_agent_runtime_s is not None and configured_max_agent_runtime_s > _SHIPPED_MAX_AGENT_RUNTIME_S:
+        return max(resolved, int(configured_max_agent_runtime_s))
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -2786,7 +2801,7 @@ def claim_and_spawn_batches(
                         _route.refused_reason,
                     )
 
-        batch_timeout_s = _batch_timeout_seconds(batch)
+        batch_timeout_s = _batch_timeout_seconds(batch, orch._config.max_agent_runtime_s)
         _shadow_bandit_decision: Any | None = None
         _routing_bandit: Any = getattr(orch, "_bandit_router", None)
         _bandit_mode = str(getattr(orch, "_bandit_routing_mode", "static"))
@@ -3815,7 +3830,15 @@ def _reap_and_cleanup_session(
         # issue #2365: chain the merge decision into the run journal so the
         # review board's merged column is a projection of the journal, not a
         # side inference. No-op when the orchestrator has no recorder.
-        record_task_merged(getattr(orch, "_recorder", None), task_id=task.id, agent_id=session.id)
+        # issue #5271: carry the merge commit sha so the row can be tied back
+        # to the git object it actually produced, not just to "a merge
+        # happened". None when the merge found nothing to commit.
+        record_task_merged(
+            getattr(orch, "_recorder", None),
+            task_id=task.id,
+            agent_id=session.id,
+            merge_commit=getattr(merge_result, "merge_commit", None),
+        )
 
     # issue #2559: reconcile what the task declared it would produce against what
     # this run's spine actually carries, and record an artifact-keyed attempt for

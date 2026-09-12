@@ -38,6 +38,11 @@ from typing import Final, get_origin
 
 import pytest
 
+#: Scans the whole source tree, so no diff produces an import edge to this
+#: file and the affected-set selector would never pick it. The marker puts it
+#: in every pull request's slice (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = REPO_ROOT / "src" / "bernstein"
 
@@ -138,6 +143,19 @@ _PENDING_SHAPES: Final[tuple[_AllowedShape, ...]] = (
             "core/autofix/dispatcher.py and core/autofix/telemetry_grounded.py "
             "report an autofix dispatch, not a verification. Not a "
             "verification result."
+        ),
+    ),
+    _AllowedShape(
+        fields=frozenset({"errors", "records", "valid"}),
+        classes=frozenset({"SignoffChainResult", "PrincipalChainResult"}),
+        reason=(
+            "core/identity/access_review.py and core/identity/principals.py "
+            "reconstruct two HMAC chains offline and report the records walked "
+            "plus the first break. The record types differ (SignoffRecord, "
+            "PrincipalReceipt) and only the principal chain replays into a "
+            "registry. Pending: the same `VerifyResult` specialisation the "
+            "spine/memory pair is waiting on; the (valid, records, errors) "
+            "triple is that shape with `ok` renamed."
         ),
     ),
     _AllowedShape(

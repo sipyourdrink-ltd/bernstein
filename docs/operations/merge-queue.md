@@ -95,6 +95,18 @@ required-context coverage by
 | `typecheck (packages/vscode)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (web)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (templates/cloudflare-mcp-server)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
+| `quorum` | `quorum.yml` :: `quorum` | Yes - `merge_group: {}` | **Through an organization ruleset, not a context name** |
+
+`quorum` is required differently from everything else in this table. A
+required *context* is matched by name, and a branch can publish that name
+from a workflow of its own; the review verdict is the one check where that
+would be the whole attack. So it is pinned as a required workflow in an
+organization ruleset instead: GitHub runs the file from the ref the ruleset
+names, and nothing on the branch can substitute for it. Requiring the
+`quorum` context by name as well would add nothing and could be satisfied by
+a branch, so this table lists it as reporting rather than requirable. What it
+decides, and why the branch rule cannot decide it instead, is written at the
+top of `scripts/quorum_check.py`.
 
 `typecheck-ts` occupies four rows because it publishes four contexts: its
 job is `typecheck (${{ matrix.package }})` and branch protection matches a
@@ -223,16 +235,25 @@ docs-only.
 
 ## macOS coverage under the queue
 
-The macOS matrix (`test-macos`, `adapter-integration-macos`) is **gated**:
-it runs on `push` to `main`, on macOS-sensitive diffs, and on the
-`macos-needed` label. On a queued group the label and `push` branches cannot
-fire, so `macos_sensitive` - computed from the group's combined diff - is what
-decides: a group touching a macOS-sensitive path runs the macOS cells in the
-queue, and a group that does not skips them. The `CI gate` roll-up tolerates
-exactly that skip (see `MACOS_SKIP_EVENTS` in `ci.yml`). Coverage is preserved
-because the **post-merge `push` to `main`** runs the full macOS suite
-un-gated, and `ci-macos-nightly.yml` is the daily safety net. The queue
-validates the integrated combination; the merged commit validates macOS.
+The macOS matrix (`test-macos`, `adapter-integration-macos`) **never runs in
+the queue**. Both jobs carry `github.event_name != 'merge_group'`.
+
+The reason is that a queue build cannot observe anything new on that surface.
+The group's merge commit is the tree that lands on `main`, and the
+**post-merge `push` to `main`** re-runs the same platform checks against it
+minutes later. Running them inside the group buys a duplicate of a result the
+push produces anyway, while the group sits at the head of the queue and every
+entry behind it waits.
+
+The `CI gate` roll-up tolerates the skip unconditionally on this event -- see
+`MACOS_UNCONDITIONAL_SKIP_EVENTS` in `ci.yml`, a subset of `MACOS_SKIP_EVENTS`
+-- so a queued group is never wedged waiting on a job that cannot start.
+
+Coverage on what actually lands: the post-merge push runs
+`adapter-integration-macos` on every commit and the `test-macos` shards
+whenever the diff touches a macOS-sensitive path, and `ci-macos-nightly.yml`
+re-runs the whole macOS suite at 06:00 UTC daily. The queue validates the
+integrated combination; the merged commit validates macOS.
 
 ## Auto-release through the queue
 
@@ -357,6 +378,21 @@ and the Step 1 payload from becoming three different answers.
 | `max_entries_to_merge` | 1 | **1** | One PR lands per push to `main`. The auto-release gate keys on the push head SHA, so merging N entries in a single push silently skips a version bump that is not last in the batch - green CI, no tag, no publish, no error. Lifting this requires the release gate to stop keying on the push head SHA; tracked as a follow-up. The second former blocker is closed: `determine-changes` now classifies a queued group against `github.event.merge_group.base_sha`, so a multi-entry group is planned from its combined diff instead of its last commit. |
 | `min_entries_to_merge_wait_minutes` | 0 | **0** | With `max_entries_to_merge = 1` there is no batch to fill, so any wait is pure added latency |
 | `check_response_timeout_minutes` | 30 | **240** | Re-measured 2026-07-27 over the last 30 successful `CI` runs on `main` (`run_started_at` -> `updated_at`): p50 **49** min, p90 **214** min, max **243** min, and **30 of 30 exceeded 30 minutes**. The earlier figures in this row (p50 38 / p90 58 / max 105) are stale. At the shipped `30`, *every* entry is ejected as timed out. At `120`, 9 of those 30 runs would still have been ejected. `240` covers all but the single 243-minute outlier. Re-measure in Step 0 before flipping - this value tracks runner-pool contention, not the test suite. |
+
+### Grouping strategy: ALLGREEN vs HEADGREEN tradeoff
+
+The merge queue is configured with `grouping_strategy: ALLGREEN`.
+
+**The Tradeoff Stated Plainly:**
+- `ALLGREEN` is the strictest setting: every entry in a batch is tested together, and the batch merges only if the entire batch passes. This ensures the exact tree tested is the exact tree that lands on `main`. However, under cumulative batching, an entry at position 1 or 2 that fails only in the combined tree will fail every group containing it, stalling all queued PRs behind it.
+- `HEADGREEN` merges the longest passing prefix (`e1..eN-1`), which prevents a poison entry from blocking PRs queued behind it, but at the cost of merging a prefix whose combination was not the exact tested tree.
+
+**Measured Cost of ALLGREEN:**
+- On 2026-09-04 between 19:58Z and 22:19Z (2h21m), the queue held 7 PRs with CI green on each PR's branch, but produced zero merges because 2 entries failed in the combined tree. Six consecutive merge-group builds produced no merge. Once the failing entries were dequeued by hand, 9 merges landed in 4 minutes.
+- A second episode occurred overnight with #5234 (ejected and re-queued 5 times, each cycle a full group build, costing ~3 hours of queue capacity).
+
+**Decision:**
+The strategy remains `ALLGREEN`. A slow queue is preferable to an untested merge on `main`. Whole-tree guards on PRs (#5428) and baseline snapshot freshness (#5503) address the supply of poison pills directly. Until then, operators resolve stalls using the bisection runbook below.
 
 ## Blockers to the flip
 
@@ -572,6 +608,22 @@ checks. Any PRs sitting in the queue are released back to normal merge.
 | Entries ejected as timed out | `check_response_timeout_minutes` below the real CI wall time | Raise it; see the measured distribution in Tunables |
 | Merges land but no release is tagged | The post-merge `push` CI run did not reach the dispatcher | Confirm a `push` run on `main` exists at the merged SHA, then that `post-ci-dispatcher.yml` ran off it; check `pyproject.toml` is still absent from `ci.yml`'s `push.paths-ignore` |
 | Queue throughput too low | Build concurrency, not batching | Raise `max_entries_to_build`. Do **not** raise `max_entries_to_merge` - see Tunables |
+| Queue produces no merge for >1h with queued PRs | A single entry fails alone in the merged tree, failing all stacked groups (`ALLGREEN`) | Follow the bisection runbook below: identify the failing entry from the single-member batch and dequeue it |
+
+### Stalled queue bisection (handling poison entries)
+
+When the merge queue has entries queued but produces no merge for an hour:
+
+1. **Inspect the single-member batch:** The queue always builds position 1 alone as a single-member batch. Check `gh run list --event merge_group --limit 10`:
+   - If the single-member batch for PR #N is failing, PR #N is failing alone on top of `main`.
+   - If position 1 passes alone but stacked groups fail, the conflict is between two specific entries in the stack.
+2. **Identify the culprit:**
+   - Look at the failed `CI gate` check on the `merge_group` run.
+   - Trace the first group in the stack that transitioned from green to red.
+3. **Dequeue the poison entry:**
+   - Disable auto-merge on the culprit PR: `gh pr merge <number> --disable-auto`.
+   - The queue will automatically eject that entry and immediately re-form the remaining queue into new groups without having to drain or pause the ruleset.
+
 
 The `merge_group` path is guarded by regression tests in
 `tests/unit/test_required_check_canary_workflow_yaml.py` (required-context

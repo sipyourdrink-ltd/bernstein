@@ -26,13 +26,13 @@ from unittest.mock import MagicMock, patch
 from bernstein.core.models import AgentHeartbeat, AgentSession, ModelConfig
 
 from bernstein.core.agents.heartbeat import (
-    AGENT,
     StallProfile,
     _escalate_heartbeat,
     _escalate_stall_profiled,
     _escalate_stall_simple,
     check_stale_agents,
 )
+from bernstein.core.defaults import AGENT
 from bernstein.core.replay.journal import EventJournal
 from bernstein.core.security.audit_chain import (
     EVENT_ESCALATION_RECEIPT,

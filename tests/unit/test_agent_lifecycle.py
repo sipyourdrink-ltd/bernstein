@@ -1118,6 +1118,60 @@ def test_handle_orphaned_task_provider_fatal_types_fast_fail_and_throttle(tmp_pa
         orch._record_provider_health.assert_called_once_with(session, success=False)
 
 
+def test_handle_orphaned_task_clean_exit_is_never_failed_by_a_log_pattern(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """2026-09-02: an agent that exited 0 printed "HTTP 401" in its final message,
+    the scanner classified the transcript as auth_error, and the task - whose work
+    had already merged - was retried twice and DLQ'd. exit_code 0 is not a death:
+    the log is never consulted, and recovery is left to the orphan path."""
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-1",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=0,
+    )
+    orch = _make_orch_fast_fail(tmp_path, "auth_error")
+
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as retry_or_fail_task,
+        patch(
+            "bernstein.core.agents.agent_lifecycle._handle_orphan_no_signals", return_value=(True, None)
+        ) as no_signals,
+    ):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    retry_or_fail_task.assert_not_called()
+    orch._rate_limit_tracker.detect_failure_type.assert_not_called()
+    orch._rate_limit_tracker.throttle_provider.assert_not_called()
+    orch._cascade_manager.find_fallback.assert_not_called()
+    no_signals.assert_called_once()
+
+
+def test_an_unknown_exit_status_still_reaches_the_scanner(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The guard is exit_code == 0, not "not a failure": a session reaped without
+    an exit status (exit_code None) is still classified from its log."""
+    task = _make_task()
+    task.status = TaskStatus.CLAIMED
+    session = AgentSession(
+        id="sess-2",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+    )
+    orch = _make_orch_fast_fail(tmp_path, "auth_error")
+
+    with patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as retry_or_fail_task:
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    retry_or_fail_task.assert_called_once()
+    assert "auth_error" in retry_or_fail_task.call_args.args[1]
+    orch._rate_limit_tracker.throttle_provider.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Issue #4222: deferred death judgment must be re-evaluable after the
 # session that deferred it is reaped, and must not defer forever on a

@@ -11,7 +11,7 @@ All commands are registered with the main CLI group in main.py.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -251,6 +251,100 @@ def config_list(project_dir: str) -> None:
         )
 
     console.print(table)
+
+
+@config_group.command("explain")
+@click.argument("key", required=False)
+@click.option("--project-dir", default=".", show_default=True, help="Project directory for precedence check.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable resolution instead of a table.")
+def config_explain(key: str | None, project_dir: str, as_json: bool) -> None:
+    """Show where each effective config value came from.
+
+    With no KEY, every key is listed. `config list` answers the same question
+    for a human reader; this command adds the file each layer was read from
+    and a `--json` shape a CI check can gate on.
+
+    Example: bernstein config explain cli --json
+    """
+    import json as _json
+
+    from rich.table import Table
+
+    from bernstein.core.config.home import (
+        _DEFAULTS,  # type: ignore[reportPrivateUsage]
+        CONFIG_LAYER_DESCRIPTIONS,
+        CONFIG_PRECEDENCE,
+        BernsteinHome,
+        ConfigSource,
+        resolve_config,
+    )
+
+    home = BernsteinHome.default()
+    keys = [key] if key else sorted(_DEFAULTS.keys())
+    if key and key not in _DEFAULTS:
+        console.print(f"[red]unknown config key:[/red] {key}")
+        console.print(f"[dim]known keys: {', '.join(sorted(_DEFAULTS))}[/dim]")
+        raise SystemExit(1)
+
+    rows: list[dict[str, Any]] = []
+    for name in keys:
+        result = resolve_config(name, home=home, project_dir=Path(project_dir))
+        # The redacted value is what gets printed. A resolution report is
+        # exactly the output an operator pastes into an issue, so a secret
+        # resolved from any layer must not be the thing that leaks.
+        chain = [
+            {
+                "source": layer["source"],
+                "value": layer["redacted_value"],
+                "path": layer["path"],
+            }
+            for layer in result["source_chain"]
+        ]
+        rows.append(
+            {
+                "key": name,
+                "value": chain[0]["value"] if chain else None,
+                "layer": result["source"],
+                "path": chain[0]["path"] if chain else None,
+                "chain": chain,
+            }
+        )
+
+    if as_json:
+        console.print_json(
+            _json.dumps(
+                {
+                    "precedence": list(CONFIG_PRECEDENCE),
+                    "settings": rows,
+                }
+            )
+        )
+        return
+
+    console.print("[dim]precedence (highest first): " + " > ".join(CONFIG_PRECEDENCE) + "[/dim]")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
+    table.add_column("Key")
+    table.add_column("Value")
+    table.add_column("Layer")
+    table.add_column("Read from")
+    styles = {"seed": "green", "session": "magenta", "project": "cyan", "context": "blue", "global": "yellow"}
+    for row in rows:
+        layer = str(row["layer"])
+        style = styles.get(layer, "dim")
+        table.add_row(
+            str(row["key"]),
+            str(row["value"]),
+            f"[{style}]{layer}[/{style}]",
+            str(row["path"] or "-"),
+        )
+    console.print(table)
+
+    if key:
+        winning = cast("ConfigSource", rows[0]["layer"])
+        console.print(f"\n[dim]{CONFIG_LAYER_DESCRIPTIONS.get(winning, '')}[/dim]")
+        console.print("[dim]layers consulted, highest first:[/dim]")
+        for step in cast("list[dict[str, Any]]", rows[0]["chain"]):
+            console.print(f"  [dim]{step['source']}[/dim] = {step['value']!r}  [dim]{step['path'] or ''}[/dim]")
 
 
 @config_group.command("diff")

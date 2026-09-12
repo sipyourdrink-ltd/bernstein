@@ -10,11 +10,11 @@ same comment with the same timestamp is ignored, while an edited comment
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from bernstein.core.persistence.atomic_write import write_atomic_text
 
 if TYPE_CHECKING:
     from bernstein.core.review_responder.models import ReviewComment
@@ -23,21 +23,18 @@ DEFAULT_STATE_PATH = Path(".sdd/runtime/review_responder/dedup.json")
 
 
 def _atomic_write(path: Path, data: str) -> None:
-    """Write ``data`` atomically via a tempfile rename.
+    """Write ``data`` through the crash-safe write path.
+
+    The previous local version closed the temporary without ``fsync``, so
+    the rename could reach the disk while the dedup state behind it did
+    not. What survives that is an empty or short state file, and a dedup
+    queue that has forgotten what it already answered.
 
     Args:
         path: Destination file.
         data: Text contents to commit.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(data)
-        os.replace(tmp, path)
-    except Exception:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    write_atomic_text(path, data)
 
 
 @dataclass(frozen=True)

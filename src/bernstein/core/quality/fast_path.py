@@ -22,7 +22,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -30,9 +31,6 @@ from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import Complexity, ModelConfig, Scope, Task
 from bernstein.core.security.path_containment import PathContainmentError, contained_subpath
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -202,10 +200,60 @@ def classify_task(task: Task) -> ClassificationResult:
 # ---------------------------------------------------------------------------
 
 
+def _is_system_or_root_directory(path: Path) -> bool:
+    """Check if a path is a filesystem root or system temporary directory."""
+    import tempfile
+
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return True
+    if resolved == resolved.parent:
+        return True
+    system_temps = {
+        Path("/tmp").resolve(),
+        Path("/var/tmp").resolve(),
+        Path("/private/tmp").resolve(),
+        Path(tempfile.gettempdir()).resolve(),
+    }
+    return resolved in system_temps
+
+
+def _resolve_ruff_targets(workdir: Path, owned_files: list[str]) -> tuple[list[str] | None, str | None]:
+    """Validate targets and workdir containment for ruff commands.
+
+    Returns (targets, None) on success, or (None, error_message) on refusal.
+    """
+    if not owned_files:
+        if _is_system_or_root_directory(workdir):
+            return None, f"refusing to run ruff on root or system temp directory: {workdir}"
+        return ["."], None
+
+    safe_targets: list[str] = []
+    for rel_path in owned_files:
+        try:
+            full_path = contained_subpath(workdir, rel_path)
+            rel = full_path.relative_to(workdir.resolve())
+            safe_targets.append(str(rel))
+        except (PathContainmentError, ValueError):
+            logger.warning("fast_path: path %r outside workdir %s - skipping", rel_path, workdir)
+
+    if not safe_targets:
+        return None, f"all owned_files were outside workdir {workdir}"
+    return safe_targets, None
+
+
 def _run_ruff_format(workdir: Path, owned_files: list[str]) -> FastPathResult:
     """Run ruff format on owned files or entire project."""
     start = time.monotonic()
-    targets = owned_files or ["."]
+    targets, err = _resolve_ruff_targets(workdir, owned_files)
+    if targets is None or err is not None:
+        return FastPathResult(
+            success=False,
+            action=FastPathAction.RUFF_FORMAT,
+            duration_s=time.monotonic() - start,
+            error=err or "no valid targets within workdir",
+        )
 
     try:
         proc = subprocess.run(
@@ -247,7 +295,14 @@ def _run_ruff_format(workdir: Path, owned_files: list[str]) -> FastPathResult:
 def _run_ruff_fix(workdir: Path, owned_files: list[str]) -> FastPathResult:
     """Run ruff check --fix on owned files or entire project."""
     start = time.monotonic()
-    targets = owned_files or ["."]
+    targets, err = _resolve_ruff_targets(workdir, owned_files)
+    if targets is None or err is not None:
+        return FastPathResult(
+            success=False,
+            action=FastPathAction.RUFF_FIX,
+            duration_s=time.monotonic() - start,
+            error=err or "no valid targets within workdir",
+        )
 
     try:
         proc = subprocess.run(
@@ -282,7 +337,14 @@ def _run_ruff_fix(workdir: Path, owned_files: list[str]) -> FastPathResult:
 def _run_sort_imports(workdir: Path, owned_files: list[str]) -> FastPathResult:
     """Run ruff check --select I --fix to sort imports."""
     start = time.monotonic()
-    targets = owned_files or ["."]
+    targets, err = _resolve_ruff_targets(workdir, owned_files)
+    if targets is None or err is not None:
+        return FastPathResult(
+            success=False,
+            action=FastPathAction.SORT_IMPORTS,
+            duration_s=time.monotonic() - start,
+            error=err or "no valid targets within workdir",
+        )
 
     try:
         proc = subprocess.run(

@@ -94,6 +94,36 @@ checked for a signature.
 
 ---
 
+## Matching is done on a folded form
+
+ASI01 and ASI06 match English keywords, and a payload does not have to be
+spelled in ASCII to read as English. Before the goal-hijack patterns run,
+the text has:
+
+1. every `Cc`/`Cf`/`Cs` codepoint dropped, which is the zero-width family
+   (U+200B to U+200D, U+FEFF, the soft hyphen, the bidi controls):
+   characters that take a position in the string and none on the screen, so
+   a zero-width space placed inside `ignore` still reads as the word to a
+   person;
+2. NFKC applied, folding the fullwidth, ligature and compatibility forms;
+3. the confusables NFKC deliberately leaves alone mapped to ASCII. A
+   Cyrillic U+0430 and a Latin `a` are different letters, and folding them
+   everywhere would corrupt ordinary Cyrillic text, so the mapping exists
+   only on this matching path.
+
+The folded text is used for matching and is never presented as the payload.
+A finding whose match came from the folded form says
+`(after folding an obfuscated spelling)` in its evidence, because the bytes
+an operator has to go and look at are the ones that arrived.
+
+The confusables table is best-effort, not the full Unicode set. Adding a row
+makes one more spelling detectable and cannot make a plain-ASCII payload
+invisible.
+
+ASI06's `source` is compared as a trust label rather than as bytes:
+`Untrusted` and `UNTRUSTED` are the same label as `untrusted`, since a JSON
+envelope in between may have case-normalised it.
+
 ## Honesty caveats
 
 The detectors are heuristics, not proofs. Two well-known classes of

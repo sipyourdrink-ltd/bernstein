@@ -68,6 +68,19 @@ class PanelMode(StrEnum):
     MAKER_CHECKER = "maker_checker"
 
 
+class AdjudicationClass(StrEnum):
+    """Independence classification of an adjudication record."""
+
+    #: Panel judges are strictly independent from the producing identity.
+    INDEPENDENT = "independent"
+    #: Panel contains a judge sharing model/identity with the producing identity.
+    WEAK = "weak"
+    #: Record carries no producing identity (legacy/unattributed).
+    UNATTRIBUTED = "unattributed"
+    #: Producing identity is empty or unresolved.
+    UNRESOLVED = "unresolved"
+
+
 def _canonical_json(value: Any) -> bytes:
     """Serialise *value* to canonical JSON bytes (sorted keys, tight separators)."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -76,6 +89,88 @@ def _canonical_json(value: Any) -> bytes:
 def _sha256_of(value: Any) -> str:
     """Return the ``sha256:``-prefixed digest of *value*'s canonical JSON."""
     return "sha256:" + hashlib.sha256(_canonical_json(value)).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ProducerIdentity:
+    """Identity of the producer (agent/model/run) whose work is being adjudicated."""
+
+    model: str
+    temperature: float = 0.0
+    prompt_hash: str = ""
+    served_model: str = ""
+
+    def identity_hash(self) -> str:
+        """Return identity digest over model + served_model + temp + prompt_hash."""
+        return _sha256_of(
+            {
+                "model": self.model,
+                "prompt_hash": self.prompt_hash,
+                "served_model": self.served_model,
+                "temperature": self.temperature,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "prompt_hash": self.prompt_hash,
+        }
+        if self.served_model:
+            d["served_model"] = self.served_model
+        return d
+
+
+def _coerce_producer(producer: ProducerIdentity | JudgeConfig | dict[str, Any] | str | None) -> ProducerIdentity | None:
+    """Coerce various producer representations into a :class:`ProducerIdentity`."""
+    if producer is None:
+        return None
+    if isinstance(producer, ProducerIdentity):
+        return producer
+    if isinstance(producer, JudgeConfig):
+        return ProducerIdentity(
+            model=producer.model,
+            temperature=producer.temperature,
+            prompt_hash=producer.prompt_hash,
+        )
+    if isinstance(producer, str):
+        return ProducerIdentity(model=producer)
+    if isinstance(producer, dict):
+        return ProducerIdentity(
+            model=str(producer.get("model", "")),
+            temperature=float(producer.get("temperature", 0.0)),
+            prompt_hash=str(producer.get("prompt_hash", "")),
+            served_model=str(producer.get("served_model", "")),
+        )
+    return None
+
+
+def _classify_adjudication(panel: PanelConfig, producer: ProducerIdentity | None) -> AdjudicationClass:
+    """Classify the independence of a panel relative to the producing identity."""
+    if producer is None:
+        return AdjudicationClass.UNATTRIBUTED
+    if (
+        not producer.model.strip()
+        or producer.model.strip().lower() == "unresolved"
+        or producer.served_model.strip().lower() == "unresolved"
+    ):
+        return AdjudicationClass.UNRESOLVED
+
+    producer_ident = producer.identity_hash()
+    p_model = producer.model.strip().lower()
+    p_served = producer.served_model.strip().lower() if producer.served_model else ""
+
+    for judge in panel.judges:
+        if judge.identity_hash() == producer_ident:
+            return AdjudicationClass.WEAK
+        j_model = judge.model.strip().lower()
+        if j_model == p_model:
+            return AdjudicationClass.WEAK
+        if p_served and j_model == p_served:
+            return AdjudicationClass.WEAK
+
+    return AdjudicationClass.INDEPENDENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +306,8 @@ class AdjudicationRecord:
         final_verdict: The aggregated terminal verdict.
         timestamp: Integer timestamp (stable across replays of a fixture).
         journal_entry_hash: Spine anchor over the record's canonical bytes.
+        produced_by: Producing agent/model/identity dictionary, if known.
+        adjudication_class: Independence classification of the adjudication.
     """
 
     run_id: str
@@ -221,10 +318,12 @@ class AdjudicationRecord:
     final_verdict: Verdict
     timestamp: int
     journal_entry_hash: str = ""
+    produced_by: dict[str, Any] | None = None
+    adjudication_class: str = ""
 
     def _binding(self) -> dict[str, Any]:
         """Return the anchor-free binding (the bytes the spine hashes)."""
-        return {
+        d: dict[str, Any] = {
             "run_id": self.run_id,
             "inputs_hash": self.inputs_hash,
             "rubric_hash": self.rubric_hash,
@@ -233,6 +332,11 @@ class AdjudicationRecord:
             "final_verdict": self.final_verdict.value,
             "timestamp": self.timestamp,
         }
+        if self.produced_by is not None:
+            if self.adjudication_class:
+                d["adjudication_class"] = self.adjudication_class
+            d["produced_by"] = self.produced_by
+        return d
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the anchor-free binding to canonical JSON bytes."""
@@ -281,6 +385,7 @@ def adjudicate(
     panel: PanelConfig,
     judge_verdicts: tuple[JudgeVerdict, ...],
     now: int,
+    produced_by: ProducerIdentity | JudgeConfig | dict[str, Any] | str | None = None,
 ) -> AdjudicationRecord:
     """Bind inputs + rubric + panel + verdicts into an anchored, signed record.
 
@@ -301,6 +406,8 @@ def adjudicate(
         panel: The independent panel configuration.
         judge_verdicts: Per-judge verdicts in panel declaration order.
         now: Integer timestamp; recorded and used as the spine timestamp.
+        produced_by: Identity of the agent/model that produced the work being
+            adjudicated.
 
     Returns:
         The anchored :class:`AdjudicationRecord`.
@@ -314,6 +421,11 @@ def adjudicate(
         if verdict.config.identity_hash() != judge.identity_hash():
             raise ValueError("judge_verdicts are not aligned with the panel's judges in declaration order")
 
+    producer = _coerce_producer(produced_by)
+    producer_dict = producer.to_dict() if producer is not None else None
+    adj_class = _classify_adjudication(panel, producer) if producer is not None else None
+    adj_class_str = adj_class.value if adj_class is not None else ""
+
     final = _aggregate(panel.mode, panel.judges, judge_verdicts)
     record = AdjudicationRecord(
         run_id=run_id,
@@ -323,6 +435,8 @@ def adjudicate(
         per_judge_verdict=tuple(v.to_dict() for v in judge_verdicts),
         final_verdict=final,
         timestamp=now,
+        produced_by=producer_dict,
+        adjudication_class=adj_class_str,
     )
 
     spine = LineageSpine(lineage_root, run_id=run_id, hmac_key=hmac_key)
@@ -345,6 +459,8 @@ def adjudicate(
         final_verdict=record.final_verdict,
         timestamp=record.timestamp,
         journal_entry_hash=anchor,
+        produced_by=record.produced_by,
+        adjudication_class=record.adjudication_class,
     )
     # Persist the full record (binding + anchor) for offline `gate verify`.
     out_dir = records_dir(lineage_root, run_id)
@@ -389,6 +505,7 @@ class AdjudicationVerifyResult:
 
     ok: bool
     reason: str = ""
+    adjudication_class: str = ""
 
 
 def verify_adjudication(
@@ -421,7 +538,7 @@ def verify_adjudication(
 
     # Reconstruct the panel from the record to re-run the independence check.
     try:
-        _panel_from_dict(record.panel_config)
+        panel = _panel_from_dict(record.panel_config)
     except PanelIndependenceError as exc:
         return AdjudicationVerifyResult(ok=False, reason=f"panel is not independent: {exc}")
 
@@ -446,7 +563,13 @@ def verify_adjudication(
             ok=False,
             reason="recorded journal_entry_hash does not match the spine anchor over the record bytes",
         )
-    return AdjudicationVerifyResult(ok=True)
+
+    adj_class = record.adjudication_class or (
+        _classify_adjudication(panel, _coerce_producer(record.produced_by)).value
+        if record.produced_by is not None
+        else AdjudicationClass.UNATTRIBUTED.value
+    )
+    return AdjudicationVerifyResult(ok=True, adjudication_class=adj_class)
 
 
 def _panel_from_dict(panel_config: dict[str, Any]) -> PanelConfig:
@@ -469,6 +592,10 @@ def read_record(path: Path) -> AdjudicationRecord | None:
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+        produced_by = raw.get("produced_by")
+        if produced_by is not None and not isinstance(produced_by, dict):
+            produced_by = None
+        adj_class = str(raw.get("adjudication_class", ""))
         return AdjudicationRecord(
             run_id=str(raw["run_id"]),
             inputs_hash=str(raw["inputs_hash"]),
@@ -478,6 +605,8 @@ def read_record(path: Path) -> AdjudicationRecord | None:
             final_verdict=Verdict(str(raw["final_verdict"])),
             timestamp=int(raw["timestamp"]),
             journal_entry_hash=str(raw.get("journal_entry_hash", "")),
+            produced_by=produced_by,
+            adjudication_class=adj_class,
         )
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
@@ -548,6 +677,7 @@ __all__ = [
     "FEATURE_CHECKER",
     "FEATURE_MAKER",
     "FEATURE_PANEL",
+    "AdjudicationClass",
     "AdjudicationRecord",
     "AdjudicationVerifyResult",
     "CostMode",
@@ -556,6 +686,7 @@ __all__ = [
     "PanelConfig",
     "PanelIndependenceError",
     "PanelMode",
+    "ProducerIdentity",
     "Verdict",
     "adjudicate",
     "attribute_cost",

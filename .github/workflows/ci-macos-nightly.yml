@@ -10,11 +10,13 @@ name: CI (macOS nightly)
 # release-train can demand an on-demand macOS check before cutting a
 # tag. The job mirrors the `test` matrix in ci.yml so the signal is
 # directly comparable.
+#
+# Every leg of this workflow runs on the hosted macOS pool, so a
+# scheduled run, a push to main and an on-demand dispatch all produce
+# the same signal on the same image.
 
 on:
   schedule:
-    # 06:00 UTC daily. Off-peak for both US/EU contributors so the
-    # macOS hosted-runner pool is least contended.
     - cron: "0 6 * * *"
   workflow_dispatch:
   push:
@@ -54,7 +56,7 @@ permissions:
 
 jobs:
   test-macos-nightly:
-    name: Test (macos-latest, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
+    name: Test (macOS, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
     runs-on: macos-latest
     timeout-minutes: 90
     permissions:
@@ -78,7 +80,7 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -119,14 +121,14 @@ jobs:
     name: Open / update macOS nightly failure issue
     needs: [test-macos-nightly]
     if: failure() && github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     permissions:
       contents: read
       issues: write
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
       - name: Open or update issue

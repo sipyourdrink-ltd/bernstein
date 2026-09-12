@@ -272,7 +272,7 @@ tuning:
     drain_timeout_s: 120.0
     stale_claim_timeout_s: 1800.0
     stalled_manager_threshold_s: 300.0
-    max_agent_runtime_s: 3600.0
+    max_agent_runtime_s: 5400.0
   spawn:
     spawn_backoff_base_s: 60.0
   agent:
@@ -317,12 +317,15 @@ now tunable, with defaults unchanged so nothing breaks for existing users:
   `IncidentManager`'s auto-pause. A negative override is clamped to `0`
   rather than being allowed to suppress the SLO-target-derived budget.
 - **`max_agent_runtime_s`** (`OrchestratorDefaults.max_agent_runtime_s`,
-  default `1800`) - the starting wall-clock kill deadline for a spawned
-  agent, now sourced through `OrchestratorConfig` via the same
-  `tuning.orchestrator.*` mechanism as `stale_claim_timeout_s`. This is
-  only the *starting* value - the agent lifecycle reaper already
-  self-extends it by 600s per cycle up to a 5400s hard cap while the agent
-  keeps heartbeating.
+  default `1800`) - an upward-only floor for the scope-based starting
+  wall-clock deadline. At the default (or any lower value), the existing
+  buckets remain small=`900`, medium=`1800`, large=`3600`, XL=`7200` seconds.
+  Raising the value above `1800` lifts only shorter buckets: for example,
+  `max_agent_runtime_s: 5400` makes small/medium/large start at `5400` while
+  XL remains `7200`. Lower values do **not** provide an early-kill override.
+  The lifecycle reaper can still self-extend a heartbeating agent by 600s per
+  cycle up to its 5400s extension ceiling; that ceiling does not shorten an
+  already-longer initial scope/XL deadline or configured floor.
 
 See `defaults.py` for the full list of parameters and their default values.
 

@@ -11,9 +11,18 @@ recorded — and what the envelope does not account for.
 ## Status
 
 **The format only.** This is the schema, the canonical encoding and one
-committed vector. There is no producer that builds an envelope from a run,
-and no verifier that checks one. Until those exist, an envelope is something
-you can validate and re-encode, not something the installation emits.
+committed vector. There is no producer that builds the six-section envelope
+from a run, and no verifier that checks one. Until those exist, an envelope
+is something you can validate and re-encode, not something the installation
+emits.
+
+The canonical encoder itself has one caller outside its own tests:
+[compliance evidence packs](../operations/compliance.md) digest their JSON
+artefacts (`manifest.json`, `controls.json`, the audit data catalog) through
+`canonical_envelope_bytes` rather than a local `json.dumps` convention, so a
+pack digest and an envelope digest are checkable the same way (#5504). That
+pack is not an evidence envelope — it carries no `principal`, `grants` or
+`signature` section — it simply reuses this module's RFC 8785 encoder.
 
 ## What an envelope proves
 

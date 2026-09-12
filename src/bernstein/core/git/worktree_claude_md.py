@@ -177,6 +177,14 @@ def write_claude_md(
 
     claude_md_path = worktree_path / "CLAUDE.md"
     try:
+        # A repo may track CLAUDE.md as a symlink to its real instruction file
+        # (``CLAUDE.md -> AGENTS.md``). Writing through the link would truncate
+        # that target - a tracked file the agent never opened, and one the
+        # skip-worktree bit below does not cover, since it names CLAUDE.md.
+        # Replacing the link keeps the override a real per-worktree file; the
+        # tracked symlink comes back through ``restore_claude_md``'s checkout.
+        if claude_md_path.is_symlink():
+            claude_md_path.unlink()
         claude_md_path.write_text(content, encoding="utf-8")
         logger.info("Wrote task-specific CLAUDE.md to %s (%d bytes)", claude_md_path, len(content))
     except OSError as exc:

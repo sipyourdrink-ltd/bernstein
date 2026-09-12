@@ -160,6 +160,14 @@ EVENT_SKILL_USAGE = "skill.usage"
 #: :mod:`bernstein.core.skills.catalog.revocation`.
 EVENT_SKILL_VERIFICATION_REFUSAL = "skill.verification_refusal"
 
+#: Issue #5047 -- emitted when a spawn is refused because the delegation hop for
+#: the agent's identity could not be written. Fail-closed: an agent whose
+#: delegation cannot be receipted must not run, because the chain would then be
+#: short by exactly the hop a verifier needs and a missing hop is
+#: indistinguishable from a delegation that never happened. Carries the run, the
+#: refused session and the reason; never a token or a key.
+EVENT_SPAWN_REFUSED_UNRECEIPTED = "spawn.refused_unreceipted"
+
 #: Issue #2306 -- emitted whenever a payment is authorized under a signed
 #: spending mandate. The event carries the consent receipt binding
 #: ``{mandate_hash, authorized_tool_calls_hash, settlement_ref,

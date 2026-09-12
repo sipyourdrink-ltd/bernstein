@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from bernstein.core.govern.agent_presence import (
+    AgentPresence,
+    Enrollment,
+    apply_presence,
+    enrollment_gap,
+)
 from bernstein.core.govern.apply import (
     ApplyStatus,
     ChangeApplier,
@@ -14,6 +20,13 @@ from bernstein.core.govern.apply import (
     GovernApplyRefused,
     apply_plan,
     verify_govern_apply_projection,
+)
+from bernstein.core.govern.derivation import (
+    DerivationRule,
+    DerivationRuleError,
+    DerivationRules,
+    DerivedFact,
+    RuleKind,
 )
 from bernstein.core.govern.duplication_audit import (
     DuplicationFinding,
@@ -28,7 +41,7 @@ from bernstein.core.govern.freshness_gate import (
     ProducerState,
     freshness_gated_read,
 )
-from bernstein.core.govern.inventory_models import Inventory, Surface
+from bernstein.core.govern.inventory_models import Inventory, Surface, SweepResult, Tombstone
 from bernstein.core.govern.lanes import (
     Barrier,
     LaneAction,
@@ -56,6 +69,22 @@ from bernstein.core.govern.playbook_models import (
     PlaybookClause,
     PlaybookValidationError,
     RemediationAction,
+)
+from bernstein.core.govern.policy_layers import (
+    EffectiveClause,
+    EffectivePolicy,
+    LayerKind,
+    OverlayFinding,
+    PolicyLayer,
+    PolicySet,
+)
+from bernstein.core.govern.probe import (
+    CollectionMethod,
+    CostClass,
+    Probe,
+    ProbeError,
+    ProbeSet,
+    load_probe_set,
 )
 from bernstein.core.govern.proposal import DraftProposal, ProposalStatus
 from bernstein.core.govern.reconcile import (
@@ -256,18 +285,28 @@ def _compare_values(observed: str, ceiling: str) -> int:
 
 
 __all__ = [
+    "AgentPresence",
     "ApplyStatus",
     "Barrier",
     "ChangeApplier",
     "ChangeOutcome",
     "ChangeResult",
     "ChangeStatus",
+    "CollectionMethod",
+    "CostClass",
+    "DerivationRule",
+    "DerivationRuleError",
+    "DerivationRules",
+    "DerivedFact",
     "DesiredEntity",
     "DesiredState",
     "DiffAction",
     "DraftProposal",
     "DuplicationFinding",
     "DuplicationReport",
+    "EffectiveClause",
+    "EffectivePolicy",
+    "Enrollment",
     "EntityKind",
     "EntityPolicy",
     "EntityStatus",
@@ -282,16 +321,23 @@ __all__ = [
     "LaneAction",
     "LaneError",
     "LaneManifest",
+    "LayerKind",
     "ObservationEnvelope",
     "ObservationLedger",
     "ObservationRecord",
     "ObservationStore",
     "ObservationStoreError",
+    "OverlayFinding",
     "PlanEntry",
     "PlanEntryKind",
     "Playbook",
     "PlaybookClause",
     "PlaybookValidationError",
+    "PolicyLayer",
+    "PolicySet",
+    "Probe",
+    "ProbeError",
+    "ProbeSet",
     "ProducerState",
     "ProposalStatus",
     "ReconcileDiff",
@@ -303,20 +349,26 @@ __all__ = [
     "RestoreEntry",
     "RestorePlan",
     "RestoreRefusal",
+    "RuleKind",
     "Snapshot",
     "SnapshotEntity",
     "Surface",
+    "SweepResult",
+    "Tombstone",
     "UnremediatedFinding",
     "Verdict",
     "apply_plan",
+    "apply_presence",
     "build_restore_plan",
     "collect_duplication",
     "collect_remediation",
     "compute_inputs_hash",
     "compute_plan",
     "compute_reconcile_diff",
+    "enrollment_gap",
     "freshness_gated_read",
     "load_lane_set",
+    "load_probe_set",
     "observation_store_root",
     "propose_reconcile",
     "reconcile_lanes",

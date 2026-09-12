@@ -1357,7 +1357,9 @@ _PROFILE_LIST: tuple[AdapterCapabilityProfile, ...] = (
         local_models=True,
         resume=ResumeStrategy.FLAG,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
-        notes="Structured JSON output via --format json. --continue re-enters the prior session; "
+        event_channel=EventChannel.STREAM_JSON,
+        notes="Structured JSON output via --format json: upstream emits NDJSON under this flag, "
+        "though nothing consumes it yet (#3676). --continue re-enters the prior session; "
         "--auto plus an explicit OPENCODE_PERMISSION policy pins tool permissions per spawn.",
     ),
     AdapterCapabilityProfile(

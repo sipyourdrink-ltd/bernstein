@@ -12,6 +12,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+#: Scans the source tree rather than importing it, so no diff produces an
+#: import edge to this file. The marker puts it in every pull request's
+#: affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 _SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
 
 _DEAD_DOCS_HOST = "chernistry.github.io"

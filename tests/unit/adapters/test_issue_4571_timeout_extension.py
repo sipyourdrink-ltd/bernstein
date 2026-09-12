@@ -19,12 +19,16 @@ not a mocked clock: the bug lives in the arming / re-arming.
 from __future__ import annotations
 
 import time
+from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from bernstein.core.models import AgentSession, Complexity, Scope, Task
+from bernstein.core.models import AgentBackend, AgentSession, Complexity, ModelConfig, Scope, Task
 
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.defaults import TASK
 
@@ -33,6 +37,39 @@ def _make_popen_mock(pid: int) -> MagicMock:
     m = MagicMock()
     m.pid = pid
     return m
+
+
+class _WatchdogAdapter(CLIAdapter):
+    """Minimal adapter that arms the real base-class timeout watchdog."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.received_timeout: int | None = None
+        self.timer = None
+        self.spawned = Event()
+
+    def name(self) -> str:
+        return "watchdog-test"
+
+    def spawn(
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
+        multimodal_context: Any | None = None,
+    ) -> SpawnResult:
+        del prompt, model_config, mcp_config, task_scope, budget_multiplier, system_addendum, multimodal_context
+        self.received_timeout = timeout_seconds
+        self.timer = self._start_timeout_watchdog(pid=9004, timeout_seconds=timeout_seconds, session_id=session_id)
+        self.spawned.set()
+        return SpawnResult(pid=9004, log_path=workdir / "watchdog.log", timeout_timer=self.timer)
 
 
 def test_extending_a_session_moves_the_process_deadline() -> None:
@@ -94,7 +131,7 @@ def test_non_extended_agent_still_killed_at_deadline() -> None:
     timer.cancel()
 
 
-def test_timeout_fallback_follows_scope_bucket_not_literal_default() -> None:
+def test_timeout_fallback_follows_scope_bucket_not_literal_default(tmp_path: Path) -> None:
     """The resolved spawn timeout follows the scope/XL bucket rather than a
     hard-coded 1800s literal. A large+high task resolves to the XL bucket;
     a small task resolves to the small bucket (both distinct from 1800 to
@@ -116,12 +153,105 @@ def test_timeout_fallback_follows_scope_bucket_not_literal_default() -> None:
         complexity=Complexity.HIGH,
     )
 
-    small_timeout = AgentSpawner._resolve_spawn_timeout([small])
-    xl_timeout = AgentSpawner._resolve_spawn_timeout([xl])
+    adapter = _WatchdogAdapter()
+    templates_dir = tmp_path / "templates" / "roles"
+    templates_dir.mkdir(parents=True)
+    spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
+
+    small_timeout = spawner._resolve_spawn_timeout([small])
+    xl_timeout = spawner._resolve_spawn_timeout([xl])
 
     assert small_timeout == int(TASK.scope_timeout_s["small"])
     assert xl_timeout == int(TASK.xl_timeout_s)
     assert small_timeout != xl_timeout, "scope and XL buckets collapsed"
+
+
+def test_raised_runtime_floor_reaches_real_spawn_watchdog(tmp_path: Path) -> None:
+    task = Task(
+        id="T-floor",
+        title="t",
+        description="d",
+        role="backend",
+        scope=Scope.SMALL,
+    )
+    adapter = _WatchdogAdapter()
+    templates_dir = tmp_path / "templates" / "roles"
+    templates_dir.mkdir(parents=True)
+    spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
+    spawner.set_max_agent_runtime_s(5400)
+
+    session = spawner.spawn_for_tasks([task])
+    try:
+        assert session.timeout_s == 5400
+        assert adapter.received_timeout == 5400
+        assert session.timeout_timer is adapter.timer
+        assert session.timeout_timer is not None
+        assert session.timeout_timer.interval == 5400
+    finally:
+        if adapter.timer is not None:
+            adapter.timer.cancel()
+
+
+def test_resume_spawn_arms_same_resolved_runtime_floor(tmp_path: Path) -> None:
+    task = Task(
+        id="T-resume-floor",
+        title="t",
+        description="d",
+        role="backend",
+        scope=Scope.SMALL,
+    )
+    adapter = _WatchdogAdapter()
+    templates_dir = tmp_path / "templates" / "roles"
+    templates_dir.mkdir(parents=True)
+    spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False, default_model="mock-model")
+    spawner.set_max_agent_runtime_s(5400)
+
+    session = spawner.spawn_for_resume([task], worktree_path=tmp_path, changed_files=[])
+    try:
+        assert session.timeout_s == 5400
+        assert adapter.received_timeout == 5400
+        assert session.timeout_timer is adapter.timer
+        assert session.timeout_timer is not None
+        assert session.timeout_timer.interval == 5400
+    finally:
+        if adapter.timer is not None:
+            adapter.timer.cancel()
+
+
+def test_in_process_spawn_arms_resolved_runtime_floor(tmp_path: Path) -> None:
+    task = Task(
+        id="T-in-process-floor",
+        title="t",
+        description="d",
+        role="backend",
+        scope=Scope.SMALL,
+    )
+    adapter = _WatchdogAdapter()
+    templates_dir = tmp_path / "templates" / "roles"
+    templates_dir.mkdir(parents=True)
+    spawner = AgentSpawner(
+        adapter,
+        templates_dir,
+        tmp_path,
+        use_worktrees=False,
+        default_model="mock-model",
+        backend=AgentBackend.IN_PROCESS,
+    )
+    spawner.set_max_agent_runtime_s(5400)
+
+    session = spawner.spawn_for_tasks([task])
+    try:
+        assert session.timeout_s == 5400
+        assert adapter.spawned.wait(2), "in-process adapter was not invoked"
+        assert adapter.received_timeout == 5400
+        assert adapter.timer is not None
+        assert adapter.timer.interval == 5400
+    finally:
+        if adapter.timer is not None:
+            adapter.timer.cancel()
+        if spawner._in_process is not None:  # pyright: ignore[reportPrivateUsage]
+            spawner._in_process.wait(session.id, timeout=1.0)  # pyright: ignore[reportPrivateUsage]
+            spawner._in_process.cleanup(session.id)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_rearm_uses_remaining_budget_not_absolute_budget() -> None:

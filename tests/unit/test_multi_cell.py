@@ -140,6 +140,14 @@ class TestRegisterRemoveCell:
         orch.register_cell(cell)
         assert "alpha" in orch.cells
 
+    def test_runtime_floor_is_wired_to_shared_spawner(self, tmp_path: Path) -> None:
+        mock_spawner = MagicMock(spec=AgentSpawner)
+        config = OrchestratorConfig(max_agent_runtime_s=5400, server_url="http://localhost:9999")
+
+        MultiCellOrchestrator(config=config, spawner=mock_spawner, workdir=tmp_path)
+
+        mock_spawner.set_max_agent_runtime_s.assert_called_once_with(5400)
+
     def test_remove_cell(self, tmp_path: Path) -> None:
         orch = self._make_orchestrator(tmp_path)
         cell = _make_cell(id="alpha")

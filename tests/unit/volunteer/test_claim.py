@@ -244,6 +244,24 @@ def test_edit_targets_only_own_comment_id() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[::1]@evil.com/owner/project.git",
+        "https://[::1",
+        "http://a]b/owner/project.git",
+    ],
+)
+def test_repo_slug_returns_none_for_a_url_the_parser_refuses(url: str) -> None:
+    """Same untrusted ``repo_url`` as ``repo_url_problem``, same three shapes.
+
+    ``urlparse`` raises ``ValueError`` on each, and the call was unguarded.
+    A URL that will not parse names no GitHub issue, which is exactly what
+    this function returns ``None`` for.
+    """
+    assert repo_slug(url) is None
+
+
 def test_repo_slug_rejects_urls_with_no_host() -> None:
     # A bare local path and an explicit file:// URL are both legitimate
     # repo_url values (a fixture repo, an already-mirrored clone -- see

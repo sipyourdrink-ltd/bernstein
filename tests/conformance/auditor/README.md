@@ -4,8 +4,11 @@ One recorded run, one exported bundle, and 21 questions that must be
 answerable **from the bundle alone** by someone who never had access to
 the machine that produced it.
 
-The score is `n/21`. It is a progress instrument, not a claim: twenty of
-the twenty-one questions have no vector yet, and the score says so.
+The score is `n/21`. It is a progress instrument, not a claim: nine
+questions have vectors, of which three pass and six explicitly
+record missing evidence with strict expected failures. The other twelve
+have no vector yet. This describes the committed scenario, not coverage
+of every production run.
 
 ## The scenario
 
@@ -26,7 +29,8 @@ the twenty-one questions have no vector yet, and the score says so.
 | `offline.py` | Runs `verify_cli/` in a subprocess with no `bernstein` on the path and an audit hook that denies sockets. |
 | `questions.py` | The 21 questions. The score's denominator. |
 | `scoreboard.py` | Pytest plugin that records which questions the run answered. |
-| `test_vectors.py` | The vectors. One today: question 17. |
+| `test_vectors.py` | Integrity and independence vectors (15–20), with supporting controls. |
+| `test_data_endpoint_vectors.py` | Data and endpoint vectors (8–10). |
 | `test_harness.py` | Holds the instrument honest; answers no question. |
 
 ## Commands
@@ -37,7 +41,7 @@ uv run python scripts/auditor_conformance.py regenerate
 
 # Run the vectors and print the score
 uv run python scripts/auditor_conformance.py score
-#   -> auditor conformance: 1/21
+#   -> auditor conformance: 3/21
 
 # Run the whole suite, harness included
 uv run pytest tests/conformance/auditor -q
@@ -61,11 +65,16 @@ between recordings in their timestamps; those are compared structurally.
 The key material here is fixed test material. It is not, and must never
 become, operator key material.
 
-## The remaining twenty
+## Question slices
 
 Each group of questions lands in its own slice: attribution (1, 2, 7,
 14), authority (3, 4, 5, 21), policy and approval (6, 11, 12, 13), data
 and endpoints (8, 9, 10), integrity and independence (15, 16, 18, 19,
-20). A slice adds vectors to `test_vectors.py` and the score moves. A
+20). A slice adds vectors to a focused test file registered in the score command;
+only passing question-marked
+vectors move the score. Questions 8 and 9 assert the recorded restricted
+file and delegated model endpoint in both receipts. Question 10 remains
+a strict expected failure for missing admission history (#5038). No
+fixture fields were added to answer these questions. A
 weak assertion that passes is worse than an honest failure: it hides
 exactly the gap this suite exists to measure.

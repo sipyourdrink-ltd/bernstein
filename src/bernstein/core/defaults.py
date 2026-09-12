@@ -160,10 +160,12 @@ class OrchestratorDefaults:
     # logic and its relationship to ``AGENT.idle_log_age_threshold_s``.
     stalled_manager_threshold_s: float = 170.0
 
-    # Starting wall-clock kill deadline for a spawned agent (OrchestratorConfig.
-    # max_agent_runtime_s). Self-extends +600s/tick up to a 5400s hard cap while
-    # the agent is heartbeating (see core/agents/agent_lifecycle.py); this is
-    # only the initial value before any extension. Tunable via
+    # Upward-only floor for spawned-agent scope/XL wall-clock buckets. Values
+    # above the shipped 1800s default raise shorter starting deadlines; values
+    # at or below the default never shorten the 900/1800/3600/7200s buckets.
+    # Heartbeat self-extension remains +600s/tick up to its 5400s ceiling (see
+    # core/agents/agent_lifecycle.py); that extension ceiling does not clamp a
+    # longer initial scope/XL deadline. Tunable via
     # ``tuning.orchestrator.max_agent_runtime_s``.
     max_agent_runtime_s: int = 1800  # 30 min
 

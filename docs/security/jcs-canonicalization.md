@@ -184,3 +184,12 @@ case; its expected bytes are derived from the RFC rule itself (names sorted by
 their UTF-16BE encoding, which is a big-endian serialisation of the code-unit
 array) rather than from any implementation, so it pins the specification
 rather than a tool.
+
+`tests/fixtures/agent-card-utf16-vector/` closes the one gap those leave: an
+`AgentIdentityCard` signed through the real `sign_agent_card` path, with a
+disagreeing property-name pair set on `extensions` -- the caller-supplied
+surface this page names above. `test_canonicalize_jcs_key_order.py` and the
+RFC reference vectors prove the canonicaliser is correct against hand-built
+input; this vector proves it against a record the production signing path
+actually emitted, which is the property an independent verifier checking
+Bernstein's real output needs (#5551).

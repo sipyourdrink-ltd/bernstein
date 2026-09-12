@@ -58,6 +58,7 @@ class FakeAdapter(CLIAdapter):
         self._name = adapter_name
         self.spawn_calls: list[tuple[str, Path]] = []
         self.spawn_system_addenda: list[str] = []
+        self.spawn_timeouts: list[int] = []
 
     def name(self) -> str:
         return self._name
@@ -75,9 +76,10 @@ class FakeAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
     ) -> SpawnResult:
-        del model_config, session_id, mcp_config, timeout_seconds, task_scope, budget_multiplier
+        del model_config, session_id, mcp_config, task_scope, budget_multiplier
         self.spawn_calls.append((prompt, workdir))
         self.spawn_system_addenda.append(system_addendum)
+        self.spawn_timeouts.append(timeout_seconds)
         return SpawnResult(pid=42, log_path=workdir / ".sdd" / "logs" / "fallback.log")
 
     def is_alive(self, pid: int) -> bool:  # pragma: no cover - not exercised
@@ -334,7 +336,7 @@ def test_legacy_container_degrade_to_none_is_surfaced_and_audited(
 
     adapter = FakeAdapter("claude")
     spawner = _spawner_with_failing_container_manager(tmp_path, adapter, error="Cannot connect to the Docker daemon.")
-    session = AgentSession(id="S-legacy", role="backend")
+    session = AgentSession(id="S-legacy", role="backend", timeout_s=5400)
 
     result = spawner._spawn_in_container(  # pyright: ignore[reportPrivateUsage]
         session_id="S-legacy",
@@ -349,6 +351,7 @@ def test_legacy_container_degrade_to_none_is_surfaced_and_audited(
     # Behaviour preserved: the run continues on the host.
     assert result.pid == 42
     assert session.isolation == IsolationMode.NONE.value
+    assert adapter.spawn_timeouts == [5400]
 
     # 1) Surfaced on the spawner so the run summary can render it.
     downgrades = spawner.isolation_downgrades

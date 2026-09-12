@@ -1,0 +1,98 @@
+name: quorum
+
+# Does this pull request have the review the charter asks for?
+#
+# docs/governance/review-charter.md section 3 anticipated this check; the
+# reasoning for having it at all, and each rule it applies, is written at the
+# top of scripts/quorum_check.py. In short: GitHub's required-approvals rule
+# applies one number to everybody and ignores its own bypass list when a pull
+# request enters the merge queue, so it cannot express a charter that exempts
+# automation, lets the maintainer merge while committers keep their veto, and
+# asks for a third approval on large or sensitive changes.
+#
+# The check only reads. It takes no token beyond the read-only GITHUB_TOKEN
+# and never runs anything from the branch under review: the checkout below is
+# pinned to the default branch, so the script, the roster and CODEOWNERS it
+# reads are the ones in force on the target branch and a pull request cannot
+# promote its own author, unown a path, or delete the script by editing its
+# own tree.
+#
+# The default branch, and not the commit a pull request records as its base:
+# a base commit older than the rules carries no copy of the script at all, so
+# the job had no rules to apply and said so. A check that applies no rule must
+# not read as a review that happened, so a missing script now fails the job
+# instead of passing it. The rules a pull request is measured against are
+# therefore always the current ones, whenever it was opened.
+#
+# This workflow is pinned by an organization ruleset as a required workflow,
+# which is what makes it non-forgeable: a branch cannot swap in its own
+# version of it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  merge_group: {}
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to check"
+        required: true
+        type: string
+
+concurrency:
+  group: quorum-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quorum:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          # The default branch, never the pull request's own tree: the script,
+          # the roster and CODEOWNERS have to be the ones in force on the
+          # target branch, and they have to be the current ones rather than
+          # whatever the pull request happens to record as its base commit.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/quorum_check.py
+            .github/quorum-roster.toml
+            .github/CODEOWNERS
+          sparse-checkout-cone-mode: false
+      - name: Check the review quorum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          # The checkout above is the default branch, so the script is there
+          # whenever the rules are in force. If it is not, this job has no
+          # rules to apply and cannot answer the review question -- and a
+          # green check that applied no rule is worse than a red one, because
+          # it is indistinguishable from a review that happened. Fail closed.
+          if [ ! -f scripts/quorum_check.py ]; then
+            echo "scripts/quorum_check.py is not present in the default branch checkout; no rule could be applied."
+            {
+              echo "### quorum: not evaluated"
+              echo ""
+              echo "\`scripts/quorum_check.py\` is not present in the default branch checkout, so this run had no rules to apply and fails rather than passing without applying any."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ "${INPUT_PR:-}" != "" ]; then
+            python3 scripts/quorum_check.py --pr "$INPUT_PR"
+          else
+            python3 scripts/quorum_check.py
+          fi

@@ -323,10 +323,9 @@ def test_audit_range_since_until_hmac_relabel_fails(tmp_path: Path) -> None:
     """Relabelling the declared audit window is tamper, not a silent pass.
 
     since/until/head_hmac describe which window the embedded audit events
-    were claimed to come from. Before this fix only the recomputed content
-    head (audit_range_head_sha256) was bound into the signed subject, so
-    these three fields could be edited post-signing with no effect on
-    verification.
+    were claimed to come from. Under schema 1.1.0, these fields are bound
+    into the signed subject alongside audit_range_head_sha256 and
+    audit_range_event_count.
     """
     sdd = tmp_path / ".sdd"
     _seed_run(sdd)
@@ -349,6 +348,368 @@ def test_audit_range_since_until_hmac_relabel_fails(tmp_path: Path) -> None:
         result = verify_run_receipt(_reserialize(doc))
         assert not result.ok, f"relabelling audit_range.{field} should fail verification"
         assert result.status == "tampered"
+
+
+def test_relabelled_since_fails_verification(tmp_path: Path) -> None:
+    """Mutating since in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["since"] = "2025-01-01T00:00:00.000000Z"
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_relabelled_until_fails_verification(tmp_path: Path) -> None:
+    """Mutating until in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["until"] = "2099-01-01T00:00:00.000000Z"
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_swapped_head_hmac_fails_verification(tmp_path: Path) -> None:
+    """Mutating head_hmac in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["head_hmac"] = "0" * 64
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_audit_event_count_in_subject_fails_on_mismatch(tmp_path: Path) -> None:
+    """Mutating event_count in an audit range fails verification as tampered."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+    receipt = build_run_receipt(
+        _RUN_ID,
+        sdd,
+        _kms(tmp_path),
+        include_audit_range=True,
+        audit_hmac_key=_HMAC_KEY,
+        audit_since="2020-01-01T00:00:00.000000Z",
+        audit_until="2100-01-01T00:00:00.000000Z",
+        write=False,
+    )
+    doc = json.loads(receipt.receipt_bytes)
+    doc["audit_range"]["event_count"] = 999
+    result = verify_run_receipt(_reserialize(doc))
+    assert not result.ok
+    assert result.status == "tampered"
+
+
+def test_schema_1_0_0_receipt_verifies_under_legacy_binding(tmp_path: Path) -> None:
+    """A schema 1.0.0 receipt with an audit range verifies under legacy binding with a warning."""
+    from bernstein.core.replay.run_receipt import (
+        _binding_block,
+        _canonical_json_bytes,
+        _extract_endpoint_identities,
+        _load_journal_rows_strict,
+        _project_journal_row,
+        _signature_preimage,
+        _spine_rows,
+        _walk_spine_rows,
+        run_journal_path,
+    )
+    from bernstein.core.security.audit_receipt import _read_range_slice
+
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    _seed_audit(sdd)
+
+    journal_path = run_journal_path(sdd, _RUN_ID)
+    events = _load_journal_rows_strict(journal_path, _RUN_ID)
+    journal_rows = [_project_journal_row(row) for row in events]
+    journal_head = str(events[-1].get("event_hash", ""))
+
+    spine_rows = _spine_rows(sdd, _RUN_ID)
+    spine_head, _, _ = _walk_spine_rows(spine_rows)
+
+    rebuilt, head_hmac, head_sha256 = _read_range_slice(
+        sdd / "audit",
+        since="2020-01-01T00:00:00.000000Z",
+        until="2100-01-01T00:00:00.000000Z",
+        key=_HMAC_KEY,
+    )
+    audit_block = {
+        "since": "2020-01-01T00:00:00.000000Z",
+        "until": "2100-01-01T00:00:00.000000Z",
+        "head_hmac": head_hmac,
+        "head_sha256": head_sha256,
+        "event_count": len(rebuilt),
+        "events": rebuilt,
+    }
+
+    # Mint a legacy 1.0.0 binding (only audit_range_head_sha256 in subject)
+    legacy_binding = _binding_block(
+        run_id=_RUN_ID,
+        journal_head=journal_head,
+        journal_count=len(journal_rows),
+        spine_head=spine_head,
+        spine_count=len(spine_rows),
+        audit_head_sha256=head_sha256,
+        endpoint_identities=_extract_endpoint_identities(journal_rows),
+        schema_version="1.0.0",
+    )
+    binding_bytes = _canonical_json_bytes(legacy_binding)
+    subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
+
+    kms = _kms(tmp_path)
+    sig = kms.sign(_signature_preimage(binding_bytes))
+    jwk = kms.public_key_jwk()
+
+    legacy_receipt: dict[str, Any] = {
+        "schema_version": "1.0.0",
+        "receipt_type": "https://bernstein.run/attestations/run-receipt/v1",
+        "run_id": _RUN_ID,
+        "subject": {
+            "name": f"run-receipt-{_RUN_ID}",
+            "digest": {"sha256": subject_sha256},
+        },
+        "journal": {
+            "head_hash": journal_head,
+            "event_count": len(journal_rows),
+            "events": journal_rows,
+        },
+        "spine": {
+            "head_hash": spine_head,
+            "entry_count": len(spine_rows),
+            "entries": spine_rows,
+        },
+        "signing": {
+            "alg": "EdDSA",
+            "key_id": "test-run-receipt-key",
+            "payload_type": "application/vnd.bernstein.run-receipt+json",
+            "public_key_jwk": jwk,
+            "signature_b64": base64.b64encode(sig).decode("ascii"),
+        },
+        "audit_range": audit_block,
+    }
+
+    result = verify_run_receipt(_reserialize(legacy_receipt))
+    assert result.ok
+    assert result.status == "ok"
+    assert result.binding_version == "1.0.0"
+    assert "audit window unbound in schema 1.0.0" in result.warnings
+
+
+def test_receipt_without_audit_range_binding_bytes_unchanged(tmp_path: Path) -> None:
+    """Receipts without an audit range produce byte-identical binding blocks in 1.0.0 and 1.1.0."""
+    from bernstein.core.replay.run_receipt import (
+        _binding_block,
+        _canonical_json_bytes,
+    )
+
+    block_100 = _binding_block(
+        run_id="test-run",
+        journal_head="head1",
+        journal_count=3,
+        spine_head="spine1",
+        spine_count=2,
+        audit_head_sha256=None,
+        schema_version="1.0.0",
+    )
+    block_110 = _binding_block(
+        run_id="test-run",
+        journal_head="head1",
+        journal_count=3,
+        spine_head="spine1",
+        spine_count=2,
+        audit_head_sha256=None,
+        schema_version="1.1.0",
+    )
+    assert _canonical_json_bytes(block_100) == _canonical_json_bytes(block_110)
+
+
+# ---------------------------------------------------------------------------
+# Hash profile (RFC 8785 / jcs-v2, issue #5274 slice 1)
+# ---------------------------------------------------------------------------
+
+
+def _seed_run_with_unicode_endpoint(sdd_dir: Path, run_id: str = _RUN_ID) -> None:
+    """Like ``_seed_run``, plus one ``agent_spawned`` event with a non-ASCII model name."""
+    journal = EventJournal(run_id=run_id, sdd_dir=sdd_dir)
+    journal.record("run_started", run_id=run_id)
+    journal.record(
+        "agent_spawned",
+        endpoint_adapter_name="mockcli",
+        endpoint_model="задача \U0001f680",
+        endpoint_base_url="",
+        endpoint_profile_name="",
+    )
+    journal.record("run_completed", run_id=run_id, ticks=1)
+    spine = LineageSpine(sdd_dir / "lineage", run_id=run_id, hmac_key=_HMAC_KEY)
+    spine.record(
+        artifact_path="src/app.py",
+        content=b"print('hi')\n",
+        actor="backend",
+        step_id="T-1",
+        model="m1",
+        timestamp=1111,
+    )
+
+
+def test_receipt_binding_bytes_are_jcs_under_v2() -> None:
+    """Under hash_profile=jcs-v2 the binding bytes are RFC 8785, not json.dumps.
+
+    A non-ASCII property value is where the two profiles diverge: legacy
+    json.dumps escapes it to \\uXXXX (ensure_ascii defaults True), RFC 8785
+    keeps it as raw UTF-8. Pins that divergence rather than asserting the
+    dispatcher merely delegated somewhere.
+    """
+    from bernstein.core.replay.run_receipt import _binding_block, _canonical_bytes_for_profile
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+    block = _binding_block(
+        run_id="run-1",
+        journal_head="h1",
+        journal_count=1,
+        spine_head="s1",
+        spine_count=1,
+        audit_head_sha256=None,
+        endpoint_identities=[{"adapter": "a", "model": "задача \U0001f680", "base_url": "", "profile": ""}],
+        hash_profile="jcs-v2",
+    )
+    jcs_bytes = _canonical_bytes_for_profile(block, "jcs-v2")
+    legacy_bytes = _canonical_bytes_for_profile(block, "py-json-v1")
+
+    assert jcs_bytes == canonicalize_jcs(block)
+    assert "задача \U0001f680".encode() in jcs_bytes
+    assert "задача \U0001f680".encode() not in legacy_bytes
+    assert b"\\u0437" in legacy_bytes  # Cyrillic 'з' (U+0437), still \u-escaped under the legacy profile
+
+
+def test_canonical_bytes_for_profile_rejects_unknown_profile() -> None:
+    """The dispatcher itself refuses a third profile name rather than silently defaulting."""
+    from bernstein.core.replay.run_receipt import _canonical_bytes_for_profile
+
+    with pytest.raises(ValueError, match="unknown hash_profile"):
+        _canonical_bytes_for_profile({"a": 1}, "py-json-v2")
+
+
+def test_default_hash_profile_binding_bytes_unchanged(tmp_path: Path) -> None:
+    """Not passing hash_profile produces byte-identical output to before this field existed."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    default_build = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False)
+    explicit_legacy = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="py-json-v1")
+    assert default_build.receipt_bytes == explicit_legacy.receipt_bytes
+    assert "hash_profile" not in default_build.receipt
+    assert default_build.receipt["subject"] == explicit_legacy.receipt["subject"]
+
+
+def test_hash_profile_jcs_v2_round_trips_through_build_and_verify(tmp_path: Path) -> None:
+    """A jcs-v2 receipt carrying non-ASCII endpoint data builds and verifies offline."""
+    sdd = tmp_path / ".sdd"
+    _seed_run_with_unicode_endpoint(sdd)
+    receipt = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="jcs-v2")
+    assert receipt.receipt["hash_profile"] == "jcs-v2"
+    models = [row.get("endpoint_model") for row in receipt.receipt["journal"]["events"]]
+    assert "задача \U0001f680" in models
+
+    result = verify_run_receipt(receipt.receipt_bytes)
+    assert result.ok, result.errors
+    assert result.status == "ok"
+
+
+def test_hash_profile_jcs_v2_fails_under_legacy_recompute() -> None:
+    """Sanity check the round trip is testing something: legacy recompute must reject it.
+
+    Rebuilds the same binding under py-json-v1 and confirms the digest it
+    produces differs from the one the jcs-v2 build actually signed, i.e. the
+    profile genuinely changes the signed bytes rather than being decorative.
+    """
+    from bernstein.core.replay.run_receipt import _binding_block, _canonical_bytes_for_profile
+
+    identities = [{"adapter": "a", "model": "задача \U0001f680", "base_url": "", "profile": ""}]
+    block = _binding_block(
+        run_id="run-1",
+        journal_head="h1",
+        journal_count=1,
+        spine_head="s1",
+        spine_count=1,
+        audit_head_sha256=None,
+        endpoint_identities=identities,
+        hash_profile="jcs-v2",
+    )
+    signed_bytes = _canonical_bytes_for_profile(block, "jcs-v2")
+    legacy_recompute = _canonical_bytes_for_profile(block, "py-json-v1")
+    assert hashlib.sha256(signed_bytes).hexdigest() != hashlib.sha256(legacy_recompute).hexdigest()
+
+
+def test_unknown_hash_profile_fails_closed_at_verify(tmp_path: Path) -> None:
+    """A receipt claiming a hash_profile this verifier does not know is malformed, not skipped."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    receipt = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False)
+    doc = dict(receipt.receipt)
+    doc["hash_profile"] = "py-json-v2"
+
+    result = verify_run_receipt(_reserialize(doc))
+    assert result.ok is False
+    assert result.status == "malformed"
+    assert "hash_profile" in "; ".join(result.errors)
+
+
+def test_tampered_hash_profile_field_fails_verification(tmp_path: Path) -> None:
+    """Relabelling a signed jcs-v2 receipt back to py-json-v1 post-signing collapses verification."""
+    sdd = tmp_path / ".sdd"
+    _seed_run_with_unicode_endpoint(sdd)
+    receipt = build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="jcs-v2")
+    doc = dict(receipt.receipt)
+    doc["hash_profile"] = "py-json-v1"
+
+    result = verify_run_receipt(_reserialize(doc))
+    assert result.ok is False
+    assert result.status == "tampered"
+
+
+def test_build_run_receipt_rejects_unknown_hash_profile(tmp_path: Path) -> None:
+    """The writer validates hash_profile up front rather than signing under a typo'd name."""
+    sdd = tmp_path / ".sdd"
+    _seed_run(sdd)
+    with pytest.raises(RunReceiptError, match="unknown hash_profile"):
+        build_run_receipt(_RUN_ID, sdd, _kms(tmp_path), write=False, hash_profile="jcs-v3")
 
 
 def test_audit_range_requires_build_inputs(tmp_path: Path) -> None:

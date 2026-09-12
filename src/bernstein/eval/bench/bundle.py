@@ -85,6 +85,37 @@ class TaskResult:
 
 
 # ---------------------------------------------------------------------------
+# Harness fingerprint
+# ---------------------------------------------------------------------------
+
+FINGERPRINT_SCHEMA_VERSION = 1
+
+
+def harness_fingerprint(scheduler_config: Mapping[str, Any]) -> str:
+    """Canonical fingerprint of the harness settings that shaped a run.
+
+    sha256 over the canonical JSON (sorted keys, no whitespace) of the
+    full ``scheduler_config`` mapping — the single settings carrier every
+    runner passes to ``adapter.run_task``: decomposition config, prompt
+    template, tool allowlist, effort/thinking budget, retry policy,
+    timeouts, sandbox type, and any key a caller adds.
+
+    The whole mapping is hashed rather than a named-key allowlist, so a
+    setting nobody thought to list still changes the fingerprint instead
+    of silently drifting two runs onto one identity.  Nothing outside the
+    mapping participates: wall-clock time, paths, and run identity are
+    not harness settings, and a fingerprint that included them would
+    never match across runs.
+    """
+    canonical = json.dumps(
+        {"schema": FINGERPRINT_SCHEMA_VERSION, "settings": scheduler_config},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+# ---------------------------------------------------------------------------
 # Bundle
 # ---------------------------------------------------------------------------
 
@@ -107,6 +138,18 @@ class SubmissionBundle:
     signature: str = ""
     # Install identity fingerprint (public-key fingerprint of the signer).
     signer_fingerprint: str = ""
+    holdout_hash: str = ""
+    # Canonical fingerprint of the harness settings (scheduler_config).
+    # Derived at construction when not supplied; from_dict passes the
+    # stored value so a tampered one survives load for compare to catch,
+    # and a pre-#5568 bundle derives it on load instead of failing.
+    harness_fingerprint: str = ""
+
+    def __post_init__(self) -> None:
+        # If caller didn't supply a fingerprint, derive it now — same
+        # emit-time contract as TaskResult.stored_receipt_hash.
+        if not self.harness_fingerprint:
+            self.harness_fingerprint = harness_fingerprint(self.scheduler_config)
 
     # Computed lazily.
     _bundle_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -137,14 +180,17 @@ class SubmissionBundle:
         return self._bundle_hash
 
     def _compute_hash(self) -> str:
+        payload_dict: dict[str, Any] = {
+            "suite_hash": self.suite_hash,
+            "suite_version": self.suite_version,
+            "submitted_at": self.submitted_at,
+            "scheduler_config": self.scheduler_config,
+            "task_results": [r.to_dict() for r in self.task_results],
+        }
+        if self.holdout_hash:
+            payload_dict["holdout_hash"] = self.holdout_hash
         payload = json.dumps(
-            {
-                "suite_hash": self.suite_hash,
-                "suite_version": self.suite_version,
-                "submitted_at": self.submitted_at,
-                "scheduler_config": self.scheduler_config,
-                "task_results": [r.to_dict() for r in self.task_results],
-            },
+            payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -155,18 +201,22 @@ class SubmissionBundle:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "bundle_hash": self.bundle_hash(),
             "suite_hash": self.suite_hash,
             "suite_version": self.suite_version,
             "submitted_at": self.submitted_at,
             "scheduler_config": self.scheduler_config,
+            "harness_fingerprint": self.harness_fingerprint,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
         }
+        if self.holdout_hash:
+            d["holdout_hash"] = self.holdout_hash
+        return d
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,6 +259,8 @@ class SubmissionBundle:
             submitted_at=raw["submitted_at"],
             signature=raw.get("signature", ""),
             signer_fingerprint=raw.get("signer_fingerprint", ""),
+            holdout_hash=raw.get("holdout_hash", ""),
+            harness_fingerprint=raw.get("harness_fingerprint", ""),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:

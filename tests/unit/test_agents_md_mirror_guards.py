@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.knowledge.agents_md_bridge import ALL_TARGETS, render
-from bernstein.core.knowledge.agents_md_generator import generate
+from bernstein.core.knowledge.agents_md_generator import GenerateOptions, generate
 
 # ---------------------------------------------------------------------------
 # Repo location helpers
@@ -46,6 +46,18 @@ def _repo_name(repo_root: Path) -> str:
     project = data.get("project", {})
     name = project.get("name") if isinstance(project, dict) else None
     return name if isinstance(name, str) and name.strip() else repo_root.name
+
+
+# The default branch is pinned rather than probed. ``generate`` refuses to
+# guess it, and a shallow CI checkout has no local ``main``, no
+# ``refs/remotes/origin/main`` and no ``origin/HEAD`` to read it from -- only
+# the base commit under a job-local ref name -- so an unpinned probe makes
+# this guard pass or explode depending on which refs the lane happened to
+# fetch. ``GenerateOptions.default_branch`` exists for exactly this case.
+# The value must match what the committed mirrors were rendered with; the
+# assertion below fails loudly if the repository's default branch is ever
+# renamed without regenerating them.
+DEFAULT_BRANCH = "main"
 
 
 def _is_bernstein_checkout(repo_root: Path) -> bool:
@@ -73,9 +85,17 @@ class TestMirrorsInSync:
     """
 
     def _sections_and_name(self) -> tuple[list, str]:
-        sections = generate(REPO_ROOT)
+        sections = generate(REPO_ROOT, GenerateOptions(default_branch=DEFAULT_BRANCH))
         assert sections, "generator produced no sections for the repo root"
         return sections, _repo_name(REPO_ROOT)
+
+    def test_the_pinned_default_branch_is_the_one_the_mirrors_document(self) -> None:
+        """The pin above is only safe while the mirrors still agree with it."""
+        agents_md = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        assert f"Default branch: `{DEFAULT_BRANCH}`." in agents_md, (
+            f"AGENTS.md no longer documents `{DEFAULT_BRANCH}` as the default branch; "
+            "update DEFAULT_BRANCH here and re-run `bernstein agents-md sync`"
+        )
 
     def test_every_generated_file_matches_disk(self) -> None:
         sections, name = self._sections_and_name()

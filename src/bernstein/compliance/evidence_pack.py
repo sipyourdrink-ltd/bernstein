@@ -54,7 +54,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.security.evidence_envelope import canonical_envelope_bytes
+
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -236,9 +239,16 @@ class EvidencePack:
 # ---------------------------------------------------------------------------
 
 
-def _canonical_json(payload: Any) -> bytes:
-    """Serialise ``payload`` as deterministic JSON (sort_keys, indent=2)."""
-    return (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
+def _canonical_json(payload: Mapping[str, Any]) -> bytes:
+    """Serialise ``payload`` as RFC 8785 (JCS) canonical JSON bytes.
+
+    Delegates to :func:`~bernstein.core.security.evidence_envelope.canonical_envelope_bytes`
+    so every digested artefact in the pack -- and any future signature over
+    one -- goes through the one canonicaliser the repository signs
+    interop-facing evidence with, rather than a second hand-rolled
+    ``json.dumps`` convention (#5504).
+    """
+    return canonical_envelope_bytes(payload)
 
 
 def _parse_iso(value: str) -> datetime | None:

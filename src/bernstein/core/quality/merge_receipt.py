@@ -1,4 +1,4 @@
-"""Merge admission receipts (issue #3754).
+"""Merge admission receipts (issue #3754, #5398).
 
 Binds the decision to merge a PR to main into a signed, SHA-anchored,
 spine-anchored artefact -- mirroring the pattern already shipped for
@@ -8,19 +8,42 @@ spines in ``core/review/receipt.py``.
 
 A merge admission receipt binds ``{head_sha, merge_base_sha,
 required_context_ids, gate_results_hash, ruleset_hash,
-review_receipt_id, journal_head, decision, authority}``, signs the
-canonical binding with the install's Ed25519 identity, and anchors
-the signature in the audit chain. After a merge lands there is a
-single artefact that proves which gates it satisfied, at what chain
-head, under whose authority -- something the four merge-gate layers
-in ``docs/operations/merge-gate.md`` collectively prevent from being
-wrong but none of which records on their own.
+review_receipt_id, journal_head, decision, authority, coverage_set_hash,
+verified, unverified, skipped}``, signs the canonical binding with the
+install's Ed25519 identity, and anchors the signature in the audit chain.
+After a merge lands there is a single artefact that proves which gates
+it satisfied, at what chain head, under whose authority -- and now
+also which paths each oracle covered, skipped, or left unchecked
+-- something the four merge-gate layers in
+``docs/operations/merge-gate.md`` collectively prevent from being wrong
+but none of which records on their own.
 
 Separation of admission vs. advisory:
     The ``decision`` field is a pure function of the hashed inputs. An
     ``escalate`` advisory (recorded as a sibling annotation) can never
     turn a ``refuse`` into an ``admit``. The advisory carries its own
     hash and is never a term in the admission decision.
+
+Coverage sets (issue #5398):
+    Every emit captures the ``change_set`` (paths under review) and a
+    tuple of ``VerificationScope`` records (oracle + paths it covered
+    + (path, reason) pairs it deliberately skipped). From these the
+    receipt derives three deterministic, sorted sets:
+
+        * ``verified``  -- union of every oracle's ``checked`` paths.
+        * ``unverified``-- change_set minus verified, in sorted order.
+        * ``skipped``   -- flattened (path, reason) pairs from every
+                            scope, in sorted order.
+
+    A single ``coverage_set_hash`` binds the three sets into the
+    signed receipt, so a verifier can prove a single byte change to
+    any scope reshuffles the signed binding. Emit fails closed when:
+
+        * ``required_oracle_kinds`` is non-empty and any kind is
+          missing from the scope set -> :class:`MissingOracleError`.
+        * ``|unverified| / max(|change_set|, 1) > unverified_threshold``
+          (default ``0.0`` -- refuse when any path is unchecked)
+          -> :class:`UnverifiedShareExceededError`.
 """
 
 from __future__ import annotations
@@ -28,7 +51,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -51,8 +74,14 @@ _MERGE_ACTOR = "bernstein.merge_admission"
 _MERGE_MODEL = "admission"
 
 #: Version stamped into every receipt binding preimage. Bump only on a
-#: wire-format change.
-MERGE_SCHEMA_VERSION = 1
+#: wire-format change. v2 adds the structured coverage sets
+#: (verified/unverified/skipped/coverage_set_hash) bound into the signed
+#: preimage; v1 receipts (without those fields) still load.
+MERGE_SCHEMA_VERSION = 2
+
+# First schema version whose signed binding carries the coverage fields.
+# A receipt below this version re-canonicalises without them.
+_COVERAGE_FIELDS_SINCE = 2
 
 #: Admission decision: every gate satisfied, merge permitted.
 DECISION_ADMIT = "admit"
@@ -65,6 +94,51 @@ DECISION_REFUSE = "refuse"
 DECISION_ESCALATE = "escalate"
 
 
+class MissingOracleError(ValueError):
+    """A required oracle kind was absent from the emit's scope set.
+
+    Raised by :func:`emit_merge_receipt` when ``required_oracle_kinds``
+    is non-empty and at least one of those oracle kinds has no matching
+    :class:`VerificationScope` recorded. Fail-closed: never emit a
+    receipt that lacks an oracle the ruleset said was required.
+    """
+
+
+class UnverifiedShareExceededError(ValueError):
+    """The share of unverified change-set paths exceeded the threshold.
+
+    Raised by :func:`emit_merge_receipt` when
+    ``|unverified| / max(|change_set|, 1) > unverified_threshold``.
+    Default threshold ``0.0`` refuses any receipt where at least one
+    path in the change set is not covered by any oracle.
+    """
+
+
+@dataclass(frozen=True)
+class VerificationScope:
+    """One oracle's coverage of a change set (issue #5398).
+
+    Slices of a merge receipt each declare their own canonical
+    ``VerificationScope`` elsewhere; this one is the self-contained
+    merge-receipt definition and is what gets folded into the signed
+    coverage_set_hash.
+
+    Attributes:
+        oracle: Oracle kind, e.g. ``"lint"``, ``"test"``, ``"review"``.
+        checked: Paths (or identifiers) the oracle actually exercised,
+            in whatever order the oracle recorded them; the receipt
+            sorts them before binding.
+        skipped: ``(path, reason)`` pairs the oracle deliberately did
+            not exercise; the receipt sorts them before binding.
+        metadata: Free-form oracle-specific context, default ``{}``.
+    """
+
+    oracle: str
+    checked: tuple[str, ...] = ()
+    skipped: tuple[tuple[str, str], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 __all__ = [
     "DECISION_ADMIT",
     "DECISION_ESCALATE",
@@ -74,8 +148,12 @@ __all__ = [
     "MERGE_SCHEMA_VERSION",
     "MergeAdmissionReceipt",
     "MergeVerifyResult",
+    "MissingOracleError",
+    "UnverifiedShareExceededError",
+    "VerificationScope",
     "_canonical_bytes",
     "_sha256_hex",
+    "compute_coverage_sets",
     "compute_gate_results_hash",
     "compute_ruleset_hash",
     "emit_merge_receipt",
@@ -152,6 +230,48 @@ def compute_ruleset_hash(
     return _sha256_hex(_canonical_bytes(payload))
 
 
+def compute_coverage_sets(
+    scopes: tuple[VerificationScope, ...] = (),
+    change_set: tuple[str, ...] = (),
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str], ...], str]:
+    """Derive the receipt's three structured coverage sets and a binding hash.
+
+    Args:
+        scopes: Per-oracle coverage records. Each scope contributes its
+            ``checked`` paths to ``verified`` and its ``skipped``
+            ``(path, reason)`` pairs to ``skipped``.
+        change_set: Paths under review; the receipt's ``unverified`` set
+            is ``change_set`` minus ``verified``, in sorted order.
+
+    Returns:
+        ``(verified, unverified, skipped, coverage_set_hash)`` where:
+
+        * ``verified`` -- sorted union of every scope's ``checked`` paths.
+        * ``unverified`` -- sorted ``change_set`` minus ``verified``.
+        * ``skipped`` -- sorted flattened ``(path, reason)`` pairs.
+        * ``coverage_set_hash`` -- SHA-256 of the canonical projection
+            of the three sets, so any change to any scope reshuffles
+            the signed binding.
+
+    Empty inputs deterministically produce
+    ``verified=(), unverified=change_set, skipped=()`` and a stable hash.
+    """
+    change_set_sorted = tuple(sorted(change_set))
+    verified_set: set[str] = set()
+    for scope in scopes:
+        verified_set.update(scope.checked)
+    verified = tuple(sorted(verified_set))
+    unverified = tuple(path for path in change_set_sorted if path not in verified_set)
+    skipped = tuple(sorted((path, reason) for scope in scopes for path, reason in scope.skipped))
+    payload: dict[str, Any] = {
+        "verified": list(verified),
+        "unverified": list(unverified),
+        "skipped": [list(pair) for pair in skipped],
+    }
+    coverage_set_hash = _sha256_hex(_canonical_bytes(payload))
+    return verified, unverified, skipped, coverage_set_hash
+
+
 # ---------------------------------------------------------------------------
 # Identity (Ed25519), persisted so verify is offline
 # ---------------------------------------------------------------------------
@@ -222,6 +342,19 @@ class MergeAdmissionReceipt:
             receipt.
         advisory: Optional sibling annotation (escalation rationale).
             Never part of the admission decision.
+        verified: Sorted paths covered by at least one oracle scope (v2+).
+        unverified: Sorted change-set paths with no oracle coverage (v2+).
+        skipped: Sorted ``(path, reason)`` pairs each oracle skipped (v2+).
+        coverage_set_hash: SHA-256 of the canonical projection of
+            ``verified``, ``unverified``, and ``skipped`` (v2+). Changes
+            to any scope reshuffle this digest and therefore the signed
+            binding.
+        schema_version: The schema version this receipt's binding is
+            projected at. Defaults to the live
+            :data:`MERGE_SCHEMA_VERSION` for freshly emitted receipts;
+            :meth:`from_dict` carries the loaded row's ``v`` through so an
+            archived receipt re-canonicalises to the bytes it was signed
+            and anchored over.
     """
 
     head_sha: str
@@ -238,15 +371,30 @@ class MergeAdmissionReceipt:
     signature: str = ""
     journal_entry_hash: str = ""
     advisory: str = ""
+    verified: tuple[str, ...] = ()
+    unverified: tuple[str, ...] = ()
+    skipped: tuple[tuple[str, str], ...] = ()
+    coverage_set_hash: str = ""
+    schema_version: int = MERGE_SCHEMA_VERSION
 
     def _binding(self) -> dict[str, Any]:
         """Return the signed + anchored binding (no signature / anchor).
 
         The ``advisory`` field is deliberately excluded -- it is a sibling
         annotation and must never be a term in the admission decision.
+
+        The projection is emitted at the receipt's own
+        :attr:`schema_version` rather than at the live
+        :data:`MERGE_SCHEMA_VERSION`, so a receipt loaded from an older
+        row re-canonicalises to the exact key set its signature and spine
+        anchor were taken over.  The coverage fields (``verified``,
+        ``unverified``, ``skipped``, ``coverage_set_hash``) appear only
+        from :data:`_COVERAGE_FIELDS_SINCE` onward.  Everything is
+        sorted-key JSON so the receipt is byte-reproducible across
+        machines.
         """
-        return {
-            "v": MERGE_SCHEMA_VERSION,
+        binding: dict[str, Any] = {
+            "v": self.schema_version,
             "head_sha": self.head_sha,
             "merge_base_sha": self.merge_base_sha,
             "required_context_ids": list(self.required_context_ids),
@@ -258,6 +406,12 @@ class MergeAdmissionReceipt:
             "authority": self.authority,
             "timestamp": self.timestamp,
         }
+        if self.schema_version >= _COVERAGE_FIELDS_SINCE:
+            binding["coverage_set_hash"] = self.coverage_set_hash
+            binding["verified"] = list(self.verified)
+            binding["unverified"] = list(self.unverified)
+            binding["skipped"] = [list(pair) for pair in self.skipped]
+        return binding
 
     def to_canonical_bytes(self) -> bytes:
         """Serialise the binding to canonical JSON bytes."""
@@ -273,6 +427,20 @@ class MergeAdmissionReceipt:
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> MergeAdmissionReceipt:
+        # v1 receipts lack the coverage fields; default to empty tuples so
+        # older receipts still load and existing gate_results_hash is still
+        # verified.
+        version = int(row.get("v", 1))
+        if version < _COVERAGE_FIELDS_SINCE:
+            verified: tuple[str, ...] = ()
+            unverified: tuple[str, ...] = ()
+            skipped: tuple[tuple[str, str], ...] = ()
+            coverage_set_hash: str = ""
+        else:
+            verified = tuple(row.get("verified", []))
+            unverified = tuple(row.get("unverified", []))
+            skipped = tuple(tuple(pair) for pair in row.get("skipped", []))
+            coverage_set_hash = str(row.get("coverage_set_hash", ""))
         return cls(
             head_sha=str(row["head_sha"]),
             merge_base_sha=str(row["merge_base_sha"]),
@@ -288,6 +456,11 @@ class MergeAdmissionReceipt:
             signature=str(row.get("signature", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
             advisory=str(row.get("advisory", "")),
+            verified=verified,
+            unverified=unverified,
+            skipped=skipped,
+            coverage_set_hash=coverage_set_hash,
+            schema_version=version,
         )
 
 
@@ -342,6 +515,10 @@ def emit_merge_receipt(
     authority: str = "autonomous",
     advisory: str = "",
     timestamp: int = 0,
+    change_set: tuple[str, ...] = (),
+    scopes: tuple[VerificationScope, ...] = (),
+    required_oracle_kinds: tuple[str, ...] = (),
+    unverified_threshold: float = 0.0,
 ) -> MergeAdmissionReceipt:
     """Emit a signed, spine-anchored merge admission receipt.
 
@@ -373,10 +550,50 @@ def emit_merge_receipt(
         advisory: Optional escalation rationale (sibling annotation;
             never a term in the admission decision).
         timestamp: Integer timestamp; caller-chosen but stable.
+        change_set: Paths under review; used to derive ``unverified``.
+        scopes: Per-oracle coverage records; each contributes ``checked``
+            paths to ``verified`` and ``(path, reason)`` pairs to
+            ``skipped``.
+        required_oracle_kinds: Oracle kinds that MUST be present in
+            ``scopes``. If any are absent, raise
+            :class:`MissingOracleError` (fail-closed).
+        unverified_threshold: Maximum allowed share of unverified paths,
+            ``|unverified| / max(|change_set|, 1)``. Default ``0.0``
+            refuses any receipt with at least one unverified path.
 
     Returns:
         The signed, anchored :class:`MergeAdmissionReceipt`.
+
+    Raises:
+        MissingOracleError: ``required_oracle_kinds`` is non-empty and at
+            least one kind has no matching :class:`VerificationScope`.
+        UnverifiedShareExceededError: The unverified share exceeds
+            ``unverified_threshold``.
     """
+    # Fail-closed gate: every required oracle kind must have a scope.
+    if required_oracle_kinds:
+        present = {scope.oracle for scope in scopes}
+        missing = [kind for kind in required_oracle_kinds if kind not in present]
+        if missing:
+            raise MissingOracleError(
+                f"required oracle kinds with no scope: {sorted(missing)}",
+            )
+
+    verified, unverified, skipped, coverage_set_hash = compute_coverage_sets(
+        scopes=scopes,
+        change_set=change_set,
+    )
+
+    # Fail-closed gate: unverified share must not exceed the threshold.
+    if unverified_threshold < 1.0:
+        unverified_share = len(unverified) / max(len(change_set), 1)
+        if unverified_share > unverified_threshold:
+            raise UnverifiedShareExceededError(
+                f"unverified share {unverified_share:.3f} exceeds threshold "
+                f"{unverified_threshold:.3f} "
+                f"({len(unverified)} unverified of {len(change_set)} change-set paths)",
+            )
+
     gate_results_hash = compute_gate_results_hash(
         blast_radius=blast_radius,
         review_verdict=review_verdict,
@@ -399,6 +616,10 @@ def emit_merge_receipt(
         authority=authority,
         timestamp=timestamp,
         advisory=advisory,
+        verified=verified,
+        unverified=unverified,
+        skipped=skipped,
+        coverage_set_hash=coverage_set_hash,
     )
     payload = unsigned.to_canonical_bytes()
     signature = sign_payload(payload, private_key_pem)
@@ -430,6 +651,11 @@ def emit_merge_receipt(
         signature=signature,
         journal_entry_hash=anchor,
         advisory=unsigned.advisory,
+        verified=unsigned.verified,
+        unverified=unsigned.unverified,
+        skipped=unsigned.skipped,
+        coverage_set_hash=unsigned.coverage_set_hash,
+        schema_version=unsigned.schema_version,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

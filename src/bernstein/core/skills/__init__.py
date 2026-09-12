@@ -29,6 +29,7 @@ from bernstein.core.skills.load_skill_tool import load_skill
 from bernstein.core.skills.loader import (
     DuplicateSkillError,
     LoadedSkill,
+    QuarantinedSkill,
     SkillLoader,
     SkillNotFoundError,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "DuplicateSkillError",
     "LazySkillSource",
     "LoadedSkill",
+    "QuarantinedSkill",
     "SkillLoader",
     "SkillManifest",
     "SkillManifestError",

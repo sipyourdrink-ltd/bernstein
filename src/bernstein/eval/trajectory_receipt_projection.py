@@ -47,7 +47,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import cbor2
 
@@ -303,8 +303,15 @@ def _build_intoto(
 def _verify_intoto(intoto_dict: dict[str, Any], *, public_key: Ed25519PublicKey) -> str:
     """Verify a DSSE / in-toto envelope and return the receipt hash.
 
+    Every failure leaves as a :class:`TrajectoryProjectionError`, the same
+    contract :func:`_verify_cose` and :func:`_verify_transparency` keep, and
+    the one ``verify_trajectory_receipt_projection`` documents. The message
+    distinguishes the three kinds: an entry rejected for its shape, a
+    signature that did not verify, and a fault raised by the verifier itself.
+
     Raises:
-        TrajectoryProjectionError: Signature invalid or envelope malformed.
+        TrajectoryProjectionError: The envelope is malformed, no signature
+            verifies, or the verifier failed.
     """
     from cryptography.exceptions import InvalidSignature
 
@@ -327,17 +334,46 @@ def _verify_intoto(intoto_dict: dict[str, Any], *, public_key: Ed25519PublicKey)
 
     pae_bytes = pae(DSSE_PAYLOAD_TYPE, payload)
     verified = False
-    for sig_entry in signatures:
-        try:
-            sig_bytes = base64.b64decode(sig_entry.get("sig", ""))
-            public_key.verify(sig_bytes, pae_bytes)
-            verified = True
-            break
-        except (InvalidSignature, Exception):
+    # Why each entry is rejected, so a failure names the cause instead of
+    # blaming the key. ``except (InvalidSignature, Exception)`` read as if
+    # only a bad signature was caught; ``Exception`` subsumes
+    # ``InvalidSignature``, so every entry that was malformed, and every
+    # bug raised from inside the verification, arrived at the same
+    # "does not verify against the supplied public key".
+    rejections: list[str] = []
+    for index, sig_entry in enumerate(signatures):
+        if not isinstance(sig_entry, dict):
+            rejections.append(f"signatures[{index}] is not an object")
             continue
+        raw_sig = cast("dict[str, Any]", sig_entry).get("sig", "")
+        if not isinstance(raw_sig, str):
+            rejections.append(f"signatures[{index}].sig is not a string")
+            continue
+        try:
+            sig_bytes = base64.b64decode(raw_sig, validate=True)
+        except ValueError as exc:
+            rejections.append(f"signatures[{index}].sig is not base64: {exc}")
+            continue
+        try:
+            public_key.verify(sig_bytes, pae_bytes)
+        except InvalidSignature:
+            rejections.append(f"signatures[{index}] does not verify")
+            continue
+        except Exception as exc:
+            # Not a rejection: the verifier itself failed. _verify_cose and
+            # _verify_transparency both convert this into a
+            # TrajectoryProjectionError with a distinguishing message, and a
+            # caller writing the documented `except TrajectoryProjectionError`
+            # must not have one leg of three raise something else.
+            msg = f"DSSE verify error: {exc}"
+            raise TrajectoryProjectionError(msg) from exc
+        verified = True
+        break
 
     if not verified:
         msg = "DSSE signature does not verify against the supplied public key"
+        if rejections:
+            msg = f"{msg} ({'; '.join(rejections)})"
         raise TrajectoryProjectionError(msg)
 
     try:

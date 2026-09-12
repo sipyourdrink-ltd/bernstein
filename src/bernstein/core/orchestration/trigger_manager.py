@@ -17,12 +17,18 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None  # type: ignore[assignment]
 
 import yaml
 
@@ -458,6 +464,10 @@ class TriggerManager:
 
         # Dedup cache: {dedup_key: expiry_timestamp}
         self._dedup_cache: dict[str, float] = {}
+        # Serialises this process's claims; the flock in _dedup_lock covers the
+        # rest. `flock` attaches to an open file description, so two threads
+        # opening the lock file separately would not exclude each other.
+        self._dedup_guard = threading.Lock()
 
         # Cron state: {trigger_name: last_fire_minute}
         self._cron_state: dict[str, str] = {}
@@ -535,17 +545,89 @@ class TriggerManager:
         now = time.time()
         self._dedup_cache = {k: v for k, v in self._dedup_cache.items() if v > now}
         path = self._runtime_dir / "dedup_cache.json"
-        with path.open("w") as f:
-            json.dump(self._dedup_cache, f)
+        # Scratch sibling + rename, for the reason _save_cron_state gives: "w"
+        # truncates before the content lands, and _load_dedup_cache reads a
+        # corrupt file as EMPTY - so an interrupted write does not lose one
+        # reservation, it releases every one of them at once.
+        fd, tmp_name = tempfile.mkstemp(dir=self._runtime_dir, prefix="dedup_cache.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(self._dedup_cache, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp_name)
+
+    @contextlib.contextmanager
+    def _dedup_lock(self) -> Iterator[None]:
+        """Hold the dedup ledger exclusively across read-decide-write.
+
+        Blocking ``flock(LOCK_EX)`` on a lock file beside the cache, matching
+        the idiom the trigger-source bridge already uses for the same problem:
+        a waiter waits rather than polling, so a contended claim is delayed and
+        never dropped. Falls back to a no-op where ``fcntl`` is unavailable
+        (Windows), where the process-wide lock remains the only ordering -
+        exactly as the bridge's decision lock degrades.
+        """
+        with self._dedup_guard:
+            if fcntl is None:  # pragma: no cover - Windows path
+                yield
+                return
+            path = self._runtime_dir / "dedup_cache.lock"
+            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    with contextlib.suppress(OSError):
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
     def _check_dedup(self, dedup_key: str) -> bool:
-        """Return True if the key is a duplicate (should be skipped)."""
+        """Return True if the key is a duplicate (should be skipped).
+
+        An ADVISORY read of the in-memory cache, kept because it is free and it
+        skips work early. It is not the decision: two callers can both pass it,
+        which is what :meth:`claim_dedup` exists to settle.
+        """
         expiry = self._dedup_cache.get(dedup_key)
         return bool(expiry is not None and expiry > time.time())
 
     def _record_dedup(self, dedup_key: str, ttl_s: int) -> None:
-        self._dedup_cache[dedup_key] = time.time() + ttl_s
-        self._save_dedup_cache()
+        """Reserve ``dedup_key`` unconditionally. Prefer :meth:`claim_dedup`."""
+        with self._dedup_lock():
+            self._load_dedup_cache()
+            self._dedup_cache[dedup_key] = time.time() + ttl_s
+            self._save_dedup_cache()
+
+    def claim_dedup(self, dedup_key: str, ttl_s: int) -> bool:
+        """Reserve ``dedup_key`` for ``ttl_s`` seconds; False if already held.
+
+        The check and the write are ONE section against every other thread and
+        every other process. Before this they were two: ``_check_dedup`` read a
+        dict loaded at construction and ``_record_dedup`` rewrote the file
+        wholesale, so two ticks - or two processes under the schedule
+        supervisor - could both pass the check on the same event id before
+        either wrote it back, and both proceeded. That is one action per
+        delivery rather than one per event id, which is the whole point of a
+        dedup ledger.
+
+        The cache is re-read from disk inside the lock: this process's copy was
+        loaded at construction and says nothing about what another process
+        claimed since.
+        """
+        with self._dedup_lock():
+            self._load_dedup_cache()
+            expiry = self._dedup_cache.get(dedup_key)
+            if expiry is not None and expiry > time.time():
+                return False
+            self._dedup_cache[dedup_key] = time.time() + ttl_s
+            self._save_dedup_cache()
+            return True
 
     # -- Cron state ---------------------------------------------------------
 
@@ -611,7 +693,18 @@ class TriggerManager:
             f.write(json.dumps(asdict(record)) + "\n")
 
     def _last_fire_time(self, trigger_name: str) -> float | None:
-        """Return the most recent fire timestamp for a trigger, or None."""
+        """Return the most recent PRODUCTIVE fire timestamp for a trigger, or None.
+
+        The cooldown clock is driven from this, and a fire that produced nothing
+        deliberately does not move it (issue #5113). A routine that runs on an
+        empty repository, finds no work and then suppresses itself for the next
+        cooldown window is reporting "quiet" and "not checking" as the same
+        thing, which is exactly the state an operator cannot afford to
+        misread.
+
+        ``produced`` missing means ``True``: records written before the field
+        existed were all real fires that created a task.
+        """
         path = self._runtime_dir / _FIRE_LOG_FILENAME
         if not path.exists():
             return None
@@ -621,7 +714,7 @@ class TriggerManager:
                 if not line:
                     continue
                 entry = json.loads(line)
-                if entry.get("trigger_name") == trigger_name:
+                if entry.get("trigger_name") == trigger_name and entry.get("produced", True):
                     last = entry.get("fired_at")
         except (json.JSONDecodeError, OSError):
             logger.warning("Error reading fire log")
@@ -809,7 +902,13 @@ class TriggerManager:
             return None
 
         cooldown_s = trigger.conditions.get("cooldown_s", 300)
-        self._record_dedup(dedup_key, max(cooldown_s, 300))
+        # The authoritative decision, taken here rather than at the advisory
+        # check above: another tick may have claimed this event id in between,
+        # and the render must not have burned the reservation if it failed.
+        if not self.claim_dedup(dedup_key, max(cooldown_s, 300)):
+            suppressed[trigger.name] = "deduplicated"
+            logger.info("Trigger %s lost the dedup race (key=%s)", trigger.name, dedup_key)
+            return None
         self._record_rate()
         logger.info("Trigger %s fired for %s event", trigger.name, event.source)
         return payload
@@ -825,8 +924,26 @@ class TriggerManager:
         title_prefix = trigger.task.title.split("{")[0] if "{" in trigger.task.title else trigger.task.title
         return sum(1 for t in tasks if t.title.startswith(title_prefix) and t.status in active_statuses)
 
-    def record_fire(self, trigger_name: str, source: str, task_id: str, dedup_key: str, summary: str) -> None:
-        """Record a trigger fire after task creation succeeds."""
+    def record_fire(
+        self,
+        trigger_name: str,
+        source: str,
+        task_id: str,
+        dedup_key: str,
+        summary: str,
+        *,
+        produced: bool = True,
+    ) -> None:
+        """Record a trigger fire after task creation succeeds.
+
+        Pass ``produced=False`` for a run that completed but found no work. The
+        record is still appended -- ``get_fire_history`` shows it, so "it ran
+        and found nothing" stays visible -- but it does not reset the cooldown
+        clock (see :meth:`_last_fire_time`).
+
+        Keyword-only and defaulted, so every existing caller keeps recording a
+        productive fire without changing a line.
+        """
         record = TriggerFireRecord(
             trigger_name=trigger_name,
             source=source,
@@ -834,6 +951,7 @@ class TriggerManager:
             task_id=task_id,
             dedup_key=dedup_key,
             event_summary=summary,
+            produced=produced,
         )
         self._record_fire(record)
 
@@ -876,7 +994,9 @@ class TriggerManager:
                 return TriggerGateResult(trigger.name, True, reason, None)
 
             cooldown_s = trigger.conditions.get("cooldown_s", 300)
-            self._record_dedup(dedup_key, max(cooldown_s, 300))
+            if not self.claim_dedup(dedup_key, max(cooldown_s, 300)):
+                logger.info("Trigger %s suppressed a direct %s task: deduplicated", trigger.name, event.source)
+                return TriggerGateResult(trigger.name, True, "deduplicated", None)
             self._record_rate()
             logger.info("Trigger %s governance passed for a direct %s task", trigger.name, event.source)
             return TriggerGateResult(trigger.name, False, None, dedup_key)

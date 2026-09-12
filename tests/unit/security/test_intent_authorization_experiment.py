@@ -20,6 +20,7 @@ import pytest
 from bernstein.experiment.intent_vs_args.policy_evaluator import (
     CORPUS_PATH,
     POLICIES_DIR,
+    REGOREPO_PATH,
     _compute_intent_digest,
     _eval_argument_aware,
     _eval_intent_aware,
@@ -147,6 +148,9 @@ class TestPolicyFiles:
         path = POLICIES_DIR / "intent_aware.yaml"
         assert path.exists()
 
+    def test_regorepo_rego_exists(self) -> None:
+        assert REGOREPO_PATH.exists()
+
     def test_yaml_files_are_valid_yaml(self) -> None:
         import yaml
 
@@ -166,10 +170,14 @@ class TestPolicyFiles:
             assert parsed["version"] == "1.0"
 
     def test_regorepo_rego_package_declaration(self) -> None:
-        pass  # Rego file removed - see test_class for details
+        content = REGOREPO_PATH.read_text(encoding="utf-8")
+        assert "package bernstein.authz.intent_experiment" in content
 
     def test_regorepo_has_all_three_variants(self) -> None:
-        pass  # Rego file removed - see test_class for details
+        content = REGOREPO_PATH.read_text(encoding="utf-8")
+        assert "role_only_allow" in content
+        assert "argument_aware_allow" in content
+        assert "intent_aware_allow" in content
 
 
 class TestPolicyEvaluatorFunctions:
@@ -332,12 +340,15 @@ class TestRunExperiment:
         assert len(parsed["results"]) == summary.total_events
 
 
-class TestIntentDigestPurity:
-    """Intent digest is computed at attestation time and cannot be changed by tool results.
+class TestInjectionResistanceAndDigestPurity:
+    """Hostile tool result cannot change recorded intent mid-run; intent digest is pure.
 
-    This tests the structural property that intent_digest is a pure function of
-    the pre-attestation declared_intent, ensuring a hostile tool result cannot
-    retroactively change the recorded intent_digest.
+    This tests the structural property that intent_digest is computed at
+    attestation time (before tool execution) and locked into the attestation
+    record.  A tool result that arrives after attestation cannot retroactively
+    change the recorded intent_digest.  Because intent_digest is a pure
+    function of the pre-attestation declared_intent, the recorded digest is
+    also immune to mutation by any post-attestation tool result.
     """
 
     def test_intent_digest_is_precomputed_not_from_result(self) -> None:
