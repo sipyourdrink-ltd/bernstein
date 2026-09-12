@@ -31,7 +31,7 @@ def _canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def _digest_args(args: Mapping[str, Any] | str | None) -> str:
+def _digest_args(args: Any) -> str:
     """Compute sha256 digest of tool call arguments."""
     if args is None:
         raw = "{}"
@@ -48,7 +48,7 @@ class LangGraphToolCall:
 
     name: str
     tool_call_id: str
-    arguments: dict[str, Any]
+    arguments: Any
     arguments_digest: str
     output: Any = None
 
@@ -59,11 +59,12 @@ class LangGraphToolCall:
         raw_args = raw.get("args") or raw.get("arguments") or {}
         if isinstance(raw_args, str):
             try:
-                args = json.loads(raw_args)
+                parsed = json.loads(raw_args)
+                args = parsed if isinstance(parsed, (dict, list)) else {"raw": parsed}
             except Exception:
                 args = {"raw": raw_args}
-        elif isinstance(raw_args, dict):
-            args = dict(raw_args)
+        elif isinstance(raw_args, (dict, list)):
+            args = raw_args
         else:
             args = {"raw": str(raw_args)}
 
@@ -266,6 +267,13 @@ class LangGraphIngestAdapter:
 
         edges = [LangGraphEdge.from_dict(e) for e in raw_edges if isinstance(e, dict)]
 
+        # Fail-closed validation: ensure all edges reference nodes present in the graph
+        for edge in edges:
+            if edge.source not in seen_node_ids:
+                raise ValueError(f"Edge source '{edge.source}' not found in graph nodes: missing node reference")
+            if edge.target not in seen_node_ids:
+                raise ValueError(f"Edge target '{edge.target}' not found in graph nodes: missing node reference")
+
         nodes.sort(key=lambda n: n.id)
         edges.sort(key=lambda e: (e.source, e.target))
 
@@ -290,10 +298,10 @@ class LangGraphCallbackHandler:
     def __init__(self, run_id: str, graph_id: str = "langgraph") -> None:
         self.run_id = run_id
         self.graph_id = graph_id
-        self._nodes: dict[str, dict[str, Any]] = {}
+        self._nodes: list[dict[str, Any]] = []
         self._edges: list[dict[str, Any]] = []
-        self._current_node: str | None = None
-        self._last_node: str | None = None
+        self._current_node: dict[str, Any] | None = None
+        self._last_node_id: str | None = None
 
     def on_chain_start(
         self,
@@ -308,17 +316,21 @@ class LangGraphCallbackHandler:
         if node_name == self.graph_id:
             return
 
-        self._nodes[node_name] = {
-            "id": node_name,
+        occurrences = sum(1 for n in self._nodes if n.get("name") == node_name)
+        node_id = run_id or (node_name if occurrences == 0 else f"{node_name}:{occurrences}")
+
+        node_data = {
+            "id": node_id,
             "name": node_name,
             "role": kwargs.get("role", "assistant"),
             "inputs": inputs or {},
             "outputs": {},
             "tool_calls": [],
         }
-        if self._last_node and self._last_node != node_name:
-            self._edges.append({"source": self._last_node, "target": node_name})
-        self._current_node = node_name
+        self._nodes.append(node_data)
+        if self._last_node_id and self._last_node_id != node_id:
+            self._edges.append({"source": self._last_node_id, "target": node_id})
+        self._current_node = node_data
 
     def on_tool_start(
         self,
@@ -327,15 +339,15 @@ class LangGraphCallbackHandler:
         *,
         tool_call_id: str | None = None,
         name: str | None = None,
-        args: dict[str, Any] | None = None,
+        args: Any = None,
         **kwargs: Any,
     ) -> None:
-        if not self._current_node or self._current_node not in self._nodes:
+        if not self._current_node:
             return
         tool_name = name or (serialized.get("name") if serialized else "tool")
-        call_id = tool_call_id or f"call_{len(self._nodes[self._current_node]['tool_calls']) + 1}"
+        call_id = tool_call_id or f"call_{len(self._current_node['tool_calls']) + 1}"
         tool_args = args if args is not None else {"input": input_str or ""}
-        self._nodes[self._current_node]["tool_calls"].append(
+        self._current_node["tool_calls"].append(
             {
                 "name": tool_name,
                 "id": call_id,
@@ -345,16 +357,16 @@ class LangGraphCallbackHandler:
         )
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
-        if not self._current_node or self._current_node not in self._nodes:
+        if not self._current_node:
             return
-        tools = self._nodes[self._current_node]["tool_calls"]
+        tools = self._current_node["tool_calls"]
         if tools:
             tools[-1]["output"] = output
 
     def on_chain_end(self, outputs: dict[str, Any] | None, **kwargs: Any) -> None:
-        if self._current_node and self._current_node in self._nodes:
-            self._nodes[self._current_node]["outputs"] = outputs or {}
-            self._last_node = self._current_node
+        if self._current_node:
+            self._current_node["outputs"] = outputs or {}
+            self._last_node_id = self._current_node["id"]
             self._current_node = None
 
     def export_trace(self) -> dict[str, Any]:
@@ -362,7 +374,7 @@ class LangGraphCallbackHandler:
         return {
             "run_id": self.run_id,
             "graph_id": self.graph_id,
-            "nodes": list(self._nodes.values()),
+            "nodes": list(self._nodes),
             "edges": list(self._edges),
         }
 

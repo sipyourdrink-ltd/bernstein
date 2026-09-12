@@ -95,19 +95,66 @@ def test_node_missing_from_ingest_fails_rather_than_silently_shrinking(
 ) -> None:
     """A node present in source but missing/dropped in ingest fails validation."""
     tampered = copy.deepcopy(raw_fixture)
-    # Remove the retriever node
+    # Remove the retriever node while edges still reference it
     tampered["nodes"] = [n for n in tampered["nodes"] if n["id"] != "retriever"]
 
-    run = adapter.ingest_trace(tampered)
-    # Tampered has only 2 nodes
-    assert len(run.nodes) == 2
-    assert "retriever" not in {n.id for n in run.nodes}
+    with pytest.raises(ValueError, match="not found in graph nodes: missing node reference"):
+        adapter.ingest_trace(tampered)
 
     # If raw fixture had an invalid entry without an id
     malformed = copy.deepcopy(raw_fixture)
     malformed["nodes"].append({"invalid": "missing id"})
     with pytest.raises(ValueError, match="missing an 'id' or 'name'"):
         adapter.ingest_trace(malformed)
+
+
+def test_tool_call_with_list_arguments(
+    adapter: LangGraphIngestAdapter,
+) -> None:
+    """Tool calls with list arguments (raw or JSON string) parse and digest without crash."""
+    from bernstein.adapters.langgraph_ingest import LangGraphToolCall
+
+    tc_list = LangGraphToolCall.from_dict({
+        "name": "batch_search",
+        "id": "call_1",
+        "args": [1, 2, 3],
+    })
+    assert tc_list.arguments == [1, 2, 3]
+    assert tc_list.arguments_digest.startswith("sha256:")
+
+    tc_json_list = LangGraphToolCall.from_dict({
+        "name": "batch_search",
+        "id": "call_2",
+        "args": '["a", "b", "c"]',
+    })
+    assert tc_json_list.arguments == ["a", "b", "c"]
+    assert tc_json_list.arguments_digest.startswith("sha256:")
+
+
+def test_callback_handler_preserves_graph_cycles() -> None:
+    """Nodes executing multiple times in loops/cycles are preserved without overwriting."""
+    handler = LangGraphCallbackHandler(run_id="run-cycle", graph_id="cycle-graph")
+
+    # Step 1: agent runs
+    handler.on_chain_start(serialized={"name": "agent"}, inputs={"msg": "start"}, name="agent")
+    handler.on_chain_end(outputs={"msg": "call tool"})
+
+    # Step 2: tools runs
+    handler.on_chain_start(serialized={"name": "tools"}, inputs={"msg": "execute"}, name="tools")
+    handler.on_chain_end(outputs={"msg": "tool done"})
+
+    # Step 3: agent runs AGAIN (cycle)
+    handler.on_chain_start(serialized={"name": "agent"}, inputs={"msg": "evaluate"}, name="agent")
+    handler.on_chain_end(outputs={"msg": "final answer"})
+
+    trace = handler.export_trace()
+    assert len(trace["nodes"]) == 3
+    node_ids = [n["id"] for n in trace["nodes"]]
+    assert node_ids == ["agent", "tools", "agent:1"]
+
+    edges = [(e["source"], e["target"]) for e in trace["edges"]]
+    assert ("agent", "tools") in edges
+    assert ("tools", "agent:1") in edges
 
 
 def test_lineage_run_plan_mapping(
