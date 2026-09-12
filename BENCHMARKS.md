@@ -8,6 +8,7 @@ This document records the canonical benchmark suites provided by `bernstein.eval
 |---|---|---|---|---|
 | `golden-v1` | Core orchestrator determinism and task execution suite | — | 5 tasks | 1.0 (100%) |
 | `tool-surface-v1` | Tool-surface risk scoring, risky triple detection, and forced approval gating | `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04` | 10 fixtures | 1.0 (100%) |
+| `goal-drift-v1` | Trajectory goal drift measurement across contract boundaries with planted distractions | `CTRL-GOAL-ALIGNMENT`, `ASI01` | 10 fixtures | 1.0 (100%) |
 
 ---
 
@@ -36,12 +37,33 @@ The server is classified as `CRITICAL` and **MUST force an approval gate**. If n
 
 ---
 
+## Goal-Drift Suite (`goal-drift-v1`)
+
+The `goal-drift-v1` benchmark measures where and when long-running agent trajectories deviate from explicit task contracts (`DriftContract`).
+
+### Drift Contract Parameters
+- **`scope_paths`**: Allowed files or directories. Any file touch outside this scope incurs an out-of-scope penalty.
+- **`required_behaviours`**: Mandatory behaviours or functions expected to be fulfilled.
+- **`forbidden_changes`**: Forbidden paths, dangerous methods, or planted scope creep.
+- **`distraction_type` / `distraction_description`**: Planted distractions (TODO scope creep, tempting refactors, unrelated failing tests, stale docs, premature optimizations).
+
+### Hard-Check Deterministic Metric
+Hard drift checks evaluate touched paths and generated diffs per execution step without calling any model:
+$$\text{Drift Score} \in [0.0, 1.0]$$
+A compliant trajectory scores strictly `0.0` at every step, yielding `max_hard_drift = 0.0`.
+
+---
+
 ## Running and Verifying Benchmarks
 
 ```bash
 # Run the tool-surface benchmark suite
 bernstein bench run tool-surface-v1 --out tool-surface-bundle.json
 
+# Run the goal-drift benchmark suite
+bernstein bench run goal-drift-v1 --out goal-drift-bundle.json
+
 # Offline independent verification
-bernstein bench verify tool-surface-bundle.json --suite tool-surface-v1
+bernstein bench verify goal-drift-bundle.json --suite goal-drift-v1
 ```
+

@@ -7,6 +7,16 @@ from bernstein.eval.bench.contamination import (
     check_solution_contamination,
     extract_ngrams,
 )
+from bernstein.eval.bench.goal_drift_suite import (
+    DriftContract,
+    DriftStepMeasurement,
+    DriftTrajectoryCurve,
+    GoalDriftReplayAdapter,
+    GoalDriftTask,
+    build_goal_drift_suite,
+    evaluate_trajectory_drift,
+    get_goal_drift_task_map,
+)
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
 from bernstein.eval.bench.reliability import (
@@ -57,6 +67,11 @@ __all__ = [
     "BenchVerifier",
     "BundleVerificationResult",
     "ContaminationVerdict",
+    "DriftContract",
+    "DriftStepMeasurement",
+    "DriftTrajectoryCurve",
+    "GoalDriftReplayAdapter",
+    "GoalDriftTask",
     "HoldoutBenchRunner",
     "HoldoutIsolationError",
     "InstallIdentityReliabilitySigner",
@@ -81,14 +96,17 @@ __all__ = [
     "ToolSurfaceReplayAdapter",
     "VerificationStatus",
     "admit_task",
+    "build_goal_drift_suite",
     "build_golden_suite_v1",
     "build_tool_surface_suite",
     "check_solution_contamination",
     "check_suite_saturation",
     "coordination_hash",
     "coordination_projection",
+    "evaluate_trajectory_drift",
     "extract_ngrams",
     "first_divergent_coordination_field",
+    "get_goal_drift_task_map",
     "harness_fingerprint",
     "reliability_check",
     "validate_run_receipt",
