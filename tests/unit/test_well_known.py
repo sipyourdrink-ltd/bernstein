@@ -23,7 +23,7 @@ from bernstein.core.routes.well_known import (
     _render_llms_txt,
     _reset_signing_keypair_for_tests,
 )
-from bernstein.core.security.agent_card_signer import canonicalize_jcs
+from bernstein.core.security.agent_card_signer import canonicalize_jcs, ed25519_public_jwk
 from bernstein.core.security.auth_middleware import AUTH_PUBLIC_PATHS
 from bernstein.core.server import create_app
 
@@ -131,7 +131,31 @@ def test_agent_json_signature_present(client: TestClient) -> None:
     sig = data["signatures"][0]
     assert sig["alg"] == "EdDSA"
     assert sig["typ"] == "agent-card+jws"
-    assert sig["kid"] == _DEFAULT_KID
+    # The signing kid is the RFC 7638 thumbprint of the signing key, not the
+    # fixed ``_DEFAULT_KID`` string. A fixed string names the tenant, so after
+    # a rotation it resolves to the new key while cards signed minutes earlier
+    # still carry it, and a verifier routing by kid fetches the wrong key.
+    # What a verifier needs is that the kid on the card it holds resolves in
+    # the JWKS it fetched - asserted here, and against the JWKS itself rather
+    # than against a recomputed thumbprint, so this cannot pass by both sides
+    # making the same mistake.
+    jwks = client.get("/.well-known/agent.json/keys").json()
+    by_kid = {jwk["kid"]: jwk["x"] for jwk in jwks["keys"]}
+
+    # Not "the kid is one of the ones we publish" - that was satisfied on main
+    # too, because the legacy alias is still advertised and, absent a
+    # rotation, still resolves to the right key. The property this change
+    # exists to establish is that the kid *names the key that signed the
+    # card*, so it is resolved and compared against the current key.
+    assert sig["kid"] != _DEFAULT_KID, "the card is signed under the tenant alias, not a key identity"
+    assert sig["kid"] in by_kid
+    from bernstein.core.routes.well_known import _get_signing_keypair
+
+    current_x = ed25519_public_jwk(_get_signing_keypair()[1], kid="x")["x"]
+    assert by_kid[sig["kid"]] == current_x
+
+    # The historical fixed kid stays advertised for verifiers that cached it.
+    assert _DEFAULT_KID in by_kid
     # Detached JWS - header..signature shape.
     parts = sig["jws"].split(".")
     assert len(parts) == 3
@@ -269,14 +293,53 @@ def test_jwks_rotation_serves_both_current_and_archived_kid(tmp_path: Path) -> N
     client = TestClient(app)
 
     keys = client.get("/.well-known/agent.json/keys").json()["keys"]
-    assert len(keys) == 2, f"expected current + 1 archived JWK, got: {keys}"
+    # Three entries, two keys: the current key twice - once under the
+    # historical fixed kid for verifiers that cached it, once under its
+    # thumbprint - and the archived key under its own thumbprint. The
+    # archived key used to be published under a timestamped keystore id,
+    # which nothing on the wire ever names, so a verifier routing by the kid
+    # its card carried could not find it.
+    assert len(keys) == 3, f"expected current (x2 labels) + 1 archived JWK, got: {keys}"
     kids = [k["kid"] for k in keys]
     assert kids[0] == "agent-bernstein-orchestrator", "current key must come first"
-    assert kids[1].startswith("agent-bernstein-orchestrator-"), "archived key carries timestamp suffix"
-    # Both JWKs must be valid Ed25519 OKP keys with distinct ``x`` values.
-    assert keys[0]["x"] != keys[1]["x"]
-    assert keys[0]["kty"] == keys[1]["kty"] == "OKP"
-    assert keys[0]["crv"] == keys[1]["crv"] == "Ed25519"
+    assert len(set(kids)) == 3, f"every published kid must be distinct: {kids}"
+
+    by_kid = {k["kid"]: k["x"] for k in keys}
+    current_x, archived_x = keys[0]["x"], keys[2]["x"]
+    assert current_x != archived_x, "current and archived must be different keys"
+    # The two labels on the current key resolve to the same key material.
+    assert by_kid[kids[1]] == current_x
+    # Every JWK is a well-formed Ed25519 OKP key.
+    assert {k["kty"] for k in keys} == {"OKP"}
+    assert {k["crv"] for k in keys} == {"Ed25519"}
+
+
+def test_the_legacy_kid_still_resolves_the_current_key_after_rotation(tmp_path: Path) -> None:
+    """The compatibility guarantee the thumbprint change rests on.
+
+    Cards are signed under a key-derived kid now, but a verifier that cached
+    ``agent-bernstein-orchestrator`` must keep resolving what it resolves
+    today: the tenant's *current* key. If that stopped holding, this would be
+    a breaking change to an advertised value rather than an additive one.
+    """
+    from bernstein.core.routes import well_known as wk
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    os.environ["BERNSTEIN_AUTH_DISABLED"] = "1"
+    keys_dir = tmp_path / "keys"
+    keystore = AgentCardKeystore(keys_dir)
+    keystore.load_or_generate()
+    keystore.rotate()
+
+    wk._reset_signing_keypair_for_tests(keys_dir)
+    client = TestClient(create_app(jsonl_path=tmp_path / "tasks.jsonl"))
+    _private_pem, current_pem = wk._get_signing_keypair()
+
+    keys = client.get("/.well-known/agent.json/keys").json()["keys"]
+    by_kid = {k["kid"]: k["x"] for k in keys}
+    current_x = ed25519_public_jwk(current_pem, kid="x")["x"]
+
+    assert by_kid["agent-bernstein-orchestrator"] == current_x
 
 
 def test_rotate_agent_card_keys_helper(tmp_path: Path) -> None:
