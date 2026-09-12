@@ -23,6 +23,8 @@ import threading
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
+
 if TYPE_CHECKING:
     from bernstein.core.storage.sink import ArtifactSink
 
@@ -45,6 +47,7 @@ class _Registry:
     def __init__(self) -> None:
         self._sinks: dict[str, ArtifactSink] = {}
         self._factories: dict[str, Any] = {}
+        self._guard = DuplicateGuard("artifact sink")
         self._lock = threading.RLock()
         self._builtins_loaded = False
         self._entrypoints_loaded = False
@@ -68,8 +71,10 @@ class _Registry:
         if not normalised:
             raise ValueError("Artifact sink name must be non-empty")
         with self._lock:
-            if normalised in self._sinks or normalised in self._factories:
-                raise ValueError(f"Duplicate artifact sink: {normalised!r}")
+            module_name = caller_module_name()
+            if module_name == __name__:
+                module_name = caller_module_name(depth=2)
+            self._guard.register(normalised, module_name)
             if inspect.isclass(sink):
                 self._factories[normalised] = sink
             else:
@@ -80,6 +85,7 @@ class _Registry:
         with self._lock:
             self._sinks.pop(name, None)
             self._factories.pop(name, None)
+            self._guard.forget(name)
 
     def get(self, name: str) -> ArtifactSink:
         """Return the sink registered under *name*.
@@ -147,6 +153,7 @@ class _Registry:
         from bernstein.core.storage.sinks.local_fs import LocalFsSink
 
         if "local_fs" not in self._all_names():
+            self._guard.register("local_fs", LocalFsSink.__module__)
             self._factories["local_fs"] = LocalFsSink
 
         self._register_cloud_factory(
@@ -183,6 +190,8 @@ class _Registry:
         if name in self._all_names():
             return
 
+        self._guard.register(name, module)
+
         def _factory() -> ArtifactSink:
             import importlib
 
@@ -213,6 +222,8 @@ class _Registry:
             except Exception as exc:
                 logger.warning("Failed to load artifact sink entry-point %r: %s", name, exc)
                 continue
+            module_name = str(getattr(loaded, "__module__", None) or getattr(ep, "value", "<entrypoint>"))
+            self._guard.register(name, module_name)
             if inspect.isclass(loaded):
                 self._factories[name] = loaded
             else:
