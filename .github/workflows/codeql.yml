@@ -11,32 +11,27 @@ on:
       - "uv.lock"
       - ".github/workflows/codeql.yml"
       - ".github/codeql/**"
-  # Path-scoped on pull_request: CodeQL analyzes Python sources only, so
-  # PRs that touch no analyzable path (docs-only, workflow-only) skip the
-  # run and free a runner slot. This is safe for branch protection: the
-  # required status check on `main` is `CI gate` only, so a skipped
-  # CodeQL run cannot deadlock a PR. Push-to-main and
-  # the weekly schedule keep full-coverage analysis on everything that
-  # lands.
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "scripts/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/codeql.yml"
-      - ".github/codeql/**"
+  # No `pull_request` trigger, deliberately (#5795). It ran 517 times in one
+  # week for 2 165 job-minutes and gated nothing: branch protection requires
+  # `CI gate` and `shipped bundle matches the lockfile`, not CodeQL. Every
+  # commit that reaches `main` is analysed again by the push run minutes
+  # later, so the pull-request run was a second analysis of the same code
+  # whose only output was an advisory annotation.
+  #
+  # Stated plainly, the cost: a newly introduced finding now surfaces after
+  # the merge rather than before it. Alerts are triaged against the trunk,
+  # which is where the push run and the weekly schedule raise them.
   schedule:
     - cron: "0 4 * * 1"  # Weekly Monday 4 AM UTC
 
 concurrency:
   group: codeql-${{ github.ref }}
-  # Cancel superseded PR analyses, but never cancel a main-branch analysis
-  # mid-run: a cancelled CodeQL run leaves code scanning in a "CodeQL exited
-  # with errors" configuration-error state and drops that commit's coverage.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Never cancel in flight. Both remaining triggers analyse the trunk, and a
+  # cancelled CodeQL run leaves code scanning in a "CodeQL exited with errors"
+  # configuration-error state and drops that commit's coverage. This was
+  # `github.event_name == 'pull_request'` while pull requests ran; with that
+  # trigger gone the expression could only ever be false.
+  cancel-in-progress: false
 
 # Default-deny at workflow scope; the analyze job re-asserts the narrow
 # writes it actually needs (Scorecard token-permissions).
