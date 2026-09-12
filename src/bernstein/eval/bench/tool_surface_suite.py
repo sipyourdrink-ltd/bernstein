@@ -82,7 +82,16 @@ def build_tool_surface_suite() -> BenchSuite:
         )
         tasks.append(task)
 
-    return BenchSuite(version="tool-surface-v1", tasks=tasks)
+    return BenchSuite(
+        version="tool-surface-v1",
+        tasks=tasks,
+        # Registry-facing declaration (#5455): what this suite exercises,
+        # in the compliance registry's vocabulary. ``CONTROLS_COVERED``
+        # above is the suite's own taxonomy (CTRL-TOOL-INVENTORY, ASI02,
+        # AST04) and is unchanged; these are the registry ids the same
+        # coverage answers to, so ``validate_controls`` admits the suite.
+        controls=["CTL-SEC-02", "CTL-SEC-05", "CTL-EVAL-01"],
+    )
 
 
 class ToolSurfaceReplayAdapter:
