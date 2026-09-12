@@ -228,8 +228,8 @@ def _show_profile(target: str, token: str) -> None:
 
 def _poll_for_token(target: str, device_code: str, expires_in: int, interval: int) -> None:
     """Poll the token endpoint until authorized, expired, or timed out."""
-    deadline = time.time() + expires_in
-    while time.time() < deadline:
+    deadline = time.monotonic() + expires_in
+    while time.monotonic() < deadline:
         time.sleep(interval)
 
         try:

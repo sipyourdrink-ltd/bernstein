@@ -349,7 +349,13 @@ class TestCleanupOrdering:
         with (
             patch.object(rb, "server_get", side_effect=lambda p: starting if p == "/status" else {"agent_count": 0}),
             patch.object(rb.time, "sleep", return_value=None),
+            # Both clocks. The bounded wait inside ``_wait_for_orchestrator_gone``
+            # reads ``monotonic``; ``time`` is still read for the freshness
+            # comparison against a recorded task timestamp. Driving only one
+            # leaves the loop unbounded, because ``sleep`` is a no-op here so
+            # the real monotonic clock barely advances.
             patch.object(rb.time, "time", side_effect=_fake_time),
+            patch.object(rb.time, "monotonic", side_effect=_fake_time),
             patch.object(rb, "_signal_orchestrator_shutdown"),
             patch("bernstein.cli.run_preflight._show_run_summary"),
             patch("bernstein.cli.run_preflight._drain_completed_backlog_files"),
