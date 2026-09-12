@@ -29,13 +29,15 @@ Covers compliance edge-cases not exercised by ``test_lineage_record.py``,
 
 from __future__ import annotations
 
-import pytest
 import base64
 import csv
 import hashlib
 import io
 import json
 import re
+
+import pytest
+
 resource = pytest.importorskip("resource")
 import sys
 from html.parser import HTMLParser
