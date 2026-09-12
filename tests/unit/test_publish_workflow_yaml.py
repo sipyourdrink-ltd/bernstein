@@ -343,6 +343,59 @@ def test_npm_missing_token_fails_the_job(workflow: dict[str, Any]) -> None:
     assert "exit 1" in run
 
 
+def test_the_npm_credential_is_checked_before_anything_ships(workflow: dict[str, Any]) -> None:
+    """The wrapper publishes last, so its credential has to be checked first.
+
+    For v3.19.2 the tag, the GitHub Release and PyPI all shipped and only the
+    npm step failed -- with an E404, which is what the registry answers for a
+    token that authenticates and cannot write to the named package. By then
+    there was nothing left to stop, and `npm view` reported the previous
+    version while everything else reported the current one (#5800).
+    """
+    jobs = cast("dict[str, Any]", workflow["jobs"])
+    assert "npm-preflight" in jobs, "no preflight job checks the wrapper credential"
+
+    for shipping in ("publish", "github-release", "publish-npm"):
+        needs = jobs[shipping].get("needs")
+        needs = [needs] if isinstance(needs, str) else needs
+        assert "npm-preflight" in (needs or []), f"{shipping} can ship before the wrapper credential is known to work"
+
+
+def test_the_preflight_asks_about_the_package_not_just_the_token(workflow: dict[str, Any]) -> None:
+    """ "Is it set" already passed for the credential that could not publish.
+
+    The existing guard checks that NPM_TOKEN is non-empty, which a valid,
+    authenticated, unauthorised token satisfies. The preflight has to ask
+    whether this credential may write THIS package.
+    """
+    run = _step_run(workflow, "npm-preflight", "Check the credential can publish the wrapper package")
+
+    assert "npm whoami" in run, "identity is not checked, so a revoked token reads as a missing package"
+    assert "npm access" in run, "write access to the package itself is never asked about"
+    assert "read-write" in run, "the access answer is not compared against write permission"
+    # Read from package.json rather than restated, so a rename cannot leave the
+    # preflight checking a package nobody publishes.
+    assert "require('./package.json').name" in run
+
+
+def test_the_preflight_never_prints_the_credential(workflow: dict[str, Any]) -> None:
+    """A preflight that leaks the token into a public log is worse than none."""
+    run = _step_run(workflow, "npm-preflight", "Check the credential can publish the wrapper package")
+
+    for leak in ('echo "$NPM_TOKEN', 'echo "${NPM_TOKEN', "printf '%s' \"${NPM_TOKEN"):
+        assert leak not in run
+    assert 'NODE_AUTH_TOKEN}"' not in run
+
+
+def test_a_silent_no_op_publish_cannot_read_as_success(workflow: dict[str, Any]) -> None:
+    """The registry is asked whether it now serves the version that was published."""
+    run = _step_run(workflow, "publish-npm", "Verify the registry serves this version")
+
+    assert "npm view" in run
+    assert "::error::" in run
+    assert "exit 1" in run
+
+
 def test_github_release_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
     """A GITHUB_TOKEN release emits no `release: published`, so each consumer is dispatched."""
     dispatched = _dispatches(workflow, "github-release")

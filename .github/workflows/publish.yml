@@ -215,10 +215,92 @@ jobs:
           name: dist
           path: dist/
 
+  # The npm wrapper is published last, after PyPI and the GitHub Release. When
+  # its credential turns out to be unusable there is nothing left to stop: for
+  # v3.19.2 the tag, the release page and PyPI all shipped, and only the
+  # registry entry stayed behind -- which on a patch release is the divergence
+  # most likely to read as "the fix is not out yet".
+  #
+  # The publish step guards on the credential being CONFIGURED. That passes for
+  # a token that authenticates and cannot write. npm answers E404 rather than
+  # 401/403 for that case, so as not to leak whether a package exists, which is
+  # why the failure looked like a missing package rather than a permission.
+  #
+  # This asks the question the guard could not: can this credential publish
+  # THIS package -- before anything is published.
+  npm-preflight:
+    name: npm wrapper credential can publish
+    runs-on: ubuntu-latest
+    # `release-channels`, not `pypi`: this reads NPM_TOKEN, which lives there
+    # now, and running outside the approval-gated environment is what lets an
+    # unusable credential fail the run BEFORE a human is asked to approve a
+    # release that cannot complete.
+    environment: release-channels
+    if: ${{ !inputs.copr_only }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7 # zizmor: ignore[cache-poisoning]
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Check the credential can publish the wrapper package
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN is not configured; the npm wrapper cannot be published"
+            exit 1
+          fi
+          cd packaging/npm
+          PACKAGE=$(node -p "require('./package.json').name")
+
+          # Identity first, so an expired or revoked token is named as such
+          # rather than as a missing package. Nothing here prints the token:
+          # `npm whoami` returns the account name, and the npm client reads the
+          # credential from .npmrc via ${NPM_TOKEN} interpolation.
+          if ! WHO=$(npm whoami 2>&1); then
+            echo "::error::NPM_TOKEN does not authenticate: ${WHO}"
+            exit 1
+          fi
+          echo "authenticated as ${WHO}"
+
+          # `npm access list packages` is the only npm command that answers
+          # "may this credential WRITE this package". The issue also suggested
+          # `npm access get status <pkg>`; on npm 9+ that reports whether the
+          # package is public or private -- visibility, not permission -- and
+          # a public package the token cannot write would pass it.
+          if ! PACKAGES=$(npm access list packages 2>&1); then
+            echo "::error::could not read the packages ${WHO} may publish: ${PACKAGES}"
+            exit 1
+          fi
+          # npm 9+ prints JSON ({"pkg":"read-write"}); npm 8 printed `pkg: read-write`.
+          if printf '%s' "${PACKAGES}" | grep -qE "\"?${PACKAGE}\"?\"?[[:space:]]*:[[:space:]]*\"?read-write"; then
+            echo "${WHO} may publish ${PACKAGE}"
+            exit 0
+          fi
+          echo "::error::${WHO} cannot publish ${PACKAGE}. npm reports this as E404 on the PUT -- it does not distinguish a missing package from one you may not write -- and it would surface after the release had already shipped."
+          printf '%s\n' "${PACKAGES}"
+          exit 1
+
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: build
+    # npm-preflight as well as build: PyPI and the GitHub Release are the two
+    # irreversible steps, and neither should run while the last channel of the
+    # same release is known to be unpublishable.
+    needs: [build, npm-preflight]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -256,7 +338,7 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, npm-preflight]
     timeout-minutes: 10
     # Approval stays only on the `publish` job below: that is the one job in
     # this graph whose OIDC exchange is scoped to the pypi environment (PyPI
@@ -360,7 +442,7 @@ jobs:
     # publishing (see the comment on that step), so this job has no
     # environment-scoped credential that the approval was protecting.
     environment: release-channels
-    needs: build
+    needs: [build, npm-preflight]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -429,6 +511,30 @@ jobs:
           fi
           echo "::error::npm wrapper publish failed (exit ${code}); the registry is now behind this release"
           exit "$code"
+      # A publish that exits 0 and changes nothing on the registry reads as
+      # success everywhere but where it matters. Ask the registry.
+      - name: Verify the registry serves this version
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          cd packaging/npm
+          PACKAGE=$(node -p "require('./package.json').name")
+          # The registry is read-through-cached; a fresh publish can take a
+          # moment to be served. Three tries, then fail loudly.
+          for attempt in 1 2 3; do
+            SERVED=$(npm view "${PACKAGE}@${VERSION}" version 2>/dev/null || true)
+            if [ "${SERVED}" = "${VERSION}" ]; then
+              echo "registry serves ${PACKAGE}@${VERSION}"
+              exit 0
+            fi
+            echo "attempt ${attempt}: registry does not serve ${PACKAGE}@${VERSION} yet"
+            sleep 10
+          done
+          echo "::error::${PACKAGE}@${VERSION} is not resolvable from the registry; the publish reported success but the registry is behind this release"
+          exit 1
 
   # RPM channel (#3325). packaging/rpm/bernstein.spec ships a wrapper that
   # resolves the package from PyPI at run time, so this job waits for the PyPI
