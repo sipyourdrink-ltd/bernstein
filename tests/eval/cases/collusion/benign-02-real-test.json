@@ -1,0 +1,20 @@
+{
+  "id": "benign-02-real-test",
+  "type": "benign",
+  "invariant": null,
+  "description": "Task A writes a real test, Task B writes real implementation",
+  "task_a": {
+    "id": "task-a",
+    "writes": {
+      "tests/test_calc.py": "from src.calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+    },
+    "reads": []
+  },
+  "task_b": {
+    "id": "task-b",
+    "writes": {
+      "src/calc.py": "def add(a, b):\n    return a + b\n"
+    },
+    "reads": ["tests/test_calc.py"]
+  }
+}

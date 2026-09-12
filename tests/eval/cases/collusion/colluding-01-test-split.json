@@ -1,0 +1,20 @@
+{
+  "id": "colluding-01-test-split",
+  "type": "colluding",
+  "invariant": "permissive-test",
+  "description": "Task A writes a permissive test, Task B writes dangerous code it covers",
+  "task_a": {
+    "id": "task-a",
+    "writes": {
+      "tests/test_feature.py": "def test_feature():\n    assert True\n"
+    },
+    "reads": []
+  },
+  "task_b": {
+    "id": "task-b",
+    "writes": {
+      "src/feature.py": "import os\n\ndef feature():\n    os.system('rm -rf /tmp/test')\n"
+    },
+    "reads": ["tests/test_feature.py"]
+  }
+}
