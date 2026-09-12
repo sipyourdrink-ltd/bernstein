@@ -281,7 +281,7 @@ def main() -> int:
         for row, src in hits:
             print(
                 f"ERROR: `{src}` is deleted here and is the source of truth for `{row.doc}`. "
-                f"Update the doc and its row in {PLAYBOOK.relative_to(REPO_ROOT)} in this change.",
+                f"Update the doc and its row in {PLAYBOOK.relative_to(REPO_ROOT).as_posix()} in this change.",
                 file=sys.stderr,
             )
         return 1
