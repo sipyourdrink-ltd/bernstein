@@ -928,3 +928,124 @@ def pack_incident(
         operator_key_path=resolved_key,
     )
     click.echo(f"Incident pack written to: {out_path} ({len(gaps)} evidence gap(s))")
+
+
+# ---------------------------------------------------------------------------
+# `bernstein compliance controls` - Central control registry inspection
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("controls")
+@click.option(
+    "--framework",
+    default=None,
+    help="Filter by compliance framework (eu_ai_act, owasp_asi, owasp_skills, nist_ai_rmf, iso_42001, finos_aigf).",
+)
+@click.option(
+    "--coverage",
+    is_flag=True,
+    default=False,
+    help="Show evaluation benchmark suite coverage for each control.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "markdown"], case_sensitive=False),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+def controls_command(framework: str | None, coverage: bool, output_format: str) -> None:
+    """List compliance controls and their mapped benchmark suites."""
+    from bernstein.compliance.controls import get_default_registry
+    from bernstein.eval.bench.bench_cli import builtin_suite_builders
+
+    registry = get_default_registry()
+    controls = registry.list_controls(framework=framework)
+
+    # Every built-in suite, from the one list `bench` itself resolves, so
+    # this view cannot disagree with what the CLI enforces or the docs table
+    # pins (#5455).
+    suites = [build() for build in builtin_suite_builders().values()] if coverage else []
+    cov_map = registry.coverage(suites) if coverage else {}
+
+    if output_format == "json":
+        data = []
+        for c in controls:
+            d = c.to_dict()
+            if coverage:
+                d["suites_covering"] = cov_map.get(c.control_id, [])
+            data.append(d)
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    if output_format == "markdown":
+        click.echo(registry.to_markdown_table(suites=suites if coverage else None))
+        return
+
+    # Text table format
+    click.echo(f"{'Control ID':<14} {'Category':<14} {'Frameworks':<28} Title")
+    click.echo("─" * 95)
+
+    for c in controls:
+        fw_list = ", ".join(c.references.keys())
+        click.echo(f"{c.control_id:<14} {c.category:<14} {fw_list:<28} {c.title}")
+        if coverage:
+            covering = cov_map.get(c.control_id, [])
+            cov_str = ", ".join(covering) if covering else "None"
+            click.echo(f"  └─ Suites covering: {cov_str}")
+    click.echo(f"\nTotal: {len(controls)} controls")
+
+
+# ---------------------------------------------------------------------------
+# `bernstein compliance oscal` - NIST OSCAL Assessment Results export
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("oscal")
+@click.option(
+    "--standard",
+    default="ai-act",
+    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills", "iso-42001"], case_sensitive=False),
+    show_default=True,
+    help="Regulatory standard to anchor the assessment results against.",
+)
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Project root directory (parent of .sdd/).",
+)
+@click.option(
+    "--out",
+    "output_file",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Destination file to write OSCAL assessment-results JSON (default: stdout).",
+)
+def oscal_export_cmd(standard: str, workdir: Path, output_file: Path | None) -> None:
+    """Export benchmark assessment results in NIST OSCAL v1.1.0 format."""
+    from bernstein.compliance.evidence_pack import _read_bench_bundles
+    from bernstein.compliance.oscal import build_oscal_assessment_results
+
+    sdd_dir = workdir / ".sdd"
+    loaded, unreadable = _read_bench_bundles(sdd_dir)
+    if unreadable:
+        # An assessment-results document that quietly omitted a bundle it
+        # could not read would assert a coverage it did not check.
+        for entry in unreadable:
+            click.echo(f"unreadable bundle: {entry['path']}: {entry['reason']}", err=True)
+        raise click.ClickException(
+            f"{len(unreadable)} bundle(s) under {sdd_dir} could not be read; "
+            "refusing to export an assessment over them."
+        )
+    oscal_doc = build_oscal_assessment_results(standard=standard.lower(), bundles=[lb.bundle for lb in loaded])
+    doc_json = json.dumps(oscal_doc, indent=2, sort_keys=True)
+
+    if output_file is not None:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text(doc_json + "\n", encoding="utf-8")
+        click.echo(f"OSCAL assessment results written to: {output_file}")
+    else:
+        click.echo(doc_json)

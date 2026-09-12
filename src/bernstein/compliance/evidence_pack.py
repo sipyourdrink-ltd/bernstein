@@ -1,4 +1,4 @@
-"""One-command compliance evidence pack export (issue #1316).
+"""One-command compliance evidence pack export (issue #1316, #5456).
 
 Walks the existing tamper-evident artefacts on disk and produces a
 reviewer-friendly zip bundle mapped to the controls of a chosen
@@ -11,6 +11,7 @@ Sources read:
 * ``.sdd/metrics/cost_history.jsonl`` - daily cost ledger snapshots.
 * ``.sdd/policy/`` (optional) - recorded operator policy decisions.
 * ``.sdd/attestations/`` (optional) - operator-supplied signed assertions.
+* ``.sdd/bench/bundles/*.json`` (optional) - signed benchmark evaluation bundles (#5456).
 
 This module is intentionally read-only: it does not mutate or rotate
 the audit chain. The output zip is byte-deterministic for a given input
@@ -52,13 +53,15 @@ import logging
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from bernstein.core.security.evidence_envelope import canonical_envelope_bytes
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+    from bernstein.eval.bench.bundle import SubmissionBundle
 
 logger = logging.getLogger(__name__)
 
@@ -412,6 +415,138 @@ def _read_cost_snapshots(
     return out
 
 
+class LoadedBundle(NamedTuple):
+    """A bench bundle as read from disk: the parsed object and the exact bytes.
+
+    The bytes are kept because the pack embeds them verbatim. Re-serialising
+    the bundle -- through the pack's JCS canonicaliser in particular -- is not
+    a round-trip: JCS writes ``1.0`` as ``1``, the reloaded score is then an
+    ``int``, ``SubmissionBundle._compute_hash`` (plain ``json.dumps``) emits a
+    different payload, and the embedded copy fails the very hash check
+    ``bench verify`` starts with. A signed artefact is embedded as signed.
+    """
+
+    bundle: SubmissionBundle
+    raw: bytes
+
+
+def _read_bench_bundles(sdd_dir: Path) -> tuple[list[LoadedBundle], list[dict[str, str]]]:
+    """Load every benchmark bundle under ``.sdd/bench/bundles``.
+
+    ``bernstein-bench run`` writes wherever ``--out`` points (default
+    ``bundle.json`` in the working directory); the operator places bundles
+    for the pack under this directory. Keyed by bundle hash on the way in,
+    so the file name is free.
+
+    Returns ``(bundles, unreadable)``. A file that does not load -- corrupt
+    JSON, a bundle-hash mismatch, a receipt-hash mismatch -- is *not*
+    dropped: it is listed in ``unreadable`` with the reason, and the caller
+    records that in the pack. An evidence pack that silently omitted a
+    tampered bundle would be reporting "could not check" as "clean", which
+    is the one thing a compliance artefact must never do (#5456 review).
+    """
+    from bernstein.eval.bench.bundle import SubmissionBundle
+
+    loaded: list[LoadedBundle] = []
+    unreadable: list[dict[str, str]] = []
+    seen: set[str] = set()
+    bundles_dir = sdd_dir / "bench" / "bundles"
+    if not bundles_dir.is_dir():
+        return loaded, unreadable
+    for path in sorted(bundles_dir.glob("*.json")):
+        try:
+            raw = path.read_bytes()
+            # Same guard as SubmissionBundle.load: recomputes every
+            # receipt hash and the bundle hash, raises on mismatch.
+            b = SubmissionBundle.from_dict(json.loads(raw.decode("utf-8")))
+        except Exception as exc:  # every failure kind is evidence here
+            unreadable.append({"path": path.name, "reason": f"{type(exc).__name__}: {exc}"[:200]})
+            continue
+        b_hash = b.bundle_hash()
+        if b_hash not in seen:
+            seen.add(b_hash)
+            loaded.append(LoadedBundle(bundle=b, raw=raw))
+    return loaded, unreadable
+
+
+def resolve_suite_controls(bundles: Sequence[SubmissionBundle]) -> tuple[dict[str, list[str]], list[str]]:
+    """Map each bundle's ``suite_version`` to the controls that suite declares.
+
+    A bundle names its suite; the *suite* declares the controls. Resolve
+    through the same builder list ``bench`` resolves suite names from, so a
+    control tool-surface-v1 declares is measured by a tool-surface-v1 bundle
+    -- not only golden-v1 via a hardcoded copy of its declaration. Bundles
+    do not carry a ``controls`` field, so reading one off the bundle always
+    yields nothing.
+
+    Returns ``(controls_by_suite, unresolvable)``: suites that are not a
+    built-in cannot be mapped from here and are listed by name so a caller
+    can say so instead of letting them read as "no coverage".
+    """
+    from bernstein.eval.bench.bench_cli import builtin_suite_builders
+
+    builders = builtin_suite_builders()
+    resolved: dict[str, list[str]] = {}
+    unresolvable: set[str] = set()
+    for b in bundles:
+        version = b.suite_version
+        if version in resolved or version in unresolvable:
+            continue
+        build = builders.get(version)
+        if build is None:
+            unresolvable.add(version)
+        else:
+            resolved[version] = list(build().controls)
+    return resolved, sorted(unresolvable)
+
+
+def _compute_bench_assessment(bundles: Sequence[SubmissionBundle]) -> dict[str, Any]:
+    from bernstein.compliance.controls import get_default_registry
+
+    registry = get_default_registry()
+    controls = registry.list_controls()
+    assessment: dict[str, Any] = {}
+
+    controls_by_suite, unresolvable = resolve_suite_controls(bundles)
+
+    for c in controls:
+        matched = []
+        for b in bundles:
+            if c.control_id in controls_by_suite.get(b.suite_version, ()):
+                matched.append(b)
+
+        if matched:
+            latest = matched[-1]
+            b_hash = latest.bundle_hash()
+            assessment[c.control_id] = {
+                "status": "measured",
+                "suite_version": latest.suite_version,
+                "bundle_hash": b_hash,
+                "score": latest.overall_score,
+                "tasks_count": len(latest.task_results),
+                "passed_count": sum(1 for r in latest.task_results if r.passed),
+                "reason": f"measured by suite {latest.suite_version} ({b_hash[:12]})",
+            }
+        else:
+            assessment[c.control_id] = {
+                "status": "declared_not_measured",
+                "suite_version": None,
+                "bundle_hash": None,
+                "score": None,
+                "tasks_count": 0,
+                "passed_count": 0,
+                "reason": (
+                    f"Control {c.control_id} is registered in catalogue "
+                    "but no matching evaluation bundle was found in the pack."
+                ),
+            }
+    if unresolvable:
+        # Bundles whose suite is not a built-in cannot be mapped to controls
+        # from here. Say so rather than letting them read as "no coverage".
+        assessment["_unresolvable_suites"] = unresolvable
+    return assessment
+
+
 def _serialise_jsonl(entries: list[dict[str, Any]]) -> bytes:
     """Serialise a list of dicts as canonical JSONL (sort_keys, ``\\n``)."""
     buf = io.BytesIO()
@@ -476,10 +611,11 @@ def _readme_for(standard: str, mapping: dict[str, Any]) -> bytes:
         "## Layout",
         "",
         "- `manifest.json`        - bundle metadata + SHA-256 of every artefact.",
-        "- `controls.json`        - control_id -> artefact mapping for this standard.",
+        "- `controls.json`        - control_id -> artefact mapping & benchmark assessment.",
         "- `audit-chain/`         - HMAC-chained audit events + per-resource catalog.",
         "- `lineage/`             - Sigstore-style transparency log entries.",
         "- `costs/`               - cost ledger snapshots over the export window.",
+        "- `bench-bundles/`       - signed evaluation benchmark bundles.",
         "- `policy/`              - operator policy snapshot (optional).",
         "- `attestations/`        - operator-supplied attestations (optional).",
         "",
@@ -587,6 +723,8 @@ def build_evidence_pack(
     events = _read_audit_events(audit_dir, since=since, task=task)
     lineage_entries = _read_lineage_entries(lineage_log, since=since, task=task)
     cost_entries = _read_cost_snapshots(metrics_dir, since=since, task=task)
+    loaded_bundles, unreadable_bundles = _read_bench_bundles(sdd_dir)
+    bundles = [lb.bundle for lb in loaded_bundles]
 
     events_bytes = _serialise_jsonl(events)
     data_catalog_bytes = _build_data_catalog(events)
@@ -594,12 +732,17 @@ def build_evidence_pack(
     costs_bytes = _serialise_jsonl(cost_entries)
 
     mapping = _STANDARD_MAPS[standard]
+    bench_assessment = _compute_bench_assessment(bundles)
     controls_payload = {
         "schema_version": SCHEMA_VERSION,
         "standard": standard,
         "regulation": mapping.get("regulation", ""),
         "controls": mapping["controls"],
         "deferred": mapping.get("deferred", []),
+        "bench_assessment": bench_assessment,
+        # Bundles present on disk that did not load. Listed so an auditor
+        # sees that they exist and were not assessed, with the reason.
+        "bench_bundles_unreadable": unreadable_bundles,
     }
     controls_bytes = _canonical_json(controls_payload)
 
@@ -615,6 +758,12 @@ def build_evidence_pack(
         "controls.json": controls_bytes,
         "README.md": _readme_for(standard, mapping),
     }
+
+    # Embed benchmark bundles byte-for-byte as they were signed and saved;
+    # see LoadedBundle for why they are not re-serialised.
+    for lb in loaded_bundles:
+        artefacts[f"bench-bundles/{lb.bundle.bundle_hash()}.json"] = lb.raw
+
     for rel, payload in policy_files.items():
         artefacts[f"policy/{rel}"] = payload
     for rel, payload in attestation_files.items():
@@ -693,6 +842,66 @@ def build_evidence_pack(
     )
 
 
+def verify_evidence_pack(pack_path: Path) -> bool:
+    """Check an evidence pack's internal integrity.
+
+    What this verifies:
+
+    * ``manifest.json`` exists and every artefact it names is present with
+      the SHA-256 the manifest records.
+    * Every embedded benchmark bundle under ``bench-bundles/`` round-trips
+      through :meth:`SubmissionBundle.from_dict`, which recomputes every
+      task's receipt hash and the bundle hash over the *full* field set and
+      raises on any mismatch. That is the same check ``bench verify`` starts
+      with, and it tracks the bundle schema automatically -- a hand-rolled
+      reconstruction here would silently drop fields added later
+      (``holdout_hash``, ``harness_fingerprint``, ...) and recompute a
+      different hash.
+
+    What this does **not** verify, and says so rather than implying it:
+
+    * Bundle **signatures**. Nothing in the bench system verifies a
+      ``SubmissionBundle.signature`` today -- ``bench verify`` replays the
+      bundle without checking it, and only reliability receipts carry a
+      trusted-key check. A pack with a tampered-then-rehashed bundle
+      therefore passes here exactly as it passes ``bench verify``. That is
+      a gap in the bundle verifier, not something a pack-level check can
+      close on its own.
+    * Replay. Whether the recorded verdicts are *reproducible* is
+      ``bench verify``'s job, against the suite.
+
+    Returns ``False`` on any integrity failure or on any error while
+    reading, which is the fail-closed direction for a verifier.
+    """
+    if not pack_path.is_file():
+        return False
+    try:
+        with zipfile.ZipFile(pack_path, "r") as zf:
+            names = zf.namelist()
+            if "manifest.json" not in names:
+                return False
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+            artefact_hashes = manifest.get("artefacts", {})
+
+            for name, expected_hash in artefact_hashes.items():
+                if name not in names:
+                    return False
+                if hashlib.sha256(zf.read(name)).hexdigest() != expected_hash:
+                    return False
+
+            from bernstein.eval.bench.bundle import SubmissionBundle
+
+            for name in names:
+                if name.startswith("bench-bundles/") and name.endswith(".json"):
+                    raw = json.loads(zf.read(name).decode("utf-8"))
+                    # from_dict recomputes receipt hashes and the bundle hash
+                    # and raises on mismatch; a ValueError here is a failure.
+                    SubmissionBundle.from_dict(raw)
+            return True
+    except Exception:  # a verifier fails closed on anything it cannot read
+        return False
+
+
 __all__ = [
     "SCHEMA_VERSION",
     "SUPPORTED_STANDARDS",
@@ -700,4 +909,5 @@ __all__ = [
     "Standard",
     "build_evidence_pack",
     "get_standard_map",
+    "verify_evidence_pack",
 ]
