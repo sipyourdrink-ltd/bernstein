@@ -90,6 +90,7 @@ from bernstein.core.identity.agent_jwt import (
     PERM_TASKS_WRITE,
     PERM_TESTS_RUN,
 )
+from bernstein.core.path_scope import pattern_subsumes
 from bernstein.core.security.agent_card_signer import (
     canonicalize_jcs,
     sign_detached_jws_over_canonical,
@@ -116,6 +117,7 @@ __all__ = [
     "attenuate",
     "bound_narrows",
     "caveats_for_scope",
+    "glob_narrows",
     "mint_root",
     "narrowing_violations",
     "path_covered_by",
@@ -243,6 +245,25 @@ def prefixes_narrow(child: frozenset[str] | None, parent: frozenset[str] | None)
     if child is None:
         return False
     return all(any(path_covered_by(c, p) for p in parent) for c in child)
+
+
+def glob_narrows(child: frozenset[str] | None, parent: frozenset[str] | None) -> bool:
+    """Every child glob's language must be covered by some parent glob (``None`` = all).
+
+    Distinct from :func:`prefixes_narrow`: ``allowed_files`` is a
+    repository-relative glob (``src/path_scope.py``'s pattern language), not a
+    path prefix. ``src`` as a prefix covers ``src/core``; ``src`` as a pattern
+    admits only the path ``src``. Reusing ``prefixes_narrow``'s ancestry check
+    for this axis would report narrowing that never happened -- worse than
+    reporting none -- so this calls
+    :func:`~bernstein.core.path_scope.pattern_subsumes` instead, which reasons
+    over the pattern grammar itself (issue #5418).
+    """
+    if parent is None:
+        return True
+    if child is None:
+        return False
+    return all(any(pattern_subsumes(p, c) for p in parent) for c in child)
 
 
 def uses_narrows(child: int | None, parent: int | None) -> bool:

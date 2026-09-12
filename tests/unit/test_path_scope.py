@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from bernstein.core.path_scope import normalise_repo_path, paths_outside_scope
+from bernstein.core.path_scope import normalise_repo_path, paths_outside_scope, pattern_subsumes
 
 
 def test_an_empty_scope_admits_every_path() -> None:
@@ -149,3 +149,70 @@ def test_repeated_double_stars_say_nothing_the_first_did_not() -> None:
     fail: silently narrower rather than loudly wrong.
     """
     assert paths_outside_scope(["a/b", "a/x/y/b"], ["a/**/**/b"]) == ()
+
+
+# ---------------------------------------------------------------------------
+# pattern_subsumes (issue #5418): is one pattern's language a subset of
+# another's, over the pattern grammar itself, not by trying sample paths.
+# ---------------------------------------------------------------------------
+
+
+def test_double_star_subsumes_a_narrower_double_star_subtree() -> None:
+    """`src/**` covers everything `src/core/**` could ever match."""
+    assert pattern_subsumes("src/**", "src/core/**")
+
+
+def test_a_pattern_is_not_a_prefix_for_subsumption_either() -> None:
+    """`src` admits only the path `src`, so it does not subsume `src/core`.
+
+    The same rule :func:`paths_outside_scope` pins for matching applies to
+    subsumption: a pattern is not a prefix.
+    """
+    assert not pattern_subsumes("src", "src/core")
+
+
+def test_a_single_star_does_not_subsume_a_deeper_path() -> None:
+    """`src/*` only ever matches two segments; it cannot cover a three-segment path."""
+    assert not pattern_subsumes("src/*", "src/a/b")
+
+
+def test_a_pattern_subsumes_itself() -> None:
+    """Reflexivity: every pattern's language is a subset of its own."""
+    for pattern in ("src/**", "src/*.py", "src", "**", "a/**/b", "src/*"):
+        assert pattern_subsumes(pattern, pattern)
+
+
+def test_bare_double_star_subsumes_everything() -> None:
+    """`**` is the widest single pattern there is."""
+    assert pattern_subsumes("**", "src/**")
+    assert pattern_subsumes("**", "anything/at/all.py")
+
+
+def test_a_narrower_double_star_does_not_subsume_the_wider_one() -> None:
+    """Subsumption is not symmetric: the wider pattern does not fit inside the narrower one."""
+    assert not pattern_subsumes("src/core/**", "src/**")
+
+
+def test_single_star_subsumes_a_literal_within_the_same_segment() -> None:
+    """`src/*` covers any single path segment under `src/`, including a literal one."""
+    assert pattern_subsumes("src/*", "src/core")
+
+
+def test_single_star_does_not_subsume_a_wildcard_it_cannot_bound() -> None:
+    """`src/a*` cannot cover `src/*` -- the child can produce content the parent's literal prefix forbids."""
+    assert not pattern_subsumes("src/a*", "src/*")
+
+
+def test_question_mark_subsumes_a_single_literal_character() -> None:
+    assert pattern_subsumes("src/?.py", "src/a.py")
+
+
+def test_question_mark_does_not_subsume_a_star() -> None:
+    """A child `*` can produce zero or many characters; a single `?` can never cover that."""
+    assert not pattern_subsumes("src/?.py", "src/*.py")
+
+
+def test_an_empty_pattern_subsumes_nothing() -> None:
+    """An empty pattern admits nothing on either side of the comparison."""
+    assert not pattern_subsumes("", "src/**")
+    assert not pattern_subsumes("src/**", "")
