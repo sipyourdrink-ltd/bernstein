@@ -6,7 +6,6 @@ import hashlib
 import json
 import shutil
 import subprocess
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -27,6 +26,7 @@ from bernstein.adapters.scanner import (
     ScannerCategory,
     ScanResult,
     ScanScope,
+    normalize_finding_path,
 )
 from bernstein.adapters.scanner_finding import Finding
 
@@ -267,7 +267,7 @@ def parse_gitleaks_sarif(report: str | bytes, *, target_root: Path | None = None
             path = str(artifact.get("uri") or "").replace("\\", "/")
             if not path:
                 raise ValueError(f"results[{result_index}] is missing artifactLocation.uri")
-            normalized_path = _normalize_path(path, target_root)
+            normalized_path = normalize_finding_path(path, target_root)
 
             region = _mapping(physical.get("region"), "region")
             snippet = str(_mapping(region.get("snippet"), "region.snippet").get("text") or "")
@@ -284,14 +284,6 @@ def parse_gitleaks_sarif(report: str | bytes, *, target_root: Path | None = None
             )
 
     return findings
-
-
-def _normalize_path(path: str, target_root: Path | None) -> str:
-    candidate = Path(path)
-    if target_root is not None and candidate.is_absolute():
-        with suppress(ValueError):
-            candidate = candidate.relative_to(target_root.resolve())
-    return candidate.as_posix()
 
 
 def _rule_descriptions(driver: dict[str, Any]) -> dict[str, str]:
