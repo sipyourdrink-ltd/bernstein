@@ -44,6 +44,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
 | `git/`                      | git sub-package |
 | `govern/`                   | Govern plan models for posture diff artifacts |
+| `governance/`               | Governance primitives for agent orchestration |
 | `grpc_gen/`                 | Generated gRPC stubs - run ``scripts/generate_proto.sh`` to populate |
 | `handoff/`                  | Session handoff between terminal and chat/dashboard surfaces (op-005) |
 | `identity/`                 | Install-rev identity module - passive, operator-decodable install fingerprint |
