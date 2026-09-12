@@ -75,7 +75,7 @@ The table below is a selection of the most load-bearing sub-packages, not the fu
 | `core/identity/` | Install-rev identity fingerprint, delegation grants, HTTP signing, SPIFFE |
 | `core/knowledge/` | Knowledge base, lessons, RAG, semantic cache, embeddings |
 | `core/lineage/` | Lineage spine (Merkle+HMAC), signed-write path (Ed25519), lineage CI gate |
-| `core/memory/` | SQLite-backed memory store |
+| `core/memory/` | SQLite-backed memory plus append-only MemoryChain provenance and signed chain-native recall receipts |
 | `core/observability/` | Metrics, circuit breaker, loop detector, log redact, telemetry |
 | `core/orchestration/` | Orchestrator, tick pipeline, manager, evolution, preflight |
 | `core/persistence/` | Task store, session, file locks, WAL, store backends |
