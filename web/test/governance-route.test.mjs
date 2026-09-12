@@ -176,3 +176,114 @@ test('the committed fixture exercises both the measured and the not-measured sta
     assert.ok(html.includes(metric.denominator_label), `${metric.id} renders without its denominator`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// "Not covered" list (#5069, slice 3 of #5067)
+// ---------------------------------------------------------------------------
+
+function gapRowFor(html, id) {
+  const start = html.indexOf(`data-gap="${id}"`);
+  assert.notEqual(start, -1, `gap ${id} is absent from the panel`);
+  const next = html.indexOf('data-gap="', start + 1);
+  return html.slice(start, next === -1 ? undefined : next);
+}
+
+const OPEN_GAP = {
+  id: 'tool_calls',
+  label: 'tool calls',
+  consequence: 'No per-call identity record is written.',
+  issue: 5062,
+  resolved: false,
+};
+
+const RESOLVED_GAP = {
+  id: 'delegation',
+  label: 'delegation',
+  consequence: 'No grant chain is written for a delegation hop.',
+  issue: 5047,
+  resolved: true,
+};
+
+const SETTINGS_GAP = {
+  id: 'approvals',
+  label: 'approvals',
+  consequence: 'The approval gate is off by default.',
+  issue: null,
+  resolved: false,
+};
+
+// 8
+test('an open gap links to its issue and states the consequence', async (t) => {
+  const { GovernancePanel, coverageFixture } = await loadPanel(t);
+  const html = renderToStaticMarkup(
+    createElement(GovernancePanel, { coverage: coverageFixture, notCoveredGaps: [OPEN_GAP] }),
+  );
+
+  const row = gapRowFor(html, 'tool_calls');
+  assert.ok(row.includes('data-gap-state="open"'), 'an open gap is not marked open');
+  assert.ok(row.includes('#5062'), 'the row does not name its issue');
+  assert.ok(row.includes('href="https://github.com/sipyourdrink-ltd/bernstein/issues/5062"'), 'the row does not link to its issue');
+  assert.ok(row.includes(OPEN_GAP.consequence), 'the row does not state the consequence');
+});
+
+// 9
+test('a resolved gap renders differently and no longer links to the issue as an open one', async (t) => {
+  const { GovernancePanel, coverageFixture } = await loadPanel(t);
+  const html = renderToStaticMarkup(
+    createElement(GovernancePanel, { coverage: coverageFixture, notCoveredGaps: [RESOLVED_GAP] }),
+  );
+
+  const row = gapRowFor(html, 'delegation');
+  assert.ok(row.includes('data-gap-state="resolved"'), 'a resolved gap is not marked resolved');
+  assert.ok(row.includes('resolved'), 'a resolved gap does not say so');
+  assert.ok(!row.includes('href='), 'a resolved gap still links out as if it were open');
+});
+
+// 10
+test('a gap with no linked issue points at settings instead of a broken link', async (t) => {
+  const { GovernancePanel, coverageFixture } = await loadPanel(t);
+  const html = renderToStaticMarkup(
+    createElement(GovernancePanel, { coverage: coverageFixture, notCoveredGaps: [SETTINGS_GAP] }),
+  );
+
+  const row = gapRowFor(html, 'approvals');
+  assert.ok(!row.includes('href='), 'a settings-only gap renders a link with nowhere real to go');
+  assert.ok(row.includes('settings'), 'a settings-only gap does not say where the fix lives');
+});
+
+// 11
+test('an empty gap list says so explicitly, distinctly from nothing having been checked', async (t) => {
+  const { GovernancePanel, coverageFixture } = await loadPanel(t);
+  const html = renderToStaticMarkup(
+    createElement(GovernancePanel, { coverage: coverageFixture, notCoveredGaps: [] }),
+  );
+
+  assert.ok(html.includes('data-testid="not-covered-empty"'), 'an empty gap list renders no explicit marker');
+  assert.ok(html.toLowerCase().includes('nothing known to be uncovered'), 'an empty list does not say what it means');
+  assert.ok(!html.includes('data-gap='), 'an empty list somehow rendered a gap row');
+});
+
+// 12
+test('adding a gap is one data entry: the fixture list renders one row per entry with no extra markup path', async (t) => {
+  const { GovernancePanel, notCoveredFixtureGaps, coverageFixture } = await loadPanel(t);
+  const html = renderToStaticMarkup(createElement(GovernancePanel, { coverage: coverageFixture }));
+
+  for (const gap of notCoveredFixtureGaps) {
+    const row = gapRowFor(html, gap.id);
+    assert.ok(row.includes(gap.label), `${gap.id} does not render its label`);
+    assert.ok(row.includes(gap.consequence), `${gap.id} does not render its consequence`);
+    assert.equal(row.includes('data-gap-state="resolved"'), gap.resolved, `${gap.id} resolved state mismatches its data`);
+  }
+});
+
+// 13
+test('the checked-in gap list carries at least one open and one resolved entry', async (t) => {
+  // Pins the property #5069's own acceptance criteria demonstrate with real
+  // data: two of the six checked-in gaps (#5047, #5051) closed after this
+  // list was written, and stay in the list, rendered as resolved rather than
+  // removed. A list where every entry is the same state would not exercise
+  // "renders differently" at all.
+  const { notCoveredFixtureGaps } = await loadPanel(t);
+  assert.ok(notCoveredFixtureGaps.some((gap) => gap.resolved), 'no resolved gap in the checked-in list');
+  assert.ok(notCoveredFixtureGaps.some((gap) => !gap.resolved), 'no open gap in the checked-in list');
+});
