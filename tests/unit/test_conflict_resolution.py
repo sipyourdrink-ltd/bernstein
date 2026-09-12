@@ -174,6 +174,9 @@ class TestMergeWithConflictDetection:
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
         assert result.conflicting_files == []
+        # No commit was produced on this path, so nothing is named. Reading
+        # HEAD here would report the pre-merge tip (#5271 review, F1).
+        assert result.merge_commit == ""
 
 
 # ------------------------------------------------------------------
