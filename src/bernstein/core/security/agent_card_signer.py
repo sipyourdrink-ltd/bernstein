@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -424,10 +425,42 @@ def verify_agent_card(
     card: AgentIdentityCard,
     signature: AgentCardSignature,
     public_key_pem: bytes,
+    *,
+    at_time: float | None = None,
 ) -> bool:
-    """Verify a detached JWS over a card body. Returns True iff valid."""
+    """Verify a detached JWS over a card body *and* the card's validity window.
+
+    A signature stays valid forever; the card it covers does not. Checking
+    only the signature makes an expired card indistinguishable from a current
+    one, so anyone who captured a card once can replay it for as long as the
+    issuing key lives. The two checks are therefore composed here rather than
+    left to the caller to remember - a verifier that returns True for a card
+    its own issuer considers dead is the wrong default for a primitive this
+    name invites people to trust.
+
+    Args:
+        card: The card body the signature is over.
+        signature: The detached JWS.
+        public_key_pem: The issuer's Ed25519 public key, from the caller's
+            trust store.
+        at_time: Epoch seconds to judge the card's validity at. ``None`` means
+            now, which is what a live verification wants. A caller replaying a
+            *historical* attestation passes the time that attestation recorded,
+            because a run from last year was signed under a card that has since
+            expired and must still verify - see
+            ``IdentitySpawnAnchor.reconstruct``.
+
+    Returns:
+        True iff the signature verifies under *public_key_pem* and the card is
+        within its validity window at *at_time*.
+    """
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import serialization
+
+    # Before any crypto: an out-of-window card is refused whatever it is
+    # signed with, and the cheap check costs nothing on the failure path.
+    if not card.is_valid_at(time.time() if at_time is None else at_time):
+        return False
 
     try:
         header_b64, payload_b64, sig_b64 = signature.detached_jws.split(".")

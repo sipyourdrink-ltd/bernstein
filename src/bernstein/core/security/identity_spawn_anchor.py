@@ -38,7 +38,8 @@ def _sha256_digest(value: object) -> str:
 
 
 def _card_is_valid_at(card: AgentIdentityCard, instant: float) -> bool:
-    return card.created_at <= instant and (not card.expires_at or card.expires_at > instant)
+    """Delegate to the card's own rule so both sides cannot drift apart."""
+    return card.is_valid_at(instant)
 
 
 def _jws_kid(detached_jws: str) -> str:
@@ -91,12 +92,23 @@ class IdentitySpawnAnchor:
         kid = _jws_kid(signature.detached_jws)
         if signature.kid != kid:
             raise IdentitySpawnAnchorError("agent-card kid substitution detected")
-        public_key = self.trusted_public_keys.get(kid)
-        if public_key is None or not verify_agent_card(snapshot, signature, public_key):
-            raise IdentitySpawnAnchorError("agent-card signature is not trusted")
+        # The clock is read once and both checks are made against it. The
+        # verifier judges the card's window itself now, so leaving it to
+        # default to ``time.time()`` would ignore this anchor's injected clock
+        # and judge a fractionally different instant from the one recorded as
+        # ``validated_at``.
         validated_at = float(self.clock())
+        # Window first, so the two failures keep separate messages. An
+        # in-date card with a bad signature is an attack; a well-signed card
+        # outside its window is an expiry, and an operator reading
+        # "signature is not trusted" for the second would look in the wrong
+        # place. The verifier's own window check stays as the default for
+        # every other caller.
         if not _card_is_valid_at(snapshot, validated_at):
             raise IdentitySpawnAnchorError("agent card is not valid at spawn time")
+        public_key = self.trusted_public_keys.get(kid)
+        if public_key is None or not verify_agent_card(snapshot, signature, public_key, at_time=validated_at):
+            raise IdentitySpawnAnchorError("agent-card signature is not trusted")
 
         envelope = {"card": asdict(snapshot), "signature": asdict(signature)}
         digest = _sha256_digest(envelope)
@@ -202,7 +214,11 @@ class IdentitySpawnAnchor:
         except ValueError as exc:
             raise IdentitySpawnAnchorError("frozen historical verification key is malformed") from exc
         identity_mismatch = signature.kid != kid or kid != details.get("agent_card_kid")
-        if identity_mismatch or not verify_agent_card(card, signature, public_key):
+        # At the recorded instant, not now: replaying an attestation from a
+        # run whose card has since expired is the point of this method, and
+        # the recorded instant was already checked against the card's window
+        # above.
+        if identity_mismatch or not verify_agent_card(card, signature, public_key, at_time=float(validated_at)):
             raise IdentitySpawnAnchorError("historical signed-card verification failed")
         tool_kid = details.get("tool_signing_kid")
         tool_jwk = details.get("tool_verification_key_jwk")

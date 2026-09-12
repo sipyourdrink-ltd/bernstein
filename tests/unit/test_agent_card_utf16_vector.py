@@ -133,9 +133,30 @@ def test_emitted_order_differs_from_code_point_ordering() -> None:
 # ---------------------------------------------------------------------------
 
 
+#: An instant inside the recorded card's validity window. The vector was
+#: minted with ``created_at`` 1700000000 and a one-day life, so it has been
+#: expired since 2023. ``verify_agent_card`` judges the window at "now" unless
+#: told otherwise, and these tests are about the *signature* over canonical
+#: bytes - passing the recorded instant is what keeps them testing that.
+_WITHIN_VECTOR_WINDOW = 1700000001.0
+
+
 def test_verifier_accepts_the_production_signature() -> None:
     card = AgentIdentityCard(**_card_dict())
-    assert verify_agent_card(card, _signature(), _PUBKEY.read_bytes()) is True
+    assert verify_agent_card(card, _signature(), _PUBKEY.read_bytes(), at_time=_WITHIN_VECTOR_WINDOW) is True
+
+
+def test_the_recorded_vector_is_expired_today() -> None:
+    """Why every verification here pins an instant.
+
+    Without ``at_time`` these assertions would be about the card's age rather
+    than its canonicalisation - the "rejects" cases especially, which would
+    pass whatever the signature said.
+    """
+    card = AgentIdentityCard(**_card_dict())
+
+    assert card.is_expired() is True
+    assert verify_agent_card(card, _signature(), _PUBKEY.read_bytes()) is False
 
 
 def test_verifier_rejects_a_signature_over_code_point_ordered_bytes() -> None:
@@ -177,11 +198,11 @@ def test_verifier_rejects_a_signature_over_code_point_ordered_bytes() -> None:
         alg="EdDSA",
     )
 
-    assert verify_agent_card(card, wrong_signature, _PUBKEY.read_bytes()) is False
+    assert verify_agent_card(card, wrong_signature, _PUBKEY.read_bytes(), at_time=_WITHIN_VECTOR_WINDOW) is False
     # And the production signature over the correct (UTF-16) bytes still
     # verifies against the same card and key -- the rejection above is about
     # the ordering, not about the key or the card.
-    assert verify_agent_card(card, _signature(), _PUBKEY.read_bytes()) is True
+    assert verify_agent_card(card, _signature(), _PUBKEY.read_bytes(), at_time=_WITHIN_VECTOR_WINDOW) is True
 
 
 # ---------------------------------------------------------------------------
