@@ -46,7 +46,7 @@ from bernstein.core.persistence.anchored_write import (
     anchored_write_text,
     mkdir_anchored,
 )
-from bernstein.core.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
+from bernstein.core.tenanting import DEFAULT_TENANT_ID, UNSPECIFIED_TENANT, normalize_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,8 @@ def _usage_tenant_scope(raw: object) -> str:
     """
     if raw is None:
         return cast(str, DEFAULT_TENANT_ID)
+    if raw == "<unspecified>" or raw is UNSPECIFIED_TENANT:
+        return UNSPECIFIED_TENANT
     if not isinstance(raw, str):
         raise ValueError(f"usage tenant_id must be a string, got {type(raw).__name__}")
     return cast(str, normalize_tenant_id(raw))
@@ -366,7 +368,7 @@ class TokenUsage:
     cost_usd: float
     agent_id: str
     task_id: str
-    tenant_id: str = "default"
+    tenant_id: str | Any = UNSPECIFIED_TENANT
     timestamp: float = field(default_factory=time.time)
     cache_hit: bool = False  # Prompt cache hit tracking (legacy)
     cached_tokens: int = 0  # Tokens served from cache (legacy)
@@ -387,7 +389,7 @@ class TokenUsage:
             "cost_usd": self.cost_usd,
             "agent_id": self.agent_id,
             "task_id": self.task_id,
-            "tenant_id": self.tenant_id,
+            "tenant_id": str(self.tenant_id) if self.tenant_id is not UNSPECIFIED_TENANT else "<unspecified>",
             "timestamp": self.timestamp,
             "cache_hit": self.cache_hit,
             "cached_tokens": self.cached_tokens,
@@ -408,6 +410,12 @@ class TokenUsage:
             tags = {}
         env_raw: object = d.get("quota_envelope", DEFAULT_QUOTA_ENVELOPE)
         envelope = str(env_raw) if env_raw else DEFAULT_QUOTA_ENVELOPE
+        raw_tenant = d.get("tenant_id")
+        tenant_id_val: str | Any = (
+            UNSPECIFIED_TENANT
+            if (raw_tenant is None or raw_tenant == "<unspecified>" or raw_tenant is UNSPECIFIED_TENANT)
+            else str(raw_tenant)
+        )
         return cls(
             input_tokens=int(d["input_tokens"]),
             output_tokens=int(d["output_tokens"]),
@@ -415,7 +423,7 @@ class TokenUsage:
             cost_usd=float(d["cost_usd"]),
             agent_id=str(d["agent_id"]),
             task_id=str(d["task_id"]),
-            tenant_id=str(d.get("tenant_id", "default") or "default"),
+            tenant_id=tenant_id_val,
             timestamp=float(d.get("timestamp", 0.0)),
             cache_hit=bool(d.get("cache_hit", False)),
             cached_tokens=int(d.get("cached_tokens", 0)),
@@ -691,7 +699,7 @@ class CostTracker:
         output_tokens: int,
         cost_usd: float | None = None,
         *,
-        tenant_id: str = "default",
+        tenant_id: str | Any = UNSPECIFIED_TENANT,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
         role: str = "",
@@ -737,7 +745,10 @@ class CostTracker:
                 :class:`PrincipalEnvelope` and admitting this call would
                 breach its ceiling.
         """
-        normalized_tenant = normalize_tenant_id(tenant_id)
+        if tenant_id is UNSPECIFIED_TENANT or tenant_id is None or tenant_id == "<unspecified>":
+            normalized_tenant = UNSPECIFIED_TENANT
+        else:
+            normalized_tenant = normalize_tenant_id(tenant_id)
         if cost_usd is None:
             cost_usd = estimate_cost(
                 model,
@@ -908,7 +919,7 @@ class CostTracker:
         total_output_tokens: int,
         total_cost_usd: float | None = None,
         *,
-        tenant_id: str = "default",
+        tenant_id: str | Any = UNSPECIFIED_TENANT,
         total_cache_read_tokens: int = 0,
         total_cache_write_tokens: int = 0,
         role: str = "",
@@ -976,7 +987,7 @@ class CostTracker:
             input_tokens=delta_input,
             output_tokens=delta_output,
             cost_usd=delta_cost,
-            tenant_id=normalize_tenant_id(tenant_id),
+            tenant_id=tenant_id,
             cache_read_tokens=delta_cache_read,
             cache_write_tokens=delta_cache_write,
             role=role,

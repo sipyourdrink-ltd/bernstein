@@ -1927,6 +1927,7 @@ class AgentSpawner:
         task_ids: list[str],
         *,
         parent_identity_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> Path:
         """Issue a short-lived task-scoped JWT and write it to a 0600 token file.
 
@@ -1950,6 +1951,9 @@ class AgentSpawner:
                 identity for a nested spawn, otherwise the run root.  Minting
                 with it records one delegation hop (#5047); ``None`` records
                 none, which is the pre-#5047 behaviour.
+            tenant_id: The tenant the agent's tasks belong to.  Signed into
+                the credential; ``None`` leaves it unspecified, which the
+                server refuses to bind to any tenant (#5028).
 
         Returns:
             Absolute path to the written token file.
@@ -1966,7 +1970,11 @@ class AgentSpawner:
             role,
             parent_identity_id=parent_identity_id,
             task_ids=task_ids,
-            metadata={"source": "spawner", "run_id": getattr(self, "_run_id", "")},
+            metadata={
+                "source": "spawner",
+                "run_id": getattr(self, "_run_id", ""),
+                **({"tenant_id": tenant_id} if tenant_id else {}),
+            },
         )
 
         # ``resolve(strict=False)`` returns an absolute path even when the
@@ -4766,11 +4774,15 @@ class AgentSpawner:
         _delegating_identity: str | None = session.parent_id or getattr(self, "_run_root_identity_id", "") or None
         try:
             task_ids_for_scope = [t.id for t in tasks]
+            # One credential is minted for the whole batch, so it can only
+            # name a tenant when every task in the batch agrees on one.
+            _batch_tenants = {t.tenant_id for t in tasks}
             _token_path = self._issue_agent_token(
                 session_id,
                 role,
                 task_ids_for_scope,
                 parent_identity_id=_delegating_identity,
+                tenant_id=_batch_tenants.pop() if len(_batch_tenants) == 1 else None,
             )
             prompt = prompt + _render_auth_section(_token_path, self._workdir)
         except DelegationWriteError as _deleg_exc:
