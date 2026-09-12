@@ -264,14 +264,17 @@ def test_ingest_validation_errors(adapter: CrewIngestAdapter) -> None:
 def test_tool_call_non_serializable_args_handled_gracefully() -> None:
     """Non-serializable argument objects (e.g. datetime) serialize gracefully without error."""
     import datetime
+
     from bernstein.adapters.crew_ingest import CrewToolCall
 
     now = datetime.datetime(2026, 9, 12, 10, 0, 0)
-    tc = CrewToolCall.from_dict({
-        "name": "calendar_query",
-        "id": "tc-date-1",
-        "args": {"time": now, "items": [1, 2]},
-    })
+    tc = CrewToolCall.from_dict(
+        {
+            "name": "calendar_query",
+            "id": "tc-date-1",
+            "args": {"time": now, "items": [1, 2]},
+        }
+    )
     assert "2026-09-12" in tc.arguments_digest or tc.arguments_digest.startswith("sha256:")
 
 
