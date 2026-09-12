@@ -143,6 +143,7 @@ for client compliance review.
 | :material-text-box-check: [What's New](whats-new.md) | Pointer to per-release notes under `docs/release-notes/` |
 | :material-history: [Release notes](release-notes/unreleased.md) | One page per tagged version, plus what has landed since the newest tag |
 | :material-shield-lock: [Air-gap installation](installation/air-gap.md) | Wheelhouse build, signed verification, `--profile airgap`, deny-all egress |
+| :material-table-check: [Governance coverage](governance/coverage.md) | Which failure class each control prevents, the test that proves it, and what is left uncovered |
 
 ## Links
 
