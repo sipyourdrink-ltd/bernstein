@@ -29,3 +29,11 @@ tests/fixtures/trust-record-vectors/*.pem -text
 tests/fixtures/agent-card-utf16-vector/*.json -text
 tests/fixtures/agent-card-utf16-vector/*.pem -text
 tests/fixtures/agent-card-utf16-vector/*.sha256 -text
+
+# Evidence-envelope vectors: same byte-exact rule as the three vector sets
+# above. The RFC 8785 canonicalisation, its detached signature and the
+# `.sha256` sidecar are all compared as raw bytes, so no checkout may
+# translate line endings in them.
+tests/fixtures/evidence-envelope-vectors/*.json -text
+tests/fixtures/evidence-envelope-vectors/*.pem -text
+tests/fixtures/evidence-envelope-vectors/*.sha256 -text
