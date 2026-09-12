@@ -806,9 +806,13 @@ def _doctor_check_adapters(checks: list[dict[str, Any]], *, env: Mapping[str, st
     import shutil
 
     any_adapter = False
-    path_val = env.get("PATH") if env is not None else None
+    has_path = env is not None and "PATH" in env
+    path_val = env["PATH"] if has_path else None
     for adapter_name in ("claude", "codex", "gemini"):
-        found = shutil.which(adapter_name, path=path_val) is not None
+        if has_path:
+            found = shutil.which(adapter_name, path=path_val) is not None
+        else:
+            found = shutil.which(adapter_name) is not None
         if found:
             any_adapter = True
         _add_check(
@@ -1215,10 +1219,16 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
         spawner_env = None
 
     py_ok = _doctor_check_python(checks)
-    any_adapter = _doctor_check_adapters(checks, env=spawner_env)
-    _doctor_check_last_green(checks, env=spawner_env)
-    _doctor_check_version_posture(checks, workdir, env=spawner_env)
-    any_key = _doctor_check_auth(checks, env=spawner_env)
+    if spawner_env is not None:
+        any_adapter = _doctor_check_adapters(checks, env=spawner_env)
+        _doctor_check_last_green(checks, env=spawner_env)
+        _doctor_check_version_posture(checks, workdir, env=spawner_env)
+        any_key = _doctor_check_auth(checks, env=spawner_env)
+    else:
+        any_adapter = _doctor_check_adapters(checks)
+        _doctor_check_last_green(checks)
+        _doctor_check_version_posture(checks, workdir)
+        any_key = _doctor_check_auth(checks)
     _doctor_check_port(checks)
     _doctor_check_workspace(checks, workdir)
     stale_pid_paths = _doctor_check_stale_pids(checks, workdir)

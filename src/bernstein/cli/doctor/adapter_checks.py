@@ -101,7 +101,10 @@ async def check_adapter_binary(
             remediation=f"Add a binary mapping for `{adapter_name}` or remove it from bernstein.yaml",
         )
 
-    path = shutil.which(declared_binary, path=env.get("PATH") if env else None)
+    if env is not None and "PATH" in env:
+        path = shutil.which(declared_binary, path=env["PATH"])
+    else:
+        path = shutil.which(declared_binary)
     if path is None:
         return DoctorResult(
             name=name,

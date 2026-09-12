@@ -156,7 +156,10 @@ async def run_all(
     env_results = run_environment_checks()
     env_results.append(check_audit_lock_filesystem(audit_dir or Path.cwd() / ".sdd" / "audit"))
 
-    adapter_task = asyncio.create_task(run_adapter_checks(adapter_names, env=env, unattended=unattended))
+    if env is not None or unattended:
+        adapter_task = asyncio.create_task(run_adapter_checks(adapter_names, env=env, unattended=unattended))
+    else:
+        adapter_task = asyncio.create_task(run_adapter_checks(adapter_names))
     network_task = asyncio.create_task(run_network_checks(provider_names))
 
     adapter_results, network_results = await asyncio.gather(
