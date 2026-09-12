@@ -35,6 +35,8 @@ from bernstein.core.models import (
     TaskType,
 )
 
+from bernstein.evolution.types import RollbackError
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -521,20 +523,35 @@ class TestFileUpgradeExecutor:
 
     def test_rollback_upgrade(self, tmp_path: Path) -> None:
         executor = FileUpgradeExecutor(tmp_path)
-
-        # Create a backup file
-        config_file = tmp_path / "config" / "test.yaml"
+        config_file = tmp_path / "config" / "policies.yaml"
         config_file.parent.mkdir(exist_ok=True)
         config_file.write_text("original content")
-
-        backup_file = tmp_path / "upgrades" / "backup_test.yaml_12345"
+        backup_file = tmp_path / "upgrades" / "backup_policies.yaml"
         backup_file.write_text("backup content")
-        executor._backup_files["test.yaml"] = backup_file
+        proposal = UpgradeProposal(
+            id="test-1",
+            title="Test rollback",
+            category=UpgradeCategory.POLICY_UPDATE,
+            description="",
+            current_state="",
+            proposed_change="",
+            benefits=[],
+            risk_assessment=RiskAssessment(),
+            rollback_plan=RollbackPlan(steps=["Revert changes"]),
+            cost_estimate_usd=0.0,
+            expected_improvement="",
+            confidence=0.9,
+        )
+        executor.rollback_upgrade(proposal)
+        assert config_file.read_text() == "backup content"
 
-        result = executor.rollback_upgrade(MagicMock())
+        backup_file.write_text("corrupted content\n")
 
-        # Backup should be restored (or at least attempted)
-        assert result is True
+        with pytest.raises(RollbackError, match="test-1"):
+            executor.rollback_upgrade(proposal)
+
+        history = (tmp_path / "upgrades" / "history.jsonl").read_text()
+        assert '"status": "rolled_back"' in history
 
 
 # --- EvolutionCoordinator ---
@@ -698,6 +715,11 @@ class TestEvolutionCoordinator:
 
     def test_execute_pending_upgrades(self, tmp_path: Path) -> None:
         coordinator = EvolutionCoordinator(tmp_path)
+        # Stub the executor so execute_upgrade reports failure and
+        # rollback_upgrade reports success without touching the filesystem.
+        coordinator.executor = MagicMock()
+        coordinator.executor.execute_upgrade.return_value = False
+        coordinator.executor.rollback_upgrade.return_value = True
 
         # Create an approved proposal
         proposal = UpgradeProposal(
