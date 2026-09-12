@@ -53,7 +53,7 @@ Bốn đặc điểm tạo nên sự khác biệt; mọi thứ phía sau chỉ l
 Danh sách đầy đủ có tại [trang năng lực](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ma trận tính năng](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) là bảng mục lục toàn diện.
 
 ### một lần chạy trông như thế nào
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Một file YAML duy nhất khai báo cả lần chạy: các phase, vai trò, phụ thuộc và điều kiện để một node được chạy. Bộ lập lịch thực thi nó như Python thuần - không có gì trong file là prompt, và không model nào quyết định điều gì xảy ra tiếp theo. Đồ thị này tạo ra một gói bằng chứng kiểm toán; file đầy đủ nằm ở [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

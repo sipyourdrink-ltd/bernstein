@@ -53,7 +53,7 @@ Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא
 הרשימה המלאה נמצאת ב[דף היכולות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [מטריצת התכונות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) מהווה את האינדקס הממצה.
 
 ### איך נראית ריצה
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 קובץ YAML אחד מצהיר על הריצה כולה: פאזות, תפקידים, תלויות והתנאים שבהם צומת בכלל רץ. המתזמן מריץ אותו כ-Python טהור - שום דבר בקובץ אינו פרומפט, ואף מודל לא מחליט מה קורה הלאה. הגרף הזה מייצר חבילת ראיות ביקורת; הקובץ המלא נמצא ב-[`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

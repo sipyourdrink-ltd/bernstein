@@ -53,7 +53,7 @@ Bernstein คือเลเยอร์ governance โอเพนซอร์�
 ดูรายการทั้งหมดได้ที่ [หน้ารวมความสามารถ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) และ [ตารางเปรียบเทียบฟีเจอร์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) ซึ่งเป็นดัชนีอย่างละเอียด
 
 ### การรันหน้าตาเป็นอย่างไร
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 ไฟล์ YAML ไฟล์เดียวประกาศการรันทั้งหมด: เฟส บทบาท การพึ่งพา และเงื่อนไขที่โหนดจะถูกรัน ตัวจัดตารางรันมันเป็น Python ล้วน - ไม่มีอะไรในไฟล์เป็นพรอมป์ต และไม่มีโมเดลตัดสินว่าจะเกิดอะไรต่อไป กราฟนี้สร้างแพ็กหลักฐานการตรวจสอบ ไฟล์เต็มอยู่ที่ [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)
 

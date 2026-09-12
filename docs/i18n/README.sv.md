@@ -53,7 +53,7 @@ Fyra saker skiljer den från mängden; resten är detaljer.
 Hela listan finns på [funktionssidan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [funktionsmatrisen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) är det fullständiga indexet.
 
 ### hur en körning ser ut
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 En enda YAML-fil deklarerar körningen: faser, roller, beroenden och villkoren under vilka en nod alls körs. Schemaläggaren exekverar den som ren Python - inget i filen är en prompt, och ingen modell bestämmer vad som händer härnäst. Den här grafen bygger ett paket med revisionsbevis; hela filen finns i [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

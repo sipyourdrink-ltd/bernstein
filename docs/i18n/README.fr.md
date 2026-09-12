@@ -53,7 +53,7 @@ Quatre éléments le distinguent ; le reste n'est que détail.
 La liste complète figure sur la [page des capacités](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) ; la [matrice des fonctionnalités](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) en est l'index exhaustif.
 
 ### à quoi ressemble une exécution
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Un seul fichier YAML déclare l'exécution : phases, rôles, dépendances et conditions sous lesquelles un nœud s'exécute. L'ordonnanceur l'exécute comme du Python pur - rien dans le fichier n'est un prompt, et aucun modèle ne décide de la suite. Ce graphe produit un dossier de preuves d'audit ; le fichier complet est dans [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

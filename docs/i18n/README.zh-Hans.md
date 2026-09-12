@@ -53,7 +53,7 @@ Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code
 完整列表见[能力页面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩阵](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是详尽的索引。
 
 ### 一次运行长什么样
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 一个 YAML 文件声明整次运行:阶段、角色、依赖,以及节点在什么条件下才会执行。调度器把它当作纯 Python 执行 - 文件里没有任何提示词,也没有模型决定下一步发生什么。这张图生成一份审计证据包;完整文件在 [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)。
 

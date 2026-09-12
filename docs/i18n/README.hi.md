@@ -53,7 +53,7 @@ Bernstein AI एजेंटों के लिए ओपन-सोर्स �
 पूरी सूची [कैपेबिलिटी पेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) पर है; [फ़ीचर मैट्रिक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) संपूर्ण अनुक्रमणिका है।
 
 ### एक रन कैसा दिखता है
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 एक ही YAML फ़ाइल पूरे रन को घोषित करती है: फेज़, रोल, निर्भरताएँ और वे शर्तें जिनके तहत कोई नोड चलता ही है। शेड्यूलर इसे शुद्ध Python की तरह चलाता है - फ़ाइल में कुछ भी प्रॉम्प्ट नहीं है, और आगे क्या होगा यह कोई मॉडल तय नहीं करता। यह ग्राफ़ एक ऑडिट एविडेंस पैक बनाता है; पूरी फ़ाइल [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) में है।
 
