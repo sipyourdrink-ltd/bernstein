@@ -231,6 +231,7 @@ def _ordered_read_sets(
             task_id=entry.task_id,
             read_paths=tuple(sorted(entry.read_paths)),
             out_of_tree=tuple(sorted(entry.out_of_tree)),
+            journal_head=entry.journal_head,
         )
         for entry in ordered
     )
@@ -324,10 +325,16 @@ class ReceiptVerification:
             :data:`RECEIPT_DIVERGED` or :data:`RECEIPT_GRAPH_MISMATCH`.
         divergences: Human-readable descriptions of each mismatch, sorted.
             Empty when verified.
+        read_sets_verified: Whether the recorded read side was re-derived
+            from the journals rather than only checked for canonical form.
+            True vacuously when the receipt carries no read sets. A caller
+            reading :attr:`status` alone cannot tell the two apart, which is
+            why this is a field and not a comment.
     """
 
     status: str
     divergences: tuple[str, ...]
+    read_sets_verified: bool = False
 
     @property
     def ok(self) -> bool:
@@ -335,7 +342,9 @@ class ReceiptVerification:
 
         Deliberately False for :data:`RECEIPT_CONSISTENT_ONLY`. A caller that
         wants the weaker guarantee has to ask for it by name, so nobody gets
-        it by writing ``if result.ok``.
+        it by writing ``if result.ok``. A receipt whose read side was not
+        re-derived never reaches :data:`RECEIPT_VERIFIED`, so this stays
+        False there too.
         """
         return self.status == RECEIPT_VERIFIED
 
@@ -356,11 +365,17 @@ def build_admission_receipt(
     ``read_sets`` records what each task *read*, as derived from its journal.
     It is the read side of the same decision: ``tasks`` carries
     ``declared_paths``, which is what a task said it owns, and a task can be
-    wrong about that. A :class:`~bernstein.core.replay.read_paths.TaskReadSet`
-    can only be obtained from
-    :func:`~bernstein.core.replay.read_paths.derive_task_read_set`, which
-    reads the Merkle-chained journal, so there is no parameter here through
-    which a self-reported read set could arrive.
+    wrong about that.
+
+    This function does not and cannot police where a read set came from --
+    :class:`~bernstein.core.replay.read_paths.TaskReadSet` is an ordinary
+    dataclass, so a hand-built one is accepted here exactly like a derived
+    one. What makes the read side checkable is that each entry carries the
+    ``journal_head`` it was derived from: an invented set names no head or
+    the wrong one, and fails when
+    :func:`verify_admission_receipt` is handed the journals to re-derive
+    from. Recording a claim and re-deriving it later is the same bargain the
+    verdicts make; it is not a constructor-level guarantee.
 
     The key is **omitted entirely when no read sets are supplied**, so a
     receipt built without them is byte-identical to one built before this
@@ -435,9 +450,13 @@ def verify_admission_receipt(
     receipt that is not in canonical form but not one whose paths were edited
     into a different, still-canonical set. Pass the sets re-derived from the
     tasks' journals to close that: the recorded read side then has to
-    reproduce from the journals, and a widened read set fails. That check is
-    deliberately not folded into ``full``, which remains a statement about
-    the graph document alone.
+    reproduce from the journals, and a widened read set fails.
+
+    A receipt carrying read sets that nobody re-derived therefore cannot
+    reach :data:`RECEIPT_VERIFIED`, exactly as node sets cannot without the
+    graph document. :attr:`ReceiptVerification.read_sets_verified` says which
+    of the two happened, so "the read side was checked" is a fact the caller
+    can read rather than infer.
 
     Args:
         receipt: The recorded receipt.
@@ -542,11 +561,25 @@ def verify_admission_receipt(
         if receipt.get(key) != expected.get(key):
             divergences.append(f"{key} recorded as {receipt.get(key)!r}, re-derived {expected.get(key)!r}")
 
+    # A recorded read side that nobody re-derived is exactly as unverified as
+    # node sets with no graph document, and has to cap the status the same
+    # way. Without this, a receipt whose ``read_sets`` were edited into a
+    # different but still-canonical set reports ``verified`` / ``ok`` -- the
+    # "weaker guarantee mistaken for the stronger" that :attr:`ok` exists to
+    # prevent. Vacuously true when the receipt carries no read sets, so a
+    # pre-read-set receipt verifies exactly as it did before.
+    read_sets_verified = read_sets is not None or not recorded_reads
+
     if divergences:
-        return ReceiptVerification(status=RECEIPT_DIVERGED, divergences=tuple(sorted(divergences)))
+        return ReceiptVerification(
+            status=RECEIPT_DIVERGED,
+            divergences=tuple(sorted(divergences)),
+            read_sets_verified=read_sets_verified,
+        )
     return ReceiptVerification(
-        status=RECEIPT_VERIFIED if full else RECEIPT_CONSISTENT_ONLY,
+        status=RECEIPT_VERIFIED if (full and read_sets_verified) else RECEIPT_CONSISTENT_ONLY,
         divergences=(),
+        read_sets_verified=read_sets_verified,
     )
 
 
@@ -585,6 +618,7 @@ def _read_set_from_entry(entry: dict[str, object]) -> TaskReadSet:
         task_id=str(entry.get("task_id", "")),
         read_paths=_str_tuple(entry.get("read_paths")),
         out_of_tree=_str_tuple(entry.get("out_of_tree")),
+        journal_head=str(entry.get("journal_head", "")),
     )
 
 

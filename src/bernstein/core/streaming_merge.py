@@ -52,12 +52,21 @@ class IncrementalChunk:
         quality_gate_passed: Whether quality checks passed for this chunk.
         is_final: Whether this is the last chunk for the task.
         read_set: Worktree-relative POSIX paths the task *read*, sorted.
-            Empty unless a journal-derived set has been attached with
-            :func:`with_read_set`. Chunk detection never fills this in:
-            ``files`` is scraped from the agent's own prose, and a read set
-            scraped from the same place would be worth nothing, since the
-            failure it exists to catch is a task being wrong about its own
-            assumptions.
+            In-tree paths only -- :func:`with_read_set` drops the derived
+            set's ``out_of_tree`` entries, because a chunk read set exists to
+            be intersected against diff paths and a path outside the worktree
+            can never appear in one. The out-of-tree reads stay on the
+            :class:`~bernstein.core.replay.read_paths.TaskReadSet` for a
+            caller that wants them.
+
+            Empty unless a set has been attached with :func:`with_read_set`.
+            Chunk detection never fills this in: ``files`` is scraped from the
+            agent's own prose, and a read set scraped from the same place
+            would be worth nothing, since the failure it exists to catch is a
+            task being wrong about its own assumptions. This is a plain
+            field, so nothing stops a caller assigning it directly -- what
+            makes a read set trustworthy is the ``journal_head`` recorded
+            alongside it in the admission receipt, not the type.
     """
 
     chunk_id: str
@@ -97,11 +106,15 @@ def with_read_set(chunk: IncrementalChunk, read_set: TaskReadSet) -> Incremental
 
     The parameter is a
     :class:`~bernstein.core.replay.read_paths.TaskReadSet` rather than a list
-    of strings on purpose. That type can only be produced by
-    :func:`~bernstein.core.replay.read_paths.derive_task_read_set`, which
-    reads the task's Merkle-chained journal, so the one route onto a chunk
-    passes through the journal and a caller cannot hand in a set the agent
-    reported about itself.
+    of strings so that the paths arrive already classified and sorted. It is
+    not a provenance check: that type is an ordinary dataclass, a hand-built
+    one is accepted here, and ``read_set`` can be assigned on the chunk
+    directly. A read set is trusted because it can be re-derived from the
+    ``journal_head`` it carries, never because of the type it arrived in.
+
+    Only ``read_paths`` reaches the chunk. ``out_of_tree`` is dropped: chunk
+    read sets are intersected against diff paths, and a path outside the
+    worktree cannot occur in a diff.
 
     Args:
         chunk: The chunk to annotate.

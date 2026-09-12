@@ -23,10 +23,22 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.core.knowledge.code_graph import ATTRIBUTION_PROVEN, TaskNodeSet
+import bernstein.core.knowledge.ast_symbol_graph as semantic_graph
+from bernstein.core.knowledge.ast_symbol_graph import (
+    build_semantic_graph,
+    graph_digest,
+    graph_document,
+)
+from bernstein.core.knowledge.code_graph import (
+    ATTRIBUTION_PROVEN,
+    SemanticCodeGraph,
+    TaskNodeSet,
+    attribute_task,
+)
 from bernstein.core.parallel_admission import (
     RECEIPT_CONSISTENT_ONLY,
     RECEIPT_DIVERGED,
+    RECEIPT_VERIFIED,
     build_admission_receipt,
     verify_admission_receipt,
 )
@@ -39,6 +51,11 @@ from bernstein.core.replay.read_paths import (
 from bernstein.core.streaming_merge import IncrementalChunk, with_read_set
 
 _DIGEST = "sha256:abc"
+
+#: One trivially attributable module, enough for a real semantic graph.
+_ALPHA_SRC = """def a() -> int:
+    return 1
+"""
 
 
 def _journal(tmp_path: Path, rows: list[dict[str, object]], run_id: str = "read-set-run") -> Path:
@@ -97,19 +114,23 @@ def test_read_set_comes_from_the_journal_not_the_agent(tmp_path: Path) -> None:
     assert receipt["tasks"][0]["declared_paths"] == ["src/beta.py"]  # type: ignore[index]
 
 
-def test_the_claim_cannot_influence_the_derived_set(tmp_path: Path) -> None:
-    """Two tasks claiming opposite things over one journal derive one set.
+def test_the_claim_cannot_influence_the_projected_read_set(tmp_path: Path) -> None:
+    """Two tasks claiming opposite things project one identical read side.
 
-    Nothing about the attribution reaches the derivation, so the claim is
-    not merely overridden -- it is never consulted.
+    The claim lives in ``declared_paths`` and the read set is derived, so
+    varying the claim while holding the journal fixed must not move the
+    projection by one byte.
     """
     journal = _journal(tmp_path, [{"event": "read", "path": "src/alpha.py"}])
+    derived = derive_task_read_set("t1", journal, tmp_path)
 
-    honest = derive_task_read_set("t1", journal, tmp_path)
-    lying = derive_task_read_set("t1", journal, tmp_path)
+    honest = build_admission_receipt(_DIGEST, [_task("t1", ("src/alpha.py",))], [derived])
+    lying = build_admission_receipt(_DIGEST, [_task("t1", ("src/nowhere.py",))], [derived])
 
-    assert honest == lying
-    assert honest.read_paths == ("src/alpha.py",)
+    assert honest["read_sets"] == lying["read_sets"]
+    assert honest["read_sets"][0]["read_paths"] == ["src/alpha.py"]  # type: ignore[index]
+    # ...while the claim itself is still recorded, and still differs.
+    assert honest["tasks"][0]["declared_paths"] != lying["tasks"][0]["declared_paths"]  # type: ignore[index]
 
 
 def test_derivation_refuses_a_tampered_journal_instead_of_shrinking(tmp_path: Path) -> None:
@@ -326,19 +347,159 @@ def test_with_read_set_refuses_another_tasks_read_set(tmp_path: Path) -> None:
         with_read_set(chunk, derive_task_read_set("other", journal, tmp_path))
 
 
-def test_with_read_set_only_accepts_a_derived_set() -> None:
-    """The type is the barrier: there is no string-list route onto a chunk.
+def test_a_hand_built_read_set_is_accepted_but_carries_no_journal_head() -> None:
+    """The type is not a provenance barrier, and must not be described as one.
 
-    ``TaskReadSet`` is only produced by ``derive_task_read_set``, so this
-    pins that the annotation API takes the derived type rather than a list
-    a caller could have assembled from anything.
+    ``TaskReadSet`` is an ordinary dataclass: a caller can build one saying
+    anything, and both ``with_read_set`` and ``build_admission_receipt`` take
+    it. What separates it from a derived set is the absent ``journal_head`` --
+    evidence, not a constructor guard. Pinned so nobody reintroduces the
+    claim that forging one is impossible.
     """
     chunk = IncrementalChunk(chunk_id="c1", task_id="t1", files=(), quality_gate_passed=True)
+    forged = TaskReadSet(task_id="t1", read_paths=("src/whatever_i_say.py",), out_of_tree=())
 
-    with pytest.raises(AttributeError):
-        with_read_set(chunk, ["src/alpha.py"])  # type: ignore[arg-type]
+    assert forged.journal_head == ""
+    assert with_read_set(chunk, forged).read_set == ("src/whatever_i_say.py",)
 
-    # The supported route: a real derived set, constructed by the derivation.
-    assert with_read_set(chunk, TaskReadSet(task_id="t1", read_paths=("src/alpha.py",), out_of_tree=())).read_set == (
-        "src/alpha.py",
+    receipt = build_admission_receipt(_DIGEST, [_task("t1")], [forged])
+    assert receipt["read_sets"][0]["journal_head"] == ""  # type: ignore[index]
+
+
+def test_with_read_set_drops_out_of_tree_reads(tmp_path: Path) -> None:
+    """Chunk read sets are intersected against diffs, so in-tree paths only."""
+    outside = tmp_path.parent / "elsewhere.py"
+    journal = _journal(
+        tmp_path,
+        [{"event": "read", "path": "src/alpha.py"}, {"event": "read", "path": str(outside)}],
     )
+    chunk = IncrementalChunk(chunk_id="c1", task_id="t1", files=(), quality_gate_passed=True)
+    derived = derive_task_read_set("t1", journal, tmp_path)
+
+    annotated = with_read_set(chunk, derived)
+
+    assert annotated.read_set == ("src/alpha.py",)
+    # Dropped from the chunk, still available on the derived set itself.
+    assert derived.out_of_tree
+
+
+# ---------------------------------------------------------------------------
+# Journal binding, and the status a receipt may reach without it
+# ---------------------------------------------------------------------------
+
+
+def _graph(root: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[SemanticCodeGraph, bytes, str]:
+    """A one-file semantic graph plus its document and digest."""
+    (root / "src" / "pkg").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "pkg" / "alpha.py").write_text(_ALPHA_SRC, encoding="utf-8")
+    monkeypatch.setattr(semantic_graph, "_git_ls_files", lambda _w: ["src/pkg/alpha.py"])
+    built = build_semantic_graph(root)
+    return SemanticCodeGraph(built), graph_document(built), graph_digest(built)
+
+
+def test_a_derived_read_set_records_the_journal_head_it_came_from(tmp_path: Path) -> None:
+    """The set names one journal state, so a verifier knows what to re-derive.
+
+    Without this the receipt says which paths were read but not according to
+    which journal, and "receipt-anchored" would be a claim with nothing
+    behind it.
+    """
+    journal = _journal(tmp_path, [{"event": "read", "path": "src/alpha.py"}])
+
+    derived = derive_task_read_set("t1", journal, tmp_path)
+
+    assert derived.journal_head
+    receipt = build_admission_receipt(_DIGEST, [_task("t1")], [derived])
+    assert receipt["read_sets"][0]["journal_head"] == derived.journal_head  # type: ignore[index]
+
+
+def test_the_journal_head_moves_when_the_journal_does(tmp_path: Path) -> None:
+    """Two different journals cannot mint the same head for the same paths."""
+    one = _journal(tmp_path, [{"event": "read", "path": "src/alpha.py"}], run_id="run-one")
+    two = _journal(
+        tmp_path,
+        [{"event": "read", "path": "src/alpha.py"}, {"event": "step", "value": 1}],
+        run_id="run-two",
+    )
+
+    first = derive_task_read_set("t1", one, tmp_path)
+    second = derive_task_read_set("t1", two, tmp_path)
+
+    assert first.read_paths == second.read_paths
+    assert first.journal_head != second.journal_head
+
+
+def test_an_unverified_read_side_cannot_reach_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A graph document alone must not certify a read side nobody re-derived.
+
+    The asymmetry this pins: absent node-set evidence already caps the status
+    at ``consistent_only``, and absent read-side evidence has to cap it the
+    same way. Otherwise an edited-but-canonical read set rides to
+    ``verified`` / ``ok`` on the graph document's coat-tails.
+    """
+    graph, document, digest = _graph(tmp_path, monkeypatch)
+    journal = _journal(tmp_path, [{"event": "read", "path": "src/pkg/alpha.py"}])
+    task = attribute_task(graph, "a", ["src/pkg/alpha.py"])
+    reads = [derive_task_read_set("a", journal, tmp_path)]
+
+    receipt = build_admission_receipt(digest, [task], reads)
+    receipt["read_sets"][0]["read_paths"] = ["src/pkg/alpha.py", "src/pkg/injected.py"]  # type: ignore[index]
+
+    without = verify_admission_receipt(receipt, graph_digest_value=digest, graph_document_bytes=document)
+    assert without.status == RECEIPT_CONSISTENT_ONLY
+    assert not without.ok
+    assert not without.read_sets_verified
+
+    with_journals = verify_admission_receipt(
+        receipt, graph_digest_value=digest, graph_document_bytes=document, read_sets=reads
+    )
+    assert with_journals.status == RECEIPT_DIVERGED
+    assert not with_journals.ok
+
+
+def test_an_honest_receipt_reaches_verified_when_both_sides_are_re_derived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap must not make ``verified`` unreachable for a sound receipt."""
+    graph, document, digest = _graph(tmp_path, monkeypatch)
+    journal = _journal(tmp_path, [{"event": "read", "path": "src/pkg/alpha.py"}])
+    task = attribute_task(graph, "a", ["src/pkg/alpha.py"])
+    reads = [derive_task_read_set("a", journal, tmp_path)]
+    receipt = build_admission_receipt(digest, [task], reads)
+
+    result = verify_admission_receipt(
+        receipt, graph_digest_value=digest, graph_document_bytes=document, read_sets=reads
+    )
+
+    assert result.status == RECEIPT_VERIFIED
+    assert result.ok
+    assert result.read_sets_verified
+
+
+def test_a_receipt_with_no_read_sets_still_reaches_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cap is vacuous where there is no read side, so nothing regresses."""
+    graph, document, digest = _graph(tmp_path, monkeypatch)
+    task = attribute_task(graph, "a", ["src/pkg/alpha.py"])
+    receipt = build_admission_receipt(digest, [task])
+
+    result = verify_admission_receipt(receipt, graph_digest_value=digest, graph_document_bytes=document)
+
+    assert result.status == RECEIPT_VERIFIED
+    assert result.ok
+    assert result.read_sets_verified
+
+
+def test_a_forged_read_set_fails_against_the_real_journal(tmp_path: Path) -> None:
+    """Evidence, not the type, is what rejects an invented read set."""
+    journal = _journal(tmp_path, [{"event": "read", "path": "src/alpha.py"}])
+    forged = TaskReadSet(task_id="a", read_paths=("src/whatever_i_say.py",), out_of_tree=())
+
+    receipt = build_admission_receipt(_DIGEST, [_task("a")], [forged])
+
+    result = verify_admission_receipt(
+        receipt,
+        graph_digest_value=_DIGEST,
+        read_sets=[derive_task_read_set("a", journal, tmp_path)],
+    )
+    assert result.status == RECEIPT_DIVERGED
+    assert not result.ok

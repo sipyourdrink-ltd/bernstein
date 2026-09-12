@@ -196,10 +196,19 @@ class TaskReadSet:
     from: a set has no order to serialise, and two runs that read the same
     files must project identically.
 
-    There is deliberately no constructor parameter through which a caller
-    could supply paths. The only way to obtain one of these is
-    :func:`derive_task_read_set`, which reads the journal itself -- so a task
-    that is wrong about what it read cannot put that claim into a receipt.
+    This is an ordinary dataclass and anyone can construct one, so holding a
+    :class:`TaskReadSet` proves nothing on its own. What the type carries is
+    *evidence*: :attr:`journal_head` is the chain head of the journal the set
+    was derived from, so a set that was invented rather than derived names no
+    head -- or the wrong one -- and fails re-derivation against that journal.
+    Provenance here is **verifiable, not unforgeable**; a caller that wants
+    the guarantee has to re-derive, which is what
+    ``verify_admission_receipt(..., read_sets=...)`` does.
+
+    The receipt projection is compared byte for byte, so both path fields are
+    sorted tuples rather than the :class:`ReadPathSet` frozensets they come
+    from: a set has no order to serialise, and two runs that read the same
+    files must project identically.
 
     Attributes:
         task_id: The task the set belongs to.
@@ -207,11 +216,16 @@ class TaskReadSet:
         out_of_tree: Absolute POSIX paths read outside the worktree root,
             sorted. Carried rather than dropped: a read reaching outside the
             tree is exactly what an integration-time check wants to see.
+        journal_head: Verified chain head of the journal this was derived
+            from, binding the set to one journal state so a verifier knows
+            which journal to re-derive against. Empty on a set that was not
+            produced by :func:`derive_task_read_set`.
     """
 
     task_id: str
     read_paths: tuple[str, ...]
     out_of_tree: tuple[str, ...]
+    journal_head: str = ""
 
     def to_dict(self) -> dict[str, object]:
         """Canonical mapping for the receipt projection."""
@@ -219,6 +233,7 @@ class TaskReadSet:
             "task_id": self.task_id,
             "read_paths": list(self.read_paths),
             "out_of_tree": list(self.out_of_tree),
+            "journal_head": self.journal_head,
         }
 
 
@@ -226,8 +241,9 @@ def derive_task_read_set(task_id: str, journal_path: Path, worktree_root: Path) 
     """Derive *task_id*'s read set from its journal.
 
     Thin task-scoped wrapper over :func:`derive_read_paths`: it adds the task
-    id and the canonical ordering the receipt needs, and adds nothing else.
-    In particular it inherits the fail-closed contract -- a journal that is
+    id, the canonical ordering the receipt needs, and the verified journal
+    head that binds the result to one journal state. It inherits the
+    fail-closed contract -- a journal that is
     missing, empty, unreadable or whose chain does not verify raises rather
     than yielding a smaller set. A trimmed read set would silently weaken
     every check built on top of it.
@@ -240,17 +256,25 @@ def derive_task_read_set(task_id: str, journal_path: Path, worktree_root: Path) 
         worktree_root: Repository root the task was scoped to.
 
     Returns:
-        The task's read set in canonical (sorted) form.
+        The task's read set in canonical (sorted) form, carrying the journal
+        head it was derived from.
 
     Raises:
         ReadPathDerivationError: The journal could not be used as a source.
             ``reason`` distinguishes the cases.
     """
     derived = derive_read_paths(journal_path, worktree_root)
+    # Re-walk for the head rather than widening ``ReadPathSet``: that type is
+    # shared with ``check_read_set_changed`` and clean-run attestation, and a
+    # new field on it would reach callers that never asked for one. The rows
+    # are already known good here -- ``derive_read_paths`` refuses otherwise --
+    # so this recompute cannot disagree with the set it labels.
+    head = verify_events(load_events(journal_path, strict=True).events).head
     return TaskReadSet(
         task_id=task_id,
         read_paths=tuple(sorted(derived.read_paths)),
         out_of_tree=tuple(sorted(derived.out_of_tree)),
+        journal_head=head,
     )
 
 
