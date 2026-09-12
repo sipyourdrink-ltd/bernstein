@@ -156,6 +156,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `kimchi.py`                 | Kimchi CLI adapter (#3100) |
 | `kimi.py`                   | Kimi CLI adapter |
 | `kiro.py`                   | Kiro CLI adapter |
+| `langgraph_ingest.py`       | Ingest adapter for graph-shaped agent runtimes (LangGraph) (#4964) |
 | `letta_code.py`             | Letta Code CLI adapter |
 | `manager.py`                | Manager adapter - spawns the internal Python ManagerAgent orchestrator |
 | `mistral.py`                | Mistral Vibe CLI adapter |
