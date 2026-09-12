@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bernstein.cli.commands.audit_cmd import (
     _parse_filename_date,
@@ -34,6 +36,8 @@ from bernstein.cli.commands.audit_cmd import (
     audit_group,
 )
 from bernstein.core.security.audit import AUDIT_KEY_ENV
+from bernstein.core.security.audit_export import AuditEntry, FileExportConfig, FileExporter
+from bernstein.core.security.key_custody import FileBasedKMSAdapter
 
 # ---------------------------------------------------------------------------
 # fixtures / helpers
@@ -308,6 +312,146 @@ def test_query_no_match_reports_yellow(isolated_audit: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# audit verify-export (issue #5034)
+# ---------------------------------------------------------------------------
+
+
+def _kms(tmp_path: Path, *, seed: bytes = b"\x04" * 32, name: str = "segment-receipt.pem") -> FileBasedKMSAdapter:
+    key_path = tmp_path / name
+    private_key = Ed25519PrivateKey.from_private_bytes(seed)
+    key_path.write_bytes(
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return FileBasedKMSAdapter(key_path, kid="verify-export-cli-test")
+
+
+def _write_export(tmp_path: Path, *, entry_count: int = 3, kms_adapter: FileBasedKMSAdapter | None = None) -> Path:
+    """Write a valid JSONL export (with segment receipt, if signed) and return its path."""
+    sdd_dir = tmp_path / ".sdd"
+    sdd_dir.mkdir(exist_ok=True)
+    exporter = FileExporter(
+        file_config=FileExportConfig(path="export.jsonl", format="jsonl"),
+        kms_adapter=kms_adapter,
+    )
+    prev = ""
+    for i in range(entry_count):
+        entry = AuditEntry(
+            timestamp=1.0,
+            event_type="task.created",
+            actor="alice",
+            resource="task-1",
+            action="create",
+            outcome="success",
+            hmac=f"{i:064x}",
+            prev_hmac=prev,
+            sequence=i,
+        )
+        exporter.add_entry(entry)
+        prev = entry.hmac
+    exporter.flush()
+    return sdd_dir / "exports" / "export.jsonl"
+
+
+def test_verify_export_passes_on_a_contiguous_unsigned_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No segment receipts at all: the panel must say so, not read like an authenticity result."""
+    monkeypatch.chdir(tmp_path)
+    export_path = _write_export(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(audit_group, ["verify-export", str(export_path)])
+    assert result.exit_code == 0, result.output
+    assert "PASSED" in result.output
+    assert "no segment receipts" in result.output.lower()
+
+
+def test_verify_export_passes_with_a_signed_segment_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No --public-key given: the panel must say trust-on-first-use, not just PASSED."""
+    monkeypatch.chdir(tmp_path)
+    export_path = _write_export(tmp_path, kms_adapter=_kms(tmp_path))
+    runner = CliRunner()
+    result = runner.invoke(audit_group, ["verify-export", str(export_path)])
+    assert result.exit_code == 0, result.output
+    assert "PASSED" in result.output
+    assert "trusted on first use" in result.output.lower()
+    assert "authenticity not verified" in result.output.lower()
+
+
+def test_verify_export_with_pinned_key_reports_signer_pinned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--public-key given and matching: the panel must distinguish this from trust-on-first-use."""
+    monkeypatch.chdir(tmp_path)
+    kms = _kms(tmp_path)
+    export_path = _write_export(tmp_path, kms_adapter=kms)
+    key_path = tmp_path / "trusted-public.json"
+    key_path.write_text(json.dumps(kms.public_key_jwk()), encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(audit_group, ["verify-export", str(export_path), "--public-key", str(key_path)])
+    assert result.exit_code == 0, result.output
+    assert "PASSED" in result.output
+    assert "signer pinned" in result.output.lower()
+
+
+def test_verify_export_detects_a_deleted_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    export_path = _write_export(tmp_path, entry_count=4)
+    lines = [line for line in export_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    del lines[1]  # delete the record at sequence 1
+    export_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(audit_group, ["verify-export", str(export_path)])
+    assert result.exit_code == 1, result.output
+    assert "GAP" in result.output
+
+
+def test_verify_export_rejects_an_untrusted_signer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    export_path = _write_export(tmp_path, kms_adapter=_kms(tmp_path))
+    other_key_path = tmp_path / "other-public.json"
+    other_signer = _kms(tmp_path, seed=b"\x05" * 32, name="other-signer.pem")
+    other_key_path.write_text(json.dumps(other_signer.public_key_jwk()), encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        audit_group,
+        ["verify-export", str(export_path), "--public-key", str(other_key_path)],
+    )
+    assert result.exit_code == 1, result.output
+    assert "TAMPERED" in result.output
+
+
+def test_verify_export_with_a_malformed_line_reports_incomplete_not_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A line that cannot be parsed must not disappear into a silent green PASSED.
+
+    A corrupt line is excluded from the sequence-continuity check entirely,
+    so nothing else can prove the export is complete once one is skipped --
+    the run must say INCOMPLETE and exit non-zero rather than PASSED.
+    """
+    monkeypatch.chdir(tmp_path)
+    export_path = _write_export(tmp_path, entry_count=3)
+    with export_path.open("a", encoding="utf-8") as fh:
+        fh.write("{not valid json\n")
+
+    runner = CliRunner()
+    result = runner.invoke(audit_group, ["verify-export", str(export_path)])
+    assert result.exit_code == 1, result.output
+    assert "INCOMPLETE" in result.output
+    assert "PASSED" not in result.output
+
+
+def test_verify_export_missing_file_exits_nonzero() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(audit_group, ["verify-export", "does-not-exist.jsonl"])
+    assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # audit capabilities
 # ---------------------------------------------------------------------------
 
@@ -359,7 +503,7 @@ def test_audit_group_help_lists_subcommands() -> None:
     runner = CliRunner()
     result = runner.invoke(audit_group, ["--help"])
     assert result.exit_code == 0, result.output
-    for sub in ("show", "seal", "verify", "verify-hmac", "export", "query", "slice", "archive"):
+    for sub in ("show", "seal", "verify", "verify-hmac", "verify-export", "export", "query", "slice", "archive"):
         assert sub in result.output, f"missing subcommand {sub} in audit --help"
 
 

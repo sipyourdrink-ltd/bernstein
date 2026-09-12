@@ -675,6 +675,8 @@ webhook payload, one batch:
     "outcome": "success",
     "details": {"from_status": "open", "to_status": "claimed"},
     "hmac": "d4e5f6…",
+    "prev_hmac": "a1b2c3…",
+    "sequence": 4271,
     "source": "bernstein-audit"
   }
 ]
@@ -682,9 +684,62 @@ webhook payload, one batch:
 
 retry behaviour: failed batches retry with exponential backoff
 (`max_retries`, `retry_backoff_s`) before being counted in
-`total_failed`. the chain on disk is the source of truth - SIEM is
-a mirror, not the master copy. if the SIEM drops a batch, replay
-from `.sdd/audit/` with `bernstein audit query`.
+`total_failed`. a batch that still fails writes an
+`audit.export.failed` event to the chain itself (when the exporter was
+constructed with a `failure_log`), so a silent forwarding outage shows
+up in `bernstein audit query` rather than being indistinguishable from
+quiet. the chain on disk is the source of truth - SIEM is a mirror,
+not the master copy. if the SIEM drops a batch, replay from
+`.sdd/audit/` with `bernstein audit query`.
+
+### Verifying an export without the source database
+
+Before issue #5034, `hmac` was the only field on an exported record, and
+it proves nothing to a receiver who never held the signing key: a
+deleted, reordered, or gapped record was invisible in the SIEM copy. Every
+`AuditEntry` now also carries `prev_hmac` and `sequence`, so the chain
+linkage survives the export.
+
+When the exporter is constructed with a `kms_adapter`
+(`bernstein.core.security.key_custody.KMSAdapter` -- the same Ed25519
+signer the lineage subsystem uses), each flushed batch is closed with a
+signed `SegmentReceipt`: first/last sequence, entry count, and the
+batch's chain-head hmac. `FileExporter` writes it as a trailing
+`{"segment_receipt": {...}}` line in the JSONL output.
+
+`bernstein audit verify-export <file>` reads that file back and reports
+whether it is contiguous, has a gap, was reordered, or was tampered with
+-- using only the file and, optionally, the signer's public key. An
+export produced before #5034 has no `sequence` field on its records, which
+reads as `sequence 0` on every record and is reported as `REORDERED` --
+that label means "this export predates the feature", not "records were
+reordered"; re-export with the current build to check it properly.
+
+```bash
+bernstein audit verify-export .sdd/exports/audit.jsonl
+bernstein audit verify-export .sdd/exports/audit.jsonl --public-key signer-public.jwk.json
+```
+
+Without `--public-key`, each receipt's embedded key is trusted on first
+use -- the command's `PASSED` panel says so explicitly (`Trust: signer
+trusted on first use -- authenticity NOT verified, re-run with
+--public-key`), because an attacker who rewrites the export and re-signs
+every receipt with their own key passes an unpinned check. Pin the signer
+with `--public-key` to actually verify authenticity: a receipt signed by
+any other key is then reported as `TAMPERED`. An export with no segment
+receipts at all reports `Trust: no segment receipts -- sequence continuity
+only` -- there is no signature evidence to check in that case.
+
+What the command proves either way is that the export is **contiguous, in
+order, and chain-linked**: each record's `prev_hmac` matches the previous
+record's stored `hmac`. It does not recompute any record's `hmac` from its
+content, so it cannot detect a record whose `details` were edited while
+its stored `hmac` was left alone -- that is a content-integrity question,
+answered only by `bernstein audit verify` against the source database and
+the HMAC signing key. This is the property that makes the SIEM copy a
+portable, offline-verifiable segment of the chain rather than just a log:
+a SOC analyst or auditor can check completeness and order for themselves,
+without holding the key.
 
 ### Sample dashboards
 
