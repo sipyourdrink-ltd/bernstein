@@ -158,6 +158,39 @@ class Finding:
         """Alias for :attr:`check_id`."""
         return self.check_id
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize finding to a dictionary containing every contract field."""
+        return {
+            "id": self.id,
+            "check_id": self.check_id,
+            "area": self.area,
+            "verdict": self.verdict.value if isinstance(self.verdict, Verdict) else str(self.verdict),
+            "evidence": [{"locator": e.locator, "sha256": e.sha256} for e in self.evidence],
+            "what_would_make_it_measurable": self.what_would_make_it_measurable,
+            "reason": self.reason,
+            "message": self.message,
+            "summary": self.summary,
+            "remediation": self.remediation,
+            "passed": self.passed,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Finding:
+        """Construct a Finding from a dictionary."""
+        evidence_list = [Evidence(locator=e["locator"], sha256=e["sha256"]) for e in data.get("evidence", [])]
+        return cls(
+            check_id=data.get("check_id") or data["id"],
+            verdict=Verdict(data["verdict"]),
+            evidence=tuple(evidence_list),
+            what_would_make_it_measurable=data.get("what_would_make_it_measurable"),
+            reason=data.get("reason"),
+            message=data.get("message", ""),
+            summary=data.get("summary", ""),
+            remediation=data.get("remediation", ""),
+            area=data.get("area", ""),
+            passed=data.get("passed"),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Check Protocol
