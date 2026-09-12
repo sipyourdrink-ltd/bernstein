@@ -68,12 +68,19 @@ class LangGraphToolCall:
         else:
             args = {"raw": str(raw_args)}
 
-        digest = str(raw.get("arguments_digest") or _digest_args(args))
+        computed_digest = _digest_args(args)
+        given_digest = raw.get("arguments_digest")
+        if given_digest is not None and str(given_digest) != computed_digest:
+            raise ValueError(
+                f"Tool call arguments_digest mismatch for '{name}': "
+                f"declared {given_digest} does not match computed {computed_digest}"
+            )
+
         return cls(
             name=name,
             tool_call_id=tool_call_id,
             arguments=args,
-            arguments_digest=digest,
+            arguments_digest=computed_digest,
             output=raw.get("output"),
         )
 
@@ -232,11 +239,19 @@ class LangGraphIngestAdapter:
         if isinstance(data, Path):
             raw_dict = json.loads(data.read_text(encoding="utf-8"))
         elif isinstance(data, str):
-            raw_dict = json.loads(data)
+            try:
+                p = Path(data)
+                raw_dict = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else json.loads(data)
+            except (OSError, ValueError):
+                raw_dict = json.loads(data)
         elif isinstance(data, Mapping):
             raw_dict = dict(data)
         else:
             raise TypeError(f"Unsupported data type for LangGraph trace: {type(data)}")
+
+        raw_meta = raw_dict.get("metadata")
+        if raw_meta is not None and not isinstance(raw_meta, dict):
+            raise ValueError("LangGraph trace 'metadata' must be a dictionary when present")
 
         run_id = str(raw_dict.get("run_id") or "foreign-langgraph-run")
         graph_id = str(raw_dict.get("graph_id") or "langgraph-graph")
@@ -253,19 +268,23 @@ class LangGraphIngestAdapter:
             node = LangGraphNode.from_dict(item)
             if not node.id:
                 raise ValueError(f"Node at index {idx} is missing an 'id' or 'name'")
+            if node.id in seen_node_ids:
+                raise ValueError(f"Duplicate node id '{node.id}' in graph nodes")
             seen_node_ids.add(node.id)
             nodes.append(node)
-
-        expected_ids = {str(item.get("id") or item.get("name")) for item in raw_nodes if isinstance(item, dict)}
-        if seen_node_ids != expected_ids:
-            missing = expected_ids - seen_node_ids
-            raise ValueError(f"Nodes present in source were omitted during ingest: {missing}")
 
         raw_edges = raw_dict.get("edges") or []
         if not isinstance(raw_edges, list):
             raise ValueError("LangGraph trace 'edges' must be a list when present")
 
-        edges = [LangGraphEdge.from_dict(e) for e in raw_edges if isinstance(e, dict)]
+        edges: list[LangGraphEdge] = []
+        for idx, e in enumerate(raw_edges):
+            if not isinstance(e, dict):
+                raise ValueError(f"Edge at index {idx} must be a dictionary")
+            edge = LangGraphEdge.from_dict(e)
+            if not edge.source or not edge.target:
+                raise ValueError(f"Edge at index {idx} must have non-empty source and target")
+            edges.append(edge)
 
         # Fail-closed validation: ensure all edges reference nodes present in the graph
         for edge in edges:
@@ -277,7 +296,7 @@ class LangGraphIngestAdapter:
         nodes.sort(key=lambda n: n.id)
         edges.sort(key=lambda e: (e.source, e.target))
 
-        metadata = dict(raw_dict.get("metadata") or {})
+        metadata = dict(raw_meta or {})
 
         return IngestedGraphRun(
             run_id=run_id,
