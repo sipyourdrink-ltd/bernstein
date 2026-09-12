@@ -110,10 +110,14 @@ def _build_task_table(tasks: list[dict[str, Any]]) -> Table:
     table.add_column("Status", min_width=14)
     table.add_column("Priority", justify="right")
     table.add_column("Agent", min_width=12)
+    table.add_column("Adapter", min_width=10)
+    table.add_column("Model", min_width=12)
 
     for t in sorted(tasks, key=_task_sort_key):
         raw_status = str(t.get("status", "open"))
         color = STATUS_COLORS.get(raw_status, "white")
+        adapter = str(t.get("adapter") or t.get("cli") or "[dim]\u2014[/dim]")
+        model = str(t.get("model") or "[dim]\u2014[/dim]")
         table.add_row(
             str(t.get("id", "\u2014")),
             str(t.get("title", "\u2014")),
@@ -121,6 +125,8 @@ def _build_task_table(tasks: list[dict[str, Any]]) -> Table:
             f"[{color}]{raw_status}[/{color}]",
             str(t.get("priority", 2)),
             str(t.get("assigned_agent") or "[dim]\u2014[/dim]"),
+            adapter,
+            model,
         )
     return table
 

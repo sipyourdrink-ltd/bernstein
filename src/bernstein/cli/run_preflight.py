@@ -671,6 +671,79 @@ def _raise_if_no_plan_after_spawn(*, narrate_wait: bool = True) -> None:
         )
 
 
+def _extract_tasks_from_payload(payload: Any) -> list[dict[str, Any]]:
+    """Extract list of task dicts from /tasks or /status response payload."""
+    if isinstance(payload, list):
+        return [t for t in payload if isinstance(t, dict)]
+    if isinstance(payload, dict):
+        if "tasks" in payload:
+            val = payload["tasks"]
+            if isinstance(val, list):
+                return [t for t in val if isinstance(t, dict)]
+            if isinstance(val, dict) and "items" in val and isinstance(val["items"], list):
+                return [t for t in val["items"] if isinstance(t, dict)]
+        if "items" in payload and isinstance(payload["items"], list):
+            return [t for t in payload["items"] if isinstance(t, dict)]
+    return []
+
+
+class TaskStateProgressTracker:
+    """Tracks and emits task state transitions in non-interactive runs.
+
+    Emits one line per state transition:
+    task <id> <state> adapter=<name> model=<route> title="<first 60 chars>"
+    plus a 'planned' line when the task is first observed.
+    """
+
+    def __init__(self, console: Console | None = None) -> None:
+        self.console = console or make_console()
+        self.seen_states: dict[str, str] = {}
+
+    @staticmethod
+    def format_line(task_id: str, state: str, adapter: str, model: str, title: str) -> str:
+        clean_title = title.replace("\n", " ").replace('"', "'").strip()[:60]
+        return f'task {task_id} {state} adapter={adapter} model={model} title="{clean_title}"'
+
+    def update_tasks(self, tasks: list[dict[str, Any]]) -> list[str]:
+        lines: list[str] = []
+        for task in tasks:
+            task_id = str(task.get("id") or "")
+            if not task_id:
+                continue
+            current_state = str(task.get("status") or "open")
+            adapter = str(task.get("adapter") or task.get("cli") or "auto")
+            model = str(task.get("model") or "default")
+            title = str(task.get("title") or "")
+
+            if task_id not in self.seen_states:
+                planned_line = self.format_line(task_id, "planned", adapter, model, title)
+                lines.append(planned_line)
+                self.console.print(planned_line, soft_wrap=True)
+                self.seen_states[task_id] = "planned"
+
+            if current_state != self.seen_states[task_id]:
+                state_line = self.format_line(task_id, current_state, adapter, model, title)
+                lines.append(state_line)
+                self.console.print(state_line, soft_wrap=True)
+                self.seen_states[task_id] = current_state
+
+        return lines
+
+    def poll(self) -> list[str]:
+        from bernstein.cli.helpers import server_get
+
+        try:
+            tasks_data = server_get("/tasks")
+            tasks = _extract_tasks_from_payload(tasks_data)
+            if not tasks:
+                status_data = server_get("/status")
+                tasks = _extract_tasks_from_payload(status_data)
+            return self.update_tasks(tasks)
+        except Exception as exc:
+            logger.warning("Failed to poll task progress: %s", exc, exc_info=True)
+            return []
+
+
 def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
     """Render either the interactive dashboard or the final summary.
 
@@ -777,7 +850,10 @@ def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
             # outcome and surface a refusal as a non-zero exit.
             from bernstein.cli.run_bootstrap import _await_first_spawn_outcome
 
-            outcome, reason = _await_first_spawn_outcome()
+            tracker = TaskStateProgressTracker(console=console)
+            tracker.poll()
+            outcome, reason = _await_first_spawn_outcome(on_poll=tracker.poll)
+            tracker.poll()
             _show_run_summary()
             if outcome == "refused":
                 console.print(f"[red]Run failed before any work started:[/red] {reason}")
