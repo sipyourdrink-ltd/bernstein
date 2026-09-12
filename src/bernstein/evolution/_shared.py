@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bernstein.evolution.types import RiskLevel, SandboxResult
+from bernstein.evolution.types import RiskLevel
 from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
 
 if TYPE_CHECKING:
@@ -130,36 +130,6 @@ def to_types_proposal(
     )
 
 
-def make_fast_track_sandbox_result(
-    proposal_id: str,
-    baseline_score: float,
-) -> SandboxResult:
-    """Return a synthetic passed SandboxResult for fast-tracked proposals.
-
-    Fast-tracked proposals (composite_risk < 0.3) skip sandbox validation.
-    We create a neutral result so the apply path can proceed normally.
-
-    Args:
-        proposal_id: ID of the fast-tracked proposal.
-        baseline_score: Current baseline benchmark score.
-
-    Returns:
-        A ``SandboxResult`` marked as passed with no test data.
-    """
-    return SandboxResult(
-        proposal_id=proposal_id,
-        passed=True,
-        tests_passed=0,
-        tests_failed=0,
-        tests_total=0,
-        baseline_score=baseline_score,
-        candidate_score=baseline_score,
-        delta=0.0,
-        duration_seconds=0.0,
-        log_path="",
-    )
-
-
 def log_experiment(experiments_path: Path, result: ExperimentResult) -> None:
     """Append experiment result to experiments.jsonl.
 
@@ -182,6 +152,15 @@ def log_deferred(deferred_path: Path, proposal: UpgradeProposal, reason: str) ->
         proposal: The deferred proposal.
         reason: Reason for deferral.
     """
+    contract_obj = getattr(proposal, "contract", None)
+    contract_component: str | None = contract_obj.component if contract_obj is not None else None
+
+    sandbox_raw = getattr(proposal, "sandbox_result", None)
+    if isinstance(sandbox_raw, dict):
+        sandbox_verdict: str | None = "passed" if sandbox_raw.get("passed") else "failed"
+    else:
+        sandbox_verdict = None
+
     record = {
         "proposal_id": proposal.id,
         "title": proposal.title,
@@ -190,6 +169,8 @@ def log_deferred(deferred_path: Path, proposal: UpgradeProposal, reason: str) ->
         "confidence": proposal.confidence,
         "reason": reason,
         "deferred_at": time.time(),
+        "contract_component": contract_component,
+        "sandbox_verdict": sandbox_verdict,
     }
     try:
         with deferred_path.open("a", encoding="utf-8") as f:

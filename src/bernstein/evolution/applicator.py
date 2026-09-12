@@ -98,8 +98,13 @@ class FileUpgradeExecutor:
         self._admission.record_outcome(decision, applied)
         return applied
 
-    def rollback_upgrade(self, _proposal: UpgradeProposal) -> bool:
-        """Rollback an upgrade by restoring backup files."""
+    def rollback_upgrade(self, proposal: UpgradeProposal) -> bool:
+        """Rollback an upgrade by restoring backup files.
+
+        After restoring each backup the history is updated with a
+        ``rolled_back`` entry so a rollback is auditable in the same place as
+        the original apply.
+        """
         try:
             for backup_key, backup_path in self._backup_files.items():
                 if backup_path.exists():
@@ -107,6 +112,7 @@ class FileUpgradeExecutor:
                     shutil.copy2(backup_path, target_path)
                     backup_path.unlink()
             self._backup_files.clear()
+            self._record_history(proposal, "rolled_back")
             return True
         except Exception as exc:
             logger.exception("Failed to rollback upgrade: %s", exc)
