@@ -1,40 +1,40 @@
 # CLI agent adapters
 
-One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 40+ more):
+One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, opencode, 40+ more):
 a task prompt becomes a CLI invocation and results stream back. One module per tool.
 
 ## Key files
 
 | File | Purpose |
 |---|---|
-| `base.py` | Base adapter: spawn, timeout, and kill discipline; lineage write boundary |
-| `_contract.py` | Loads the per-adapter YAML capability contracts and asserts them |
-| `capability_profile.py` | Declarative adapter capability profiles and profile factory |
+| `base.py` | Base adapter: spawn, timeout, kill, lineage write boundary |
+| `_contract.py` | Loads per-adapter YAML capability contracts and asserts them |
+| `capability_profile.py` | Declarative adapter capability profiles and factory |
+| `admission.py` | Admission gate: validates spawn request against run-level and operator policies |
+| `env_isolation.py` | Per-task environment isolation: credential filtering, network policy, sandbox wiring |
 | `skills_injector.py` | Copies sanitized skill markdown into the worktree at dispatch |
+| `registry.py` | Central name → adapter class mapping |
+| `use_cases.py` | Human-readable adapter use-case catalogue for `bernstein init` |
+| `opencode.py` | OpenCode adapter; qualifies bare model IDs from the operator's jsonc config |
+| `scanner.py` | Base scanner: normalised `ScanResult`/`Finding` schema and scan receipt |
+| `scanner_registry.py` | Registry for scanner adapters (nmap, semgrep, grype, trivy, gitleaks, …) |
+| `nmap.py` | nmap network-scan adapter: XML normalisation, port-rule policy check |
+| `semgrep.py` | Semgrep SAST adapter: SARIF parse, ruleset digest |
+| `acp_channel.py` | Agent Communication Protocol channel bridging into the orchestrator event loop |
 | `canary.py` | Nightly conformance canary matrix over adapter contracts |
-| `goose_stream_parser.py` | Parses Goose `--output-format stream-json`; token accounting rides the terminal `envelope` event |
-| `http_429_classifier.py` | Classifies HTTP 429 errors into standing quotas vs. transient rate limits |
-| `onboarding.py` | Interactive probe and capability discovery for newly installed agent CLIs |
-| `mock.py` | Mock agent for zero-API-key demos; produces the same completion evidence real agents do (`Modified:` log lines plus a per-fix commit scoped to the mutated file) |
+| `onboarding.py` | Interactive probe and capability discovery for new agent CLIs |
+| `mock.py` | Zero-API-key demo agent; produces real completion evidence |
 
 ## Invariants
 
-- Every adapter has a YAML contract in `tests/contract/contracts/` naming
-  its required flags/subcommands. Capability assertions only, never snapshot
-  `--help` text (`_contract.py` docstring); drift is a hard fail (exit 2).
-- Artifact writes go through the lineage-spine boundary in `base.py`; do not
-  add adapter-local artifact write paths (`../core/lineage/spine.py`).
-- Keep adapter module import time free of replay-journal imports;
-  `base.py` duplicates capability constants for exactly this reason.
-- Default spawned-process timeout is 30 minutes (`DEFAULT_TIMEOUT_SECONDS` in
-  `base.py`); adapters get SIGTERM, then SIGKILL after a grace period.
+- Every adapter has a YAML contract in `tests/contract/contracts/`; drift is a hard fail (exit 2).
+- Artifact writes go through the lineage-spine boundary in `base.py`; no adapter-local write paths.
+- `admission.py` is the last gate before a process starts; never bypass it.
+- Scanner adapters produce byte-stable `ScanResult` so scans are content-addressable.
 
 ## Testing
 
-Per-adapter unit tests are mostly flat as `tests/unit/test_adapter_<name>.py`,
-with a few under `tests/unit/adapters/` beside the shared subsystem tests.
-Both layouts are current; follow whichever one an adapter already uses, and
-run one file at a time. Contract checks live under `tests/contract/`;
-live-binary conformance is opt-in via the `--live` pytest flag.
+Per-adapter unit tests: `tests/unit/test_adapter_<name>.py` or `tests/unit/adapters/`.
+Contract checks: `tests/contract/`. Live-binary conformance: opt-in via `--live`.
 
-<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-09-11 against this subtree; the notes above still hold. -->
