@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
+import bernstein.core.memory.recall_receipt as recall_receipt_module
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
 from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.lineage.store import LineageStore
 from bernstein.core.memory.chain import MemoryChain, MemoryReplayError, MemoryScope
 from bernstein.core.memory.recall_receipt import MemoryRecallReceiptStore
 from bernstein.core.security.audit import AuditLog, RetentionPolicy
+from bernstein.core.security.audit_chain import EVENT_MEMORY_RECALL, AuditChainStore
 
 _KEY = b"k" * 32
 
@@ -93,6 +97,240 @@ def test_signed_recall_receipt_records_and_verifies_exact_evidence(
     assert outcome.checks["recall_replay"]
 
 
+def test_receipt_file_bytes_match_signed_lineage_content(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    receipt = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=100,
+    )
+    assert receipt is not None
+
+    stored = store.receipt_path(receipt.receipt_id).read_bytes()
+    assert stored == receipt.body_bytes()
+    assert "sha256:" + hashlib.sha256(stored).hexdigest() == receipt.receipt_id
+
+    entries = [
+        entry
+        for entry, _jws in LineageStore(tmp_path / ".sdd" / "lineage").read_log()
+        if entry.artefact_path == recall_receipt_module.receipt_artefact_path(receipt.receipt_id)
+    ]
+    assert len(entries) == 1
+    assert entries[0].content_hash == receipt.receipt_id
+
+
+def test_colon_agent_id_uses_path_safe_identity_card(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    receipt = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=100,
+    )
+    assert receipt is not None
+
+    identity_root = tmp_path / ".sdd" / "memory" / "recall" / "identity"
+    cards = list(identity_root.glob("*/card.json"))
+    assert len(cards) == 1
+    assert ":" not in cards[0].parent.name
+    assert cards[0].parent.name != keypair[0].agent_id
+    assert store.verify(receipt.receipt_id).ok
+
+
+@pytest.mark.parametrize("failure_target", ["receipt", "card"])
+def test_preseal_persistence_failure_leaves_no_recall_lineage_or_audit(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+    monkeypatch: pytest.MonkeyPatch,
+    failure_target: str,
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    real_write = recall_receipt_module.write_atomic_bytes
+
+    def fail_selected(path: Path, data: bytes, *, mode: int = 0o600) -> None:
+        is_receipt = "receipts" in path.parts
+        is_card = path.name == "card.json"
+        if (failure_target == "receipt" and is_receipt) or (failure_target == "card" and is_card):
+            raise OSError("simulated persistence failure")
+        real_write(path, data, mode=mode)
+
+    monkeypatch.setattr(recall_receipt_module, "write_atomic_bytes", fail_selected)
+    with pytest.raises(OSError, match="simulated persistence failure"):
+        store.record_exact(
+            scope=MemoryScope.USER,
+            namespace="alex",
+            query="prefers dark mode",
+            run_id="run-recall",
+            step_id="recall-1",
+            ts_ns=100,
+        )
+
+    assert not (tmp_path / ".sdd" / "lineage" / "log.jsonl").exists()
+    assert not list((tmp_path / ".sdd" / "audit").glob("*.jsonl"))
+
+
+def test_audit_failure_retry_reuses_lineage_and_completes_event(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    real_record = recall_receipt_module.record_memory_recall
+
+    def fail_audit(**_kwargs: object) -> object:
+        raise OSError("simulated audit append failure")
+
+    monkeypatch.setattr(recall_receipt_module, "record_memory_recall", fail_audit)
+    with pytest.raises(OSError, match="simulated audit append failure"):
+        store.record_exact(
+            scope=MemoryScope.USER,
+            namespace="alex",
+            query="prefers dark mode",
+            run_id="run-recall",
+            step_id="recall-1",
+            ts_ns=100,
+        )
+
+    lineage_store = LineageStore(tmp_path / ".sdd" / "lineage")
+    assert len(list(lineage_store.read_log())) == 1
+
+    monkeypatch.setattr(recall_receipt_module, "record_memory_recall", real_record)
+    recovered = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=200,
+    )
+    assert recovered is not None
+    assert len(list(lineage_store.read_log())) == 1
+    events = AuditChainStore(tmp_path / ".sdd" / "audit", key=_KEY).query(
+        event_type=EVENT_MEMORY_RECALL,
+        resource_id=recovered.receipt_id,
+        include_archived=True,
+    )
+    assert len(events) == 1
+    assert store.verify(recovered.receipt_id).ok
+
+
+def test_repeated_identical_recall_reuses_lineage_and_audit(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    first = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=100,
+    )
+    second = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=999,
+    )
+    assert first is not None and second is not None
+    assert first.receipt_id == second.receipt_id
+    assert first.lineage_entry_hash == second.lineage_entry_hash
+    assert len(list(LineageStore(tmp_path / ".sdd" / "lineage").read_log())) == 1
+    events = AuditChainStore(tmp_path / ".sdd" / "audit", key=_KEY).query(
+        event_type=EVENT_MEMORY_RECALL,
+        resource_id=first.receipt_id,
+        include_archived=True,
+    )
+    assert len(events) == 1
+
+
+def test_existing_receipt_bytes_are_not_silently_overwritten(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    receipt = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=100,
+    )
+    assert receipt is not None
+    store.receipt_path(receipt.receipt_id).write_bytes(b"tampered")
+
+    with pytest.raises(MemoryReplayError, match="existing recall receipt bytes"):
+        store.record_exact(
+            scope=MemoryScope.USER,
+            namespace="alex",
+            query="prefers dark mode",
+            run_id="run-recall",
+            step_id="recall-1",
+            ts_ns=200,
+        )
+
+    assert len(list(LineageStore(tmp_path / ".sdd" / "lineage").read_log())) == 1
+
+
+def test_existing_lineage_with_different_signer_is_not_reused(tmp_path: Path) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    private_a, public_a = generate_keypair()
+    first_store = MemoryRecallReceiptStore(
+        tmp_path,
+        agent_card=AgentCard(agent_id="agent:one", kid="key-one", public_key_pem=public_a),
+        private_key_pem=private_a,
+        operator_hmac_key=_KEY,
+    )
+    receipt = first_store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=100,
+    )
+    assert receipt is not None
+
+    private_b, public_b = generate_keypair()
+    second_store = MemoryRecallReceiptStore(
+        tmp_path,
+        agent_card=AgentCard(agent_id="agent:two", kid="key-two", public_key_pem=public_b),
+        private_key_pem=private_b,
+        operator_hmac_key=_KEY,
+    )
+    with pytest.raises(MemoryReplayError, match="current signer"):
+        second_store.record_exact(
+            scope=MemoryScope.USER,
+            namespace="alex",
+            query="prefers dark mode",
+            run_id="run-recall",
+            step_id="recall-1",
+            ts_ns=200,
+        )
+    assert len(list(LineageStore(tmp_path / ".sdd" / "lineage").read_log())) == 1
+
+
 def test_historical_receipt_survives_later_tombstone_and_replacement(
     tmp_path: Path,
     keypair: tuple[AgentCard, str],
@@ -158,6 +396,77 @@ def test_recall_receipt_verifies_after_audit_segment_is_archived(
     assert outcome.ok, outcome.failures
     assert outcome.checks["audit_chain"]
     assert outcome.checks["audit_event"]
+
+
+def test_verify_missing_receipt_fails_closed(tmp_path: Path, keypair: tuple[AgentCard, str]) -> None:
+    outcome = _store(tmp_path, keypair).verify("sha256:" + "0" * 64)
+    assert not outcome.ok
+    assert outcome.receipt_id == "sha256:" + "0" * 64
+    assert not outcome.checks["receipt_file"]
+
+
+@pytest.mark.parametrize("payload", [b"{", b"{}", b'{"v":1,"record_hashes":"bad"}'])
+def test_verify_malformed_receipt_fails_closed(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+    payload: bytes,
+) -> None:
+    store = _store(tmp_path, keypair)
+    receipt_id = "sha256:" + "1" * 64
+    path = store.receipt_path(receipt_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+
+    outcome = store.verify(receipt_id)
+    assert not outcome.ok
+    assert outcome.receipt_id == receipt_id
+    assert not outcome.checks["receipt_file"]
+
+
+def test_verify_malformed_card_fails_signature_check(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    receipt = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=100,
+    )
+    assert receipt is not None
+    (card_path,) = list((tmp_path / ".sdd" / "memory" / "recall" / "identity").glob("*/card.json"))
+    card_path.write_text("{}", encoding="utf-8")
+
+    outcome = store.verify(receipt.receipt_id)
+    assert not outcome.ok
+    assert not outcome.checks["signature"]
+
+
+def test_verify_undecodable_card_fails_signature_check(
+    tmp_path: Path,
+    keypair: tuple[AgentCard, str],
+) -> None:
+    _write(tmp_path, claim="prefers dark mode", step_id="s1", timestamp=1)
+    store = _store(tmp_path, keypair)
+    receipt = store.record_exact(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        query="prefers dark mode",
+        run_id="run-recall",
+        step_id="recall-1",
+        ts_ns=100,
+    )
+    assert receipt is not None
+    (card_path,) = list((tmp_path / ".sdd" / "memory" / "recall" / "identity").glob("*/card.json"))
+    card_path.write_bytes(b"\xff")
+
+    outcome = store.verify(receipt.receipt_id)
+    assert not outcome.ok
+    assert not outcome.checks["signature"]
 
 
 @pytest.mark.parametrize(

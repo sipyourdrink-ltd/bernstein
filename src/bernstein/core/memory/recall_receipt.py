@@ -13,7 +13,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from bernstein.core.lineage.entry import canonicalise, compute_operator_hmac, entry_hash
 from bernstein.core.lineage.identity import AgentCard, verify_detached
@@ -26,12 +26,16 @@ from bernstein.core.memory.chain import (
     MemoryReplayError,
     MemoryScope,
 )
+from bernstein.core.persistence.atomic_write import write_atomic_bytes
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.audit_chain import (
     EVENT_MEMORY_RECALL,
     AuditChainStore,
     record_memory_recall,
 )
+
+if TYPE_CHECKING:
+    from bernstein.core.security.audit import AuditEvent
 
 RECALL_RECEIPT_VERSION = 1
 _RECEIPT_ARTEFACT_KIND = "sdd-runtime"
@@ -107,25 +111,51 @@ class MemoryRecallReceipt:
 
     @classmethod
     def from_dict(cls, row: dict[str, object]) -> MemoryRecallReceipt:
+        version = row.get("v")
         hashes_raw = row.get("record_hashes")
+        if not isinstance(version, int) or isinstance(version, bool):
+            raise ValueError("v must be an integer")
         if not isinstance(hashes_raw, list):
-            raise ValueError("record_hashes must be a list")
+            raise ValueError("record_hashes must be a list of strings")
         hashes = cast("list[object]", hashes_raw)
+        if not all(isinstance(value, str) for value in hashes):
+            raise ValueError("record_hashes must be a list of strings")
+
+        text_fields: dict[str, str] = {}
+        for name in (
+            "scope",
+            "namespace",
+            "query",
+            "query_hash",
+            "selector",
+            "fold_head",
+            "fold_hash",
+            "run_id",
+            "step_id",
+            "receipt_id",
+        ):
+            value = row.get(name)
+            if not isinstance(value, str):
+                raise ValueError(f"{name} must be a string")
+            text_fields[name] = value
+
         anchor = row.get("lineage_entry_hash")
+        if anchor is not None and not isinstance(anchor, str):
+            raise ValueError("lineage_entry_hash must be a string when present")
         return cls(
-            v=int(str(row["v"])),
-            scope=str(row["scope"]),
-            namespace=str(row["namespace"]),
-            query=str(row["query"]),
-            query_hash=str(row["query_hash"]),
-            selector=str(row["selector"]),
-            fold_head=str(row["fold_head"]),
-            fold_hash=str(row["fold_hash"]),
-            record_hashes=tuple(str(value) for value in hashes),
-            run_id=str(row["run_id"]),
-            step_id=str(row["step_id"]),
-            receipt_id=str(row["receipt_id"]),
-            lineage_entry_hash=None if anchor is None else str(anchor),
+            v=version,
+            scope=text_fields["scope"],
+            namespace=text_fields["namespace"],
+            query=text_fields["query"],
+            query_hash=text_fields["query_hash"],
+            selector=text_fields["selector"],
+            fold_head=text_fields["fold_head"],
+            fold_hash=text_fields["fold_hash"],
+            record_hashes=tuple(cast("list[str]", hashes)),
+            run_id=text_fields["run_id"],
+            step_id=text_fields["step_id"],
+            receipt_id=text_fields["receipt_id"],
+            lineage_entry_hash=anchor,
         )
 
     def with_anchor(self, lineage_entry_hash: str) -> MemoryRecallReceipt:
@@ -167,6 +197,12 @@ def receipt_artefact_path(receipt_id: str) -> str:
     return f".sdd/memory/recall/receipts/{_hash_stem(receipt_id)}.json"
 
 
+def _identity_card_path(workdir: Path, agent_id: str, kid: str) -> Path:
+    """Return a Windows-safe deterministic path for one persisted agent card."""
+    identity_key = hashlib.sha256(canonicalize_jcs({"agent_id": agent_id, "kid": kid})).hexdigest()
+    return workdir / ".sdd" / "memory" / "recall" / "identity" / identity_key / "card.json"
+
+
 class MemoryRecallReceiptStore:
     """Record and offline-verify chain-native recall receipts for one workdir."""
 
@@ -205,6 +241,10 @@ class MemoryRecallReceiptStore:
 
         Empty namespaces and exact queries selecting no live record perform no
         lineage, audit, identity, or receipt writes.
+
+        The namespace is fully verified, including its lineage-spine anchors,
+        before anything is sealed. That verification scans the namespace and
+        its referenced spines, so recording cost grows with chain length.
         """
         selection = self._memory_chain.recall_exact(
             query,
@@ -257,100 +297,186 @@ class MemoryRecallReceiptStore:
             receipt_id=receipt_id,
         )
 
-        lineage_store = LineageStore(self.workdir / ".sdd" / "lineage")
-        lineage_entry_hash = seal_write(
-            lineage_store,
-            self._operator_hmac_key,
-            artefact_path=receipt_artefact_path(receipt_id),
-            new_content=receipt.body_bytes(),
-            agent_id=self._card.agent_id,
-            agent_card=self._card,
-            private_key_pem=self._private_key_pem,
-            tool_call_id=receipt_id,
-            span_id=_RECEIPT_SPAN_ID,
-            artefact_kind=_RECEIPT_ARTEFACT_KIND,
-            ts_ns=ts_ns,
-        )
-        anchored = receipt.with_anchor(lineage_entry_hash)
-
-        audit_chain = AuditChainStore(self.workdir / ".sdd" / "audit", key=self._operator_hmac_key)
-        record_memory_recall(
-            chain=audit_chain,
-            receipt_id=receipt_id,
-            lineage_entry_hash=lineage_entry_hash,
-            scope=anchored.scope,
-            namespace=anchored.namespace,
-            actor=self._card.agent_id,
-            run_id=run_id,
-            step_id=step_id,
-            query_hash=query_hash,
-            fold_head=anchored.fold_head,
-            fold_hash=anchored.fold_hash,
-            records_hash=hash_record_hashes(anchored.record_hashes),
-            record_count=len(anchored.record_hashes),
-        )
-
-        out_dir = receipts_dir(self.workdir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        self.receipt_path(receipt_id).write_text(
-            json.dumps(anchored.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-            encoding="utf-8",
+        self._persist_exact_bytes(
+            self.receipt_path(receipt_id),
+            receipt.body_bytes(),
+            label="recall receipt",
         )
         self._persist_card()
+
+        lineage_store = LineageStore(self.workdir / ".sdd" / "lineage")
+        lineage_entry_hash = self._existing_lineage_anchor(lineage_store, receipt)
+        if lineage_entry_hash is None:
+            lineage_entry_hash = seal_write(
+                lineage_store,
+                self._operator_hmac_key,
+                artefact_path=receipt_artefact_path(receipt_id),
+                new_content=receipt.body_bytes(),
+                agent_id=self._card.agent_id,
+                agent_card=self._card,
+                private_key_pem=self._private_key_pem,
+                tool_call_id=receipt_id,
+                span_id=_RECEIPT_SPAN_ID,
+                artefact_kind=_RECEIPT_ARTEFACT_KIND,
+                ts_ns=ts_ns,
+            )
+        anchored = receipt.with_anchor(lineage_entry_hash)
+
+        self._ensure_audit_event(anchored)
         return anchored
 
+    @staticmethod
+    def _persist_exact_bytes(path: Path, payload: bytes, *, label: str) -> None:
+        if path.exists():
+            existing = path.read_bytes()
+            if existing != payload:
+                raise MemoryReplayError(f"existing {label} bytes do not match the expected content address")
+            return
+        write_atomic_bytes(path, payload)
+
+    def _existing_lineage_anchor(self, store: LineageStore, receipt: MemoryRecallReceipt) -> str | None:
+        artefact_path = receipt_artefact_path(receipt.receipt_id)
+        try:
+            candidates = [(entry, jws) for entry, jws in store.read_log() if entry.artefact_path == artefact_path]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise MemoryReplayError("existing recall lineage could not be read safely") from exc
+        if not candidates:
+            return None
+        if len(candidates) != 1:
+            raise MemoryReplayError("existing recall lineage is ambiguous; expected exactly one entry")
+
+        entry, jws = candidates[0]
+        valid = (
+            entry.content_hash == receipt.receipt_id
+            and entry.artefact_kind == _RECEIPT_ARTEFACT_KIND
+            and entry.agent_id == self._card.agent_id
+            and entry.agent_card_kid == self._card.kid
+            and entry.tool_call_id == receipt.receipt_id
+            and entry.span_id == _RECEIPT_SPAN_ID
+            and compute_operator_hmac(entry, self._operator_hmac_key) == entry.operator_hmac
+            and bool(jws)
+            and verify_detached(canonicalise(entry), jws, self._card)
+        )
+        if not valid:
+            raise MemoryReplayError("existing recall lineage does not match the receipt and current signer")
+        return entry_hash(entry)
+
+    def _ensure_audit_event(self, receipt: MemoryRecallReceipt) -> None:
+        if receipt.lineage_entry_hash is None:
+            raise MemoryReplayError("cannot record recall audit event without a lineage anchor")
+
+        audit_chain = AuditChainStore(self.workdir / ".sdd" / "audit", key=self._operator_hmac_key)
+        audit_ok, audit_errors, events = audit_chain.verify_and_query(
+            event_type=EVENT_MEMORY_RECALL,
+            resource_id=receipt.receipt_id,
+            include_archived=True,
+        )
+        if not audit_ok:
+            raise MemoryReplayError("audit chain does not verify: " + "; ".join(audit_errors))
+
+        records_hash = hash_record_hashes(receipt.record_hashes)
+
+        def event_matches(event: AuditEvent) -> bool:
+            details = event.details
+            return (
+                event.actor == self._card.agent_id
+                and details.get("receipt_id") == receipt.receipt_id
+                and details.get("lineage_entry_hash") == receipt.lineage_entry_hash
+                and details.get("scope") == receipt.scope
+                and details.get("namespace") == receipt.namespace
+                and details.get("run_id") == receipt.run_id
+                and details.get("step_id") == receipt.step_id
+                and details.get("query_hash") == receipt.query_hash
+                and details.get("fold_head") == receipt.fold_head
+                and details.get("fold_hash") == receipt.fold_hash
+                and details.get("records_hash") == records_hash
+                and details.get("record_count") == len(receipt.record_hashes)
+            )
+
+        if events:
+            if not all(event_matches(event) for event in events):
+                raise MemoryReplayError("existing memory.recall audit event conflicts with the receipt")
+            return
+
+        record_memory_recall(
+            chain=audit_chain,
+            receipt_id=receipt.receipt_id,
+            lineage_entry_hash=receipt.lineage_entry_hash,
+            scope=receipt.scope,
+            namespace=receipt.namespace,
+            actor=self._card.agent_id,
+            run_id=receipt.run_id,
+            step_id=receipt.step_id,
+            query_hash=receipt.query_hash,
+            fold_head=receipt.fold_head,
+            fold_hash=receipt.fold_hash,
+            records_hash=records_hash,
+            record_count=len(receipt.record_hashes),
+        )
+
     def load(self, receipt_id: str) -> MemoryRecallReceipt:
-        """Load a persisted receipt by content address."""
+        """Load the persisted canonical receipt body by content address."""
         path = self.receipt_path(receipt_id)
         if not path.exists():
             raise FileNotFoundError(f"no memory recall receipt stored at {path}")
-        row_raw = json.loads(path.read_text(encoding="utf-8"))
+        row_raw = json.loads(path.read_bytes())
         if not isinstance(row_raw, dict):
             raise ValueError("memory recall receipt is not an object")
         row = cast("dict[str, object]", row_raw)
+        row["receipt_id"] = receipt_id
         return MemoryRecallReceipt.from_dict(row)
 
     def _persist_card(self) -> None:
-        card_dir = self.workdir / ".sdd" / "memory" / "recall" / "identity" / self._card.agent_id
-        card_dir.mkdir(parents=True, exist_ok=True)
-        (card_dir / "card.json").write_text(
-            json.dumps(
-                {
-                    "agent_id": self._card.agent_id,
-                    "kid": self._card.kid,
-                    "public_key_pem": self._card.public_key_pem,
-                    "protocol_version": self._card.protocol_version,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            encoding="utf-8",
+        path = _identity_card_path(self.workdir, self._card.agent_id, self._card.kid)
+        payload = canonicalize_jcs(
+            {
+                "agent_id": self._card.agent_id,
+                "kid": self._card.kid,
+                "public_key_pem": self._card.public_key_pem,
+                "protocol_version": self._card.protocol_version,
+            }
         )
+        self._persist_exact_bytes(path, payload, label="recall identity card")
 
     def _load_card(self, agent_id: str, kid: str) -> AgentCard | None:
-        path = self.workdir / ".sdd" / "memory" / "recall" / "identity" / agent_id / "card.json"
+        path = _identity_card_path(self.workdir, agent_id, kid)
         if not path.exists():
             return None
         try:
             row_raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeError, json.JSONDecodeError):
             return None
         if not isinstance(row_raw, dict):
             return None
         row = cast("dict[str, object]", row_raw)
-        if row.get("agent_id") != agent_id or row.get("kid") != kid:
+        public_key_pem = row.get("public_key_pem")
+        protocol_version = row.get("protocol_version", "a2a/1.0")
+        if (
+            row.get("agent_id") != agent_id
+            or row.get("kid") != kid
+            or not isinstance(public_key_pem, str)
+            or not isinstance(protocol_version, str)
+        ):
             return None
         return AgentCard(
-            agent_id=str(row["agent_id"]),
-            kid=str(row["kid"]),
-            public_key_pem=str(row["public_key_pem"]),
-            protocol_version=str(row.get("protocol_version", "a2a/1.0")),
+            agent_id=agent_id,
+            kid=kid,
+            public_key_pem=public_key_pem,
+            protocol_version=protocol_version,
         )
 
     def verify(self, receipt_id: str) -> MemoryRecallVerification:
         """Verify the receipt, signed lineage, audit mirror, and replayed recall."""
-        receipt = self.load(receipt_id)
+        try:
+            stored_bytes = self.receipt_path(receipt_id).read_bytes()
+            receipt = self.load(receipt_id)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            return MemoryRecallVerification(
+                ok=False,
+                receipt_id=receipt_id,
+                checks={"receipt_file": False, "receipt_body": False},
+                failures=[f"receipt_file: stored receipt cannot be verified ({type(exc).__name__})"],
+            )
         checks: dict[str, bool] = {}
         failures: list[str] = []
 
@@ -364,7 +490,9 @@ class MemoryRecallReceiptStore:
             "receipt_body",
             receipt.v == RECALL_RECEIPT_VERSION
             and receipt.receipt_id == receipt_id
-            and recomputed_id == receipt.receipt_id,
+            and recomputed_id == receipt.receipt_id
+            and stored_bytes == receipt.body_bytes()
+            and _sha256(stored_bytes) == receipt.receipt_id,
             "canonical receipt body does not match its content address",
         )
         check(
@@ -380,14 +508,21 @@ class MemoryRecallReceiptStore:
 
         lineage_store = LineageStore(self.workdir / ".sdd" / "lineage")
         found = None
-        if receipt.lineage_entry_hash is not None:
-            for candidate, jws in lineage_store.read_log():
-                if entry_hash(candidate) == receipt.lineage_entry_hash:
-                    found = (candidate, jws)
-                    break
+        try:
+            candidates = [
+                (candidate, jws)
+                for candidate, jws in lineage_store.read_log()
+                if candidate.artefact_path == receipt_artefact_path(receipt.receipt_id)
+            ]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            candidates = []
+        if len(candidates) == 1:
+            found = candidates[0]
+        elif len(candidates) > 1:
+            failures.append("lineage_entry: multiple lineage entries exist for one recall receipt")
         check("lineage_entry", found is not None, "signed lineage entry is missing")
 
-        lineage_entry_hash = receipt.lineage_entry_hash or ""
+        lineage_entry_hash = ""
         actor = ""
         if found is not None:
             entry, jws = found
@@ -445,28 +580,28 @@ class MemoryRecallReceiptStore:
         chain_ok = False
         replay_ok = False
         if scope is not None:
-            chain_result = self._memory_chain.verify(
-                scope,
-                receipt.namespace,
-                spine_root=self.workdir / ".sdd" / "lineage",
-            )
-            chain_ok = chain_result.status is MemoryChainStatus.OK
-            if chain_ok:
-                try:
+            try:
+                chain_result = self._memory_chain.verify(
+                    scope,
+                    receipt.namespace,
+                    spine_root=self.workdir / ".sdd" / "lineage",
+                )
+                chain_ok = chain_result.status is MemoryChainStatus.OK
+                if chain_ok:
                     replay = self._memory_chain.recall_exact(
                         receipt.query,
                         scope=scope,
                         namespace=receipt.namespace,
                         fold_head=receipt.fold_head,
                     )
-                except MemoryReplayError:
-                    replay = None
-                if replay is not None:
                     replay_ok = (
                         replay.selector == receipt.selector
                         and replay.fold_hash == receipt.fold_hash
                         and replay.record_hashes == receipt.record_hashes
                     )
+            except (MemoryReplayError, OSError, ValueError):
+                chain_ok = False
+                replay_ok = False
         check("memory_chain", chain_ok, "memory chain does not verify")
         check("recall_replay", replay_ok, "historical fold/query replay selected different evidence")
 

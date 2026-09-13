@@ -246,6 +246,30 @@ class MemoryChainEntry:
         return (json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
 
 
+def _memory_chain_entry_from_json_value(value: object) -> MemoryChainEntry:
+    """Parse one JSON-decoded memory-chain row into ``MemoryChainEntry``."""
+    if not isinstance(value, dict):
+        raise TypeError("memory chain row is not an object")
+    data = cast("dict[str, object]", value)
+    return MemoryChainEntry(
+        v=int(str(data["v"])),
+        prev_hash=str(data["prev_hash"]),
+        source_hash=str(data["source_hash"]),
+        actor=str(data["actor"]),
+        claim=str(data["claim"]),
+        model=str(data["model"]),
+        timestamp=int(str(data["timestamp"])),
+        scope=str(data["scope"]),
+        namespace=str(data["namespace"]),
+        kind=str(data["kind"]),
+        tombstone_of=str(data["tombstone_of"]),
+        run_id=str(data["run_id"]),
+        step_id=str(data["step_id"]),
+        entry_hash=str(data["entry_hash"]),
+        hmac=str(data["hmac"]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Origin (why)
 # ---------------------------------------------------------------------------
@@ -583,29 +607,8 @@ class MemoryChain:
             return
         for line in raw.split(b"\n"):
             try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                logger.debug("memory chain: skipping malformed row in %s", path)
-                continue
-            try:
-                yield MemoryChainEntry(
-                    v=int(row["v"]),
-                    prev_hash=str(row["prev_hash"]),
-                    source_hash=str(row["source_hash"]),
-                    actor=str(row["actor"]),
-                    claim=str(row["claim"]),
-                    model=str(row["model"]),
-                    timestamp=int(row["timestamp"]),
-                    scope=str(row["scope"]),
-                    namespace=str(row["namespace"]),
-                    kind=str(row["kind"]),
-                    tombstone_of=str(row["tombstone_of"]),
-                    run_id=str(row["run_id"]),
-                    step_id=str(row["step_id"]),
-                    entry_hash=str(row["entry_hash"]),
-                    hmac=str(row["hmac"]),
-                )
-            except (KeyError, TypeError, ValueError):
+                yield _memory_chain_entry_from_json_value(json.loads(line))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 logger.debug("memory chain: skipping row with bad shape in %s", path)
                 continue
 
@@ -637,27 +640,7 @@ class MemoryChain:
         previous = _GENESIS_HASH
         for line_no, line in enumerate(raw.split(b"\n"), start=1):
             try:
-                data_raw = json.loads(line)
-                if not isinstance(data_raw, dict):
-                    raise TypeError
-                data = cast("dict[str, object]", data_raw)
-                row = MemoryChainEntry(
-                    v=int(str(data["v"])),
-                    prev_hash=str(data["prev_hash"]),
-                    source_hash=str(data["source_hash"]),
-                    actor=str(data["actor"]),
-                    claim=str(data["claim"]),
-                    model=str(data["model"]),
-                    timestamp=int(str(data["timestamp"])),
-                    scope=str(data["scope"]),
-                    namespace=str(data["namespace"]),
-                    kind=str(data["kind"]),
-                    tombstone_of=str(data["tombstone_of"]),
-                    run_id=str(data["run_id"]),
-                    step_id=str(data["step_id"]),
-                    entry_hash=str(data["entry_hash"]),
-                    hmac=str(data["hmac"]),
-                )
+                row = _memory_chain_entry_from_json_value(json.loads(line))
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
                 raise MemoryReplayError(f"line {line_no}: invalid memory chain row") from exc
             if row.v != MEMORY_CHAIN_ENTRY_VERSION or row.scope != scope.value or row.namespace != namespace:
@@ -752,7 +735,14 @@ class MemoryChain:
         namespace: str,
         fold_head: str | None = None,
     ) -> MemoryRecallSelection:
-        """Select live claims equal to ``query`` from one chain snapshot."""
+        """Select live claims equal to ``query`` from one chain snapshot.
+
+        This low-level selector validates row shape, chain continuity, and each
+        entry's content hash. It does not authenticate entry HMACs or lineage-
+        spine anchors. Callers that need an authenticated recall must verify the
+        namespace first; :class:`MemoryRecallReceiptStore` does so before
+        sealing a receipt.
+        """
         resolved_head, prefix = self._snapshot_prefix(scope, namespace, fold_head=fold_head)
         folded = self._fold_prefix(prefix)
         folded_bytes = self._fold_bytes_for_entries(scope, namespace, folded)
