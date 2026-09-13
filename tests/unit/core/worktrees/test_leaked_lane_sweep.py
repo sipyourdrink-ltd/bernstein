@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.worktrees.leak_sweep import sweep_leaked_worktrees
-from bernstein.core.worktrees.task_status import read_task_statuses, task_is_terminal
+from bernstein.core.worktrees.task_status import read_task_statuses, status_is_terminal, task_is_terminal
 
 
 def _init_repo(repo_root: Path) -> None:
@@ -103,6 +103,32 @@ class TestTaskStatusReader:
         statuses = read_task_statuses(repo_root / ".sdd")
         assert statuses == {"task-3": "done"}
 
+    def test_a_task_present_in_both_logs_takes_the_archive_value(self, repo_root: Path) -> None:
+        """Archival happens once a task already reached its final status.
+
+        The live log's own record for the same id can predate that --
+        whatever it last said before the task was filed away -- so the
+        archive is the newer, authoritative one where the two disagree.
+        """
+        _write_task_record(repo_root, "task-5", "in_progress")  # live: stale, pre-archival
+        _write_task_record(repo_root, "task-5", "done", archive=True)  # archive: the real ending
+
+        assert read_task_statuses(repo_root / ".sdd") == {"task-5": "done"}
+        assert task_is_terminal(repo_root / ".sdd", "task-5") is True
+
+
+class TestStatusIsTerminal:
+    """The pure predicate leak_sweep applies against an already-read mapping."""
+
+    def test_a_terminal_status_is_true(self) -> None:
+        assert status_is_terminal("done") is True
+
+    def test_a_non_terminal_status_is_false(self) -> None:
+        assert status_is_terminal("open") is False
+
+    def test_no_status_at_all_is_none(self) -> None:
+        assert status_is_terminal(None) is None
+
 
 class TestSweepLeakedWorktrees:
     def test_sweep_lists_worktree_whose_task_is_terminal(self, repo_root: Path) -> None:
@@ -138,14 +164,15 @@ class TestSweepLeakedWorktrees:
         _make_worktree_dir(repo_root, "orphan")
         assert sweep_leaked_worktrees(repo_root) == []
 
-    def test_multiple_leaked_worktrees_are_all_listed(self, repo_root: Path) -> None:
-        for sid, task_id, status in (("a", "task-a", "done"), ("b", "task-b", "failed")):
+    def test_multiple_leaked_worktrees_are_listed_sorted_by_session_id(self, repo_root: Path) -> None:
+        """Written out of order on purpose: the sort is this function's own guarantee, not inherited."""
+        for sid, task_id, status in (("zebra", "task-z", "failed"), ("apple", "task-a", "done")):
             _make_worktree_dir(repo_root, sid)
             _write_pid_record(repo_root, sid, pid=os.getpid(), task_id=task_id)
             _write_task_record(repo_root, task_id, status)
 
         leaked = sweep_leaked_worktrees(repo_root)
-        assert {entry.worktree.session_id for entry in leaked} == {"a", "b"}
+        assert [entry.worktree.session_id for entry in leaked] == ["apple", "zebra"]
 
     def test_an_archived_task_record_is_found_too(self, repo_root: Path) -> None:
         sid = "archived"
