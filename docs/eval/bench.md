@@ -56,6 +56,19 @@ bernstein bench run <suite>
 | No fabrication | Flipping a verdict without a matching receipt fails verification at the diverging task |
 | No missing receipts | An empty/absent receipt fails the entire bundle |
 | Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
+| Attributable | The bundle carries a detached Ed25519 JWS over its hash, made with the install identity. `bench verify` checks it against a key you supply with `--trusted-key FINGERPRINT=PATH` |
+
+Every hash above can be recomputed by whoever rebuilt the bundle, so they answer
+"is this internally consistent", not "who produced it". The signature is the only
+part that needs a key, which is why it is checked first and why a bundle whose
+fingerprint resolves to no trusted key is reported `UNSIGNED` rather than assumed
+good.
+
+The stub signer (`--stub-signer` on both `run` and `verify`) uses a key that is a
+public constant in `bernstein/eval/bench/signer.py`. A stub-signed bundle proves
+nothing about its origin, so `bench verify` refuses one unless you say that is
+what you are verifying. `--no-signature` skips the check entirely for a replay-only
+run.
 
 ---
 
