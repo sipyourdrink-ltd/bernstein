@@ -41,4 +41,3 @@ __all__ = [
     "run_all",
     "unregister",
 ]
-

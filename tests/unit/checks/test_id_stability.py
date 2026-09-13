@@ -23,13 +23,10 @@ ACTIVE_PINNED_IDS: frozenset[str] = frozenset(
     }
 )
 
-# Retired / deprecated check IDs that may never be reused
-TOMBSTONED_IDS: frozenset[str] = frozenset(
-    {
-        "compliance:legacy_v1_soc2_raw",
-        "doctor:deprecated_auth_heuristic",
-    }
-)
+# Retired / deprecated check IDs that may never be reused.
+# As checks are deprecated and retired from the active catalogue across releases,
+# their IDs must be pinned here as permanent tombstones so they are never reassigned.
+TOMBSTONED_IDS: frozenset[str] = frozenset()
 
 
 class _DummyCheck:
@@ -67,10 +64,14 @@ def test_check_ids_are_properly_namespaced() -> None:
         assert name, f"Check ID '{cid}' has empty name suffix"
 
 
-def test_no_overlap_between_active_ids_and_tombstones() -> None:
-    """Active IDs and tombstoned IDs must be completely disjoint sets."""
-    overlap = ACTIVE_PINNED_IDS & TOMBSTONED_IDS
-    assert not overlap, f"IDs present in both active and tombstone sets: {overlap}"
+def test_populated_registry_contains_no_tombstoned_ids() -> None:
+    """The default populated registry and active pinned set must never contain tombstoned IDs."""
+    registry = CheckRegistry()
+    populate_default_checks(registry)
+
+    registered_ids = {c.check_id for c in registry.iter_checks()}
+    assert registered_ids & TOMBSTONED_IDS == set(), f"Tombstoned IDs found in active registry: {registered_ids & TOMBSTONED_IDS}"
+    assert ACTIVE_PINNED_IDS & TOMBSTONED_IDS == set(), f"Pinned IDs overlap with tombstones: {ACTIVE_PINNED_IDS & TOMBSTONED_IDS}"
 
 
 def test_registered_check_ids_are_unique() -> None:
