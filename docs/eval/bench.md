@@ -889,7 +889,20 @@ changes, including the combined merge-queue diff; see
 
 ## Leakage benchmark suite (`leakage-v1`)
 
-The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries (fake API keys, internal email addresses, paths, and random nonces) across multiple encodings (plain, base64, URL-encoded, split lines, JSON-escaped) into diverse seed points (environment, workspace files, task prompts, tool outputs, adapter stderr) and scans all 8 governed output surfaces:
+The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries — an AWS-shaped access key id, an internal e-mail address, an internal path and a nonce, each in five encodings (plain, base64, URL-encoded, split across lines, JSON-escaped) — into the inputs a run reads (workspace files, task prompt, tool output, adapter stderr) and scans the bytes the system actually emits on each output surface. Five surfaces are driven for real without an orchestrator run; the three that only a governed run produces are reported as **not exercised**, never as clean:
+
+| Surface | Driven by | Today |
+| :--- | :--- | :--- |
+| `bench_bundle` | `SubmissionBundle.save()` with the canaries in a receipt and harness output | **leaks** — no redaction on this path |
+| `evidence_pack` | `build_evidence_pack()` over a seeded `.sdd` (audit event, policy file, attestation) | **leaks** — audit, policy and attestation bytes are embedded verbatim |
+| `run_archive` | `create_archive()` over a seeded `.sdd` (runtime log, audit) | **leaks** — files are zipped verbatim |
+| `logs` | `sanitize_log()` | **leaks** — the sanitizer escapes control characters and never claimed to redact |
+| `pr_title_and_body` | `build_evidence_projection()` of an evidence bundle whose producer carried the canaries | clean — the projection references the bundle without embedding evidence |
+| `journal`, `receipts`, `telemetry_export` | a governed run | not exercised |
+
+Run it with `bernstein bench run leakage-v1 --out leakage.json` and verify with `bernstein bench verify leakage.json --suite leakage-v1`. The nonce is fresh per run, so two bundles differ by design; a canary that survived one run must not match the next.
+
+The eight surfaces are:
 1. `journal`
 2. `receipts`
 3. `pr_title_and_body`
@@ -899,7 +912,7 @@ The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canarie
 7. `bench_bundle`
 8. `run_archive`
 
-Zero hits are required by the CI gate; any hit reports the leaking surface, encoding, and the responsible redaction stage.
+Zero hits on every exercised surface is the gate; a hit reports the surface, the canary type and encoding, and the redaction stage that should have caught it — or that no such stage exists on that path, which is what the four leaking surfaces above report today. Those are findings about the system, and each gets a follow-up against the path that emits the bytes.
 
 ---
 
