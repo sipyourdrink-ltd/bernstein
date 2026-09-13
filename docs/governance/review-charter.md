@@ -44,7 +44,9 @@ A merge that fails any of these is reverted first and discussed second. The reve
 
 Changes here need the maintainer's approval in addition to the quorum:
 
-`.github/` · `src/bernstein/core/` · `src/bernstein/evolution/` · `src/bernstein/adapters/` · `pyproject.toml` and lockfiles · `schemas/` · `proto/` · `SECURITY.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, this page, `.github/CODEOWNERS` · `docs/decisions/` · agent configuration files at the repository root · every path listed as in scope in [SECURITY.md](../../SECURITY.md).
+`.github/` · `src/bernstein/core/` · `src/bernstein/evolution/` · `src/bernstein/adapters/` · `pyproject.toml` and lockfiles · `schemas/` · `proto/` · `SECURITY.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, this page, `.github/CODEOWNERS` · `docs/decisions/` · agent configuration files at the repository root · the container images (`Dockerfile`, `docker-compose.yaml`).
+
+The scope table in [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) names attack surfaces, not paths. Code behind those surfaces that sits outside the paths above is protected only where section 3 reaches it: a path naming `sandbox`, `security` or `audit` needs the third approval, and anything else follows the ordinary quorum. `.github/CODEOWNERS` is the enforced form of this list: the `quorum` check asks the owner of every path it names. When the two differ, reconcile them in one pull request rather than reading either as the correction of the other; `renovate.json`, `scripts/quorum_check.py` and `scripts/queue_hygiene.py` are owned there without appearing in this list.
 
 Reserved to the maintainer: creating tags and releases, changing repository settings or rulesets, changing rosters, running the publishing workflows, answering security reports, imposing sanctions.
 
