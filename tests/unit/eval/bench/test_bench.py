@@ -70,6 +70,9 @@ def simple_suite() -> BenchSuite:
                 category="cat2",
             ),
         ],
+        # #5455: the CLI refuses a suite that maps to no control, so the
+        # fixture declares one; the value is irrelevant to what these tests check.
+        controls=["CTL-EVAL-01"],
     )
 
 
@@ -97,8 +100,22 @@ class TestSuiteContentAddressing:
     """AC-4: suite is content-addressed; a changed task changes the suite hash."""
 
     def test_same_suite_same_hash(self, simple_suite: BenchSuite) -> None:
-        suite2 = BenchSuite(version="test-v1", tasks=list(simple_suite.tasks))
+        suite2 = BenchSuite(version="test-v1", tasks=list(simple_suite.tasks), controls=list(simple_suite.controls))
         assert simple_suite.suite_hash == suite2.suite_hash
+
+    def test_declaring_controls_changes_the_hash_and_declaring_none_does_not(self, simple_suite: BenchSuite) -> None:
+        """Controls are part of suite identity only when declared (#5455).
+
+        A suite that declares controls commits to them. A suite that declares
+        none hashes exactly as it did before the field existed, so every
+        suite, receipt and bundle published before #5455 keeps its identity.
+        """
+        bare = BenchSuite(version="test-v1", tasks=list(simple_suite.tasks))
+        bare_again = BenchSuite(version="test-v1", tasks=list(simple_suite.tasks), controls=[])
+        assert bare.suite_hash == bare_again.suite_hash
+        assert bare.suite_hash != simple_suite.suite_hash
+        assert "controls" not in bare.to_dict()
+        assert bare.to_dict()["suite_hash"] == bare.suite_hash
 
     def test_changed_task_changes_hash(self, simple_suite: BenchSuite) -> None:
         original_hash = simple_suite.suite_hash

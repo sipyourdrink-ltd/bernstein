@@ -942,6 +942,12 @@ def pack_incident(
     help="Filter by compliance framework (eu_ai_act, owasp_asi, owasp_skills, nist_ai_rmf, iso_42001, finos_aigf).",
 )
 @click.option(
+    "--coverage",
+    is_flag=True,
+    default=False,
+    help="Show which built-in benchmark suites declare each control.",
+)
+@click.option(
     "--format",
     "output_format",
     type=click.Choice(["text", "json", "markdown"], case_sensitive=False),
@@ -949,7 +955,7 @@ def pack_incident(
     show_default=True,
     help="Output format.",
 )
-def controls_command(framework: str | None, output_format: str) -> None:
+def controls_command(framework: str | None, coverage: bool, output_format: str) -> None:
     """List the registered compliance controls and their framework mappings."""
     from bernstein.compliance.controls import get_default_registry
 
@@ -960,12 +966,28 @@ def controls_command(framework: str | None, output_format: str) -> None:
         known = sorted({k for c in registry.list_controls() for k in c.references})
         click.echo(f"No control references framework {framework!r}; known frameworks: {', '.join(known)}", err=True)
 
+    # Every built-in suite, from the one list `bench` itself resolves, so
+    # this view cannot disagree with what the CLI enforces or the docs table
+    # pins (#5455).
+    suites = []
+    if coverage:
+        from bernstein.eval.bench.bench_cli import builtin_suite_builders
+
+        suites = [build() for build in builtin_suite_builders().values()]
+    cov_map = registry.coverage(suites) if coverage else {}
+
     if output_format == "json":
-        click.echo(json.dumps([c.to_dict() for c in controls], indent=2))
+        data = []
+        for c in controls:
+            d = c.to_dict()
+            if coverage:
+                d["suites_covering"] = cov_map.get(c.control_id, [])
+            data.append(d)
+        click.echo(json.dumps(data, indent=2))
         return
 
     if output_format == "markdown":
-        click.echo(registry.to_markdown_table())
+        click.echo(registry.to_markdown_table(suites=suites if coverage else None))
         return
 
     # Text table format
@@ -974,4 +996,7 @@ def controls_command(framework: str | None, output_format: str) -> None:
     for c in controls:
         fw_list = ", ".join(c.references.keys())
         click.echo(f"{c.control_id:<14} {c.category:<14} {fw_list:<28} {c.title}")
+        if coverage:
+            covering = cov_map.get(c.control_id, [])
+            click.echo(f"  └─ Suites covering: {', '.join(covering) if covering else 'None'}")
     click.echo(f"\nTotal: {len(controls)} controls")

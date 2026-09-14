@@ -34,6 +34,7 @@ from bernstein.compliance.evidence_pack import (
     EvidencePack,
     build_evidence_pack,
     get_standard_map,
+    verify_evidence_pack,
 )
 from bernstein.compliance.iso42001 import control_map as iso42001_control_map
 from bernstein.compliance.owasp_asi import control_map as owasp_asi_control_map
@@ -63,4 +64,5 @@ __all__ = [
     "iso42001_control_map",
     "owasp_asi_control_map",
     "owasp_skills_control_map",
+    "verify_evidence_pack",
 ]

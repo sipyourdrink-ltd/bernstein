@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.compliance.controls import ControlRegistry
+
 # ---------------------------------------------------------------------------
 # Task spec (mirrors yaml_runner task shape, kept dependency-free here)
 # ---------------------------------------------------------------------------
@@ -65,13 +67,18 @@ class BenchSuite:
     ``suite_hash`` is derived from the *ordered* sequence of per-task hashes,
     so adding, removing, or reordering any task changes the suite identity.
     If private holdout tasks are configured, ``holdout_hash`` is bound to
-    the manifest without publishing the private task specifications.
+    the manifest without publishing the private task specifications. A
+    non-empty ``controls`` declaration is bound the same way, so a suite
+    that declares none keeps the hash it was published with.
     """
 
     version: str
     tasks: list[BenchTask] = field(default_factory=list)
     holdout_hash: str = ""
     holdout_tasks: list[BenchTask] = field(default_factory=list, repr=False)
+    # Compliance control IDs this suite claims to exercise (#5455). Bound
+    # into ``suite_hash`` only when non-empty -- see ``_compute_hash``.
+    controls: list[str] = field(default_factory=list)
 
     # Computed lazily and cached.
     _suite_hash: str | None = field(default=None, init=False, repr=False, compare=False)
@@ -104,12 +111,37 @@ class BenchSuite:
         effective_holdout = self.holdout_hash or (self.compute_holdout_hash() if self.holdout_tasks else "")
         if effective_holdout:
             payload_dict["holdout_hash"] = effective_holdout
+        # Same rule as holdout_hash: a declaration the suite does not make is
+        # not in the payload, so every suite published before #5455 -- and
+        # every receipt, bundle and leaderboard row that names its hash --
+        # stays valid. A suite that does declare controls commits to them.
+        if self.controls:
+            # Canonical: the same declaration in any order, with any
+            # repeats, is one identity -- as holdout_hash is one digest.
+            payload_dict["controls"] = sorted(set(self.controls))
         payload = json.dumps(
             payload_dict,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
         return hashlib.sha256(payload).hexdigest()
+
+    def validate_controls(self, registry: ControlRegistry | None = None) -> None:
+        """Validate that the suite declares at least one control and all controls are registered."""
+        if not self.controls:
+            raise ValueError(
+                f"BenchSuite {self.version!r} must declare at least one control ID from the compliance registry."
+            )
+        if registry is None:
+            from bernstein.compliance.controls import get_default_registry
+
+            registry = get_default_registry()
+        invalid = registry.validate_control_ids(self.controls)
+        if invalid:
+            raise ValueError(
+                f"BenchSuite {self.version!r} declares unregistered control IDs: {invalid}. "
+                "All controls must be registered in bernstein.compliance.controls."
+            )
 
     # ------------------------------------------------------------------
     # Serialisation
@@ -134,6 +166,8 @@ class BenchSuite:
         effective_holdout = self.holdout_hash or (self.compute_holdout_hash() if self.holdout_tasks else "")
         if effective_holdout:
             d["holdout_hash"] = effective_holdout
+        if self.controls:
+            d["controls"] = list(self.controls)
         return d
 
     def save(self, path: Path) -> None:
@@ -157,7 +191,15 @@ class BenchSuite:
             for t in raw["tasks"]
         ]
         holdout_hash = raw.get("holdout_hash", "")
-        suite = cls(version=raw["version"], tasks=tasks, holdout_hash=holdout_hash)
+        controls = raw.get("controls", [])
+        # The field is bound into suite identity, so its shape is checked here
+        # rather than surfacing later as a per-character "unregistered id"
+        # error (a string) or a silently accepted mapping (a dict).
+        if not isinstance(controls, list) or not all(isinstance(c, str) and c for c in controls):
+            raise ValueError(
+                f"Suite {raw.get('version')!r}: 'controls' must be a list of non-empty strings, got {controls!r}"
+            )
+        suite = cls(version=raw["version"], tasks=tasks, holdout_hash=holdout_hash, controls=controls)
         # Integrity check: stored hash must match recomputed hash.
         if suite.suite_hash != raw["suite_hash"]:
             raise ValueError(

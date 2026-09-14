@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING
 import click
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bernstein.eval.bench.suite import BenchSuite
 
 # ---------------------------------------------------------------------------
@@ -33,23 +35,47 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _get_suite(name: str):
-    """Resolve a suite name or .json path to a BenchSuite."""
+def builtin_suite_builders() -> dict[str, Callable[[], BenchSuite]]:
+    """Every suite ``bench`` resolves by name, keyed by that name.
+
+    This is the one list. ``_get_suite`` reads it, ``compliance controls
+    --coverage`` reads it, the docs-table test reads it, so a built-in added
+    here is enforced, reported and documented from the same place (#5455).
+    Imports are deferred so importing this module stays cheap.
+    """
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
-    from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
-    _BUILTIN = {
+    return {
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
     }
 
-    if name in _BUILTIN:
-        return _BUILTIN[name]()
 
-    path = Path(name)
-    if path.suffix == ".json" and path.exists():
-        return BenchSuite.load(path)
+def _get_suite(name: str):
+    """Resolve a suite name or .json path to a BenchSuite."""
+    from bernstein.eval.bench.suite import BenchSuite
+
+    _BUILTIN = builtin_suite_builders()
+
+    suite: BenchSuite | None = None
+    if name in _BUILTIN:
+        suite = _BUILTIN[name]()
+    else:
+        path = Path(name)
+        if path.suffix == ".json" and path.exists():
+            suite = BenchSuite.load(path)
+
+    if suite is not None:
+        # #5455: a suite that maps to no compliance control is refused here,
+        # at the one point every ``bench`` subcommand resolves its suite
+        # through, so an unmapped suite cannot run, score, or publish a
+        # bundle. Built-in and ``.json`` suites are held to the same rule.
+        try:
+            suite.validate_controls()
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="suite") from exc
+        return suite
 
     raise click.BadParameter(
         f"Unknown suite {name!r}. Built-in suites: {', '.join(_BUILTIN)}. Or pass a path to a .json suite file.",

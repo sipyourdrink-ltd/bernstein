@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from bernstein.eval.bench.suite import BenchSuite
+
 
 @dataclass(frozen=True)
 class Control:
@@ -610,9 +612,27 @@ class ControlRegistry:
         """Return a list of any control IDs that are not present in the registry."""
         return [cid for cid in control_ids if cid not in self._controls]
 
-    def to_markdown_table(self) -> str:
-        """Generate a Markdown table of controls and their framework mappings."""
+    def coverage(self, suites: Iterable[BenchSuite]) -> dict[str, list[str]]:
+        """Map each control_id to the list of suite versions that measure it."""
+        mapping: dict[str, list[str]] = {cid: [] for cid in self._controls}
+        for suite in suites:
+            for cid in suite.controls:
+                if cid in mapping:
+                    mapping[cid].append(suite.version)
+                else:
+                    mapping[cid] = [suite.version]
+        return mapping
+
+    def to_markdown_table(self, suites: Iterable[BenchSuite] | None = None) -> str:
+        """Generate a Markdown table of controls and their framework mappings.
+
+        With *suites*, a "Suites Covering" column names the suites that
+        declare each control, from :meth:`coverage`.
+        """
+        cov = self.coverage(suites) if suites is not None else {}
         headers = ["Control ID", "Title", "Frameworks", "Evidence Kinds"]
+        if suites is not None:
+            headers.append("Suites Covering")
         lines = [
             "| " + " | ".join(headers) + " |",
             "| " + " | ".join(["---"] * len(headers)) + " |",
@@ -620,7 +640,11 @@ class ControlRegistry:
         for c in self.list_controls():
             fw_str = ", ".join(f"{k.upper()}" for k in sorted(c.references.keys()))
             ev_str = ", ".join(c.evidence_kinds)
-            lines.append("| " + " | ".join([c.control_id, c.title, fw_str, ev_str]) + " |")
+            row = [c.control_id, c.title, fw_str, ev_str]
+            if suites is not None:
+                covering = cov.get(c.control_id, [])
+                row.append(", ".join(covering) if covering else "*(uncovered)*")
+            lines.append("| " + " | ".join(row) + " |")
         return "\n".join(lines)
 
 
