@@ -206,8 +206,16 @@ def bench_verify(bundle: str, suite: str) -> None:
     default=False,
     help="Rank even when the two bundles' harness fingerprints differ.",
 )
-def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
-    """Compare two submission bundles, ranking by score.
+@click.option(
+    "--penalty",
+    "--lambda",
+    "lambda_penalty",
+    type=float,
+    default=None,
+    help="Penalty parameter lambda for incorrect answers (wrong = -lambda). Defaults to 1.0 or bundle override.",
+)
+def bench_compare(a: str, b: str, allow_harness_drift: bool, lambda_penalty: float | None) -> None:
+    """Compare two submission bundles, ranking by expected value.
 
     A and B are paths to submission bundle .json files.
 
@@ -262,12 +270,23 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
     else:
         click.echo(f"Harness fingerprint: {fp_a} (match)")
 
-    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -p[1].overall_score)
+    # An explicit --penalty overrides whatever each bundle stored, so the two
+    # are ranked on one scale rather than on each other's lambda (#5567).
+    if lambda_penalty is not None:
+        bundle_a.lambda_penalty = lambda_penalty
+        bundle_b.lambda_penalty = lambda_penalty
+
+    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -p[1].expected_value)
     click.echo("")
     for rank, (path, bundle) in enumerate(ordered, start=1):
         click.echo(
-            f"{rank}. {path.name}: score {bundle.overall_score * 100:.1f}%, "
-            f"pass rate {bundle.pass_rate * 100:.1f}%, {len(bundle.task_results)} tasks"
+            f"{rank}. {path.name}: expected value {bundle.expected_value:.2f} "
+            f"(lambda={bundle.lambda_penalty:.1f}), "
+            f"score {bundle.overall_score * 100:.1f}%, "
+            f"resolve rate {bundle.resolve_rate * 100:.1f}%, "
+            f"abstain rate {bundle.abstain_rate * 100:.1f}%, "
+            f"confident error rate {bundle.confident_error_rate * 100:.1f}%, "
+            f"{len(bundle.task_results)} tasks"
         )
 
 
@@ -436,6 +455,11 @@ def bench_reliability_check(receipt: str, suite: str, task_id: str | None, attem
 
     click.echo(result.report())
     sys.exit(0 if result.passed else 1)
+
+
+# ---------------------------------------------------------------------------
+# Compare submission bundles (issue #5567)
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

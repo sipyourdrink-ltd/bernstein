@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+#: Default penalty for a wrong answer under expected-value scoring (#5567).
+#: A bundle that stores this value is hashed exactly as it was before the
+#: field existed, so published bundle hashes do not move.
+_DEFAULT_LAMBDA_PENALTY = 1.0
+
+
 @dataclass
 class TaskResult:
     """
@@ -54,6 +60,15 @@ class TaskResult:
     # construction time and restored verbatim from the JSON at load time.
     # The verifier recomputes this from the live receipt and compares.
     stored_receipt_hash: str = ""
+    # Whether the task ended with a declared abstention.
+    abstained: bool = False
+    abstention_reason: str = ""
+    # Declared confidence probability in [0.0, 1.0].
+    confidence: float = 1.0
+    # The task was not evaluated at all -- excluded from every denominator,
+    # mirroring ``InstanceStatus == "skipped"`` in benchmarks/swe_bench/metrics.py.
+    # A skipped task is not a wrong answer and must not be scored as one.
+    skipped: bool = False
 
     def __post_init__(self) -> None:
         # If caller didn't supply stored_receipt_hash, derive it now.
@@ -71,7 +86,7 @@ class TaskResult:
         return self.stored_receipt_hash
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "task_id": self.task_id,
             "task_hash": self.task_hash,
             "receipt": self.receipt,
@@ -81,7 +96,15 @@ class TaskResult:
             "passed": self.passed,
             "score": self.score,
             "harness_output": self.harness_output,
+            "abstained": self.abstained,
+            "abstention_reason": self.abstention_reason,
+            "confidence": self.confidence,
         }
+        # Omitted when False so every bundle written before this field existed
+        # hashes exactly as it did (same rule as ``lambda_penalty``).
+        if self.skipped:
+            d["skipped"] = True
+        return d
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +168,9 @@ class SubmissionBundle:
     # and a pre-#5568 bundle derives it on load instead of failing.
     harness_fingerprint: str = ""
 
+    # Penalty parameter for incorrect answers (wrong = -lambda).
+    lambda_penalty: float = _DEFAULT_LAMBDA_PENALTY
+
     def __post_init__(self) -> None:
         # If caller didn't supply a fingerprint, derive it now — same
         # emit-time contract as TaskResult.stored_receipt_hash.
@@ -170,6 +196,77 @@ class SubmissionBundle:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
 
+    @property
+    def abstained_count(self) -> int:
+        return sum(1 for r in self.task_results if r.abstained and not r.skipped)
+
+    @property
+    def skipped_count(self) -> int:
+        return sum(1 for r in self.task_results if r.skipped)
+
+    @property
+    def evaluated_count(self) -> int:
+        """Tasks that were actually run: everything but the skipped ones."""
+        return len(self.task_results) - self.skipped_count
+
+    @property
+    def resolved_count(self) -> int:
+        return sum(1 for r in self.task_results if r.passed and not r.abstained and not r.skipped)
+
+    @property
+    def wrong_count(self) -> int:
+        return sum(1 for r in self.task_results if not r.passed and not r.abstained and not r.skipped)
+
+    @property
+    def attempted_count(self) -> int:
+        return self.evaluated_count - self.abstained_count
+
+    @property
+    def resolve_rate(self) -> float:
+        """Resolve rate: resolved / attempted (abstentions excluded from denominator)."""
+        if self.attempted_count <= 0:
+            return 0.0
+        return self.resolved_count / self.attempted_count
+
+    @property
+    def abstain_rate(self) -> float:
+        """Abstain rate: abstained / evaluated (skipped tasks excluded)."""
+        if self.evaluated_count <= 0:
+            return 0.0
+        return self.abstained_count / self.evaluated_count
+
+    @property
+    def confident_error_rate(self) -> float:
+        """Confident-error rate: wrong / (wrong + resolved)."""
+        denominator = self.wrong_count + self.resolved_count
+        if denominator <= 0:
+            return 0.0
+        return self.wrong_count / denominator
+
+    @property
+    def expected_value(self) -> float:
+        """Expected value under lambda penalty: (resolved * 1.0 + abstained * 0.0 + wrong * -lambda) / total."""
+        if self.evaluated_count <= 0:
+            return 0.0
+        total_ev = self.resolved_count * 1.0 + self.abstained_count * 0.0 + self.wrong_count * (-self.lambda_penalty)
+        return total_ev / self.evaluated_count
+
+    @property
+    def brier_score(self) -> float:
+        """Brier score over predicted confidence vs binary outcome.
+
+        Skipped tasks carry no outcome to be wrong about, so they are left
+        out of the mean rather than scored against a fabricated one.
+        """
+        squared_errors = [
+            (r.confidence - (1.0 if r.passed and not r.abstained else 0.0)) ** 2
+            for r in self.task_results
+            if not r.skipped
+        ]
+        if not squared_errors:
+            return 0.0
+        return sum(squared_errors) / len(squared_errors)
+
     # ------------------------------------------------------------------
     # Content hash (covers everything *except* the signature field)
     # ------------------------------------------------------------------
@@ -189,6 +286,13 @@ class SubmissionBundle:
         }
         if self.holdout_hash:
             payload_dict["holdout_hash"] = self.holdout_hash
+        # lambda reorders `bench compare`, so a bundle that carries a
+        # non-default one has to commit to it: two bundles with identical
+        # task results but different lambda rank differently and must not
+        # share a hash. Included only when it is not the default, so every
+        # bundle written before #5567 keeps the hash it was published with.
+        if self.lambda_penalty != _DEFAULT_LAMBDA_PENALTY:
+            payload_dict["lambda_penalty"] = self.lambda_penalty
         payload = json.dumps(
             payload_dict,
             sort_keys=True,
@@ -210,6 +314,12 @@ class SubmissionBundle:
             "harness_fingerprint": self.harness_fingerprint,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
+            "resolve_rate": self.resolve_rate,
+            "abstain_rate": self.abstain_rate,
+            "confident_error_rate": self.confident_error_rate,
+            "lambda_penalty": self.lambda_penalty,
+            "expected_value": self.expected_value,
+            "brier_score": self.brier_score,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
@@ -248,6 +358,10 @@ class SubmissionBundle:
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],
+                abstained=r.get("abstained", False),
+                abstention_reason=r.get("abstention_reason", ""),
+                confidence=r.get("confidence", 1.0),
+                skipped=r.get("skipped", False),
             )
             for r in raw["task_results"]
         ]
@@ -261,6 +375,7 @@ class SubmissionBundle:
             signer_fingerprint=raw.get("signer_fingerprint", ""),
             holdout_hash=raw.get("holdout_hash", ""),
             harness_fingerprint=raw.get("harness_fingerprint", ""),
+            lambda_penalty=raw.get("lambda_penalty", 1.0),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:
