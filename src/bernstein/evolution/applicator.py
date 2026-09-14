@@ -33,6 +33,19 @@ class UpgradeExecutor(Protocol):
         """Rollback an upgrade. Returns True if successful."""
         ...
 
+    def was_applied(self, proposal_id: str) -> bool:
+        """Did this proposal ever change anything that is still in place?
+
+        On the Protocol because the CALLER needs it. `execute_upgrade`
+        returning False covers three different situations - admission refused
+        it, the category had no sink, or an apply genuinely failed - and only
+        the third is something to roll back. A caller that cannot tell them
+        apart treats a proposal that never touched the tree as a reverted
+        change, which is how the circuit breaker came to halt evolution on the
+        first proposal it ever saw.
+        """
+        ...
+
 
 class FileUpgradeExecutor:
     """
@@ -136,7 +149,7 @@ class FileUpgradeExecutor:
             # since every category resolves to `_skip_no_sink` - or the record
             # was lost. `history.jsonl` is what tells those apart, and getting
             # it wrong in the reassuring direction is the defect above.
-            if self._was_applied(proposal.id):
+            if self.was_applied(proposal.id):
                 raise RollbackError(
                     f"proposal {proposal.id} was applied but no backup manifest exists at "
                     f"{manifest}; the files it changed cannot be restored from here"
@@ -213,7 +226,7 @@ class FileUpgradeExecutor:
         _ = proposal
         return sorted(recorded)
 
-    def _was_applied(self, proposal_id: str) -> bool:
+    def was_applied(self, proposal_id: str) -> bool:
         """Did any history row for this proposal record an APPLIED change?
 
         Read rather than remembered, so this answers the same way in a process

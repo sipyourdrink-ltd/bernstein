@@ -188,3 +188,43 @@ def test_a_rolled_back_proposal_can_be_rolled_back_again_without_raising(tmp_pat
     assert executor.rollback_upgrade(proposal) is True
     assert executor.rollback_upgrade(proposal) is True
     assert (tmp_path / "config" / "policies.yaml").read_text(encoding="utf-8") == ORIGINAL
+
+
+# --- the breaker only hears about a real revert (#5408 follow-on) -----------
+#
+# `record_rollback` trips the circuit breaker on ANY rollback inside 48 hours,
+# and the timestamp it checks is the one it just appended -- so one rollback is
+# enough to halt evolution. That is the intended policy for a system that edits
+# itself, and `test_rollback_trips` pins it.
+#
+# What it was being fed is the problem. `execute_upgrade` answers False for
+# three different situations -- admission refused the proposal, the category
+# had no sink, or an apply failed partway -- and only the last undid anything.
+# Every category resolves to `_skip_no_sink` today, so the loop's failure path
+# ran for a proposal that never touched the tree, recorded it as a rollback,
+# and halted evolution on the FIRST proposal it ever saw, with a reason reading
+# "Rollback detected".
+
+
+def test_a_proposal_that_never_applied_is_not_a_rollback(tmp_path: Path) -> None:
+    """The fact the loop needs, and could not previously ask for."""
+    proposal = _proposal()
+    executor = FileUpgradeExecutor(tmp_path)
+    assert executor.execute_upgrade(proposal) is False, "no category has a sink today"
+    assert executor.was_applied(proposal.id) is False
+
+
+def test_a_proposal_that_applied_is_reported_as_applied(tmp_path: Path) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    # A fresh executor, because the loop may not be the process that applied.
+    assert FileUpgradeExecutor(tmp_path).was_applied(proposal.id) is True
+
+
+def test_a_rolled_back_proposal_is_no_longer_reported_as_applied(tmp_path: Path) -> None:
+    """Otherwise a second pass would record a second rollback for one change."""
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    executor = FileUpgradeExecutor(tmp_path)
+    executor.rollback_upgrade(proposal)
+    assert executor.was_applied(proposal.id) is False

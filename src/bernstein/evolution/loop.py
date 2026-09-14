@@ -1001,6 +1001,9 @@ class EvolutionLoop:
             logger.info("Proposal %s applied successfully", proposal.id)
         else:
             logger.warning("Proposal %s application failed - attempting rollback", proposal.id)
+            # Asked BEFORE the rollback, which writes `rolled_back` to history
+            # and would flip the answer.
+            changed_something = self._executor.was_applied(proposal.id)
             try:
                 self._executor.rollback_upgrade(proposal)
             except RollbackError:
@@ -1012,7 +1015,18 @@ class EvolutionLoop:
                 self._breaker.record_rollback(proposal.id)
                 logger.exception("Proposal %s rollback FAILED; the tree is in an undeclared state", proposal.id)
                 raise
-            self._breaker.record_rollback(proposal.id)
+            # Only a real revert is a rollback. `execute_upgrade` answers False
+            # for three different situations and only one of them undid
+            # anything: admission refused the proposal, the category had no
+            # sink, or an apply failed partway. Recording the first two as
+            # rollbacks halted evolution permanently on the first proposal -
+            # `record_rollback` trips the breaker on ANY rollback inside 48h,
+            # so one no-op was enough, and the halt reason read "Rollback
+            # detected" for a tree nothing had touched.
+            if changed_something:
+                self._breaker.record_rollback(proposal.id)
+            else:
+                logger.info("Proposal %s changed nothing, so there was nothing to roll back", proposal.id)
 
         return success
 
