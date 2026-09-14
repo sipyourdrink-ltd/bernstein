@@ -45,6 +45,7 @@ def roster(qc: ModuleType):
         core_reviewers=frozenset({"core1", "core2"}),
         committers=frozenset({"comm1", "comm2"}),
         automation=frozenset({"the-conductor[bot]", "renovate[bot]"}),
+        machine_reviewers=frozenset({"reviewer[bot]"}),
     )
 
 
@@ -65,6 +66,7 @@ def _pr(
     reviews: list | None = None,
     contributors: set[str] | None = None,
     pushed_hours_ago: float = 1.0,
+    author_record=None,
 ):
     return qc.PullRequest(
         number=1,
@@ -76,7 +78,17 @@ def _pr(
         reviews=reviews or [],
         contributors=contributors if contributors is not None else {author},
         last_push=NOW - timedelta(hours=pushed_hours_ago),
+        author_record=author_record,
     )
+
+
+def _record(qc: ModuleType, *, given: int, open_prs: int = 1, merged: int = 1):
+    return qc.AuthorRecord(
+        since=NOW - timedelta(days=30), reviews_given=given, open_pull_requests=open_prs, merged_pull_requests=merged
+    )
+
+
+QUORUM = ["core1", "comm1"]
 
 
 def _evaluate(qc: ModuleType, roster, pr):
@@ -264,6 +276,186 @@ def test_a_committer_can_block_the_maintainer(qc: ModuleType, roster) -> None:
 def test_a_stranger_cannot_block_the_maintainer(qc: ModuleType, roster) -> None:
     pr = _pr(qc, author="owner", contributors={"owner"}, reviews=[_review(qc, "passer-by", "CHANGES_REQUESTED")])
     assert _evaluate(qc, roster, pr).passed
+
+
+# --- machine review (rule 7) -----------------------------------------------
+
+
+def test_a_machine_approval_stands_in_for_the_non_core_approval(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "reviewer[bot]", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert any("machine review" in note and "@reviewer[bot]" in note for note in verdict.notes)
+
+
+def test_a_machine_approval_is_never_the_core_one(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "comm1", "APPROVED"), _review(qc, "reviewer[bot]", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_a_machine_approval_is_never_the_only_one(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "reviewer[bot]", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert "@core1" in verdict.requirements[0].who
+
+
+def test_a_machine_approval_does_not_count_where_a_third_approval_is_needed(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        paths=["src/bernstein/security/keys.py"],
+        reviews=[_review(qc, login, "APPROVED") for login in ("core1", "core2", "reviewer[bot]")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("does not count here" in note for note in verdict.notes)
+
+
+def test_a_machine_approval_does_not_satisfy_a_protected_path(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        paths=[".github/workflows/ci.yml"],
+        reviews=[_review(qc, login, "APPROVED") for login in ("core1", "comm1", "reviewer[bot]")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    owner_rows = [req for req in verdict.requirements if req.text.startswith("approval from the owner")]
+    assert owner_rows and not owner_rows[0].met
+
+
+def test_a_machine_approval_given_before_the_last_push_does_not_count(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "reviewer[bot]", "APPROVED", sha="0" * 40)],
+    )
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_machine_list_is_optional_in_the_roster(qc: ModuleType, tmp_path: Path) -> None:
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "quorum-roster.toml").write_text('maintainer = "m"\ncore_reviewers = ["c"]\n')
+    assert qc.load_roster(str(tmp_path)).machine_reviewers == frozenset()
+    (tmp_path / ".github" / "quorum-roster.toml").write_text(
+        'maintainer = "m"\ncore_reviewers = ["c"]\nmachine_reviewers = ["r[bot]"]\n'
+    )
+    assert qc.load_roster(str(tmp_path)).machine_reviewers == frozenset({"r[bot]"})
+
+
+# --- review for review (rule 6, charter section 5) ---------------------------
+
+
+def test_a_contributor_keeps_one_review_per_open_pull_request(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[_review(qc, login, "APPROVED") for login in QUORUM],
+        author_record=_record(qc, given=2, open_prs=3, merged=1),
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    row = verdict.requirements[-1]
+    assert row.text.startswith("3 review(s) by the author") and "2 given, 3 open" in row.text
+    assert "@outsider" in row.who
+
+
+def test_enough_reviews_settle_the_exchange(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[_review(qc, login, "APPROVED") for login in QUORUM],
+        author_record=_record(qc, given=3, open_prs=3, merged=1),
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_contributor_without_a_merge_yet_is_not_asked_to_review(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[_review(qc, login, "APPROVED") for login in QUORUM],
+        author_record=_record(qc, given=0, open_prs=4, merged=0),
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert not any("by the author" in req.text for req in verdict.requirements)
+
+
+def test_the_rule_is_not_applied_without_a_record(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, login, "APPROVED") for login in QUORUM])
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_the_rule_reaches_contributors_only(qc: ModuleType, roster) -> None:
+    assert roster.is_contributor("outsider")
+    for login in ("owner", "core1", "comm1", "the-conductor[bot]", "github-actions[bot]", "stranger[bot]"):
+        assert not roster.is_contributor(login), login
+    # A committer's record, if one were ever attached, changes nothing.
+    pr = _pr(
+        qc,
+        author="comm1",
+        reviews=[_review(qc, login, "APPROVED") for login in ("core1", "comm2")],
+        author_record=_record(qc, given=0, open_prs=5, merged=9),
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_the_record_counts_reviews_inside_the_window_only(qc: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_gh_json(*args: str):
+        calls.append(args)
+        return {
+            "data": {
+                "reviewed": {
+                    "nodes": [
+                        {
+                            "reviews": {
+                                "nodes": [
+                                    {"submittedAt": "2026-09-01T10:00:00Z"},
+                                    {"submittedAt": "2026-08-01T10:00:00Z"},
+                                ]
+                            }
+                        },
+                        {"reviews": {"nodes": [{"submittedAt": "2026-09-09T10:00:00Z"}]}},
+                        None,
+                    ]
+                },
+                "open": {"issueCount": 2},
+                "merged": {"issueCount": 7},
+            }
+        }
+
+    monkeypatch.setattr(qc, "gh_json", fake_gh_json)
+    since = NOW - timedelta(days=30)
+    record = qc.fetch_author_record("o/r", "outsider", since)
+    assert record == qc.AuthorRecord(since=since, reviews_given=2, open_pull_requests=2, merged_pull_requests=7)
+    joined = " ".join(calls[0])
+    assert "reviewed-by:outsider -author:outsider updated:>=2026-08-11" in joined
+    assert "is:open draft:false author:outsider" in joined
+    assert "is:merged author:outsider" in joined
+
+
+def test_the_record_is_read_for_contributors_and_not_at_merge_time(
+    qc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    looked_up: list[str] = []
+    pr = _pr(qc, reviews=[_review(qc, login, "APPROVED") for login in QUORUM])
+
+    monkeypatch.setattr(qc, "fetch_pull_request", lambda repo, number: pr)
+    monkeypatch.setattr(
+        qc, "fetch_author_record", lambda repo, author, since: looked_up.append(author) or _record(qc, given=0)
+    )
+    monkeypatch.setattr(
+        qc, "load_roster", lambda root: qc.Roster("owner", frozenset({"core1"}), frozenset({"comm1"}), frozenset())
+    )
+    monkeypatch.setattr(qc, "load_codeowners", lambda root: [])
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    assert qc.main(["--repo", "o/r", "--pr", "1"]) == 1
+    assert looked_up == ["outsider"]
+
+    pr.author_record = None
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    assert qc.main(["--repo", "o/r", "--pr", "1"]) == 0
+    assert looked_up == ["outsider"]
 
 
 # --- the objection window on governance files (charter section 10) ----------

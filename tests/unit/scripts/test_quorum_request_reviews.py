@@ -33,6 +33,7 @@ def roster(rr: ModuleType):
         core_reviewers=frozenset({"core1", "core2"}),
         committers=frozenset({"comm1", "comm2"}),
         automation=frozenset({"the-conductor[bot]"}),
+        machine_reviewers=frozenset({"reviewer[bot]"}),
     )
 
 
@@ -69,6 +70,14 @@ def test_a_core_approval_leaves_one_more_to_ask_from_anyone(rr, roster) -> None:
 def test_a_committer_approval_still_needs_a_core_reviewer(rr, roster) -> None:
     pr = _pr(rr, reviews=[_review(rr, "comm1", "APPROVED")])
     assert rr.plan_requests(pr, roster, set(), {"core1": 1}) == ["core2"]
+
+
+def test_a_machine_approval_leaves_only_the_core_seat_to_ask_for(rr, roster) -> None:
+    pr = _pr(rr, reviews=[_review(rr, "reviewer[bot]", "APPROVED")])
+    assert rr.plan_requests(pr, roster, set(), {}) == ["core1"]
+    # Where a third approval is needed the machine review is not counted.
+    pr = _pr(rr, paths=["src/bernstein/security/keys.py"], reviews=[_review(rr, "reviewer[bot]", "APPROVED")])
+    assert rr.plan_requests(pr, roster, set(), {}) == ["core1", "core2", "comm1"]
 
 
 def test_a_standing_request_counts_and_is_not_repeated(rr, roster) -> None:

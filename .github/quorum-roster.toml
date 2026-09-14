@@ -21,3 +21,8 @@ committers = ["Chirag6722", "Silentpartnercoding"]
 # Accounts that merge their own changes on green CI (charter, section 1).
 # Their reviews never count toward a human quorum.
 automation = ["bernstein-the-conductor[bot]", "renovate[bot]", "dependabot[bot]"]
+
+# Accounts whose approval is a machine review (charter, section 3): it fills
+# the second, non-core seat where two approvals are enough, and nothing more.
+# An empty list switches the rule off.
+machine_reviewers = ["bernstein-the-conductor[bot]"]

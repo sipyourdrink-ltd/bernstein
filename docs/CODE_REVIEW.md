@@ -1,6 +1,6 @@
 # Code review
 
-Last reviewed: 2026-09-09.
+Last reviewed: 2026-09-14.
 
 The rules for how a change reaches `main` live in one place, the
 [review charter](governance/review-charter.md). This page is the reviewer's
@@ -21,13 +21,19 @@ owner's on a path the owner holds. A new push dismisses earlier approvals, and
 the person who pushed last cannot supply the final one. A change over 400
 lines, or one touching a path with `sandbox`, `security`, or `audit` in it,
 needs three approvals, two of them from core reviewers, and over 1,000 lines
-gets split or sent to the maintainer instead.
+gets split or sent to the maintainer instead. Where two approvals are enough,
+the second may come from the review automation named in the roster under
+`machine_reviewers`; that approval is never the core one, never the only one,
+and never stands in for a code owner or the maintainer. A contributor who has
+had a pull request merged keeps, over the last thirty days, at least as many
+reviews of other people's pull requests as they have open; the `quorum` check
+names the count on each of theirs (charter section 5).
 Protected paths (charter section 4, including the `.github/` directory, `core`,
 `evolution`, `adapters`, dependency lockfiles, schemas, the security and
 governance documents, agent configuration files) also need the maintainer's
 approval. The project's own automation merges its own changes when CI is green;
-dependency bots merge under their own policy. Neither counts toward a human
-quorum, and neither self-merges a change whose paths carry `sandbox`,
+dependency bots merge under their own policy. Neither supplies a core
+approval, and neither self-merges a change whose paths carry `sandbox`,
 `security`, `audit` or `auth`, or sit under `.github/`, `schemas/` or `proto/`
 - those wait for the maintainer's approval like anyone else's. That carve-out
 is what the `quorum` check applies today; the charter's automation row does

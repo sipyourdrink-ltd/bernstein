@@ -4,12 +4,14 @@ name: quorum rerun
 #
 # Two cases. A review is submitted, edited or dismissed: `pull_request` does
 # not fire for that, so the last quorum run still shows the old verdict and an
-# approval would otherwise sit unnoticed until the next push. And the 72-hour
-# objection window on governance files (charter, section 10) closes with the
-# clock rather than with an event, so an hourly sweep re-runs those - only
-# those, because they are the only pull requests whose verdict changes on its
-# own, and re-running everything hourly would spend runner slots the queue
-# needs.
+# approval would otherwise sit unnoticed until the next push. A review also
+# moves the reviewer's own pull requests, because the check counts reviews
+# given against pull requests open (charter, section 5), so those are re-run
+# too. And the 72-hour objection window on governance files (charter, section
+# 10) closes with the clock rather than with an event, so an hourly sweep
+# re-runs those - only those, because they are the only pull requests whose
+# verdict changes on its own, and re-running everything hourly would spend
+# runner slots the queue needs.
 #
 # `pull_request_review` is a privileged trigger: it runs the workflow from the
 # base branch with a writable token, including for pull requests from forks.
@@ -43,11 +45,20 @@ jobs:
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+      # The default branch, never the pull request's tree: under the
+      # privileged review trigger the default ref is the pull request's merge
+      # commit, and the scripts below run with a writable token.
+      - name: Check out the scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - name: Re-run quorum
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           REVIEWED_PR: ${{ github.event.pull_request.number }}
+          REVIEWER: ${{ github.event.review.user.login }}
         run: |
           set -euo pipefail
 
@@ -84,6 +95,30 @@ jobs:
 
           if [ -n "${REVIEWED_PR:-}" ]; then
             rerun_for "$REVIEWED_PR"
+            # The reviewer's own open pull requests: the review they just
+            # gave may have settled their side of the exchange (charter,
+            # section 5). The check reads that through the search index,
+            # which trails a fresh review by up to about a minute, so this
+            # waits. Then one local evaluation - the row is the same on every
+            # pull request of one author - says whether the exchange is
+            # settled before any run is spent: an author who still owes
+            # reviews would only get the same red again, and re-running a
+            # stack of them takes the job slots the queue is waiting for.
+            if [ -n "${REVIEWER:-}" ]; then
+              own=$(gh pr list --repo "$REPO" --state open --author "$REVIEWER" --limit 30 \
+                      --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' \
+                    | grep -vx "$REVIEWED_PR" || true)
+              if [ -n "$own" ]; then
+                sleep 60
+                first=$(printf '%s\n' "$own" | head -1)
+                if { GITHUB_STEP_SUMMARY='' python3 scripts/quorum_check.py --pr "$first" || true; } \
+                     | grep -F 'by the author on other people' | grep -q '| yes |'; then
+                  printf '%s\n' "$own" | while read -r pr; do rerun_for "$pr"; done
+                else
+                  echo "@$REVIEWER has no settled review exchange to re-run; nothing to do for their own pull requests"
+                fi
+              fi
+            fi
             exit 0
           fi
 
@@ -100,13 +135,7 @@ jobs:
                         | .number' \
             | while read -r pr; do rerun_for "$pr"; done
 
-      # The sweep also asks for what the check says is missing. Only the base
-      # branch is checked out, so this stays safe under the privileged trigger.
-      - name: Check out the scripts
-        if: github.event_name != 'pull_request_review'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
+      # The sweep also asks for what the check says is missing.
       - name: Ask the roster for the reviews still missing
         if: github.event_name != 'pull_request_review'
         env:

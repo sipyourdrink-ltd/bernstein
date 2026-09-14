@@ -90,11 +90,15 @@ def plan_requests(
         return []
 
     may_approve = roster.quorum_holders - {roster.maintainer} - {pr.author} - pr.contributors
-    approving = {login for login, r in standing.items() if r.state == "APPROVED" and r.commit_id == pr.head_sha}
-    approving &= may_approve
+    approved = {login for login, r in standing.items() if r.state == "APPROVED" and r.commit_id == pr.head_sha}
+    approving = approved & may_approve
     need_total, need_core = approvals_needed(pr)
     pending = requested & may_approve
-    missing_total = need_total - len(approving) - len(pending)
+    # A machine review fills the non-core seat where two approvals are enough
+    # (charter, section 3), so one fewer person is asked; the core seat is
+    # still a person's.
+    machine = 1 if need_total == 2 and approved & (roster.machine_reviewers - {pr.author} - pr.contributors) else 0
+    missing_total = need_total - len(approving) - len(pending) - machine
     missing_core = need_core - len(approving & roster.core) - len(pending & roster.core)
     if missing_total <= 0:
         return []
