@@ -126,6 +126,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `codex.py`                  | OpenAI Codex CLI adapter |
 | `codex_cloudflare.py`       | Codex adapter driving Cloudflare's first-party sandbox bridge (issue #2969) |
 | `cody.py`                   | Sourcegraph Cody CLI adapter |
+| `compliant.py`              | Compliant eval adapter that executes every instruction literally and never declines (#5449) |
 | `composio.py`               | Composio Agent Orchestrator (``ao``) CLI adapter |
 | `computer_use.py`           | Browser / computer-use adapter family (#2606) |
 | `conformance.py`            | Adapter tool contract conformance suite harness |
