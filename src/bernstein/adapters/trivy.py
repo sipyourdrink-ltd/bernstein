@@ -32,6 +32,7 @@ from bernstein.adapters.scanner import (
     ScannerCategory,
     ScanResult,
     ScanScope,
+    normalize_report_path,
 )
 from bernstein.adapters.scanner_finding import Finding
 
@@ -313,14 +314,26 @@ def _result_path(result: dict[str, Any], result_index: int, target_root: Path | 
 
 
 def _normalize_path(uri: str, target_root: Path | None) -> str:
+    """Decode trivy's `file:` URI, then ask the shared helper the path question.
+
+    The URI decoding stays here because it is trivy's alone -- gitleaks and
+    semgrep report plain paths. Everything after it is the same question the
+    other two adapters ask, and answering it three times is how all three came
+    to be wrong on Windows in the same way (#5787).
+
+    The root is still walked up to a directory when the caller passed a FILE as
+    the scan target, which trivy alone supports.
+    """
     parsed = urlparse(uri)
     path = unquote(parsed.path) if parsed.scheme == "file" else unquote(uri)
-    candidate = Path(path.replace("\\", "/"))
-    if target_root is not None and candidate.is_absolute():
-        root = target_root if target_root.is_dir() or not target_root.exists() else target_root.parent
-        with suppress(ValueError):
-            candidate = candidate.relative_to(root.resolve())
-    return candidate.as_posix()
+    return normalize_report_path(path, _root_directory(target_root))
+
+
+def _root_directory(target_root: Path | None) -> Path | None:
+    """The scan root as a directory: trivy can be pointed at a single file."""
+    if target_root is None:
+        return None
+    return target_root if target_root.is_dir() or not target_root.exists() else target_root.parent
 
 
 def _rule_summary(rule: dict[str, Any], fallback: str) -> str:

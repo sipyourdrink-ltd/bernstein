@@ -28,15 +28,16 @@ Reused infrastructure (never reimplemented):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import RateLimitMeter, record_rate_limit_hit
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from bernstein.adapters.scanner_finding import Finding
 
@@ -81,6 +82,73 @@ class ScannerCategory(StrEnum):
     DAST = "dast"
 
 
+def normalize_report_path(path: str, target_root: Path | None) -> str:
+    r"""Make a scanner's reported path portable, and relative to the scan target.
+
+    One helper rather than a copy per adapter, because the bug it exists to
+    prevent is a HOST-dependent one: gitleaks, semgrep and trivy each carried
+    their own version, all three failed on Windows in the same way, and three
+    copies is three places for the next platform difference to be fixed in two
+    of them.
+
+    Every comparison here is in :class:`~pathlib.PurePosixPath`, deliberately,
+    and that is the fix rather than an implementation detail. A scanner report
+    is data that may have been produced on another machine, so the question
+    "is this path absolute, and is it under the scan root" must be answered the
+    same way wherever it is asked. Answering it in the HOST's flavour got two
+    different wrong answers on Windows for `/checkout/project/app.env`:
+
+    * ``PureWindowsPath("/checkout/project/app.env").is_absolute()`` is
+      ``False`` -- a drive-less rooted path is not absolute on Windows -- so
+      the relativisation never ran and the absolute path was reported verbatim;
+    * and had it run, ``target_root.resolve()`` would have anchored the root to
+      the current drive (``C:\checkout\project``) while the candidate had no
+      drive at all, so ``relative_to`` would have raised anyway.
+
+    Both roots are tried, raw and resolved: production passes a root that is
+    already resolved, while a caller holding a plain path would otherwise be
+    relativised against whatever drive the process happens to be on.
+
+    Args:
+        path: The path as the scanner reported it. Backslashes are accepted;
+            a report produced on Windows uses them.
+        target_root: The scan root, or ``None`` to normalise separators only.
+
+    Returns:
+        The path relative to ``target_root`` when it lies underneath it, else
+        the path with separators normalised and nothing else changed. A path
+        OUTSIDE the scan target is reported as-is on purpose: silently
+        relativising it would claim the finding is somewhere it is not.
+    """
+    text = path.replace("\\", "/")
+    candidate = PurePosixPath(text)
+    if target_root is None or not _is_rooted(text):
+        return candidate.as_posix()
+    for root in _candidate_roots(target_root):
+        with suppress(ValueError):
+            return candidate.relative_to(root).as_posix()
+    return candidate.as_posix()
+
+
+def _is_rooted(text: str) -> bool:
+    """Is this path anchored, in EITHER flavour?
+
+    Asked in both because the two disagree, and a scanner report may have been
+    produced on the other one. ``/checkout/app.env`` is absolute to POSIX and
+    not to Windows (no drive); ``C:/checkout/app.env`` is absolute to Windows
+    and, to POSIX, an ordinary relative path whose first segment is ``C:``.
+    Trusting either alone leaves half of the reports unrelativised on one host.
+    """
+    return PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute()
+
+
+def _candidate_roots(target_root: Path) -> Iterator[PurePosixPath]:
+    """The scan root as written, then as resolved. Duplicates are harmless."""
+    yield PurePosixPath(target_root.as_posix())
+    with suppress(OSError):
+        yield PurePosixPath(target_root.resolve().as_posix())
+
+
 @dataclass(frozen=True)
 class ScanScope:
     """What a scan is allowed to touch.
@@ -101,8 +169,14 @@ class ScanScope:
     config: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        # `as_posix()`, never `str()`. This dict is hashed: it reaches
+        # `CleanRunAttestation.body()` and from there `canonical_bytes()`, whose
+        # docstring states a cross-machine byte-equality contract. `str(Path)`
+        # renders the host's separator, so the same scan of the same tree
+        # serialised `/repo/src` on Linux and `\repo\src` on Windows and sealed
+        # two different attestation hashes into the lineage spine for one scope.
         return {
-            "roots": [str(p) for p in self.roots],
+            "roots": [p.as_posix() for p in self.roots],
             "include": list(self.include),
             "exclude": list(self.exclude),
             "max_depth": self.max_depth,
