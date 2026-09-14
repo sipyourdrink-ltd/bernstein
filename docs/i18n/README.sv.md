@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### governance-lagret med öppen källkod för AI-agenter
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)

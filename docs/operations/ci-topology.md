@@ -32,7 +32,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cleanup-runs.yml | Cleanup Action Runs | workflow_dispatch | {"cancel-in-progress": "false", "group": "cleanup-runs-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-e2e.yml | cluster-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
-| .github/workflows/codeql.yml | CodeQL Security Analysis | pull_request, push, schedule | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "codeql-${{ github.ref }}"} | 1 |
+| .github/workflows/codeql.yml | CodeQL Security Analysis | push, schedule | {"cancel-in-progress": "false", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/coverage-ratchet-weekly.yml | Coverage ratchet (weekly floor bump) | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "coverage-ratchet-weekly"} | 1 |
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | workflow_run | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
