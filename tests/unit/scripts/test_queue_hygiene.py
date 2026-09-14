@@ -570,3 +570,28 @@ def test_pr_filter_does_not_weaken_cross_pr_rules(qh: ModuleType) -> None:
         "over-wip must still fire for the filtered PR - the rule needed to "
         "see all 6 of this author's PRs, not just the filtered-to-one list"
     )
+
+
+# --- ensure_labels ----------------------------------------------------------
+
+
+def test_ensure_labels_skips_names_that_already_exist(qh: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `gh label list --json name` answers with a list of objects. Wrapping
+    # that in set() raised on the unhashable dicts, so the first --apply run
+    # died here before any rule ran; the dry run never reaches this function,
+    # which is why it hid.
+    created: list[str] = []
+
+    def fake_gh_json(*args: str) -> object:
+        assert args[:2] == ("label", "list")
+        return [{"name": "over-wip"}]
+
+    def fake_gh(*args: str) -> None:
+        assert args[:2] == ("label", "create")
+        created.append(args[2])
+
+    monkeypatch.setattr(qh, "gh_json", fake_gh_json)
+    monkeypatch.setattr(qh, "gh", fake_gh)
+    qh.ensure_labels("owner/repo")  # must not raise
+    assert "over-wip" not in created
+    assert created == [name for name, _, _ in qh._LABELS_TO_ENSURE if name != "over-wip"]

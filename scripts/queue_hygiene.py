@@ -427,8 +427,11 @@ _LABELS_TO_ENSURE = (
 
 
 def ensure_labels(repo: str) -> None:
-    existing = set(gh_json("label", "list", "--repo", repo, "--limit", "300", "--json", "name"))
-    existing_names = {e["name"] for e in existing} if existing and isinstance(existing, list) else set()
+    # `gh label list --json name` returns a list of {"name": ...} objects;
+    # wrapping it in set() raised on the unhashable dicts, so every --apply
+    # run died here before any rule ran. Dry runs never reach this function.
+    existing = gh_json("label", "list", "--repo", repo, "--limit", "300", "--json", "name")
+    existing_names = {e["name"] for e in existing} if isinstance(existing, list) else set()
     for name, color, description in _LABELS_TO_ENSURE:
         if name in existing_names:
             continue
