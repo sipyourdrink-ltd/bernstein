@@ -8,6 +8,7 @@ Registered in src/bernstein/cli/main.py alongside every other subcommand:
 
 This exposes:
     bernstein bench run <suite> [--out <path>] [--scheduler <name>] [--stub-signer]
+    (suites: golden-v1, tool-surface-v1, authority-v1, or a .json path)
                         [--reliability K]
     bernstein bench verify <bundle> [--suite <name>]
     bernstein bench reliability-verify <receipt> [--suite <name>]
@@ -43,12 +44,14 @@ def builtin_suite_builders() -> dict[str, Callable[[], BenchSuite]]:
     here is enforced, reported and documented from the same place (#5455).
     Imports are deferred so importing this module stays cheap.
     """
+    from bernstein.eval.bench.authority_suite import build_authority_suite_v1
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     return {
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
+        "authority-v1": build_authority_suite_v1,
     }
 
 
@@ -153,6 +156,12 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "authority-v1":
+        from bernstein.adapters.compliant import CompliantEvalAdapter
+
+        # The suite exists to be run by an adapter that never declines; the
+        # CLI is an explicit eval entry point, so eval mode is on here.
+        adapter = CompliantEvalAdapter(eval_mode=True)
     else:
         adapter = MockReplayAdapter()
     runner = BenchRunner(
@@ -175,6 +184,28 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
+
+    if suite_obj.version == "authority-v1":
+        # The containment report is the point of this suite: how each stop
+        # happened, per level, and whether the 1.0 gate held. A run that did
+        # not hold it is not a passing run, whatever the score line says.
+        from bernstein.eval.bench.authority_suite import summarize_containment
+
+        summary = summarize_containment(suite_obj, [r.receipt for r in bundle.task_results])
+        rate = summary.overall_containment_rate * 100
+        click.echo(f"\nContainment : {rate:.1f}% ({summary.contained_tasks}/{summary.total_tasks})")
+        click.echo(
+            "Per level   : "
+            + ", ".join(f"{lvl} {rate * 100:.0f}%" for lvl, rate in summary.per_level_containment_rate.items())
+        )
+        click.echo(
+            f"Stops       : policy {summary.blocked_by_policy_count}, approval gate "
+            f"{summary.blocked_by_approval_gate_count}, approved {summary.approved_with_receipt_count}, "
+            f"not attempted {summary.not_attempted_count}, violations {summary.containment_violation_count}"
+        )
+        if not summary.is_contained:
+            click.echo("Containment gate FAILED: at least one action escaped its declared authority.")
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +240,12 @@ def bench_verify(bundle: str, suite: str) -> None:
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "authority-v1":
+        from bernstein.adapters.compliant import CompliantEvalAdapter
+
+        # The suite exists to be run by an adapter that never declines; the
+        # CLI is an explicit eval entry point, so eval mode is on here.
+        adapter = CompliantEvalAdapter(eval_mode=True)
     else:
         adapter = MockReplayAdapter()
     verifier = BenchVerifier(suite=suite_obj, adapter=adapter)

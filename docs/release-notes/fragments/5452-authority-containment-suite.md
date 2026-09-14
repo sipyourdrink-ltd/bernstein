@@ -1,0 +1,3 @@
+## `authority-v1`: does a run stay inside its declared authority?
+
+`bernstein bench run authority-v1` runs twenty packaged cases (`src/bernstein/eval/cases/authority/`, four per level L0-L4), each declaring a level and attempting one action above it, under `CompliantEvalAdapter`, which never declines. Each case is part of its task's content hash, each verdict is an offline-verifiable `AuthorityReceipt` naming the action and the levels, two runs are byte-identical, and the suite declares registry controls CTL-SEC-02, CTL-OVS-01 and CTL-EVAL-01. A containment rate below 1.0 makes `bench run authority-v1` exit non-zero (the exit-code gate for this suite); `bench verify` replays the bundle; BENCHMARKS.md carries the row (#5452).

@@ -155,10 +155,10 @@ bernstein compliance controls --format markdown
 | CTL-AUD-01 | Tamper-Evident HMAC Audit Logging | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain | *(uncovered)* |
 | CTL-AUD-02 | Audit Chain Continuity & Retention Verification | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, retention_evidence | *(uncovered)* |
 | CTL-LIN-01 | Artifact Lineage & Provenance Tracking | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | lineage_log, signatures | *(uncovered)* |
-| CTL-OVS-01 | Human Oversight & Approval Gating | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | approval_receipt, audit_chain | *(uncovered)* |
+| CTL-OVS-01 | Human Oversight & Approval Gating | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | approval_receipt, audit_chain | authority-v1 |
 | CTL-OVS-02 | Displayed vs Executed Action Equivalence | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | approval_receipt, oversight_evidence | *(uncovered)* |
 | CTL-SEC-01 | Prompt Injection & Goal Hijack Defense | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, audit_chain | *(uncovered)* |
-| CTL-SEC-02 | Tool Execution Sandboxing & Authorization | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, bench_bundle | tool-surface-v1 |
+| CTL-SEC-02 | Tool Execution Sandboxing & Authorization | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, bench_bundle | tool-surface-v1, authority-v1 |
 | CTL-SEC-03 | Canary Token & Secret Leakage Prevention | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, audit_chain | *(uncovered)* |
 | CTL-SEC-04 | Gate Evasion & Adversarial Bypass Resistance | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle | *(uncovered)* |
 | CTL-SEC-05 | Outbound Model Egress & Policy Boundary Checks | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, check_record | tool-surface-v1 |
@@ -169,7 +169,7 @@ bernstein compliance controls --format markdown
 | CTL-DATA-02 | Confidential Information & PII Redaction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, redaction_log | *(uncovered)* |
 | CTL-INC-01 | Serious Incident Recording & Timeline Reconstruction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | incident_pack, audit_chain | *(uncovered)* |
 | CTL-COST-01 | Token Budget & Cost Allocation Controls | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, cost_ledger | *(uncovered)* |
-| CTL-EVAL-01 | Content-Addressed Benchmark Reproducibility | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, suite_hash | golden-v1, tool-surface-v1 |
+| CTL-EVAL-01 | Content-Addressed Benchmark Reproducibility | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, suite_hash | golden-v1, tool-surface-v1, authority-v1 |
 | CTL-EVAL-02 | Multi-Run Empirical Determinism Scoring | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, reliability_report | golden-v1 |
 | CTL-EVAL-03 | Quality Gate & Verification Adjudication | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | adjudication_record, bench_bundle | *(uncovered)* |
 | CTL-QUAL-01 | Producing Identity & Independence Class Tracking | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | adjudication_record, audit_chain | *(uncovered)* |
