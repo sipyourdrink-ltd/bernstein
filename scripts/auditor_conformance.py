@@ -35,6 +35,7 @@ from tests.conformance.auditor.scoreboard import REPORT_PATH_ENV, read_report  #
 VECTORS = (
     "tests/conformance/auditor/test_vectors.py",
     "tests/conformance/auditor/test_data_endpoint_vectors.py",
+    "tests/conformance/auditor/test_attribution_vectors.py",
 )
 SCORE_PLUGIN = "tests.conformance.auditor.scoreboard"
 
