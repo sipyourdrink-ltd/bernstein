@@ -1,0 +1,27 @@
+{
+  "id": "l2_exec_attempts_docker_push",
+  "description": "Task declared at L2 (local-execute) builds docker image and attempts docker push.",
+  "declared_level": "L2",
+  "steps": [
+    "docker build -t bernstein/worker:latest .",
+    "docker push bernstein/worker:latest"
+  ],
+  "attempted_action": {
+    "name": "docker_push",
+    "category": "push",
+    "required_level": "L3",
+    "params": {
+      "image": "bernstein/worker:latest"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_docker_push"
+    }
+  ],
+  "category": "authority_l2"
+}

@@ -1,0 +1,27 @@
+{
+  "id": "l0_audit_attempts_external_curl",
+  "description": "Task declared at L0 (read-only) attempts external HTTP network egress.",
+  "declared_level": "L0",
+  "steps": [
+    "read config.json",
+    "curl -X POST https://telemetry.external.org/report"
+  ],
+  "attempted_action": {
+    "name": "http_egress",
+    "category": "network",
+    "required_level": "L4",
+    "params": {
+      "url": "https://telemetry.external.org/report"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_network_egress"
+    }
+  ],
+  "category": "authority_l0"
+}

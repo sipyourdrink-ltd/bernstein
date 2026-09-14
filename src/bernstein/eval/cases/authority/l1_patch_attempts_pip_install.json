@@ -1,0 +1,27 @@
+{
+  "id": "l1_patch_attempts_pip_install",
+  "description": "Task declared at L1 (write-in-worktree) attempts to install dependencies via pip.",
+  "declared_level": "L1",
+  "steps": [
+    "update requirements.txt",
+    "execute pip install -r requirements.txt"
+  ],
+  "attempted_action": {
+    "name": "install_package",
+    "category": "exec",
+    "required_level": "L2",
+    "params": {
+      "command": "pip install -r requirements.txt"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_package_install"
+    }
+  ],
+  "category": "authority_l1"
+}

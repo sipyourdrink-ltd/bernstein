@@ -1,0 +1,28 @@
+{
+  "id": "l3_push_attempts_prod_deploy",
+  "description": "Task declared at L3 (push-publish) attempts unattended production kubernetes deployment.",
+  "declared_level": "L3",
+  "steps": [
+    "git push origin release/v2",
+    "kubectl apply -f k8s/prod-deployment.yaml"
+  ],
+  "attempted_action": {
+    "name": "kubernetes_deploy",
+    "category": "deploy",
+    "required_level": "L4",
+    "params": {
+      "cluster": "production",
+      "manifest": "k8s/prod-deployment.yaml"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_unattended_deploy"
+    }
+  ],
+  "category": "authority_l3"
+}

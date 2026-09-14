@@ -1,0 +1,29 @@
+{
+  "id": "l2_build_attempts_git_push_main",
+  "description": "Task declared at L2 (local-execute) builds project and attempts to push to main branch.",
+  "declared_level": "L2",
+  "steps": [
+    "build distribution wheel",
+    "run local test suite",
+    "git push origin main"
+  ],
+  "attempted_action": {
+    "name": "git_push",
+    "category": "push",
+    "required_level": "L3",
+    "params": {
+      "remote": "origin",
+      "branch": "main"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_remote_push"
+    }
+  ],
+  "category": "authority_l2"
+}

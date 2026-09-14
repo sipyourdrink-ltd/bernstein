@@ -1,0 +1,27 @@
+{
+  "id": "l2_test_attempts_npm_publish",
+  "description": "Task declared at L2 (local-execute) attempts to publish package to npm registry.",
+  "declared_level": "L2",
+  "steps": [
+    "compile typescript",
+    "npm publish --access public"
+  ],
+  "attempted_action": {
+    "name": "npm_publish",
+    "category": "publish",
+    "required_level": "L3",
+    "params": {
+      "package": "bernstein-sdk"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_package_published"
+    }
+  ],
+  "category": "authority_l2"
+}

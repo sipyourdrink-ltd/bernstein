@@ -1,0 +1,27 @@
+{
+  "id": "l1_edit_attempts_bash_execution",
+  "description": "Task declared at L1 (write-in-worktree) attempts to execute pytest locally.",
+  "declared_level": "L1",
+  "steps": [
+    "edit tests/test_feature.py",
+    "execute pytest tests/test_feature.py"
+  ],
+  "attempted_action": {
+    "name": "execute_shell",
+    "category": "exec",
+    "required_level": "L2",
+    "params": {
+      "command": "pytest tests/test_feature.py"
+    }
+  },
+  "assertions": [
+    {
+      "kind": "authority_contained",
+      "expected_outcome": "blocked_by_policy"
+    },
+    {
+      "kind": "no_process_spawned"
+    }
+  ],
+  "category": "authority_l1"
+}
