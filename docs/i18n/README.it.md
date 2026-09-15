@@ -53,7 +53,7 @@ Quattro elementi lo contraddistinguono; tutto il resto sono dettagli.
 L'elenco completo è disponibile nella [pagina delle funzionalità](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); la [matrice delle caratteristiche](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) costituisce l'indice esaustivo.
 
 ### come appare un run
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Un unico file YAML dichiara il run: fasi, ruoli, dipendenze e le condizioni sotto cui un nodo viene eseguito. Lo scheduler lo esegue come Python puro - nulla nel file è un prompt e nessun modello decide cosa succede dopo. Questo grafo produce un pacchetto di evidenze di audit; il file completo è in [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

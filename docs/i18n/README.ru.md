@@ -53,7 +53,7 @@ Bernstein — опенсорсный governance-слой для AI-агенто�
 Полный список — на [странице возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [матрица возможностей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) — исчерпывающий индекс.
 
 ### как выглядит прогон
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Один YAML-файл объявляет весь прогон: фазы, роли, зависимости и условия, при которых узел вообще запускается. Планировщик исполняет его как обычный Python — в файле нет ни одного промпта, и ни одна модель не решает, что будет дальше. Этот граф собирает пакет аудиторских свидетельств; полный файл лежит в [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

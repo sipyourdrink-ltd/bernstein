@@ -53,7 +53,7 @@ Neljä ominaisuutta erottaa sen muista; kaikki muu on yksityiskohtia.
 Täydellinen luettelo löytyy [kyvykkyyssivulta](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ominaisuusmatriisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) toimii kattavana hakemistona.
 
 ### miltä ajo näyttää
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Yksi YAML-tiedosto deklaroi ajon: vaiheet, roolit, riippuvuudet ja ehdot, joilla solmu ylipäätään ajetaan. Skeduloija suorittaa sen puhtaana Pythonina - mikään tiedostossa ei ole prompti, eikä mikään malli päätä mitä seuraavaksi tapahtuu. Tämä graafi tuottaa auditointievidenssipaketin; koko tiedosto on [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

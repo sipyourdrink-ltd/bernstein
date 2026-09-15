@@ -53,7 +53,7 @@ Dört özellik onu farklı kılar; gerisi ayrıntıdır.
 Tam liste [yetenekler sayfasında](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) yer alır; [özellik matrisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) kapsamlı dizindir.
 
 ### bir çalıştırma nasıl görünür
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Tek bir YAML dosyası çalıştırmayı bildirir: fazlar, roller, bağımlılıklar ve bir düğümün hangi koşullarda çalışacağı. Zamanlayıcı bunu saf Python olarak yürütür - dosyada hiçbir şey prompt değildir ve bundan sonra ne olacağına hiçbir model karar vermez. Bu graf bir denetim kanıt paketi üretir; dosyanın tamamı [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) içindedir.
 

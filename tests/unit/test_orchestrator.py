@@ -42,6 +42,7 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.defaults import ORCHESTRATOR
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
@@ -259,6 +260,84 @@ def _build_orchestrator(
     spawner = AgentSpawner(adp, templates_dir, tmp_path, default_model=default_model)
     client = httpx.Client(transport=_paginated_transport(transport), base_url="http://testserver")
     return Orchestrator(cfg, spawner, tmp_path, client=client)
+
+
+def test_orchestrator_deduplicates_scenario_skip_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    scenarios_dir = tmp_path / ".bernstein" / "scenarios"
+    scenarios_dir.mkdir(parents=True)
+    (scenarios_dir / "scenario.yaml").write_text(
+        """id: scenario-a
+name: Scenario A
+description: Demo
+tasks:
+  - title: Task one
+    description: first
+""",
+        encoding="utf-8",
+    )
+    transport = _mock_transport(
+        {
+            "GET /status": httpx.Response(200, json={"status": "ok"}),
+            "GET /tasks": httpx.Response(200, json=[]),
+        }
+    )
+    orch = _build_orchestrator(tmp_path, transport)
+
+    with caplog.at_level(logging.WARNING):
+        orch._tick_count = ORCHESTRATOR.normal_tick_phase - 1
+        orch.tick()
+        orch._tick_count = ORCHESTRATOR.normal_tick_phase - 1
+        orch.tick()
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Found workspace scenarios but skipped roadmap emission:")
+    ]
+    assert len(warnings) == 1
+    assert str(tmp_path / ".sdd" / "backlog" / "open") in warnings[0]
+
+
+def test_orchestrator_clears_scenario_skip_warning_after_emission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from bernstein.core.planning import roadmap_runtime
+
+    roadmap_runtime._reset_scenario_skip_warning_state_for_tests()
+    outcomes = iter(
+        [
+            roadmap_runtime.RoadmapWaveOutcome((), "backlog-missing", 1, "blocked"),
+            roadmap_runtime.RoadmapWaveOutcome((tmp_path / "ticket.yaml",), "emitted", 1, "emitted"),
+            roadmap_runtime.RoadmapWaveOutcome((), "backlog-missing", 1, "blocked again"),
+        ]
+    )
+    monkeypatch.setattr(roadmap_runtime, "emit_roadmap_wave_outcome", lambda _workdir: next(outcomes))
+    transport = _mock_transport(
+        {
+            "GET /status": httpx.Response(200, json={"status": "ok"}),
+            "GET /tasks": httpx.Response(200, json=[]),
+        }
+    )
+    orch = _build_orchestrator(tmp_path, transport)
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            orch._tick_count = ORCHESTRATOR.normal_tick_phase - 1
+            orch.tick()
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Found workspace scenarios but skipped roadmap emission:")
+    ]
+    assert len(warnings) == 2
+    assert "backlog-missing" in warnings[0]
+    assert "backlog-missing" in warnings[1]
 
 
 # --- Task.from_dict ---

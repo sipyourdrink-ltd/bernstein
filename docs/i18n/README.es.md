@@ -53,7 +53,7 @@ Cuatro cosas lo diferencian; todo lo demás son detalles.
 La lista completa está en la [página de capacidades](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); la [matriz de características](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) es el índice exhaustivo.
 
 ### cómo es una ejecución
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Un único archivo YAML declara la ejecución: fases, roles, dependencias y las condiciones bajo las que un nodo llega a ejecutarse. El planificador lo ejecuta como Python puro - nada en el archivo es un prompt y ningún modelo decide qué pasa después. Este grafo produce un paquete de evidencias de auditoría; el archivo completo está en [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

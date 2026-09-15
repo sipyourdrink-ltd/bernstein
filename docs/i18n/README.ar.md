@@ -53,7 +53,7 @@ Bernstein هو طبقة الحوكمة مفتوحة المصدر لوكلاء ا
 القائمة الكاملة متوفرة في [صفحة الإمكانيات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)؛ و[مصفوفة الميزات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) هي الفهرس الشامل.
 
 ### كيف يبدو التشغيل
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 ملف YAML واحد يعلن التشغيل كاملًا: المراحل والأدوار والاعتماديات والشروط التي يعمل بموجبها كل عقدة أصلًا. المجدوِل ينفّذه كـ Python خالص - لا شيء في الملف موجّه نصي، ولا يقرر أي نموذج ما يحدث تاليًا. هذا المخطط ينتج حزمة أدلة تدقيق؛ الملف الكامل في [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

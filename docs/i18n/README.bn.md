@@ -53,7 +53,7 @@ Bernstein হলো AI এজেন্টদের জন্য ওপেন-স
 পুরো তালিকা আছে [ক্যাপাবিলিটি পাতায়](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ফিচার ম্যাট্রিক্স](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) হলো সম্পূর্ণ সূচি।
 
 ### একটি রান দেখতে কেমন
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 একটিমাত্র YAML ফাইল পুরো রানটি ঘোষণা করে: ফেজ, রোল, নির্ভরতা এবং কোন শর্তে একটি নোড আদৌ চলবে। শিডিউলার এটিকে বিশুদ্ধ Python হিসেবে চালায় - ফাইলের কিছুই প্রম্পট নয়, আর এরপরে কী হবে তা কোনো মডেল ঠিক করে না। এই গ্রাফটি একটি অডিট এভিডেন্স প্যাক তৈরি করে; সম্পূর্ণ ফাইলটি আছে [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml)-এ।
 

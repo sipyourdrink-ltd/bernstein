@@ -53,7 +53,7 @@ Quatro pontos o diferenciam; todo o resto são detalhes.
 A lista completa está na [página de capacidades](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); a [matriz de recursos](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) é o índice exaustivo.
 
 ### como é uma execução
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Um único arquivo YAML declara a execução: fases, papéis, dependências e as condições sob as quais um nó chega a rodar. O escalonador o executa como Python puro - nada no arquivo é um prompt e nenhum modelo decide o que acontece a seguir. Este grafo produz um pacote de evidências de auditoria; o arquivo completo está em [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

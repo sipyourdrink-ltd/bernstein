@@ -53,7 +53,7 @@ Bernstein は AI エージェントのためのオープンソース・ガバナ
 全一覧は[ケーパビリティのページ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)に、網羅的な索引は[機能マトリクス](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)にある。
 
 ### 実行はこう見える
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 1 つの YAML ファイルが実行全体を宣言します: フェーズ、ロール、依存関係、そしてノードが実行される条件。スケジューラはそれを素の Python として実行します - ファイルの中にプロンプトは一切なく、次に何が起きるかをモデルが決めることもありません。このグラフは監査エビデンスパックを生成します。完全なファイルは [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml) にあります。
 

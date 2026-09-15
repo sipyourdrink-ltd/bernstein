@@ -53,7 +53,7 @@ Cztery cechy wyróżniają ten projekt; reszta to szczegóły.
 Pełna lista znajduje się na [stronie możliwości](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [macierz funkcji](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) stanowi wyczerpujący spis.
 
 ### jak wygląda przebieg
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Jeden plik YAML deklaruje cały przebieg: fazy, role, zależności i warunki, pod którymi węzeł w ogóle się uruchamia. Scheduler wykonuje go jako czysty Python - nic w pliku nie jest promptem i żaden model nie decyduje, co dalej. Ten graf buduje pakiet dowodów audytowych; pełny plik leży w [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

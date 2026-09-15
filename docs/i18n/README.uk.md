@@ -53,7 +53,7 @@ Bernstein — опенсорсний governance-шар для AI-агентів.
 Повний список наведено на [сторінці можливостей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [матриця функцій](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) є вичерпним покажчиком.
 
 ### як виглядає запуск
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Один YAML-файл оголошує весь запуск: фази, ролі, залежності та умови, за яких вузол узагалі виконується. Планувальник виконує його як звичайний Python — у файлі немає жодного промпта, і жодна модель не вирішує, що буде далі. Цей граф збирає пакет аудиторських свідчень; повний файл лежить у [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 

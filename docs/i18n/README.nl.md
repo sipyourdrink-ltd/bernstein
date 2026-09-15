@@ -53,7 +53,7 @@ Vier eigenschappen maken het uniek; al het andere is detail.
 De volledige lijst staat op de [mogelijkhedenpagina](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); de [functiematrix](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) is de uitputtende index.
 
 ### hoe een run eruitziet
-<!-- l10n: en="what a run looks like" hash="sha256:980d54d982be" -->
+<!-- l10n: en="what a run looks like" hash="sha256:21e85ef816ea" -->
 
 Eén YAML-bestand declareert de run: fasen, rollen, afhankelijkheden en de voorwaarden waaronder een node überhaupt draait. De scheduler voert het uit als gewoon Python - niets in het bestand is een prompt, en geen model beslist wat er daarna gebeurt. Deze graaf produceert een audit-evidence-pack; het volledige bestand staat in [`.bernstein/workflows/audit-evidence-pack.yaml`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/.bernstein/workflows/audit-evidence-pack.yaml).
 
