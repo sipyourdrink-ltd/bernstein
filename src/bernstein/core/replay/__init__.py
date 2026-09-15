@@ -84,7 +84,9 @@ from bernstein.core.replay.provider_state import (
 from bernstein.core.replay.read_paths import (
     ReadPathDerivationError,
     ReadPathSet,
+    TaskReadSet,
     derive_read_paths,
+    derive_task_read_set,
 )
 from bernstein.core.replay.run_receipt import (
     RUN_RECEIPT_FILENAME,
@@ -155,9 +157,11 @@ __all__ = [
     "RunReceipt",
     "RunReceiptError",
     "RunReceiptVerifyResult",
+    "TaskReadSet",
     "build_run_receipt",
     "derive_read_paths",
     "derive_replay_key",
+    "derive_task_read_set",
     "diff_event_logs",
     "fork_run",
     "is_recording_enabled",

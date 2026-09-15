@@ -19,12 +19,14 @@ lease-backed resource-pool subsystem from #2544 -- a different question
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from bernstein.core.knowledge.code_graph import TaskNodeSet
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+
+    from bernstein.core.replay.read_paths import TaskReadSet
 
 __all__ = [
     "ADMISSION_RECEIPT_VERSION",
@@ -180,6 +182,61 @@ def _reject_duplicate_task_ids(tasks: Sequence[TaskNodeSet]) -> None:
         raise ValueError(f"attributions name the same task more than once: {list(duplicates)}")
 
 
+def _ordered_read_sets(
+    tasks: Sequence[TaskNodeSet],
+    read_sets: Iterable[TaskReadSet],
+) -> tuple[TaskReadSet, ...]:
+    """Canonicalise the read sets for the projection, or refuse them.
+
+    Sorting happens here rather than being trusted from the caller, so the
+    projection is canonical however the set was built and a receipt carrying
+    unsorted paths is caught as a divergence rather than re-derived into
+    agreement with itself.
+
+    Two read sets for one task are refused for the same reason two
+    attributions are: they are two different sets under one name, and keeping
+    either silently would record a read side the run did not have. A read set
+    naming a task the receipt does not carry is refused too -- it describes a
+    decision this receipt is not about.
+
+    Args:
+        tasks: The attributions the receipt is being built over.
+        read_sets: One entry per task that has one. Tasks may be absent.
+
+    Returns:
+        The read sets, ordered by task id, with their paths sorted.
+
+    Raises:
+        ValueError: On a duplicate task id, or one absent from *tasks*.
+    """
+    from bernstein.core.replay.read_paths import TaskReadSet as _TaskReadSet
+
+    ordered = sorted(read_sets, key=lambda r: r.task_id)
+
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for entry in ordered:
+        if entry.task_id in seen:
+            duplicates.add(entry.task_id)
+        seen.add(entry.task_id)
+    if duplicates:
+        raise ValueError(f"read sets name the same task more than once: {sorted(duplicates)}")
+
+    unknown = sorted(seen - {task.task_id for task in tasks})
+    if unknown:
+        raise ValueError(f"read sets name tasks absent from the receipt: {unknown}")
+
+    return tuple(
+        _TaskReadSet(
+            task_id=entry.task_id,
+            read_paths=tuple(sorted(entry.read_paths)),
+            out_of_tree=tuple(sorted(entry.out_of_tree)),
+            journal_head=entry.journal_head,
+        )
+        for entry in ordered
+    )
+
+
 def serial_groups(attributions: Iterable[TaskNodeSet]) -> tuple[tuple[str, ...], ...]:
     """Partition tasks into groups whose members must not run concurrently.
 
@@ -268,10 +325,16 @@ class ReceiptVerification:
             :data:`RECEIPT_DIVERGED` or :data:`RECEIPT_GRAPH_MISMATCH`.
         divergences: Human-readable descriptions of each mismatch, sorted.
             Empty when verified.
+        read_sets_verified: Whether the recorded read side was re-derived
+            from the journals rather than only checked for canonical form.
+            True vacuously when the receipt carries no read sets. A caller
+            reading :attr:`status` alone cannot tell the two apart, which is
+            why this is a field and not a comment.
     """
 
     status: str
     divergences: tuple[str, ...]
+    read_sets_verified: bool = False
 
     @property
     def ok(self) -> bool:
@@ -279,7 +342,9 @@ class ReceiptVerification:
 
         Deliberately False for :data:`RECEIPT_CONSISTENT_ONLY`. A caller that
         wants the weaker guarantee has to ask for it by name, so nobody gets
-        it by writing ``if result.ok``.
+        it by writing ``if result.ok``. A receipt whose read side was not
+        re-derived never reaches :data:`RECEIPT_VERIFIED`, so this stays
+        False there too.
         """
         return self.status == RECEIPT_VERIFIED
 
@@ -287,6 +352,7 @@ class ReceiptVerification:
 def build_admission_receipt(
     graph_digest_value: str,
     attributions: Iterable[TaskNodeSet],
+    read_sets: Iterable[TaskReadSet] = (),
 ) -> dict[str, object]:
     """Project the graph digest, the node sets and the verdicts into a receipt.
 
@@ -296,27 +362,55 @@ def build_admission_receipt(
     value and then re-deriving it is the point: the receipt is checkable, not
     authoritative.
 
+    ``read_sets`` records what each task *read*, as derived from its journal.
+    It is the read side of the same decision: ``tasks`` carries
+    ``declared_paths``, which is what a task said it owns, and a task can be
+    wrong about that.
+
+    This function does not and cannot police where a read set came from --
+    :class:`~bernstein.core.replay.read_paths.TaskReadSet` is an ordinary
+    dataclass, so a hand-built one is accepted here exactly like a derived
+    one. What makes the read side checkable is that each entry carries the
+    ``journal_head`` it was derived from: an invented set names no head or
+    the wrong one, and fails when
+    :func:`verify_admission_receipt` is handed the journals to re-derive
+    from. Recording a claim and re-deriving it later is the same bargain the
+    verdicts make; it is not a constructor-level guarantee.
+
+    The key is **omitted entirely when no read sets are supplied**, so a
+    receipt built without them is byte-identical to one built before this
+    field existed and every stored receipt re-verifies unchanged. This is the
+    same back-compat-by-omission rule the journal uses for its ``effort``
+    dimension, and it is why :data:`ADMISSION_RECEIPT_VERSION` does not move.
+
     Args:
         graph_digest_value: Digest of the graph the decision was taken over.
         attributions: One entry per task in the run.
+        read_sets: Journal-derived read sets, at most one per task. Tasks
+            without one are simply absent; an empty iterable omits the key.
 
     Returns:
         A canonically-ordered mapping ready to be serialised into the lineage
         record.
 
     Raises:
-        ValueError: If two attributions share a task id.
+        ValueError: If two attributions share a task id, if two read sets do,
+            or if a read set names a task the receipt does not carry.
     """
     ordered = sorted(attributions, key=lambda t: t.task_id)
     _reject_duplicate_task_ids(ordered)
+    reads = _ordered_read_sets(ordered, read_sets)
     verdicts = [admit_pair(left, right).to_dict() for left, right in _pairwise(ordered)]
-    return {
+    receipt: dict[str, object] = {
         "version": ADMISSION_RECEIPT_VERSION,
         "graph_digest": graph_digest_value,
         "tasks": [task.to_dict() for task in ordered],
         "pairs": verdicts,
         "serial_groups": [list(group) for group in serial_groups(ordered)],
     }
+    if reads:
+        receipt["read_sets"] = [entry.to_dict() for entry in reads]
+    return receipt
 
 
 def verify_admission_receipt(
@@ -324,6 +418,7 @@ def verify_admission_receipt(
     *,
     graph_digest_value: str,
     graph_document_bytes: bytes | None = None,
+    read_sets: Iterable[TaskReadSet] | None = None,
 ) -> ReceiptVerification:
     """Re-derive a receipt and compare it to what was recorded.
 
@@ -350,10 +445,26 @@ def verify_admission_receipt(
     caller asking whether a decision holds is owed an answer rather than a
     traceback.
 
+    The read side works the same way and for the same reason. Without
+    *read_sets* only the recorded sets are re-projected, which catches a
+    receipt that is not in canonical form but not one whose paths were edited
+    into a different, still-canonical set. Pass the sets re-derived from the
+    tasks' journals to close that: the recorded read side then has to
+    reproduce from the journals, and a widened read set fails.
+
+    A receipt carrying read sets that nobody re-derived therefore cannot
+    reach :data:`RECEIPT_VERIFIED`, exactly as node sets cannot without the
+    graph document. :attr:`ReceiptVerification.read_sets_verified` says which
+    of the two happened, so "the read side was checked" is a fact the caller
+    can read rather than infer.
+
     Args:
         receipt: The recorded receipt.
         graph_digest_value: Digest of the graph to check it against.
         graph_document_bytes: The canonical graph document, when available.
+        read_sets: Read sets re-derived from the tasks' journals, when
+            available. ``None`` checks the recorded read side for canonical
+            form only.
 
     Returns:
         The verification outcome.
@@ -366,9 +477,7 @@ def verify_admission_receipt(
             ),
         )
 
-    raw_tasks = receipt.get("tasks")
-    entries = [e for e in (raw_tasks if isinstance(raw_tasks, list) else []) if isinstance(e, dict)]
-    recorded = [_task_from_entry(entry) for entry in entries]
+    recorded = [_task_from_entry(entry) for entry in _dict_rows(receipt.get("tasks"))]
 
     duplicates = _duplicate_task_ids(recorded)
     if duplicates:
@@ -379,6 +488,22 @@ def verify_admission_receipt(
             status=RECEIPT_DIVERGED,
             divergences=(f"receipt names the same task more than once: {list(duplicates)}",),
         )
+
+    recorded_reads = [_read_set_from_entry(entry) for entry in _dict_rows(receipt.get("read_sets"))]
+
+    # The recorded read sets are the projection source unless the caller
+    # supplied sets re-derived from the journals, in which case those are --
+    # the whole point being that the recorded ones are then not trusted.
+    reads_source = recorded_reads if read_sets is None else list(read_sets)
+
+    # Re-deriving would raise on either of these, and a verifier owes the
+    # caller a verdict rather than a traceback. A read set for a task the
+    # receipt does not carry, or two for one task, is a receipt no honest run
+    # produced.
+    try:
+        _ordered_read_sets(recorded, reads_source)
+    except ValueError as exc:
+        return ReceiptVerification(status=RECEIPT_DIVERGED, divergences=(str(exc),))
 
     divergences: list[str] = []
     rebuilt = recorded
@@ -421,29 +546,80 @@ def verify_admission_receipt(
         rebuilt = rederived
         full = True
 
-    expected = build_admission_receipt(graph_digest_value, rebuilt)
+    expected = build_admission_receipt(graph_digest_value, rebuilt, reads_source)
     # Every projected field, not only the verdicts. A receipt whose verdicts
     # survive an edit elsewhere -- a rewritten ``version``, a reordered or
     # padded ``tasks`` list -- is still a receipt that does not say what the
     # run produced, and comparing the whole canonical projection is what makes
     # "verified" mean the document reproduces byte for byte.
-    for key in ("version", "tasks", "pairs", "serial_groups"):
-        if receipt.get(key) != expected[key]:
-            divergences.append(f"{key} recorded as {receipt.get(key)!r}, re-derived {expected[key]!r}")
+    # ``read_sets`` is compared through ``.get`` on both sides because the key
+    # is absent from both a pre-read-set receipt and its re-derivation, and
+    # absent-on-both must compare equal. A recorded empty list is *not* the
+    # canonical form of "no read sets" -- omission is -- so it diverges, which
+    # is the intended answer.
+    for key in ("version", "tasks", "pairs", "serial_groups", "read_sets"):
+        if receipt.get(key) != expected.get(key):
+            divergences.append(f"{key} recorded as {receipt.get(key)!r}, re-derived {expected.get(key)!r}")
+
+    # A recorded read side that nobody re-derived is exactly as unverified as
+    # node sets with no graph document, and has to cap the status the same
+    # way. Without this, a receipt whose ``read_sets`` were edited into a
+    # different but still-canonical set reports ``verified`` / ``ok`` -- the
+    # "weaker guarantee mistaken for the stronger" that :attr:`ok` exists to
+    # prevent. Vacuously true when the receipt carries no read sets, so a
+    # pre-read-set receipt verifies exactly as it did before.
+    read_sets_verified = read_sets is not None or not recorded_reads
 
     if divergences:
-        return ReceiptVerification(status=RECEIPT_DIVERGED, divergences=tuple(sorted(divergences)))
+        return ReceiptVerification(
+            status=RECEIPT_DIVERGED,
+            divergences=tuple(sorted(divergences)),
+            read_sets_verified=read_sets_verified,
+        )
     return ReceiptVerification(
-        status=RECEIPT_VERIFIED if full else RECEIPT_CONSISTENT_ONLY,
+        status=RECEIPT_VERIFIED if (full and read_sets_verified) else RECEIPT_CONSISTENT_ONLY,
         divergences=(),
+        read_sets_verified=read_sets_verified,
     )
+
+
+def _dict_rows(value: object) -> list[dict[str, object]]:
+    """Coerce a recorded list field to the mapping rows it should hold.
+
+    A receipt may have been edited, so a value that is not a list of mappings
+    yields no rows rather than a traceback -- the same tolerance every other
+    coercion here applies, hoisted so both recorded lists share it.
+    """
+    if not isinstance(value, list):
+        return []
+    return [cast("dict[str, object]", row) for row in cast("list[object]", value) if isinstance(row, dict)]
 
 
 def _str_tuple(value: object) -> tuple[str, ...]:
     """Coerce a recorded field to a tuple of strings, tolerating absence."""
     if not isinstance(value, list):
         return ()
-    return tuple(str(item) for item in value)
+    return tuple(str(item) for item in cast("list[object]", value))
+
+
+def _read_set_from_entry(entry: dict[str, object]) -> TaskReadSet:
+    """Rebuild one read set from its recorded mapping.
+
+    Every field is coerced rather than trusted, exactly as
+    :func:`_task_from_entry` does: the receipt may have been edited, and a
+    verifier that raises on a malformed value reports a crash where it should
+    report a divergence. Ordering is left as recorded here -- canonicalising
+    it is :func:`_ordered_read_sets`' job, and doing it here would quietly
+    sort an edited receipt into agreement with itself.
+    """
+    from bernstein.core.replay.read_paths import TaskReadSet as _TaskReadSet
+
+    return _TaskReadSet(
+        task_id=str(entry.get("task_id", "")),
+        read_paths=_str_tuple(entry.get("read_paths")),
+        out_of_tree=_str_tuple(entry.get("out_of_tree")),
+        journal_head=str(entry.get("journal_head", "")),
+    )
 
 
 def _task_from_entry(entry: dict[str, object]) -> TaskNodeSet:
