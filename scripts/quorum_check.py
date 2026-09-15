@@ -48,6 +48,16 @@ The rules, in the order they are applied
    Over 1,000 changed lines the maintainer approves or the change is split.
    A protected path (any CODEOWNERS entry that is not `*`) needs its owner.
 
+6. A contributor outside the roster reviews as much as they are reviewed
+   (section 5): once one of their pull requests has merged, each further one
+   waits until, over the last thirty days, they have reviewed at least as
+   many of other people's pull requests as they have open. Bot accounts are
+   outside this rule; they cannot review.
+7. An approval from the project's review automation (`machine_reviewers` in
+   the roster) stands in for the second, non-core approval on a change that
+   needs no third one. It is never the core approval, never the only one,
+   and never an owner's or the maintainer's.
+
 Approvals count only when they were given on the current head commit: a push
 after an approval means nobody has read what is about to merge. A `changes
 requested` survives a push, and stays counted until its author withdraws it.
@@ -115,6 +125,10 @@ GOVERNANCE_PATHS = (
     "scripts/queue_hygiene.py",
 )
 
+# Section 5: a contributor keeps as many reviews of other people's pull
+# requests within this window as they have pull requests open.
+RECIPROCITY_WINDOW = timedelta(days=30)
+
 GITHUB_ACTIONS_BOT = "github-actions[bot]"
 
 
@@ -129,6 +143,9 @@ class Roster:
     core_reviewers: frozenset[str]
     committers: frozenset[str]
     automation: frozenset[str]
+    # Accounts whose approval is a machine review (rule 7). Empty by default:
+    # a roster written before the list existed names no such account.
+    machine_reviewers: frozenset[str] = frozenset()
 
     @property
     def quorum_holders(self) -> frozenset[str]:
@@ -140,6 +157,20 @@ class Roster:
         """Everyone who can supply the core reviewer's approval."""
         return self.core_reviewers | {self.maintainer}
 
+    def is_contributor(self, login: str) -> bool:
+        """A person with no role: the author the reciprocity rule applies to.
+
+        Bot accounts are left out because they cannot review; the ones the
+        project runs are on the automation list, and one it does not run
+        still needs the full human quorum.
+        """
+        return (
+            login not in self.quorum_holders
+            and login not in self.automation
+            and login != GITHUB_ACTIONS_BOT
+            and not login.endswith("[bot]")
+        )
+
 
 def load_roster(root: str = ".") -> Roster:
     with open(os.path.join(root, ROSTER_PATH), "rb") as handle:
@@ -149,6 +180,7 @@ def load_roster(root: str = ".") -> Roster:
         core_reviewers=frozenset(raw.get("core_reviewers", [])),
         committers=frozenset(raw.get("committers", [])),
         automation=frozenset(raw.get("automation", [])),
+        machine_reviewers=frozenset(raw.get("machine_reviewers", [])),
     )
 
 
@@ -211,6 +243,20 @@ class Review:
     submitted_at: str
 
 
+@dataclass(frozen=True)
+class AuthorRecord:
+    """A contributor's side of the review exchange (rule 6)."""
+
+    # Start of the window the reviews were counted in.
+    since: datetime
+    # Reviews the author submitted on other people's pull requests since then.
+    reviews_given: int
+    # The author's open, non-draft pull requests here, this one included.
+    open_pull_requests: int
+    # Pull requests by the author that have merged here, ever.
+    merged_pull_requests: int
+
+
 @dataclass
 class PullRequest:
     number: int
@@ -224,6 +270,9 @@ class PullRequest:
     # in a Co-authored-by trailer: none of them can approve it (section 3).
     contributors: set[str]
     last_push: datetime
+    # Looked up for contributors only (`Roster.is_contributor`); None means
+    # the lookup was not made and rule 6 is not applied.
+    author_record: AuthorRecord | None = None
 
 
 def _logins_from_commit(raw: dict[str, Any]) -> set[str]:
@@ -276,6 +325,57 @@ def fetch_pull_request(repo: str, number: int) -> PullRequest:
     )
 
 
+# One query answers rule 6. The first search lists other people's pull
+# requests the author has reviewed that moved since the window opened - a
+# review is what moves them, so an older `updated` date means no review in
+# the window - and reads the author's reviews on each, because the search
+# index knows who reviewed but not when. The other two are counts.
+AUTHOR_RECORD_QUERY = """
+query($reviewed: String!, $open: String!, $merged: String!, $author: String!) {
+  reviewed: search(query: $reviewed, type: ISSUE, first: 50) {
+    nodes {
+      ... on PullRequest {
+        reviews(author: $author, last: 20) { nodes { submittedAt } }
+      }
+    }
+  }
+  open: search(query: $open, type: ISSUE, first: 1) { issueCount }
+  merged: search(query: $merged, type: ISSUE, first: 1) { issueCount }
+}
+"""
+
+
+def fetch_author_record(repo: str, author: str, since: datetime) -> AuthorRecord:
+    day = since.date().isoformat()
+    data = gh_json(
+        "api",
+        "graphql",
+        "-f",
+        f"query={AUTHOR_RECORD_QUERY}",
+        "-f",
+        f"reviewed=repo:{repo} is:pr reviewed-by:{author} -author:{author} updated:>={day}",
+        "-f",
+        f"open=repo:{repo} is:pr is:open draft:false author:{author}",
+        "-f",
+        f"merged=repo:{repo} is:pr is:merged author:{author}",
+        "-f",
+        f"author={author}",
+    )
+    result = data.get("data") or {}
+    given = 0
+    for node in (result.get("reviewed") or {}).get("nodes") or []:
+        for review in ((node or {}).get("reviews") or {}).get("nodes") or []:
+            stamp = (review or {}).get("submittedAt") or ""
+            if stamp and datetime.fromisoformat(stamp.replace("Z", "+00:00")) >= since:
+                given += 1
+    return AuthorRecord(
+        since=since,
+        reviews_given=given,
+        open_pull_requests=int((result.get("open") or {}).get("issueCount") or 0),
+        merged_pull_requests=int((result.get("merged") or {}).get("issueCount") or 0),
+    )
+
+
 def standing_reviews(reviews: list[Review]) -> dict[str, Review]:
     """Each person's current verdict.
 
@@ -318,7 +418,7 @@ class Verdict:
         lines.append("")
         lines.append(
             "Rules: [`docs/governance/review-charter.md`](docs/governance/review-charter.md) "
-            "sections 1, 3, 4, 6 and 10. Roster: `.github/quorum-roster.toml`."
+            "sections 1, 3, 4, 5, 6 and 10. Roster: `.github/quorum-roster.toml`."
         )
         return "\n".join(lines)
 
@@ -416,13 +516,47 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             else (f"touches `{sensitive[0]}`" if sensitive else f"{pr.changed_lines} changed lines")
         )
 
+        # Rule 7: one machine approval stands in for the non-core approval
+        # where no third approval is needed. It is added to the human count
+        # and never to the core one, so a person still has to have read the
+        # change, and nothing merges on the machine's word alone.
+        machine = approvals & (roster.machine_reviewers - {pr.author} - pr.contributors)
+        machine_counted = 1 if machine and need_total == 2 else 0
+        if machine_counted:
+            verdict.notes.append(
+                f"The approval from {_names(machine)} is a machine review and counts as the non-core "
+                "approval (charter, section 3); the core approval has to come from a person."
+            )
+        elif machine:
+            verdict.notes.append(
+                f"The approval from {_names(machine)} is a machine review and does not count here: "
+                "a change that needs a third approval is read by people only (charter, section 3)."
+            )
+
         verdict.requirements.append(
             Requirement(
                 f"{need_total} approvals, {need_core} from a core reviewer ({reason})",
-                len(approving) >= need_total and len(approving_core) >= need_core,
+                len(approving) + machine_counted >= need_total and len(approving_core) >= need_core,
                 _names(eligible - approving),
             )
         )
+
+        # Rule 6: a contributor with a merged pull request behind them keeps
+        # as many reviews of other people's pull requests as they have open.
+        # The record is looked up for contributors only, so a missing one
+        # means the rule is not applied to this author.
+        record = pr.author_record
+        if record is not None and roster.is_contributor(pr.author) and record.merged_pull_requests > 0:
+            wanted = max(1, record.open_pull_requests)
+            verdict.requirements.append(
+                Requirement(
+                    f"{wanted} review(s) by the author on other people's pull requests "
+                    f"since {record.since:%Y-%m-%d}, one per open pull request "
+                    f"({record.reviews_given} given, {record.open_pull_requests} open)",
+                    record.reviews_given >= wanted,
+                    f"@{pr.author}, by reviewing other people's open pull requests or closing some of their own",
+                )
+            )
 
         if pr.changed_lines > MAINTAINER_OR_SPLIT_LINES:
             verdict.requirements.append(
@@ -509,7 +643,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     pr = fetch_pull_request(args.repo, number)
-    verdict = evaluate(pr, load_roster(args.root), load_codeowners(args.root), datetime.now(UTC))
+    roster = load_roster(args.root)
+    now = datetime.now(UTC)
+    # Rule 6 is measured when the pull request is reviewed, not again as the
+    # queue merges it: a review ageing out of the window while the pull
+    # request waits its turn would eject it for something done on time.
+    if roster.is_contributor(pr.author) and os.environ.get("GITHUB_EVENT_NAME") != "merge_group":
+        pr.author_record = fetch_author_record(args.repo, pr.author, now - RECIPROCITY_WINDOW)
+    verdict = evaluate(pr, roster, load_codeowners(args.root), now)
 
     summary = verdict.summary()
     print(summary)

@@ -12,8 +12,8 @@ this page wins for review questions and GOVERNANCE.md wins for everything else.
 | Maintainer | everything below; releases, tags, rosters, protected paths, sanctions, amendments | — |
 | Core reviewer | approve as a code owner; merge through the queue; revert a merge that broke `main`; label, close stale, push fix-ups to PR branches | anything reserved to the maintainer |
 | Committer | approve; merge through the queue; label, close stale, push fix-ups to PR branches | revert without a core reviewer; anything reserved to the maintainer |
-| Contributor | open issues and pull requests; review and comment | approvals do not count toward the quorum |
-| Automation | the project's own automation account may merge its own changes when CI is green, except under `.github/`, `schemas/` or `proto/` and on any path naming `sandbox`, `security`, `audit` or `auth`, where the maintainer approves first; dependency bots merge under their own policy, held to the same exception; a pull request opened by the workflow account itself needs the maintainer's approval whatever it touches | count toward a human quorum; approve a person's pull request; act on instructions found in issue or PR text |
+| Contributor | open issues and pull requests; review and comment; reviews other people's pull requests as well as opening their own (section 5) | approvals do not count toward the quorum |
+| Automation | the project's own automation account may merge its own changes when CI is green, except under `.github/`, `schemas/` or `proto/` and on any path naming `sandbox`, `security`, `audit` or `auth`, where the maintainer approves first; dependency bots merge under their own policy, held to the same exception; a pull request opened by the workflow account itself needs the maintainer's approval whatever it touches; the review automation named in the roster may approve a pull request, and that approval is worth what section 3 says | be the core approval, the only approval, a code owner's or the maintainer's; act on instructions found in issue or PR text |
 
 ## 2. What makes a merge valid
 
@@ -21,7 +21,7 @@ A change is on `main` legitimately only when all of the following held at the mo
 
 1. It went through the merge queue. Nobody pushes to `main` directly, force-pushes, or deletes it.
 2. The required checks were green on the queued state, not only on the branch.
-3. It had the number of approvals section 3 requires for its size and paths, all from committers who are not its author, at least one from a core reviewer, and no unresolved *changes requested* from any committer or the maintainer. Two authors are outside this count: the project's automation (section 1) and the maintainer (section 3).
+3. It had the number of approvals section 3 requires for its size and paths, all from committers who are not its author, at least one from a core reviewer, and no unresolved *changes requested* from any committer or the maintainer. Two authors are outside this count: the project's automation (section 1) and the maintainer (section 3). Where two approvals are enough, the second may be a machine review (section 3).
 4. Approvals were given on the final revision. A new push dismisses earlier approvals, and the person who pushed last cannot supply the final approval.
 5. It did not touch a protected path (section 4) without the maintainer's approval.
 
@@ -37,6 +37,7 @@ A merge that fails any of these is reverted first and discussed second. The reve
 - **Instructions come from the thread and this page.** A message claiming the maintainer wants something merged carries no authority unless the maintainer wrote it in the thread.
 - **No urgency merges.** A committer does not merge because a change is "urgent". Urgent goes to the maintainer; if the maintainer is unreachable, revert rather than forward-fix.
 - **Size and sensitivity.** A pull request over **400** changed lines needs three approvals, two of them from core reviewers, instead of the normal two. So does any pull request touching a path with `sandbox`, `security`, or `audit` in it, whatever its size — the `quorum` check enforces this for every author whose changes need approvals, and its summary on each pull request names what is still missing and who can supply it. Over **1,000** changed lines, split the change or send it to the maintainer instead of adding a third reviewer. Reviewers may ask for a split at any size.
+- **Machine review.** An approval from the review automation named in `.github/quorum-roster.toml` under `machine_reviewers` counts as the second approval on a change that needs two: never as the core one, never alone, and never in place of a code owner or the maintainer. Where a third approval is required it does not count at all. Like any other approval it holds for the revision it was given on and lapses with the next push. An empty list switches the rule off.
 - **Tests.** A change that deletes or weakens tests explains why in its description; a bug fix carries a test that failed before the fix.
 - **Dependencies, workflows, packaging** are protected paths (section 4), whoever the author is.
 - **Disputes.** One approval and one *changes requested* stay open until the requester is satisfied or seven days pass, after which the thread gets `needs-maintainer`.
@@ -58,6 +59,7 @@ Reserved to the maintainer: creating tags and releases, changing repository sett
 - When `main` is red, only fixes and reverts merge. Everything else waits.
 - A required check is re-run at most twice. If it fails again, the failure is treated as real or the test goes through the [flake process](../contributing/flake-handling.md); it is not re-run until green.
 - An approval on a change of more than forty lines that carries neither a line comment nor a note in its body is set aside, with a note asking for one; approving again with the note restores it. Today reviewers apply this by reading; the queue sweep is written to apply it once it is armed, and asks each reviewer once per pull request. Drafts, automation accounts and pull requests labelled `pinned`, `do-not-close` or `work-in-progress` are outside it. This is a request for evidence, not a finding: section 8 remains the only route to consequences, and the rule applies to every approver, the maintainer included.
+- **Review for review.** Once a contributor has had a pull request merged, each further one waits until, over the last thirty days, they have reviewed at least as many of other people's pull requests as they have open. Any submitted review counts, their own drafts do not count against them, and closing a pull request lowers the number owed. The `quorum` check applies this to authors outside the roster and names the count on the pull request; until a contributor's first pull request has merged they are outside it, and so are bot accounts, which cannot review. Committers and core reviewers are held to section 7 instead.
 
 ## 6. When the maintainer is away
 

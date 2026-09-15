@@ -103,6 +103,35 @@ def test_the_sweep_logs_the_run_id_it_found() -> None:
     assert "re-running quorum for #$pr (run $run" in step
 
 
+def test_a_review_also_reruns_the_reviewers_own_pull_requests() -> None:
+    # Charter section 5 counts reviews given against pull requests open, so
+    # a review moves the verdict on the reviewer's own pull requests as well
+    # as on the one reviewed; the reviewed one is not re-run twice, and the
+    # rest only once a local evaluation says the exchange is settled.
+    step = _rerun_step()
+    assert "REVIEWER: ${{ github.event.review.user.login }}" in WORKFLOW.read_text(encoding="utf-8")
+    assert '--author "$REVIEWER"' in step
+    assert 'grep -vx "$REVIEWED_PR"' in step
+    assert 'python3 scripts/quorum_check.py --pr "$first"' in step
+    assert "by the author on other people" in step
+
+
+def test_the_checkout_is_pinned_to_the_default_branch() -> None:
+    # `pull_request_review` is a privileged trigger whose default ref is the
+    # pull request's merge commit; the scripts run from the default branch.
+    doc = cast("dict[str, Any]", yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")))
+    checkouts = [
+        step
+        for step in doc["jobs"]["rerun"]["steps"]
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    assert len(checkouts) == 1
+    with_ = checkouts[0].get("with") or {}
+    assert with_.get("ref") == "${{ github.event.repository.default_branch }}"
+    assert with_.get("persist-credentials") is False
+    assert "if" not in checkouts[0]
+
+
 def test_the_quiet_line_does_not_claim_more_than_it_knows() -> None:
     """ "Already green or never ran" was wrong in a third way: still running."""
     assert "already green, still running, or never ran" in _rerun_step()
