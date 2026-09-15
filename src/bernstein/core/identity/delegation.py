@@ -105,6 +105,11 @@ __all__ = [
     "verify_run_chain",
 ]
 
+#: Filename written by :meth:`DelegationLedger.record_chain_head` beside the
+#: delegation JSONL to declare the final hop count and head HMAC.  Its presence
+#: enables tail-truncation detection in :func:`verify_run_chain`.
+_HEAD_SUFFIX: Final[str] = ".head.json"
+
 #: Genesis linkage value for the first hop of a run (matches the audit-chain
 #: convention of a fixed 64-hex-zero anchor).
 GENESIS_HMAC: Final[str] = "0" * 64
@@ -234,6 +239,11 @@ class ChainResult:
     authority: AuthorityReport = field(default_factory=lambda: AuthorityReport())
     #: Graded pass / fail / unproven reading of the same receipts (#2554).
     verdict: ChainVerdict = field(default_factory=ChainVerdict)
+    #: True when the chain was sealed with :meth:`DelegationLedger.record_chain_head`
+    #: and the reconstructed chain matches the declared hop count and head HMAC.
+    #: False when the sidecar exists but disagrees (tail truncation detected).
+    #: None when no sidecar was written (pre-seal chains; no completeness claim).
+    sealed: bool | None = None
 
     @property
     def violations(self) -> list[ScopeViolation]:
@@ -398,6 +408,34 @@ class DelegationLedger:
                 fh.write(json.dumps(entry, sort_keys=True) + "\n")
         return DelegationReceipt(**entry)
 
+    def record_chain_head(self, run_id: str) -> None:
+        """Seal a completed chain by writing a chain-head sidecar file.
+
+        Reads the current tail of ``run_id``'s delegation file and writes
+        a small JSON document alongside it::
+
+            <root>/delegation/<run_id>.head.json
+            {"hop_count": 3, "head_hmac": "<hex>"}
+
+        :func:`verify_run_chain` reads this file when it exists and fails
+        the result if the reconstructed chain's hop count or head HMAC
+        does not match -- detecting tail truncation that ``prev_hmac``
+        linkage cannot catch.
+
+        Idempotent: writing the sidecar again after additional hops updates
+        the count, because the full JSONL file is always the authority; the
+        sidecar is checked against whatever the JSONL actually contains.
+
+        Args:
+            run_id: Run whose chain to seal.
+        """
+        with self._append_lock(run_id):
+            prev_hmac, hop_count = self._tail(run_id)
+            receipt_path = self.receipt_path(run_id)
+            sidecar = receipt_path.with_name(receipt_path.stem + _HEAD_SUFFIX)
+            payload = json.dumps({"hop_count": hop_count, "head_hmac": prev_hmac}, sort_keys=True)
+            sidecar.write_text(payload, encoding="utf-8")
+
 
 def verify_run_chain(
     *,
@@ -484,6 +522,31 @@ def verify_run_chain(
             break
         prev_hmac = stored_hmac
 
+    # Check for a chain-head sidecar written by DelegationLedger.record_chain_head.
+    # When present, the declared hop count and head HMAC are compared against the
+    # reconstructed chain; a mismatch means the tail was removed after sealing.
+    sidecar_path = ledger_dir / f"{safe}{_HEAD_SUFFIX}"
+    sealed: bool | None = None
+    if sidecar_path.is_file():
+        try:
+            head = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            declared_count: int = int(head["hop_count"])
+            declared_hmac: str = str(head["head_hmac"])
+        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"chain-head sidecar is malformed: {exc}")
+            sealed = False
+        else:
+            if len(receipts) != declared_count or prev_hmac != declared_hmac:
+                errors.append(
+                    f"chain head mismatch: sidecar declares {declared_count} hop(s) "
+                    f"with head HMAC {declared_hmac[:16]}…, "
+                    f"but {len(receipts)} hop(s) were reconstructed "
+                    f"(tail truncation detected)"
+                )
+                sealed = False
+            else:
+                sealed = True
+
     chain_ok = not errors and len(receipts) > 0
     authority = verify_authority(receipts, scope_resolver=scope_resolver, genesis=GENESIS_HMAC)
     verdict = grade_chain(
@@ -494,13 +557,14 @@ def verify_run_chain(
         root_issuers=root_issuers,
     )
     return ChainResult(
-        valid=chain_ok and authority.ok,
+        valid=chain_ok and authority.ok and sealed is not False,
         hops=len(receipts),
         receipts=receipts,
         errors=errors,
         chain_ok=chain_ok,
         authority=authority,
         verdict=verdict,
+        sealed=sealed,
     )
 
 
