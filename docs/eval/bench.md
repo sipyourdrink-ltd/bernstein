@@ -15,6 +15,10 @@ machine), `bernstein-bench` is designed so that:
 2. **The posted score is recomputable** by anyone from the embedded run receipts.
 3. **A coordinator that puts a model in the scheduling loop cannot pass** the
    byte-identical reproducibility gate by construction.
+4. **A run can report into CI**: a SARIF 2.1.0 document for code scanning,
+   a check-run scorecard with the delta against a signed baseline, and a
+   conclusion that is only ever green over a baseline that was signed, from
+   the same suite, and re-verified (#5458).
 
 The primary artefact is not a leaderboard row — it is a **submission bundle** whose
 score is recomputable from the replayable run receipts it embeds.
@@ -146,6 +150,66 @@ still printed).  The stored fingerprint is recomputed from the raw
 `scheduler_config` beside it before it is trusted; a bundle whose stored
 fingerprint does not match its own settings fails with an integrity
 error even with the flag.
+
+### 5. Report into CI (`--ci`, `--sarif-out`, `--baseline`)
+
+```bash
+bernstein bench run golden-v1 --out run.json \
+  --ci \
+  --sarif-out run.sarif \
+  --baseline main-bundle.json \
+  --regression-threshold 0.05 \
+  --repo owner/repo --head-sha "$GITHUB_SHA"
+```
+
+`--sarif-out` (or `--ci`, which defaults it to `<out>.sarif`) writes a
+SARIF 2.1.0 document with one `result` per failed task, `ruleId` the task
+id, and the suite's own source as the location — `golden_suite.py` for a
+built-in suite, the `.json` file for a file suite — because that is the
+only file a benchmark task really has. `tool.driver.semanticVersion` is
+the bernstein version; the suite version, suite hash and bundle hash ride
+in `tool.driver.properties`. (The SARIF JSON Schema is not vendored; the
+tests check the document's shape, not schema validity.)
+
+`--baseline` compares the run against a bundle from the default branch
+and prints a scorecard:
+
+| Suite | Pass Rate | Score | Baseline Pass Rate | Delta | Bundle Hash | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `golden-v1` | 100.0% | 1.00 | 100.0% | +0.0% | `3f9a2c1d4e5f` | ✓ PASS |
+
+The conclusion is **success** or **failure** (pass rate dropped by more
+than `--regression-threshold`) only over a baseline that is *signed*,
+from the *same suite*, and *re-verified* — every receipt hash recomputed
+and every verdict replayed by `bench verify`'s machinery. Every way a
+baseline falls short of that is **neutral**, with the reason in the
+summary, never a green:
+
+- no `--baseline` given;
+- the file loads but does not verify (tampered receipt, hash mismatch);
+- the bundle is unsigned, or a stub signature no longer matches its hash
+  (the bundle was altered after signing);
+- the bundle is from a different suite.
+
+A `--baseline` path that does not exist is a configuration error and the
+command refuses, rather than reporting neutral for a comparison it was
+asked to make. A non-stub signature is checked for **presence only** —
+nothing in the bench layer can verify one yet (#5856), and the check
+establishes that a signature is there, not who made it — and the summary
+says so for that baseline. The baseline must therefore come from a channel
+you trust (the default branch's own artefact, not an upload): the
+signature check catches alteration after signing, not fabrication, and the
+stub key is public. The current run's bundle is not re-verified — it was
+produced in-process a moment earlier; only the baseline is.
+
+With `--repo` and `--head-sha` the scorecard is also published as a
+GitHub check run named `bernstein / bench scorecard` with the same
+conclusion; if the check run cannot be posted (client not configured,
+API call failed) or only one of the two flags was given, the command says
+so on stderr rather than leaving the operator to notice the missing check.
+`--ci` exits 1 on `failure`; `neutral` exits 0 and relies on the
+check-run conclusion to keep the merge gate from reading it as green.
+`--regression-threshold` must be zero or positive.
 
 ---
 
@@ -308,6 +372,12 @@ result = verifier.verify(bundle)
 print(result.report())
 # overall: MATCH
 
+# Report into CI: SARIF document and scorecard against a signed baseline
+# from bernstein.eval.bench import bundle_to_sarif, evaluate_ci_scorecard
+# sarif = bundle_to_sarif(bundle, suite, suite_uri="src/bernstein/eval/bench/golden_suite.py")
+# scorecard = evaluate_ci_scorecard(bundle=bundle, suite=suite, baseline_bundle=baseline, verifier=verifier)
+# print(scorecard.to_markdown())   # neutral unless the baseline is signed, same-suite and verified
+
 # Project to leaderboard
 lb = Leaderboard(suite_hash=suite.suite_hash, suite_version=suite.version)
 lb.add_entry(
@@ -375,6 +445,8 @@ src/bernstein/eval/bench/
 ├── rotation.py          # Suite saturation & rotation detection
 ├── runner.py            # BenchRunner, HoldoutBenchRunner (isolated execution)
 ├── verifier.py          # BenchVerifier, VerificationStatus
+├── sarif.py             # bundle_to_sarif: SARIF 2.1.0 document, one result per failed task (#5458)
+├── ci.py                # BenchScorecard, evaluate_ci_scorecard, post_bench_check_run (#5458)
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render & rotation alert
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
 ├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
@@ -382,6 +454,7 @@ src/bernstein/eval/bench/
 
 tests/unit/eval/bench/
 ├── test_bench.py                   # TDD suite — core acceptance criteria
+├── test_bench_ci.py                # SARIF shape, scorecard conclusions, check-run posting, CLI (#5458)
 ├── test_rotation_contamination.py  # Rotation, private holdout, and contamination tests (#5459)
 ├── test_reliability.py             # pass^k reliability floor tests
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
