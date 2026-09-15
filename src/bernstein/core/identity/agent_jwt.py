@@ -27,6 +27,7 @@ from bernstein.core.security.auth import create_jwt, verify_jwt
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import (
     DEFAULT_TENANT_ID,
+    UNSPECIFIED_TENANT,
     InvalidTenantIdError,
     normalize_tenant_id,
 )
@@ -304,7 +305,7 @@ def _require_matching_scope(field: str, on_identity: list[str], on_credential: l
         )
 
 
-def _credential_tenant_id(raw: Any) -> str:
+def _credential_tenant_id(raw: Any) -> Any:
     """Return the tenant a persisted credential is scoped to.
 
     The value is read back as the authenticated scope for every request this
@@ -332,6 +333,8 @@ def _credential_tenant_id(raw: Any) -> str:
     """
     if raw is _TENANT_KEY_ABSENT:
         return DEFAULT_TENANT_ID
+    if raw == "<unspecified>" or raw is UNSPECIFIED_TENANT:
+        return UNSPECIFIED_TENANT
     if not isinstance(raw, str):
         raise ValueError(f"credential tenant_id must be a string, got {type(raw).__name__}")
     if not raw.strip():
@@ -401,7 +404,7 @@ class AgentCredential:
     token_type: TokenType = "opaque"
     algorithm: str = "HS256"
     jti: str = ""
-    tenant_id: str = "default"
+    tenant_id: str | Any = UNSPECIFIED_TENANT
     # Zero-trust: task scope - the task IDs this credential is authorised to act on.
     # An empty list means no task-scope restriction (legacy / manager tokens).
     task_ids: list[str] = field(default_factory=list)
@@ -428,7 +431,7 @@ class AgentCredential:
             "token_type": self.token_type,
             "algorithm": self.algorithm,
             "jti": self.jti,
-            "tenant_id": self.tenant_id,
+            "tenant_id": str(self.tenant_id) if self.tenant_id is not UNSPECIFIED_TENANT else "<unspecified>",
             "task_ids": self.task_ids.copy(),
             "allowed_files": self.allowed_files.copy(),
         }
@@ -929,14 +932,20 @@ class AgentIdentityStore:
         # Use shorter expiry (4 h) for task-scoped tokens to limit blast radius.
         default_expiry = 14400 if scoped_task_ids else 86400
         expiry_s = int(token_expiry_s if token_expiry_s > 0 else default_expiry)
-        tenant_id = normalize_tenant_id(str((metadata or {}).get("tenant_id", "default")))
+        raw_metadata_tenant = (metadata or {}).get("tenant_id")
+        if raw_metadata_tenant is None or raw_metadata_tenant is UNSPECIFIED_TENANT:
+            tenant_id: str | Any = UNSPECIFIED_TENANT
+            claim_tenant_val = "<unspecified>"
+        else:
+            tenant_id = normalize_tenant_id(str(raw_metadata_tenant))
+            claim_tenant_val = tenant_id
         raw_token = create_jwt(
             claims={
                 "sub": identity_id,
                 "sid": session_id,
                 "role": role,
                 "scopes": sorted(permissions),
-                "tenant_id": tenant_id,
+                "tenant_id": claim_tenant_val,
                 "task_ids": scoped_task_ids,
                 "allowed_files": scoped_files,
             },
@@ -1128,10 +1137,14 @@ class AgentIdentityStore:
         # (already valid) tenant, so it is a claim mismatch like any other -
         # deny rather than letting the refusal escape this bool-returning
         # validator and surface as a server error at the auth boundary.
-        try:
-            claim_tenant = normalize_tenant_id(str(claims.get("tenant_id", "default")))
-        except InvalidTenantIdError:
-            return False
+        claim_tenant_raw = claims.get("tenant_id")
+        if claim_tenant_raw == "<unspecified>" or claim_tenant_raw is None or claim_tenant_raw is UNSPECIFIED_TENANT:
+            claim_tenant: str | Any = UNSPECIFIED_TENANT
+        else:
+            try:
+                claim_tenant = normalize_tenant_id(str(claim_tenant_raw))
+            except InvalidTenantIdError:
+                return False
         if claim_tenant != cred.tenant_id:
             return False
         claim_scopes = _claim_string_list(claims.get("scopes", []))
