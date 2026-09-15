@@ -62,6 +62,16 @@ such.
 
 ---
 
+## Control coverage
+
+[`docs/governance/coverage.md`](docs/governance/coverage.md) maps each failure class an agentic
+workload exhibits to the control that answers it, where that control is enforced, and the test that
+fails when it is removed. It also names what is **not** covered: the rows marked `partial` state the
+residual risk in plain language and link the issue that closes the gap.
+
+Read it before reporting a gap. A class the table already reports as `partial` is a known limit with
+an open issue rather than a vulnerability, and the issue is the better place to add what you found.
+
 ## Coordinated Disclosure
 
 ### Scope

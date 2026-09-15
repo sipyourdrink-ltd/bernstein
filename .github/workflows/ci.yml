@@ -508,6 +508,13 @@ jobs:
         # drift much later inside a long test shard. Run
         # `uv run python scripts/gen_distribution_manifests.py` locally to fix.
         run: uv run python scripts/gen_distribution_manifests.py --check
+      - name: Governance coverage table drift check (#5569)
+        # Fails if docs/governance/coverage.md drifts from coverage.yaml. Runs
+        # here rather than only in a test shard for the reason the manifest
+        # check does: the table is edited by docs-only changes, and a docs-only
+        # PR does not reach the affected-tests lane that would otherwise catch
+        # it. `uv run python scripts/gen_governance_coverage.py --update` fixes.
+        run: uv run python scripts/gen_governance_coverage.py --check
       - name: CLI reference flag-table drift check (#3465)
         # Fails if docs/reference/cli-reference.md documents a flag a command
         # rejects (that invocation exits 2 with "No such option" before the
