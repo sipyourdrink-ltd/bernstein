@@ -1001,7 +1001,17 @@ class EvolutionLoop:
             logger.info("Proposal %s applied successfully", proposal.id)
         else:
             logger.warning("Proposal %s application failed - attempting rollback", proposal.id)
-            self._executor.rollback_upgrade(proposal)
+            try:
+                self._executor.rollback_upgrade(proposal)
+            except RollbackError:
+                # NOT swallowed. A failed apply whose rollback also failed
+                # leaves the tree in a state nobody declared, and continuing the
+                # loop over it would apply the next proposal on top. The breaker
+                # is tripped first so the failure is recorded even though this
+                # does not return.
+                self._breaker.record_rollback(proposal.id)
+                logger.exception("Proposal %s rollback FAILED; the tree is in an undeclared state", proposal.id)
+                raise
             self._breaker.record_rollback(proposal.id)
 
         return success
