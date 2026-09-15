@@ -569,6 +569,13 @@ jobs:
       - uses: ./.github/actions/bootstrap
       - run: uv run ruff check src/
       - run: uv run ruff format --check src/
+      # `tests/` is where contributors add code every day, and it was
+      # ungated -- so it had already drifted, and the nightly sweep kept
+      # having to heal it after the fact. The whole tree passes both checks
+      # today, so gate it here and the next drift fails on the pull request
+      # that introduced it instead.
+      - run: uv run ruff check tests/
+      - run: uv run ruff format --check tests/
       - name: Architecture contracts (import-linter)
         run: uv run lint-imports
       - name: Route broad-except policy (#1723)

@@ -46,9 +46,7 @@ def test_q3_was_the_subagent_authorized_to_act_and_by_whom(bundle_reader: Bundle
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason=(
-        "the exported bundle carries no delegation grant record specifying permitted scope (#5047)"
-    ),
+    reason=("the exported bundle carries no delegation grant record specifying permitted scope (#5047)"),
 )
 def test_q4_what_exactly_was_the_subagent_permitted_to_do(bundle_reader: BundleReader) -> None:
     """Q4: what exactly was it permitted to do?
@@ -57,11 +55,7 @@ def test_q4_what_exactly_was_the_subagent_permitted_to_do(bundle_reader: BundleR
     (tools, file paths, endpoints, and delegation depth).
     """
     audit = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
-    grants = [
-        event
-        for event in audit["events"]
-        if event["event_type"] in ("authority.grant", "delegation.grant")
-    ]
+    grants = [event for event in audit["events"] if event["event_type"] in ("authority.grant", "delegation.grant")]
     assert grants, "the bundle must contain an authority grant record (#5047)"
 
     grant = grants[0]
@@ -94,9 +88,7 @@ def test_q5_did_the_subagent_stay_inside_that_permission(bundle_reader: BundleRe
 
     # Check that each sub-agent action was validated against the grant
     subagent_actions = [
-        event
-        for event in events
-        if event.get("actor") == "agent-b" and event["event_type"] != "agent.delegated"
+        event for event in events if event.get("actor") == "agent-b" and event["event_type"] != "agent.delegated"
     ]
     assert subagent_actions, "sub-agent actions must exist in the bundle"
     for action in subagent_actions:
@@ -109,9 +101,7 @@ def test_q5_did_the_subagent_stay_inside_that_permission(bundle_reader: BundleRe
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason=(
-        "the exported bundle has no delegation graph linking principals derived from the same grant (#5055)"
-    ),
+    reason=("the exported bundle has no delegation graph linking principals derived from the same grant (#5055)"),
 )
 def test_q21_which_other_principals_hold_authority_derived_from_the_same_grant(
     bundle_reader: BundleReader,
@@ -123,9 +113,7 @@ def test_q21_which_other_principals_hold_authority_derived_from_the_same_grant(
     """
     audit = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
     authority_graph = audit.get("authority_graph") or audit.get("delegation_tree")
-    assert authority_graph is not None, (
-        "bundle must export an authority graph or delegation tree (#5055)"
-    )
+    assert authority_graph is not None, "bundle must export an authority graph or delegation tree (#5055)"
     assert isinstance(authority_graph, dict) and "nodes" in authority_graph, (
         "authority graph must link principal nodes and delegation edges (#5055)"
     )
