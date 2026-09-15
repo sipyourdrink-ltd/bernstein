@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import statistics
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 InstanceStatus = Literal["resolved", "failed", "error", "skipped"]
 SummarySourceType = Literal["mock", "eval"]
@@ -185,22 +189,63 @@ class ResultStore:
         return self.results_dir / f"{scenario_name}.jsonl"
 
     def append(self, result: InstanceResult) -> None:
-        """Append one result to the scenario's JSONL file."""
+        """Append one result to the scenario's JSONL file, durably.
+
+        ``fsync`` because this file IS the resume point. Without it a finished
+        instance can sit in the OS page cache when the process dies, and the
+        next run re-evaluates it - which on SWE-Bench is a real model call and
+        real money, paid again for work that was already done.
+        """
         path = self._path_for(result.scenario_name)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(result.to_dict()) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def load(self, scenario_name: str) -> list[InstanceResult]:
-        """Load all results for a scenario."""
+        """Load all results for a scenario.
+
+        A torn FINAL line is dropped; a malformed line anywhere else raises.
+
+        The distinction is the whole point. Appending is not atomic, so a
+        process killed mid-write leaves a partial last line - and a bare
+        ``json.loads`` over every line made that one fragment poison the file:
+        ``already_evaluated`` raised, so a crashed benchmark run could not
+        resume, and every instance it HAD completed was re-evaluated. That is
+        the opposite of what this file is for.
+
+        Skipping every unparseable line would trade that for something worse -
+        silent data loss in the middle of a file, where corruption means
+        something went wrong that nobody will now hear about. Only the last
+        line can be torn by an interrupted append, so only the last line is
+        forgiven.
+        """
         path = self._path_for(scenario_name)
         if not path.exists():
             return []
+        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+        populated = [(index, line) for index, line in enumerate(lines) if line]
         results: list[InstanceResult] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
+        for position, (index, line) in enumerate(populated):
+            try:
                 data: dict[str, object] = json.loads(line)
-                results.append(InstanceResult.from_dict(data))
+            except ValueError:
+                is_last = position == len(populated) - 1
+                if not is_last:
+                    raise ValueError(
+                        f"{path}: line {index + 1} is not valid JSON, and it is not the last line. "
+                        "A torn final line is a crash artefact; one in the middle is corruption, "
+                        "and dropping it would lose a completed result silently."
+                    ) from None
+                logger.warning(
+                    "%s: dropping a torn final line (%d chars) - an append was interrupted. "
+                    "The %d complete result(s) before it are intact.",
+                    path,
+                    len(line),
+                    len(results),
+                )
+                break
+            results.append(InstanceResult.from_dict(data))
         return results
 
     def load_all(self) -> dict[str, list[InstanceResult]]:
