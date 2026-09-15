@@ -8762,6 +8762,67 @@ def record_delegation_minted(
     )
 
 
+# ---------------------------------------------------------------------------
+# Declaration-init quarantine (#5108)
+# ---------------------------------------------------------------------------
+# A plugin, skill, adapter, or routine that fails to initialise is isolated
+# in-process (see e.g. ``bernstein.core.skills.loader.SkillLoader``) so the
+# rest of the set still loads. This event is the journaled half: the fact
+# that isolated the failure vanishes when the process exits unless it is
+# also anchored to the chain.
+
+#: A declaration (skill, plugin, adapter, or routine) failed to initialise
+#: and was quarantined rather than taking the rest of its set down. Records
+#: what failed and why; one event per quarantine, never batched, so the
+#: chain names exactly which declaration and when.
+EVENT_DECLARATION_QUARANTINED = "declaration.quarantined"
+
+
+def record_declaration_quarantined(
+    *,
+    chain: AuditChainStore,
+    kind: str,
+    source_name: str,
+    origin: str,
+    name: str,
+    reason: str,
+    error_type: str,
+    actor: str = "loader",
+) -> AuditEvent:
+    """Append a ``declaration.quarantined`` event into *chain* (#5108).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        kind: Declaration kind (``"skill"`` today; a plugin/adapter/routine
+            kind once quarantine extends to them).
+        source_name: Label of the source the declaration came from.
+        origin: The declaration's origin, or the source label for a
+            whole-source failure.
+        name: The declaration's own name, or ``""`` when the failure never
+            got far enough to name one.
+        reason: The exception text.
+        error_type: The exception class name.
+        actor: Recorded actor; defaults to ``"loader"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_DECLARATION_QUARANTINED,
+        actor=actor,
+        resource_type="declaration",
+        resource_id=origin,
+        details={
+            "kind": kind,
+            "source_name": source_name,
+            "origin": origin,
+            "name": name,
+            "reason": reason,
+            "error_type": error_type,
+        },
+    )
+
+
 def record_pool_registered(
     *,
     chain: AuditChainStore,
@@ -9772,6 +9833,7 @@ __all__ = [
     "EVENT_COST_DISPATCH_RECEIPT",
     "EVENT_COST_PROFILE_REPORT",
     "EVENT_DASHBOARD_TOKEN_GRANT",
+    "EVENT_DECLARATION_QUARANTINED",
     "EVENT_DELEGATION_MINTED",
     "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_LADDER_BUDGET_STOP",
@@ -9934,6 +9996,7 @@ __all__ = [
     "record_cost_dispatch_receipt",
     "record_cost_profile_report",
     "record_dashboard_token_grant",
+    "record_declaration_quarantined",
     "record_delegation_minted",
     "record_endpoint_certification",
     "record_escalation_ladder_budget_stop",
