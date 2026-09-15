@@ -32,6 +32,7 @@ from __future__ import annotations
 import copy
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
 from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
-from bernstein.eval.bench.signer import StubSigner
+from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
 from bernstein.eval.bench.verifier import BenchVerifier, VerificationStatus
 
@@ -239,7 +240,7 @@ class TestVerifierMatch:
     """AC-2: bench verify recomputes scores offline and reports MATCH."""
 
     def test_honest_bundle_passes_verification(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
-        bundle = _make_bundle(simple_suite, adapter)
+        bundle = StubSigner().sign(_make_bundle(simple_suite, adapter))
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
         result = verifier.verify(bundle)
         assert result.status == VerificationStatus.MATCH
@@ -249,7 +250,7 @@ class TestVerifierMatch:
 
     def test_honest_bundle_after_save_load(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
         """verify must pass on a bundle loaded from disk (round-trip)."""
-        bundle = _make_bundle(simple_suite, adapter)
+        bundle = StubSigner().sign(_make_bundle(simple_suite, adapter))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bundle.json"
             bundle.save(path)
@@ -260,19 +261,19 @@ class TestVerifierMatch:
 
     def test_verify_names_each_task(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
         """Report must include a per-task result for every task."""
-        bundle = _make_bundle(simple_suite, adapter)
+        bundle = StubSigner().sign(_make_bundle(simple_suite, adapter))
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
         result = verifier.verify(bundle)
         ids = {tr.task_id for tr in result.task_results}
         assert ids == {t.id for t in simple_suite.tasks}
 
     def test_golden_suite_verifies(self, golden_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
-        bundle = _make_bundle(golden_suite, adapter)
+        bundle = StubSigner().sign(_make_bundle(golden_suite, adapter))
         verifier = BenchVerifier(suite=golden_suite, adapter=adapter)
         assert verifier.verify(bundle).passed
 
     def test_report_string_contains_match(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
-        bundle = _make_bundle(simple_suite, adapter)
+        bundle = StubSigner().sign(_make_bundle(simple_suite, adapter))
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
         report = verifier.verify(bundle).report()
         assert "MATCH" in report
@@ -295,12 +296,14 @@ class TestVerifierFabricatedScore:
             passed=not bundle.task_results[0].passed,  # ← flip
             score=0.0,
         )
-        bad_bundle = SubmissionBundle(
-            suite_hash=bundle.suite_hash,
-            suite_version=bundle.suite_version,
-            task_results=[tampered, *bundle.task_results[1:]],
-            scheduler_config=bundle.scheduler_config,
-            submitted_at=bundle.submitted_at,
+        bad_bundle = StubSigner().sign(
+            SubmissionBundle(
+                suite_hash=bundle.suite_hash,
+                suite_version=bundle.suite_version,
+                task_results=[tampered, *bundle.task_results[1:]],
+                scheduler_config=bundle.scheduler_config,
+                submitted_at=bundle.submitted_at,
+            )
         )
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
         result = verifier.verify(bad_bundle)
@@ -343,12 +346,14 @@ class TestVerifierReceiptIntegrity:
             passed=bundle.task_results[0].passed,
             score=bundle.task_results[0].score,
         )
-        bad = SubmissionBundle(
-            suite_hash=bundle.suite_hash,
-            suite_version=bundle.suite_version,
-            task_results=[stripped, *bundle.task_results[1:]],
-            scheduler_config=bundle.scheduler_config,
-            submitted_at=bundle.submitted_at,
+        bad = StubSigner().sign(
+            SubmissionBundle(
+                suite_hash=bundle.suite_hash,
+                suite_version=bundle.suite_version,
+                task_results=[stripped, *bundle.task_results[1:]],
+                scheduler_config=bundle.scheduler_config,
+                submitted_at=bundle.submitted_at,
+            )
         )
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
         result = verifier.verify(bad)
@@ -383,12 +388,14 @@ class TestVerifierReceiptIntegrity:
         corrupted.harness_output = {}
         corrupted.stored_receipt_hash = original_stored_hash  # ← original hash
 
-        bad = SubmissionBundle(
-            suite_hash=bundle.suite_hash,
-            suite_version=bundle.suite_version,
-            task_results=[corrupted, *bundle.task_results[1:]],
-            scheduler_config=bundle.scheduler_config,
-            submitted_at=bundle.submitted_at,
+        bad = StubSigner().sign(
+            SubmissionBundle(
+                suite_hash=bundle.suite_hash,
+                suite_version=bundle.suite_version,
+                task_results=[corrupted, *bundle.task_results[1:]],
+                scheduler_config=bundle.scheduler_config,
+                submitted_at=bundle.submitted_at,
+            )
         )
 
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
@@ -410,16 +417,187 @@ class TestVerifierReceiptIntegrity:
             passed=bundle.task_results[0].passed,
             score=bundle.task_results[0].score,
         )
-        bad = SubmissionBundle(
-            suite_hash=bundle.suite_hash,
-            suite_version=bundle.suite_version,
-            task_results=[stripped, *bundle.task_results[1:]],
-            scheduler_config=bundle.scheduler_config,
-            submitted_at=bundle.submitted_at,
+        bad = StubSigner().sign(
+            SubmissionBundle(
+                suite_hash=bundle.suite_hash,
+                suite_version=bundle.suite_version,
+                task_results=[stripped, *bundle.task_results[1:]],
+                scheduler_config=bundle.scheduler_config,
+                submitted_at=bundle.submitted_at,
+            )
         )
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
         result = verifier.verify(bad)
         assert result.status != VerificationStatus.MATCH
+
+
+# ===========================================================================
+# Bundle signature verification (issue #5856)
+# ===========================================================================
+
+
+class TestBundleSignatureVerification:
+    """
+    #5856: AgentCardSigner.sign imported a module that does not exist, so
+    every production run silently fell back to StubSigner's public test
+    key, and BenchVerifier.verify never checked signature/signer_fingerprint
+    at all. Both are fixed together: an honest but unsigned bundle must
+    never verify as MATCH, and AgentCardSigner must produce a real,
+    independently-verifiable install-identity signature rather than a
+    disguised stub one.
+    """
+
+    @staticmethod
+    def _keypair() -> tuple[bytes, bytes]:
+        from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
+
+        return generate_ed25519_keypair()
+
+    def test_unsigned_bundle_is_unsigned_not_match(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
+        """An otherwise-honest bundle with no signature must not read as MATCH."""
+        bundle = _make_bundle(simple_suite, adapter)
+        assert bundle.signature == "" and bundle.signer_fingerprint == ""
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        result = verifier.verify(bundle)
+        assert result.status == VerificationStatus.UNSIGNED
+
+    def test_forged_stub_signature_never_reaches_match(
+        self, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        """A bundle carrying the stub's own fingerprint but a garbage signature must fail."""
+        bundle = replace(
+            StubSigner().sign(_make_bundle(simple_suite, adapter)),
+            signature="not-the-real-stub-signature",
+        )
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        result = verifier.verify(bundle)
+        assert result.status == VerificationStatus.UNSIGNED
+        assert "Stub signature" in result.detail
+        assert not result.passed
+
+    def test_agent_card_signer_raises_without_install_identity(
+        self, simple_suite: BenchSuite, adapter: MockReplayAdapter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Signing fails loudly when no key material is available, never silently minted."""
+        from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+        empty_keystore = AgentCardKeystore(tmp_path / "keys")
+        assert not empty_keystore.has_keypair()
+        monkeypatch.setattr("bernstein.core.identity.http_signing.default_keystore", lambda: empty_keystore)
+        with pytest.raises(RuntimeError, match="bernstein init"):
+            AgentCardSigner().sign(_make_bundle(simple_suite, adapter))
+        assert not empty_keystore.has_keypair()
+
+    def test_agent_card_signer_fingerprint_differs_from_stub(
+        self, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        private_pem, public_pem = self._keypair()
+        signer = AgentCardSigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        signed = signer.sign(_make_bundle(simple_suite, adapter))
+        assert signed.signer_fingerprint != StubSigner.fingerprint()
+        assert signed.signature != StubSigner.expected_signature(signed)
+
+    def test_install_identity_signature_verifies_offline(
+        self, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        """An Ed25519-signed bundle round-trips and verifies against the trusted key."""
+        private_pem, public_pem = self._keypair()
+        signer = AgentCardSigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        signed = signer.sign(_make_bundle(simple_suite, adapter))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bundle.json"
+            signed.save(path)
+            loaded = SubmissionBundle.load(path)
+
+        verifier = BenchVerifier(
+            suite=simple_suite,
+            adapter=adapter,
+            trusted_keys={signer.fingerprint(): public_pem},
+        )
+        assert verifier.verify(loaded).passed
+
+    def test_forged_bundle_signature_never_reaches_match(
+        self, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        """
+        Swapped-in fingerprint/signature values must never verify: garbage
+        signatures, signatures minted by a different key, and unknown
+        fingerprints all end UNSIGNED.
+        """
+        private_pem, public_pem = self._keypair()
+        signer = AgentCardSigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        base = _make_bundle(simple_suite, adapter)
+        honest = signer.sign(base)
+        verifier = BenchVerifier(
+            suite=simple_suite,
+            adapter=adapter,
+            trusted_keys={signer.fingerprint(): public_pem},
+        )
+        assert verifier.verify(honest).passed  # guard
+
+        # (a) Garbage signature under the trusted fingerprint.
+        garbage = replace(honest, signature="AAAA..BBBB")
+        assert verifier.verify(garbage).status == VerificationStatus.UNSIGNED
+
+        # (b) Structurally valid signature minted by a DIFFERENT key,
+        #     presented under the trusted fingerprint.
+        other_private, other_public = self._keypair()
+        other_signer = AgentCardSigner(private_key_pem=other_private, public_key_pem=other_public)
+        cross = replace(honest, signature=other_signer.sign(base).signature)
+        assert verifier.verify(cross).status == VerificationStatus.UNSIGNED
+
+        # (c) Unknown fingerprint (not in the trusted key map).
+        unknown = replace(honest, signer_fingerprint="not-a-known-keyid")
+        assert verifier.verify(unknown).status == VerificationStatus.UNSIGNED
+
+    def test_tampered_content_fails_signature_verification(
+        self, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        """Content edited after signing no longer verifies (hash moved under the signature)."""
+        private_pem, public_pem = self._keypair()
+        signer = AgentCardSigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        honest = signer.sign(_make_bundle(simple_suite, adapter))
+        tampered = replace(honest, holdout_hash="deadbeef" * 8)  # keeps the old signature
+        verifier = BenchVerifier(
+            suite=simple_suite,
+            adapter=adapter,
+            trusted_keys={signer.fingerprint(): public_pem},
+        )
+        assert verifier.verify(tampered).status == VerificationStatus.UNSIGNED
+
+    def test_agent_card_signer_requires_both_or_neither_key(self) -> None:
+        with pytest.raises(ValueError, match="both"):
+            AgentCardSigner(private_key_pem=b"x")
+
+    def test_require_install_identity_refuses_valid_stub_signature(
+        self, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        """A stub signature that verifies fine by default is refused under the strict flag."""
+        bundle = StubSigner().sign(_make_bundle(simple_suite, adapter))
+        lenient = BenchVerifier(suite=simple_suite, adapter=adapter)
+        assert lenient.verify(bundle).passed  # guard: still MATCH by default
+
+        strict = BenchVerifier(suite=simple_suite, adapter=adapter, require_install_identity=True)
+        result = strict.verify(bundle)
+        assert result.status == VerificationStatus.UNSIGNED
+        assert "stub" in result.detail.lower()
+
+    def test_report_names_the_signer(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
+        """The verify report says whether a MATCH came from a stub or an install identity."""
+        stub_bundle = StubSigner().sign(_make_bundle(simple_suite, adapter))
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        stub_report = verifier.verify(stub_bundle).report()
+        assert f"signer      : {StubSigner.fingerprint()} (stub, test-grade)" in stub_report
+
+        private_pem, public_pem = self._keypair()
+        signer = AgentCardSigner(private_key_pem=private_pem, public_key_pem=public_pem)
+        install_bundle = signer.sign(_make_bundle(simple_suite, adapter))
+        install_verifier = BenchVerifier(
+            suite=simple_suite, adapter=adapter, trusted_keys={signer.fingerprint(): public_pem}
+        )
+        install_report = install_verifier.verify(install_bundle).report()
+        assert f"signer      : {signer.fingerprint()} (install identity)" in install_report
 
 
 # ===========================================================================
@@ -431,7 +609,7 @@ class TestLeaderboard:
     """AC-5: leaderboard lists only bench-verify-passing bundles."""
 
     def test_only_verified_bundles_appear(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
-        bundle = _make_bundle(simple_suite, adapter)
+        bundle = StubSigner().sign(_make_bundle(simple_suite, adapter))
         verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
         assert verifier.verify(bundle).passed  # guard
 
@@ -552,6 +730,40 @@ class TestCLI:
         result = runner.invoke(bench_group, ["verify", str(bundle_path), "--suite", str(suite_path)])
         assert result.exit_code == 0, result.output
 
+    def test_cmd_verify_checks_install_identity_signature_via_signer_key(
+        self, tmp_path: Path, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        """
+        End-to-end through the CLI entry point: --signer-key loads the
+        trusted public key file that _reliability_trusted_keys resolves
+        into BenchVerifier(trusted_keys=...), not just the class directly.
+        """
+        from click.testing import CliRunner
+
+        from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
+        from bernstein.eval.bench.bench_cli import bench_group
+
+        private_pem, public_pem = generate_ed25519_keypair()
+        signed = AgentCardSigner(private_key_pem=private_pem, public_key_pem=public_pem).sign(
+            _make_bundle(simple_suite, adapter)
+        )
+        suite_path = tmp_path / "suite.json"
+        simple_suite.save(suite_path)
+        bundle_path = tmp_path / "bundle.json"
+        signed.save(bundle_path)
+        key_path = tmp_path / "signer.pub.pem"
+        key_path.write_bytes(public_pem)
+
+        runner = CliRunner()
+        no_key = runner.invoke(bench_group, ["verify", str(bundle_path), "--suite", str(suite_path)])
+        assert no_key.exit_code == 1, no_key.output
+
+        with_key = runner.invoke(
+            bench_group,
+            ["verify", str(bundle_path), "--suite", str(suite_path), "--signer-key", str(key_path)],
+        )
+        assert with_key.exit_code == 0, with_key.output
+
     def test_cmd_verify_fails_on_fabricated_bundle(
         self, tmp_path: Path, simple_suite: BenchSuite, adapter: MockReplayAdapter
     ) -> None:
@@ -567,12 +779,14 @@ class TestCLI:
             passed=not bundle.task_results[0].passed,
             score=0.0,
         )
-        bad = SubmissionBundle(
-            suite_hash=bundle.suite_hash,
-            suite_version=bundle.suite_version,
-            task_results=[tampered, *bundle.task_results[1:]],
-            scheduler_config=bundle.scheduler_config,
-            submitted_at=bundle.submitted_at,
+        bad = StubSigner().sign(
+            SubmissionBundle(
+                suite_hash=bundle.suite_hash,
+                suite_version=bundle.suite_version,
+                task_results=[tampered, *bundle.task_results[1:]],
+                scheduler_config=bundle.scheduler_config,
+                submitted_at=bundle.submitted_at,
+            )
         )
         suite_path = tmp_path / "suite.json"
         simple_suite.save(suite_path)

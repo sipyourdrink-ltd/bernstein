@@ -79,18 +79,23 @@ per-task receipts** — this is the empirical determinism property.
 ### 2. Verify the bundle
 
 ```bash
-bernstein bench verify my-bundle.json
+bernstein bench verify my-bundle.json --signer-key trusted-install.pub.pem
 ```
 
 The verifier:
 
 1. Confirms `bundle.suite_hash` matches the suite you loaded.
-2. For each task result:
+2. Checks the signature: a stub signature is recomputed and compared; an
+   install-identity signature is verified as a detached Ed25519 JWS against
+   a trusted public key passed via `--signer-key` (repeatable) or the local
+   install identity. An unresolvable fingerprint fails verification rather
+   than being silently skipped.
+3. For each task result:
    - Checks the stored `receipt_hash` matches `sha256(receipt bytes)`.
    - Re-runs harness scoring against the receipt (no access to the
      submitter's machine).
    - Compares the replayed verdict to the stored verdict.
-3. Reports **MATCH** or names the exact task whose replay diverged.
+4. Reports **MATCH** or names the exact task whose replay diverged.
 
 Example output:
 

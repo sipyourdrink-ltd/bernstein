@@ -173,6 +173,10 @@ class AgentCardKeystore:
                 self._generate_atomic()
             return self._load_existing()
 
+    def has_keypair(self) -> bool:
+        """Whether a keypair already exists on disk, with no generation side effect."""
+        return self._private_path.exists() and self._public_path.exists()
+
     def signer(self) -> KMSAdapter:
         """Return a custody-bounded signer over the active install-identity key.
 

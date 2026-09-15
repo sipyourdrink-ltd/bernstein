@@ -139,11 +139,13 @@ def test_bench_verifier_catches_tampered_capability_receipt() -> None:
         score=first_result.score,
         stored_receipt_hash=first_result.stored_receipt_hash,  # old hash doesn't match new bytes
     )
-    tampered_bundle = SubmissionBundle(
-        suite_hash=bundle.suite_hash,
-        suite_version=bundle.suite_version,
-        task_results=[tampered_task_result, *bundle.task_results[1:]],
-        scheduler_config=bundle.scheduler_config,
+    tampered_bundle = StubSigner().sign(
+        SubmissionBundle(
+            suite_hash=bundle.suite_hash,
+            suite_version=bundle.suite_version,
+            task_results=[tampered_task_result, *bundle.task_results[1:]],
+            scheduler_config=bundle.scheduler_config,
+        )
     )
 
     verifier = BenchVerifier(suite=suite, adapter=adapter)

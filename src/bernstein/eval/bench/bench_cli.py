@@ -9,7 +9,7 @@ Registered in src/bernstein/cli/main.py alongside every other subcommand:
 This exposes:
     bernstein bench run <suite> [--out <path>] [--scheduler <name>] [--stub-signer]
                         [--reliability K]
-    bernstein bench verify <bundle> [--suite <name>]
+    bernstein bench verify <bundle> [--suite <name>] [--signer-key <path>]...
     bernstein bench reliability-verify <receipt> [--suite <name>]
     bernstein bench reliability-check <receipt> [--suite <name>] [--task <id>] [--attempt N]
 
@@ -138,8 +138,16 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     click.echo("\nRunning tasks…")
     bundle = runner.run()
 
-    signer = StubSigner() if stub_signer else AgentCardSigner()
-    bundle = signer.sign(bundle)
+    if stub_signer:
+        bundle = StubSigner().sign(bundle)
+    else:
+        try:
+            bundle = AgentCardSigner().sign(bundle)
+        except Exception as exc:
+            raise click.ClickException(
+                f"Install-identity signing failed ({exc}). Run `bernstein init` to "
+                "set up the install identity, or pass --stub-signer for a test-grade bundle."
+            ) from exc
 
     out_path = Path(out)
     bundle.save(out_path)
@@ -159,12 +167,28 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
 @bench_group.command(name="verify")
 @click.argument("bundle")
 @click.option("--suite", default="golden-v1", show_default=True, help="Suite to verify against.")
-def bench_verify(bundle: str, suite: str) -> None:
+@click.option(
+    "--signer-key",
+    "signer_keys",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Trusted Ed25519 public key PEM of the emitting install (repeatable). "
+    "The local install identity key is trusted automatically when present.",
+)
+@click.option(
+    "--require-install-identity",
+    is_flag=True,
+    default=False,
+    help="Refuse a bundle carrying only a stub (test-grade) signature.",
+)
+def bench_verify(bundle: str, suite: str, signer_keys: tuple[str, ...], require_install_identity: bool) -> None:
     """Verify a bundle by replaying every task receipt offline.
 
     BUNDLE is the path to a submission bundle .json file.
 
-    Exits 0 on MATCH, 1 on any divergence or fabricated score.
+    Exits 0 on MATCH, 1 on any divergence, fabricated score, a signature
+    that does not verify against a trusted key, or (with
+    --require-install-identity) a stub signature.
     """
     from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.runner import MockReplayAdapter, ReplayAdapter
@@ -185,7 +209,12 @@ def bench_verify(bundle: str, suite: str) -> None:
         adapter = ToolSurfaceReplayAdapter()
     else:
         adapter = MockReplayAdapter()
-    verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
+    verifier = BenchVerifier(
+        suite=suite_obj,
+        adapter=adapter,
+        trusted_keys=_reliability_trusted_keys(signer_keys),
+        require_install_identity=require_install_identity,
+    )
     result = verifier.verify(bundle_obj)
 
     click.echo(result.report())

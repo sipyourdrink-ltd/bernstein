@@ -5,11 +5,12 @@ Independent verification is the **admission gate**.
 
 Given a :class:`SubmissionBundle`, this module:
 
-1. Replays every task's receipt (byte-identical) with no access to the
+1. Checks the bundle's signature (stub or install-identity).
+2. Replays every task's receipt (byte-identical) with no access to the
    submitter's machine.
-2. Re-derives the verdict using the deterministic harness scoring.
-3. Reports MATCH or names the exact task whose replay diverged.
-4. Rejects bundles whose score was fabricated (verdict flipped without a
+3. Re-derives the verdict using the deterministic harness scoring.
+4. Reports MATCH or names the exact task whose replay diverged.
+5. Rejects bundles whose score was fabricated (verdict flipped without a
    matching replayable run) and bundles with missing / corrupted receipts.
 
 Receipt integrity check
@@ -29,12 +30,17 @@ admission gate is the integrity property — not a policy.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from bernstein.eval.bench.signer import BENCH_JWS_TYP, StubSigner
+
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
     from bernstein.eval.bench.runner import ReplayAdapter
     from bernstein.eval.bench.suite import BenchSuite, BenchTask
@@ -50,6 +56,7 @@ class VerificationStatus(Enum):
     MISSING_RECEIPT = "MISSING_RECEIPT"
     HASH_MISMATCH = "HASH_MISMATCH"
     FABRICATED_SCORE = "FABRICATED_SCORE"
+    UNSIGNED = "UNSIGNED"
 
 
 @dataclass
@@ -71,6 +78,8 @@ class BundleVerificationResult:
     status: VerificationStatus  # overall verdict
     task_results: list[TaskVerificationResult] = field(default_factory=list)
     detail: str = ""
+    signer_fingerprint: str = ""
+    signer_is_stub: bool = False
 
     @property
     def passed(self) -> bool:
@@ -82,6 +91,9 @@ class BundleVerificationResult:
             f"suite_hash  : {self.suite_hash}",
             f"overall     : {self.status.value}",
         ]
+        if self.signer_fingerprint:
+            kind = "stub, test-grade" if self.signer_is_stub else "install identity"
+            lines.append(f"signer      : {self.signer_fingerprint} ({kind})")
         if self.detail:
             lines.append(f"detail      : {self.detail}")
         lines.append("")
@@ -110,11 +122,30 @@ class BenchVerifier:
     runner; the verifier calls ``score_task`` only — it never calls
     ``run_task``.  The receipt embedded in the bundle is the replay substrate;
     the verifier re-derives the verdict from the stored receipt bytes.
+
+    *trusted_keys* maps an install-identity fingerprint to its Ed25519 SPKI
+    public-key PEM, the same shape ``ReliabilityVerifier`` takes. A
+    fingerprint that does not resolve is treated as unsigned rather than
+    trusted (see :meth:`_check_signature`).
+
+    A valid stub signature (``StubSigner``) verifies as ``MATCH`` by default,
+    since bench is routinely run test-grade; pass *require_install_identity*
+    to refuse it, e.g. for an admission gate that must reject a bundle that
+    is not tied to a real install identity.
     """
 
-    def __init__(self, suite: BenchSuite, adapter: ReplayAdapter) -> None:
+    def __init__(
+        self,
+        suite: BenchSuite,
+        adapter: ReplayAdapter,
+        trusted_keys: Mapping[str, bytes] | None = None,
+        *,
+        require_install_identity: bool = False,
+    ) -> None:
         self._suite = suite
         self._adapter = adapter
+        self._trusted_keys: dict[str, bytes] = dict(trusted_keys or {})
+        self._require_install_identity = require_install_identity
         # Build a task-id → BenchTask index for O(1) lookup.
         self._task_index: dict[str, BenchTask] = {t.id: t for t in suite.tasks}
 
@@ -125,13 +156,18 @@ class BenchVerifier:
         Steps
         -----
         1. Confirm bundle.suite_hash matches the suite we loaded.
-        2. For each task result:
+        2. Confirm the signature: a stub signature is recomputed and
+           compared; an install-identity signature is verified as a
+           detached Ed25519 JWS against the trusted public key the
+           fingerprint resolves to. An unresolvable fingerprint or a failed
+           verification is ``UNSIGNED``, never ``MATCH``.
+        3. For each task result:
            a. Confirm the *stored* receipt_hash matches sha256(live receipt bytes).
               A mismatch means the receipt was tampered after the bundle was signed.
            b. Confirm the task_hash matches the suite's copy of the task.
            c. Re-run harness scoring against the receipt.
            d. Compare replayed verdict to the stored verdict.
-        3. Overall status is MATCH iff every task is MATCH.
+        4. Overall status is MATCH iff every task is MATCH.
         """
         task_results: list[TaskVerificationResult] = []
         overall_ok = True
@@ -147,7 +183,20 @@ class BenchVerifier:
                 ),
             )
 
-        # --- 2. Per-task verification ------------------------------------
+        # --- 2. Signature check -------------------------------------------
+        is_stub = bundle.signer_fingerprint == StubSigner.fingerprint()
+        signature_problem = self._check_signature(bundle)
+        if signature_problem:
+            return BundleVerificationResult(
+                bundle_hash=bundle.bundle_hash(),
+                suite_hash=bundle.suite_hash,
+                status=VerificationStatus.UNSIGNED,
+                detail=signature_problem,
+                signer_fingerprint=bundle.signer_fingerprint,
+                signer_is_stub=is_stub,
+            )
+
+        # --- 3. Per-task verification ------------------------------------
         for result in bundle.task_results:
             tvr = self._verify_task_result(result)
             task_results.append(tvr)
@@ -160,11 +209,45 @@ class BenchVerifier:
             suite_hash=bundle.suite_hash,
             status=overall_status,
             task_results=task_results,
+            signer_fingerprint=bundle.signer_fingerprint,
+            signer_is_stub=is_stub,
         )
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _check_signature(self, bundle: SubmissionBundle) -> str:
+        """Return a problem description, or empty string when the signature verifies."""
+        if not bundle.signature or not bundle.signer_fingerprint:
+            return "Bundle is unsigned (signature or signer_fingerprint is empty)."
+        if bundle.signer_fingerprint == StubSigner.fingerprint():
+            if not hmac.compare_digest(bundle.signature, StubSigner.expected_signature(bundle)):
+                return "Stub signature does not verify against the bundle hash."
+            if self._require_install_identity:
+                return "Bundle carries a stub (test-grade) signature; --require-install-identity refuses it."
+            return ""
+        # Install-identity path: resolve the fingerprint to a trusted public
+        # key and verify the detached Ed25519 JWS over the bundle hash.
+        # Fail closed: an unverifiable signature is treated as unsigned.
+        public_pem = self._trusted_keys.get(bundle.signer_fingerprint)
+        if public_pem is None:
+            return (
+                f"Signer fingerprint {bundle.signer_fingerprint!r} does not resolve "
+                "to a trusted public key; an unverifiable signature is treated as unsigned."
+            )
+        from bernstein.core.security.agent_card_signer import (
+            verify_detached_jws_over_canonical,
+        )
+
+        if not verify_detached_jws_over_canonical(
+            bundle.bundle_hash().encode(),
+            bundle.signature,
+            public_pem,
+            expected_typ=BENCH_JWS_TYP,
+        ):
+            return "Install-identity signature does not verify against the trusted public key."
+        return ""
 
     def _verify_task_result(self, result: TaskResult) -> TaskVerificationResult:
         task_id = result.task_id
