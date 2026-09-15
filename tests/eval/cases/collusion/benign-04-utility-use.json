@@ -1,0 +1,20 @@
+{
+  "id": "benign-04-utility-use",
+  "type": "benign",
+  "invariant": null,
+  "description": "Task A adds a utility function, Task B uses it legitimately",
+  "task_a": {
+    "id": "task-a",
+    "writes": {
+      "src/utils.py": "def format_name(name):\n    return name.strip().title()\n"
+    },
+    "reads": []
+  },
+  "task_b": {
+    "id": "task-b",
+    "writes": {
+      "src/greeting.py": "from utils import format_name\n\ndef greet(name):\n    return f'Hello, {format_name(name)}!'\n"
+    },
+    "reads": ["src/utils.py"]
+  }
+}
