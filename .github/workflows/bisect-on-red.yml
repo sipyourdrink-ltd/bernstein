@@ -101,7 +101,7 @@ jobs:
           # old recurring misfire), so we walk first-parent commits and
           # bound them by the last green baseline instead.
           LAST_GREEN=$(gh api \
-            "repos/${REPO}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=1" \
+            "repos/${REPO}/actions/workflows/ci.yml/runs?branch=main&event=workflow_dispatch&status=success&per_page=1" \
             --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null || echo "")
 
           CANDIDATES=()

@@ -108,12 +108,9 @@ A baseline written before these fields existed has no `line_rate`. That
 is a warning, not an error - the ratchet still runs, and the next click
 records provenance.
 
-Note: this measured total can differ from the figure a static-analysis
-dashboard reports. The dashboard ingests whatever `coverage.xml` the CI
-shard last uploaded, and under the rapid-merge cadence that artifact is
-frequently partial (the shard is cancelled mid-run by `cancel-in-progress`
-concurrency) - which understates coverage. The baseline here is the
-complete-run number, which is the value the ratchet must protect.
+The primary measurement now comes from the cadenced full-suite run on `main`.
+Ordinary post-merge pushes do not produce coverage, so rapid merge traffic can
+no longer turn a cancelled push run into a partial coverage measurement.
 
 ---
 
@@ -138,12 +135,14 @@ is reported as a warning and in the step summary; it does not fail the PR.
 
 ---
 
-## LEVEL 2 - total-coverage monotonic ratchet (per CI run on main)
+## LEVEL 2 - total-coverage monotonic ratchet (post-merge full CI)
 
 Prevents backsliding: total coverage may only hold or rise.
 
-Flow (`.github/workflows/coverage-ratchet.yml`, triggered when a **CI run
-on `main` completes** - `workflow_run`, any conclusion):
+Flow (`.github/workflows/coverage-ratchet.yml`, triggered when a **CI run on
+`main` completes** - `workflow_run`, any conclusion). The usual measurement
+source is the 45-minute full-suite `workflow_dispatch`; immediate release
+pushes also produce the same artifact:
 
 1. Take the `coverage-report` from the CI run that just finished, and
    check out the commit that run measured
@@ -226,30 +225,28 @@ on:
     branches: [main]
 ```
 
-`types: [completed]` deliberately does **not** filter on conclusion.
-`ci.yml`'s `cancel-in-progress` concurrency cancels most `main` runs under
-the rapid-merge cadence, so firing only on `success` would idle the
-ratchet almost permanently - the reason the original implementation
-avoided `workflow_run` altogether. A cancelled run has usually already
-uploaded `coverage-report` before it was cut, and the event still hands us
-an exact `head_sha` and run id.
+`types: [completed]` deliberately does **not** filter on conclusion. A full
+dispatch can still be cancelled manually, and the event still supplies its
+exact `head_sha` and run id so an exact-SHA sibling rerun can be considered.
+The job-level trust guard admits only same-repository `push` and
+`workflow_dispatch` CI runs; pull-request runs never reach the privileged
+checkout.
 
 From there, two ordered passes:
 
 | Pass | Accepts | Why |
 |---|---|---|
 | 1 | the triggering run itself | the ordinary case; its id and `head_sha` come straight from the event |
-| 2 | any **other completed** run for the same `head_sha` | fallback when the triggering run was cut before the shard uploaded |
+| 2 | any **other completed** run for the same `head_sha` | fallback for a cancelled/re-run full-suite attempt on the same commit |
 
 Pass 2 widens *which run*, never *which commit*, and ignores runs still in
-flight (they have not finished uploading). So the worst case is a
-**partial** report for the right commit, which understates coverage and
-can therefore cost a bump but never manufacture one.
+flight (they have not finished uploading). The provenance therefore remains
+bound to the tree actually measured.
 
-If no completed run for this commit carries a `coverage-report` (a
-docs-only push, say), the workflow logs a notice and skips. Skipping is
-the correct outcome - the alternative is measuring something else - and
-the next commit's CI completion gets its own chance.
+If no completed run for this commit carries a `coverage-report` (the normal
+case for an ordinary cheap main push), the workflow logs a notice and skips.
+Skipping is the correct outcome - the alternative is measuring something
+else - and the next cadenced full run gets its own chance.
 
 > A `workflow_run` workflow always executes the copy of the file on the
 > default branch, so edits to this workflow take effect only once merged
@@ -257,7 +254,7 @@ the next commit's CI completion gets its own chance.
 
 ### Why a missing coverage.xml is not a drop
 
-Docs-only pushes skip the coverage shard, so `coverage.xml` may be absent.
+Ordinary main pushes skip the coverage shard, so `coverage.xml` may be absent.
 The script treats a missing or malformed report as a **soft-skip**
 (exit 3, warning) - never as a coverage drop - so the ratchet cannot
 false-fail on a push that legitimately produced no coverage.
@@ -302,7 +299,8 @@ Do this only once coverage is healthy enough that the gates rarely fire.
 
 ### Promote LEVEL 2 (total ratchet) to blocking
 
-The total ratchet runs *post-merge* (on push to `main`), so it is
+The total ratchet runs *post-merge* (normally from the cadenced full-main
+dispatch), so it is
 structurally advisory: it cannot block a PR merge. To make a total drop
 actionable as a hard signal:
 
@@ -326,7 +324,7 @@ total coverage. Options, least to most invasive:
 | Situation | Override |
 |---|---|
 | LEVEL 1 false-positive on a PR | gate is advisory by default - no action needed; if promoted, add the missing tests or split the refactor from the behaviour change |
-| LEVEL 2 reports a drop from a *partial* CI run | when the resolved CI run was cancelled mid-shard, its `coverage.xml` understates coverage and the ratchet flags a spurious drop. The run is still the right commit (resolution filters on `head_sha`), so this is a partial measurement, not a mismatched one. Advisory (warning only) and self-heals on the next complete run. Do **not** lower the baseline for this - it is a measurement artifact, not a real regression. Promote LEVEL 2 to blocking only once full-run artifacts are reliable. |
+| LEVEL 2 fires for a CI run with no coverage artifact | ordinary cheap main pushes intentionally have none. The workflow soft-skips rather than borrowing another commit's report. No operator action is needed; the next cadenced full run supplies the measurement. |
 | Total dips on a pure deletion | the deletion removes covered *and* uncovered lines; if the percentage genuinely dropped, add a test or accept the lower mark - see **Lowering the baseline by hand** below |
 | Need to reset the baseline after a large legitimate change | run `scripts/coverage_ratchet.py init --coverage-xml coverage.xml --baseline .coverage-baseline.json --head-sha "$(git rev-parse HEAD)"` against a fresh measurement and commit the result. This is the preferred reset: it rewrites the mark *and* its provenance together. |
 
@@ -392,6 +390,6 @@ predating provenance still verifies.
 | `scripts/coverage_ratchet.py` | compare / bump / seed logic |
 | `.coverage-baseline.json` | committed baseline (high-water + floor) |
 | `.github/workflows/ci.yml` (`diff-coverage` job) | LEVEL 1 per-PR gate |
-| `.github/workflows/coverage-ratchet.yml` | LEVEL 2 post-push total ratchet |
+| `.github/workflows/coverage-ratchet.yml` | LEVEL 2 post-merge total ratchet |
 | `.github/workflows/coverage-ratchet-weekly.yml` | weekly floor bump PR |
 | `tests/unit/test_coverage_ratchet.py` | unit tests for the script |

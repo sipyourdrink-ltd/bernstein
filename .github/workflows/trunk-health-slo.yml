@@ -1,7 +1,7 @@
 name: Trunk Health SLO
 
-# Compute the last-24h main-red rate (failed CI runs / total CI runs on
-# main) and toggle a marker issue labeled `trunk-unstable` accordingly. A
+# Compute the last-24h main-red rate from completed full-suite CI runs and
+# toggle a marker issue labeled `trunk-unstable` accordingly. A
 # companion gate step (the trunk andon gate in `pr-policy.yml`) keys off
 # that open issue to hold merges on every PR until the trunk recovers,
 # unless the PR carries the `hotfix-cleared` label. The flag is an issue
@@ -142,7 +142,7 @@ jobs:
             echo ""
             echo "| metric | value |"
             echo "|---|---|"
-            echo "| CI runs on main (window) | ${TOTAL} |"
+            echo "| full-suite CI runs on main (window) | ${TOTAL} |"
             echo "| failed runs | ${RED} |"
             echo "| red-rate | ${RED_PCT}% |"
             echo "| insufficient sample | ${INSUFFICIENT} |"
