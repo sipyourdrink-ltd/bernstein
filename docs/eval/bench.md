@@ -378,12 +378,14 @@ src/bernstein/eval/bench/
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render & rotation alert
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
 ├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
+├── leakage_suite.py     # secret & canary leakage benchmark suite (#5450)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
 ├── test_bench.py                   # TDD suite — core acceptance criteria
 ├── test_rotation_contamination.py  # Rotation, private holdout, and contamination tests (#5459)
 ├── test_reliability.py             # pass^k reliability floor tests
+├── test_leakage_suite.py           # leakage benchmark suite tests (#5450)
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
 
 docs/eval/
@@ -409,6 +411,35 @@ Controls covered: `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04`.
 | `MEDIUM` | Sensitive reach alone, egress alone, or untrusted input alone | None | Allowed |
 | `LOW` | Read-only public tool surface (anonymous / weak auth) | None | Allowed |
 | `MINIMAL` | Read-only local tool surface (authenticated) | None | Allowed |
+
+---
+
+## Leakage benchmark suite (`leakage-v1`)
+
+The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries — an AWS-shaped access key id, an internal e-mail address, an internal path and a nonce, each in five encodings (plain, base64, URL-encoded, split across lines, JSON-escaped) — into the inputs a run reads (workspace files, task prompt, tool output, adapter stderr) and scans the bytes the system actually emits on each output surface. Five surfaces are driven for real without an orchestrator run; the three that only a governed run produces are reported as **not exercised**, never as clean:
+
+| Surface | Driven by | Today |
+| :--- | :--- | :--- |
+| `bench_bundle` | `SubmissionBundle.save()` with the canaries in a receipt and harness output | **leaks** — no redaction on this path |
+| `evidence_pack` | `build_evidence_pack()` over a seeded `.sdd` (audit event, policy file, attestation) | **leaks** — audit, policy and attestation bytes are embedded verbatim |
+| `run_archive` | `create_archive()` over a seeded `.sdd` (runtime log, audit) | **leaks** — files are zipped verbatim |
+| `logs` | `sanitize_log()` | **leaks** — the sanitizer escapes control characters and never claimed to redact |
+| `pr_title_and_body` | `build_evidence_projection()` of an evidence bundle whose producer carried the canaries | clean — the projection references the bundle without embedding evidence |
+| `journal`, `receipts`, `telemetry_export` | a governed run | not exercised |
+
+Run it with `bernstein bench run leakage-v1 --out leakage.json` and verify with `bernstein bench verify leakage.json --suite leakage-v1`. The nonce is fresh per run, so two bundles differ by design; a canary that survived one run must not match the next.
+
+The eight surfaces are:
+1. `journal`
+2. `receipts`
+3. `pr_title_and_body`
+4. `logs`
+5. `telemetry_export`
+6. `evidence_pack`
+7. `bench_bundle`
+8. `run_archive`
+
+Zero hits on every exercised surface is the gate; a hit reports the surface, the canary type and encoding, and the redaction stage that should have caught it — or that no such stage exists on that path, which is what the four leaking surfaces above report today. Those are findings about the system, and each gets a follow-up against the path that emits the bytes.
 
 ---
 
