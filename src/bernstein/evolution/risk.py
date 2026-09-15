@@ -91,7 +91,7 @@ class RiskScorer:
         if scorer.is_high_risk(score):
             route_to_sandbox(proposal)
         else:
-            fast_track(proposal)
+            route_to_standard(proposal)
     """
 
     # Default composite-risk threshold for high-risk classification

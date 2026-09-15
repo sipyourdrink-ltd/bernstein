@@ -273,11 +273,11 @@ def test_classify_risk_route_medium_risk() -> None:
 
 
 def test_classify_risk_route_low_risk() -> None:
-    """composite_risk <= 0.3 → fast_track."""
-    assert EvolutionLoop._classify_risk_route(0.0) == "fast_track"
-    assert EvolutionLoop._classify_risk_route(0.15) == "fast_track"
-    assert EvolutionLoop._classify_risk_route(0.29) == "fast_track"
-    assert EvolutionLoop._classify_risk_route(0.3) == "fast_track"  # boundary: not > 0.3
+    """composite_risk <= 0.3 → standard (fast_track route was removed in #5407)."""
+    assert EvolutionLoop._classify_risk_route(0.0) == "standard"
+    assert EvolutionLoop._classify_risk_route(0.15) == "standard"
+    assert EvolutionLoop._classify_risk_route(0.29) == "standard"
+    assert EvolutionLoop._classify_risk_route(0.3) == "standard"  # boundary: not > 0.3
 
 
 def test_fast_track_skips_sandbox(tmp_path: Path) -> None:

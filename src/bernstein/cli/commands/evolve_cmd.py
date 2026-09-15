@@ -409,6 +409,8 @@ def evolve_run(
 )
 def evolve_review(workdir: str) -> None:
     """Show upgrade proposals pending human review."""
+    import json
+
     from bernstein.evolution.gate import ApprovalGate
 
     root = Path(workdir).resolve()
@@ -419,6 +421,24 @@ def evolve_review(workdir: str) -> None:
         console.print("[dim]No proposals pending review.[/dim]")
         return
 
+    # Build a lookup from proposal_id → deferred record so we can show
+    # the change contract component and sandbox verdict without loading the
+    # full proposal object.
+    deferred_by_id: dict[str, dict] = {}
+    deferred_path = decisions_dir / "deferred.jsonl"
+    if deferred_path.is_file():
+        for line in deferred_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            pid = rec.get("proposal_id", "")
+            if pid:
+                deferred_by_id[pid] = rec
+
     from rich.table import Table
 
     review_table = Table(title="Proposals Pending Review", show_lines=True, header_style="bold cyan")
@@ -426,15 +446,22 @@ def evolve_review(workdir: str) -> None:
     review_table.add_column("Risk", min_width=12)
     review_table.add_column("Confidence", justify="right", min_width=10)
     review_table.add_column("Outcome", min_width=22)
+    review_table.add_column("Contract", min_width=16)
+    review_table.add_column("Sandbox verdict", min_width=14)
     review_table.add_column("Reason")
 
     for d in sorted(pending, key=lambda x: x.decided_at):
         outcome_color = "red" if "immediate" in d.outcome.value else "yellow"
+        deferred = deferred_by_id.get(d.proposal_id, {})
+        contract_component = deferred.get("contract_component") or "[dim]—[/dim]"
+        sandbox_verdict = deferred.get("sandbox_verdict") or "[dim]—[/dim]"
         review_table.add_row(
             d.proposal_id,
             d.risk_level.value,
             f"{d.confidence:.0%}",
             f"[{outcome_color}]{d.outcome.value}[/{outcome_color}]",
+            contract_component,
+            sandbox_verdict,
             d.reason,
         )
 
