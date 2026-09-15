@@ -189,9 +189,7 @@ def test_a_sensitive_path_needs_the_third_approval_at_any_size(qc: ModuleType, r
     assert "security" in verdict.requirements[0].text
 
 
-def test_a_test_path_that_merely_names_a_sensitive_word_does_not_escalate(
-    qc: ModuleType, roster
-) -> None:
+def test_a_test_path_that_merely_names_a_sensitive_word_does_not_escalate(qc: ModuleType, roster) -> None:
     """A conformance vector for the auditor is not a change to the auditor.
 
     The words are matched against the whole path, so `tests/conformance/auditor/`
@@ -204,18 +202,14 @@ def test_a_test_path_that_merely_names_a_sensitive_word_does_not_escalate(
     assert verdict.passed
 
 
-def test_a_release_note_naming_a_sensitive_word_does_not_escalate(
-    qc: ModuleType, roster
-) -> None:
+def test_a_release_note_naming_a_sensitive_word_does_not_escalate(qc: ModuleType, roster) -> None:
     reviews = [_review(qc, "core1", "APPROVED"), _review(qc, "comm1", "APPROVED")]
     paths = ["docs/release-notes/fragments/5072-govern-audit-check-contract.md"]
     verdict = _evaluate(qc, roster, _pr(qc, changed_lines=8, paths=paths, reviews=reviews))
     assert verdict.passed
 
 
-def test_the_implementation_still_escalates_when_a_test_rides_along(
-    qc: ModuleType, roster
-) -> None:
+def test_the_implementation_still_escalates_when_a_test_rides_along(qc: ModuleType, roster) -> None:
     """The exemption is per path, not per pull request."""
     reviews = [_review(qc, "core1", "APPROVED"), _review(qc, "comm1", "APPROVED")]
     paths = [
