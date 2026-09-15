@@ -25,13 +25,17 @@ from bernstein.core.approval.card import (
     render_card_text,
 )
 from bernstein.core.approval.card_gate import (
+    ApprovalCardAlreadySettled,
     ApprovalCardExpired,
     ApprovalCardGate,
     ApprovalCardHashMismatch,
+    ApprovalCardReleased,
+    ApprovalCardReleaseIdentityRequired,
 )
 from bernstein.core.security.audit_chain import (
     EVENT_APPROVAL_CARD_ISSUED,
     EVENT_APPROVAL_CARD_REFUSED,
+    EVENT_APPROVAL_CARD_RELEASED,
     EVENT_APPROVAL_CARD_RESOLVED,
     AuditChainStore,
 )
@@ -250,3 +254,124 @@ def test_resolve_still_works_after_restart_before_expiry(tmp_path: Path) -> None
     resolved = gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_200.0, approver="U7")
     assert resolved.card_hash == issued.card_hash
     assert chain2.query(event_type=EVENT_APPROVAL_CARD_RESOLVED)
+
+
+# ---------------------------------------------------------------------------
+# Gate: release of terminal-deny cards (issue #5474)
+# ---------------------------------------------------------------------------
+
+
+def test_release_expired_card_records_release_event(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    card = _safe_card(created_at=1_000.0, ttl=600.0)  # not_after == 1600
+    issued = gate.issue(card)
+
+    # Expire the card.
+    with pytest.raises(ApprovalCardExpired):
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_600.0, approver="U7")
+
+    # Release it.
+    released = gate.release(
+        card_hash=issued.card_hash, released_by="admin-alice", reason="Business justification", now=1_700.0
+    )
+    assert released.card_hash == issued.card_hash
+
+    events = chain.query(event_type=EVENT_APPROVAL_CARD_RELEASED)
+    assert len(events) == 1
+    assert events[0].details["released_by"] == "admin-alice"
+    assert events[0].details["reason"] == "Business justification"
+    assert events[0].details["card_hash"] == issued.card_hash
+    ok, errors = chain.verify()
+    assert ok, errors
+
+
+def test_release_released_card_raises(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    issued = gate.issue(_safe_card(created_at=1_000.0, ttl=600.0))
+
+    with pytest.raises(ApprovalCardExpired):
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_600.0, approver="U7")
+
+    gate.release(card_hash=issued.card_hash, released_by="admin-alice", reason="First release", now=1_700.0)
+
+    with pytest.raises(ApprovalCardReleased):
+        gate.release(card_hash=issued.card_hash, released_by="admin-bob", reason="Second release", now=1_800.0)
+
+
+def test_release_resolved_card_is_idempotent(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    issued = gate.issue(_safe_card(created_at=1_000.0, ttl=600.0))
+    gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_100.0, approver="U7")
+
+    # Resolved is terminal; release must raise.
+    with pytest.raises(ValueError, match="not terminally denied"):
+        gate.release(card_hash=issued.card_hash, released_by="admin-alice", reason="Should fail", now=1_200.0)
+
+
+def test_release_unknown_hash_raises(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+
+    with pytest.raises(ApprovalCardHashMismatch):
+        gate.release(card_hash="unknown-hash", released_by="admin-alice", reason="No such card", now=1_700.0)
+
+
+def test_release_without_identity_raises(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    issued = gate.issue(_safe_card(created_at=1_000.0, ttl=600.0))
+
+    with pytest.raises(ApprovalCardExpired):
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_600.0, approver="U7")
+
+    with pytest.raises(ApprovalCardReleaseIdentityRequired):
+        gate.release(card_hash=issued.card_hash, released_by="   ", reason="Should fail", now=1_700.0)
+
+
+def test_resolve_after_release_raises(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    issued = gate.issue(_safe_card(created_at=1_000.0, ttl=600.0))
+
+    with pytest.raises(ApprovalCardExpired):
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_600.0, approver="U7")
+
+    gate.release(card_hash=issued.card_hash, released_by="admin-alice", reason="Released", now=1_700.0)
+
+    # Released is terminal: resolve must raise.
+    with pytest.raises(ApprovalCardAlreadySettled):
+        gate.resolve(card_hash=issued.card_hash, decision="approve", now=1_800.0, approver="admin-bob")
+
+
+def test_release_requires_terminal_settled_card(tmp_path: Path) -> None:
+    chain = _chain(tmp_path)
+    gate = ApprovalCardGate(chain)
+    issued = gate.issue(_safe_card(created_at=1_000.0, ttl=600.0))
+
+    # Card is still live; release must raise.
+    with pytest.raises(ValueError, match="not terminally settled"):
+        gate.release(card_hash=issued.card_hash, released_by="admin-alice", reason="Too early", now=1_200.0)
+
+
+def test_release_across_restart(tmp_path: Path) -> None:
+    chain1 = _chain(tmp_path)
+    gate1 = ApprovalCardGate(chain1)
+    issued = gate1.issue(_safe_card(created_at=1_000.0, ttl=600.0))
+
+    with pytest.raises(ApprovalCardExpired):
+        gate1.resolve(card_hash=issued.card_hash, decision="approve", now=1_600.0, approver="U7")
+
+    gate1.release(card_hash=issued.card_hash, released_by="admin-alice", reason="Approved post-fact", now=1_700.0)
+
+    # A fresh gate over the same audit dir must still see the card as released.
+    chain2 = _chain(tmp_path)
+    gate2 = ApprovalCardGate(chain2)
+    with pytest.raises(ApprovalCardAlreadySettled):
+        gate2.resolve(card_hash=issued.card_hash, decision="approve", now=1_800.0, approver="admin-bob")
+
+    events = chain2.query(event_type=EVENT_APPROVAL_CARD_RELEASED)
+    assert len(events) == 1
+    assert events[0].details["released_by"] == "admin-alice"
