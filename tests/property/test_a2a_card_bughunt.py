@@ -30,10 +30,15 @@ surface. Findings:
     ``canonicalize_jcs`` now sorts property names by UTF-16 code units, so
     ``test_rfc_8785_utf16_keysort`` below is a positive assertion.
 
-#4 (operational, xfail - verifier accepts expired cards):
-    ``verify_agent_card`` does not consult ``card.is_expired()`` -
-    integrators must remember to call it themselves. Replay-by-stale-card
-    is not addressed at the cryptographic verifier layer.
+#4 (FIXED - verifier accepts expired cards):
+    ``verify_agent_card`` used to check the signature and stop, so an
+    expired card was indistinguishable from a current one and anyone who
+    captured a card once could replay it for the life of the issuing key.
+    It now also requires the card to be inside its validity window - both
+    ends of it, via ``AgentIdentityCard.is_valid_at`` - defaulting to now.
+    ``at_time`` selects a different instant, which is what
+    ``IdentitySpawnAnchor.reconstruct`` passes so an attestation recorded
+    under a since-expired card still replays.
 
 #5 (operational, documented - ephemeral per-process keypair):
     Each orchestrator process mints a fresh keypair on first JWKS hit. A
@@ -363,19 +368,18 @@ def test_rfc_8785_utf16_keysort() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "verify_agent_card is a pure crypto primitive - it does not consult "
-        "AgentIdentityCard.is_expired(). Integrators MUST also call "
-        "card.is_expired() after verifying the signature, otherwise an "
-        "attacker who captured an old card can replay it indefinitely. "
-        "Documenting via xfail until either the verifier composes the expiry "
-        "check or the docstring grows an explicit warning."
-    ),
-    strict=True,
-)
 def test_expired_card_signature_should_be_rejected() -> None:
-    """If a card is expired, verify_agent_card should return False."""
+    """FIXED: an expired card does not verify.
+
+    This was an ``xfail(strict=True)``: ``verify_agent_card`` checked only
+    the signature, and a signature stays valid forever while the card it
+    covers does not. Anyone who captured a card once could replay it for as
+    long as the issuing key lived, because an expired card was byte-for-byte
+    indistinguishable from a current one to the only function whose name
+    invites a caller to trust it.
+
+    The verifier now composes the window check, defaulting to now.
+    """
     import time
 
     priv, pub = generate_ed25519_keypair()
@@ -384,6 +388,63 @@ def test_expired_card_signature_should_be_rejected() -> None:
     sig = sign_agent_card(card, priv)
     assert card.is_expired() is True
     assert verify_agent_card(card, sig, pub) is False
+
+
+def test_an_expired_card_still_verifies_at_the_time_it_was_valid() -> None:
+    """The escape hatch that keeps historical replay working.
+
+    ``IdentitySpawnAnchor.reconstruct`` re-checks a run recorded months
+    ago, under a card that has since expired. If the window were judged at
+    "now" with no way to say otherwise, every old attestation would become
+    unverifiable - the fix would have traded a replay hole for an audit trail
+    that decays.
+    """
+    import time
+
+    priv, pub = generate_ed25519_keypair()
+    card = _stable_card()
+    issued_at = time.time() - 86400
+    card.created_at = issued_at
+    card.expires_at = issued_at + 3600
+    sig = sign_agent_card(card, priv)
+
+    assert verify_agent_card(card, sig, pub) is False
+    assert verify_agent_card(card, sig, pub, at_time=issued_at + 60) is True
+
+
+def test_a_card_is_not_yet_valid_before_it_was_created() -> None:
+    """The near end of the window, which ``is_expired`` does not cover."""
+    import time
+
+    priv, pub = generate_ed25519_keypair()
+    card = _stable_card()
+    card.created_at = time.time() + 3600
+    card.expires_at = 0.0
+    sig = sign_agent_card(card, priv)
+
+    assert card.is_expired() is False
+    assert verify_agent_card(card, sig, pub) is False
+
+
+def test_a_card_that_never_expires_still_verifies() -> None:
+    """``expires_at == 0`` is "no expiry", the shape issue_identity_card emits."""
+    priv, pub = generate_ed25519_keypair()
+    card = _stable_card()
+    card.expires_at = 0.0
+    sig = sign_agent_card(card, priv)
+
+    assert verify_agent_card(card, sig, pub) is True
+
+
+def test_the_window_check_does_not_replace_the_signature_check() -> None:
+    """An in-window card with a bad signature is still refused."""
+    priv, _pub = generate_ed25519_keypair()
+    _other_priv, other_pub = generate_ed25519_keypair()
+    card = _stable_card()
+    card.expires_at = 0.0
+    sig = sign_agent_card(card, priv)
+
+    assert verify_agent_card(card, sig, other_pub) is False
 
 
 # ---------------------------------------------------------------------------

@@ -297,6 +297,30 @@ class AgentIdentityCard:
     def is_expired(self) -> bool:
         return self.expires_at > 0 and time.time() > self.expires_at
 
+    def is_valid_at(self, instant: float) -> bool:
+        """Is this card inside its validity window at *instant*?
+
+        The whole window, not just its far end: a card is invalid before
+        ``created_at`` as well as at or after ``expires_at``. ``expires_at``
+        of ``0`` means the card never expires, which is the shape
+        :func:`issue_identity_card` produces when no TTL is asked for.
+
+        This is the single statement of the rule. :meth:`is_expired` answers
+        the narrower question - has the far end passed *now* - and the two are
+        not complements: a card whose ``created_at`` is in the future is not
+        expired, and is not valid either.
+
+        Args:
+            instant: Epoch seconds to judge the card at. Callers verifying a
+                historical attestation pass the time the card was originally
+                validated, not the current time, so a run recorded last year
+                still replays.
+
+        Returns:
+            True when the card may be relied on at *instant*.
+        """
+        return self.created_at <= instant and (not self.expires_at or self.expires_at > instant)
+
 
 def issue_identity_card(
     agent_id: str,
