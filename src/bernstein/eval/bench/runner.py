@@ -85,6 +85,9 @@ class MockReplayAdapter:
                 {"seq": 0, "kind": "task.started", "task_hash": task_hash},
                 {"seq": 1, "kind": "task.completed", "task_hash": task_hash},
             ],
+            "tokens": 100,
+            "cost_usd": 0.001,
+            "duration_seconds": 0.05,
         }
 
     def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
@@ -148,6 +151,9 @@ class StochasticMockReplayAdapter:
                 {"seq": 1, "kind": "model.output", "sample": sample},
                 {"seq": 2, "kind": "task.completed", "task_hash": task_hash},
             ],
+            "tokens": 100,
+            "cost_usd": 0.001,
+            "duration_seconds": 0.05,
         }
 
     def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
@@ -175,14 +181,51 @@ class BenchRunner:
     suite: BenchSuite
     adapter: ReplayAdapter
     scheduler_config: dict[str, Any]
+    budget_usd: float | None = None
 
     def run(self) -> SubmissionBundle:
         """Execute every task; return the unsigned bundle."""
         task_results: list[TaskResult] = []
+        cumulative_cost_usd = 0.0
 
         for task in self.suite.tasks:
+            # Check budget gate (#5464)
+            if self.budget_usd is not None and cumulative_cost_usd >= self.budget_usd:
+                refusal_receipt = {
+                    "journal_head": "",
+                    "spine_head": "",
+                    "run_id": f"refusal-{task.id}",
+                    "refusal_reason": (
+                        f"budget_exceeded: limit ${self.budget_usd:.4f} exceeded (spent ${cumulative_cost_usd:.4f})"
+                    ),
+                    "status": "refused",
+                }
+                task_results.append(
+                    TaskResult(
+                        task_id=task.id,
+                        task_hash=task.content_hash(),
+                        receipt=refusal_receipt,
+                        passed=False,
+                        score=0.0,
+                        harness_output={"refusal": "budget_exceeded"},
+                        tokens=0,
+                        cost_usd=0.0,
+                        duration_seconds=0.0,
+                    )
+                )
+                continue
+
+            t0 = time.perf_counter()
             receipt = self.adapter.run_task(task, self.scheduler_config)
+            t1 = time.perf_counter()
+
             passed, score, harness_output = self.adapter.score_task(task, receipt)
+
+            tokens = int(receipt.get("tokens", 0))
+            cost_usd = float(receipt.get("cost_usd", 0.0))
+            duration_seconds = float(receipt.get("duration_seconds", max(0.0, t1 - t0)))
+
+            cumulative_cost_usd += cost_usd
 
             task_results.append(
                 TaskResult(
@@ -192,6 +235,9 @@ class BenchRunner:
                     passed=passed,
                     score=score,
                     harness_output=harness_output,
+                    tokens=tokens,
+                    cost_usd=cost_usd,
+                    duration_seconds=duration_seconds,
                 )
             )
 

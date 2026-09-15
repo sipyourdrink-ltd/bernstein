@@ -54,6 +54,14 @@ class TaskResult:
     # construction time and restored verbatim from the JSON at load time.
     # The verifier recomputes this from the live receipt and compares.
     stored_receipt_hash: str = ""
+    # Resource metrics (#5464). Bound into the bundle hash through to_dict,
+    # but only when set: a bundle written before these fields existed has
+    # none of them, and its stored hash was computed without them, so
+    # emitting zeros on reload would fail the very hash check that guards
+    # it against tampering. Same rule as SubmissionBundle.holdout_hash.
+    tokens: int = 0
+    cost_usd: float = 0.0
+    duration_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         # If caller didn't supply stored_receipt_hash, derive it now.
@@ -70,8 +78,12 @@ class TaskResult:
         """Return the *stored* receipt hash (set at emit time, not recomputed)."""
         return self.stored_receipt_hash
 
+    def has_resource_metrics(self) -> bool:
+        """True when any resource metric was recorded for this task."""
+        return bool(self.tokens or self.cost_usd or self.duration_seconds)
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "task_id": self.task_id,
             "task_hash": self.task_hash,
             "receipt": self.receipt,
@@ -82,6 +94,11 @@ class TaskResult:
             "score": self.score,
             "harness_output": self.harness_output,
         }
+        if self.has_resource_metrics():
+            d["tokens"] = self.tokens
+            d["cost_usd"] = self.cost_usd
+            d["duration_seconds"] = self.duration_seconds
+        return d
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +187,26 @@ class SubmissionBundle:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
 
+    @property
+    def total_tokens(self) -> int:
+        return sum(r.tokens for r in self.task_results)
+
+    @property
+    def total_cost_usd(self) -> float:
+        return sum(r.cost_usd for r in self.task_results)
+
+    @property
+    def total_duration_seconds(self) -> float:
+        return sum(r.duration_seconds for r in self.task_results)
+
     # ------------------------------------------------------------------
-    # Content hash (covers everything *except* the signature field)
+    # Content hash. Covers the suite identity, the submission time, the
+    # scheduler config, every task record (resource metrics included, when
+    # set) and holdout_hash when set. It deliberately leaves out the
+    # signature and signer_fingerprint, and every field that is recomputed
+    # from the task records on read -- overall_score, pass_rate, the three
+    # total_* sums, harness_fingerprint -- so a writer that did not emit
+    # those keys and one that does hash a bundle identically.
     # ------------------------------------------------------------------
 
     def bundle_hash(self) -> str:
@@ -210,6 +245,9 @@ class SubmissionBundle:
             "harness_fingerprint": self.harness_fingerprint,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
+            "total_tokens": self.total_tokens,
+            "total_cost_usd": self.total_cost_usd,
+            "total_duration_seconds": self.total_duration_seconds,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
@@ -248,6 +286,9 @@ class SubmissionBundle:
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],
+                tokens=r.get("tokens", 0),
+                cost_usd=float(r.get("cost_usd", 0.0)),
+                duration_seconds=float(r.get("duration_seconds", 0.0)),
             )
             for r in raw["task_results"]
         ]
