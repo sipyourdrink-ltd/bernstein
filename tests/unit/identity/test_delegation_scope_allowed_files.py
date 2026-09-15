@@ -1,25 +1,29 @@
-"""The recorded-but-ungraded ``allowed_files`` axis on ``DelegationScope`` (#5351).
+"""The ``allowed_files`` axis on ``DelegationScope`` (#5351, graded since #5418).
 
-``allowed_files`` is a glob field: a pattern is not a path prefix, so it cannot
-be decided by the ancestry primitive ``path_prefixes`` uses, and translating one
-into the other would report "narrowing checked and held" for an axis where only
-the patterns that happened to have a prefix form were checked.  The axis is
-therefore recorded verbatim on the receipt and graded
-``comparison_axis_unsupported``: the hop reads unproven with a named reason
-until a glob-subsumption primitive exists to grade it (follow-up #5418).
+``allowed_files`` is a glob field: a pattern is not a path prefix, so it could
+not be decided by the ancestry primitive ``path_prefixes`` uses, and
+translating one into the other would report "narrowing checked and held" for
+an axis where only the patterns that happened to have a prefix form were
+checked. Before #5418 the axis was therefore recorded verbatim on the receipt
+but never compared, and graded ``comparison_axis_unsupported`` whenever a
+hop's own body carried the key. #5418 added
+:func:`~bernstein.core.security.capability_tokens.glob_narrows`, a
+subsumption primitive over the pattern grammar in
+:mod:`bernstein.core.path_scope` (not the ancestry one), so the axis is now
+graded like every other axis: ``pass`` when it narrows, ``axis_widened`` when
+it does not.
 
-The compatibility group pins the axis against the implementation exactly as it
-stood at the commit this change is written on top of.  ``scope_ref()`` digests
-the canonical bytes of ``to_body()``, so emitting a new key unconditionally
-would move every stored reference and stop sealed records from replaying
-byte-identically.  The literals below were computed on that pre-change class and
-are the oracle: a scope that does not use the axis must still produce these
-exact bytes and this exact digest.
+The compatibility group pins the SERIALIZED BODY against the implementation
+exactly as it stood before #5418 -- that part is unaffected by this change.
+``scope_ref()`` digests the canonical bytes of ``to_body()``, so emitting a
+new key unconditionally would move every stored reference and stop sealed
+records from replaying byte-identically. The literals below were computed on
+the pre-#5418 class and remain the oracle for the *serialization*: a scope
+that does not use the axis must still produce these exact bytes and this
+exact digest, whatever the *grading* rules do.
 
-The presence matrix records what the module actually produces for the three
-ways two hops can carry the axis.  Grading keys off each hop's OWN recorded
-body, so the three cases are not symmetric, and the asymmetry is recorded here
-rather than engineered away.
+The presence matrix records what the module produces for the three ways two
+hops can carry the axis, now that the axis is actually compared.
 """
 
 from __future__ import annotations
@@ -28,10 +32,10 @@ from dataclasses import replace
 
 from bernstein.core.identity import delegation
 from bernstein.core.identity.delegation_scope import (
-    REASON_COMPARISON_AXIS_UNSUPPORTED,
+    REASON_AXIS_WIDENED,
     REASON_ROOT_STRUCTURAL_ONLY,
+    VERDICT_FAIL,
     VERDICT_PASS,
-    VERDICT_UNPROVEN,
     ChainVerdict,
     DelegationScope,
     HopVerdict,
@@ -151,57 +155,65 @@ class TestTheAxisSurvivesTheRoundTrip:
         A recorded reference that is not the content address of the inline scope
         is read as one signed body contradicting itself, which fails the hop -
         so a receipt recording this axis would grade ``fail`` rather than
-        ``unproven`` if the constructor could not read the key back.
+        ``pass`` if the constructor could not read the key back. A lone root
+        hop has nothing to narrow against, so it reads pass (structural only),
+        not unproven -- ``allowed_files`` is a recognized, gradable axis now.
         """
         scope = replace(REPRESENTATIVE, allowed_files=frozenset({"src/**"}))
         assert DelegationScope.from_body(scope.to_body()).scope_ref() == scope.scope_ref()
-        assert grade_chain([_receipt(0, scope=scope)]).hops[0].verdict == VERDICT_UNPROVEN
+        assert grade_chain([_receipt(0, scope=scope)]).hops[0].verdict == VERDICT_PASS
 
 
 class TestPresenceMatrix:
-    """What the module produces when one, both, or neither hop records the axis."""
+    """What the module produces when one, both, or neither hop records the axis.
+
+    ``CHILD_WITH``'s ``src/core`` narrows correctly under ``CEILING_WITH``'s
+    ``src/**`` (``pattern_subsumes("src/**", "src/core")`` holds), so the
+    narrowing cases below read pass. The one genuine widening -- a child that
+    drops the file restriction its parent imposed -- is the case #5418 exists
+    to catch, and now does.
+    """
 
     def test_both_sides_record_it(self):
+        """A child pattern that narrows under the ceiling's grades pass on the axis."""
         verdict = grade_chain([_receipt(0, scope=CEILING_WITH), _receipt(1, scope=CHILD_WITH)])
         rows = _rows(verdict)
-        assert verdict.verdict == VERDICT_UNPROVEN
-        assert verdict.unproven_hops == 2
-        assert rows[0].verdict == VERDICT_UNPROVEN
-        assert rows[0].axes == ("allowed_files",)
-        assert set(rows[0].reasons) == {REASON_COMPARISON_AXIS_UNSUPPORTED, REASON_ROOT_STRUCTURAL_ONLY}
-        assert rows[1].verdict == VERDICT_UNPROVEN
-        assert rows[1].axes == ("allowed_files",)
-        assert rows[1].reasons == (REASON_COMPARISON_AXIS_UNSUPPORTED,)
-
-    def test_the_child_records_it_and_the_ceiling_does_not(self):
-        verdict = grade_chain([_receipt(0, scope=CEILING_WITHOUT), _receipt(1, scope=CHILD_WITH)])
-        rows = _rows(verdict)
-        assert verdict.verdict == VERDICT_UNPROVEN
-        assert verdict.unproven_hops == 1
+        assert verdict.verdict == VERDICT_PASS
+        assert verdict.unproven_hops == 0
         assert rows[0].verdict == VERDICT_PASS
         assert rows[0].axes == ()
-        assert rows[1].verdict == VERDICT_UNPROVEN
-        assert rows[1].axes == ("allowed_files",)
-        assert REASON_COMPARISON_AXIS_UNSUPPORTED in rows[1].reasons
-
-    def test_the_ceiling_records_it_and_the_child_does_not(self):
-        """The asymmetric case, recorded rather than fixed.
-
-        Grading keys off each hop's own body, and the comparator is not asked
-        about this axis, so the child's row carries no reason to be unproven:
-        an axis the ceiling bounded goes uncompared while that row reads pass.
-        The chain is still unproven, on the ceiling's own row.  Whether the
-        child's row should also be unproven is a semantics call, not something
-        to decide inside a test; on this repository's own minting path a child
-        that names no file scope under a restricted parent is refused before any
-        receipt is written.
-        """
-        verdict = grade_chain([_receipt(0, scope=CEILING_WITH), _receipt(1, scope=CHILD_WITHOUT)])
-        rows = _rows(verdict)
-        assert verdict.verdict == VERDICT_UNPROVEN
-        assert verdict.unproven_hops == 1
-        assert rows[0].verdict == VERDICT_UNPROVEN
-        assert rows[0].axes == ("allowed_files",)
+        assert rows[0].reasons == (REASON_ROOT_STRUCTURAL_ONLY,)
         assert rows[1].verdict == VERDICT_PASS
         assert rows[1].axes == ()
         assert rows[1].reasons == ()
+
+    def test_the_child_records_it_and_the_ceiling_does_not(self):
+        """A ceiling that never restricted files subsumes anything the child records."""
+        verdict = grade_chain([_receipt(0, scope=CEILING_WITHOUT), _receipt(1, scope=CHILD_WITH)])
+        rows = _rows(verdict)
+        assert verdict.verdict == VERDICT_PASS
+        assert verdict.unproven_hops == 0
+        assert rows[0].verdict == VERDICT_PASS
+        assert rows[0].axes == ()
+        assert rows[1].verdict == VERDICT_PASS
+        assert rows[1].axes == ()
+        assert rows[1].reasons == ()
+
+    def test_the_ceiling_records_it_and_the_child_does_not(self):
+        """The genuine widening: a child that drops the parent's file restriction fails.
+
+        Before #5418 this axis was never compared at all, so this exact
+        widening -- a sub-agent credential that names no file scope where its
+        parent named one -- read as a clean pass. That is the defect #5418
+        closes: it is not merely "unproven, say so"; it is a widening that
+        went completely uncaught.
+        """
+        verdict = grade_chain([_receipt(0, scope=CEILING_WITH), _receipt(1, scope=CHILD_WITHOUT)])
+        rows = _rows(verdict)
+        assert verdict.verdict == VERDICT_FAIL
+        assert verdict.unproven_hops == 0
+        assert rows[0].verdict == VERDICT_PASS
+        assert rows[0].axes == ()
+        assert rows[1].verdict == VERDICT_FAIL
+        assert rows[1].axes == ("allowed_files",)
+        assert rows[1].reasons == (REASON_AXIS_WIDENED,)
