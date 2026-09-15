@@ -788,6 +788,60 @@ def test_completion_marker_dead_agent_skipped(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Salvage merges on the recycling paths reach the journal (#5271 review, F1)
+# ---------------------------------------------------------------------------
+#
+# Four paths salvage uncommitted work before a worktree is destroyed. Two live
+# in agent_lifecycle (dead agent, orphan) and already passed the recorder and
+# a reason through. The two here did not, so a merge on a completion reap or
+# an idle recycle produced no journal row and, had one been produced, would
+# have carried the wrong reason. Patch the salvage call and check what the
+# caller hands it; the salvage function's own behaviour is pinned in
+# tests/unit/test_agent_lifecycle.py.
+
+
+def test_idle_force_kill_salvage_carries_the_recorder_and_the_idle_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.agents import agent_recycling
+
+    salvage = MagicMock(return_value=False)
+    monkeypatch.setattr(agent_recycling, "_save_partial_work", salvage)
+    orch = _make_orch(tmp_path)
+    orch._recorder = object()
+    session = _make_session(["T-idle-9"], session_id="s-idle-09")
+    orch._agents["s-idle-09"] = session
+    now = time.time()
+    orch._idle_shutdown_ts["s-idle-09"] = now - (_IDLE_GRACE_S + 1)
+
+    agent_recycling._recycle_or_kill(orch, session, now, reason="heartbeat_60s")
+
+    salvage.assert_called_once_with(orch._spawner, session, recorder=orch._recorder, reason="heartbeat_60s")
+    orch._spawner.kill.assert_called_once_with(session)
+
+
+def test_completion_reap_salvage_carries_the_recorder_and_says_completed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.agents import agent_recycling
+
+    salvage = MagicMock(return_value=False)
+    monkeypatch.setattr(agent_recycling, "_save_partial_work", salvage)
+    orch = _make_orch(tmp_path)
+    orch._recorder = object()
+    session = _make_session(["T-comp-9"], session_id="s-comp-09")
+    orch._agents["s-comp-09"] = session
+    completion_file = tmp_path / ".sdd" / "runtime" / "completed" / "s-comp-09"
+    completion_file.parent.mkdir(parents=True)
+    completion_file.write_text("done")
+
+    agent_recycling._reap_completed_agent(orch, session, completion_file)
+
+    salvage.assert_called_once_with(orch._spawner, session, recorder=orch._recorder, reason="completed")
+    assert not completion_file.exists()
+
+
+# ---------------------------------------------------------------------------
 # Constants sanity checks
 # ---------------------------------------------------------------------------
 

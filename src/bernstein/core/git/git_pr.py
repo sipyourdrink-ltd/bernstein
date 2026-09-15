@@ -435,9 +435,12 @@ def merge_with_conflict_detection(
             rev_r = run_git(["rev-parse", "HEAD"], cwd, timeout=10)
             commit_sha = rev_r.stdout.strip() if rev_r.ok else ""
             return MergeResult(success=True, conflicting_files=[], merge_diff=diff, merge_commit=commit_sha)
-        # Nothing to commit (branches already identical)
+        # Nothing to commit (branches already identical). No commit was
+        # produced, so `merge_commit` stays empty: reading HEAD here would
+        # name the integration branch's pre-merge tip, a commit that predates
+        # the reap and that this merge did not create (#5271 review, F1).
         run_git(["merge", "--abort"], cwd, timeout=10)
-        return MergeResult(success=True, conflicting_files=[])
+        return MergeResult(success=True, conflicting_files=[], merge_commit="")
 
     # 2. Check if the failure is due to merge conflicts
     conflicts = _parse_conflict_files(cwd)
