@@ -1,0 +1,5 @@
+--- a/src/bernstein/old_helper.py
++++ b/src/bernstein/old_helper.py
+@@ -1,5 +0,0 @@
+-def old_helper():
+-    return 42
