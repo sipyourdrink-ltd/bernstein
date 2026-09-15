@@ -11,6 +11,41 @@ see no behaviour change unless they pass the new keywords. The
 spawned-agent prompt path is the one exception - see "Enforcement on the
 spawned-agent prompt path" below.
 
+## Chain-native verifiable recall (partial #2914)
+
+Bernstein also has an append-only `MemoryChain` under
+`.sdd/memory/chain/<scope>/<namespace>.jsonl`. This is a separate,
+tamper-evident surface from the SQLite store above. Its current state is a
+deterministic fold of writes minus tombstones; a recall can now pin an exact
+`claim-exact-v1` query to one captured fold head and seal the ordered record
+hashes that query selected.
+
+A non-empty chain-native recall produces a content-addressed receipt under
+`.sdd/memory/recall/receipts/`. The canonical receipt body binds
+`{scope, namespace, query, query_hash, selector, fold_head, fold_hash,
+record_hashes, run_id, step_id}`. Its SHA-256 is the receipt id. The same body
+is sealed through the existing signed `LineageStore` write path as an
+`sdd-runtime` artefact, including the detached `.jws` sidecar and operator
+HMAC, and a `memory.recall` audit event mirrors only hashes and identifiers.
+The audit event never copies the raw query or remembered claim text.
+
+Offline verification re-hashes the receipt, verifies the signed lineage entry
+and audit chain, then replays the `MemoryChain` through the recorded
+`fold_head`. The canonical fold hash and the ordered selected record hashes
+must match. Later valid writes or tombstones therefore do not invalidate an
+older receipt: verification reconstructs the historical prefix the recall
+actually read. An empty namespace or an exact query with no live match is a
+no-op and creates no recall receipt, lineage entry, or `memory.recall` event.
+
+### Reachability limit
+
+This is intentionally a chain-native partial implementation of #2914. The
+spawned-agent persistent-memory prompt path still reads
+`SQLiteMemoryStore.get_relevant()` via `spawner_core._load_persistent_memory`;
+it does **not** emit these recall receipts yet. Semantic/vector retrieval and
+migrating SQLite memory writes onto `MemoryChain` or the signed lineage write
+path remain follow-up work.
+
 ## What changed
 
 | Surface | Old | New |
@@ -185,7 +220,7 @@ for fact in kb.subscribe(
 
 - Tagging `bernstein memory add` / `bernstein memory share` with the
   invoking adapter's identity - see "Known residual gap" above.
-- Lineage-style content-hash chains across rows. `cross_task_kb_meta`
-  already carries `content_hash` per published fact.
+- Migrating SQLite rows and spawned-agent reads onto the append-only
+  `MemoryChain` / signed recall-receipt substrate described above.
 - Provenance on the JSONL log under `memory/jsonl_log.py`. Add it
   separately if the SQLite primitive proves out.
