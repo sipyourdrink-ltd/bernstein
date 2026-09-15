@@ -28,7 +28,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
 | `autoheal/`                 | Auto-heal v2 subpackage |
 | `chat/`                     | Chat-control bridges for driving Bernstein agents from messaging apps |
-| `checks/`                   | Audit check contract, registry, and producer adapters (#5072) |
+| `checks/`                   | Audit check contract, registry, and producer adapters (#5072, #5076, #5091) |
 | `communication/`            | communication sub-package |
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
