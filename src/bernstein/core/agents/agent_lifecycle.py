@@ -30,6 +30,7 @@ from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import AbortReason, AgentSession, Task, TaskStatus, TransitionReason
 from bernstein.core.task_lifecycle import (
+    _write_retry_checkpoint,
     collect_completion_data,
     retry_or_fail_task,
 )
@@ -400,6 +401,10 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     if _rl_tracker is not None and session.provider:
         _rl_tracker.decrement_active(session.provider)
     _preserve_runner_logs(orch, session)
+    # issue #5844: record the checkpointed-retry reference before any of this
+    # session's tasks reach a retry decision below, and before _save_partial_work
+    # touches the worktree with its own WIP commit/merge.
+    _write_retry_checkpoint(orch, session, detector="crash")
     for task_id in session.task_ids:
         orch._crash_counts[task_id] = orch._crash_counts.get(task_id, 0) + 1
         _maybe_preserve_worktree(orch, session, task_id)
@@ -2920,6 +2925,9 @@ def _reap_wall_clock_timeout(
     with contextlib.suppress(OSError):
         orch._signal_mgr.clear_signals(session.id)
     _preserve_runner_logs(orch, session)
+    # issue #5844: same ordering guarantee as the crash path in _handle_dead_agent,
+    # before any retry decision and before _save_partial_work touches the worktree.
+    _write_retry_checkpoint(orch, session, detector="wall_clock_timeout")
     for task_id in session.task_ids:
         _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
     _save_partial_work(orch._spawner, session)
@@ -2970,6 +2978,9 @@ def _reap_heartbeat_timeout(
     orch._record_provider_health(session, success=False)
     with contextlib.suppress(OSError):
         orch._signal_mgr.clear_signals(session.id)
+    # issue #5844: same ordering guarantee as the other two reap paths, before
+    # the retry_or_fail_task call below reaches its checkpoint-retry decision.
+    _write_retry_checkpoint(orch, session, detector="heartbeat_timeout")
     for task_id in session.task_ids:
         _wal_r = getattr(orch, "_wal_writer", None)
         if _wal_r is not None:
