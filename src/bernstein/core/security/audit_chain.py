@@ -3673,6 +3673,61 @@ def record_read_set_refusal(
     )
 
 
+#: Issue #3279 -- emitted once per merge-tree integration probe. The event
+#: anchors a signed probe receipt into the HMAC chain so what two live worker
+#: commits composed to is provable offline. Only the pair, the resulting tree
+#: id, the verdict and the sealed receipt's content hash are recorded; the
+#: receipt itself carries the merge configuration and command a third party
+#: needs to re-derive the tree id with stock git and no bernstein installed.
+EVENT_MERGE_PROBE = "merge.probe_receipt"
+
+
+def record_merge_probe(
+    *,
+    chain: AuditChainStore,
+    a_commit: str,
+    b_commit: str,
+    tree_id: str,
+    verdict: str,
+    receipt_hash: str,
+    actor: str = "merge_tree_probe",
+) -> AuditEvent:
+    """Append a ``merge.probe_receipt`` event into *chain*.
+
+    The pair is ordered -- ``a_commit`` is ours and ``b_commit`` is theirs --
+    so the reversed pair is a different probe and a different entry.
+
+    ``verdict`` is recorded verbatim from the probe and is never ``SAFE``: a
+    clean probe states textual composition only, and the chain must not carry
+    a stronger claim than was measured.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        a_commit: Resolved object id of the first side.
+        b_commit: Resolved object id of the second side.
+        tree_id: Object id of the merged tree; empty when unavailable.
+        verdict: ``TEXTUAL_CLEAN``, ``CONFLICTED`` or ``UNAVAILABLE``.
+        receipt_hash: ``sha256:`` content hash of the sealed probe receipt.
+        actor: Recorded actor; defaults to ``"merge_tree_probe"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MERGE_PROBE,
+        actor=actor,
+        resource_type="merge_probe",
+        resource_id=receipt_hash,
+        details={
+            "a_commit": a_commit,
+            "b_commit": b_commit,
+            "tree_id": tree_id,
+            "verdict": verdict,
+            "receipt_hash": receipt_hash,
+        },
+    )
+
+
 def record_context_capsule(
     *,
     chain: AuditChainStore,
@@ -9806,6 +9861,7 @@ __all__ = [
     "EVENT_MCP_STATELESS_CALL",
     "EVENT_MCP_TASK_HANDLE",
     "EVENT_MEMORY_WRITE",
+    "EVENT_MERGE_PROBE",
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
     "EVENT_MODEL_DRIFT_OBSERVATION",
@@ -9966,6 +10022,7 @@ __all__ = [
     "record_mcp_stateless_call",
     "record_mcp_task_handle",
     "record_memory_write",
+    "record_merge_probe",
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
     "record_model_drift_observation",
