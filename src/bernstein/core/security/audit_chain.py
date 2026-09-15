@@ -9061,6 +9061,109 @@ def record_pool_warm_quarantine(
 
 
 # ---------------------------------------------------------------------------
+# Reconciliation lanes (#5120)
+# ---------------------------------------------------------------------------
+# A lane's lifecycle lives in the chain, mirroring the pool section above:
+# register/update/retire events are the only mutation path, and the runtime
+# lane registry is a deterministic projection rebuilt by replaying them (see
+# ``bernstein.core.govern.lane_registry``).
+
+#: A lane manifest was registered. Records the lane name and its canonical
+#: ``lane_hash`` so the registry projection can be rebuilt from the chain.
+EVENT_LANE_REGISTERED = "lane.registered"
+
+#: A lane manifest was updated (superseded by a new canonical hash). Records
+#: both the prior and the new ``lane_hash`` so the projection is unambiguous.
+EVENT_LANE_UPDATED = "lane.updated"
+
+#: A lane was retired. The projection drops it.
+EVENT_LANE_RETIRED = "lane.retired"
+
+
+def record_lane_registered(
+    *,
+    chain: AuditChainStore,
+    lane_name: str,
+    lane_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``lane.registered`` event into *chain* (#5120).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        lane_name: Operator-facing lane name.
+        lane_hash: Canonical hash identifying the registered lane manifest.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_LANE_REGISTERED,
+        actor=actor,
+        resource_type="reconciliation_lane",
+        resource_id=lane_hash,
+        details={"lane_name": lane_name, "lane_hash": lane_hash},
+    )
+
+
+def record_lane_updated(
+    *,
+    chain: AuditChainStore,
+    lane_name: str,
+    lane_hash: str,
+    prev_lane_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``lane.updated`` event into *chain* (#5120).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        lane_name: Operator-facing lane name.
+        lane_hash: New canonical hash identifying the lane manifest.
+        prev_lane_hash: The superseded lane hash for the same name.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_LANE_UPDATED,
+        actor=actor,
+        resource_type="reconciliation_lane",
+        resource_id=lane_hash,
+        details={"lane_name": lane_name, "lane_hash": lane_hash, "prev_lane_hash": prev_lane_hash},
+    )
+
+
+def record_lane_retired(
+    *,
+    chain: AuditChainStore,
+    lane_name: str,
+    lane_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``lane.retired`` event into *chain* (#5120).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        lane_name: Operator-facing lane name.
+        lane_hash: Canonical hash of the retired lane manifest.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_LANE_RETIRED,
+        actor=actor,
+        resource_type="reconciliation_lane",
+        resource_id=lane_hash,
+        details={"lane_name": lane_name, "lane_hash": lane_hash},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Provenance-verified release update advisory (#2942)
 # ---------------------------------------------------------------------------
 
@@ -9800,6 +9903,9 @@ __all__ = [
     "EVENT_INPUT_REFUSAL",
     "EVENT_INTENT_CAPSULE",
     "EVENT_INTENT_DRIFT",
+    "EVENT_LANE_REGISTERED",
+    "EVENT_LANE_RETIRED",
+    "EVENT_LANE_UPDATED",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
     "EVENT_MCP_CAPABILITY_DRIFT",
@@ -9960,6 +10066,9 @@ __all__ = [
     "record_input_refusal",
     "record_intent_capsule",
     "record_intent_drift",
+    "record_lane_registered",
+    "record_lane_retired",
+    "record_lane_updated",
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
     "record_mcp_capability_drift",
