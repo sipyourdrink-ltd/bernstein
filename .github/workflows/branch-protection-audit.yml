@@ -48,14 +48,27 @@ jobs:
     runs-on: [self-hosted, linux, vps]
     environment: automation
     timeout-minutes: 5
+    environment: trusted
     permissions:
       contents: read
       issues: write
+      id-token: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+
+      - name: Fetch publishing credentials from the external secret store
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: ${{ vars.SECRET_STORE_IDENTITY_ID }}
+          domain: https://app.infisical.com
+          project-slug: ${{ vars.SECRET_STORE_PROJECT_SLUG }}
+          env-slug: prod
+          secret-path: /ci
+          export-type: env
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -67,7 +80,7 @@ jobs:
           # Admin-scoped read is required to fetch repository rulesets; the
           # default github.token cannot do it. See the workflow header for the
           # secret's required fine-grained PAT scopes. No github.token fallback.
-          GH_TOKEN: ${{ secrets.BRANCH_PROTECTION_AUDIT_TOKEN }}
+          GH_TOKEN: ${{ env.BRANCH_PROTECTION_AUDIT_TOKEN }}
         # scripts/check_branch_ruleset_audit.py reads rules/branches/main,
         # rulesets, and rulesets/{id} (stdlib-only, no `uv sync` needed for
         # this job) and asserts: merge_queue, non_fast_forward and deletion
