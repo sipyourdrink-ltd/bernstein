@@ -1,5 +1,19 @@
 """bernstein-bench: runnable, reproducibility-gated evaluation harness."""
 
+from bernstein.eval.bench.authority_levels import (
+    AuthorityAction,
+    AuthorityLevel,
+    AuthorityReceipt,
+    ContainmentOutcome,
+    evaluate_authority_action,
+    evaluate_subtask_delegation,
+    verify_authority_receipt,
+)
+from bernstein.eval.bench.authority_suite import (
+    AuthorityContainmentSummary,
+    build_authority_suite_v1,
+    summarize_containment,
+)
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult, harness_fingerprint
 from bernstein.eval.bench.contamination import (
     ContaminationVerdict,
@@ -51,11 +65,16 @@ from bernstein.eval.bench.verifier import (
 )
 
 __all__ = [
+    "AuthorityAction",
+    "AuthorityContainmentSummary",
+    "AuthorityLevel",
+    "AuthorityReceipt",
     "BenchRunner",
     "BenchSuite",
     "BenchTask",
     "BenchVerifier",
     "BundleVerificationResult",
+    "ContainmentOutcome",
     "ContaminationVerdict",
     "HoldoutBenchRunner",
     "HoldoutIsolationError",
@@ -81,15 +100,20 @@ __all__ = [
     "ToolSurfaceReplayAdapter",
     "VerificationStatus",
     "admit_task",
+    "build_authority_suite_v1",
     "build_golden_suite_v1",
     "build_tool_surface_suite",
     "check_solution_contamination",
     "check_suite_saturation",
     "coordination_hash",
     "coordination_projection",
+    "evaluate_authority_action",
+    "evaluate_subtask_delegation",
     "extract_ngrams",
     "first_divergent_coordination_field",
     "harness_fingerprint",
     "reliability_check",
+    "summarize_containment",
     "validate_run_receipt",
+    "verify_authority_receipt",
 ]
