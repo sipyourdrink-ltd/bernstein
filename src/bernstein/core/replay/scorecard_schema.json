@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bernstein.run/schemas/scorecard/v1",
+  "title": "Bernstein Run Scorecard v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "type_version",
+    "scorecard_type",
+    "run_id",
+    "trajectory",
+    "verification",
+    "recovery",
+    "state_consistency",
+    "safety",
+    "replayability"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "citation": {
+      "type": "object",
+      "required": ["section", "field"],
+      "additionalProperties": false,
+      "properties": {
+        "section": { "type": "string", "minLength": 1 },
+        "field": { "type": "string", "minLength": 1 },
+        "journal_event_index": { "type": "integer", "minimum": 0 },
+        "step_hash": { "type": "string", "minLength": 1 }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/citation" }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "type_version": { "type": "integer", "minimum": 1 },
+    "scorecard_type": {
+      "type": "string",
+      "pattern": "^https://bernstein\\.run/attestations/scorecard/v[0-9]+$"
+    },
+    "run_id": { "type": "string", "minLength": 1 },
+    "trajectory": {
+      "type": "object",
+      "required": ["step_count", "schema_version", "citations"],
+      "additionalProperties": false,
+      "properties": {
+        "step_count": { "type": "integer", "minimum": 0 },
+        "first_step_index": { "type": "integer", "minimum": 0 },
+        "last_step_index": { "type": "integer", "minimum": 0 },
+        "first_step_hash": { "type": "string", "minLength": 1 },
+        "last_step_hash": { "type": "string", "minLength": 1 },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "citations": { "$ref": "#/definitions/citations" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "journal_ok",
+        "journal_head",
+        "journal_steps",
+        "spine_ok",
+        "spine_head",
+        "spine_entries",
+        "citations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "journal_ok": { "type": "boolean" },
+        "journal_head": { "type": "string" },
+        "journal_steps": { "type": "integer", "minimum": 0 },
+        "divergent_step": { "type": ["integer", "null"], "minimum": 0 },
+        "spine_ok": { "type": "boolean" },
+        "spine_head": { "type": "string" },
+        "spine_entries": { "type": "integer", "minimum": 0 },
+        "citations": { "$ref": "#/definitions/citations" }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "required": ["repaired", "dropped_rows", "citations"],
+      "additionalProperties": false,
+      "properties": {
+        "repaired": { "type": "boolean" },
+        "dropped_rows": { "type": "integer", "minimum": 0 },
+        "first_recoverable_seq": { "type": ["integer", "null"], "minimum": 0 },
+        "recovery_event_index": { "type": ["integer", "null"], "minimum": 0 },
+        "citations": { "$ref": "#/definitions/citations" }
+      }
+    },
+    "state_consistency": {
+      "type": "object",
+      "required": ["mutation_count", "disagreement_count", "citations"],
+      "additionalProperties": false,
+      "properties": {
+        "mutation_count": { "type": "integer", "minimum": 0 },
+        "disagreement_count": { "type": "integer", "minimum": 0 },
+        "last_mutation_event_index": { "type": ["integer", "null"], "minimum": 0 },
+        "citations": { "$ref": "#/definitions/citations" }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "required": [
+        "capability_declared",
+        "refusal_count",
+        "run_receipt_signed",
+        "citations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "capability_declared": { "type": "boolean" },
+        "refusal_count": { "type": "integer", "minimum": 0 },
+        "run_receipt_signed": { "type": "boolean" },
+        "citations": { "$ref": "#/definitions/citations" }
+      }
+    },
+    "replayability": {
+      "type": "object",
+      "required": [
+        "recorded",
+        "key_scheme",
+        "gateway_mode",
+        "fixture_present",
+        "citations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "recorded": { "type": "boolean" },
+        "key_scheme": { "type": "string" },
+        "gateway_mode": { "type": "string" },
+        "fixture_present": { "type": "boolean" },
+        "citations": { "$ref": "#/definitions/citations" }
+      }
+    }
+  }
+}

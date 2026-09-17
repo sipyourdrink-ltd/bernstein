@@ -83,6 +83,17 @@ MAINTAINER_OR_SPLIT_LINES = 1000
 # Section 3: these words in a path make a change sensitive whatever its size.
 SENSITIVE_WORDS = ("sandbox", "security", "audit")
 
+# The words are matched against the whole path, which also catches the tests
+# and the release notes that accompany the code carrying them: "auditor" in
+# `tests/conformance/auditor/` reads as "audit", and nine pull requests that
+# add nothing but conformance vectors waited on a third approval for it. A
+# test cannot loosen the control it exercises and a release note cannot loosen
+# anything, so the escalation reads the paths that carry the implementation.
+# These two prefixes are exempted rather than `src/` being allowlisted: an
+# allowlist would also stop escalating `.github/`, `schemas/` and `proto/`,
+# which is a change nobody asked for.
+SENSITIVE_EXEMPT_PREFIXES = ("tests/", "docs/")
+
 # Section 1 as decided for automation: the paths where automation stops being
 # allowed to merge its own work. Wider than SENSITIVE_WORDS because a change
 # to the workflows, the schemas or the wire protocol is not something the
@@ -399,7 +410,12 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         approving = approvals & eligible
         approving_core = approving & roster.core
 
-        sensitive = sorted(p for p in pr.paths if any(word in p for word in SENSITIVE_WORDS))
+        sensitive = sorted(
+            p
+            for p in pr.paths
+            if not p.startswith(SENSITIVE_EXEMPT_PREFIXES)
+            and any(word in p for word in SENSITIVE_WORDS)
+        )
         large = pr.changed_lines > THIRD_APPROVAL_LINES
         need_total, need_core = (3, 2) if (large or sensitive) else (2, 1)
         reason = (
@@ -452,6 +468,21 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
     missing = sum(1 for req in verdict.requirements if not req.met)
     verdict.title = "review requirements met" if verdict.passed else f"{missing} requirement(s) missing"
     return verdict
+
+
+def annotation(verdict: Verdict) -> str:
+    """The one line GitHub shows next to the red check.
+
+    It names the first unmet requirement and who can meet it, so a contributor
+    reads "waiting for two approvals" rather than "something is missing". The
+    full table stays in the job summary.
+    """
+    unmet = [req for req in verdict.requirements if not req.met]
+    if not unmet:
+        return verdict.title
+    first = unmet[0]
+    rest = f" (+{len(unmet) - 1} more in the job summary)" if len(unmet) > 1 else ""
+    return f"waiting for: {first.text} - {first.who}{rest}".replace("`", "")
 
 
 def pr_number_from_env(env: dict[str, str]) -> int | None:
@@ -507,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         with open(summary_path, "a", encoding="utf-8") as handle:
             handle.write(summary + "\n")
     if not verdict.passed:
-        print(f"::error title=quorum::{verdict.title} - see the job summary for what is missing")
+        print(f"::error title=quorum::{annotation(verdict)}")
         return 1
     return 0
 
