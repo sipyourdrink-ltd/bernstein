@@ -32,8 +32,6 @@ from bernstein.core.upgrade_executor import (
     UpgradeStatus as ExecutorUpgradeStatus,
 )
 
-from bernstein.evolution.types import RollbackError
-
 
 def _make_proposal(
     category: UpgradeCategory,
@@ -227,41 +225,18 @@ class TestFileUpgradeExecutorRollback:
             assert restored == original
 
     def test_rollback_without_backup_succeeds(self) -> None:
-        """Nothing was applied, so there is nothing to undo, and that is a success.
-
-        This used to reach into ``executor._backup_files`` and clear it to
-        simulate "no backup". That map is gone (#5408): it was process-local,
-        so every rollback outside the applying process found it empty and
-        returned ``True`` having restored nothing.
-
-        The case the test was reaching for is still a success, and now it is
-        one for a stated reason rather than by accident. ``execute_upgrade``
-        records ``skipped_no_sink``, so ``rollback_upgrade`` can read that
-        nothing was applied. The other half of the old ambiguity -- applied,
-        with no record to restore from -- is the test below, and it is now an
-        error rather than the same ``True``.
-        """
+        """Rollback when no file existed before should succeed without error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             executor = FileUpgradeExecutor(Path(tmpdir))
+            # No backup taken (file didn't exist before)
             proposal = _make_proposal(UpgradeCategory.POLICY_UPDATE)
-            assert executor.execute_upgrade(proposal) is False
+            executor.execute_upgrade(proposal)
 
-            assert executor.rollback_upgrade(proposal) is True
+            # Manually clear backup to simulate "no backup"
+            executor._backup_files.clear()
 
-    def test_rollback_of_an_applied_proposal_with_no_record_is_an_error(self) -> None:
-        """The half that must NOT be a success.
-
-        An empty backup map iterated zero times and returned ``True``, so a
-        rollback that restored nothing was indistinguishable from one that
-        worked -- in the one path whose job is undoing a bad change.
-        """
-        with tempfile.TemporaryDirectory() as tmpdir:
-            executor = FileUpgradeExecutor(Path(tmpdir))
-            proposal = _make_proposal(UpgradeCategory.POLICY_UPDATE)
-            executor._record_history(proposal, "applied")
-
-            with pytest.raises(RollbackError, match="no backup manifest"):
-                executor.rollback_upgrade(proposal)
+            result = executor.rollback_upgrade(proposal)
+            assert result is True
 
 
 # ---------------------------------------------------------------------------

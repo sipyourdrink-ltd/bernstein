@@ -1,19 +1,30 @@
 # Review ownership. The rules these encode are written out in
 # docs/governance/review-charter.md; this file is how GitHub enforces them.
 #
-# Later entries win, so the default sits at the top and the paths the charter
-# reserves to the maintainer sit below it.
+# There is no catch-all line on purpose. The approval counts the charter
+# asks for (s2) are checked by scripts/quorum_check.py against
+# .github/quorum-roster.toml, and the reviews a change still needs are
+# requested from the roster by the hourly sweep, so a catch-all here would
+# only route every pull request to every core reviewer at once.
+#
+# Later entries win. The entries below are the paths the charter protects
+# (s4). A line that names several people is satisfied by any one of them:
+# that is how GitHub reads it and how scripts/quorum_check.py counts it.
 
-# Every change needs an approving review from a core reviewer (charter, s2).
-# Any one of them satisfies the requirement.
-* @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e
-
-# Paths the charter reserves to the maintainer (s4): these need the
-# maintainer's approval in addition to the usual quorum.
+# Paths the charter protects (s4): these need a code owner's approval in
+# addition to the usual quorum. On most of them the owner is the maintainer.
 /.github/ @chernistry
-/src/bernstein/core/ @chernistry
+# The core package and the adapters are shared with the core reviewers: any
+# one of the people named supplies the owner's approval. The four
+# subpackages listed right after core/ are the exception and stay with the
+# maintainer; they come later in the file, so they win.
+/src/bernstein/core/ @chernistry @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e @Chirag6722
+/src/bernstein/core/security/ @chernistry
+/src/bernstein/core/identity/ @chernistry
+/src/bernstein/core/sandbox/ @chernistry
+/src/bernstein/core/tokens/ @chernistry
 /src/bernstein/evolution/ @chernistry
-/src/bernstein/adapters/ @chernistry
+/src/bernstein/adapters/ @chernistry @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e @Chirag6722
 /schemas/ @chernistry
 /proto/ @chernistry
 /pyproject.toml @chernistry

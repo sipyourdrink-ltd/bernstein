@@ -46,7 +46,10 @@ The rules, in the order they are applied
    400 changed lines, or on a path containing `sandbox`, `security` or
    `audit`, a third approval is required and two of the three must be core.
    Over 1,000 changed lines the maintainer approves or the change is split.
-   A protected path (any CODEOWNERS entry that is not `*`) needs its owner.
+   A protected path (any CODEOWNERS entry that is not `*`) needs an approval
+   from one of its owners: a line naming several people is satisfied by any
+   one of them, as GitHub's own code-owner review works, and never by the
+   author or by anyone who pushed to the branch.
 
 Approvals count only when they were given on the current head commit: a push
 after an approval means nobody has read what is about to merge. A `changes
@@ -433,19 +436,25 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
                 )
             )
 
-        protected: dict[str, list[str]] = {}
+        # A CODEOWNERS line that names several people is satisfied by any one
+        # of them, which is how GitHub's own code-owner review reads it, so
+        # the paths are grouped by the owner set of the line that won them
+        # and each group is one requirement: a line with five owners asks for
+        # one approval, not five. The author and anyone who pushed to the
+        # branch cannot be that one (section 3).
+        protected: dict[frozenset[str], list[str]] = {}
         for path in pr.paths:
             path_owners, specific = owners_for(path, owners)
             if specific:
-                for owner in path_owners:
-                    protected.setdefault(owner, []).append(path)
-        for owner, paths in sorted(protected.items()):
+                protected.setdefault(frozenset(path_owners), []).append(path)
+        for owner_set, paths in sorted(protected.items(), key=lambda item: sorted(item[0])):
+            eligible_owners = owner_set - {pr.author} - pr.contributors
             verdict.requirements.append(
                 Requirement(
                     f"approval from the owner of {', '.join(f'`{p}`' for p in paths[:3])}"
                     + (" and others" if len(paths) > 3 else ""),
-                    owner in approvals,
-                    f"@{owner}",
+                    bool(eligible_owners & approvals),
+                    _names(eligible_owners) if eligible_owners else "nobody: every owner wrote or pushed this change",
                 )
             )
 
