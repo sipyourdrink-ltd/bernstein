@@ -28,7 +28,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
 | `autoheal/`                 | Auto-heal v2 subpackage |
 | `chat/`                     | Chat-control bridges for driving Bernstein agents from messaging apps |
-| `checks/`                   | Audit check contract, registry, and producer adapters (#5072) |
+| `checks/`                   | Audit check contract, registry, and producer adapters (#5072, #5076, #5091) |
 | `communication/`            | communication sub-package |
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
@@ -132,7 +132,6 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `continue_dev.py`           | Continue.dev CLI adapter |
 | `copilot.py`                | GitHub Copilot CLI adapter |
 | `council_runner.py`         | Task-level "council of agents" runner |
-| `crew_ingest.py`            | Ingest adapter for role-and-crew agent runtimes (#4965) |
 | `cursor.py`                 | Cursor Agent CLI adapter |
 | `devin_terminal.py`         | Devin for Terminal (Cognition) CLI adapter |
 | `draft.py`                  | Drafting helper for adapter capability profiles |
