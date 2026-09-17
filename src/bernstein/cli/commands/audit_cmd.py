@@ -21,6 +21,7 @@ Commands:
                                      status callback offline.
   bernstein audit verify-hmac        Verify HMAC chain across all audit files.
   bernstein audit verify-gates       Verify clearance-gate integrity offline.
+  bernstein audit verify-export      Verify a SIEM export file offline (#5034).
   bernstein audit export             Export a signed Article 12 evidence pack.
   bernstein audit pack               Build a SOC 2 evidence checklist.
   bernstein audit capabilities       Print lethal-trifecta capability matrix.
@@ -479,6 +480,137 @@ def verify_cmd(
     console.print(
         Panel(
             f"[bold red]Audit Verification: FAILED[/bold red]\n\n[bold]Failing pillar(s):[/bold]\n{failing_list}",
+            border_style="red",
+            expand=False,
+        )
+    )
+    console.print()
+    raise SystemExit(1)
+
+
+@audit_group.command("verify-export")
+@click.argument("export_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--public-key",
+    "public_key_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help=(
+        "Trusted Ed25519 public-key JWK (JSON file) to pin the segment-receipt "
+        "signer. Without it, each receipt's embedded key is trusted on first use."
+    ),
+)
+def verify_export_cmd(export_file: Path, public_key_path: Path | None) -> None:
+    """Verify a SIEM export file is contiguous, in order, and chain-linked.
+
+    Reads a JSONL file produced by :class:`~bernstein.core.security.audit_export.FileExporter`
+    -- exported records plus the interleaved ``segment_receipt`` lines -- and
+    reports whether it is contiguous, has a gap, is reordered, or was
+    tampered with. Works on the file alone: no database, no HMAC key,
+    just the export and (optionally) the signer's public key (issue #5034).
+
+    This checks chain linkage (each record's ``prev_hmac`` against the
+    previous record's stored ``hmac``), not record content: a stored
+    ``hmac`` that no longer matches what it was computed over is not
+    detectable from the export alone. Content verification needs the HMAC
+    signing key, via ``bernstein audit verify``.
+    """
+    import json as _json
+
+    from bernstein.core.security.audit_export import (
+        AuditEntry,
+        ExportVerifyStatus,
+        SegmentReceipt,
+        verify_exported_records,
+    )
+
+    entries: list[AuditEntry] = []
+    receipts: list[SegmentReceipt] = []
+    skipped_lines = 0
+    for lineno, raw_line in enumerate(export_file.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            row = _json.loads(line)
+        except _json.JSONDecodeError:
+            console.print(f"[red]Line {lineno} is not valid JSON -- skipping.[/red]")
+            skipped_lines += 1
+            continue
+        if not isinstance(row, dict):
+            skipped_lines += 1
+            continue
+        row = cast("dict[str, Any]", row)
+        if "segment_receipt" in row:
+            receipts.append(SegmentReceipt.from_dict(row["segment_receipt"]))
+            continue
+        entries.append(
+            AuditEntry(
+                timestamp=float(row.get("timestamp", 0.0)),
+                event_type=str(row.get("event_type", "")),
+                actor=str(row.get("actor", "")),
+                resource=str(row.get("resource", "")),
+                action=str(row.get("action", "")),
+                outcome=str(row.get("outcome", "success")),
+                details=dict(row.get("details") or {}),
+                hmac=str(row.get("hmac", "")),
+                prev_hmac=str(row.get("prev_hmac", "")),
+                sequence=int(row.get("sequence", 0)),
+            )
+        )
+
+    trusted_jwk: dict[str, Any] | None = None
+    if public_key_path is not None:
+        trusted_jwk = _json.loads(public_key_path.read_text(encoding="utf-8"))
+
+    result = verify_exported_records(entries, receipts, trusted_public_key_jwk=trusted_jwk)
+
+    # Which trust mode actually produced this result -- distinct claims that
+    # must not read the same way in the panel: a pinned signer, an
+    # unpinned (trust-on-first-use) signer, or no signature evidence at all.
+    if trusted_jwk is not None:
+        trust = "signer pinned"
+    elif receipts:
+        trust = "signer trusted on first use -- authenticity NOT verified, re-run with --public-key"
+    else:
+        trust = "no segment receipts -- sequence continuity only"
+
+    console.print()
+    if result.ok and skipped_lines:
+        console.print(
+            Panel(
+                f"[bold yellow]Export Verification: INCOMPLETE[/bold yellow]\n"
+                f"[dim]{len(entries)} record(s), {len(receipts)} segment receipt(s) -- {result.detail}, "
+                f"but {skipped_lines} line(s) could not be parsed and were excluded from the check. "
+                "A skipped line is not accounted for by sequence continuity.[/dim]",
+                border_style="yellow",
+                expand=False,
+            )
+        )
+        console.print()
+        raise SystemExit(1)
+    if result.ok:
+        console.print(
+            Panel(
+                f"[bold green]Export Verification: PASSED[/bold green]\n"
+                f"[dim]{len(entries)} record(s), {len(receipts)} segment receipt(s) -- {result.detail}.\n"
+                f"Trust: {trust}.[/dim]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        console.print()
+        raise SystemExit(0)
+
+    status_label = {
+        ExportVerifyStatus.GAP: "GAP",
+        ExportVerifyStatus.REORDERED: "REORDERED",
+        ExportVerifyStatus.TAMPERED: "TAMPERED",
+    }.get(result.status, result.status.value.upper())
+    at = f" at sequence {result.at_sequence}" if result.at_sequence is not None else ""
+    console.print(
+        Panel(
+            f"[bold red]Export Verification: {status_label}{at}[/bold red]\n\n{result.detail}",
             border_style="red",
             expand=False,
         )

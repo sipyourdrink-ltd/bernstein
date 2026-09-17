@@ -51,16 +51,34 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Look the run up BY COMMIT, never by workflow file.
+          #
+          # The repository carries two workflow registrations for quorum.yml.
+          # `gh run list --workflow quorum.yml` resolves to 354225427, whose
+          # only runs are workflow_dispatch; every pull_request and merge_group
+          # run of the check carries workflow_id 354268719, and
+          # GET /actions/workflows/354268719 is a 404. So the lookup returned
+          # nothing for exactly the runs this sweep exists to re-run, and every
+          # governance pull request was reported as "already green or never
+          # ran" while its check sat red (#5827).
+          #
+          # `gh run rerun` refuses for the same reason -- it resolves the
+          # workflow before posting -- so the rerun goes through the REST
+          # endpoint, which works on these runs today.
           rerun_for () {  # rerun_for <pr-number>
             local pr="$1" head run
             head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)
-            run=$(gh run list --repo "$REPO" --workflow quorum.yml --commit "$head" \
-                    --limit 1 --json databaseId,conclusion --jq '.[0] | select(.conclusion != "success") | .databaseId')
+            # The check run names its own run in html_url; that is the id the
+            # rerun endpoint wants, and it is reachable without the workflow.
+            run=$(gh api "repos/${REPO}/commits/${head}/check-runs?check_name=quorum" \
+                    --jq '.check_runs[] | select(.conclusion != null and .conclusion != "success") | .html_url' \
+                  | sed -E 's#.*/actions/runs/([0-9]+)(/.*)?$#\1#' | head -1)
             if [ -n "${run:-}" ]; then
               echo "re-running quorum for #$pr (run $run, head ${head:0:9})"
-              gh run rerun "$run" --repo "$REPO" || echo "  rerun refused; the next push will re-evaluate"
+              gh api -X POST "repos/${REPO}/actions/runs/${run}/rerun" >/dev/null \
+                || echo "  rerun refused; the next push will re-evaluate"
             else
-              echo "#$pr: quorum already green or never ran; nothing to do"
+              echo "#$pr: quorum already green, still running, or never ran; nothing to do"
             fi
           }
 
