@@ -24,7 +24,11 @@ def planner() -> ModuleType:
 
 
 def test_plan_records_one_pinned_range_and_sorted_paths(planner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner, "discover_affected_files", lambda _base: [Path("tests/unit/test_b.py")])
+    monkeypatch.setattr(
+        planner,
+        "discover_affected_files",
+        lambda _base: [planner.ROOT / "tests/unit/test_b.py"],
+    )
     monkeypatch.setattr(planner, "discover_whole_tree_guard_files", lambda: [Path("tests/unit/test_guard.py")])
     monkeypatch.setattr(planner, "_resolve", lambda rev: {"pr-base": "base-sha", "HEAD": "head-sha"}[rev])
 

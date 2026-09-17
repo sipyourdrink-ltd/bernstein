@@ -34,6 +34,12 @@ class AffectedTestPlan(TypedDict):
     guards: list[str]
 
 
+def _relative(path: Path) -> str:
+    """Return a portable repository-relative test path."""
+    absolute = path if path.is_absolute() else ROOT / path
+    return absolute.resolve().relative_to(ROOT.resolve()).as_posix()
+
+
 def _resolve(rev: str) -> str:
     return subprocess.run(
         ["git", "rev-parse", rev],
@@ -59,8 +65,8 @@ def build_plan(base: str) -> AffectedTestPlan:
         "base": base,
         "base_sha": _resolve(base),
         "head_sha": _resolve("HEAD"),
-        "affected": [path.as_posix() for path in affected],
-        "guards": [path.as_posix() for path in discover_whole_tree_guard_files()],
+        "affected": [_relative(path) for path in affected],
+        "guards": [_relative(path) for path in discover_whole_tree_guard_files()],
     }
 
 
@@ -97,6 +103,10 @@ def _write_selection(plan: AffectedTestPlan, spec: str, output: Path, durations_
     selected = select_shard(plan, spec, durations_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("".join(f"{path}\n" for path in selected), encoding="utf-8")
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with Path(github_output).open("a", encoding="utf-8") as stream:
+            stream.write(f"selected_count={len(selected)}\n")
     if selected:
         return
     message = f"No affected test files in shard {spec}. Compared {plan['base_sha']}...{plan['head_sha']}."

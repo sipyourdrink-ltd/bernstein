@@ -32,12 +32,17 @@ def test_affected_set_is_computed_once_and_shared_across_cells() -> None:
     planner_runs = "\n".join(str(step.get("run", "")) for step in _steps(planner))
     assert planner_runs.count("scripts/plan_affected_tests.py") == 1
     assert "artifact_digest" in planner["outputs"]
-    assert any("actions/upload-artifact" in str(step.get("uses", "")) for step in _steps(planner))
+    uploads = [step for step in _steps(planner) if "actions/upload-artifact" in str(step.get("uses", ""))]
+    assert len(uploads) == 1
+    assert uploads[0]["with"]["overwrite"] is True
 
     for job_id in CONSUMERS:
         job = jobs[job_id]
         assert PLANNER_JOB in job["needs"]
         assert any("actions/download-artifact" in str(step.get("uses", "")) for step in _steps(job))
+        assert any(step.get("name") == "Nothing affected in this shard" for step in _steps(job))
         runs = "\n".join(str(step.get("run", "")) for step in _steps(job))
         assert "--affected" not in runs
         assert "scripts/test_impact.py" not in runs
+
+    assert PLANNER_JOB in jobs["ci-gate"]["needs"]

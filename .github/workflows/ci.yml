@@ -399,6 +399,9 @@ jobs:
       contents: read
     outputs:
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      affected_count: ${{ steps.plan.outputs.affected_count }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -420,12 +423,23 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin \
             "${BASE_SHA}:refs/remotes/origin/pr-base"
-      - name: Compute affected-test plan
+      - id: plan
+        name: Compute affected-test plan
         if: github.event_name == 'pull_request'
         run: |
           uv run python scripts/plan_affected_tests.py plan \
             --base refs/remotes/origin/pr-base \
             --output affected-test-plan.json
+          echo "affected_count=$(jq '.affected | length' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$(jq -r '.base_sha' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(jq -r '.head_sha' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
+      - name: Nothing affected
+        if: github.event_name == 'pull_request' && steps.plan.outputs.affected_count == '0'
+        env:
+          BASE_SHA: ${{ steps.plan.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+        run: |
+          echo "No tests affected. Compared ${BASE_SHA}...${HEAD_SHA}."
       - id: upload
         name: Upload affected-test plan
         if: github.event_name == 'pull_request'
@@ -434,6 +448,7 @@ jobs:
           name: affected-test-plan-${{ github.run_id }}
           path: affected-test-plan.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   # ─── Fast checks (never cancelled, <2 min each) ───────────────────────
@@ -2028,8 +2043,34 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin \
             "${HEAD_SHA}:refs/remotes/origin/pr-head"
+      - id: select_affected
+        name: Select affected-test shard
+        if: github.event_name == 'pull_request' && runner.os != 'Windows'
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
+        run: |
+          uv run python scripts/plan_affected_tests.py select \
+            --plan .sdd/affected-test-plan/affected-test-plan.json \
+            --shard "${SHARD}/${SHARD_COUNT}" \
+            --output .sdd/affected-test-plan/selected.txt
+      - name: Nothing affected in this shard
+        if: >-
+          github.event_name == 'pull_request' &&
+          runner.os != 'Windows' &&
+          steps.select_affected.outputs.selected_count == '0'
+        env:
+          BASE_SHA: ${{ needs.plan-affected-tests.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.plan-affected-tests.outputs.head_sha }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
+        run: |
+          echo "No affected tests in shard ${SHARD}/${SHARD_COUNT}. Compared ${BASE_SHA}...${HEAD_SHA}."
       - name: Run isolated test suite (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: >-
+          runner.os != 'Windows' &&
+          (github.event_name != 'pull_request' ||
+           steps.select_affected.outputs.selected_count != '0')
         env:
           EVENT_NAME: ${{ github.event_name }}
           PYTHON_VERSION: ${{ matrix.python-version }}
@@ -2044,14 +2085,10 @@ jobs:
             coverage_args=(--coverage)
           fi
           if [ "${EVENT_NAME}" = "pull_request" ]; then
-            uv run python scripts/plan_affected_tests.py select \
-              --plan .sdd/affected-test-plan/affected-test-plan.json \
-              --shard "${SHARD}/${SHARD_COUNT}" \
-              --output .sdd/affected-test-plan/selected.txt
-            mapfile -t test_files < .sdd/affected-test-plan/selected.txt
-            if [ "${#test_files[@]}" -eq 0 ]; then
-              exit 0
-            fi
+            test_files=()
+            while IFS= read -r test_file; do
+              test_files+=("${test_file}")
+            done < .sdd/affected-test-plan/selected.txt
             uv run python scripts/run_tests.py --parallel 6 \
               "${coverage_args[@]}" \
               "${test_files[@]}"
@@ -2338,7 +2375,32 @@ jobs:
         with:
           name: affected-test-plan-${{ github.run_id }}
           path: .sdd/affected-test-plan
+      - id: select_affected
+        name: Select affected-test shard
+        if: github.event_name == 'pull_request'
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.MACOS_SHARD_COUNT }}
+        run: |
+          uv run python scripts/plan_affected_tests.py select \
+            --plan .sdd/affected-test-plan/affected-test-plan.json \
+            --shard "${SHARD}/${SHARD_COUNT}" \
+            --output .sdd/affected-test-plan/selected.txt
+      - name: Nothing affected in this shard
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.select_affected.outputs.selected_count == '0'
+        env:
+          BASE_SHA: ${{ needs.plan-affected-tests.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.plan-affected-tests.outputs.head_sha }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.MACOS_SHARD_COUNT }}
+        run: |
+          echo "No affected tests in shard ${SHARD}/${SHARD_COUNT}. Compared ${BASE_SHA}...${HEAD_SHA}."
       - name: Run isolated test suite
+        if: >-
+          github.event_name != 'pull_request' ||
+          steps.select_affected.outputs.selected_count != '0'
         env:
           EVENT_NAME: ${{ github.event_name }}
           SHARD: ${{ matrix.shard }}
@@ -2349,14 +2411,10 @@ jobs:
           # across all 4 cells, so per-push macOS coverage is the
           # complete suite rather than a fixed quarter of it.
           if [ "${EVENT_NAME}" = "pull_request" ]; then
-            uv run python scripts/plan_affected_tests.py select \
-              --plan .sdd/affected-test-plan/affected-test-plan.json \
-              --shard "${SHARD}/${SHARD_COUNT}" \
-              --output .sdd/affected-test-plan/selected.txt
-            mapfile -t test_files < .sdd/affected-test-plan/selected.txt
-            if [ "${#test_files[@]}" -eq 0 ]; then
-              exit 0
-            fi
+            test_files=()
+            while IFS= read -r test_file; do
+              test_files+=("${test_file}")
+            done < .sdd/affected-test-plan/selected.txt
             uv run python scripts/run_tests.py --parallel 6 \
               "${test_files[@]}"
           else
@@ -2454,6 +2512,7 @@ jobs:
     if: always() && !cancelled()
     needs:
       - determine-changes
+      - plan-affected-tests
       - repo-hygiene
       - lint
       - spelling
