@@ -7,6 +7,11 @@ name: Trunk Health SLO
 # unless the PR carries the `hotfix-cleared` label. The flag is an issue
 # rather than an Actions variable because GITHUB_TOKEN can write issues
 # but not variables, so the mechanism needs no separately provisioned PAT.
+# This SLO intentionally samples completed full-suite `workflow_dispatch`
+# runs rather than ordinary main-push CI verdicts. A non-test failure first
+# seen on an ordinary push is re-exercised when the cadence dispatches current
+# main, so the SLO can observe it later; 45 minutes is only the nominal cadence,
+# and GitHub's best-effort scheduler can make that delay longer.
 #
 # The toggle exists so a red trunk stops new merges from piling on top
 # of an already-broken main: while the red rate is over threshold the

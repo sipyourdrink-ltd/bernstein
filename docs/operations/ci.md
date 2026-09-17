@@ -273,8 +273,15 @@ cancelled/skipped dispatches are retried on the next tick.
 full suite starts it can reach a readable verdict even if more merges land.
 Release pushes (`chore(release)` / `release:`) retain the same per-SHA,
 non-cancelling treatment and run the full suite immediately. The 45-minute
-schedule avoids the top of the hour; GitHub schedules remain best-effort, so
-operators should measure actual completed-verdict spacing after rollout.
+value is nominal scheduled-tick spacing, not a completed-verdict ceiling.
+GitHub can delay or drop scheduled events, leaving demand pending until a later
+controller run and making the observed dispatch/verdict interval longer. All
+CI-relevant pushes that land before a dispatch starts are covered by that one
+full run of then-current `main`. A relevant push that lands after a dispatch
+starts is newer demand and can trigger another dispatch on a later tick; the
+per-SHA, non-cancelling groups do not force it to wait for the older full run
+to finish. Operators should measure actual completed-verdict spacing after
+rollout.
 
 Background: see issue #1273 for the wave-merge race and the
 PR-vs-push split. The rationale is restated in the comment block
