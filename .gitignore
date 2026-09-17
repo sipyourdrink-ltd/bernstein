@@ -54,6 +54,17 @@ node_modules/
 
 # Bernstein workspace state — .sdd must NEVER be committed to git (CI enforced)
 .sdd/
+# The same runtime directories when a run's root is the checkout itself
+# rather than .sdd/. Two of them hold key material -- auth/ carries the
+# agent-identity JWT secret and a2a/identity/ the private half of the
+# lineage signing keypair -- and auth/ is already in _MERGE_DENY_PREFIXES
+# (core/git/git_pr.py), so the project has decided these must never reach
+# main. The merge gate is the last line; without these entries `git add -A`
+# stages a key long before any gate sees it. Anchored to the root so a
+# legitimate nested directory of the same name is untouched.
+/auth/
+/a2a/
+/default/
 
 # MkDocs build output
 site/
