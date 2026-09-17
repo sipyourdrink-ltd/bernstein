@@ -207,6 +207,43 @@ one of the bundles has no cost recorded rather than printing nothing.
 
 ---
 
+## Abstention, and the three rates
+
+A run that declines a task it cannot verify used to score exactly like one that
+submitted a confidently wrong patch: both were a `failed`, both sat in the
+denominator of `resolve_rate = resolved / attempted`, and neither in the
+numerator. That rewards guessing, because a guess can only raise the resolve
+rate and an abstention can only lower it.
+
+An instance may now end `abstained`, carrying an `abstention_reason`. It is not
+an attempt at the task, it is a declared refusal to answer one, so it is
+excluded from `attempted` — and because an abstention scores above a wrong
+answer, claiming one costs a stated reason.
+
+Three rates, because no one of them answers the operator's question alone:
+
+| Rate | Definition | What it tells you |
+|---|---|---|
+| **Resolve rate** | `resolved / attempted`, where `attempted` excludes skipped **and** abstained | Of the answers the run gave, how many were right |
+| **Abstain rate** | `abstained / taken_on`, where `taken_on` excludes only skipped | How often the run said it could not tell |
+| **Confident-error rate** | `wrong / (wrong + resolved)` | Of the answers it gave, how many were wrong |
+
+Read them together. A high resolve rate beside a high abstain rate is a run
+that answers rarely and well; the same resolve rate beside a zero abstain rate
+and a high confident-error rate is a run that answers everything and is often
+wrong. The resolve rate on its own cannot separate those two, which is why
+raising it by guessing used to be free.
+
+`errors` are excluded from both halves of the confident-error rate: a harness
+crash is not the run being confidently wrong, and counting it as one would move
+the number for something the run did not do.
+
+**Existing bundles are unaffected.** A bundle written before abstentions
+existed has `abstained: 0`, so `attempted` is `total - skipped` for it exactly
+as it always was and its published resolve rate does not move.
+
+---
+
 ## Suite format
 
 Suites are content-addressed JSON files:
