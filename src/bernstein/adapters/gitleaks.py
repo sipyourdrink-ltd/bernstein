@@ -26,7 +26,6 @@ from bernstein.adapters.scanner import (
     ScannerCategory,
     ScanResult,
     ScanScope,
-    normalize_finding_path,
     normalize_report_path,
 )
 from bernstein.adapters.scanner_finding import Finding
