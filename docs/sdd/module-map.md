@@ -28,7 +28,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
 | `autoheal/`                 | Auto-heal v2 subpackage |
 | `chat/`                     | Chat-control bridges for driving Bernstein agents from messaging apps |
-| `checks/`                   | Audit check contract, registry, and producer adapters (#5072, #5076, #5091) |
+| `checks/`                   | Audit check contract, registry, and producer adapters (#5072) |
 | `communication/`            | communication sub-package |
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
@@ -52,7 +52,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `knowledge/`                | knowledge sub-package |
 | `lifecycle/`                | Lifecycle-hooks subsystem |
 | `lineage/`                  | Lineage v1 - Sigstore-style per-artefact transparency log |
-| `memory/`                   | memory sub-package - persistent memory stores |
+| `memory/`                   | Persistent memory stores and tamper-evident MemoryChain provenance |
 | `notifications/`            | Outbound notification subsystem (release 1.9) |
 | `observability/`            | observability sub-package |
 | `orchestration/`            | orchestration sub-package |

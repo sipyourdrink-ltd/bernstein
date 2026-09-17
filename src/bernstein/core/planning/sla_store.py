@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from bernstein.core.security.sanitize import sanitize_log
+
 if TYPE_CHECKING:
     # `SLAStore.list` shadows the builtin inside the class body, so
     # annotations below name it explicitly.
@@ -102,12 +104,11 @@ def _single_line(value: object, *, limit: int = 256) -> str:
     Contract ids and store paths reach log records, and a log record is
     newline-delimited both for an operator reading the file and for any shipper
     parsing it. A value carrying CR or LF could therefore append a forged
-    record after the real one. Line breaks are escaped first, every remaining
-    non-printable character is hex-escaped, and the result is length-capped, so
-    an untrusted value always occupies exactly one line of bounded width.
+    record after the real one. :func:`sanitize_log` escapes every record
+    boundary and control character, and the result is length-capped, so an
+    untrusted value always occupies exactly one line of bounded width.
     """
-    text = str(value).replace("\r", "\\r").replace("\n", "\\n")
-    text = "".join(ch if ch.isprintable() else f"\\x{ord(ch):02x}" for ch in text)
+    text = sanitize_log(str(value))
     if len(text) > limit:
         text = text[:limit] + "...(truncated)"
     return text
