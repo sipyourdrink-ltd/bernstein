@@ -769,7 +769,7 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 # standing obligation. Handing a language over is a one-line change to
 # this table, made by the person taking it on.
 [tool.bernstein.readme-l10n.owners]
-"zh-Hans" = "@chernistry"
+"zh-Hans" = "@7487"
 "zh-TW" = "@chernistry"
 "ja" = "@chernistry"
 "ko" = "@Bhumika-1432006"
