@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -38,17 +39,49 @@ from bernstein.mcp.input_validation import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _reset_validator_cache() -> Iterator[None]:
-    """Each test starts with a clean registry cache and strict mode."""
+@contextmanager
+def _isolated_validator_mode() -> Iterator[None]:
+    """Run a block with a clean registry cache and no mode set, then restore.
+
+    Restoring means *exactly* what was found, in both directions. The earlier
+    version of this only put a prior value back, so a test that set the
+    variable itself while it had been unset left its own value behind --
+    ``_is_permissive`` reads ``os.environ`` on every call, so that value was
+    live for every later test on the same worker process. That is what made
+    ``test_post_artifact_tool_schema`` flake under ``pytest-xdist``: the
+    failure followed work-stealing order rather than collection order.
+    """
     reset_registry_cache()
-    prior = os.environ.pop("BERNSTEIN_MCP_VALIDATION", None)
+    prior = os.environ.pop(iv._MODE_ENV, None)
     try:
         yield
     finally:
         reset_registry_cache()
-        if prior is not None:
-            os.environ["BERNSTEIN_MCP_VALIDATION"] = prior
+        if prior is None:
+            os.environ.pop(iv._MODE_ENV, None)
+        else:
+            os.environ[iv._MODE_ENV] = prior
+
+
+@pytest.fixture(autouse=True)
+def _reset_validator_cache() -> Iterator[None]:
+    """Each test starts with a clean registry cache and strict mode."""
+    with _isolated_validator_mode():
+        yield
+
+
+@pytest.fixture
+def set_mode(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+    """Set the validator mode for the duration of one test.
+
+    ``monkeypatch`` undoes the write itself, so a test that needs a mode never
+    depends on the autouse fixture's teardown to contain it.
+    """
+
+    def _set(value: str) -> None:
+        monkeypatch.setenv(iv._MODE_ENV, value)
+
+    return _set
 
 
 def _minimal_registry(extra: dict[str, dict[str, Any]] | None = None) -> SchemaRegistry:
@@ -381,29 +414,63 @@ def test_allow_unsafe_args_still_runs_schema_validation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_permissive_mode_demotes_schema_failure() -> None:
-    os.environ["BERNSTEIN_MCP_VALIDATION"] = "permissive"
+def test_permissive_mode_demotes_schema_failure(set_mode: Callable[[str], None]) -> None:
+    set_mode("permissive")
     result = validate_tool_call("bernstein_run", {})  # missing goal
     assert isinstance(result, ValidatedPayload)
 
 
-def test_permissive_mode_demotes_unknown_tool() -> None:
-    os.environ["BERNSTEIN_MCP_VALIDATION"] = "permissive"
+def test_permissive_mode_demotes_unknown_tool(set_mode: Callable[[str], None]) -> None:
+    set_mode("permissive")
     result = validate_tool_call("not_a_tool", {})
     assert isinstance(result, ValidatedPayload)
 
 
-def test_permissive_explicit_override_beats_env() -> None:
-    os.environ["BERNSTEIN_MCP_VALIDATION"] = "strict"
+def test_permissive_explicit_override_beats_env(set_mode: Callable[[str], None]) -> None:
+    set_mode("strict")
     result = validate_tool_call("bernstein_run", {}, permissive=True)
     assert isinstance(result, ValidatedPayload)
 
 
-def test_permissive_mode_with_non_dict_payload_returns_empty_payload() -> None:
-    os.environ["BERNSTEIN_MCP_VALIDATION"] = "permissive"
+def test_permissive_mode_with_non_dict_payload_returns_empty_payload(
+    set_mode: Callable[[str], None],
+) -> None:
+    set_mode("permissive")
     result = validate_tool_call("bernstein_run", 42)
     assert isinstance(result, ValidatedPayload)
     assert result.payload == {}
+
+
+# ---------------------------------------------------------------------------
+# Mode isolation: this file must not change the mode any later test sees.
+# ---------------------------------------------------------------------------
+
+
+def test_isolation_unsets_a_mode_the_block_set_when_none_was_set_before() -> None:
+    """A mode written inside the block does not outlive it.
+
+    This is the flake from #5952 stated as a test: a permissive-mode test on a
+    worker used to leave ``permissive`` in ``os.environ``, and every later test
+    on that worker read it.
+    """
+    os.environ.pop(iv._MODE_ENV, None)
+    with _isolated_validator_mode():
+        os.environ[iv._MODE_ENV] = "permissive"
+        assert iv._is_permissive()
+    assert iv._MODE_ENV not in os.environ
+    assert not iv._is_permissive()
+
+
+def test_isolation_restores_the_mode_that_was_already_set() -> None:
+    """The other direction: an outer value survives a block that overwrote it."""
+    os.environ[iv._MODE_ENV] = "strict"
+    try:
+        with _isolated_validator_mode():
+            assert iv._MODE_ENV not in os.environ
+            os.environ[iv._MODE_ENV] = "permissive"
+        assert os.environ[iv._MODE_ENV] == "strict"
+    finally:
+        os.environ.pop(iv._MODE_ENV, None)
 
 
 # ---------------------------------------------------------------------------
