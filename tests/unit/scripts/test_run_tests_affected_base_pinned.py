@@ -83,12 +83,14 @@ def test_base_is_fetched_from_the_pinned_event_sha(
     assert any(PINNED_BASE_EXPRESSION in value for value in _env_values(fetch_step))
 
 
+@pytest.mark.parametrize("half", [0, 1], ids=["fetch-step", "plan-step"])
 def test_no_planner_step_reads_the_base_branch_name(
     planner_steps: tuple[dict[str, Any], dict[str, Any]],
+    half: int,
 ) -> None:
     """Neither planner step derives its base from a ref that can move mid-run."""
-    for step in planner_steps:
-        assert not [value for value in _env_values(step) if MOVING_BASE_EXPRESSION in value]
+    step = planner_steps[half]
+    assert not [value for value in _env_values(step) if MOVING_BASE_EXPRESSION in value]
 
 
 def test_base_is_not_fetched_from_a_branch_head(
