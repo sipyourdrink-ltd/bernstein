@@ -28,8 +28,10 @@ Reused infrastructure (never reimplemented):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import RateLimitMeter, record_rate_limit_hit
@@ -44,6 +46,31 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Capability enums
 # ---------------------------------------------------------------------------
+
+
+def normalize_finding_path(path: str, target_root: Path | None) -> str:
+    """Relativize *path* against *target_root* using POSIX semantics.
+
+    SARIF URIs are always POSIX-style (forward slashes). Using OS-native
+    ``Path`` (which is ``WindowsPath`` on Windows) causes ``is_absolute()``
+    to fail for rootless paths and ``relative_to()`` to raise on drive
+    mismatches. ``PurePosixPath`` gives deterministic cross-platform behavior.
+
+    Callers must pass an already-resolved *target_root*; this function does
+    not call ``.resolve()`` to preserve lexical purity and avoid filesystem
+    access during parsing.
+    """
+    candidate = PurePosixPath(path.replace("\\", "/"))
+    if target_root is not None:
+        root_posix = PurePosixPath(str(target_root).replace("\\", "/"))
+        # Gate on the root being anchored (leading '/' or a drive letter).
+        # Note: This heuristic treats POSIX directories literally named 'c:data'
+        # as anchored, which is an acceptable tradeoff for cross-platform drive-letter support.
+        anchored = root_posix.is_absolute() or (root_posix.parts and ":" in root_posix.parts[0])
+        if anchored:
+            with suppress(ValueError):
+                candidate = candidate.relative_to(root_posix)
+    return str(candidate)
 
 
 class OutputFormat(StrEnum):
@@ -102,7 +129,7 @@ class ScanScope:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "roots": [str(p) for p in self.roots],
+            "roots": [p.as_posix() for p in self.roots],
             "include": list(self.include),
             "exclude": list(self.exclude),
             "max_depth": self.max_depth,
