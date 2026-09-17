@@ -524,7 +524,18 @@ class ClaudeCodeAdapter(CLIAdapter):
         cmd.extend(["--json-schema", _RESULT_SCHEMA])
 
         if mcp_config:
-            cmd.extend(["--mcp-config", json.dumps(mcp_config)])
+            # `--strict-mcp-config` beside it, always. Without it Claude Code MERGES
+            # the servers passed here with the operator's own user-global MCP
+            # configuration, so every spawned agent launches a private instance of
+            # every server that operator happens to have installed -- dozens of
+            # background processes across concurrent runs, and a tool surface in the
+            # agent's context that the task never asked for (#5965).
+            #
+            # It does not drop anything the task declared: a task's own servers are
+            # merged into this payload by the caller before it gets here, and strict
+            # means "only the servers from --mcp-config", which is exactly that
+            # payload plus the bernstein bridge.
+            cmd.extend(["--mcp-config", json.dumps(mcp_config), "--strict-mcp-config"])
 
         if system_addendum:
             cmd.extend(["--append-system-prompt", system_addendum])
