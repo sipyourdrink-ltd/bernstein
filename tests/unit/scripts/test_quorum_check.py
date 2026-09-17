@@ -45,6 +45,7 @@ def roster(qc: ModuleType):
         core_reviewers=frozenset({"core1", "core2"}),
         committers=frozenset({"comm1", "comm2"}),
         automation=frozenset({"the-conductor[bot]", "renovate[bot]"}),
+        machine_reviewers=frozenset({"reviewer[bot]"}),
     )
 
 
@@ -77,6 +78,9 @@ def _pr(
         contributors=contributors if contributors is not None else {author},
         last_push=NOW - timedelta(hours=pushed_hours_ago),
     )
+
+
+QUORUM = ["core1", "comm1"]
 
 
 def _evaluate(qc: ModuleType, roster, pr):
@@ -296,6 +300,72 @@ def test_a_committer_can_block_the_maintainer(qc: ModuleType, roster) -> None:
 def test_a_stranger_cannot_block_the_maintainer(qc: ModuleType, roster) -> None:
     pr = _pr(qc, author="owner", contributors={"owner"}, reviews=[_review(qc, "passer-by", "CHANGES_REQUESTED")])
     assert _evaluate(qc, roster, pr).passed
+
+
+# --- machine review (rule 7) -----------------------------------------------
+
+
+def test_a_machine_approval_stands_in_for_the_non_core_approval(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "reviewer[bot]", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert any("machine review" in note and "@reviewer[bot]" in note for note in verdict.notes)
+
+
+def test_a_machine_approval_is_never_the_core_one(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "comm1", "APPROVED"), _review(qc, "reviewer[bot]", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_a_machine_approval_is_never_the_only_one(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "reviewer[bot]", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert "@core1" in verdict.requirements[0].who
+
+
+def test_a_machine_approval_does_not_count_where_a_third_approval_is_needed(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        paths=["src/bernstein/security/keys.py"],
+        reviews=[_review(qc, login, "APPROVED") for login in ("core1", "core2", "reviewer[bot]")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("does not count here" in note for note in verdict.notes)
+
+
+def test_a_machine_approval_does_not_satisfy_a_protected_path(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        paths=[".github/workflows/ci.yml"],
+        reviews=[_review(qc, login, "APPROVED") for login in ("core1", "comm1", "reviewer[bot]")],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    owner_rows = [req for req in verdict.requirements if req.text.startswith("approval from the owner")]
+    assert owner_rows and not owner_rows[0].met
+
+
+def test_a_machine_approval_given_before_the_last_push_does_not_count(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "reviewer[bot]", "APPROVED", sha="0" * 40)],
+    )
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_machine_list_is_optional_in_the_roster(qc: ModuleType, tmp_path: Path) -> None:
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "quorum-roster.toml").write_text('maintainer = "m"\ncore_reviewers = ["c"]\n')
+    assert qc.load_roster(str(tmp_path)).machine_reviewers == frozenset()
+    (tmp_path / ".github" / "quorum-roster.toml").write_text(
+        'maintainer = "m"\ncore_reviewers = ["c"]\nmachine_reviewers = ["r[bot]"]\n'
+    )
+    assert qc.load_roster(str(tmp_path)).machine_reviewers == frozenset({"r[bot]"})
+
+
+# --- review for review (rule 6, charter section 5) ---------------------------
 
 
 # --- the objection window on governance files (charter section 10) ----------

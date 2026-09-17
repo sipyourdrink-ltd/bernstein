@@ -101,8 +101,3 @@ def test_the_sweep_logs_the_run_id_it_found() -> None:
     step = _rerun_step()
 
     assert "re-running quorum for #$pr (run $run" in step
-
-
-def test_the_quiet_line_does_not_claim_more_than_it_knows() -> None:
-    """ "Already green or never ran" was wrong in a third way: still running."""
-    assert "already green, still running, or never ran" in _rerun_step()

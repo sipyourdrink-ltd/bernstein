@@ -48,6 +48,16 @@ The rules, in the order they are applied
    Over 1,000 changed lines the maintainer approves or the change is split.
    A protected path (any CODEOWNERS entry that is not `*`) needs its owner.
 
+6. A contributor outside the roster reviews as much as they are reviewed
+   (section 5): once one of their pull requests has merged, each further one
+   waits until, over the last thirty days, they have reviewed at least as
+   many of other people's pull requests as they have open. Bot accounts are
+   outside this rule; they cannot review.
+7. An approval from the project's review automation (`machine_reviewers` in
+   the roster) stands in for the second, non-core approval on a change that
+   needs no third one. It is never the core approval, never the only one,
+   and never an owner's or the maintainer's.
+
 Approvals count only when they were given on the current head commit: a push
 after an approval means nobody has read what is about to merge. A `changes
 requested` survives a push, and stays counted until its author withdraws it.
@@ -115,6 +125,9 @@ GOVERNANCE_PATHS = (
     "scripts/queue_hygiene.py",
 )
 
+# Section 5: a contributor keeps as many reviews of other people's pull
+# requests within this window as they have pull requests open.
+
 GITHUB_ACTIONS_BOT = "github-actions[bot]"
 
 
@@ -129,6 +142,9 @@ class Roster:
     core_reviewers: frozenset[str]
     committers: frozenset[str]
     automation: frozenset[str]
+    # Accounts whose approval is a machine review (rule 7). Empty by default:
+    # a roster written before the list existed names no such account.
+    machine_reviewers: frozenset[str] = frozenset()
 
     @property
     def quorum_holders(self) -> frozenset[str]:
@@ -140,6 +156,20 @@ class Roster:
         """Everyone who can supply the core reviewer's approval."""
         return self.core_reviewers | {self.maintainer}
 
+    def is_contributor(self, login: str) -> bool:
+        """A person with no role: the author the reciprocity rule applies to.
+
+        Bot accounts are left out because they cannot review; the ones the
+        project runs are on the automation list, and one it does not run
+        still needs the full human quorum.
+        """
+        return (
+            login not in self.quorum_holders
+            and login not in self.automation
+            and login != GITHUB_ACTIONS_BOT
+            and not login.endswith("[bot]")
+        )
+
 
 def load_roster(root: str = ".") -> Roster:
     with open(os.path.join(root, ROSTER_PATH), "rb") as handle:
@@ -149,6 +179,7 @@ def load_roster(root: str = ".") -> Roster:
         core_reviewers=frozenset(raw.get("core_reviewers", [])),
         committers=frozenset(raw.get("committers", [])),
         automation=frozenset(raw.get("automation", [])),
+        machine_reviewers=frozenset(raw.get("machine_reviewers", [])),
     )
 
 
@@ -218,12 +249,15 @@ class PullRequest:
     is_draft: bool
     head_sha: str
     changed_lines: int
-    paths: list[str]
-    reviews: list[Review]
+    paths: list[str] = field(default_factory=list)
+    reviews: list[Review] = field(default_factory=list)
     # Everyone who wrote or pushed any commit on the branch, plus anyone named
     # in a Co-authored-by trailer: none of them can approve it (section 3).
-    contributors: set[str]
-    last_push: datetime
+    contributors: set[str] = field(default_factory=set)
+    last_push: datetime | None = None
+    review_requests: dict[str, str] = field(default_factory=dict)
+    # Looked up for contributors only (`Roster.is_contributor`); None means
+    # the lookup was not made and rule 6 is not applied.
 
 
 def _logins_from_commit(raw: dict[str, Any]) -> set[str]:
@@ -245,6 +279,7 @@ def fetch_pull_request(repo: str, number: int) -> PullRequest:
     files = gh_json("api", f"repos/{repo}/pulls/{number}/files", "--paginate")
     raw_reviews = gh_json("api", f"repos/{repo}/pulls/{number}/reviews", "--paginate")
     commits = gh_json("api", f"repos/{repo}/pulls/{number}/commits", "--paginate")
+    timeline = gh_json("api", f"repos/{repo}/issues/{number}/timeline", "--paginate")
 
     contributors: set[str] = set()
     pushed_at = None
@@ -252,27 +287,36 @@ def fetch_pull_request(repo: str, number: int) -> PullRequest:
         contributors |= _logins_from_commit(commit)
         date = ((commit.get("commit") or {}).get("committer") or {}).get("date")
         if date:
-            moment = datetime.fromisoformat(date.replace("Z", "+00:00"))
-            pushed_at = moment if pushed_at is None or moment > pushed_at else pushed_at
+            pushed = datetime.fromisoformat(date.replace("Z", "+00:00"))
+            if pushed_at is None or pushed > pushed_at:
+                pushed_at = pushed
+
+    review_requests: dict[str, str] = {}
+    for event in timeline:
+        if event.get("event") == "review_requested":
+            login = (event.get("requested_reviewer") or {}).get("login")
+            if login:
+                review_requests[login] = event.get("created_at")
 
     return PullRequest(
-        number=number,
-        author=(raw.get("user") or {}).get("login", ""),
-        is_draft=bool(raw.get("draft")),
-        head_sha=(raw.get("head") or {}).get("sha", ""),
-        changed_lines=int(raw.get("additions") or 0) + int(raw.get("deletions") or 0),
+        number=raw["number"],
+        author=raw["user"]["login"],
+        is_draft=raw["draft"],
+        head_sha=raw["head"]["sha"],
+        changed_lines=raw["additions"] + raw["deletions"],
         paths=[f["filename"] for f in files],
         reviews=[
             Review(
-                login=(r.get("user") or {}).get("login", ""),
-                state=r.get("state", ""),
-                commit_id=r.get("commit_id") or "",
-                submitted_at=r.get("submitted_at") or "",
+                r["user"]["login"],
+                r["state"],
+                r["commit_id"],
+                r["submitted_at"],
             )
             for r in raw_reviews
         ],
         contributors=contributors,
         last_push=pushed_at or datetime.now(UTC),
+        review_requests=review_requests,
     )
 
 
@@ -318,7 +362,7 @@ class Verdict:
         lines.append("")
         lines.append(
             "Rules: [`docs/governance/review-charter.md`](docs/governance/review-charter.md) "
-            "sections 1, 3, 4, 6 and 10. Roster: `.github/quorum-roster.toml`."
+            "sections 1, 3, 4, 5, 6 and 10. Roster: `.github/quorum-roster.toml`."
         )
         return "\n".join(lines)
 
@@ -338,16 +382,44 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
     stale_approvals = {
         login for login, review in standing.items() if review.state == "APPROVED" and review.commit_id != pr.head_sha
     }
-    changes_requested = {login for login, review in standing.items() if review.state == "CHANGES_REQUESTED"}
+    changes_requested = set()
+    for login, review in list(standing.items()):
+        if review.state == "CHANGES_REQUESTED":
+            if review.commit_id != pr.head_sha and login in pr.review_requests:
+                req_time = datetime.fromisoformat(pr.review_requests[login].replace("Z", "+00:00"))
+                review_time = datetime.fromisoformat(review.submitted_at.replace("Z", "+00:00"))
+                if req_time > review_time and (now - req_time).total_seconds() / 3600 >= 72:
+                    # Drop the stale CR
+                    del standing[login]
+                    continue
+            changes_requested.add(login)
 
     verdict = Verdict(True, "")
     blocking = changes_requested & (roster.quorum_holders | {roster.maintainer})
     if blocking:
+        who_parts = []
+        for login in sorted(blocking):
+            review = standing[login]
+            if review.commit_id != pr.head_sha and login in pr.review_requests:
+                req_time = datetime.fromisoformat(pr.review_requests[login].replace("Z", "+00:00"))
+                review_time = datetime.fromisoformat(review.submitted_at.replace("Z", "+00:00"))
+                if req_time > review_time:
+                    hours = (now - req_time).total_seconds() / 3600
+                    if hours < 72:
+                        left = int(72 - hours)
+                        who_parts.append(
+                            f"@{login} — the objection lapses about {left}h from now unless they review again"
+                        )
+                        continue
+            who_parts.append(f"@{login}")
+
         verdict.requirements.append(
             Requirement(
                 f"no standing *changes requested* (open: {_names(blocking)})",
                 False,
-                "the reviewer who asked for changes, by approving or dismissing their review",
+                ", ".join(who_parts)
+                if any("lapses about" in w for w in who_parts)
+                else "the reviewer who asked for changes, by approving or dismissing their review",
             )
         )
 
@@ -416,11 +488,63 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             else (f"touches `{sensitive[0]}`" if sensitive else f"{pr.changed_lines} changed lines")
         )
 
+        # Rule 7: one machine approval stands in for the non-core approval
+        # where no third approval is needed. It is added to the human count
+        # and never to the core one, so a person still has to have read the
+        # change, and nothing merges on the machine's word alone.
+        machine = approvals & (roster.machine_reviewers - {pr.author} - pr.contributors)
+        machine_counted = 1 if machine and need_total == 2 else 0
+        if machine_counted:
+            verdict.notes.append(
+                f"The approval from {_names(machine)} is a machine review and counts as the non-core "
+                "approval (charter, section 3); the core approval has to come from a person."
+            )
+        elif machine:
+            verdict.notes.append(
+                f"The approval from {_names(machine)} is a machine review and does not count here: "
+                "a change that needs a third approval is read by people only (charter, section 3)."
+            )
+
+        req_met = len(approving) + machine_counted >= need_total and len(approving_core) >= need_core
+        req_who = _names(eligible - approving)
+
+        maintainer_approval = standing.get(roster.maintainer)
+        if (
+            maintainer_approval
+            and maintainer_approval.state == "APPROVED"
+            and maintainer_approval.commit_id == pr.head_sha
+            and not req_met
+        ):
+            has_identity_tokens = any(
+                p.startswith("src/bernstein/core/identity/") or p.startswith("src/bernstein/core/tokens/")
+                for p in pr.paths
+            )
+            if not sensitive and not has_identity_tokens and pr.changed_lines <= 1000:
+                submitted_at = datetime.fromisoformat(maintainer_approval.submitted_at.replace("Z", "+00:00"))
+                hours_held = (now - submitted_at).total_seconds() / 3600.0
+                if hours_held >= 72:
+                    req_met = True
+                    req_who = "maintainer approval held 72 hours without objection (charter, section 3)"
+                else:
+                    hours_left = int(72 - hours_held)
+                    req_who = f"nobody - it merges about {hours_left}h from now, or on a second approval sooner"
+            elif (sensitive or has_identity_tokens or pr.changed_lines > 1000) and not (
+                has_identity_tokens and pr.changed_lines > 400
+            ):
+                submitted_at = datetime.fromisoformat(maintainer_approval.submitted_at.replace("Z", "+00:00"))
+                hours_held = (now - submitted_at).total_seconds() / 3600.0
+                if hours_held >= 168:
+                    req_met = True
+                    req_who = "maintainer approval held seven days without objection (charter, section 3)"
+                else:
+                    hours_left = int(168 - hours_held)
+                    req_who = f"nobody - it merges about {hours_left}h from now"
+
         verdict.requirements.append(
             Requirement(
                 f"{need_total} approvals, {need_core} from a core reviewer ({reason})",
-                len(approving) >= need_total and len(approving_core) >= need_core,
-                _names(eligible - approving),
+                req_met,
+                req_who,
             )
         )
 
@@ -509,7 +633,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     pr = fetch_pull_request(args.repo, number)
-    verdict = evaluate(pr, load_roster(args.root), load_codeowners(args.root), datetime.now(UTC))
+    roster = load_roster(args.root)
+    now = datetime.now(UTC)
+    verdict = evaluate(pr, roster, load_codeowners(args.root), now)
 
     summary = verdict.summary()
     print(summary)
