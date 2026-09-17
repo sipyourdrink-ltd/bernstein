@@ -11,24 +11,6 @@ see no behaviour change unless they pass the new keywords. The
 spawned-agent prompt path is the one exception - see "Enforcement on the
 spawned-agent prompt path" below.
 
-## Chain-native historical exact recall (partial #2914)
-
-Bernstein also has an append-only `MemoryChain` under
-`.sdd/memory/chain/<scope>/<namespace>.jsonl`. This is separate from the
-SQLite store above. `MemoryChain.recall_exact()` can replay one chain prefix
-through a recorded `fold_head`, fold live writes minus tombstones, hash that
-canonical folded state, and return matching claim records in append order.
-Two readers over the same prefix therefore produce the same fold hash and
-ordered record hashes, and later tombstones do not change a replay at an older
-head.
-
-This is the deterministic selection substrate only. It validates row shape,
-chain continuity, and entry content hashes; callers that require authenticated
-evidence must verify the namespace separately before using the selection. It
-does not yet create a signed recall receipt or `memory.recall` audit event, and
-the spawned-agent prompt path continues to read `SQLiteMemoryStore.get_relevant()`
-without using this chain-native recall surface.
-
 ## What changed
 
 | Surface | Old | New |

@@ -10,13 +10,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from pathlib import Path
 
-#: What one instance did.
-#:
-#: ``abstained`` is not a flavour of ``failed``. A run that declines a task it
-#: cannot verify, and says why, told the truth; a run that submits a wrong patch
-#: did not. Scoring them the same rewards guessing, because a guess can only
-#: raise the resolve rate and an abstention can only lower it (#5567).
-InstanceStatus = Literal["resolved", "failed", "error", "skipped", "abstained"]
+InstanceStatus = Literal["resolved", "failed", "error", "skipped"]
 SummarySourceType = Literal["mock", "eval"]
 
 
@@ -47,24 +41,14 @@ class InstanceResult:
     agent_traces: list[AgentTrace] = field(default_factory=list)
     error_message: str = ""
     patch: str = ""  # Final unified diff applied to the repo
-    #: Why the run declined, for `status == "abstained"` only.
-    #:
-    #: An abstention scores above a wrong answer, so it must cost something to
-    #: claim: a reason makes the decision reviewable, and an unreasoned
-    #: abstention is not one. Separate from `error_message`, which says the
-    #: HARNESS broke; this says the run worked and declined to answer.
-    abstention_reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> InstanceResult:
-        payload = dict(data)
-        traces = [AgentTrace(**t) for t in payload.pop("agent_traces", [])]  # type: ignore[arg-type]
-        # Results written before #5567 have no abstention field.
-        payload.setdefault("abstention_reason", "")
-        return cls(**payload, agent_traces=traces)  # type: ignore[arg-type]
+        traces = [AgentTrace(**t) for t in data.pop("agent_traces", [])]  # type: ignore[arg-type]
+        return cls(**data, agent_traces=traces)  # type: ignore[arg-type]
 
 
 @dataclass
@@ -77,21 +61,12 @@ class ScenarioSummary:
     failed: int
     errors: int
     skipped: int
-    resolve_rate: float  # resolved / attempted, where attempted excludes skipped AND abstained
+    resolve_rate: float  # resolved / (total_instances - skipped)
     mean_wall_time_s: float
     median_wall_time_s: float
     total_cost_usd: float
     mean_cost_per_instance_usd: float
     mean_tokens_per_instance: float
-    #: Instances the run declined with a stated reason.
-    abstained: int = 0
-    #: abstained / taken_on -- how often the run said it could not tell.
-    abstain_rate: float = 0.0
-    #: wrong / (wrong + resolved): of the answers actually GIVEN, how many were
-    #: wrong. The number an operator needs and the resolve rate cannot express,
-    #: because a run can raise its resolve rate by guessing and this rate is what
-    #: that costs.
-    confident_error_rate: float = 0.0
     verified: bool = False
     source_type: SummarySourceType = "mock"
     dataset: str = "princeton-nlp/SWE-bench_Lite"
@@ -107,18 +82,7 @@ class ScenarioSummary:
 
     @property
     def attempted_instances(self) -> int:
-        """Instances the run gave an ANSWER for: not skipped, not abstained.
-
-        An abstention is not an attempt at the task, it is a declared refusal to
-        answer it, so counting it in the denominator would make declining look
-        exactly like failing. Old summaries carry ``abstained: 0``, so this is
-        the number it has always been for them.
-        """
-        return self.total_instances - self.skipped - self.abstained
-
-    @property
-    def taken_on_instances(self) -> int:
-        """Instances the run did not skip -- attempts plus abstentions."""
+        """Return the number of non-skipped instances."""
         return self.total_instances - self.skipped
 
     @property
@@ -133,11 +97,6 @@ class ScenarioSummary:
         scenario_name = str(payload.get("scenario_name", ""))
         total_instances = _coerce_int(payload.get("total_instances", 0))
 
-        # A bundle written before #5567 has no abstentions, so these defaults are
-        # not merely safe, they are the correct values for it.
-        payload.setdefault("abstained", 0)
-        payload.setdefault("abstain_rate", 0.0)
-        payload.setdefault("confident_error_rate", 0.0)
         payload.setdefault("verified", False)
         payload.setdefault("source_type", "mock")
         payload.setdefault("dataset", "princeton-nlp/SWE-bench_Lite")
@@ -181,23 +140,9 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
     failed = sum(1 for r in results if r.status == "failed" and not r.resolved)
     errors = sum(1 for r in results if r.status == "error")
     skipped = sum(1 for r in results if r.status == "skipped")
-    abstained = sum(1 for r in results if r.status == "abstained" and not r.resolved)
-    # An abstention is not an attempt: the run declined to answer, so it belongs
-    # in neither half of the resolve rate. Counting it in the denominator alone
-    # is what made declining score below guessing (#5567). For a run with no
-    # abstentions -- every bundle written before this -- the number is unchanged.
-    taken_on = total - skipped
-    attempted = taken_on - abstained
+    attempted = total - skipped
 
     resolve_rate = resolved / attempted if attempted > 0 else 0.0
-    abstain_rate = abstained / taken_on if taken_on > 0 else 0.0
-    # Of the answers actually GIVEN, how many were wrong. `errors` is excluded on
-    # both sides: a harness crash is not the run being confidently wrong, and
-    # counting it as one would move this number for reasons the run did not
-    # cause. Guessing on a task the run cannot verify raises `resolve_rate` at
-    # best and raises THIS at worst, which is the trade the rate exists to show.
-    answered = failed + resolved
-    confident_error_rate = failed / answered if answered > 0 else 0.0
 
     wall_times = [r.wall_time_s for r in results if r.status not in ("skipped", "error")]
     mean_wall = statistics.mean(wall_times) if wall_times else 0.0
@@ -219,9 +164,6 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         errors=errors,
         skipped=skipped,
         resolve_rate=resolve_rate,
-        abstained=abstained,
-        abstain_rate=abstain_rate,
-        confident_error_rate=confident_error_rate,
         mean_wall_time_s=mean_wall,
         median_wall_time_s=median_wall,
         total_cost_usd=total_cost,

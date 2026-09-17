@@ -486,52 +486,6 @@ class TestRuntimeClaim:
 
 
 # ---------------------------------------------------------------------------
-# cnf.jwk: further RFC 7517 members ride inside the signed pre-image
-# ---------------------------------------------------------------------------
-
-
-class TestCnfJwkMembers:
-    def test_default_writes_exactly_the_four_key_members(self, tmp_path: Path) -> None:
-        emitter = _emitter_with_known_key()
-        journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1.0}])
-        parsed = json.loads(emitter.emit_trust_record(journal, "run-1", "exec-1"))
-
-        assert set(parsed["cnf"]["jwk"]) == {"kty", "crv", "x", "kid"}
-
-    def test_further_members_are_carried_beside_the_key_material_and_signed(self, tmp_path: Path) -> None:
-        emitter = _emitter_with_known_key()
-        journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1.0}])
-        parsed = json.loads(
-            emitter.emit_trust_record(
-                journal, "run-1", "exec-1", cnf_jwk_members={"alg": "EdDSA", "\U0001f600": "supplementary-plane"}
-            )
-        )
-        jwk = parsed["cnf"]["jwk"]
-
-        assert jwk["alg"] == "EdDSA"
-        assert jwk["\U0001f600"] == "supplementary-plane"
-        assert jwk["kty"] == "OKP" and jwk["crv"] == "Ed25519" and jwk["kid"] == "install-aaaaaaaaaaaaaaaa"
-        assert _offline_verify(parsed, _public_key_pem_from_raw(_test_keypair()[1])) is True
-        # The members are inside the pre-image: dropping one breaks the signature.
-        del parsed["cnf"]["jwk"]["alg"]
-        assert _offline_verify(parsed, _public_key_pem_from_raw(_test_keypair()[1])) is False
-
-    @pytest.mark.parametrize("member", ["kty", "crv", "x", "kid"])
-    def test_the_key_material_cannot_be_overridden(self, tmp_path: Path, member: str) -> None:
-        emitter = _emitter_with_known_key()
-        journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1.0}])
-        with pytest.raises(ValueError, match="may not override the key material"):
-            emitter.emit_trust_record(journal, "run-1", "exec-1", cnf_jwk_members={member: "x"})
-
-    @pytest.mark.parametrize("member", ["d", "p", "q", "dp", "dq", "qi", "k"])
-    def test_private_key_parameters_are_refused_before_signing(self, tmp_path: Path, member: str) -> None:
-        emitter = _emitter_with_known_key()
-        journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1.0}])
-        with pytest.raises(ValueError, match="private-key parameters"):
-            emitter.emit_trust_record(journal, "run-1", "exec-1", cnf_jwk_members={member: "x"})
-
-
-# ---------------------------------------------------------------------------
 # tool_transcript: always present, digest over tool_call entries only
 # ---------------------------------------------------------------------------
 

@@ -1,1 +1,1 @@
-"""Persistent memory stores and tamper-evident MemoryChain provenance."""
+"""memory sub-package - persistent memory stores."""

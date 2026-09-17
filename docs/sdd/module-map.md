@@ -52,7 +52,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `knowledge/`                | knowledge sub-package |
 | `lifecycle/`                | Lifecycle-hooks subsystem |
 | `lineage/`                  | Lineage v1 - Sigstore-style per-artefact transparency log |
-| `memory/`                   | Persistent memory stores and tamper-evident MemoryChain provenance |
+| `memory/`                   | memory sub-package - persistent memory stores |
 | `notifications/`            | Outbound notification subsystem (release 1.9) |
 | `observability/`            | observability sub-package |
 | `orchestration/`            | orchestration sub-package |
@@ -132,6 +132,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `continue_dev.py`           | Continue.dev CLI adapter |
 | `copilot.py`                | GitHub Copilot CLI adapter |
 | `council_runner.py`         | Task-level "council of agents" runner |
+| `crew_ingest.py`            | Ingest adapter for role-and-crew agent runtimes (#4965) |
 | `cursor.py`                 | Cursor Agent CLI adapter |
 | `devin_terminal.py`         | Devin for Terminal (Cognition) CLI adapter |
 | `draft.py`                  | Drafting helper for adapter capability profiles |

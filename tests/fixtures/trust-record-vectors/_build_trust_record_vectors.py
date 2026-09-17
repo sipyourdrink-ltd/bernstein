@@ -8,12 +8,10 @@ Run by hand from a source checkout, never by the test suite::
 Records two real runs through the actual ``EventJournal`` write path (not a
 hand-built journal): a single-execution Trust Record for the first, and a
 delegated parent+child pair (linked by ``delegation.parent_record_hash``)
-for the second, extended to a grandchild hop. A run-level aggregate record
-(issue #4763) is then built over that chain -- not from a journal, since
-there is none for "the whole run" as such. A third run mints a
-supplementary-plane parent+child pair whose parent ``cnf.jwk`` carries a
-key outside the Basic Multilingual Plane (see step 4 below). All seven are
-written alongside the deterministic Ed25519 key that signed them.
+for the second. A fourth, run-level aggregate record (issue #4763) is then
+built over the parent+child pair -- not from a journal, since there is none
+for "the whole run" as such. All four are written alongside the
+deterministic Ed25519 key that signed them.
 
 Why the vectors are committed rather than generated at test time
 ------------------------------------------------------------------
@@ -79,21 +77,6 @@ _FIXTURE_BUILD_DIGEST = f"sha256:{hashlib.sha256(b'trust-record-vector-fixture-b
 #: Frozen fixture clock: one synthetic second per ``time.time()`` call,
 #: starting at a fixed epoch. Never real wall-clock.
 _FIXTURE_EPOCH_START = 1_700_000_000.0
-
-#: Two further ``cnf.jwk`` members for the supplementary-plane pair (step 4),
-#: with the same names and values as trace-spec's
-#: ``examples/delegation-link/24-parent-key-supplementary-plane.json`` so the
-#: two corpora exercise one comparison. U+E000 is a BMP private-use character:
-#: one UTF-16 code unit, ``E000``. U+1F600 is outside the BMP: the surrogate
-#: pair ``D83D DE00``. RFC 8785 orders property names by UTF-16 code unit, so
-#: U+1F600 sorts *before* U+E000 in the canonical form (``D83D < E000``); a
-#: code-point sort puts it after (``0x1F600 > 0xE000``). Inserted here in
-#: code-point order so the canonical output cannot coincide with insertion
-#: order.
-_SUPPLEMENTARY_PLANE_JWK_MEMBERS: dict[str, str] = {
-    "\ue000": "bmp-private-use",
-    "\U0001f600": "supplementary-plane",
-}
 
 OUT_DIR = Path(__file__).resolve().parent
 
@@ -240,65 +223,6 @@ def main() -> None:
         aggregate_path = OUT_DIR / "aggregate-trust-record.json"
         aggregate_path.write_text(aggregate_output + "\n", encoding="utf-8")
         print(f"Wrote run-level aggregate vector: {aggregate_path}  ({len(aggregate_output)} bytes)")
-
-        # 4. Supplementary-plane pair (trace-spec #231/#245): a root hop whose
-        # cnf.jwk carries two further RFC 7517 members, keyed by a BMP
-        # private-use character and by a character outside the Basic
-        # Multilingual Plane, and a child hop linked to it by
-        # delegation.parent_record_hash. Every other vector here is
-        # ASCII-keyed, where RFC 8785's UTF-16 code-unit order and a naive
-        # code-point sort agree, so this pair is the only one that can fail
-        # in the direction the corpus exists to test: a verifier that sorts
-        # by code point computes a different digest for this parent, does
-        # not resolve the child's link, and cannot verify the parent's
-        # signature. The members sit in the object whose digest the child
-        # asserts, not somewhere else in the record: a supplementary-plane
-        # key elsewhere would not make the *link* discriminating. Minted
-        # after the aggregate so the earlier vectors' frozen clock values,
-        # and therefore their bytes, are untouched.
-        supp_run_id = "trust-record-vector-supplementary-run"
-        supp_parent_journal = EventJournal("trust-record-vector-supp-parent", sdd_dir)
-        supp_parent_journal.record(
-            "run_started",
-            role="orchestrator",
-            model_provider="anthropic",
-            model_id="claude-sonnet-5",
-            data_class="internal",
-            gate_config={"rules": ["deny-network", "deny-exfil", "deny-shell"], "version": 1},
-        )
-        supp_parent_journal.record("agent_spawned", agent="child-1")
-
-        supp_parent_output = emitter.emit_trust_record(
-            supp_parent_journal.path,
-            supp_run_id,
-            "trust-record-vector-supp-parent",
-            cnf_jwk_members=_SUPPLEMENTARY_PLANE_JWK_MEMBERS,
-        )
-        supp_parent_path = OUT_DIR / "supplementary-plane-parent-trust-record.json"
-        supp_parent_path.write_text(supp_parent_output + "\n", encoding="utf-8")
-        print(f"Wrote supplementary-plane parent vector: {supp_parent_path}  ({len(supp_parent_output)} bytes)")
-
-        supp_child_journal = EventJournal("trust-record-vector-supp-child", sdd_dir)
-        supp_child_journal.record(
-            "run_started",
-            role="backend",
-            model_provider="anthropic",
-            model_id="claude-haiku-5",
-            data_class="internal",
-            gate_config={"rules": ["deny-network", "deny-exfil"], "version": 1},
-        )
-        supp_child_journal.record("run_completed", status="ok")
-
-        supp_child_output = emitter.emit_trust_record(
-            supp_child_journal.path,
-            supp_run_id,
-            "trust-record-vector-supp-child",
-            parent_record=supp_parent_output,
-            credential_id="trust-record-vector-delegation-credential:scope=narrow",
-        )
-        supp_child_path = OUT_DIR / "supplementary-plane-child-trust-record.json"
-        supp_child_path.write_text(supp_child_output + "\n", encoding="utf-8")
-        print(f"Wrote supplementary-plane child vector: {supp_child_path}  ({len(supp_child_output)} bytes)")
 
     # 3. Public key PEM -- pinned alongside as a second, independent check
     # that it agrees with the key recoverable from cnf.jwk. Not required

@@ -212,7 +212,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
 __all__ = ["TrustRecordEmitter", "sign_trust_record", "verify_trust_record"]
@@ -271,18 +271,6 @@ _SLSA_LEVEL: int = 0
 #: constant, like ``_APPRAISAL_VERIFIER_URI`` -- this producer always
 #: resolves its own member records the same way.
 _MEMBER_EXECUTION_RESOLVER_URI: str = "https://bernstein.run/trace/records"
-
-#: ``cnf.jwk`` members this emitter writes from the signing key itself. A
-#: caller-supplied member (``cnf_jwk_members``) may not override any of them:
-#: the key material is what the signature verifies against, and ``kid`` is
-#: how a verifier finds the key.
-_JWK_EMITTER_MEMBERS: frozenset[str] = frozenset({"kty", "crv", "x", "kid"})
-
-#: RFC 7518 private-key parameters. The upstream schema refuses a ``cnf.jwk``
-#: carrying any of them (GHSA-vc4p-h84j-7qxj): ``cnf`` is a public
-#: proof-of-possession key. Refusing them here keeps the refusal at the
-#: producer, before anything is signed, rather than at the verifier.
-_JWK_PRIVATE_PARAMS: frozenset[str] = frozenset({"d", "p", "q", "dp", "dq", "qi", "k"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -595,7 +583,6 @@ class TrustRecordEmitter:
         kid: str,
         parent_record: str | None = None,
         credential_id: str | None = None,
-        cnf_jwk_members: Mapping[str, Any] | None = None,
     ) -> TrustRecord:
         """Build the unsigned Trust Record from journal data.
 
@@ -623,16 +610,6 @@ class TrustRecordEmitter:
                 Required exactly when *parent_record* is given, and must be
                 non-empty (the schema requires
                 ``delegation.credential_id`` to have ``minLength: 1``).
-            cnf_jwk_members: Further RFC 7517 members to carry in
-                ``cnf.jwk`` beside the key material, such as ``alg`` or
-                ``use``. The schema leaves ``cnf.jwk`` open to further
-                members (``additionalProperties`` is any canonicalizable
-                value), and every member is inside the signed pre-image.
-                May not name a member this emitter writes from the key
-                itself (``kty``, ``crv``, ``x``, ``kid``) and may not carry
-                a private-key parameter (``d``, ``p``, ``q``, ``dp``,
-                ``dq``, ``qi``, ``k``), which the schema refuses. ``None``
-                (the default) adds nothing.
 
         Returns:
             TrustRecord with every field populated but no signature.
@@ -642,10 +619,9 @@ class TrustRecordEmitter:
                 journal has no events (no completion time to source ``iat``
                 from), the journal names no model or gate config,
                 *credential_id* was given but is an empty string, *
-                *parent_record* was given but is not valid JSON,
+                *parent_record* was given but is not valid JSON, or
                 *parent_record* and *credential_id* disagree about whether
-                this is a delegated hop, or *cnf_jwk_members* names a
-                reserved or private-key member.
+                this is a delegated hop.
         """
         if (parent_record is None) != (credential_id is None):
             msg = "parent_record and credential_id must be given together (child hop) or not at all (root hop)"
@@ -656,15 +632,6 @@ class TrustRecordEmitter:
                 "(schema requires delegation.credential_id to have minLength 1)"
             )
             raise ValueError(msg)
-        if cnf_jwk_members:
-            reserved = _JWK_EMITTER_MEMBERS.intersection(cnf_jwk_members)
-            if reserved:
-                msg = f"cnf_jwk_members may not override the key material this emitter writes: {sorted(reserved)}"
-                raise ValueError(msg)
-            private = _JWK_PRIVATE_PARAMS.intersection(cnf_jwk_members)
-            if private:
-                msg = f"cnf_jwk_members may not carry private-key parameters, cnf.jwk is public: {sorted(private)}"
-                raise ValueError(msg)
 
         # Read journal file
         try:
@@ -734,15 +701,14 @@ class TrustRecordEmitter:
         public_key_raw = _ed25519_public_key_raw(self._get_private_key_pem())
         from bernstein.core.security.agent_card_signer import _b64url
 
-        jwk: dict[str, Any] = {
-            "kty": "OKP",
-            "crv": "Ed25519",
-            "x": _b64url(public_key_raw),
-            "kid": kid,
+        cnf: dict[str, Any] = {
+            "jwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": _b64url(public_key_raw),
+                "kid": kid,
+            }
         }
-        if cnf_jwk_members:
-            jwk.update(cnf_jwk_members)
-        cnf: dict[str, Any] = {"jwk": jwk}
 
         delegation: dict[str, Any] | None = None
         if parent_record is not None:
@@ -814,7 +780,6 @@ class TrustRecordEmitter:
         *,
         parent_record: str | None = None,
         credential_id: str | None = None,
-        cnf_jwk_members: Mapping[str, Any] | None = None,
     ) -> str:
         """Emit a TRACE 0.2 Trust Record as canonical JSON.
 
@@ -833,9 +798,6 @@ class TrustRecordEmitter:
                 ``None`` (the default) for a root execution.
             credential_id: The delegation credential this hop acted under.
                 Required exactly when *parent_record* is given.
-            cnf_jwk_members: Further RFC 7517 members for ``cnf.jwk``, signed
-                with the rest of the record (see
-                :meth:`_build_unsigned_record`). ``None`` adds nothing.
 
         Returns:
             Canonical JSON string of the signed Trust Record.
@@ -850,7 +812,6 @@ class TrustRecordEmitter:
             kid=kid,
             parent_record=parent_record,
             credential_id=credential_id,
-            cnf_jwk_members=cnf_jwk_members,
         )
 
         signed = self._sign_record(record)

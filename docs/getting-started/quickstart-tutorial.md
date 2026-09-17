@@ -38,7 +38,7 @@ bernstein --version
 You should see something like:
 
 ```
-bernstein, version 3.17.0
+bernstein 3.5.0
 ```
 
 > **If you see "command not found"**: Make sure your tool bin directory is on `$PATH`.

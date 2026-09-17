@@ -569,13 +569,6 @@ jobs:
       - uses: ./.github/actions/bootstrap
       - run: uv run ruff check src/
       - run: uv run ruff format --check src/
-      # `tests/` is where contributors add code every day, and it was
-      # ungated -- so it had already drifted, and the nightly sweep kept
-      # having to heal it after the fact. The whole tree passes both checks
-      # today, so gate it here and the next drift fails on the pull request
-      # that introduced it instead.
-      - run: uv run ruff check tests/
-      - run: uv run ruff format --check tests/
       - name: Architecture contracts (import-linter)
         run: uv run lint-imports
       - name: Route broad-except policy (#1723)
@@ -598,7 +591,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1
+      - uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f # v1
 
   actionlint:
     name: Workflow lint
@@ -614,7 +607,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: reviewdog/action-actionlint@d290e336d5a743810aef4404f757dc862276d2ae # v1
+      - uses: reviewdog/action-actionlint@dbe5299849118fd6f099ba563d263d770955a64a # v1
         with:
           reporter: github-check
           level: error

@@ -20,8 +20,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,15 +29,7 @@ _PARENT = _VECTORS / "delegated-parent-trust-record.json"
 _CHILD = _VECTORS / "delegated-child-trust-record.json"
 _GRANDCHILD = _VECTORS / "delegated-grandchild-trust-record.json"
 _AGGREGATE = _VECTORS / "aggregate-trust-record.json"
-_SUPP_PARENT = _VECTORS / "supplementary-plane-parent-trust-record.json"
-_SUPP_CHILD = _VECTORS / "supplementary-plane-child-trust-record.json"
 _PUBKEY = _VECTORS / "trust-record-vectors-key.pem"
-
-#: The two further ``cnf.jwk`` members the supplementary-plane parent carries
-#: (same names and values as trace-spec's delegation-link vector 24). U+E000 is
-#: one UTF-16 code unit, ``E000``; U+1F600 is the surrogate pair ``D83D DE00``.
-_BMP_PRIVATE_USE_KEY = "\ue000"
-_SUPPLEMENTARY_PLANE_KEY = "\U0001f600"
 
 #: Every top-level field that is *always* signed, mirroring
 #: ``trust_record._BASE_SIGNED_FIELDS``. ``delegation``/``references`` are
@@ -309,8 +299,6 @@ def test_regenerating_the_vectors_is_byte_identical_to_the_committed_files() -> 
             "delegated-child-trust-record.json",
             "delegated-grandchild-trust-record.json",
             "aggregate-trust-record.json",
-            "supplementary-plane-parent-trust-record.json",
-            "supplementary-plane-child-trust-record.json",
         ):
             committed = (_VECTORS / name).read_bytes()
             assert first[name] == committed, f"{name} has drifted from the committed vector -- re-mint required"
@@ -383,116 +371,3 @@ def test_data_class_narrowing_exists() -> None:
         f"parent-child {parent['data_class']} -> {child['data_class']}, "
         f"child-grandchild {child['data_class']} -> {grandchild['data_class']}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Supplementary-plane pair: the one place RFC 8785 key order and a code-point
-# sort disagree (trace-spec #231 / #245; issue #5551)
-# ---------------------------------------------------------------------------
-
-
-def _code_point_sorted_bytes(doc: dict[str, Any]) -> bytes:
-    """The shortcut a producer reaches for instead of RFC 8785.
-
-    ``sort_keys=True`` orders property names by Unicode code point;
-    ``ensure_ascii=False`` fixes the escaping half of the shortcut and leaves
-    the ordering half wrong, which is the worse of the two states because it
-    passes every BMP-only vector. Agrees with :func:`canonicalize_jcs` on
-    every ASCII record in this directory and disagrees on the one below.
-    """
-    return json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
-def _sha256_prefixed(data: bytes) -> str:
-    return f"sha256:{hashlib.sha256(data).hexdigest()}"
-
-
-def test_supplementary_plane_parent_carries_both_members_in_the_object_the_child_digests() -> None:
-    """A supplementary-plane key somewhere in the record is not enough: the
-    astral member and the BMP member in U+E000..U+FFFF have to sit together in
-    the object whose digest the child asserts, or the *link* does not
-    discriminate. Here they are in ``cnf.jwk``, next to the key material.
-    """
-    jwk = _load(_SUPP_PARENT)["cnf"]["jwk"]
-    assert jwk[_BMP_PRIVATE_USE_KEY] == "bmp-private-use"
-    assert jwk[_SUPPLEMENTARY_PLANE_KEY] == "supplementary-plane"
-    assert jwk["kty"] == "OKP" and jwk["crv"] == "Ed25519" and jwk["x"] and jwk["kid"]
-    assert ord(_BMP_PRIVATE_USE_KEY) == 0xE000
-    assert ord(_SUPPLEMENTARY_PLANE_KEY) == 0x1F600
-
-
-def test_supplementary_plane_parent_and_child_verify_offline() -> None:
-    for path in (_SUPP_PARENT, _SUPP_CHILD):
-        doc = _load(path)
-        assert _verify_offline(doc, _public_key_pem_from_cnf_jwk(doc)) is True, path.name
-
-
-def test_supplementary_plane_canonical_form_orders_the_astral_key_before_the_private_use_key() -> None:
-    """RFC 8785 section 3.2.3: names sort as arrays of UTF-16 code units, so the
-    surrogate pair ``D83D DE00`` sorts before ``E000``. A code-point sort puts
-    ``0x1F600`` after ``0xE000``. Both orders are pinned, so the test fails if
-    the vector stopped exercising the split as well as if the canonicalizer
-    got it wrong.
-    """
-    parent = _load(_SUPP_PARENT)
-    canonical = canonicalize_jcs(parent).decode("utf-8")
-    code_point = _code_point_sorted_bytes(parent).decode("utf-8")
-    astral, private_use = f'"{_SUPPLEMENTARY_PLANE_KEY}"', f'"{_BMP_PRIVATE_USE_KEY}"'
-
-    assert canonical.index(astral) < canonical.index(private_use), "JCS order: U+1F600 first"
-    assert code_point.index(private_use) < code_point.index(astral), "code-point order: U+E000 first"
-
-
-def test_supplementary_plane_child_link_resolves_under_utf16_order_and_dangles_under_code_point_order() -> None:
-    """The child's ``delegation.parent_record_hash`` is the parent's digest
-    under RFC 8785 (trace-spec section 3.1.3). A verifier that sorts by code
-    point computes a different digest for the same parent, does not find a
-    record with it, and reports ``parent_not_found`` on a chain that is
-    otherwise exactly the ASCII pair's.
-    """
-    link = _load(_SUPP_CHILD)["delegation"]["parent_record_hash"]
-    parent = _load(_SUPP_PARENT)
-
-    assert link == _sha256_prefixed(canonicalize_jcs(parent))
-    assert link != _sha256_prefixed(_code_point_sorted_bytes(parent))
-
-
-def test_the_ascii_parent_cannot_tell_the_two_orders_apart() -> None:
-    """Control: on the ASCII-keyed parent the shortcut computes the *same*
-    digest, so an implementation taking it passes that pair by coincidence.
-    That is why the supplementary-plane pair exists, and it is what makes the
-    divergence above attributable to the key rather than to anything else in
-    the record.
-    """
-    parent = _load(_PARENT)
-    assert _sha256_prefixed(canonicalize_jcs(parent)) == _sha256_prefixed(_code_point_sorted_bytes(parent))
-    assert _load(_CHILD)["delegation"]["parent_record_hash"] == _sha256_prefixed(canonicalize_jcs(parent))
-
-
-def test_supplementary_plane_parent_signature_fails_under_code_point_canonicalisation() -> None:
-    """The signature discriminates as well as the link: the pre-image is the
-    JCS form of the record without ``signature``, and a code-point
-    canonicalizer reconstructs different bytes for this record and cannot
-    verify it. Both directions are asserted, since a test that only showed
-    the wrong bytes failing would also pass against a broken signature.
-    """
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives.serialization import load_pem_public_key
-
-    doc = _load(_SUPP_PARENT)
-    public_key = load_pem_public_key(_public_key_pem_from_cnf_jwk(doc))
-    sig = doc["signature"]
-    raw_sig = base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4))
-    body = {k: v for k, v in doc.items() if k != "signature"}
-
-    public_key.verify(raw_sig, canonicalize_jcs(body))  # RFC 8785: verifies
-    with pytest.raises(InvalidSignature):
-        public_key.verify(raw_sig, _code_point_sorted_bytes(body))
-
-
-def test_supplementary_plane_child_is_a_delegated_hop_and_the_parent_is_a_root() -> None:
-    parent, child = _load(_SUPP_PARENT), _load(_SUPP_CHILD)
-    assert "delegation" not in parent
-    assert child["delegation"]["credential_id"] == "trust-record-vector-delegation-credential:scope=narrow"
-    assert parent["subject"].startswith("spiffe://bernstein.run/run/trust-record-vector-supplementary-run/exec/")
-    assert child["subject"].startswith("spiffe://bernstein.run/run/trust-record-vector-supplementary-run/exec/")

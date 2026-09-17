@@ -32,7 +32,6 @@ from bernstein.adapters.scanner import (
     ScannerCategory,
     ScanResult,
     ScanScope,
-    normalize_finding_path,
 )
 from bernstein.adapters.scanner_finding import Finding
 
@@ -314,15 +313,14 @@ def _result_path(result: dict[str, Any], result_index: int, target_root: Path | 
 
 
 def _normalize_path(uri: str, target_root: Path | None) -> str:
-    """Relativize *uri* against *target_root* using POSIX semantics."""
     parsed = urlparse(uri)
     path = unquote(parsed.path) if parsed.scheme == "file" else unquote(uri)
-
-    root = target_root
-    if root is not None:
-        root = root if root.is_dir() or not root.exists() else root.parent
-
-    return normalize_finding_path(path, root)
+    candidate = Path(path.replace("\\", "/"))
+    if target_root is not None and candidate.is_absolute():
+        root = target_root if target_root.is_dir() or not target_root.exists() else target_root.parent
+        with suppress(ValueError):
+            candidate = candidate.relative_to(root.resolve())
+    return candidate.as_posix()
 
 
 def _rule_summary(rule: dict[str, Any], fallback: str) -> str:

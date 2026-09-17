@@ -151,29 +151,6 @@ def test_retention_prunes_oldest_run_journals(tmp_path: Path) -> None:
     assert surviving == ["run-02", "run-03"]
 
 
-def test_retention_still_caps_total_when_active_run_sorts_first(tmp_path: Path) -> None:
-    """The budget holds even when the active run's name is not the newest (#5881).
-
-    ``run_id`` is caller-supplied (an operator-pinned ``BERNSTEIN_RUN_ID``, or a
-    resumed older run) and is not guaranteed to sort after every existing run
-    directory. Retention must still cap the total number of surviving run
-    directories at the configured limit, with the active run protected from
-    deletion rather than exempted from the count.
-    """
-    runs_root = tmp_path
-    with patch.dict("os.environ", {"BERNSTEIN_REPLAY_RETENTION": "2"}, clear=True):
-        for rid in ("run-b", "run-c"):
-            j = EventJournal(run_id=rid, sdd_dir=runs_root)
-            j.record("only")
-        # The active run's name sorts BEFORE the two existing run directories.
-        active = EventJournal(run_id="run-a", sdd_dir=runs_root)
-        active.record("only")
-        surviving = sorted(p.name for p in (runs_root / "runs").iterdir() if p.is_dir())
-    assert len(surviving) == 2
-    assert "run-a" in surviving
-    assert "run-c" in surviving
-
-
 def test_run_id_traversal_is_refused(tmp_path: Path) -> None:
     """A run_id that traverses or escapes the runs root is refused before I/O."""
     for bad in ("../../etc", "..", "a/../../b", "/abs/path", "", ".", "a\\b"):

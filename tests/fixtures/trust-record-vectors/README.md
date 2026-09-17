@@ -1,6 +1,6 @@
 # Trust Record test vectors
 
-Seven TRACE v0.2 Trust Records, all produced by the real
+Four TRACE v0.2 Trust Records, all produced by the real
 `bernstein.core.observability.trust_record.TrustRecordEmitter` over real
 `EventJournal`-recorded runs -- never hand-written JSON. See
 `_build_trust_record_vectors.py` in this directory for exactly how each one
@@ -11,49 +11,8 @@ was built.
 | `single-execution-trust-record.json` | one root (non-delegated) execution, with a tool call and a produced artifact |
 | `delegated-parent-trust-record.json` | the parent hop of a two-hop delegated run |
 | `delegated-child-trust-record.json` | the child hop, carrying `delegation` keyed on the parent's own record |
-| `delegated-grandchild-trust-record.json` | a third hop under the child, so the chain is two links deep |
-| `aggregate-trust-record.json` | the run-level rollup over parent+child+grandchild, carrying `references[rel=member-execution]` |
-| `supplementary-plane-parent-trust-record.json` | a root hop whose `cnf.jwk` carries a key outside the Basic Multilingual Plane (see below) |
-| `supplementary-plane-child-trust-record.json` | the child hop linked to it, whose `delegation.parent_record_hash` only resolves under RFC 8785 key order |
-| `trust-record-vectors-key.pem` | the public half of the deterministic Ed25519 key that signed all seven |
-
-## The supplementary-plane pair
-
-RFC 8785 orders object property names as arrays of UTF-16 code units. The
-shortcut most JSON libraries offer (`sort_keys=True`) orders them by Unicode
-code point. The two agree on every ASCII and BMP-only name, so the five vectors
-above are satisfied by a correct canonicalizer and by an incorrect one alike:
-they show that two implementations agree, not what they agree about.
-
-The parent of this pair carries two further RFC 7517 members in `cnf.jwk`, the
-object whose digest the child asserts, with the same names and values as
-trace-spec's `examples/delegation-link/24-parent-key-supplementary-plane.json`:
-
-| Member | Code point | UTF-16 code units | JCS order | code-point order |
-|---|---|---|---|---|
-| `"\ue000": "bmp-private-use"` | U+E000 | `E000` | second | first |
-| `"\U0001f600": "supplementary-plane"` | U+1F600 | `D83D DE00` | first | second |
-
-`D83D < E000`, so RFC 8785 puts the supplementary-plane member first and a
-code-point sort puts it second. Two consequences, both asserted in
-`tests/unit/test_trust_record_format_vectors.py`:
-
-- the child's `delegation.parent_record_hash` equals the parent's digest under
-  RFC 8785 (trace-spec section 3.1.3) and differs from its digest under a
-  code-point sort, so a verifier taking the shortcut reports `parent_not_found`
-  on a chain that is otherwise the ASCII pair's;
-- the parent's `signature` verifies over its RFC 8785 pre-image and fails over
-  the code-point one, so the same shortcut cannot verify the parent either.
-
-The committed file itself is `json.dumps(sort_keys=True)` output with ASCII
-escapes, which is code-point order: the file is a JSON document, and the record
-is what parsing it yields. Digest the parsed record under RFC 8785, never the
-file's bytes.
-
-The members reach the record through the emitter's `cnf_jwk_members`
-parameter and the production signing path (`sign_trust_record` over
-`canonicalize_jcs`); no schema was changed, since `cnf.jwk` already admits
-further members.
+| `aggregate-trust-record.json` | the run-level rollup over the parent+child pair, carrying `references[rel=member-execution]` |
+| `trust-record-vectors-key.pem` | the public half of the deterministic Ed25519 key that signed all four |
 
 ## Upstream pin
 
