@@ -739,9 +739,8 @@ class MemoryChain:
 
         This low-level selector validates row shape, chain continuity, and each
         entry's content hash. It does not authenticate entry HMACs or lineage-
-        spine anchors. Callers that need an authenticated recall must verify the
-        namespace first; :class:`MemoryRecallReceiptStore` does so before
-        sealing a receipt.
+        spine anchors. Callers that need authenticated recall evidence must
+        verify the namespace before relying on the selection.
         """
         resolved_head, prefix = self._snapshot_prefix(scope, namespace, fold_head=fold_head)
         folded = self._fold_prefix(prefix)

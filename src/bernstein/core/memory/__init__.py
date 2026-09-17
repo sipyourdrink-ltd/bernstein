@@ -1,1 +1,1 @@
-"""Persistent memory stores, tamper-evident chains, and signed recall receipts."""
+"""Persistent memory stores and tamper-evident MemoryChain provenance."""
