@@ -76,11 +76,11 @@ jobs:
     # exactly `failure`. So `cancelled` and `skipped` route nothing: today
     # they boot this job, resolve metadata, and every child then skips.
     #
-    # That is not a rare case. ci.yml keys push-to-main runs per SHA and
-    # never cancels them, so a merge wave leaves a long tail of main CI runs
-    # that an operator mass-cancels to reclaim the pool; `workflow_run` fires
-    # on `completed`, which includes `cancelled`, and each one paid a runner
-    # slot here for no routing decision.
+    # That is not a rare case. Ordinary push-to-main CI is branch-scoped and
+    # cancellable, so a newer landed commit can supersede an older run.
+    # `workflow_run` still fires on `completed` for that cancelled run (and for
+    # operator cancellations), so filtering `cancelled` / `skipped` here avoids
+    # booting a dispatcher runner when no child route can act on the result.
     #
     # `success` is admitted unconditionally, so the release path is
     # untouched. tests/unit/test_post_ci_dispatcher_workflow_yaml.py pins

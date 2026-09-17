@@ -456,10 +456,12 @@ Every workflow triggering on `pull_request` declares a `concurrency`
 group keyed on the PR, and every one of them cancels a superseded
 pull-request run. There are no exceptions.
 
-`ci.yml` and `codeql.yml` express cancellation as
-`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`: they
-cancel on the PR lane and keep the per-SHA push-to-`main` lane alive, so
-a release commit's CI is never cancelled by the next merge.
+`codeql.yml` limits cancellation to `pull_request`: its main-branch runs stay
+alive. `ci.yml` additionally cancels superseded ordinary pushes to `main` by
+putting them in one branch-wide group. Release pushes whose head commit starts
+with `chore(release)` or `release:` keep a per-SHA, non-cancelling group, as do
+`merge_group` and `workflow_dispatch`, so the release and full-suite paths can
+reach their own verdicts.
 
 `tests/unit/test_pull_request_workflow_concurrency_yaml.py` pins both
 the rule and the exception list, so a new `pull_request` workflow
