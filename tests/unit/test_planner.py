@@ -88,6 +88,64 @@ def test_post_task_to_server_boosts_upgrade_priority_and_sets_planned_status() -
     assert "upgrade_details" in body
 
 
+def test_post_task_to_server_forwards_completion_signals() -> None:
+    """A plan step's declared witnesses must survive the POST (#5960).
+
+    `TaskCreate` accepts `completion_signals` and the janitor evaluates them,
+    but this body is assembled field by field: a field with no explicit forward
+    does not arrive. Without it every task posted by `run --from-plan` reached
+    the server with an empty list and fell back to the default verification
+    heuristics, so a plan that named exactly what "done" meant was verified by
+    a guess instead -- and nothing said so.
+    """
+    client = _FakePlannerClient()
+    task = Task(
+        id="local-signals",
+        title="Add the parser",
+        description="Parse the seed file",
+        role="backend",
+        scope=Scope.SMALL,
+        complexity=Complexity.LOW,
+        task_type=TaskType.STANDARD,
+        completion_signals=[
+            CompletionSignal(type="file_exists", value="src/parser.py"),
+            CompletionSignal(type="test_passes", value="tests/unit/test_parser.py"),
+        ],
+    )
+
+    asyncio.run(planner._post_task_to_server(cast("Any", client), "http://server", task))
+
+    body = cast("dict[str, object]", client.posts[0]["json"])
+    assert body["completion_signals"] == [
+        {"type": "file_exists", "value": "src/parser.py"},
+        {"type": "test_passes", "value": "tests/unit/test_parser.py"},
+    ]
+
+
+def test_post_task_to_server_omits_completion_signals_when_none_declared() -> None:
+    """No declaration stays absent rather than posting an empty list.
+
+    Every other optional field on this body is forwarded only when set, and the
+    server defaults the key to an empty list, so sending one explicitly would
+    add a wire field that says nothing.
+    """
+    client = _FakePlannerClient()
+    task = Task(
+        id="local-plain",
+        title="Add the parser",
+        description="Parse the seed file",
+        role="backend",
+        scope=Scope.SMALL,
+        complexity=Complexity.LOW,
+        task_type=TaskType.STANDARD,
+    )
+
+    asyncio.run(planner._post_task_to_server(cast("Any", client), "http://server", task))
+
+    body = cast("dict[str, object]", client.posts[0]["json"])
+    assert "completion_signals" not in body
+
+
 def test_fetch_existing_tasks_parses_upgrade_details_from_server() -> None:
     class _Client:
         async def get(self, _url: str) -> _FakeResponse:
