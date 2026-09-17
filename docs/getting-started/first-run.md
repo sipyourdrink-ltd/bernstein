@@ -116,13 +116,10 @@ bernstein live       # full TUI dashboard (attach to a running session)
 bernstein gui serve  # opens http://127.0.0.1:8052/ui/ in your browser
 ```
 
-`bernstein status` output looks like:
-
-```
-Tasks: 0 open · 1 in-progress · 0 done · 0 failed
-Agents: 1 running (agent/abc12345 - backend)
-Spend:  $0.04 so far
-```
+`bernstein status` prints a banner, the task counts, and a **Bernstein Agents**
+table with one row per running session — session, role, CLI, model, worker,
+skills, worker PID, agent PID and runtime — followed by the spend so far. Use
+`bernstein status --json` when you want a shape to parse rather than to read.
 
 ---
 

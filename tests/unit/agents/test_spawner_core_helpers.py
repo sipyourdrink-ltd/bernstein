@@ -30,8 +30,8 @@ from bernstein.core.agents.spawner_core import (
     _render_auth_section,
     _render_batch_prompt,
     _render_signal_check,
-    _sanitise_for_log,
 )
+from bernstein.core.security.sanitize import sanitize_log
 
 
 def _task(make_task: Any, **overrides: Any) -> Any:
@@ -39,23 +39,23 @@ def _task(make_task: Any, **overrides: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# _sanitise_for_log
+# sanitize_log (used by the spawner modules for log injection defence)
 # ---------------------------------------------------------------------------
 
 
-def test_sanitise_for_log_strips_crlf() -> None:
-    """CR and LF are removed so log lines cannot be forged."""
-    assert _sanitise_for_log("line1\nline2\rline3") == "line1line2line3"
+def test_sanitize_log_strips_crlf() -> None:
+    """CR and LF are escaped so log lines cannot be forged."""
+    assert sanitize_log("line1\nline2\rline3") == "line1\\nline2\\rline3"
 
 
-def test_sanitise_for_log_empty_passthrough() -> None:
+def test_sanitize_log_empty_passthrough() -> None:
     """An empty string is returned unchanged (cheap fast path)."""
-    assert _sanitise_for_log("") == ""
+    assert sanitize_log("") == ""
 
 
-def test_sanitise_for_log_clean_passthrough() -> None:
+def test_sanitize_log_clean_passthrough() -> None:
     """A string with no control chars is unchanged."""
-    assert _sanitise_for_log("normal session id") == "normal session id"
+    assert sanitize_log("normal session id") == "normal session id"
 
 
 # ---------------------------------------------------------------------------

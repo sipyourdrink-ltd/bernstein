@@ -104,11 +104,62 @@ def _streaming_operations() -> frozenset[tuple[str, str]]:
 _STREAMING_OPERATIONS = _streaming_operations()
 
 
+def _operations_declaring_501() -> frozenset[tuple[str, str]]:
+    """``(METHOD, path)`` for every operation whose schema declares a 501.
+
+    Read off the schema rather than a hardcoded path list, so a new
+    deliberate "not implemented" refusal is handled the day it is added.
+    """
+    found: set[tuple[str, str]] = set()
+    paths: dict[str, Any] = _app.openapi().get("paths", {})
+    for path, operations in paths.items():
+        for method, operation in operations.items():
+            if not isinstance(operation, dict):
+                continue
+            if "501" in (operation.get("responses") or {}):
+                found.add((method.upper(), path))
+    return frozenset(found)
+
+
+_DECLARED_501_OPERATIONS = _operations_declaring_501()
+
+
+def _is_declared_501(status_code: int, method: str, path: str) -> bool:
+    """True for a 501 the operation's own schema declares."""
+    return status_code == 501 and (method.upper(), path) in _DECLARED_501_OPERATIONS
+
+
+def _not_an_undeclared_server_error(ctx: st_checks.CheckContext, response: Any, case: schemathesis.Case) -> bool | None:
+    """`not_a_server_error`, except that a documented 501 is contract.
+
+    `not_a_server_error` fails on every 5xx, which is right for the property
+    this suite is after -- an unhandled exception escaping a handler -- and
+    wrong for a refusal the schema declares. `GET /Users` under
+    `src/bernstein/core/routes/scim.py` answers 501 `invalidFilter` to any
+    `filter` query because `ServiceProviderConfig` reports
+    `filter.supported = false`, and it declares that 501 in its own
+    `responses`. Reporting it as a server error says the SCIM filter
+    contract is broken at the moment it is being honoured -- the same shape
+    of false positive the drain/503 fixture below undoes.
+
+    Narrow on purpose, in two ways that keep the leak check intact:
+
+    * Only 501. An unhandled exception cannot produce one -- Starlette
+      answers 500, and this app registers no catch-all handler -- so no
+      crash can hide behind this branch. 500, 502 and 503 still fail.
+    * Only where the operation's schema declares 501. An undocumented 501
+      is still a failure, so a handler that starts refusing work without
+      saying so in the schema reddens this suite.
+    """
+    if _is_declared_501(response.status_code, case.method, case.path):
+        return True
+    return st_checks.not_a_server_error(ctx, response, case)
+
+
 # Smoke runs only the 5xx-leak check; nightly inspects the rest manually.
-# `not_a_server_error` catches the case property tests cannot:
-# unhandled-exception leaks against arbitrary Hypothesis-generated
-# request bodies.
-_CHECKS = [st_checks.not_a_server_error]
+# The check catches what property tests cannot: unhandled-exception leaks
+# against arbitrary Hypothesis-generated request bodies.
+_CHECKS = [_not_an_undeclared_server_error]
 
 
 @pytest.fixture(autouse=True)
@@ -349,3 +400,95 @@ def test_drain_is_not_left_set_for_the_next_operation() -> None:
 
         for path in _DRAIN_AWARE_READS:
             assert client.get(path).status_code == 200, f"{path} stayed unready after the drain was cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Documented "not implemented" refusals
+# ---------------------------------------------------------------------------
+
+
+_SCIM_USERS_PATHS = ("/scim/v2/Users", "/api/v1/scim/v2/Users")
+
+
+def test_scim_user_listing_declares_and_answers_501_for_a_filter() -> None:
+    """The refusal `_CHECKS` tolerates has to be real, and declared.
+
+    `GET /Users` reports `filter.supported = false` in
+    `ServiceProviderConfig` and refuses a `filter` query rather than
+    ignoring it, because answering an unfiltered list would hand a client
+    more principals than it asked for. If that behaviour or its schema entry
+    ever goes away, `_not_an_undeclared_server_error` is tolerating nothing
+    and should stop claiming to -- fail here, where the reason is legible,
+    rather than silently widening the leak check.
+    """
+    paths: dict[str, Any] = _app.openapi()["paths"]
+
+    for path in _SCIM_USERS_PATHS:
+        assert ("GET", path) in _DECLARED_501_OPERATIONS, f"{path} no longer declares 501"
+        assert "501" in paths[path]["get"]["responses"], f"{path} dropped 501 from its schema"
+
+    with TestClient(_app, client=("10.0.2.1", 1234)) as client:
+        for path in _SCIM_USERS_PATHS:
+            refused = client.get(path, params={"filter": 'userName eq "x"'})
+            assert refused.status_code == 501, f"{path} answered {refused.status_code} to a filter query"
+            assert refused.json()["scimType"] == "invalidFilter"
+
+            listed = client.get(path)
+            assert listed.status_code == 200, f"{path} answered {listed.status_code} without a filter"
+
+
+def test_the_tolerated_refusal_is_narrow() -> None:
+    """Only a 501, and only where the schema declares one.
+
+    The fuzz sweep reaches the 501 branch only when Hypothesis happens to
+    draw a `filter` value, which is why the nightly lane failed on some
+    nights and not others. This pins the predicate without depending on the
+    draw: every other status stays a failure, and so does a 501 from an
+    operation that never declared one.
+    """
+    documented = _SCIM_USERS_PATHS[0]
+
+    assert _is_declared_501(501, "GET", documented) is True
+    assert _is_declared_501(501, "get", documented) is True, "method comparison must not be case-sensitive"
+
+    # Same operation, any other 5xx: still a server error.
+    for status in (500, 502, 503, 504):
+        assert _is_declared_501(status, "GET", documented) is False, f"{status} must not be tolerated"
+
+    # A 501 nobody declared: still a server error.
+    assert _is_declared_501(501, "GET", "/api/v1/tasks") is False
+    assert _is_declared_501(501, "POST", documented) is False, "only the declared method is covered"
+
+    # The tolerance covers the SCIM listings and nothing else.
+    assert frozenset(("GET", path) for path in _SCIM_USERS_PATHS) == _DECLARED_501_OPERATIONS
+
+
+# The scim sweep ahead of these tests has already spent the per-address
+# request budget, so a probe on the default `testclient` address is answered
+# 429 and would measure the rate limiter instead of the filter contract. Same
+# reason the drain and streaming probes each present a distinct peer.
+_SCIM_PROBE_PEER = ("10.0.3.1", 1234)
+
+
+def test_the_documented_refusal_reaches_the_check_the_sweep_uses() -> None:
+    """End to end: `_CHECKS` accepts the refusal the raw check rejects.
+
+    The failing pair in the nightly log was `GET /scim/v2/Users` and
+    `GET /api/v1/scim/v2/Users`; both are validated here through the same
+    schemathesis check machinery the sweep runs.
+
+    The response is captured once, off its own peer, and then validated
+    twice. Letting the case issue its own request would draw on the budget
+    the sweep has already spent and turn the comparison vacuous.
+    """
+    with TestClient(_app, client=_SCIM_PROBE_PEER) as client:
+        for path in _SCIM_USERS_PATHS:
+            case = schema[path]["GET"].Case(query={"filter": 'userName eq "x"'})
+            response = client.get(path, params={"filter": 'userName eq "x"'})
+
+            assert response.status_code == 501, f"{path} answered {response.status_code} to a filter query"
+
+            case.validate_response(response, checks=_CHECKS)
+
+            with pytest.raises(BaseException, match="Server error"):
+                case.validate_response(response, checks=[st_checks.not_a_server_error])

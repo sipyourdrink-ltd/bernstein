@@ -5,6 +5,8 @@ read, and that set must come from the Merkle-chained journal rather than
 from anything the agent declares. These tests pin the derivation contract:
 
 * known rows yield exactly the expected worktree-relative POSIX path set;
+* paths nested under ``args`` or ``frame`` payload carriers are collected
+  alongside top-level paths, matching how production adapters journal reads;
 * a mutated row (byte flip in the file) raises the dedicated error instead
   of returning a smaller set;
 * an unparsable row raises the dedicated error with the malformed reason,
@@ -196,7 +198,9 @@ def test_out_of_tree_path_lands_in_separate_set(tmp_path: Path) -> None:
     result = derive_read_paths(path, tmp_path)
 
     assert result.read_paths == frozenset({"src/foo.py"})
-    assert result.out_of_tree == frozenset({str(outside)})
+    # out_of_tree is documented as "Absolute POSIX paths"; compare in POSIX form
+    # so the assertion holds on Windows (backslash separators) and POSIX alike.
+    assert result.out_of_tree == frozenset({outside.as_posix()})
 
 
 def test_determinism_across_insertion_orders(tmp_path: Path) -> None:
@@ -215,3 +219,52 @@ def test_determinism_across_insertion_orders(tmp_path: Path) -> None:
         sorted(second.read_paths),
         sorted(second.out_of_tree),
     )
+
+
+def test_path_nested_under_args_is_collected(tmp_path: Path) -> None:
+    # Production adapters (e.g. openai_agents_builtins) journal file reads as
+    #   {"type": "tool_call", "args": {"path": "README.md"}}
+    # rather than at the top level.  Before the fix the derivation scanned
+    # only top-level PATH_FIELDS, so every real run produced an empty read set
+    # and the merge-admission gate never fired.
+    path = _journal(
+        tmp_path,
+        [
+            {"event": "tool_call", "tool": "fs.read", "args": {"path": "README.md"}},
+            {"event": "read", "path": "src/foo.py"},
+        ],
+    )
+
+    result = derive_read_paths(path, tmp_path)
+
+    assert result.read_paths == frozenset({"README.md", "src/foo.py"})
+    assert result.out_of_tree == frozenset()
+
+
+def test_path_nested_under_frame_is_collected(tmp_path: Path) -> None:
+    # ACPEventJournalSink wraps entire event dicts under the ``frame`` key.
+    path = _journal(
+        tmp_path,
+        [
+            {"event": "acp_event", "frame": {"path": "src/bar.py"}},
+        ],
+    )
+
+    result = derive_read_paths(path, tmp_path)
+
+    assert result.read_paths == frozenset({"src/bar.py"})
+
+
+def test_args_carrier_with_non_dict_value_is_skipped(tmp_path: Path) -> None:
+    # If ``args`` holds a non-dict value the row should not crash derivation.
+    path = _journal(
+        tmp_path,
+        [
+            {"event": "tool_call", "args": "not-a-dict"},
+            {"event": "read", "path": "src/foo.py"},
+        ],
+    )
+
+    result = derive_read_paths(path, tmp_path)
+
+    assert result.read_paths == frozenset({"src/foo.py"})

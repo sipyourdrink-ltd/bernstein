@@ -9,11 +9,13 @@ written only when the operator accepts.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
+from bernstein.adapters import onboarding
 from bernstein.adapters.draft import Draft, read_draft_document
 from bernstein.cli.commands.adapters_draft_cmd import _execute_draft
 from bernstein.cli.main import cli
@@ -23,15 +25,29 @@ RECORDABLE_FIXTURE = FIXTURES / "probe_recordable.py"
 NO_MODEL_FIXTURE = FIXTURES / "probe_ok.py"
 
 
+def _run_python_fixture(monkeypatch: pytest.MonkeyPatch, fixture: Path) -> None:
+    """Execute one Python fixture without changing the logical probe command."""
+    run_capture = onboarding._run_capture
+
+    def run_fixture(cmd: list[str], *, timeout: int, env: dict[str, str] | None = None) -> tuple[int, str]:
+        assert cmd[0] == str(fixture)
+        return run_capture([sys.executable, *cmd], timeout=timeout, env=env)
+
+    monkeypatch.setattr(onboarding, "_run_capture", run_fixture)
+
+
 # ---------------------------------------------------------------------------
 # _execute_draft: the full pipeline (real probe subprocess, real file),
 # confirmation injected so no test depends on a TTY.
 # ---------------------------------------------------------------------------
 
 
-def test_execute_draft_confirmed_persists_a_real_file_showing_the_exact_argv(tmp_path: Path) -> None:
+def test_execute_draft_confirmed_persists_a_real_file_showing_the_exact_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A confirmed draft persists YAML to out_dir, and the operator saw the real argv first."""
     seen_previews: list[str] = []
+    _run_python_fixture(monkeypatch, RECORDABLE_FIXTURE)
 
     def confirm(preview: str) -> bool:
         seen_previews.append(preview)
@@ -62,9 +78,10 @@ def test_execute_draft_confirmed_persists_a_real_file_showing_the_exact_argv(tmp
     assert document["invocation"]["model_flag"] == "--model"
 
 
-def test_execute_draft_declined_leaves_out_dir_untouched(tmp_path: Path) -> None:
+def test_execute_draft_declined_leaves_out_dir_untouched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Declining the confirmation writes nothing - out_dir is never even created."""
     out_dir = tmp_path / "drafts"
+    _run_python_fixture(monkeypatch, RECORDABLE_FIXTURE)
 
     rc, target = _execute_draft(
         str(RECORDABLE_FIXTURE),
@@ -82,8 +99,11 @@ def test_execute_draft_declined_leaves_out_dir_untouched(tmp_path: Path) -> None
     assert not out_dir.exists(), "a declined draft must not create out_dir"
 
 
-def test_execute_draft_yes_flag_never_calls_the_confirmation_gate(tmp_path: Path) -> None:
+def test_execute_draft_yes_flag_never_calls_the_confirmation_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """--yes bypasses confirmation entirely, not merely auto-answers it."""
+    _run_python_fixture(monkeypatch, RECORDABLE_FIXTURE)
 
     def confirm(_preview: str) -> bool:
         raise AssertionError("confirm() must not be called when assume_yes=True")
@@ -104,10 +124,11 @@ def test_execute_draft_yes_flag_never_calls_the_confirmation_gate(tmp_path: Path
 
 
 def test_execute_draft_refuses_missing_required_field_without_ever_confirming(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A --require'd field missing from a real probe refuses before confirmation, writes nothing."""
     out_dir = tmp_path / "drafts"
+    _run_python_fixture(monkeypatch, NO_MODEL_FIXTURE)
 
     def confirm(_preview: str) -> bool:
         raise AssertionError("confirm() must not be called when drafting itself refused")
@@ -134,10 +155,13 @@ def test_execute_draft_refuses_missing_required_field_without_ever_confirming(
 # ---------------------------------------------------------------------------
 
 
-def test_adapters_draft_cli_confirmed_via_stdin_writes_the_draft(tmp_path: Path) -> None:
+def test_adapters_draft_cli_confirmed_via_stdin_writes_the_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The registered CLI command, invoked the way an operator would, persists on 'y'."""
     out_dir = tmp_path / "drafts"
     runner = CliRunner()
+    _run_python_fixture(monkeypatch, RECORDABLE_FIXTURE)
 
     result = runner.invoke(
         cli,
@@ -159,10 +183,11 @@ def test_adapters_draft_cli_confirmed_via_stdin_writes_the_draft(tmp_path: Path)
     assert len(written) == 1, written
 
 
-def test_adapters_draft_cli_declined_via_stdin_writes_nothing(tmp_path: Path) -> None:
+def test_adapters_draft_cli_declined_via_stdin_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The registered CLI command exits 1 and writes nothing when the operator answers 'n'."""
     out_dir = tmp_path / "drafts"
     runner = CliRunner()
+    _run_python_fixture(monkeypatch, RECORDABLE_FIXTURE)
 
     result = runner.invoke(
         cli,

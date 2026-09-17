@@ -36,7 +36,7 @@ concurrency:
 jobs:
   preflight:
     name: preflight (gate)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 1
     outputs:
       enabled: ${{ steps.gate.outputs.enabled }}
@@ -69,7 +69,7 @@ jobs:
     name: smoke (synthetic)
     needs: preflight
     if: needs.preflight.outputs.enabled == 'smoke'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 5
     steps:
       - name: Harden runner (audit mode)
@@ -110,7 +110,7 @@ jobs:
     name: bench (full)
     needs: preflight
     if: needs.preflight.outputs.enabled == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 240
     env:
       # Per-suite budget cap protects against runaway spend.

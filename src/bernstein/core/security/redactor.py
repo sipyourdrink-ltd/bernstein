@@ -36,7 +36,20 @@ if TYPE_CHECKING:
 
 __all__ = ["collapse_home", "mask", "redact_file", "redact_text"]
 
-_HOME_RE: re.Pattern[str] | None = None
+#: Cached ``(home value, compiled pattern)``. Keyed on the home value rather
+#: than compiled once and kept forever: ``$HOME`` is read from the environment,
+#: and a process that changes it would otherwise keep collapsing against the
+#: path it started with.
+_HOME_CACHE: tuple[str, re.Pattern[str] | None] | None = None
+
+
+def _home_prefix() -> str:
+    """Return the current home directory, without a trailing separator."""
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    # Both separators: a value can arrive from a Windows environment
+    # (``C:\\Users\\x\\``) as readily as a POSIX one, and only the POSIX
+    # spelling was being trimmed.
+    return home.rstrip("/\\")
 
 
 def _home_pattern() -> re.Pattern[str] | None:
@@ -44,16 +57,43 @@ def _home_pattern() -> re.Pattern[str] | None:
 
     Compiled lazily because ``$HOME`` can be unset in CI runners; we
     return ``None`` in that case and skip the collapse step.
+
+    ``None`` is also returned when the home directory is a filesystem root -
+    ``/`` on POSIX, ``C:\\`` on Windows. Trimming the trailing separator
+    leaves such a value empty (or a bare drive letter), and an empty pattern
+    matches at *every* position: ``re.compile("").sub("~", "abc")`` is
+    ``"~a~b~c~"``. That is not a redaction failing to fire, it is every string
+    that passes through the redactor being rewritten character by character.
+
+    ``HOME=/`` is the ordinary configuration for a container running as root,
+    and :func:`redact_text` runs on the write path of the work ledger *before*
+    each entry is hashed - so the corruption would be sealed into the chain,
+    not merely displayed. Collapsing the root to ``~`` would be wrong even if
+    it worked, since every absolute path on the host begins with it.
     """
-    global _HOME_RE
-    if _HOME_RE is not None:
-        return _HOME_RE
-    home = os.environ.get("HOME") or os.path.expanduser("~")
-    if not home or home == "~":
-        return None
-    # Match the literal home path as a path prefix.
-    _HOME_RE = re.compile(re.escape(home.rstrip("/")))
-    return _HOME_RE
+    global _HOME_CACHE
+    home = _home_prefix()
+    if _HOME_CACHE is not None and _HOME_CACHE[0] == home:
+        return _HOME_CACHE[1]
+    # ``expanduser`` returns "~" unchanged when it cannot resolve one.
+    # ``_is_filesystem_root`` covers the emptied-by-trimming cases above.
+    pattern = None if not home or home == "~" or _is_filesystem_root(home) else re.compile(re.escape(home))
+    _HOME_CACHE = (home, pattern)
+    return pattern
+
+
+def _is_filesystem_root(home: str) -> bool:
+    """Is *home* a filesystem root rather than a directory inside one?
+
+    Reached with the trailing separator already trimmed, so ``/`` arrives as
+    ``""`` and ``C:\\`` as ``"C:"``. A UNC share root (``\\\\server\\share``)
+    trims to ``\\\\server\\share`` and is left alone - it is a real directory
+    with a real prefix, unlike the two above.
+    """
+    if not home:
+        return True
+    # A bare drive designator: "C:" is what "C:\\" trims down to.
+    return len(home) == 2 and home[1] == ":" and home[0].isalpha()
 
 
 def collapse_home(text: str) -> str:

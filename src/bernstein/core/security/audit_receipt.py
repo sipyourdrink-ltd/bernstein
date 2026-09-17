@@ -170,6 +170,38 @@ def _canonical_json_bytes(obj: dict[str, Any]) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+#: Legacy profile: :func:`_canonical_json_bytes`, unchanged (``ensure_ascii``
+#: default True, no numeric normalisation).
+HASH_PROFILE_LEGACY: str = "py-json-v1"
+
+#: RFC 8785 (JCS) profile via
+#: :func:`bernstein.core.security.agent_card_signer.canonicalize_jcs`, already
+#: used by the TRACE projection and audit-chain digests.
+HASH_PROFILE_JCS_V2: str = "jcs-v2"
+
+
+def _canonical_bytes_for_profile(obj: dict[str, Any], hash_profile: str) -> bytes:
+    """Return canonical bytes for *obj* under a named hash profile.
+
+    A record with no ``hash_profile`` field is :data:`HASH_PROFILE_LEGACY` by
+    convention; callers resolve that default before calling this function.
+    Does not change :func:`_canonical_json_bytes` itself, so every receipt
+    that already relies on its bytes keeps them.
+
+    Raises:
+        ValueError: *hash_profile* is neither known profile. Callers on an
+            untrusted read path (a receipt someone else produced) must catch
+            this and fail closed rather than let it propagate.
+    """
+    if hash_profile == HASH_PROFILE_JCS_V2:
+        from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+        return canonicalize_jcs(obj)
+    if hash_profile == HASH_PROFILE_LEGACY:
+        return _canonical_json_bytes(obj)
+    raise ValueError(f"unknown hash_profile {hash_profile!r}")
+
+
 def _canonical_event_bytes(event: dict[str, Any]) -> bytes:
     """Return the canonical single-event bytes used as a Merkle leaf.
 

@@ -4,9 +4,18 @@ Run Bernstein from GitHub Actions to orchestrate coding agents in CI.
 
 ## Quick setup
 
-Copy `.github/workflows/bernstein-ci-fix.yml` into your repo, set the
-appropriate API key secret, and you're done. When CI fails on your default
-branch, Bernstein will attempt to fix it automatically.
+Add a step that uses this action with `task: fix-ci`, set the appropriate
+API key secret, and you're done. When CI fails on your default branch,
+Bernstein will attempt to fix it automatically.
+
+```yaml
+- uses: actions/checkout@v4
+- uses: sipyourdrink-ltd/bernstein@v4
+  with:
+    task: "fix-ci"
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
 
 ## Inputs
 

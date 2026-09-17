@@ -42,7 +42,8 @@ env:
 jobs:
   bump:
     name: Bump diff-coverage floor and open review PR
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
+    environment: automation
     timeout-minutes: 10
     if: >-
       github.event_name == 'workflow_dispatch' ||

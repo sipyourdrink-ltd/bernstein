@@ -62,6 +62,14 @@ MATCH_ANYTHING = ("*", "**")
 #: `test_queue_reporting_web_lanes_can_actually_be_required` re-reads the
 #: workflow and fails if the trigger is missing or filtered.
 QUEUE_REPORTING_WEB_LANES = {
+    "quorum.yml": (
+        "Answers whether a pull request has the review the charter asks for. It runs on "
+        "every pull request whatever it touches, `web/**` included, and on merge_group, so "
+        "the answer is re-checked against the queued state rather than only against the "
+        "branch. It is required through an organization ruleset that pins this workflow "
+        "rather than through a required-context name, which is what stops a branch from "
+        "substituting its own copy; the name it publishes is `quorum`."
+    ),
     "typecheck-ts.yml": (
         "`tsc --noEmit` over the TypeScript packages, `web/` among them. #4010's shape one "
         "directory over: ci.yml paths-ignores the TypeScript trees, `CI gate` is the only "
@@ -841,18 +849,82 @@ def test_macos_tolerance_covers_the_merge_group_event(
 ) -> None:
     """The roll-up must tolerate the macOS skip on a queued group.
 
-    The macOS jobs gate on ``push``, on a ``macos-needed`` label, or on
-    the planner's ``macos_sensitive`` verdict. On a merge group there is
-    no pull request payload, so the label branch cannot fire and only the
-    planner's verdict can start them. Without ``merge_group`` in the
-    tolerated-skip events, every non-macOS-sensitive group fails
+    Both macOS jobs carry ``github.event_name != 'merge_group'``, so they
+    skip on every queued group whatever the planner said. Without
+    ``merge_group`` in the tolerated-skip events, every group fails
     ``CI gate`` and nothing ever merges.
     """
     events = rollup_constants.get("MACOS_SKIP_EVENTS")
     assert events, "the roll-up no longer declares MACOS_SKIP_EVENTS"
     assert "merge_group" in events, (
-        f"MACOS_SKIP_EVENTS is {events!r}. A queued group cannot set the `macos-needed` label branch, so the "
-        "macOS cells skip and `CI gate` fails on every group whose diff is not macOS-sensitive."
+        f"MACOS_SKIP_EVENTS is {events!r}. The macOS jobs never start on a queued group, so the macOS cells "
+        "skip and `CI gate` fails on every group."
+    )
+
+
+def test_merge_group_macos_tolerance_does_not_depend_on_the_planner(
+    rollup_constants: dict[str, Any],
+) -> None:
+    """The queued-group tolerance must be unconditional, not planner-gated.
+
+    The macOS jobs refuse the ``merge_group`` event outright, so a group
+    whose combined diff *is* macOS-sensitive skips them exactly like any
+    other group. A tolerance still keyed on ``macos_sensitive`` would flag
+    that skip and wedge the queue on precisely the groups that touch the
+    platform paths.
+    """
+    unconditional = rollup_constants.get("MACOS_UNCONDITIONAL_SKIP_EVENTS")
+    assert unconditional, "the roll-up no longer declares MACOS_UNCONDITIONAL_SKIP_EVENTS"
+    assert "merge_group" in unconditional, (
+        f"MACOS_UNCONDITIONAL_SKIP_EVENTS is {unconditional!r}. A macOS-sensitive group would then have to "
+        "produce macOS results it can never produce, and the queue wedges."
+    )
+    events = rollup_constants.get("MACOS_SKIP_EVENTS") or ()
+    assert set(unconditional) <= set(events), (
+        f"MACOS_UNCONDITIONAL_SKIP_EVENTS {unconditional!r} is not a subset of MACOS_SKIP_EVENTS {events!r}. "
+        "The unconditional branch is only reached for events the outer check already admits."
+    )
+
+
+def test_macos_jobs_refuse_the_merge_group_event(ci_jobs: dict[str, Any]) -> None:
+    """The job `if:`s must be what actually keeps macOS out of the queue.
+
+    The roll-up tolerance above is only safe while the jobs really cannot
+    start on a queued group. If an `if:` regains a branch that fires on
+    ``merge_group``, the queue pays for macOS again and the tolerance
+    silently becomes a hole that would accept a genuine skip.
+    """
+    for key in ("test-macos", "adapter-integration-macos"):
+        job = ci_jobs.get(key)
+        assert isinstance(job, dict), f"ci.yml must keep a `{key}` job"
+        condition = " ".join(str(job.get("if", "")).split())
+        assert "github.event_name != 'merge_group'" in condition, (
+            f"`{key}.if` is {condition!r}; it no longer excludes the merge queue, but the roll-up still "
+            "tolerates its skip on that event unconditionally."
+        )
+
+
+def test_test_macos_has_no_unconditional_push_branch(ci_jobs: dict[str, Any]) -> None:
+    """The macOS shards must be planner-gated on push, not automatic.
+
+    ``test-macos`` fans out over four macOS runners. On a push whose diff
+    touches none of the platform paths those shards re-assert what the
+    ubuntu/windows ``test`` matrix already checked on the same commit, so
+    the job gates on ``macos_sensitive`` there too and the roll-up carries
+    the matching ``MACOS_PUSH_GATED`` tolerance. A bare
+    ``github.event_name == 'push'`` branch would put them back on every
+    merge while that tolerance quietly accepts a real skip.
+    """
+    job = ci_jobs.get("test-macos")
+    assert isinstance(job, dict), "ci.yml must keep a `test-macos` job"
+    condition = " ".join(str(job.get("if", "")).split())
+    assert "github.event_name == 'push'" not in condition, (
+        f"`test-macos.if` is {condition!r}; the push branch is back, so every merge to main pays for the "
+        "macOS shards again."
+    )
+    assert "macos_sensitive" in condition, (
+        f"`test-macos.if` is {condition!r}; without the planner's verdict the job can no longer run on a "
+        "push that does touch a macOS-sensitive path."
     )
 
 

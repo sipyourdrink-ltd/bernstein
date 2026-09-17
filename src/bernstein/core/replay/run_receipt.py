@@ -231,6 +231,24 @@ def _canonical_json_bytes(obj: dict[str, Any]) -> bytes:
     return _cjb(obj)
 
 
+#: Legacy binding-bytes profile (the only one before this field existed).
+HASH_PROFILE_LEGACY: str = "py-json-v1"
+
+#: RFC 8785 (JCS) binding-bytes profile.
+HASH_PROFILE_JCS_V2: str = "jcs-v2"
+
+
+def _canonical_bytes_for_profile(obj: dict[str, Any], hash_profile: str) -> bytes:
+    """Binding bytes for *obj* under *hash_profile* - the audit-receipt dispatch, reused.
+
+    Raises:
+        ValueError: *hash_profile* is neither known profile.
+    """
+    from bernstein.core.security.audit_receipt import _canonical_bytes_for_profile as _cbfp
+
+    return _cbfp(obj, hash_profile)
+
+
 def _binding_block(
     *,
     run_id: str,
@@ -246,6 +264,7 @@ def _binding_block(
     audit_event_count: int | None = None,
     audit_head_hmac: str | None = None,
     schema_version: str = RUN_RECEIPT_SCHEMA_VERSION,
+    hash_profile: str = HASH_PROFILE_LEGACY,
 ) -> dict[str, Any]:
     """The subject binding: one canonical block over every recomputed head.
 
@@ -279,6 +298,12 @@ def _binding_block(
     resolved set rather than asserting a digest nothing re-derives; a run
     that recorded no such event binds no field and older receipts keep
     verifying unchanged.
+
+    ``hash_profile`` selects the canonicalization :func:`_canonical_bytes_for_profile`
+    (or the verifier's matching rebuild) uses to turn this block into bytes.
+    It is bound into the block itself only when it is not the legacy default,
+    so a receipt built under :data:`HASH_PROFILE_LEGACY` produces byte-identical
+    bytes to a caller that never knew this parameter existed.
     """
     block: dict[str, Any] = {
         "journal_event_count": journal_count,
@@ -287,6 +312,8 @@ def _binding_block(
         "spine_entry_count": spine_count,
         "spine_head": spine_head,
     }
+    if hash_profile != HASH_PROFILE_LEGACY:
+        block["hash_profile"] = hash_profile
     if endpoint_identities is not None and len(endpoint_identities) > 0:
         block["endpoints"] = endpoint_identities
     if extension_set_digest is not None:
@@ -558,6 +585,7 @@ def build_run_receipt(
     audit_until: str | None = None,
     write: bool = True,
     output_path: Path | None = None,
+    hash_profile: str = HASH_PROFILE_LEGACY,
 ) -> RunReceipt:
     """Build (and by default write) the signed receipt for one run.
 
@@ -581,6 +609,12 @@ def build_run_receipt(
         write: When ``False``, build in-memory only.
         output_path: Override the on-disk destination (defaults to
             ``.sdd/runs/<run_id>/run-receipt.json``).
+        hash_profile: Canonicalization for the signed binding bytes.
+            :data:`HASH_PROFILE_LEGACY` (default) reproduces every byte this
+            function has always produced. :data:`HASH_PROFILE_JCS_V2` signs
+            RFC 8785 bytes instead, so a non-ASCII payload hashes the same
+            here as it already does in the TRACE projection and audit-chain
+            digests.
 
     Returns:
         A :class:`RunReceipt`.
@@ -590,10 +624,13 @@ def build_run_receipt(
             row is malformed (never sign over a parseable subset - the
             build refuses on the first bad line rather than signing the
             surviving rows as a shorter run), an embedded chain does not
-            recompute (never sign a broken chain), or the opt-in audit
-            range was requested without its inputs.
+            recompute (never sign a broken chain), the opt-in audit range
+            was requested without its inputs, or ``hash_profile`` names
+            neither known profile.
         JournalPathError: ``run_id`` is not a safe path segment.
     """
+    if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+        raise RunReceiptError(f"unknown hash_profile {hash_profile!r}")
     journal_path = run_journal_path(sdd_dir, run_id)
     events = _load_journal_rows_strict(journal_path, run_id)
     if not events:
@@ -654,8 +691,9 @@ def build_run_receipt(
         audit_event_count=audit_block["event_count"] if audit_block is not None else None,
         audit_head_hmac=audit_block["head_hmac"] if audit_block is not None else None,
         schema_version=RUN_RECEIPT_SCHEMA_VERSION,
+        hash_profile=hash_profile,
     )
-    binding_bytes = _canonical_json_bytes(binding)
+    binding_bytes = _canonical_bytes_for_profile(binding, hash_profile)
     subject_sha256 = hashlib.sha256(binding_bytes).hexdigest()
     signature = kms_adapter.sign(_signature_preimage(binding_bytes))
     jwk = kms_adapter.public_key_jwk()
@@ -689,6 +727,8 @@ def build_run_receipt(
     }
     if audit_block is not None:
         receipt["audit_range"] = audit_block
+    if hash_profile != HASH_PROFILE_LEGACY:
+        receipt["hash_profile"] = hash_profile
     receipt_bytes = _canonical_json_bytes(receipt) + b"\n"
 
     receipt_path: Path | None = None
@@ -814,6 +854,13 @@ def verify_run_receipt(
         return _malformed(f"unsupported schema_version {raw_schema_version!r}", run_id=run_id)
     schema_version = str(raw_schema_version)
 
+    raw_hash_profile = receipt.get("hash_profile", HASH_PROFILE_LEGACY)
+    if raw_hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+        return _malformed(
+            f"unsupported hash_profile {raw_hash_profile!r}", run_id=run_id, binding_version=schema_version
+        )
+    hash_profile = str(raw_hash_profile)
+
     journal_block = receipt.get("journal")
     spine_block = receipt.get("spine")
     signing = receipt.get("signing")
@@ -933,8 +980,9 @@ def verify_run_receipt(
         audit_event_count=audit_event_count,
         audit_head_hmac=audit_head_hmac,
         schema_version=schema_version,
+        hash_profile=hash_profile,
     )
-    binding_bytes = _canonical_json_bytes(binding)
+    binding_bytes = _canonical_bytes_for_profile(binding, hash_profile)
     recomputed_subject = hashlib.sha256(binding_bytes).hexdigest()
     stated_subject = str(((receipt.get("subject") or {}).get("digest") or {}).get("sha256", ""))
     if stated_subject != recomputed_subject:
@@ -1106,6 +1154,8 @@ def write_run_receipt_if_configured(run_id: str, sdd_dir: Path) -> Path | None:
 
 
 __all__ = [
+    "HASH_PROFILE_JCS_V2",
+    "HASH_PROFILE_LEGACY",
     "RUN_RECEIPT_FILENAME",
     "RUN_RECEIPT_PAYLOAD_TYPE",
     "RUN_RECEIPT_SCHEMA_VERSION",

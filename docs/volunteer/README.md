@@ -14,7 +14,7 @@ receipt bundle that a maintainer can verify offline.
   a project commits to opt in.
 - [Volunteer sandbox profile](reference/volunteer-sandbox.md) — the containment
   boundary derived from the manifest and the donor's limits.
-- [Volunteer donor budgets](reference/volunteer-budget.md) — persistent task,
+- [Volunteer donor budgets](../reference/volunteer-budget.md) — persistent task,
   wall-clock, token, size, and local-model limits.
 - [Volunteer protocol documents](protocol.md) — the five signed, transport-neutral
   documents (project card, worker card, claim, submission, verification

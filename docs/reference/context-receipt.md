@@ -145,5 +145,5 @@ refuse to proceed.
   configure policy in `bernstein.yaml`
 - [Deterministic replay](../operations/deterministic-replay.md) — How context
   receipts enable reproducible runs
-- [Run receipts](run-receipts.md) — Overview of run-level receipts and
+- [Receipts](receipt.md) — Overview of run-level receipts and
   attestation

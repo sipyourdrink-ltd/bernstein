@@ -45,7 +45,7 @@ permissions: {}
 jobs:
   compute:
     name: Compute trunk red-rate and toggle the andon marker
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
       actions: read

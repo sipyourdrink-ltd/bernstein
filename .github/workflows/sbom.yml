@@ -40,6 +40,11 @@ jobs:
     name: Generate SBOM
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Approval lives on publish.yml's `publish` job (PyPI trusted
+    # publishing, OIDC-scoped to the pypi environment). This job only
+    # writes release assets with the repo token, so it has no environment-
+    # scoped credential that the approval was protecting.
+    environment: release-channels
     permissions:
       contents: write  # Required to attach SBOMs to the release
     steps:

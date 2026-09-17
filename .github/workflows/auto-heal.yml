@@ -28,9 +28,9 @@ name: Auto-heal v2
 # via workflow_call. The dispatcher reads the upstream CI run metadata
 # once and routes here together with the other post-CI children, so we
 # no longer pay an independent workflow_run cold start per fanout child.
-# The dispatcher also serialises auto-heal with bernstein-ci-fix via
-# the `heal_outcome` workflow output below: bernstein-ci-fix runs only
-# when this heal did not open a PR.
+# The `heal_outcome` workflow output below reports what this heal did,
+# so the dispatcher and any future child can route on the result
+# instead of re-deriving it.
 on:
   workflow_call:
     inputs:
@@ -61,8 +61,8 @@ on:
       heal_outcome:
         description: >-
           Outcome label of the heal attempt: applied, skipped_no_jobs, or
-          failed_validation. Consumed by post-ci-dispatcher to decide
-          whether bernstein-ci-fix should run as a fallback fixer.
+          failed_validation. Consumed by post-ci-dispatcher so downstream
+          routing can react to what this heal actually did.
         value: ${{ jobs.heal.outputs.outcome }}
 
 permissions: {}
@@ -280,6 +280,7 @@ jobs:
       needs.triage.outputs.should_heal == 'true' &&
       needs.triage.outputs.idempotent_skip != 'true'
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 25
     permissions:
       contents: write
@@ -349,7 +350,7 @@ jobs:
         # `crate-ci/typos` is the upstream-recommended GH action and
         # mirrors the binary used by the spelling job in ci.yml.
         if: needs.triage.outputs.strategy == 'typos-allowlist'
-        uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f # v1
+        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1
         with:
           # `--format json` would normally print findings; we only need
           # the binary on $PATH for the apply step below to invoke.

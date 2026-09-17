@@ -139,7 +139,7 @@ the other is a human-observable signal.
 *A patch reference plus a receipt bundle reference.* A submission is
 deliberately thin: everything else — the patch, the gate logs, the
 manifest digest the gates ran against — already lives inside the signed
-[result-receipt bundle](../../src/bernstein/core/security/result_receipt_bundle.py)
+[result-receipt bundle](../reference/receipt.md)
 it points at. A submission does not recompute or re-attest anything the
 bundle already carries; it only routes a verifier to it.
 

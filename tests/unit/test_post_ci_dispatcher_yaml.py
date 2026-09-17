@@ -1,7 +1,7 @@
 """Structural assertions on ``.github/workflows/post-ci-dispatcher.yml``.
 
 The dispatcher consolidates the sibling ``workflow_run: CI completed``
-listeners (auto-release, auto-heal, bernstein-ci-fix, bisect-on-red)
+listeners (auto-release, auto-heal, bisect-on-red)
 into a single boot that calls each child via ``workflow_call``. The
 acceptance criteria are encoded as tests here so the consolidation
 cannot silently regress.
@@ -26,7 +26,6 @@ DISPATCHER = REPO_ROOT / ".github" / "workflows" / "post-ci-dispatcher.yml"
 CHILDREN = (
     "auto-release",
     "auto-heal",
-    "bernstein-ci-fix",
     "bisect-on-red",
 )
 
@@ -47,7 +46,6 @@ CHILDREN = (
 EXPECTED_CHILD_SECRETS: dict[str, frozenset[str]] = {
     "auto-release": frozenset(),
     "auto-heal": frozenset({"BERNSTEIN_AUTOSYNC_TOKEN"}),
-    "bernstein-ci-fix": frozenset({"BERNSTEIN_AUTOSYNC_TOKEN", "GEMINI_API_KEY"}),
     "bisect-on-red": frozenset(),
 }
 
@@ -129,26 +127,6 @@ def test_dispatcher_calls_each_child(dispatcher: dict[str, Any], child: str) -> 
     )
 
 
-def test_bernstein_ci_fix_serialised_after_auto_heal(dispatcher: dict[str, Any]) -> None:
-    """bernstein-ci-fix runs only when auto-heal did NOT open a heal PR.
-
-    Acceptance criterion: auto-heal and bernstein-ci-fix call each other
-    via dispatcher (instead of both firing in parallel on the same
-    failing SHA). The serialisation is implemented as needs: auto-heal
-    plus a gate on auto-heal's heal_outcome output.
-    """
-    jobs = dispatcher["jobs"]
-    ci_fix = jobs["bernstein-ci-fix"]
-    needs = ci_fix.get("needs")
-    if isinstance(needs, str):
-        needs = [needs]
-    assert isinstance(needs, list)
-    assert "auto-heal" in needs, "bernstein-ci-fix must declare needs: auto-heal"
-    if_cond = ci_fix.get("if", "")
-    assert isinstance(if_cond, str)
-    assert "needs.auto-heal" in if_cond, "bernstein-ci-fix.if must inspect needs.auto-heal to serialise the heals"
-
-
 def test_dispatcher_concurrency_per_sha(dispatcher: dict[str, Any]) -> None:
     """Dispatcher owns the per-SHA concurrency group covering the fanout."""
     conc = dispatcher.get("concurrency")
@@ -169,7 +147,6 @@ def test_dispatcher_workflow_permissions_minimal(dispatcher: dict[str, Any]) -> 
     [
         ".github/workflows/auto-release.yml",
         ".github/workflows/auto-heal.yml",
-        ".github/workflows/bernstein-ci-fix.yml",
         ".github/workflows/bisect-on-red.yml",
     ],
 )
@@ -200,8 +177,8 @@ def test_children_expose_workflow_call(child_yaml: str) -> None:
 #
 # That has bitten this dispatcher twice. The second time, a callee job
 # gained `actions: write` while the caller kept its narrower grant, and
-# auto-release, auto-heal, bernstein-ci-fix and bisect-on-red were all
-# silently dead for five days across 83 consecutive runs. The assertion
+# auto-release, auto-heal and bisect-on-red were all silently dead for
+# five days across 83 consecutive runs. The assertion
 # below turns that class of change into a red build instead.
 
 _PERMISSION_LEVELS = {"none": 0, "read": 1, "write": 2}

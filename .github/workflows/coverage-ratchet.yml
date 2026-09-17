@@ -95,6 +95,7 @@ jobs:
   ratchet:
     name: Total coverage ratchet
     runs-on: ubuntu-latest
+    environment: automation
     timeout-minutes: 10
     # Two guards, and they answer different questions.
     #
