@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 from bernstein.core.orchestrator import TickResult
 
@@ -70,7 +69,7 @@ def test_quarantined_task_skip_transitions_terminal(tmp_path: Path) -> None:
     task.id = "task123"
     task.title = task_title
     task.role = "backend"
-    batch = [task]
+
 
     orch = _claim_orch(tmp_path, _quarantine_stub(task.title))
     result = TickResult()
