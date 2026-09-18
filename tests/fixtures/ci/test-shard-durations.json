@@ -902,7 +902,6 @@
     "tests/unit/test_benchmark_reproducible.py": 14.7,
     "tests/unit/test_benchmark_simulate_cmd.py": 6.8,
     "tests/unit/test_benchmarks.py": 11.8,
-    "tests/unit/test_bernstein_ci_fix_workflow_yaml.py": 5.8,
     "tests/unit/test_bernstein_pr_review_workflow_yaml.py": 6.2,
     "tests/unit/test_best_of_n.py": 8.4,
     "tests/unit/test_blast_radius.py": 9.3,

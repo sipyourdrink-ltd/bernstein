@@ -35,7 +35,7 @@ concurrency:
 jobs:
   staleness:
     name: recompile and diff
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
     permissions:
       contents: read

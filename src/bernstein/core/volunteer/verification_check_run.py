@@ -34,7 +34,7 @@ from bernstein.core.volunteer.manifest import VolunteerManifest, load_manifest_f
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from bernstein.core.github_app.check_runs import CheckRunClient
+    from bernstein.github_app.check_runs import CheckRunClient
 
 # Pattern to extract bundle JSON from PR body or comments
 _BUNDLE_JSON_PATTERN = re.compile(

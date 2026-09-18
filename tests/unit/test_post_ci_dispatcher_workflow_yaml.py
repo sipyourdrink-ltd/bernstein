@@ -1,8 +1,8 @@
 """Structural assertions on the Post-CI dispatcher's routing filter.
 
 ``.github/workflows/post-ci-dispatcher.yml`` is the sole invocation path
-for ``auto-release.yml``, ``auto-heal.yml``, ``bernstein-ci-fix.yml`` and
-``bisect-on-red.yml``: each of those declares ``on: workflow_call:`` and
+for ``auto-release.yml``, ``auto-heal.yml`` and ``bisect-on-red.yml``:
+each of those declares ``on: workflow_call:`` and
 nothing else. Nothing publishes a failing check when the dispatcher stops
 routing, so a filter that is one conclusion too wide disables automated
 releases silently.
@@ -47,7 +47,6 @@ INERT_CONCLUSIONS = {"cancelled", "skipped"}
 CHILDREN = {
     "auto-release": "./.github/workflows/auto-release.yml",
     "auto-heal": "./.github/workflows/auto-heal.yml",
-    "bernstein-ci-fix": "./.github/workflows/bernstein-ci-fix.yml",
     "bisect-on-red": "./.github/workflows/bisect-on-red.yml",
 }
 
@@ -123,7 +122,7 @@ def test_auto_release_jobs_still_gate_on_success() -> None:
 
 
 def test_failure_routes_require_exactly_failure(dispatcher: dict) -> None:
-    for job_name in ("auto-heal", "bernstein-ci-fix", "bisect-on-red"):
+    for job_name in ("auto-heal", "bisect-on-red"):
         condition = " ".join(dispatcher["jobs"][job_name]["if"].split())
         assert "needs.meta.outputs.conclusion == 'failure'" in condition
 

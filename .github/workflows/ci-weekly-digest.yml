@@ -46,7 +46,7 @@ permissions: {}
 jobs:
   digest:
     name: Build and publish weekly digest
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
       contents: read

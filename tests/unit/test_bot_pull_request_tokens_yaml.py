@@ -237,7 +237,6 @@ def test_discovery_finds_the_known_pull_request_lanes() -> None:
     for expected in (
         "adapter-conformance-canary.yml",
         "auto-heal.yml",
-        "bernstein-ci-fix.yml",
         "bernstein-issues-decompose.yml",
         "ci-topology-heal.yml",
         "coverage-ratchet-weekly.yml",
@@ -515,7 +514,6 @@ def test_discovery_matches_exactly_the_known_pull_request_lanes() -> None:
     assert lanes == {
         "adapter-conformance-canary.yml",
         "auto-heal.yml",
-        "bernstein-ci-fix.yml",
         "bernstein-issues-decompose.yml",
         "ci-topology-heal.yml",
         "coverage-ratchet-weekly.yml",
@@ -604,7 +602,6 @@ def test_branch_push_discovery_covers_every_gh_pr_create_lane() -> None:
         in {
             "adapter-conformance-canary.yml",
             "auto-heal.yml",
-            "bernstein-ci-fix.yml",
             "bernstein-issues-decompose.yml",
             "nightly-drift-sweep.yml",
         }

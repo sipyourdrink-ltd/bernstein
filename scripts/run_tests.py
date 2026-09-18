@@ -22,16 +22,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping
+    from multiprocessing.sharedctypes import Synchronized
 
 # Changed paths for which an empty affected set is a coverage hole rather than
 # a legitimate no-op, so the shards fail closed instead of reporting green.
@@ -109,6 +113,65 @@ MEMORY_HEAVY_FILES: frozenset[str] = frozenset(
         "test_volunteer_sandbox_egress.py",
     }
 )
+
+# pytest builds every ``tmp_path`` under ``$PYTEST_DEBUG_TEMPROOT`` and keeps a
+# ``pytest-current`` symlink in the ``pytest-of-<user>`` directory it creates
+# there. Workers that inherit one root rewrite that symlink concurrently and
+# the loser fails on whichever test was building a ``tmp_path`` at the time
+# (issue #5777), so each worker is handed a root of its own instead.
+PYTEST_TEMPROOT_ENV = "PYTEST_DEBUG_TEMPROOT"
+
+#: Prefix of the run-unique parent directory holding one root per worker.
+TEMP_ROOT_PREFIX = "bernstein-tests-"
+
+#: This pool worker's own temporary root, claimed once by
+#: ``_bind_worker_temp_root`` and read by every ``run_file`` call it serves.
+_WORKER_TEMP_ROOT: Path | None = None
+
+
+def create_run_temp_parent() -> Path:
+    """Create the run-unique parent directory that holds every worker root."""
+    return Path(tempfile.mkdtemp(prefix=TEMP_ROOT_PREFIX))
+
+
+def worker_temp_root(parent: Path, index: int) -> Path:
+    """Create and return worker *index*'s own pytest temporary root."""
+    root = parent / f"w{index}"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def remove_run_temp_parent(parent: Path | None) -> None:
+    """Remove the run parent, and with it every worker root beneath it."""
+    if parent is None:
+        return
+    shutil.rmtree(parent, ignore_errors=True)
+
+
+def worker_env(temp_root: Path | None) -> dict[str, str]:
+    """Return the child environment for a worker owning *temp_root*.
+
+    A copy, never the live mapping: the parent process keeps whatever
+    ``PYTEST_DEBUG_TEMPROOT`` it was started with.
+    """
+    env = dict(os.environ)
+    if temp_root is not None:
+        env[PYTEST_TEMPROOT_ENV] = str(temp_root)
+    return env
+
+
+def _bind_worker_temp_root(parent: str, counter: Synchronized[int]) -> None:
+    """Pool initializer: claim the next worker index under *parent*.
+
+    ``counter`` is shared across the pool so the index is unique per worker
+    rather than per submitted file: a worker outlives the file it was started
+    for, so a per-file index would let two live workers share a root.
+    """
+    global _WORKER_TEMP_ROOT
+    with counter.get_lock():
+        index = counter.value
+        counter.value = index + 1
+    _WORKER_TEMP_ROOT = worker_temp_root(Path(parent), index)
 
 
 def split_memory_heavy(files: list[Path]) -> tuple[list[Path], list[Path]]:
@@ -385,11 +448,20 @@ def shard_files(
     return [f for j, f in enumerate(files) if j % shard_count == shard_index - 1]
 
 
-def run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple[Path, int, float, str]:
+def run_file(
+    path: Path,
+    extra_args: list[str],
+    coverage: bool = False,
+    temp_root: Path | None = None,
+) -> tuple[Path, int, float, str]:
     """Run a single test file in a subprocess. Returns (path, exitcode, duration, output).
 
     When ``coverage`` is True, the process is wrapped in ``coverage run`` with a
     parallel-safe data file so that many subprocesses can be combined later.
+
+    ``temp_root`` overrides the pytest temporary root for this subprocess; it
+    defaults to the root bound to the calling pool worker, or to whatever the
+    parent inherited when there is none.
     """
     if coverage:
         cmd = [
@@ -424,7 +496,13 @@ def run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple
             *extra_args,
         ]
     start = time.monotonic()
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=test_file_timeout_seconds())
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=test_file_timeout_seconds(),
+        env=worker_env(temp_root if temp_root is not None else _WORKER_TEMP_ROOT),
+    )
     duration = time.monotonic() - start
     output = result.stdout + result.stderr
     return path, result.returncode, duration, output
@@ -597,90 +675,101 @@ def run_parallel(
 
     print(f"  Workers: {workers}")
 
-    normal_files, heavy_files = split_memory_heavy(files)
-    total = len(files)
+    # One temporary root per worker, all under a single run-unique parent so
+    # the whole run is torn down by one rmtree below (issue #5777).
+    temp_parent = create_run_temp_parent()
+    try:
+        normal_files, heavy_files = split_memory_heavy(files)
+        total = len(files)
 
-    # Run normal files in parallel
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(run_file, f, extra_args, coverage): f for f in normal_files}
-        for future in as_completed(futures):
-            if abort:
-                future.cancel()
-                continue
-            try:
-                fpath, code, duration, output = future.result(timeout=360)
-            except Exception as exc:
-                fpath = futures[future]
+        # Run normal files in parallel
+        counter = multiprocessing.Value("i", 0)
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_bind_worker_temp_root,
+            initargs=(str(temp_parent), counter),
+        ) as pool:
+            futures = {pool.submit(run_file, f, extra_args, coverage): f for f in normal_files}
+            for future in as_completed(futures):
+                if abort:
+                    future.cancel()
+                    continue
+                try:
+                    fpath, code, duration, output = future.result(timeout=360)
+                except Exception as exc:
+                    fpath = futures[future]
+                    done += 1
+                    print(f"  ERROR [{done}/{total}] {durations_key(fpath)}: {exc}")
+                    failed += 1
+                    if fail_fast:
+                        abort = True
+                        for f in futures:
+                            f.cancel()
+                    continue
+
+                retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
+                if retry is not None:
+                    print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
+                    code, duration, output = retry
+
                 done += 1
-                print(f"  ERROR [{done}/{total}] {durations_key(fpath)}: {exc}")
-                failed += 1
-                if fail_fast:
-                    abort = True
-                    for f in futures:
-                        f.cancel()
-                continue
+                label = f"[{done}/{total}] {durations_key(fpath)}"
+                if recorded_durations is not None:
+                    recorded_durations[durations_key(fpath)] = duration
+                outcome = _report_file_result(label, code, duration, output)
+                if outcome == OUTCOME_PASSED:
+                    passed += 1
+                elif outcome == OUTCOME_NO_TESTS:
+                    no_tests.append(fpath)
+                else:
+                    failed += 1
+                    if fail_fast:
+                        abort = True
+                        for f in futures:
+                            f.cancel()
 
-            retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
-            if retry is not None:
-                print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
-                code, duration, output = retry
+        # Run memory-heavy files sequentially to avoid OOM
+        if heavy_files:
+            print("  Running memory-heavy files sequentially...")
+            for f in heavy_files:
+                if abort:
+                    break
+                try:
+                    fpath, code, duration, output = run_file(f, extra_args, coverage)
+                except Exception as exc:
+                    done += 1
+                    print(f"  ERROR [{done}/{total}] {durations_key(f)}: {exc}")
+                    failed += 1
+                    if fail_fast:
+                        abort = True
+                    continue
 
-            done += 1
-            label = f"[{done}/{total}] {durations_key(fpath)}"
-            if recorded_durations is not None:
-                recorded_durations[durations_key(fpath)] = duration
-            outcome = _report_file_result(label, code, duration, output)
-            if outcome == OUTCOME_PASSED:
-                passed += 1
-            elif outcome == OUTCOME_NO_TESTS:
-                no_tests.append(fpath)
-            else:
-                failed += 1
-                if fail_fast:
-                    abort = True
-                    for f in futures:
-                        f.cancel()
+                retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
+                if retry is not None:
+                    print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
+                    code, duration, output = retry
 
-    # Run memory-heavy files sequentially to avoid OOM
-    if heavy_files:
-        print("  Running memory-heavy files sequentially...")
-        for f in heavy_files:
-            if abort:
-                break
-            try:
-                fpath, code, duration, output = run_file(f, extra_args, coverage)
-            except Exception as exc:
                 done += 1
-                print(f"  ERROR [{done}/{total}] {durations_key(f)}: {exc}")
-                failed += 1
-                if fail_fast:
-                    abort = True
-                continue
+                label = f"[{done}/{total}] {durations_key(f)}"
+                if recorded_durations is not None:
+                    recorded_durations[durations_key(fpath)] = duration
+                outcome = _report_file_result(label, code, duration, output)
+                if outcome == OUTCOME_PASSED:
+                    passed += 1
+                elif outcome == OUTCOME_NO_TESTS:
+                    no_tests.append(fpath)
+                else:
+                    failed += 1
+                    if fail_fast:
+                        abort = True
 
-            retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
-            if retry is not None:
-                print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
-                code, duration, output = retry
-
-            done += 1
-            label = f"[{done}/{total}] {durations_key(f)}"
-            if recorded_durations is not None:
-                recorded_durations[durations_key(fpath)] = duration
-            outcome = _report_file_result(label, code, duration, output)
-            if outcome == OUTCOME_PASSED:
-                passed += 1
-            elif outcome == OUTCOME_NO_TESTS:
-                no_tests.append(fpath)
-            else:
-                failed += 1
-                if fail_fast:
-                    abort = True
-
-    wall_time = time.monotonic() - wall_start
-    print(f"\n{'=' * 60}")
-    _print_totals(passed, failed, no_tests, total)
-    print(f"Wall:  {wall_time:.1f}s ({workers} workers)")
-    return 1 if failed else 0
+        wall_time = time.monotonic() - wall_start
+        print(f"\n{'=' * 60}")
+        _print_totals(passed, failed, no_tests, total)
+        print(f"Wall:  {wall_time:.1f}s ({workers} workers)")
+        return 1 if failed else 0
+    finally:
+        remove_run_temp_parent(temp_parent)
 
 
 def _describe_rev(rev: str) -> str:

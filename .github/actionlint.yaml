@@ -1,0 +1,5 @@
+# Labels of the project's own runners. Without this, actionlint rejects any
+# `runs-on` label it does not recognise as a hosted-runner label.
+self-hosted-runner:
+  labels:
+    - vps

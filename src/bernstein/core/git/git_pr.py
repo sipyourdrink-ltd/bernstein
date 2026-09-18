@@ -45,6 +45,15 @@ class MergeResult:
             this is the list of forbidden paths that were staged.  The
             merge is aborted and never produces a commit in this case
             (fix for defect 28, the decoy-commit secret-leak path).
+        merge_commit: The sha of the merge commit this merge produced on
+            the integration branch, when it produced one. Empty when the
+            merge failed, was refused, or found nothing to commit
+            (branches already identical) -- there is no commit to name in
+            any of those cases. Read right after the commit succeeds so a
+            caller (e.g. the ``task_merged`` journal row, issue #5271) can
+            tie the recorded merge decision back to the git object it
+            actually produced, rather than recording only that *a* merge
+            happened.
     """
 
     success: bool
@@ -52,6 +61,7 @@ class MergeResult:
     merge_diff: str = ""
     error: str = ""
     refused_forbidden_files: list[str] = field(default_factory=list)
+    merge_commit: str = ""
 
 
 @dataclass(frozen=True)
@@ -422,7 +432,9 @@ def merge_with_conflict_detection(
         commit_r = run_git(["commit", "-m", msg], cwd, timeout=30)
         if commit_r.ok:
             diff = run_git(["diff", "HEAD~1", "--stat"], cwd, timeout=30).stdout
-            return MergeResult(success=True, conflicting_files=[], merge_diff=diff)
+            rev_r = run_git(["rev-parse", "HEAD"], cwd, timeout=10)
+            commit_sha = rev_r.stdout.strip() if rev_r.ok else ""
+            return MergeResult(success=True, conflicting_files=[], merge_diff=diff, merge_commit=commit_sha)
         # Nothing to commit (branches already identical)
         run_git(["merge", "--abort"], cwd, timeout=10)
         return MergeResult(success=True, conflicting_files=[])

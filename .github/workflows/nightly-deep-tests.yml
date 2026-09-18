@@ -52,7 +52,7 @@ jobs:
     # Sharded rather than a single job because a full unfiltered shard takes
     # roughly half an hour; one unsharded job would run about two.
     name: Unit tests (Python 3.14, shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -82,7 +82,7 @@ jobs:
 
   hypothesis-deep:
     name: Hypothesis (deep, 1000 examples)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -102,7 +102,7 @@ jobs:
 
   schemathesis-deep:
     name: Schemathesis (deep, full sweep)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 60
     permissions:
       contents: read
@@ -128,7 +128,7 @@ jobs:
     # in the smoke profile that PR-time would use once contracts are
     # added).
     name: CrossHair (concolic, deep)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 60
     permissions:
       contents: read
@@ -153,7 +153,7 @@ jobs:
 
   mutmut-full:
     name: Mutation (full repo, advisory)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 240
     permissions:
       contents: read
@@ -183,7 +183,7 @@ jobs:
 
   bandit-medium-and-high:
     name: Bandit (full -ll, advisory)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -211,7 +211,7 @@ jobs:
 
   pip-audit-deep:
     name: pip-audit (full closure)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -251,7 +251,7 @@ jobs:
     # Gated off the default CI run via the ``stress`` marker so PRs
     # don't pay the ~45 s wall-clock cost; runs once per day here.
     name: Stress + resource-leak suite (TC-C)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
     permissions:
       contents: read

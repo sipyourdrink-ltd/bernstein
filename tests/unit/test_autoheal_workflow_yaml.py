@@ -93,11 +93,11 @@ def test_workflow_call_trigger_with_inputs(workflow: dict[str, object]) -> None:
 
 
 def test_workflow_call_exposes_heal_outcome(workflow: dict[str, object]) -> None:
-    """Dispatcher gates bernstein-ci-fix on this output.
+    """The dispatcher routes on this output.
 
-    Acceptance criterion: auto-heal and bernstein-ci-fix call each other
-    via dispatcher (instead of both firing in parallel). The serialisation
-    relies on the dispatcher reading the heal outcome via this output.
+    The reusable workflow must keep publishing the heal outcome so
+    post-ci-dispatcher.yml can react to what the heal actually did
+    instead of re-deriving it from the child run.
     """
     on = workflow.get(True, workflow.get("on"))
     assert isinstance(on, dict)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,7 +37,8 @@ def _profile(*, extra_args: tuple[str, ...] = ()) -> AdapterCapabilityProfile:
         name="recordable-fixture",
         display_name="Recordable Fixture",
         invocation=InvocationSpec(
-            binary=str(FIXTURE),
+            binary=sys.executable,
+            subcommands=(str(FIXTURE),),
             model_flag="--model",
             prompt_flag="--prompt",
             prompt_positional=False,
@@ -45,11 +47,11 @@ def _profile(*, extra_args: tuple[str, ...] = ()) -> AdapterCapabilityProfile:
     )
 
 
-def _write_evidence(path: Path, *, binary: str = str(FIXTURE)) -> Path:
+def _write_evidence(path: Path, *, binary: str = sys.executable) -> Path:
     """Write a synthetic probe record without running the probing step."""
     document = {
         "binary": binary,
-        "command": f"{binary} --help",
+        "command": f"{binary} {FIXTURE} --help",
         "exit_code": 0,
         "output": "--model <name> --prompt <text>",
     }

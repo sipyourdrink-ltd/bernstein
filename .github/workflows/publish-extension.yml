@@ -23,6 +23,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: pypi
     timeout-minutes: 30
     permissions:
       # Read-only: the job packages a VSIX and publishes to external
