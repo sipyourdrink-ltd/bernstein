@@ -405,7 +405,8 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         sensitive = sorted(
             p
             for p in pr.paths
-            if not p.startswith(SENSITIVE_EXEMPT_PREFIXES) and any(word in p for word in SENSITIVE_WORDS)
+            if not p.startswith(SENSITIVE_EXEMPT_PREFIXES)
+            and any(word in p for word in SENSITIVE_WORDS)
         )
         large = pr.changed_lines > THIRD_APPROVAL_LINES
         need_total, need_core = (3, 2) if (large or sensitive) else (2, 1)
