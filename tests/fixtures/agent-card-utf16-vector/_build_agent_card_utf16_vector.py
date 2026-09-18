@@ -157,7 +157,9 @@ def build(dest: Path) -> Path:
     (dest / _SIGNATURE_NAME).write_bytes(canonicalize_jcs(signature_payload) + b"\n")
 
     (dest / _KEY_NAME).write_bytes(
-        _private_key().public_key().public_bytes(
+        _private_key()
+        .public_key()
+        .public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
