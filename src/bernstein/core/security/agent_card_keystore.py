@@ -48,6 +48,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import re
 import shutil
 import sys
 import threading
@@ -84,6 +85,10 @@ _PRIVATE_FILENAME: str = "agent-card.ed25519"
 _PUBLIC_FILENAME: str = "agent-card.ed25519.pub"
 _ARCHIVE_DIRNAME: str = "archive"
 _ROTATED_AT_FILENAME: str = "rotated_at.txt"
+#: Upper bound on the ``-N`` collision suffix before ``_unique_archive_folder``
+#: gives up. An unwritable or full archive directory must fail loudly rather
+#: than loop forever.
+_MAX_ARCHIVE_SUFFIX: int = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,9 +208,10 @@ class AgentCardKeystore:
     def list_archived(self) -> list[ArchivedKey]:
         """Return archived keys still inside the grace window.
 
-        Old archive directories beyond the grace window are silently skipped
-        (and may be GC'd by the operator out-of-band). The returned list is
-        sorted oldest → newest so the JWKS publishes a stable order.
+        Old archive directories beyond the grace window are silently skipped.
+        ``rotate()`` deletes them once the window shuts, so ``list_archived``
+        does not promise out-of-band GC. The returned list is sorted oldest →
+        newest so the JWKS publishes a stable order.
         """
         archive_dir = self._dir / _ARCHIVE_DIRNAME
         if not archive_dir.is_dir():
@@ -262,11 +268,6 @@ class AgentCardKeystore:
             if self._private_path.exists() or self._public_path.exists():
                 self._archive_existing()
             self._generate_atomic()
-            # Drop what the grace window has already stopped publishing.
-            # Done after archiving so the key retired by *this* rotation is
-            # judged by the same cutoff as every other one.
-            self._prune_expired_archives()
-
             # Record rotation to audit chain
             try:
                 _, new_public_pem = self._load_existing()
@@ -288,6 +289,16 @@ class AgentCardKeystore:
             except Exception:
                 # Best effort - audit failure shouldn't break key rotation
                 pass
+
+            # Drop what the grace window has already stopped publishing.
+            # Done after the audit append so a prune failure (or a
+            # naive-timestamp crash inside pruning) cannot leave a rotation
+            # performed on disk but unrecorded. Best-effort: a prune failure
+            # keeps stale archives, which is reversible and safe.
+            try:
+                self._prune_expired_archives()
+            except Exception:
+                logger.exception("agent-card keystore: prune after rotation failed")
 
             return self._load_existing()
 
@@ -370,7 +381,6 @@ class AgentCardKeystore:
         # verifier still inside its grace window lost the key it was cached
         # on - silently, since the write succeeds.
         folder = self._unique_archive_folder(rotated_at)
-        folder.mkdir(parents=True, exist_ok=True)
 
         if self._private_path.exists():
             archived_priv = folder / _PRIVATE_FILENAME
@@ -400,14 +410,24 @@ class AgentCardKeystore:
             A path under ``archive/`` that does not yet exist.
         """
         base = self._dir / _ARCHIVE_DIRNAME / rotated_at.strftime("%Y%m%dT%H%M%SZ")
-        if not base.exists():
-            return base
-        suffix = 1
+        candidate, suffix = base, 0
         while True:
-            candidate = base.with_name(f"{base.name}-{suffix}")
-            if not candidate.exists():
+            try:
+                # exist_ok=False: claiming the directory IS the check, so two
+                # processes cannot both pass an existence test and then both
+                # ``Path.replace`` into the same folder.
+                candidate.mkdir(parents=True)
                 return candidate
+            except FileExistsError:
+                pass
             suffix += 1
+            if suffix > _MAX_ARCHIVE_SUFFIX:
+                msg = (
+                    f"agent-card keystore: could not claim an archive directory "
+                    f"for {rotated_at.isoformat()} after {_MAX_ARCHIVE_SUFFIX} attempts"
+                )
+                raise RuntimeError(msg) from None
+            candidate = base.with_name(f"{base.name}-{suffix}")
 
     def _prune_expired_archives(self) -> int:
         """Delete archive directories the grace window no longer covers.
@@ -422,9 +442,13 @@ class AgentCardKeystore:
         set of private keys a later disk compromise yields.
 
         The cutoff is computed with the same expression :meth:`list_archived`
-        uses, so the two cannot disagree about which entries are live - a
-        prune that ran even slightly ahead of the publisher would delete a key
-        the JWKS was still advertising.
+        uses, so the two cannot disagree about which entries are still inside
+        the window. Their skip sets are not identical - the publisher also
+        skips an archive whose public key is missing or unreadable, while the
+        prune deletes by age alone - but they agree on everything that matters:
+        a prune that ran even slightly ahead of the publisher still could not
+        delete a key the JWKS was advertising, because the cutoff only moves
+        forward.
 
         The two are not symmetric, though, and the asymmetry is worth stating:
         skipping is reversible and deleting is not. If the clock steps
@@ -432,6 +456,14 @@ class AgentCardKeystore:
         restored from a snapshot - an entry :meth:`list_archived` would have
         started publishing again is already gone. Sharing the expression makes
         the *decision* identical; it does not make the consequences identical.
+
+        ``_archive_existing`` records ``now().replace(microsecond=0)`` while
+        this cutoff keeps its microseconds, so a freshly archived stamp is
+        always fractionally older than the cutoff's base instant. That is
+        harmless above zero grace and is the intended behaviour at
+        ``grace_seconds == 0``, where the key retired by the current rotation
+        is already outside the window and is deleted before ``rotate()``
+        returns.
 
         An entry whose rotation timestamp cannot be read is left alone. It is
         not published either, so it is only wasted space; deleting a
@@ -469,17 +501,29 @@ class AgentCardKeystore:
             logger.info("agent-card keystore: pruned %d archived keypair(s) past the grace window", removed)
         return removed
 
+    _FALLBACK_STAMP_RE = re.compile(r"\d{8}T\d{6}Z(?:-\d+)?")
+
     @staticmethod
     def _read_rotated_at(archive_entry: Path) -> _dt.datetime | None:
-        """Return the rotation timestamp recorded inside ``archive_entry``."""
+        """Return the rotation timestamp recorded inside ``archive_entry``.
+
+        Always returns an aware UTC datetime. A hand-written ``rotated_at.txt``
+        that omits the offset is normalised to UTC rather than left naive, so
+        the comparisons in :meth:`list_archived` and
+        :meth:`_prune_expired_archives` never mix aware and naive values and
+        raise ``TypeError``.
+        """
         stamp_file = archive_entry / _ROTATED_AT_FILENAME
         if not stamp_file.is_file():
             # Fall back to the directory name (UTC stamp) for entries written
-            # by older versions or moved by hand.
+            # by older versions or moved by hand. Only the strict
+            # ``<YYYYmmddTHHMMSSZ>`` shape (with an optional ``-N`` collision
+            # suffix) is dated; any other name is left alone rather than
+            # widened into something this module did not write.
+            if not AgentCardKeystore._FALLBACK_STAMP_RE.fullmatch(archive_entry.name):
+                return None
+            stem = archive_entry.name.split("-", 1)[0]
             try:
-                # Strip the ``-N`` collision suffix ``_unique_archive_folder``
-                # adds when two rotations share a second.
-                stem = archive_entry.name.split("-", 1)[0]
                 return _dt.datetime.strptime(stem, "%Y%m%dT%H%M%SZ").replace(
                     tzinfo=_dt.UTC,
                 )
@@ -490,6 +534,9 @@ class AgentCardKeystore:
         except OSError:  # pragma: no cover - filesystem flake
             return None
         try:
-            return _dt.datetime.fromisoformat(text)
+            parsed = _dt.datetime.fromisoformat(text)
         except ValueError:
             return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_dt.UTC)
+        return parsed

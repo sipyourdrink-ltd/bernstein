@@ -966,8 +966,9 @@ class _ManualClock:
     * A clock that advanced on every read would place ``_archive_existing``
       and the prune that follows it at different instants inside a single
       ``rotate()``, so the freshly-archived key would be judged against a
-      cutoff taken from its own future and deleted immediately. Real time does
-      not do that, and a test that models it that way measures the model.
+      cutoff taken from its own future and deleted immediately. Real time can
+      advance between the two reads, so a test that models it that way is
+      measuring the machine's timing, not the keystore's pruning rule.
     """
 
     def __init__(self, start: _dt.datetime | None = None) -> None:
