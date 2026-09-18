@@ -141,6 +141,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://bernstein.readthedocs.io/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://bernstein.readthedocs.io/en/latest/installation/air-gap/).
 
+Hosted, read-only: `claude mcp add --transport http bernstein https://mcp.bernstein.run/mcp` verifies run receipts and lists presets/adapters without installing anything.
+
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
 The recording above is a real run, and it ships with its own proof. The cast, the signed run receipt derived from that run's journal, and the public key that pins it all live in [`docs/assets/demo-run/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/docs/assets/demo-run). Verify the run you just watched, offline:
