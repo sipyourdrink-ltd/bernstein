@@ -138,6 +138,7 @@ for client compliance review.
 | :material-wrench: [Configuration](operations/CONFIG.md) | bernstein.yaml reference |
 | :material-puzzle: [Adapter Guide](adapters/ADAPTER_GUIDE.md) | Supported agents and how to add your own |
 | :material-api: [API Reference](reference/openapi-reference.md) | Task server REST API |
+| :material-connection: [Integrations](integrations.md) | what Bernstein bridges to, by the name you call it |
 | :material-sitemap: [Architecture](architecture/ARCHITECTURE.md) | How Bernstein works under the hood |
 | :material-state-machine: [Lifecycle FSM](architecture/LIFECYCLE.md) | Task and agent state machines with transition tables |
 | :material-text-box-check: [What's New](whats-new.md) | Pointer to per-release notes under `docs/release-notes/` |

@@ -101,6 +101,18 @@ class TestCIWorkflowExists:
         assert "name" in data
         assert "jobs" in data
 
+    def test_main_and_macos_test_jobs_share_per_file_timeout(self) -> None:
+        data = _load_ci_workflow()
+        jobs = cast("dict[str, Any]", data["jobs"])
+        test_job = cast("dict[str, Any]", jobs["test"])
+        macos_job = cast("dict[str, Any]", jobs["test-macos"])
+        test_env = cast("dict[str, Any]", test_job.get("env", {}))
+        macos_env = cast("dict[str, Any]", macos_job.get("env", {}))
+
+        timeout_key = "BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS"
+        assert test_env.get(timeout_key) == "600"
+        assert macos_env.get(timeout_key) == test_env[timeout_key]
+
     def test_ci_runs_on_ubuntu(self) -> None:
         data = _load_ci_workflow()
         # At least one job should run on ubuntu

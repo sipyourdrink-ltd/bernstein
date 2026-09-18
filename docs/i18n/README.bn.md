@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse` ও `hub` কার্যকর সাব-কমান্ড।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://bernstein.readthedocs.io/):
 
