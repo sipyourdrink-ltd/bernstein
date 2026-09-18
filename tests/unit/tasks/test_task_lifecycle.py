@@ -12,7 +12,7 @@ from bernstein.core.orchestrator import TickResult
 from bernstein.core.tasks.task_lifecycle import claim_and_spawn_batches
 
 
-def _claim_orch(tmp_path: Path, quarantine: Any) -> Any:
+def _claim_orch(tmp_path: Path, quarantine: 'Any') -> 'Any':
     """Build a minimal orchestrator stub for claim-path tests."""
     client = MagicMock()
     client.post.return_value = MagicMock(status_code=200)
@@ -49,7 +49,7 @@ def _claim_orch(tmp_path: Path, quarantine: Any) -> Any:
     )
 
 
-def _quarantine_stub(title: str) -> Any:
+def _quarantine_stub(title: str) -> 'Any':
     """Return a quarantine stub that reports one quarantined skip entry."""
     return SimpleNamespace(
         is_quarantined=lambda t: t == title,
