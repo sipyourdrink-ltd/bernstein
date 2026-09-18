@@ -78,9 +78,7 @@ def test_q12_the_approver_and_approval_timestamp_are_recorded(bundle_reader: Bun
     audit = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
     events = audit["events"]
     # Match the real event names emitted by approval_gate.py, not a prefix guess
-    approvals = [
-        e for e in events if e["event_type"] in ("approval_pending", "approval_resolved")
-    ]
+    approvals = [e for e in events if e["event_type"] in ("approval_pending", "approval_resolved")]
     assert approvals, "no approval event recorded in audit receipt (#5060)"
     for approval in approvals:
         assert approval["details"].get("approved_by"), "approval record missing approved_by (#5060)"
