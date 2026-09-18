@@ -744,6 +744,17 @@ class EventJournal:
         Retention is applied over past *runs*, never mid-run, so the
         active chain stays intact for ``verify``. Non-positive or unset
         retention keeps everything.
+
+        ``run_id`` is caller-supplied (an operator-pinned ``BERNSTEIN_RUN_ID``,
+        or a resumed older run - see ``orchestrator.py``/``multi_cell.py``)
+        and is not guaranteed to sort after every existing run directory. The
+        deletion count is therefore computed first (``len(run_dirs) -
+        retention``) and then satisfied by walking every directory oldest
+        first, skipping the active one wherever it falls: taking only the
+        first ``excess`` names and separately skipping the active run left
+        the deletion count short whenever the active run landed inside that
+        slice, so more than ``retention`` directories could survive (issue
+        #5881).
         """
         retention = _retention_limit()
         if retention <= 0 or not self._runs_root.exists():
@@ -752,12 +763,18 @@ class EventJournal:
             (d for d in self._runs_root.iterdir() if d.is_dir()),
             key=lambda d: d.name,
         )
-        excess = len(run_dirs) - retention
-        for stale in run_dirs[:excess]:
+        to_delete = len(run_dirs) - retention
+        if to_delete <= 0:
+            return
+        deleted = 0
+        for stale in run_dirs:
+            if deleted >= to_delete:
+                break
             if stale.name == self._run_id:
                 continue
             with contextlib.suppress(OSError):
                 _remove_tree(stale)
+            deleted += 1
 
 
 def _retention_limit() -> int:

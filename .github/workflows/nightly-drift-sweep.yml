@@ -102,7 +102,20 @@ jobs:
           git checkout -B "${BRANCH}"
           git add -A
           git commit -m "chore(auto): nightly mirror + format drift sweep"
-          git push --force-with-lease origin "${BRANCH}"
+          # Authenticated on the command line rather than through the
+          # credential `actions/checkout` persists. That credential reaches
+          # `git push` only on a hosted runner: the checkout writes it to a
+          # side config file wired in with `includeIf.gitdir:`, and the
+          # condition stops matching on the project's own runner, where this
+          # lane runs. Nothing earlier in the job notices, because the
+          # repository is public and every read the run makes needs no
+          # credential at all. The push is also only reached on a night that
+          # finds drift, so a run that finds none looks healthy. Same form the
+          # adapter lanes push with, and the same token `gh pr create` below
+          # uses, so the branch and the pull request carry one identity.
+          git push --force --quiet \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/${BRANCH}"
           gh pr create \
             --base main \
             --head "${BRANCH}" \

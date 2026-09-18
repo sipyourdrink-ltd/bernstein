@@ -273,16 +273,7 @@ def emit_process_reap_receipt(
         )
 
 
-def _sanitise_for_log(value: str) -> str:
-    """Strip CR/LF from ``value`` so attacker-controlled input cannot
-    inject fake log lines.
-
-    Used at every log site that touches data read out of the pending
-    pushes file or subprocess stderr (CodeQL/Sonar py/log-injection
-    S5145). Keep this function cheap and side-effect-free - it is
-    called inside the spawner hot path.
-    """
-    return value.replace("\r", "").replace("\n", "") if value else value
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
