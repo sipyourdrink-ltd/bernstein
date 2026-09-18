@@ -70,10 +70,17 @@ class GrpcServerConfig:
 
 
 def _task_to_proto(task: dict[str, Any]) -> dict[str, Any]:
-    """Convert internal task dict to proto-compatible dict."""
+    """Convert internal task dict to proto-compatible dict.
+
+    ``goal`` prefers an explicit ``"goal"`` key (the ad-hoc shape some
+    callers use) and falls back to ``"title"`` -- the field a real
+    ``bernstein.core.tasks.models.Task`` actually carries (see
+    ``Task.to_dict()``). ``Task`` has no ``goal`` field at all, so without
+    this fallback every real task's content is silently dropped.
+    """
     return {
         "id": task.get("id", ""),
-        "goal": task.get("goal", ""),
+        "goal": task.get("goal") or task.get("title") or "",
         "role": task.get("role", ""),
         "status": _STATUS_MAP.get(task.get("status", ""), 0),
         "assigned_agent": task.get("assigned_agent", ""),
@@ -211,9 +218,17 @@ class TaskServiceImpl:
     def _fill_task_proto(self, proto: Any, task: Any) -> None:
         if task is None:
             return
+        # ``vars(task)`` assumes a non-dict ``task`` carries ``__dict__``
+        # (true for the current ``Task`` dataclass); a future ``slots=True``
+        # on ``Task`` would turn this into a ``TypeError``.
         t = task if isinstance(task, dict) else vars(task)
         proto.id = t.get("id", "")
-        proto.goal = t.get("goal", "")
+        # ``goal`` prefers an explicit "goal" key and falls back to "title" --
+        # the field a real Task actually carries (Task has no "goal" field at
+        # all; see Task.to_dict()). Without this fallback, filling this proto
+        # from a real Task (or its to_dict() output) silently drops the
+        # task's content on every TaskService RPC.
+        proto.goal = t.get("goal") or t.get("title") or ""
         proto.role = t.get("role", "")
         proto.status = _STATUS_MAP.get(t.get("status", ""), 0)
         proto.assigned_agent = t.get("assigned_agent", "") or ""

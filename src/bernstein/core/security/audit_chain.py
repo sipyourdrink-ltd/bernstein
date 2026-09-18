@@ -857,6 +857,17 @@ EVENT_APPROVAL_CARD_RESOLVED = "chat.approval_card.resolved"
 #: alone, that a stale or tampered decision was contained and never executed.
 EVENT_APPROVAL_CARD_REFUSED = "chat.approval_card.refused"
 
+#: Issue #5474 -- emitted when an operator with install-audit-key access
+#: releases a card the gate had settled terminally as refused (or otherwise
+#: terminal-deny). The release is not a settlement: it is a recorded operator
+#: decision that the terminal outcome is superseded, bound to the operator's
+#: identity, cause, and the chain head at release time, and it closes the gap
+#: where a denied approval card was terminal with no authorized release path
+#: and the only reachable halt was a chat keyword that recorded nothing. The
+#: released state is final -- a card can be released at most once, and a card
+#: already released refuses further resolve and further release attempts.
+EVENT_APPROVAL_CARD_RELEASED = "chat.approval_card.released"
+
 #: Issue #2545 -- emitted whenever an input boundary (schedule fire, recipe
 #: launch, MCP ``bernstein_run`` / ``bernstein_scenario`` call, or task-server
 #: claim) refuses a parameter that fails its declared contract. The event binds
@@ -9748,6 +9759,7 @@ __all__ = [
     "EVENT_ADAPTER_VERSION_POSTURE",
     "EVENT_APPROVAL_CARD_ISSUED",
     "EVENT_APPROVAL_CARD_REFUSED",
+    "EVENT_APPROVAL_CARD_RELEASED",
     "EVENT_APPROVAL_CARD_RESOLVED",
     "EVENT_AUDIT_RECEIPT_EXPORT",
     "EVENT_AUTOMATION_ACTION",
