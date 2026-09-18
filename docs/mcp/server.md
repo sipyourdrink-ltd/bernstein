@@ -14,6 +14,12 @@ client at the server. For the per-tier tool catalogue see
 | SSE | `bernstein mcp --transport http` | Remote/web integration. |
 | Streamable HTTP | served on `/mcp` | Stateless remote integration with cancellation. |
 
+A hosted, read-only instance of the streamable transport is served at
+`https://mcp.bernstein.run/mcp`; it verifies run receipts and lists the
+shipped presets and adapters without installing anything. Connect with
+`claude mcp add --transport http bernstein https://mcp.bernstein.run/mcp`;
+nothing is stored and no secret is needed. The same verifier is also served as a form at `https://mcp.bernstein.run/verify`.
+
 The streamable HTTP transport binds to loopback by default. Binding to a
 public interface requires a bearer token (see Auth) and is otherwise refused
 at startup.
