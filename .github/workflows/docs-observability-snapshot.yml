@@ -13,7 +13,8 @@ permissions:
 jobs:
   snapshot:
     name: Capture snapshot
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
+    environment: automation
     timeout-minutes: 15
     permissions:
       contents: write

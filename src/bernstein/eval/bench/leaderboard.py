@@ -36,6 +36,9 @@ class LeaderboardEntry:
     num_tasks: int
     submitted_at: float
     signer_fingerprint: str = ""
+    # Harness-settings fingerprint carried from the bundle; groups the
+    # leaderboard so rows are only ranked against like harnesses.
+    harness_fingerprint: str = ""
     # Path to the bundle file (relative to the leaderboard root).
     bundle_path: str = ""
 
@@ -55,6 +58,7 @@ class LeaderboardEntry:
             "submitted_at": self.submitted_at,
             "submitted_at_iso": self.submitted_at_iso(),
             "signer_fingerprint": self.signer_fingerprint,
+            "harness_fingerprint": self.harness_fingerprint,
             "bundle_path": self.bundle_path,
         }
 
@@ -115,6 +119,7 @@ class Leaderboard:
                 num_tasks=e["num_tasks"],
                 submitted_at=e["submitted_at"],
                 signer_fingerprint=e.get("signer_fingerprint", ""),
+                harness_fingerprint=e.get("harness_fingerprint", ""),
                 bundle_path=e.get("bundle_path", ""),
             )
             for e in raw.get("entries", [])
@@ -163,26 +168,44 @@ class Leaderboard:
             f"Suite version: **{self.suite_version}**  ",
             f"Suite hash: `{self.suite_hash}`",
             "",
-            "| Rank | Score | Pass rate | Tasks | Submitted | Bundle hash |",
-            "|------|------:|----------:|------:|-----------|-------------|",
+            "Rows are grouped by harness fingerprint: scores are only ranked "
+            "against bundles produced by the same harness settings "
+            "(`scheduler_config`).",
+            "",
         ]
 
-        for rank, entry in enumerate(self.entries, start=1):
-            score_pct = f"{entry.overall_score * 100:.1f}%"
-            pass_pct = f"{entry.pass_rate * 100:.1f}%"
-            short_hash = entry.bundle_hash[:16]
-            bundle_link = f"[`{short_hash}…`]({entry.bundle_path})" if entry.bundle_path else f"`{short_hash}…`"
-            lines.append(
-                f"| {rank} "
-                f"| {score_pct} "
-                f"| {pass_pct} "
-                f"| {entry.num_tasks} "
-                f"| {entry.submitted_at_iso()} "
-                f"| {bundle_link} |"
-            )
+        # One ranked section per harness fingerprint, best group first.
+        groups: dict[str, list[LeaderboardEntry]] = {}
+        for entry in self.entries:
+            groups.setdefault(entry.harness_fingerprint, []).append(entry)
+        ordered_groups = sorted(groups.items(), key=lambda kv: (-max(e.overall_score for e in kv[1]), kv[0]))
+
+        for fingerprint, group in ordered_groups:
+            label = f"{fingerprint[:12]}…" if fingerprint else "(unattributed — pre-fingerprint bundle)"
+            lines += [
+                f"### Harness {label}",
+                "",
+                "| Rank | Score | Pass rate | Tasks | Submitted | Bundle hash | Harness |",
+                "|------|------:|----------:|------:|-----------|-------------|---------|",
+            ]
+            for rank, entry in enumerate(group, start=1):
+                score_pct = f"{entry.overall_score * 100:.1f}%"
+                pass_pct = f"{entry.pass_rate * 100:.1f}%"
+                short_hash = entry.bundle_hash[:16]
+                bundle_link = f"[`{short_hash}…`]({entry.bundle_path})" if entry.bundle_path else f"`{short_hash}…`"
+                harness_cell = f"`{entry.harness_fingerprint[:12]}…`" if entry.harness_fingerprint else "—"
+                lines.append(
+                    f"| {rank} "
+                    f"| {score_pct} "
+                    f"| {pass_pct} "
+                    f"| {entry.num_tasks} "
+                    f"| {entry.submitted_at_iso()} "
+                    f"| {bundle_link} "
+                    f"| {harness_cell} |"
+                )
+            lines.append("")
 
         lines += [
-            "",
             "---",
             "",
             "## How to verify a row",

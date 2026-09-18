@@ -6,7 +6,7 @@
 |------|-------|
 | File | `.github/workflows/post-ci-dispatcher.yml` |
 | Trigger | `workflow_run: CI completed` on `main` |
-| Children | `auto-release`, `auto-heal`, `bernstein-ci-fix`, `bisect-on-red` |
+| Children | `auto-release`, `auto-heal`, `bisect-on-red` |
 | Boots paid | 1 per CI completion (was 5) |
 
 Single `workflow_run: CI completed` listener that resolves the upstream
@@ -16,7 +16,7 @@ independent runner cold start plus a GHA token mint per CI completion.
 
 ## What changed
 
-The five post-CI workflows kept their file paths so existing branch
+The post-CI workflows kept their file paths so existing branch
 protection rules, runtime tooling, and operator runbooks continue to
 resolve them by name. Their internals now declare `on: workflow_call:`
 instead of `on: workflow_run:`; the dispatcher owns the upstream event.
@@ -25,7 +25,6 @@ instead of `on: workflow_run:`; the dispatcher owns the upstream event.
 |---|---|---|
 | `auto-release.yml` | `workflow_run: CI completed` | `workflow_call` |
 | `auto-heal.yml` | `workflow_run: CI completed` | `workflow_call` |
-| `bernstein-ci-fix.yml` | `workflow_run: CI completed` | `workflow_call` |
 | `bisect-on-red.yml` | `workflow_run: CI completed` | `workflow_call` |
 | `post-ci-dispatcher.yml` | n/a (new) | `workflow_run: CI completed` |
 
@@ -43,31 +42,22 @@ CI run completes on main
 |     display_title, ...    |
 +-------------+-------------+
               |
-   +----------+----------+----------+-----------+
-   |          |          |          |           |
-   v          v          v          v           v
-auto-      auto-heal  bernstein-  bisect-     (dispatcher
-release               ci-fix     on-red       outputs)
-(main      (failure,  (failure,  (failure,
- branch)    canonical  canonical  main)
-            repo)      repo,
-                       and auto-heal
-                       did NOT open
-                       a PR)
+   +----------+----------+-----------+
+   |          |          |           |
+   v          v          v           v
+auto-      auto-heal  bisect-     (dispatcher
+release               on-red       outputs)
+(main      (failure,  (failure,
+ branch)    canonical  main)
+            repo)
 ```
 
-## Race resolution
+## Heal outcome
 
-Before: `auto-heal` and `bernstein-ci-fix` both listened to
-`workflow_run: CI completed` and ran in parallel. On a real failure both
-tried to open a heal PR on the same SHA, occasionally producing competing
-patches.
-
-After: the dispatcher serialises them via `needs:`. `bernstein-ci-fix`
-runs only when `auto-heal` either skipped or did not open a PR. The
-serialisation point is the reusable workflow output
-`auto-heal.heal_outcome` (one of `applied`, `skipped_no_jobs`,
-`failed_validation`).
+`auto-heal` publishes a reusable workflow output `heal_outcome` (one of
+`applied`, `skipped_no_jobs`, `failed_validation`). The dispatcher reads
+it so downstream routing can react to what the heal actually did without
+re-deriving it from the child run.
 
 ## Inputs forwarded by the dispatcher
 
@@ -77,12 +67,11 @@ inputs once and passes them to each child:
 | Input | Used by |
 |---|---|
 | `conclusion` | auto-release |
-| `head_branch` | auto-release, bernstein-ci-fix |
+| `head_branch` | auto-release |
 | `head_sha` | every child |
 | `run_id` | every child |
 | `html_url` | auto-release, bisect-on-red |
-| `display_title` | auto-heal, bernstein-ci-fix (recursion guards) |
-| `actor_login` | bernstein-ci-fix (bot filtering) |
+| `display_title` | auto-heal (recursion guards) |
 
 ## Security model
 
@@ -108,7 +97,6 @@ forwards only those:
 |---|---|
 | `auto-release` | none |
 | `auto-heal` | none |
-| `bernstein-ci-fix` | `GEMINI_API_KEY` (optional) |
 | `bisect-on-red` | none |
 
 `GITHUB_TOKEN` is provided automatically to every reusable workflow
@@ -129,4 +117,4 @@ A real `workflow_run` event can be observed by pushing a commit to main
 and watching the dispatcher boot, or simulated locally by invoking each
 reusable workflow with `gh workflow run` and synthetic inputs. The unit
 test `tests/unit/test_post_ci_dispatcher_yaml.py` asserts the
-dispatcher's structural invariants (trigger, children, race serialisation).
+dispatcher's structural invariants (trigger, children, routing filter).

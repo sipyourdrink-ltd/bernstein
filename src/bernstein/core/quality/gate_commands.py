@@ -118,15 +118,34 @@ def _build_registry_from_config(config: Any) -> tuple[FormatterConfig, ...]:
 
 
 class GateRunnerCommandsMixin:
-    """Mixin providing all individual gate implementations for GateRunner.
+    """Named as a mixin for :class:`~bernstein.core.gate_pipeline.GateRunner`,
+    but not currently composed into it (#5682).
 
-    This mixin is combined with :class:`~bernstein.core.gate_pipeline.GateRunner`
-    at runtime.  Methods here reference ``self._config``, ``self._workdir``,
-    ``self._base_ref``, ``self._changed_files_resolved``, and helper methods
-    from the cache mixin via the GateRunner instance.
+    ``GateRunner.__mro__`` is ``(GateRunner, object)`` -- nothing inherits
+    this class or injects it dynamically, despite the name and the methods
+    here being written as instance methods that assume ``self._config``,
+    ``self._workdir``, ``self._base_ref``, ``self._changed_files_resolved``,
+    and cache-mixin helpers are available on ``self`` the way they are on a
+    real ``GateRunner`` instance. Calling most of these methods directly
+    (``GateRunnerCommandsMixin().some_gate(...)``) raises ``AttributeError``,
+    the same failure #5572 hit for ``_build_dead_code_result`` before that
+    fix qualified the one call actually needed
+    (``GateRunnerCommandsMixin._build_dead_code_result(...)``, a
+    ``@staticmethod`` with no dependency on ``self``) instead of assuming
+    composition that does not exist.
+
+    Twenty-three method names are independently defined in both this file
+    and ``gate_runner.py`` (``_run_tests_gate``, ``_run_complexity_gate_sync``,
+    and 21 more) -- resolving whether that duplication should become real
+    composition, a shared base, or is simply dead code is a separate,
+    larger question this docstring does not answer; see the issue for the
+    open investigation.
     """
 
-    # -- mixin initialiser (called from GateRunner.__init__) -----------------
+    # -- mixin initialiser: defined, but never called from anywhere --------
+    # No call site exists in src/ (checked: `grep -rn "__init_commands__"`
+    # finds only this definition), and GateRunner.__init__ does not
+    # reference it either.
 
     @staticmethod
     def __init_commands__(instance: object) -> None:

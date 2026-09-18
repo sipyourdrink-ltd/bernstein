@@ -38,7 +38,7 @@ concurrency:
 jobs:
   canary:
     name: Real-run canary
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 15
     steps:
       - name: Harden runner

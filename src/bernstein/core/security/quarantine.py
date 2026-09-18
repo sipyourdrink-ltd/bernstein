@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Literal
 
+from bernstein.core.persistence.atomic_write import write_atomic_json
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -86,7 +88,16 @@ class QuarantineStore:
                 for item in raw
             ]
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            logger.warning("quarantine: failed to load %s: %s", self._path, exc)
+            # Degrading to "nothing is quarantined" is the permissive answer:
+            # every repeatedly-failing task becomes eligible again. Kept, so a
+            # damaged file cannot stop the orchestrator, but logged as an
+            # error saying what was lost - a WARNING understated it.
+            logger.error(
+                "quarantine: %s is unreadable (%s); treating every task as not quarantined "
+                "until the file is repaired or removed",
+                self._path,
+                exc,
+            )
             return []
 
     def get_entry(self, task_title: str) -> QuarantineEntry | None:
@@ -139,11 +150,19 @@ class QuarantineStore:
 
         Creates parent directories as needed.
 
+        Written through :func:`write_atomic_json` rather than in place. A
+        plain write truncates the destination before it writes, so the window
+        between those two steps is one where the file on disk holds no
+        entries - and :meth:`load` reads an unparseable file as "nothing is
+        quarantined", which is the permissive answer. A crash in that window
+        therefore releases every quarantined task back into the next run's
+        schedule, silently. Writing to a temporary file and renaming means a
+        reader sees either the previous set or the new one, never neither.
+
         Args:
             entries: Full list of entries to write (replaces current file).
         """
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps([asdict(e) for e in entries], indent=2))
+        write_atomic_json(self._path, [asdict(e) for e in entries])
 
     def record_failure(self, task_title: str, reason: str) -> None:
         """Record a failure for *task_title*, incrementing its fail count.

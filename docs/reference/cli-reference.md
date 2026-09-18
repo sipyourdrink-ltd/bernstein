@@ -1294,7 +1294,7 @@ regardless of its age. Exits non-zero if the sweep fails.
 | `--fix` | off | Attempt to auto-fix issues. |
 | `--suggest-docs` | off | Print the top curated documentation gaps and exit. |
 | `--failover-drill` | off | Exercise every declared provider fallback chain; exit non-zero on any broken chain. |
-| `--endpoint URL` | none | Certify an OpenAI-compatible endpoint; see [Endpoint certification](#endpoint-certification-bernstein-doctor---endpoint). |
+| `--endpoint URL` | none | Certify an OpenAI-compatible endpoint; see [Endpoint certification](#endpoint-certification-bernstein-doctor-endpoint). |
 | `--endpoint-model NAME` | first `/models` entry | Model id to certify. |
 | `--endpoint-engine NAME` | none | Runtime label recorded in the receipt (e.g. `ollama`, `lmstudio`, `mlx`). |
 | `--endpoint-api-key-env NAME` | none | Name of the env var holding the endpoint's API key (never the key itself). |

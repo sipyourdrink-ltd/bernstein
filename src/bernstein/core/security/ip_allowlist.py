@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any, cast
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
+from bernstein.core.security.sanitize import sanitize_log
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -23,14 +25,39 @@ _Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
 def _parse_allowed_networks(allowed_ips: Sequence[str]) -> tuple[_Network, ...]:
-    """Parse a sequence of CIDR strings into IP network objects."""
+    """Parse a sequence of CIDR strings into IP network objects.
+
+    An entry that does not parse is dropped with a warning rather than
+    raising: one bad range in a list of five should narrow the allowlist,
+    not take the server down. Dropping narrows, so it errs towards denial -
+    but only while at least one range survives. Callers must therefore
+    distinguish "nothing was configured" from "everything configured was
+    dropped"; see :func:`allowlist_is_unusable`.
+    """
     networks: list[_Network] = []
     for ip_range in allowed_ips:
         try:
             networks.append(ipaddress.ip_network(ip_range, strict=False))
         except ValueError as exc:
-            logger.warning("Invalid IP range %s: %s", ip_range, exc)
+            logger.warning("Invalid IP range %s: %s", sanitize_log(ip_range), sanitize_log(str(exc)))
     return tuple(networks)
+
+
+def allowlist_is_unusable(configured: Sequence[str], parsed: Sequence[_Network]) -> bool:
+    """Is this an allowlist that was asked for but cannot be enforced?
+
+    The middleware treats an empty set of networks as "no allowlist", which
+    is right for an operator who configured none and wrong for an operator
+    who configured only ranges that fail to parse. The two states are
+    identical downstream - an empty tuple either way - so they have to be
+    told apart here, before the request is judged.
+
+    ``configured`` empty is the first state: nothing was asked for, the
+    middleware is inert, every request passes. ``configured`` non-empty with
+    ``parsed`` empty is the second: an operator asked for a restriction and
+    a typo silently removed it. That must not resolve to "allow everyone".
+    """
+    return bool(configured) and not parsed
 
 
 class IPAllowlistMiddleware(BaseHTTPMiddleware):
@@ -39,6 +66,13 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
     When configured, all requests must originate from an allowed IP range.
     Localhost (127.0.0.1) is always allowed. Health and discovery endpoints
     are exempt.
+
+    A configured allowlist in which *no* range parses is refused rather than
+    ignored. Dropping unparseable ranges narrows the allowlist, which is safe
+    while one survives; when none does, the same drop widens it to everything,
+    and an allowlist that silently stops restricting is worse than one that
+    stops the server. ``check_ip_allowed`` has always denied in that state -
+    this is the middleware agreeing with it.
 
     Args:
         app: ASGI application.
@@ -96,7 +130,22 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
         if path in self._active_public_paths:
             return await call_next(request)
 
-        allowed_networks = self._resolve_allowed_networks(request)
+        configured, allowed_networks = self._resolve_allowed_networks(request)
+
+        # An allowlist that was configured but parsed to nothing is a
+        # misconfiguration, not an absence. Passing through here is how a
+        # single typo turns "only the office range may reach this server"
+        # into "anyone may", with nothing in the response to show it.
+        if allowlist_is_unusable(configured, allowed_networks):
+            logger.error(
+                "IP allowlist configured with %d range(s), none of them parseable; refusing %s",
+                len(configured),
+                sanitize_log(path),
+            )
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "IP allowlist is configured but unusable; no range parsed"},
+            )
 
         # If no allowlist configured, pass through
         if not allowed_networks:
@@ -115,27 +164,35 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
             if any(client_addr in network for network in allowed_networks):
                 return await call_next(request)
         except ValueError:
-            logger.warning("Invalid client IP: %s", client_ip)
+            logger.warning("Invalid client IP: %s", sanitize_log(client_ip))
 
         # IP not in allowlist
-        logger.warning("Blocked request from IP %s to %s", client_ip, path)
+        # Both values can come straight from the request - the IP via a
+        # forwarded header, the path from the request line - so neither
+        # reaches the log without escaping.
+        logger.warning("Blocked request from IP %s to %s", sanitize_log(client_ip), sanitize_log(path))
         return JSONResponse(
             status_code=403,
             content={"detail": f"IP {client_ip} not in allowed list"},
         )
 
-    def _resolve_allowed_networks(self, request: Request) -> tuple[_Network, ...]:
-        """Resolve the active allowlist from static config or app state."""
+    def _resolve_allowed_networks(self, request: Request) -> tuple[tuple[str, ...], tuple[_Network, ...]]:
+        """Resolve the active allowlist from static config or app state.
+
+        Returns both halves - the raw ranges the operator configured and the
+        ones that parsed - because the caller cannot tell a missing allowlist
+        from a wholly unparseable one from the parsed tuple alone.
+        """
         if self._configured_allowed_ips is not None:
-            return self._configured_networks
+            return self._configured_allowed_ips, self._configured_networks
 
         allowed_ips = self._allowed_ips_from_seed(request)
         if not allowed_ips:
-            return ()
+            return (), ()
         if allowed_ips != self._cached_dynamic_allowed_ips:
             self._cached_dynamic_allowed_ips = allowed_ips
             self._cached_dynamic_networks = _parse_allowed_networks(allowed_ips)
-        return self._cached_dynamic_networks
+        return allowed_ips, self._cached_dynamic_networks
 
     def _allowed_ips_from_seed(self, request: Request) -> tuple[str, ...]:
         """Read allowlist CIDRs from the current app seed config."""

@@ -109,11 +109,16 @@ with `sys.platform == "darwin"` branches).
 
 ### What runs when
 
+The two macOS jobs are `test-macos` (four sharded macOS runners, the
+whole suite) and `adapter-integration-macos` (one short job).
+
 | Event | macOS jobs trigger? | Notes |
 |-------|---------------------|-------|
-| `push` to `main` | Always | Every merged commit gets a fresh macOS signal |
-| PR with `macos-needed` label | Always | Operator opt-in for cross-platform work |
-| PR touching macOS-sensitive paths | Always | Path filter in `determine-changes` |
+| `push` to `main`, macOS-sensitive diff | Both | Path filter in `determine-changes` |
+| `push` to `main`, any other diff | `adapter-integration-macos` only | Every merged commit still gets a macOS signal; the `test-macos` shards would only re-assert what the ubuntu/windows `test` matrix already checked on the same commit |
+| Merge queue (`merge_group`) | Neither | The post-merge `push` re-checks the same tree minutes later |
+| PR with `macos-needed` label | Both | Operator opt-in for cross-platform work |
+| PR touching macOS-sensitive paths | Both | Path filter in `determine-changes` |
 | Other PRs | Skipped | Nightly catches drift within 24h |
 | Daily 06:00 UTC schedule | Full macOS matrix | `ci-macos-nightly.yml` |
 
@@ -379,7 +384,7 @@ to git, and both are accepted:
 
 | Shape | Lanes | How git gets the token |
 |-------|-------|------------------------|
-| Persisted checkout credential | `adapter-conformance-canary`, `bernstein-ci-fix`, `nightly-drift-sweep` | `actions/checkout` is given the same `token:` expression and leaves it in `.git/config` |
+| Persisted checkout credential | `adapter-conformance-canary`, `nightly-drift-sweep` | `actions/checkout` is given the same `token:` expression and leaves it in `.git/config` |
 | Explicit auth header | `auto-heal`, `bernstein-issues-decompose` | the step checks out with `persist-credentials: false`, then sets `http.https://github.com/.extraheader` from `$GH_TOKEN` and unsets it on exit |
 
 Passing `persist-credentials: false` without setting the header leaves the
@@ -481,7 +486,11 @@ intentional-skip allow-lists. The aggregator understands:
 
 - `docs_only` skips for content-only changes
 - `PR_ONLY` / `PUSH_ONLY` event-gated jobs
-- `MACOS_GATED` jobs that legitimately skip on non-macOS-sensitive PRs
+- `MACOS_GATED` jobs that legitimately skip on non-macOS-sensitive PRs,
+  and unconditionally on a `merge_group` ref
+  (`MACOS_UNCONDITIONAL_SKIP_EVENTS`)
+- `MACOS_PUSH_GATED` - the `test-macos` shards, which also skip on a push
+  to `main` whose diff is not macOS-sensitive
 
 If you add a new conditionally-gated job, register it in the
 appropriate allow-list inside the `roll-up` step of `ci-gate`.

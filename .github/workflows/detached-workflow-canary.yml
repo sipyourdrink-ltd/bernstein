@@ -41,7 +41,7 @@ permissions:
 jobs:
   canary:
     name: Detached workflow canary
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, vps]
     timeout-minutes: 10
     # Advisory: the action this reports is a settings change a human makes.
     continue-on-error: true

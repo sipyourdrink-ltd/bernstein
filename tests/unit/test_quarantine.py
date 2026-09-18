@@ -11,10 +11,14 @@ Covers:
 
 from __future__ import annotations
 
+import builtins
 import json
+import logging
+import os
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
 from bernstein.core.quarantine import QUARANTINE_THRESHOLD, QuarantineEntry, QuarantineStore
 
 if TYPE_CHECKING:
@@ -284,3 +288,124 @@ def test_get_action_returns_skip_by_default(tmp_path: Path) -> None:
 def test_get_action_returns_none_for_unknown_task(tmp_path: Path) -> None:
     store = _store(tmp_path)
     assert store.get_entry("unknown") is None
+
+
+# ---------------------------------------------------------------------------
+# The write is crash-safe
+# ---------------------------------------------------------------------------
+#
+# ``load`` reads an unparseable file as an empty list - every quarantined task
+# becomes eligible again. That is the permissive answer, and it is reachable
+# from the store's own writes: a plain ``write_text`` truncates the
+# destination before writing it, so a crash between those two steps leaves
+# zero bytes where the quarantine set used to be. The next run reschedules
+# every known-bad task, with a single log line as the only trace.
+#
+# ``write_atomic_json`` writes a temporary file, fsyncs it, and renames it
+# over the destination, so a reader sees the previous set or the new one and
+# never neither.
+
+
+def test_the_destination_is_never_opened_for_writing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The invariant that makes the write atomic, asserted directly.
+
+    An in-place write has to truncate the destination; a rename never touches
+    it. So "was the destination ever opened for writing" separates the two
+    implementations exactly, without needing to catch the crash window in the
+    act.
+    """
+    store_path = tmp_path / "quarantine.json"
+    opened_for_write: list[str] = []
+
+    real_open = os.open
+
+    def spy(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if flags & (os.O_WRONLY | os.O_RDWR):
+            opened_for_write.append(str(path))
+        return real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+
+    real_builtin_open = builtins.open
+
+    def builtin_spy(file: object, mode: str = "r", *args: object, **kwargs: object) -> object:
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            opened_for_write.append(str(file))
+        return real_builtin_open(file, mode, *args, **kwargs)  # type: ignore[arg-type, call-overload]
+
+    monkeypatch.setattr(os, "open", spy)
+    monkeypatch.setattr(builtins, "open", builtin_spy)
+
+    QuarantineStore(store_path).save([QuarantineEntry("t", 1, date.today().isoformat(), "boom")])
+
+    assert str(store_path) not in opened_for_write
+    assert opened_for_write, "nothing was opened for writing at all - the spy is not wired up"
+
+
+def test_the_write_is_flushed_to_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rename that outlives its own bytes is not a crash-safe write."""
+    synced: list[int] = []
+    real_fsync = os.fsync
+
+    def spy(fd: int) -> None:
+        synced.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+
+    QuarantineStore(tmp_path / "quarantine.json").save([QuarantineEntry("t", 1, date.today().isoformat(), "boom")])
+
+    assert synced, "quarantine state was published without being fsynced"
+
+
+def test_a_save_leaves_no_temporary_file_behind(tmp_path: Path) -> None:
+    store_path = tmp_path / "quarantine.json"
+    store = QuarantineStore(store_path)
+    store.save([QuarantineEntry("t", 1, date.today().isoformat(), "boom")])
+    store.save([QuarantineEntry("t", 2, date.today().isoformat(), "boom again")])
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["quarantine.json"]
+
+
+def test_a_rewrite_replaces_the_previous_contents(tmp_path: Path) -> None:
+    """``Path.rename`` refuses an existing destination on Windows.
+
+    Delegating must not turn the second save of a run into a crash there.
+    """
+    store_path = tmp_path / "quarantine.json"
+    store = QuarantineStore(store_path)
+    today = date.today().isoformat()
+    store.save([QuarantineEntry("first", 1, today, "a")])
+    store.save([QuarantineEntry("second", 2, today, "b")])
+
+    assert [e.task_title for e in store.load()] == ["second"]
+
+
+def test_a_truncated_file_releases_every_quarantined_task(tmp_path: Path) -> None:
+    """The consequence the atomic write exists to prevent, spelled out.
+
+    This is documentation rather than a regression: it passes either way. It
+    is what a torn write costs, and it is why ``load`` degrading to ``[]``
+    makes the write path the thing that has to be safe.
+    """
+    store_path = tmp_path / "quarantine.json"
+    store = QuarantineStore(store_path)
+    for _ in range(QUARANTINE_THRESHOLD):
+        store.record_failure("known bad task", "boom")
+    assert store.is_quarantined("known bad task")
+
+    intact = store_path.read_text()
+    store_path.write_text(intact[: len(intact) // 2])
+
+    assert not QuarantineStore(store_path).is_quarantined("known bad task")
+
+
+def test_an_unreadable_file_is_logged_as_an_error_naming_what_was_lost(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A WARNING understated it: the whole quarantine set stops applying."""
+    store_path = tmp_path / "quarantine.json"
+    store_path.write_text("{ not json")
+
+    with caplog.at_level(logging.ERROR, logger="bernstein.core.security.quarantine"):
+        assert QuarantineStore(store_path).load() == []
+
+    assert "treating every task as not quarantined" in caplog.text

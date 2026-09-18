@@ -2518,6 +2518,10 @@ def claim_and_spawn_batches(
             for task in quarantined_tasks:
                 entry = orch._quarantine.get_entry(task.title)
                 action = entry.action if entry else "skip"
+                reason = (
+                    f"Quarantined after {entry.fail_count if entry else 0} failures: "
+                    f"{entry.action if entry else 'skip'}"
+                )
                 logger.warning(
                     "Skipping quarantined task %s (title=%r, fail_count=%d, action=%s)",
                     task.id,
@@ -2533,6 +2537,14 @@ def claim_and_spawn_batches(
                         decomposed_task_ids=orch._decomposed_task_ids,
                         workdir=orch._workdir,
                     )
+                else:
+                    with contextlib.suppress(Exception):
+                        fail_task(
+                            orch._client,
+                            base,
+                            task.id,
+                            reason,
+                        )
             continue
 
         # Pre-flight: auto-decompose large tasks before claiming.
@@ -3830,7 +3842,15 @@ def _reap_and_cleanup_session(
         # issue #2365: chain the merge decision into the run journal so the
         # review board's merged column is a projection of the journal, not a
         # side inference. No-op when the orchestrator has no recorder.
-        record_task_merged(getattr(orch, "_recorder", None), task_id=task.id, agent_id=session.id)
+        # issue #5271: carry the merge commit sha so the row can be tied back
+        # to the git object it actually produced, not just to "a merge
+        # happened". None when the merge found nothing to commit.
+        record_task_merged(
+            getattr(orch, "_recorder", None),
+            task_id=task.id,
+            agent_id=session.id,
+            merge_commit=getattr(merge_result, "merge_commit", None),
+        )
 
     # issue #2559: reconcile what the task declared it would produce against what
     # this run's spine actually carries, and record an artifact-keyed attempt for
@@ -4145,7 +4165,7 @@ def _record_bandit_outcome(
     bandit.record_outcome(
         task=task,
         model=session.model_config.model if session.model_config else "sonnet",
-        effort=getattr(session, "effort", "") or "",
+        effort=session.model_config.effort if session.model_config else "",
         cost_usd=bm.cost_usd if bm is not None else 0.0,
         quality_score=1.0 if janitor_passed else 0.0,
         budget_ceiling=max(float(getattr(orch._config, "budget_usd", 0.0) or 0.0), 1.0),

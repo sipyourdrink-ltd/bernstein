@@ -1,0 +1,23 @@
+# Who may approve, and what an approval from them is worth.
+#
+# `scripts/quorum_check.py` reads this file from the BASE branch of a pull
+# request, never from the branch under review, so a pull request cannot put
+# its own author on the roster. Changing this file needs the maintainer:
+# `.github/CODEOWNERS` routes it there.
+#
+# Roles are defined in docs/governance/review-charter.md, section 1. A person
+# belongs to exactly one list. Removing someone here removes their ability to
+# form a quorum; it does not touch their repository access, which lives in the
+# repository's collaborator settings and has to be changed there as well.
+
+maintainer = "chernistry"
+
+# Approve as a code owner; one core approval is part of every quorum.
+core_reviewers = ["vaibhav8a", "thegoodengineer", "tenequm", "Phoenix1504e"]
+
+# Approve; two approvals of any kind form the quorum when one is a core one.
+committers = ["Chirag6722", "Silentpartnercoding"]
+
+# Accounts that merge their own changes on green CI (charter, section 1).
+# Their reviews never count toward a human quorum.
+automation = ["bernstein-the-conductor[bot]", "renovate[bot]", "dependabot[bot]"]

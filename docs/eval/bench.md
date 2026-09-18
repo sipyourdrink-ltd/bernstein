@@ -119,6 +119,34 @@ any leaderboard entry is written.
 The leaderboard (`docs/eval/leaderboard.md`) lists only verified bundles,
 each row linking its bundle hash so anyone can re-verify.
 
+### 4. Compare two bundles
+
+```bash
+bernstein bench compare a.json b.json
+```
+
+`bench compare` ranks two bundles by score, but only when they were
+produced by the **same harness settings**.  Every bundle carries a
+`harness_fingerprint` (see [Bundle format](#bundle-format)) — a SHA-256
+over the canonical JSON of the `scheduler_config` mapping that shaped
+the run.  When the fingerprints differ, `compare` prints which settings
+keys differ and **refuses to rank**, because a score gap across
+differing harness settings is a harness change, not a model change:
+
+```text
+Harness fingerprints differ: 9f1c48d0aa21… vs 5b07d39c88fe…
+Differing harness settings: prompt_template
+Refusing to rank: a score gap across differing harness settings is a
+harness change, not a model change.  Pass --allow-harness-drift to rank
+anyway.
+```
+
+Pass `--allow-harness-drift` to rank anyway (the differing keys are
+still printed).  The stored fingerprint is recomputed from the raw
+`scheduler_config` beside it before it is trusted; a bundle whose stored
+fingerprint does not match its own settings fails with an integrity
+error even with the flag.
+
 ---
 
 ## Reliability floor (`--reliability k`)
@@ -139,6 +167,43 @@ all `k` per-attempt run receipts embedded so the floor is recomputable
 offline. `bernstein eval --reliability k` is a thin alias for the same
 run path — identical receipt, verified with the same two verbs above.
 Full details: [reliability.md](reliability.md).
+
+---
+
+## Abstention, and the three rates
+
+A run that declines a task it cannot verify used to score exactly like one that
+submitted a confidently wrong patch: both were a `failed`, both sat in the
+denominator of `resolve_rate = resolved / attempted`, and neither in the
+numerator. That rewards guessing, because a guess can only raise the resolve
+rate and an abstention can only lower it.
+
+An instance may now end `abstained`, carrying an `abstention_reason`. It is not
+an attempt at the task, it is a declared refusal to answer one, so it is
+excluded from `attempted` — and because an abstention scores above a wrong
+answer, claiming one costs a stated reason.
+
+Three rates, because no one of them answers the operator's question alone:
+
+| Rate | Definition | What it tells you |
+|---|---|---|
+| **Resolve rate** | `resolved / attempted`, where `attempted` excludes skipped **and** abstained | Of the answers the run gave, how many were right |
+| **Abstain rate** | `abstained / taken_on`, where `taken_on` excludes only skipped | How often the run said it could not tell |
+| **Confident-error rate** | `wrong / (wrong + resolved)` | Of the answers it gave, how many were wrong |
+
+Read them together. A high resolve rate beside a high abstain rate is a run
+that answers rarely and well; the same resolve rate beside a zero abstain rate
+and a high confident-error rate is a run that answers everything and is often
+wrong. The resolve rate on its own cannot separate those two, which is why
+raising it by guessing used to be free.
+
+`errors` are excluded from both halves of the confident-error rate: a harness
+crash is not the run being confidently wrong, and counting it as one would move
+the number for something the run did not do.
+
+**Existing bundles are unaffected.** A bundle written before abstentions
+existed has `abstained: 0`, so `attempted` is `total - skipped` for it exactly
+as it always was and its published resolve rate does not move.
 
 ---
 
@@ -177,6 +242,7 @@ Two runners on the same `suite_hash` provably ran the same task set.
   "suite_version": "golden-v1",
   "submitted_at": 1753000000.0,
   "scheduler_config": {"...": "..."},
+  "harness_fingerprint": "<sha256 of canonical scheduler_config JSON>",
   "overall_score": 0.95,
   "pass_rate": 1.0,
   "task_results": [
@@ -203,6 +269,18 @@ Two runners on the same `suite_hash` provably ran the same task set.
 The `receipt` is the replay substrate.  The `score` only means something
 because the receipt exists to replay it.  Removing or corrupting the receipt
 makes the entire bundle fail verification.
+
+`harness_fingerprint` is a SHA-256 over the canonical JSON (sorted keys,
+no whitespace) of the full `scheduler_config` mapping.  It is a pure
+projection of the settings carried beside it — it does not participate
+in `bundle_hash` — and is recomputed by `bench compare` before it is
+trusted.  The whole mapping is hashed rather than a named-key allowlist,
+so a setting nobody thought to list still changes the fingerprint instead
+of silently drifting two runs onto one identity; wall-clock time, paths,
+and run identity are excluded because they are not harness settings.
+Bundles emitted before the field existed load unchanged (the fingerprint
+is derived on load), and comparing against one reads as drift requiring
+`--allow-harness-drift`.
 
 ---
 

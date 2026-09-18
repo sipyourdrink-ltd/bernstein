@@ -446,10 +446,10 @@ def _run_rollup(
     )
 
 
-# A typical (non-macOS-sensitive) merge_group entry: every required job
-# succeeds except the ones whose `if:` excludes merge_group. Under
-# merge_group: macOS-gated jobs skip (if: only fires on push / sensitive /
-# label), and PR-only jobs skip (if: pull_request).
+# A typical merge_group entry: every required job succeeds except the ones
+# whose `if:` excludes merge_group. Under merge_group: the macOS jobs skip
+# (both carry `github.event_name != 'merge_group'`), and PR-only jobs skip
+# (if: pull_request).
 _MERGE_GROUP_NEEDS = {
     "determine-changes": {"result": "success"},
     "repo-hygiene": {"result": "success"},
@@ -471,9 +471,9 @@ _MERGE_GROUP_NEEDS = {
     "beartype": {"result": "success"},
     "pyright-strict-zone": {"result": "success"},
     "adapter-integration": {"result": "success"},
-    "adapter-integration-macos": {"result": "skipped"},  # if: push/sensitive/label
+    "adapter-integration-macos": {"result": "skipped"},  # if: != merge_group
     "test": {"result": "success"},
-    "test-macos": {"result": "skipped"},  # if: push/sensitive/label
+    "test-macos": {"result": "skipped"},  # if: != merge_group
 }
 
 
@@ -481,9 +481,9 @@ def test_ci_gate_rollup_passes_on_merge_group(ci_doc: dict[str, object], tmp_pat
     """The shipped roll-up must PASS on a merge_group event whose only
     non-success jobs are the ones legitimately skipped under merge_group.
 
-    If this fails, a GitHub merge queue would wedge: the first queued entry
-    with a non-macOS-sensitive diff makes test-macos / adapter-integration-macos
-    skip, and an intolerant gate reads that as a failure -> nothing merges.
+    If this fails, a GitHub merge queue would wedge: every queued entry
+    makes test-macos / adapter-integration-macos skip, and an intolerant
+    gate reads that as a failure -> nothing merges.
     """
     script = _ci_gate_rollup_script(ci_doc)
     proc = _run_rollup(
@@ -539,6 +539,109 @@ def test_ci_gate_rollup_passes_on_push(ci_doc: dict[str, object], tmp_path: Path
         plan={"docs_only": "false", "macos_sensitive": "false"},
     )
     assert proc.returncode == 0, f"CI gate roll-up must pass on push.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+def test_ci_gate_rollup_passes_on_a_macos_sensitive_merge_group(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """A queued group that touches macOS paths must pass too.
+
+    Both macOS jobs carry `github.event_name != 'merge_group'`, so they
+    skip on every group -- including one whose combined diff is
+    macOS-sensitive. A tolerance still keyed on `macos_sensitive` would
+    flag that skip and wedge the queue on exactly the entries that touch
+    the platform surface. The post-merge push to `main` re-checks the same
+    tree minutes later.
+    """
+    script = _ci_gate_rollup_script(ci_doc)
+    proc = _run_rollup(
+        tmp_path,
+        script,
+        needs=_MERGE_GROUP_NEEDS,
+        event="merge_group",
+        plan={"docs_only": "false", "macos_sensitive": "true"},
+    )
+    assert proc.returncode == 0, (
+        "CI gate roll-up FAILED on a macOS-sensitive merge_group -- the queue would wedge on every entry "
+        f"that touches a platform path.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+
+
+def test_ci_gate_rollup_tolerates_the_macos_shards_skipping_on_a_plain_push(
+    ci_doc: dict[str, object], tmp_path: Path
+) -> None:
+    """`test-macos` skips on a push whose diff is not macOS-sensitive.
+
+    Four sharded macOS runners cannot observe anything on such a push that
+    the ubuntu/windows `test` matrix does not already observe on the same
+    commit, and ci-macos-nightly.yml re-runs the whole macOS suite daily.
+    Pins MACOS_PUSH_GATED: without it every merge to `main` red-gates.
+    """
+    script = _ci_gate_rollup_script(ci_doc)
+    needs = dict(_MERGE_GROUP_NEEDS)
+    needs["test-macos"] = {"result": "skipped"}
+    needs["adapter-integration-macos"] = {"result": "success"}
+    proc = _run_rollup(
+        tmp_path,
+        script,
+        needs=needs,
+        event="push",
+        plan={"docs_only": "false", "macos_sensitive": "false"},
+    )
+    assert proc.returncode == 0, (
+        "CI gate roll-up FAILED to tolerate a test-macos skip on a non-macOS-sensitive push to main."
+        f"\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+
+
+def test_ci_gate_rollup_fails_when_the_macos_shards_skip_a_macos_sensitive_push(
+    ci_doc: dict[str, object], tmp_path: Path
+) -> None:
+    """The push tolerance must not become a rubber stamp.
+
+    When the planner says the pushed diff touched a macOS-sensitive path,
+    `test-macos` has to produce a result. A skip there is the silent hole
+    the tolerance must not cover.
+    """
+    script = _ci_gate_rollup_script(ci_doc)
+    needs = dict(_MERGE_GROUP_NEEDS)
+    needs["test-macos"] = {"result": "skipped"}
+    needs["adapter-integration-macos"] = {"result": "success"}
+    proc = _run_rollup(
+        tmp_path,
+        script,
+        needs=needs,
+        event="push",
+        plan={"docs_only": "false", "macos_sensitive": "true"},
+    )
+    assert proc.returncode == 1, (
+        "CI gate roll-up must FAIL when test-macos skips on a macOS-sensitive push to main."
+        f"\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+
+
+def test_ci_gate_rollup_still_requires_adapter_integration_macos_on_push(
+    ci_doc: dict[str, object], tmp_path: Path
+) -> None:
+    """Only the sharded job is push-gated; the short one still runs.
+
+    `adapter-integration-macos` is a single job, so every merged commit
+    keeps a macOS signal. It is deliberately absent from MACOS_PUSH_GATED,
+    and a skip on push must still fail the gate.
+    """
+    script = _ci_gate_rollup_script(ci_doc)
+    needs = dict(_MERGE_GROUP_NEEDS)
+    needs["test-macos"] = {"result": "skipped"}
+    needs["adapter-integration-macos"] = {"result": "skipped"}
+    proc = _run_rollup(
+        tmp_path,
+        script,
+        needs=needs,
+        event="push",
+        plan={"docs_only": "false", "macos_sensitive": "false"},
+    )
+    assert proc.returncode == 1, (
+        "CI gate roll-up must FAIL when adapter-integration-macos skips on a push to main -- otherwise a "
+        f"merged commit can land with no macOS signal at all.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
 
 
 def test_ci_gate_rollup_tolerates_rpm_smoke_skip_when_diff_is_rpm_irrelevant(
