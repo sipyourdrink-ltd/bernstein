@@ -1,9 +1,3 @@
-## Skipped quarantined tasks now leave the open queue
+Fix quarantined task skip wedging quiescence (#5967)
 
-A task quarantined with `action="skip"` was logged and dropped from the claim
-batch without a status transition. The task stayed `open`, so the orchestrator
-kept counting it as pending work and never reached quiescence.
-
-Skipped quarantined tasks now fail through the normal `fail_task` path with
-their quarantine reason, while `action="decompose"` tasks still decompose
-first (#5967).
+When a quarantined task is skipped in claim_and_spawn_batches, it now transitions to TaskStatus.FAILED instead of being left open with a bare continue. This ensures the orchestrator's _raw_open count reaches zero and quiescence can be achieved.
