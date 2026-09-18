@@ -70,7 +70,6 @@ def test_quarantined_task_skip_transitions_terminal(tmp_path: Path) -> None:
     task.title = task_title
     task.role = "backend"
 
-
     orch = _claim_orch(tmp_path, _quarantine_stub(task.title))
     result = TickResult()
 
