@@ -239,9 +239,9 @@ class TestLogInjection:
             ("plain", "plain"),
             ("a\nb", "a\\nb"),
             ("a\r\nb", "a\\r\\nb"),
-            ("a\tb", "a\\x09b"),
+            ("a\tb", "a\\tb"),
             ("a\x1b[31mb", "a\\x1b[31mb"),
-            ("line\u2028sep", "line\\x2028sep"),
+            ("line\u2028sep", "line\\u2028sep"),
         ],
     )
     def test_single_line_escapes_every_control_character(self, raw: str, expected: str) -> None:

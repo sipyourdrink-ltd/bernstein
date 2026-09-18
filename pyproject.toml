@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.19.1"
+version = "3.19.2"
 description = "The open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs Claude Code, Codex, Gemini CLI, and 40+ CLI agents; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -336,7 +336,7 @@ research-render = [
 # TRACE 0.2 Trust Record emitter (src/bernstein/core/observability/trust_record.py).
 # Optional so minimal installs stay dependency-free. Enable with:
 #   pip install 'bernstein[trace]'
-trace = ["agentrust-trace>=0.9,<0.10"]
+trace = ["agentrust-trace>=0.10,<0.11"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"
@@ -769,7 +769,7 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 # standing obligation. Handing a language over is a one-line change to
 # this table, made by the person taking it on.
 [tool.bernstein.readme-l10n.owners]
-"zh-Hans" = "@chernistry"
+"zh-Hans" = "@7487"
 "zh-TW" = "@chernistry"
 "ja" = "@chernistry"
 "ko" = "@Bhumika-1432006"
@@ -786,11 +786,11 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 "sv" = "@thegoodengineer"
 "fi" = "@Bhumika-1432006"
 "uk" = "@thegoodengineer"
-"tr" = "@chernistry"
+"tr" = "@thegoodengineer"
 "ar" = "@thegoodengineer"
 "he" = "@Bhumika-1432006"
 "id" = "@thegoodengineer"
-"vi" = "@chernistry"
+"vi" = "@thegoodengineer"
 "th" = "@thegoodengineer"
 
 [tool.pytest.ini_options]
