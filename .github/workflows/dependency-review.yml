@@ -110,4 +110,5 @@ jobs:
             pkg:pypi/protobuf,
             pkg:pypi/crosshair-tool,
             pkg:pypi/numpy,
-            pkg:pypi/python-telegram-bot
+            pkg:pypi/python-telegram-bot,
+            pkg:pypi/grimp
