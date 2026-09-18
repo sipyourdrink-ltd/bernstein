@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### il layer di governance open source per agenti IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 La [guida del donatore](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) copre l'esecuzione di un worker e il budget che imposti, la [guida del progetto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) copre la dichiarazione di un manifesto, e il [modello delle minacce](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica cosa ciascun confine protegge e cosa no. L'esecutore a comando singolo non è ancora rilasciato: oggi `verify`, `browse` e `hub` sono i sottocomandi funzionanti.
 
 ### oltre la pagina principale
-<!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
 
 Tutte le informazioni approfondite sono disponibili sul [sito della documentazione](https://bernstein.readthedocs.io/):
 

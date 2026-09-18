@@ -1,73 +1,62 @@
-# Code Review Process
+# Code review
 
-Last reviewed: 2026-07-16.
+Last reviewed: 2026-09-09.
 
-This document describes how changes land in Bernstein. It exists so the OpenSSF
-Scorecard, regulated buyers, and new contributors can all read the same answer
-in one place.
+The rules for how a change reaches `main` live in one place, the
+[review charter](governance/review-charter.md). This page is the reviewer's
+checklist and defers to the charter for everything else, so that the OpenSSF
+Scorecard, operators evaluating the project, and new contributors all read the
+same answer.
 
-## Default rule
+## The rules, in one paragraph
 
-All non-trivial changes land via pull request against `main` with at least one
-approving review from a maintainer or designated reviewer. Direct pushes to
-`main` are reserved for the operator (repo owner) and limited to:
+Every change goes through the merge queue; nobody pushes to `main` directly. A
+pull request merges with two approving reviews from committers who are not its
+author, at least one of them from a core reviewer, green required checks on the
+queued state, and no unresolved *changes requested*. The roster that says who is
+a core reviewer is `.github/quorum-roster.toml`. Ownership is a second, separate
+requirement: every path with a named owner in `.github/CODEOWNERS` needs that
+owner's approval too, so a core reviewer's approval does not stand in for a code
+owner's on a path the owner holds. A new push dismisses earlier approvals, and
+the person who pushed last cannot supply the final one. A change over 400
+lines, or one touching a path with `sandbox`, `security`, or `audit` in it,
+needs three approvals, two of them from core reviewers, and over 1,000 lines
+gets split or sent to the maintainer instead.
+Protected paths (charter section 4, including the `.github/` directory, `core`,
+`evolution`, `adapters`, dependency lockfiles, schemas, the security and
+governance documents, agent configuration files) also need the maintainer's
+approval. The project's own automation merges its own changes when CI is green;
+dependency bots merge under their own policy. Neither counts toward a human
+quorum, and neither self-merges a change whose paths carry `sandbox`,
+`security`, `audit` or `auth`, or sit under `.github/`, `schemas/` or `proto/`
+- those wait for the maintainer's approval like anyone else's. That carve-out
+is what the `quorum` check applies today; the charter's automation row does
+not carry it yet, and #5740 proposes it for section 1.
 
-- Release-cut commits produced by the auto-release workflow.
-- Documentation typo fixes and link repairs.
-- Emergency hotfixes for production-breaking issues, which are followed by a
-  retrospective PR within 24 hours.
+## Reviewer checklist
 
-## Security-sensitive changes
+An approval says "I read the whole diff and would defend it". Before approving:
 
-Changes that touch any of the following paths require **two** approving
-reviews, or operator-only push from a verified-signed commit:
-
-- `SECURITY.md`
-- `.github/workflows/**`
-- `src/bernstein/core/security/**`
-- `src/bernstein/core/identity/**`
-- Anything under `*signing*`, `*auth*`, `*credential*`, or `*token*` paths
-- Cryptographic key material, public keys, or signature verification logic
-
-## Required status checks
-
-Branch protection on `main` requires the following checks to pass before a PR
-can merge:
-
-- CI (`.github/workflows/ci.yml`)
-- CodeQL (`.github/workflows/codeql.yml`)
-- Architecture contracts (`lint-imports`)
-- Type checks (`pyright src/`)
-
-A green status from each is non-negotiable.
-
-## Reviewer expectations
-
-A reviewer is expected to:
-
-1. Pull the branch locally for any non-trivial change and run the affected
-   test files.
-2. Sanity-check that new public surface (CLI flags, MCP tools, HTTP routes,
-   adapter contracts) has corresponding tests and docs in the same PR.
+1. Pull the branch for any non-trivial change and run the affected tests.
+2. Check that new public surface (CLI flags, MCP tools, HTTP routes, adapter
+   contracts) has tests and docs in the same pull request.
 3. Flag any new dependency, new outbound network call, or new credential read
-   in the PR conversation before approving.
+   in the conversation before approving.
+4. Leave at least one line-level comment on a change over about 40 lines: a
+   finding, or a note of what you ran. A review that says only "looks good"
+   still counts as an approval; the comment is what makes it reviewable by
+   anyone reading the thread later.
 
-## Auto-merged PRs
-
-The following PR classes are auto-merged when checks are green and one
-approving review is present:
-
-- Dependabot bumps in the `minor-and-patch` and `actions-minor-patch` groups.
-- Documentation-only changes (`docs:` prefix) from maintainers.
-
-Security-group Dependabot bumps (`cryptography`, `pyjwt`, `lxml`, etc.) are
-never auto-merged; they require a maintainer review even when the diff is
-trivial.
+Item 4 is the one rule on this page that neither the charter nor the check
+carries. It is proposed for charter section 5 in #5746 with the same
+threshold and the same shape; until that lands, read it as guidance rather
+than a merge condition.
 
 ## Escalation
 
-If a reviewer disagrees with the operator on a security-sensitive change, the
-change is blocked until a second maintainer weighs in or the disagreement is
-recorded in `docs/decisions/`. Disagreements about non-security changes are
-resolved by the operator after the reviewer's concerns are acknowledged in the
-PR conversation.
+A dispute, one approval against one *changes requested*, stays open until the
+requester is satisfied or seven days pass; then anyone on the thread applies
+`needs-maintainer` by hand. No script sets that label today, so nothing marks
+the thread if nobody does. Disagreements on security-sensitive changes are resolved by
+the maintainer, and when the outcome settles a boundary it is recorded in
+`docs/decisions/`.

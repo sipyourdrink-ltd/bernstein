@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### die Open-Source-Governance-Schicht für KI-Agenten
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:9c87d303c594" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 Der [Spenderleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt den Betrieb eines Workers und das Budget, das Sie setzen, der [Projektleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) das Deklarieren eines Manifests, und das [Bedrohungsmodell](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschreibt, wovor jede Grenze schützt und wovor nicht. Der Runner mit einem einzigen Befehl ist noch nicht veröffentlicht: Heute sind `verify`, `browse` und `hub` die funktionierenden Unterbefehle.
 
 ### hinter den Kulissen
-<!-- l10n: en="beyond the front page" hash="sha256:ee01fbaaebd6" -->
+<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
 
 Alle weiterführenden Details finden sich auf der [Dokumentations-Website](https://bernstein.readthedocs.io/):
 
