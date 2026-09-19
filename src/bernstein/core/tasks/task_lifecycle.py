@@ -537,6 +537,74 @@ def _stamp_checkpoint_retry_metadata_safe(
         return retry_metadata
 
 
+def _write_retry_checkpoint(orch: Any, session: AgentSession, *, detector: str) -> None:
+    """Record a checkpointed-retry reference before an ordinary crash/timeout retry (#5844).
+
+    ``checkpoint_retry.record_task_checkpoint`` had exactly one production
+    caller (an operator's ``steer.pause``), so ``latest_checkpoint`` always
+    saw nothing and ``_stamp_checkpoint_retry_metadata_safe`` above always
+    stamped ``cold``/``no_checkpoint`` on the ordinary failure path. The
+    warm-resume machinery from #2359/#2403 never fired for the crash/timeout
+    cases it exists for. This writes the checkpoint that stamp reads back, at
+    the moment the dying session's native adapter, session id and worktree
+    are still known, mirroring ``heartbeat._write_stall_checkpoint``'s
+    resume-checkpoint write beside it (issue #3376), one journal write
+    earlier in the same death path.
+
+    Fail-open by design, like the stall checkpoint beside it: a write
+    failure must never block the retry/DLQ decision that follows.
+
+    Ordering assumption: the two calls between this write and the actual
+    retry decision, ``_maybe_preserve_worktree`` (records a path in a
+    dict, touches no file) and the orphan-handling call that reaches
+    ``retry_or_fail_task``, run before ``_save_partial_work``'s WIP
+    commit/merge/cleanup ever touches this worktree, so the live
+    ``workspace_hash`` recompute that decides warm-vs-cold sees the same
+    tree this function just hashed. ``workspace_hash`` also excludes
+    ``.git``, so even a same-tree WIP commit taken later would not move it.
+    ``_save_partial_work``'s merge-and-cleanup step can and does remove the
+    worktree outright, but only after the decision above has already been
+    made and stamped onto the retry task's metadata, so a later destruction
+    cannot retroactively un-stamp it. If a future change moves the retry
+    decision to run after ``_save_partial_work``, this assumption breaks and
+    warm resume goes silently cold.
+    """
+    workdir = getattr(orch, "_workdir", None)
+    if not isinstance(workdir, Path):
+        return
+    task_ids = list(getattr(session, "task_ids", None) or [])
+    if not task_ids:
+        return
+    try:
+        from bernstein.adapters.registry import adapter_name_for_provider
+        from bernstein.core.tasks import checkpoint_retry
+
+        worktree_path = orch._spawner.get_worktree_path(session.id)
+        if worktree_path is None:
+            return
+        adapter_name = adapter_name_for_provider(session.provider, session.model_config.model) or getattr(
+            orch._spawner, "default_adapter_name", None
+        )
+        ws_hash = checkpoint_retry.workspace_hash(Path(worktree_path))
+        for task_id in task_ids:
+            checkpoint_retry.record_task_checkpoint(
+                sdd_dir=workdir / ".sdd",
+                task_id=task_id,
+                adapter=adapter_name or "",
+                session_id=session.id,
+                workspace_hash=ws_hash,
+                worktree_path=str(worktree_path),
+            )
+    except Exception as exc:
+        logger.warning(
+            "Could not write retry checkpoint for session %s (%s): %s: %s",
+            session.id,
+            detector,
+            type(exc).__name__,
+            exc,
+        )
+
+
 def _extract_failure_context(
     task: Task,
     workdir: Path | None,
