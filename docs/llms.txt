@@ -34,5 +34,6 @@ HMAC-signed audit trail on top.
 ## Resources
 - [GitHub Repository](https://github.com/sipyourdrink-ltd/bernstein): Source code, issues, discussions
 - [PyPI Package](https://pypi.org/project/bernstein/): pip install bernstein
+- [Hosted MCP endpoint](https://mcp.bernstein.run/mcp): Read-only, no install - verify run receipts and list presets/adapters over Streamable HTTP
 - [Blog](https://bernstein.readthedocs.io/blog/ten-agents-one-release/): Engineering articles on multi-agent orchestration patterns
 - [Author](https://alexchernysh.com): Built by Alex Chernysh ([@alex_chernysh on X](https://x.com/alex_chernysh))

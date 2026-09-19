@@ -15,6 +15,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `diff_paths.py`             | Which repository-relative paths a unified diff touches |
 | `finding_verify.py`         | FindingVerifyReceipt - lineage-attested receipts for finding verify results |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
+| `log_safe.py`               | Bound and de-fang an arbitrary value before it becomes part of a log record |
 | `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
 | `registry_guard.py`         | Shared duplicate-registration guard for the registry classes under ``bernstein`` |
