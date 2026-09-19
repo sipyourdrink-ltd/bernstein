@@ -161,6 +161,7 @@ MODULES: tuple[Module, ...] = (
         tests=(
             "tests/unit/test_config_schema.py",
             "tests/unit/test_seed_parser_mutation_kill.py",
+            "tests/unit/test_seed_team_manifest.py",
         ),
         threshold=0.70,
         budget_seconds=1200,
