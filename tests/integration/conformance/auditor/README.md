@@ -75,4 +75,5 @@ uv run python -m tests.integration.conformance.auditor.scenario --out /tmp/audit
 | `conftest.py` | session fixtures and the question bookkeeping |
 | `test_harness.py` | the instrument's own guarantees (no question numbers) |
 | `test_vectors_integrity.py` | question 17, the worked example, plus the integrity group: 15, 16, 18, 19, 20 (#5062) |
+| `test_vectors_authority.py` | the authority group: questions 3, 4, 5 and 21, plus the tests for the bundle search itself (#5059) |
 | `test_scoreboard.py` | what `n/21` means |
