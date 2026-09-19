@@ -319,6 +319,41 @@ def test_the_window_applies_to_the_roster_and_to_this_script(qc: ModuleType, ros
         assert not _evaluate(qc, roster, pr).passed, path
 
 
+# --- the backlog window (charter section 3, until 2026-10-05) ---------------
+
+
+def test_the_maintainers_approval_alone_passes_an_ordinary_change_in_the_window(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert "2026-10-05" in verdict.requirements[0].text
+
+
+def test_an_unapproved_change_in_the_window_names_the_maintainer_as_a_way_out(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert "or @owner alone" in verdict.requirements[0].who
+
+
+def test_the_window_does_not_lift_the_third_approval_on_a_large_change(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, changed_lines=401, reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_does_not_lift_the_third_approval_on_a_sensitive_path(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, paths=["src/bernstein/core/security/auth.py"], reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_closes_on_its_date(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
+    after = qc.BACKLOG_WINDOW_ENDS + timedelta(minutes=1)
+    verdict = qc.evaluate(pr, roster, OWNERS, after)
+    assert not verdict.passed
+    assert "2026-10-05" not in verdict.requirements[0].text
+
+
 # --- drafts and plumbing ----------------------------------------------------
 
 
