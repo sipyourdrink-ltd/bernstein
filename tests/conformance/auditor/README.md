@@ -5,7 +5,7 @@ answerable **from the bundle alone** by someone who never had access to
 the machine that produced it.
 
 The score is `n/21`. It is a progress instrument, not a claim: thirteen
-questions have vectors, of which five pass and eight explicitly
+questions have vectors, of which four pass and nine explicitly
 record missing evidence with strict expected failures. The other eight
 have no vector yet. This describes the committed scenario, not coverage
 of every production run.
@@ -42,7 +42,7 @@ uv run python scripts/auditor_conformance.py regenerate
 
 # Run the vectors and print the score
 uv run python scripts/auditor_conformance.py score
-#   -> auditor conformance: 5/21
+#   -> auditor conformance: 4/21
 
 # Run the whole suite, harness included
 uv run pytest tests/conformance/auditor -q
@@ -75,8 +75,9 @@ and endpoints (8, 9, 10), integrity and independence (15, 16, 18, 19,
 only passing question-marked
 vectors move the score. Questions 8 and 9 assert the recorded restricted
 file and delegated model endpoint in both receipts. Question 10 remains
-a strict expected failure for missing admission history (#5038). Questions 1 and 2 pass; 7 and 14 remain strict expected failures (no
-identity presented to the tool, no agent code/config/toolset digest). No
+a strict expected failure for missing admission history (#5038). Question 1 passes; 2, 7 and 14 remain strict expected failures (an
+action whose recorded actor is the tool rather than the invoking agent,
+no identity presented to the tool, no agent code/config/toolset digest). No
 fixture fields were added to answer these questions. A
 weak assertion that passes is worse than an honest failure: it hides
 exactly the gap this suite exists to measure.
