@@ -177,10 +177,24 @@ class Filter:
         if token.startswith("\\"):
             return cls(key=key, kind=FilterKind.EXACT, literal=token[1:])
         if token.startswith("~"):
+            expression = token[1:]
+            if not expression:
+                # An empty regex matches at every position, so `key ~` selects
+                # every node instead of narrowing to none of them. That is the
+                # dangerous direction for a selector: it is what an unset shell
+                # variable expands to (`region ~$REGION`), and the result is a
+                # reconcile lane or audit pass aimed at the whole inventory
+                # while reading as a filtered one. Refused for the same reason
+                # `{}` is refused below - a term that constrains nothing is not
+                # a term, and omitting the filter says so unambiguously.
+                raise SelectorSyntaxError(
+                    f"empty regex for key {key!r}: '~' matches every value, "
+                    f"so it narrows nothing - omit the filter to match all",
+                )
             try:
-                pattern = re.compile(token[1:])
+                pattern = re.compile(expression)
             except re.error as exc:
-                raise SelectorSyntaxError(f"invalid regex for key {key!r}: {token[1:]!r} ({exc})") from exc
+                raise SelectorSyntaxError(f"invalid regex for key {key!r}: {expression!r} ({exc})") from exc
             return cls(key=key, kind=FilterKind.REGEX, pattern=pattern)
         if token.startswith("{") and token.endswith("}"):
             members = tuple(sorted({p.strip() for p in token[1:-1].split(",") if p.strip()}))
