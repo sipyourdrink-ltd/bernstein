@@ -115,6 +115,26 @@ def test_explain_names_the_layer_a_value_came_from(project: Path) -> None:
     assert setting["path"].endswith("config.yaml")
 
 
+def test_effective_value_names_its_source_layer(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test from #5110: name the winner and retain the loser in ``chain``.
+
+    This records the required output contract. It also passes against the
+    previous per-key resolution path by design.
+    """
+    monkeypatch.setenv("BERNSTEIN_CLI", "gemini")
+
+    code, output = _explain("cli", "--project-dir", str(project), "--json")
+    assert code == 0
+    setting = json.loads(output)["settings"][0]
+    assert setting["value"] == "gemini"
+    assert setting["layer"] == "session"
+    sources = [layer["source"] for layer in setting["chain"]]
+    assert sources[0] == "session"
+    assert "project" in sources
+    project_layer = next(layer for layer in setting["chain"] if layer["source"] == "project")
+    assert project_layer["value"] == "codex"
+
+
 def test_explain_reports_the_file_each_layer_was_read_from(project: Path) -> None:
     """`config list` answers the layer question but never names the file."""
     _, output = _explain("max_agents", "--project-dir", str(project), "--json")
