@@ -223,16 +223,42 @@ def _tenant_key_dir(tenant_id: str) -> Path:
     return base / "tenants" / tenant_id
 
 
-def _tenant_kid(tenant_id: str) -> str:
-    """Return the stable ``kid`` advertised for ``tenant_id``.
+def _legacy_tenant_kid(tenant_id: str) -> str:
+    """Return the historical fixed ``kid`` for ``tenant_id``.
 
-    The default tenant keeps ``agent-bernstein-orchestrator`` so verifiers that
-    cached the single-tenant key still route by it; other tenants append their
-    id so a card and its JWKS resolve within the tenant only.
+    This names a *tenant*, not a key, which is why it can no longer be what a
+    card is signed under - see :func:`_tenant_kid`. It survives as an alias in
+    the JWKS so a verifier that cached ``agent-bernstein-orchestrator`` still
+    resolves the tenant's current key exactly as it does today.
     """
     if tenant_id == DEFAULT_TENANT_ID:
         return _DEFAULT_KID
     return f"{_DEFAULT_KID}-{tenant_id}"
+
+
+def _tenant_kid(tenant_id: str) -> str:
+    """Return the ``kid`` cards for ``tenant_id`` are signed under.
+
+    The RFC 7638 thumbprint of the tenant's current public key, which is the
+    shape :mod:`bernstein.core.identity.http_signing` already uses for its
+    own directory.
+
+    A fixed per-tenant string cannot do this job. It names the tenant, so
+    after a rotation it resolves to the *new* key while cards signed minutes
+    earlier still carry it - and a verifier that routes by ``kid``, which this
+    module's JWKS docstring says is supported, fetches the wrong key and
+    fails. The grace window rescued only verifiers that try every published
+    key, which is the fallback, not the contract.
+
+    A thumbprint is derived from the key, so it changes exactly when the key
+    changes: an in-flight card names the key that actually signed it, and the
+    archived entry published under that same thumbprint resolves it for as
+    long as the grace window holds it open.
+    """
+    from bernstein.core.identity.http_signing import install_identity_keyid
+
+    _private_pem, public_pem = _get_signing_keypair(tenant_id)
+    return install_identity_keyid(public_pem)
 
 
 def _get_keystore(tenant_id: str = DEFAULT_TENANT_ID) -> AgentCardKeystore:
@@ -667,21 +693,38 @@ def agent_json_keys(request: Request) -> dict[str, Any]:
     """Return the JWKS for verifying ``/.well-known/agent.json`` signatures.
 
     JWKS shape per RFC 7517 - ``{"keys": [<jwk>, ...]}``. The current
-    orchestrator key always appears first; during a rotation grace window
-    (24h by default) any archived public keys still inside the window are
-    appended so verifiers cached on the old ``kid`` keep validating until
+    orchestrator key always appears first, keyed by its RFC 7638 thumbprint,
+    and again under the historical fixed kid so a verifier that cached
+    ``agent-bernstein-orchestrator`` keeps resolving it. During a rotation
+    grace window (24h by default) any archived public keys still inside the
+    window are appended under *their* thumbprints, which is the kid a card
+    signed by one of them carries - so a verifier routing by kid finds the
+    key that actually signed the card it is holding, rather than whichever
+    key is current. Verifiers cached on the old JWKS keep validating until
     their HTTP cache (``Cache-Control: public, max-age=3600`` on the agent
-    card route) ages out and they refetch the fresh JWKS. The JWKS is
-    tenant-scoped: tenant A's card never verifies against tenant B's keys.
+    card route) ages out and they refetch. The JWKS is tenant-scoped: tenant
+    A's card never verifies against tenant B's keys.
     """
     tenant_id = _resolve_tenant(request)
     # Ensure both the cached PEM and the keystore binding exist before we
     # query the archive - the side-effect of ``_get_signing_keypair`` is
     # what materialises the on-disk directory on first run.
+    from bernstein.core.identity.http_signing import install_identity_keyid
+
     _private_pem, public_pem = _get_signing_keypair(tenant_id)
-    jwks: list[dict[str, str]] = [ed25519_public_jwk(public_pem, kid=_tenant_kid(tenant_id))]
+    # The historical fixed kid stays first. A verifier that cached
+    # ``agent-bernstein-orchestrator`` resolves exactly what it resolves
+    # today, and an OAuth client that takes the first match still converges
+    # on the current key - both properties this endpoint already promised.
+    jwks: list[dict[str, str]] = [ed25519_public_jwk(public_pem, kid=_legacy_tenant_kid(tenant_id))]
+    # The same key again under its thumbprint, which is what a card signed
+    # by it now carries. Same key material, second label - not a second key.
+    jwks.append(ed25519_public_jwk(public_pem, kid=install_identity_keyid(public_pem)))
     for archived in _get_keystore(tenant_id).list_archived():
-        jwks.append(ed25519_public_jwk(archived.public_pem, kid=archived.kid))
+        # Published under the thumbprint a card signed by this key carries,
+        # not under the timestamped keystore id, which nothing on the wire
+        # names. Routing by kid is the whole point of the grace window.
+        jwks.append(ed25519_public_jwk(archived.public_pem, kid=install_identity_keyid(archived.public_pem)))
     return {"keys": jwks}
 
 
