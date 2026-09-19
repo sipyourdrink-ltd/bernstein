@@ -1421,6 +1421,7 @@ class Orchestrator:
             run_id=self._run_id,
             day_key=day_key,
             knob_matrix=knob_matrix,
+            default_adapter=str(getattr(self._spawner, "default_adapter_name", None) or ""),
         )
         entries = SpendLedger.load_entries(self._spend_ledger.path)
         outcome = evaluate_run_dispatch(
