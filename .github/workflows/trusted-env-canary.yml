@@ -1,0 +1,65 @@
+name: Trusted environment canary
+
+# Purpose: prove that the `trusted` deployment environment's branch policy is
+# actually enforcing, by observing GitHub refuse a run.
+#
+# Trigger is `workflow_dispatch` only, and deliberately so. Any automatic
+# trigger -- push, schedule, pull_request -- would start a run that names the
+# `trusted` environment. If that happens before the environment has been
+# created and its deployment branch policy configured, GitHub creates the
+# environment implicitly, with no protection rules attached. The gate would
+# then exist by name and protect nothing, and every later read-back would pass
+# for the wrong reason. Keep this file dispatch-only.
+#
+# How to read the result:
+#
+#   Dispatch from a branch other than the default branch
+#     -> expected: GitHub refuses to start the job. The run appears with the
+#        job in a failed/blocked state and the message names the environment's
+#        branch policy. THAT REFUSAL IS THE PASS. It is the only direct
+#        evidence that the policy is live.
+#
+#   Dispatch from the default branch
+#     -> expected: the job runs and prints the marker below.
+#
+#   Both dispatches succeed
+#     -> the branch policy is NOT attached. Stop. Do not merge anything else
+#        that names this environment. Re-check:
+#          gh api repos/<owner>/<repo>/environments/trusted \
+#            -q '[.protection_rules[].type]'
+#        which must return ["branch_policy"], and
+#          gh api repos/<owner>/<repo>/environments/trusted/deployment-branch-policies
+#        which must list the default branch and the release tag pattern.
+#
+# This workflow reads nothing, writes nothing, and needs no credentials. It is
+# safe to leave in the repository permanently as a re-runnable check whenever
+# the environment's configuration is changed.
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  canary:
+    name: Confirm the trusted environment gate is live
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: trusted
+    permissions: {}
+    steps:
+      - name: Emit marker
+        run: |
+          set -euo pipefail
+          echo "trusted-env-canary: reached the job body"
+          echo "ref=${GITHUB_REF}"
+          echo "sha=${GITHUB_SHA}"
+          {
+            echo "### Trusted environment canary"
+            echo ""
+            echo "Reached the job body on \`${GITHUB_REF}\`."
+            echo ""
+            echo "This means the deployment branch policy admitted this ref."
+            echo "Dispatch the same workflow from a non-default branch: that run"
+            echo "must be refused before the job body is reached."
+          } >> "${GITHUB_STEP_SUMMARY}"
