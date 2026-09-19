@@ -75,6 +75,11 @@ jobs:
           - lineage_tips
           - lineage_merge
           - config_seed_parser
+          - journal_verify
+          - sandbox_eval
+          - policy_engine
+          - compliance_policies
+          - audit_pack
         # Per-module advisory flag: `true` opts the module out of the run
         # conclusion. Keep this closed and reviewed - a module doesn't
         # get to stay advisory by default (mirrors the
@@ -97,6 +102,26 @@ jobs:
             advisory: false
           - module: lineage_tips
             advisory: false
+          - module: journal_verify
+            # Registered in MODULES by #4194 (72.5% killed vs a 70%
+            # threshold, PASS) but never added to this matrix, so the
+            # weekly audit has never actually run it. Found while adding
+            # test_matrix_modules_match_registry (issue #5947); kept
+            # advisory until the next scheduled run confirms the kill
+            # rate still holds against current code.
+            advisory: true
+          - module: sandbox_eval
+            # New entry (issue #5947), no kill-rate history yet.
+            advisory: true
+          - module: policy_engine
+            # New entry (issue #5947), no kill-rate history yet.
+            advisory: true
+          - module: compliance_policies
+            # New entry (issue #5947), no kill-rate history yet.
+            advisory: true
+          - module: audit_pack
+            # New entry (issue #5947), no kill-rate history yet.
+            advisory: true
           - module: lineage_merge
             advisory: false
           - module: config_seed_parser

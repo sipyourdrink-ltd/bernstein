@@ -23,15 +23,39 @@ from pathlib import Path
 from typing import cast
 
 import yaml
+from scripts.mutmut_critical import MODULES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "mutation-fixed.yml"
 
-# Modules still below their gate threshold. Closed list, reviewed in code:
-# adding a module here without also raising its kill rate (or lowering its
-# threshold in scripts/mutmut_critical.py:MODULES with a documented reason)
-# defeats the gate the same way the blanket continue-on-error used to.
-ADVISORY_MODULES: set[str] = {"audit_log"}
+# Modules still below their gate threshold, or too new to have a kill-rate
+# history yet. Closed list, reviewed in code: adding a module here without
+# also raising its kill rate (or lowering its threshold in
+# scripts/mutmut_critical.py:MODULES with a documented reason) defeats the
+# gate the same way the blanket continue-on-error used to.
+ADVISORY_MODULES: set[str] = {
+    "audit_log",
+    "journal_verify",
+    "sandbox_eval",
+    "policy_engine",
+    "compliance_policies",
+    "audit_pack",
+}
+
+# Dedicated test files for the four security-enforcement modules (issue
+# #5947). Listed by path, not dotted import: pytest.ini_options.testpaths
+# execution needs a real filesystem path, and these modules are reachable
+# only through src/bernstein/core/__init__.py's _REDIRECT_MAP alias, so a
+# dotted-path selection would silently run against the wrong file.
+_SECURITY_MODULE_TESTS: dict[str, tuple[str, ...]] = {
+    "sandbox_eval": ("tests/unit/test_sandbox_eval.py",),
+    "policy_engine": (
+        "tests/unit/test_policy_engine.py",
+        "tests/unit/test_decision_graph.py",
+    ),
+    "compliance_policies": ("tests/unit/test_compliance_policies.py",),
+    "audit_pack": ("tests/unit/security/test_audit_pack_staged_write.py",),
+}
 
 
 def _load() -> dict[object, object]:
@@ -157,3 +181,48 @@ def test_upload_step_still_runs_after_a_failing_harness() -> None:
         "Upload module result must run with always() so a failing harness step "
         "still uploads the module's survivor JSON as an artifact"
     )
+
+
+def test_matrix_modules_match_registry() -> None:
+    """The workflow matrix and MODULES must gate the same module set.
+
+    A module registered in scripts/mutmut_critical.py but missing from the
+    matrix runs locally (or via workflow_dispatch by name) but is never
+    exercised by the weekly scheduled audit; a matrix key with no MODULES
+    entry fails at runtime with an unknown module. Registering a module is
+    supposed to be a one-step guarantee of a measured kill rate, not two
+    steps a reviewer has to notice went out of sync (issue #5947).
+    """
+    registry_keys = {m.key for m in MODULES}
+    matrix_keys = set(_matrix_modules())
+    assert registry_keys == matrix_keys, (
+        f"MODULES and the workflow matrix disagree: only in MODULES "
+        f"{registry_keys - matrix_keys}, only in the matrix {matrix_keys - registry_keys}"
+    )
+
+
+def test_security_modules_registered() -> None:
+    """The four security-enforcement modules from issue #5947 are gated.
+
+    Registered by ``tests=`` file path, not dotted import: these modules
+    are reachable only through src/bernstein/core/__init__.py's
+    _REDIRECT_MAP alias, so a dotted-path test selection would silently
+    score the wrong (or no) tests.
+    """
+    by_key = {m.key: m for m in MODULES}
+    for key, expected_tests in _SECURITY_MODULE_TESTS.items():
+        assert key in by_key, f"{key!r} is not registered in scripts/mutmut_critical.py MODULES"
+        module = by_key[key]
+        assert module.source.startswith("src/bernstein/core/security/"), (
+            f"{key!r} source {module.source!r} is not under core/security/"
+        )
+        assert set(module.tests) == set(expected_tests), f"{key!r} tests={module.tests!r}, expected {expected_tests!r}"
+        for test_path in module.tests:
+            assert (REPO_ROOT / test_path).is_file(), f"{key!r} lists a test path that does not exist: {test_path}"
+
+    reachability_scan = "tests/unit/test_compliance_module_reachability.py"
+    for key, module in by_key.items():
+        assert reachability_scan not in module.tests, (
+            f"{key!r} lists {reachability_scan}, which is a static ast scan that "
+            "never imports or executes the module and cannot kill a mutant"
+        )

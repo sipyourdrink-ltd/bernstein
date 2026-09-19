@@ -182,6 +182,75 @@ MODULES: tuple[Module, ...] = (
         max_candidates=120,
         note="Replay journal verifier (issue #3654): verify_journal / verify_events.",
     ),
+    Module(
+        key="sandbox_eval",
+        source="src/bernstein/core/security/sandbox_eval.py",
+        tests=("tests/unit/test_sandbox_eval.py",),
+        threshold=0.70,
+        # Measured: 74 candidates at ~11.5s/mutant (pytest startup dominates
+        # a 25-test suite), so a naive baseline*10 heuristic (150s) covered
+        # only 13 before timing out. 1000s clears all 74 with margin.
+        budget_seconds=1000,
+        max_candidates=80,
+        note=(
+            "Sandbox manager (issue #5947). 22/74 killed (29.7%) on the first "
+            "measured run, well under the 70% threshold; survivors are mostly "
+            "module-level budget/timeout constants and preset dict literals "
+            "the tests never assert on. Advisory until backfilled."
+        ),
+    ),
+    Module(
+        key="policy_engine",
+        source="src/bernstein/core/security/policy_engine.py",
+        tests=(
+            "tests/unit/test_policy_engine.py",
+            "tests/unit/test_decision_graph.py",
+        ),
+        threshold=0.70,
+        # Measured: 94 real candidates, capped to max_candidates=80, at
+        # ~8s/mutant; 800s clears the full capped set with margin.
+        budget_seconds=800,
+        max_candidates=80,
+        # test_arch_conformance.py also imports this module (DecisionType),
+        # but only as an incidental enum reference for an unrelated diff
+        # parser; it exercises none of policy_engine's decision-graph/OPA
+        # logic, so adding it here would cost ~9s of baseline time for no
+        # real kill-rate signal. Left out (issue #5947 discussion).
+        note=(
+            "Decision graph + OPA bridge (issue #5947). 27/80 killed (33.8%) "
+            "on the first measured run, well under the 70% threshold. "
+            "Advisory until backfilled."
+        ),
+    ),
+    Module(
+        key="compliance_policies",
+        source="src/bernstein/core/security/compliance_policies.py",
+        tests=("tests/unit/test_compliance_policies.py",),
+        threshold=0.70,
+        # Measured: 138 real candidates, capped to max_candidates=80, at
+        # ~10s/mutant; 1000s clears the full capped set with margin.
+        budget_seconds=1000,
+        max_candidates=80,
+        note=(
+            "Compliance presets (issue #5947). 3/80 killed (3.75%) on the "
+            "first measured run, the widest gap of the four new modules. "
+            "Advisory until backfilled."
+        ),
+    ),
+    Module(
+        key="audit_pack",
+        source="src/bernstein/core/security/audit_pack.py",
+        tests=("tests/unit/security/test_audit_pack_staged_write.py",),
+        threshold=0.70,
+        # Measured: 67 candidates at ~7.7s/mutant; 700s clears all of them
+        # with margin.
+        budget_seconds=700,
+        max_candidates=80,
+        note=(
+            "Evidence pack export (issue #5947). 3/67 killed (4.5%) on the "
+            "first measured run. Advisory until backfilled."
+        ),
+    ),
 )
 
 # (search, replace) pairs applied one-at-a-time per line. Mirrors the
