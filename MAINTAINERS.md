@@ -24,8 +24,8 @@ disagree the TOML wins. How the count works is in
 | Role | Who | What it means on a pull request |
 |---|---|---|
 | Maintainer | [@chernistry](https://github.com/chernistry) | Own changes merge without approvals; approves protected paths and changes over 1,000 lines |
-| Core reviewers | [@vaibhav8a](https://github.com/vaibhav8a), [@thegoodengineer](https://github.com/thegoodengineer), [@tenequm](https://github.com/tenequm), [@Phoenix1504e](https://github.com/Phoenix1504e), [@Chirag6722](https://github.com/Chirag6722) | At least one of the two approvals a contributor's change needs comes from here |
-| Committers | [@Silentpartnercoding](https://github.com/Silentpartnercoding) | Approvals count toward the two; a standing "changes requested" blocks a merge, the maintainer's own included |
+| Core reviewers | [@vaibhav8a](https://github.com/vaibhav8a), [@thegoodengineer](https://github.com/thegoodengineer), [@tenequm](https://github.com/tenequm), [@Phoenix1504e](https://github.com/Phoenix1504e) | At least one of the two approvals a contributor's change needs comes from here |
+| Committers | [@Chirag6722](https://github.com/Chirag6722), [@Silentpartnercoding](https://github.com/Silentpartnercoding) | Approvals count toward the two; a standing "changes requested" blocks a merge, the maintainer's own included |
 | Automation | `bernstein-the-conductor[bot]`, `renovate[bot]`, `dependabot[bot]` | Own changes merge on green CI, except on sensitive paths, where the maintainer approves |
 
 A change to the roster is a pull request against the TOML file, following

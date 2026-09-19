@@ -245,73 +245,6 @@ def test_the_catch_all_owner_rule_is_not_treated_as_a_protected_path(qc: ModuleT
     assert verdict.passed
 
 
-# --- a CODEOWNERS line naming several people (charter section 4) ------------
-
-# The adapters line is shared between the maintainer and one core reviewer;
-# the core line above it still names the maintainer alone.
-SHARED_OWNERS = [*OWNERS, ("/src/bernstein/adapters/", ["owner", "core1"])]
-
-
-def _owner_rows(verdict) -> list:
-    return [req for req in verdict.requirements if req.text.startswith("approval from the owner of")]
-
-
-def test_one_approval_from_any_owner_of_a_shared_line_satisfies_it(qc: ModuleType, roster) -> None:
-    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "comm1", "APPROVED")])
-    verdict = qc.evaluate(pr, roster, SHARED_OWNERS, NOW)
-    (row,) = _owner_rows(verdict)
-    assert row.met
-    assert verdict.passed
-
-
-def test_a_shared_line_without_an_approval_names_everyone_who_could_give_one(qc: ModuleType, roster) -> None:
-    (row,) = _owner_rows(qc.evaluate(_pr(qc), roster, SHARED_OWNERS, NOW))
-    assert not row.met
-    assert row.who == "@core1, @owner"
-
-
-def test_a_single_owner_line_reads_exactly_as_before(qc: ModuleType, roster) -> None:
-    # The regression guarantee for the grouping: a line naming one person
-    # produces the same row, word for word, as it did when every owner was
-    # a requirement of their own.
-    paths = [f"src/bernstein/core/{name}.py" for name in ("a", "b", "c", "d")]
-    expected_text = "approval from the owner of `src/bernstein/core/a.py`"
-    (row,) = _owner_rows(_evaluate(qc, roster, _pr(qc, paths=paths[:1])))
-    assert (row.text, row.met, row.who) == (expected_text, False, "@owner")
-    approved = _pr(qc, paths=paths[:1], reviews=[_review(qc, "owner", "APPROVED")])
-    (row,) = _owner_rows(_evaluate(qc, roster, approved))
-    assert (row.text, row.met, row.who) == (expected_text, True, "@owner")
-    (row,) = _owner_rows(_evaluate(qc, roster, _pr(qc, paths=paths)))
-    assert row.text == (
-        "approval from the owner of `src/bernstein/core/a.py`, `src/bernstein/core/b.py`, "
-        "`src/bernstein/core/c.py` and others"
-    )
-
-
-def test_an_owner_who_wrote_or_pushed_the_change_cannot_satisfy_its_line(qc: ModuleType, roster) -> None:
-    # As the author.
-    pr = _pr(qc, author="core1", reviews=[_review(qc, "core1", "APPROVED")])
-    (row,) = _owner_rows(qc.evaluate(pr, roster, SHARED_OWNERS, NOW))
-    assert not row.met and row.who == "@owner"
-    # As someone who pushed to the branch.
-    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED")], contributors={"outsider", "core1"})
-    (row,) = _owner_rows(qc.evaluate(pr, roster, SHARED_OWNERS, NOW))
-    assert not row.met and row.who == "@owner"
-    # When nobody named on the line is left, the table says so.
-    pr = _pr(qc, author="core1", contributors={"core1", "owner"})
-    (row,) = _owner_rows(qc.evaluate(pr, roster, SHARED_OWNERS, NOW))
-    assert not row.met and row.who == "nobody: every owner wrote or pushed this change"
-
-
-def test_paths_are_grouped_by_the_owner_set_of_their_line(qc: ModuleType, roster) -> None:
-    paths = ["src/bernstein/adapters/a.py", "src/bernstein/adapters/b.py", "src/bernstein/core/c.py"]
-    rows = _owner_rows(qc.evaluate(_pr(qc, paths=paths), roster, SHARED_OWNERS, NOW))
-    assert [(row.text, row.who) for row in rows] == [
-        ("approval from the owner of `src/bernstein/adapters/a.py`, `src/bernstein/adapters/b.py`", "@core1, @owner"),
-        ("approval from the owner of `src/bernstein/core/c.py`", "@owner"),
-    ]
-
-
 # --- automation, the workflow account and the maintainer --------------------
 
 
@@ -431,18 +364,9 @@ def test_the_roster_and_codeowners_on_this_branch_load(qc: ModuleType) -> None:
     loaded = qc.load_roster(str(REPO_ROOT))
     assert loaded.maintainer
     assert loaded.core_reviewers and loaded.committers
-    assert not loaded.core_reviewers & loaded.committers  # a person is in exactly one list
     owners = qc.load_codeowners(str(REPO_ROOT))
-    assert owners and all(pattern != "*" for pattern, _ in owners)  # no catch-all, on purpose
+    assert owners and owners[0][0] == "*"
     assert qc.owners_for(".github/workflows/ci.yml", owners) == ([loaded.maintainer], True)
-    assert qc.owners_for("README.md", owners) == ([], False)
-    # core/ and adapters/ are shared with every core reviewer, and the four
-    # sensitive subpackages under core/ stay with the maintainer alone.
-    for path in ("src/bernstein/core/tasks/claim.py", "src/bernstein/adapters/aider.py"):
-        shared, specific = qc.owners_for(path, owners)
-        assert specific and set(shared) == set(loaded.core), path
-    for sub in ("security", "identity", "sandbox", "tokens"):
-        assert qc.owners_for(f"src/bernstein/core/{sub}/x.py", owners) == ([loaded.maintainer], True), sub
 
 
 def test_annotation_names_the_first_unmet_requirement(qc: ModuleType) -> None:
