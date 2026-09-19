@@ -531,9 +531,23 @@ class TestFileUpgradeExecutor:
         backup_file.write_text("backup content")
         executor._backup_files["test.yaml"] = backup_file
 
-        result = executor.rollback_upgrade(MagicMock())
+        proposal = UpgradeProposal(
+            id="UPG-rollback",
+            title="Rollback test",
+            category=UpgradeCategory.POLICY_UPDATE,
+            description="Test",
+            current_state="Current",
+            proposed_change="Change",
+            benefits=["Benefit"],
+            risk_assessment=RiskAssessment(),
+            rollback_plan=MagicMock(),
+            cost_estimate_usd=0.0,
+            expected_improvement="Improvement",
+            confidence=0.9,
+        )
+        result = executor.rollback_upgrade(proposal)
 
-        # Backup should be restored (or at least attempted)
+        # Backup should be restored and a rolled_back entry written to history
         assert result is True
 
 

@@ -273,15 +273,15 @@ def test_classify_risk_route_medium_risk() -> None:
 
 
 def test_classify_risk_route_low_risk() -> None:
-    """composite_risk <= 0.3 → fast_track."""
-    assert EvolutionLoop._classify_risk_route(0.0) == "fast_track"
-    assert EvolutionLoop._classify_risk_route(0.15) == "fast_track"
-    assert EvolutionLoop._classify_risk_route(0.29) == "fast_track"
-    assert EvolutionLoop._classify_risk_route(0.3) == "fast_track"  # boundary: not > 0.3
+    """composite_risk <= 0.3 → standard (fast_track route was removed in #5407)."""
+    assert EvolutionLoop._classify_risk_route(0.0) == "standard"
+    assert EvolutionLoop._classify_risk_route(0.15) == "standard"
+    assert EvolutionLoop._classify_risk_route(0.29) == "standard"
+    assert EvolutionLoop._classify_risk_route(0.3) == "standard"  # boundary: not > 0.3
 
 
-def test_fast_track_skips_sandbox(tmp_path: Path) -> None:
-    """Proposals with composite_risk < 0.3 bypass sandbox validation."""
+def test_low_risk_still_sandbox_validated(tmp_path: Path) -> None:
+    """Low-risk proposals (composite_risk < 0.3) still run sandbox validation (#5407)."""
     loop = _make_loop(tmp_path)
     proposal = _make_proposal()  # default: no affected_components, short change → low risk
 
@@ -312,7 +312,7 @@ def test_fast_track_skips_sandbox(tmp_path: Path) -> None:
         result = loop.run_cycle()
 
     assert result is not None
-    assert sandbox_called == [], "Sandbox should not be called for fast_track proposals"
+    assert sandbox_called == [True], "Sandbox must be called for low-risk proposals after #5407"
 
 
 def test_sandbox_verify_route_calls_sandbox(tmp_path: Path) -> None:
