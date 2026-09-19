@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.orchestration.steering import (
     InvalidSteeringCommand,
     SteeringCommand,
@@ -182,9 +183,9 @@ async def post_task_steer(task_id: str, body: TaskSteerPost, request: Request) -
     )
     logger.info(
         "task.steer recorded: task_id=%s kind=%s principal=%s scope=%s seq=%d",
-        sanitize_log(task_id),
+        for_log(task_id),
         sanitize_log(command.kind),
-        sanitize_log(principal),
+        for_log(principal),
         sanitize_log(scope),
         outcome.message.seq,
     )
