@@ -1,0 +1,20 @@
+{
+  "id": "benign-01-unrelated",
+  "type": "benign",
+  "invariant": null,
+  "description": "Two unrelated tasks touching different files",
+  "task_a": {
+    "id": "task-a",
+    "writes": {
+      "src/utils.py": "def add(a, b):\n    return a + b\n"
+    },
+    "reads": []
+  },
+  "task_b": {
+    "id": "task-b",
+    "writes": {
+      "docs/readme.md": "# Updated documentation\n"
+    },
+    "reads": []
+  }
+}

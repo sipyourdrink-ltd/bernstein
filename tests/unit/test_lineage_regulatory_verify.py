@@ -35,7 +35,6 @@ import hashlib
 import io
 import json
 import re
-import resource
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -44,6 +43,8 @@ import pytest
 from click.testing import CliRunner
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+resource = pytest.importorskip("resource")
 
 from bernstein.cli.commands.lineage_export_cmd import (
     _record_row,
