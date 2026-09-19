@@ -459,6 +459,8 @@ artifacts = [
     # firewall loads them at startup to validate every incoming MCP tool
     # call. Loader: bernstein.mcp.input_validation.load_registry.
     "src/bernstein/mcp/tool_schemas/*.json",
+    # OSCAL v1.1.0 assessment-results schema for compliance exports.
+    "src/bernstein/compliance/oscal_schema/*.json",
     # Doctor doc-suggestion seed list. Curated list of common documentation
     # gaps surfaced by `bernstein doctor --suggest-docs`. Operator refreshes
     # it on each release. Loader:
