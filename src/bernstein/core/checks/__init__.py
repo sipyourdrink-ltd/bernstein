@@ -12,6 +12,12 @@ from bernstein.core.checks.contract import (
     Finding,
     Verdict,
 )
+from bernstein.core.checks.formatters import (
+    compute_audit_exit_code,
+    findings_to_json,
+    findings_to_sarif,
+    verdict_to_kind,
+)
 from bernstein.core.checks.registry import (
     CheckRegistry,
     clear,
@@ -31,9 +37,13 @@ __all__ = [
     "Finding",
     "Verdict",
     "clear",
+    "compute_audit_exit_code",
+    "findings_to_json",
+    "findings_to_sarif",
     "get_check",
     "iter_checks",
     "register",
     "run_all",
     "unregister",
+    "verdict_to_kind",
 ]
