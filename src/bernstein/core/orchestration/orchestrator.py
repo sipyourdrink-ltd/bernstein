@@ -347,6 +347,29 @@ _complete_task = complete_task
 _parse_backlog_file = parse_backlog_file
 
 
+def has_terminal_task(tasks_by_status: Mapping[str, list[Task]]) -> bool:
+    """Has any task in this run actually reached a terminal state?
+
+    Step-8b quiescence self-stops only once the answer is yes. The guard exists
+    because a brand-new or empty backlog also reads ``open=0 agents=0`` on tick
+    #1 -- a server that has not ingested its seed task, or a harness driving
+    ``tick()`` against an empty transport -- and self-stopping there would end
+    the orchestrator before it ever did anything.
+
+    ``closed`` counts, and its absence is what #5968 reports. A verified task is
+    archived out of ``done`` into ``closed``, so on a run whose tasks all
+    completed and were archived this answered "nothing has run" on every tick:
+    quiescence logged ``done 0->0, failed 0->0``, the self-stop was never
+    reached, and neither ``run_completed`` nor ``run_quiescence`` was ever
+    journalled. A finished run with no ending.
+
+    ``.get`` for ``closed`` so a caller passing a narrower status list -- the
+    parameter ``fetch_all_tasks`` still honours -- gets a false rather than a
+    KeyError.
+    """
+    return bool(tasks_by_status["done"] or tasks_by_status["failed"] or tasks_by_status.get("closed"))
+
+
 class ShutdownInProgress(RuntimeError):
     """Raised when a spawn is attempted after shutdown has started."""
 
@@ -2486,7 +2509,7 @@ class Orchestrator:
             # harness driving tick() directly against an empty transport).
             # Self-stopping in that case would end the orchestrator before
             # it ever does anything.
-            _had_any_terminal_task = bool(refreshed_tasks_by_status["done"] or refreshed_tasks_by_status["failed"])
+            _had_any_terminal_task = has_terminal_task(refreshed_tasks_by_status)
             if not _had_any_terminal_task:
                 logger.debug(
                     "8b quiescence (tick #%d) with zero terminal tasks - not eligible "
