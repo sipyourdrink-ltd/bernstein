@@ -44,7 +44,7 @@ def _load_schema() -> dict[str, Any]:
             return json.loads(schema_path.read_text(encoding="utf-8"))
         raise FileNotFoundError(
             "OSCAL assessment-results schema not found in package data or source tree"
-        )
+        ) from None
 
 
 # Cached schema for validation
@@ -127,10 +127,10 @@ def build_oscal_assessment_results(
         OSCAL assessment-results document as a dict.
     """
     from bernstein.compliance.evidence_pack import (
-        _read_audit_events,
-        _read_lineage_entries,
-        _read_cost_snapshots,
         _matches_task,
+        _read_audit_events,
+        _read_cost_snapshots,
+        _read_lineage_entries,
     )
 
     audit_dir = sdd_dir / "audit"
@@ -212,10 +212,26 @@ def build_oscal_assessment_results(
                     ],
                     "subject-uuids": [result_uuid],
                     "props": [
-                        {"name": "event_type", "ns": "https://bernstein.run/oscal", "value": str(ev.get("event_type", ""))},
-                        {"name": "outcome", "ns": "https://bernstein.run/oscal", "value": str(ev.get("outcome", ""))},
-                        {"name": "actor", "ns": "https://bernstein.run/oscal", "value": str(ev.get("actor", ""))},
-                        {"name": "resource_id", "ns": "https://bernstein.run/oscal", "value": str(ev.get("resource_id", ""))},
+                        {
+                            "name": "event_type",
+                            "ns": "https://bernstein.run/oscal",
+                            "value": str(ev.get("event_type", "")),
+                        },
+                        {
+                            "name": "outcome",
+                            "ns": "https://bernstein.run/oscal",
+                            "value": str(ev.get("outcome", "")),
+                        },
+                        {
+                            "name": "actor",
+                            "ns": "https://bernstein.run/oscal",
+                            "value": str(ev.get("actor", "")),
+                        },
+                        {
+                            "name": "resource_id",
+                            "ns": "https://bernstein.run/oscal",
+                            "value": str(ev.get("resource_id", "")),
+                        },
                     ],
                     "remarks": f"HMAC: {ev.get('hmac', 'n/a')[:16]}...",
                 }
@@ -243,8 +259,18 @@ def build_oscal_assessment_results(
                         ],
                         "subject-uuids": [result_uuid],
                         "props": [
-                            {"name": "content_hash", "ns": "https://bernstein.run/oscal", "value": str(le.get("content_hash", ""))},
-                            {"name": "parent_hashes", "ns": "https://bernstein.run/oscal", "value": ",".join(str(h) for h in le.get("parent_hashes", []))},
+                            {
+                                "name": "content_hash",
+                                "ns": "https://bernstein.run/oscal",
+                                "value": str(le.get("content_hash", "")),
+                            },
+                            {
+                                "name": "parent_hashes",
+                                "ns": "https://bernstein.run/oscal",
+                                "value": ",".join(
+                                    str(h) for h in le.get("parent_hashes", [])
+                                ),
+                            },
                         ],
                         "remarks": "Sigstore-style transparency log entry",
                     }
