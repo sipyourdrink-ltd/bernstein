@@ -37,6 +37,7 @@ import unicodedata
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from bernstein.core.datasources.errors import DataSourceError, ReceiptNotFound
 from bernstein.core.datasources.result import NormalizedResult, canonical_bytes, content_hash
@@ -67,6 +68,26 @@ def _sha256_hex(data: bytes) -> str:
 
 def _stem(hash_str: str) -> str:
     return hash_str.split(":", 1)[1] if ":" in hash_str else hash_str
+
+
+def _safe_identity_dirname(agent_id: str) -> str:
+    """Return a filesystem-safe directory name for *agent_id*.
+
+    Real agent ids in this codebase carry a colon (``agent:datasource-1``,
+    ``agent:claude-worker-3``), and ``:`` is not a legal path component on
+    Windows -- a store using the raw id as a directory name never persists
+    its first card there (issue #5859). Percent-encoding every character
+    outside the URI "unreserved" set (``quote(..., safe="")``) keeps the
+    mapping reversible and collision-free, unlike replacing illegal
+    characters with a single placeholder, which can map two distinct ids to
+    the same directory.
+
+    The directory name is never trusted as identity either way -- the
+    card's own ``agent_id``/``kid`` body fields are authoritative (see
+    :meth:`QueryReceiptStore._load_card`), the same rule
+    ``core.lineage.gate._load_cards`` states for its own on-disk layout.
+    """
+    return quote(agent_id, safe="")
 
 
 def hash_query_text(sql: str) -> str:
@@ -284,6 +305,11 @@ class QueryReceiptStore:
         binding = compute_binding(core)
 
         artefact_path = _artefact_path(connection.id, qhash, phash)
+        # Persist the public agent card before sealing the lineage entry: a
+        # card-write failure (issue #5859) must not leave an orphaned,
+        # unverifiable lineage entry behind it. Idempotent -- the same card
+        # is written on every call.
+        self._persist_card()
         # ``span_id`` is deliberately repurposed here: instead of an OTel span
         # context, it carries the receipt-core ``binding`` digest so the binding
         # is signed and HMAC'd along with the rest of the entry. ``seal_write``
@@ -336,8 +362,6 @@ class QueryReceiptStore:
             encoding="utf-8",
         )
         self._append_audit(receipt)
-        # Persist the public agent card so an offline verifier has the key.
-        self._persist_card()
         return receipt
 
     def _append_audit(self, receipt: QueryReceipt) -> None:
@@ -360,7 +384,7 @@ class QueryReceiptStore:
     def _persist_card(self) -> None:
         identity_dir = self.root / "identity"
         identity_dir.mkdir(parents=True, exist_ok=True)
-        card_dir = identity_dir / self._card.agent_id
+        card_dir = identity_dir / _safe_identity_dirname(self._card.agent_id)
         card_dir.mkdir(parents=True, exist_ok=True)
         (card_dir / "card.json").write_text(
             json.dumps(
@@ -472,9 +496,16 @@ class QueryReceiptStore:
         return VerifyOutcome(ok=not failures, receipt_id=receipt.receipt_id, checks=checks, failures=failures)
 
     def _load_card(self, agent_id: str, kid: str) -> AgentCard | None:
-        card_path = self.root / "identity" / agent_id / "card.json"
+        card_path = self.root / "identity" / _safe_identity_dirname(agent_id) / "card.json"
         if not card_path.exists():
-            return None
+            # Compatibility: POSIX stores created before #5859 wrote the raw
+            # agent_id as the directory name (e.g. ``identity/agent:foo/``).
+            # Fall back to that path read-only — never write or migrate it.
+            legacy_path = self.root / "identity" / agent_id / "card.json"
+            if legacy_path.exists():
+                card_path = legacy_path
+            else:
+                return None
         try:
             data = json.loads(card_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

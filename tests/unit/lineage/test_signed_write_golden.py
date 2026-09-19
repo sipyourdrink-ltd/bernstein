@@ -157,7 +157,7 @@ _GOLDEN_RECEIPT_AUDIT_JSONL = '{"connection_id": "sales", "content_hash": "sha25
 _GOLDEN_RECEIPT_JWS = "eyJhbGciOiJFZERTQSIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il0sImtpZCI6ImdvbGRlbi1raWQtMSJ9..YSXmB-VWEvGYY4veBn_pyzkta6kEW6_uOIH1sd5ZLxaQCVvAvm5296TxYu6gzsVWSbVnn02rAkgR7pdgjXY7Bg"
 
 _GOLDEN_RECEIPT_TREE_SHA256 = {
-    "identity/agent:golden/card.json": "600909af55c532baf2f58863ecefac3fc6cc42e3aac7a7799d53d533c0dab738",
+    "identity/agent%3Agolden/card.json": "600909af55c532baf2f58863ecefac3fc6cc42e3aac7a7799d53d533c0dab738",
     "lineage/by-artefact/72/72725e594c28d45e66e3d702d69da6f2d24541e913ecb5515481d95df844452e.jsonl": "b402ea31850cfe166a0ac03b858929c7da6d97361c3df3a1944248da03d65dba",
     "lineage/log.jsonl": "b402ea31850cfe166a0ac03b858929c7da6d97361c3df3a1944248da03d65dba",
     "lineage/signatures/72/72725e594c28d45e66e3d702d69da6f2d24541e913ecb5515481d95df844452e/9b28e9c35d2b102b4915b09dc613a764f21a6985c648bd41107e878b453b5e45.jws": "1f7bb73e776c1e132e5e4153319e1336a6430e743ac0c34e49482c9a6acffc9e",
