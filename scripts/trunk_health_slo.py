@@ -1,4 +1,4 @@
-"""Compute the main-branch red-rate for the Trunk Health SLO gate.
+"""Compute the main-branch full-suite red-rate for the Trunk Health SLO gate.
 
 Ports the inline shell logic from `.github/workflows/trunk-health-slo.yml`
 into a testable Python script. Fixes the population sampling by querying
@@ -36,7 +36,7 @@ _HTTP_TIMEOUT_S = 30
 
 
 def fetch_ci_runs(repo: str, token: str, since: datetime) -> list[dict]:
-    """Fetch CI workflow runs on main since the given timestamp."""
+    """Fetch cadenced full-suite CI runs on main since the given timestamp."""
     since_iso = since.strftime("%Y-%m-%dT%H:%M:%SZ")
     runs: list[dict] = []
     page = 1
@@ -45,6 +45,7 @@ def fetch_ci_runs(repo: str, token: str, since: datetime) -> list[dict]:
         # Use the API's created parameter to avoid truncating the time window
         params = {
             "branch": "main",
+            "event": "workflow_dispatch",
             "per_page": "100",
             "created": f">={since_iso}",
             "page": str(page),

@@ -2,8 +2,8 @@ name: Coverage ratchet (total)
 
 # LEVEL 2 of the coverage ratchet - total-coverage monotonic gate.
 #
-# The CI coverage shard already produces a Cobertura coverage.xml on every
-# push to main and uploads it as the `coverage-report` artifact. This
+# The cadenced full CI run (and immediate release pushes) produces a Cobertura
+# coverage.xml for main and uploads it as the `coverage-report` artifact. This
 # workflow consumes that *same* artifact (no parallel coverage system) and
 # runs scripts/coverage_ratchet.py check:
 #
@@ -49,12 +49,10 @@ name: Coverage ratchet (total)
 # commit without moving the trigger would leave the ratchet correct and
 # permanently idle.
 #
-# `types: [completed]` fires on every conclusion, cancelled included.
-# That matters here: ci.yml's cancel-in-progress concurrency cancels most
-# main runs, so filtering on `conclusion == success` would almost never
-# fire - the reason the original implementation avoided `workflow_run`
-# altogether. Not filtering on conclusion keeps the fallback while the
-# event still hands us an exact `head_sha` and run id.
+# `types: [completed]` fires on every conclusion, cancelled included. Keeping
+# the trigger conclusion-agnostic lets an operator-cancelled full run fall
+# through to the same-SHA fallback while the event still supplies the exact
+# `head_sha` and run id.
 #
 # Keeping the baseline-write here (not in ci.yml) means ci.yml's gate jobs
 # never need `contents: write`.
@@ -74,9 +72,9 @@ name: Coverage ratchet (total)
 # safe is the job-level guard below, not the `branches:` filter: a fork's
 # branch can also be called `main`, so that filter alone is not a trust
 # boundary. The guard requires the triggering run to come from THIS
-# repository and from a `push` event, so the checked-out commit is
-# always one that already reached our default branch through the merge
-# queue. There is no reachable path here that builds fork-authored code.
+# repository and from either a main `push` or `workflow_dispatch`, so the
+# checked-out commit is always from our repository's main-branch CI surface.
+# There is no reachable path here that builds fork-authored code.
 on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["CI"]
@@ -103,15 +101,16 @@ jobs:
     # `branches: [main]` in the trigger does not establish one: a fork's
     # own branch may be named `main` too, and a fork PR's CI run carries
     # that name. Requiring the triggering run to belong to THIS repository
-    # and to be a `push` narrows the checked-out commit to one that is
-    # already on our default branch, having passed the merge queue.
+    # and to be a main `push` or `workflow_dispatch` narrows the checked-out
+    # commit to our repository's trusted CI entrypoints.
     #
     # The third skips the merge of a baseline-bump PR this workflow opened
     # (avoids a self-retrigger loop on its own change). On workflow_run the
     # commit lives under the triggering run, not the top-level event.
     if: >-
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.event == 'push' ||
+       github.event.workflow_run.event == 'workflow_dispatch') &&
       !contains(github.event.workflow_run.head_commit.message, 'ratchet coverage baseline')
     permissions:
       contents: write  # create the bump branch
@@ -160,13 +159,10 @@ jobs:
           #   1. the triggering run itself - the ordinary case, and the
           #      one whose id and head_sha the event handed us directly.
           #   2. any *other* completed run for the same commit - the
-          #      deliberate fallback. ci.yml's cancel-in-progress
-          #      concurrency means the triggering run may have been
-          #      cancelled before the coverage shard uploaded; a re-run or
-          #      a superseded attempt on the same commit can still carry a
-          #      usable report. Conclusion is not filtered in either pass,
-          #      because insisting on `success` would idle the ratchet
-          #      almost permanently under that same concurrency.
+          #      deliberate fallback. A manually cancelled full run may have
+          #      stopped before the coverage shard uploaded; a re-run on the
+          #      same commit can still carry a usable report. Conclusion is
+          #      not filtered in either pass.
           #
           # Neither pass can reach a run for a different commit, so the
           # worst case is a *partial* report for the right commit. A
