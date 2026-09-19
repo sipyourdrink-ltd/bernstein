@@ -2518,6 +2518,10 @@ def claim_and_spawn_batches(
             for task in quarantined_tasks:
                 entry = orch._quarantine.get_entry(task.title)
                 action = entry.action if entry else "skip"
+                reason = (
+                    f"Quarantined after {entry.fail_count if entry else 0} failures: "
+                    f"{entry.action if entry else 'skip'}"
+                )
                 logger.warning(
                     "Skipping quarantined task %s (title=%r, fail_count=%d, action=%s)",
                     task.id,
@@ -2533,6 +2537,14 @@ def claim_and_spawn_batches(
                         decomposed_task_ids=orch._decomposed_task_ids,
                         workdir=orch._workdir,
                     )
+                else:
+                    with contextlib.suppress(Exception):
+                        fail_task(
+                            orch._client,
+                            base,
+                            task.id,
+                            reason,
+                        )
             continue
 
         # Pre-flight: auto-decompose large tasks before claiming.
