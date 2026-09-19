@@ -23,6 +23,8 @@ import threading
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
 
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
+
 if TYPE_CHECKING:
     from bernstein.core.sandbox.backend import SandboxBackend
 
@@ -41,6 +43,7 @@ class _Registry:
     def __init__(self) -> None:
         self._backends: dict[str, SandboxBackend] = {}
         self._factories: dict[str, type[SandboxBackend]] = {}
+        self._guard = DuplicateGuard("sandbox backend")
         self._lock = threading.RLock()
         self._builtins_loaded = False
         self._entrypoints_loaded = False
@@ -66,8 +69,10 @@ class _Registry:
         if not normalized:
             raise ValueError("Sandbox backend name must be non-empty")
         with self._lock:
-            if normalized in self._backends or normalized in self._factories:
-                raise ValueError(f"Duplicate sandbox backend: {normalized!r}")
+            module_name = caller_module_name()
+            if module_name == __name__:
+                module_name = caller_module_name(depth=2)
+            self._guard.register(normalized, module_name)
             if inspect.isclass(backend):
                 self._factories[normalized] = backend
             else:
@@ -81,6 +86,7 @@ class _Registry:
         with self._lock:
             self._backends.pop(name, None)
             self._factories.pop(name, None)
+            self._guard.forget(name)
 
     def get(self, name: str) -> SandboxBackend:
         """Return the backend registered under *name*.
@@ -167,6 +173,7 @@ class _Registry:
         for name, cls in builtins:
             if name in self._all_names():
                 continue
+            self._guard.register(name, cls.__module__)
             self._factories[name] = cls
 
     def _load_entrypoints(self) -> None:
@@ -185,6 +192,8 @@ class _Registry:
             except Exception as exc:
                 logger.warning("Failed to load sandbox backend entry-point %r: %s", name, exc)
                 continue
+            module_name = str(getattr(loaded, "__module__", None) or getattr(ep, "value", "<entrypoint>"))
+            self._guard.register(name, module_name)
             if inspect.isclass(loaded):
                 self._factories[name] = loaded  # type: ignore[assignment]  # dynamic registry
             else:
