@@ -13,7 +13,6 @@ Tests verify:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,9 +22,6 @@ from bernstein.core.checks.adapters import (
 )
 from bernstein.core.checks.contract import Evidence, Finding, Verdict
 from bernstein.core.checks.registry import CheckRegistry
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class _DummyCheck:

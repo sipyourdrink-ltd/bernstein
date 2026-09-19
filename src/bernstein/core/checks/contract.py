@@ -10,12 +10,13 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from bernstein.core.evidence.bundle import _canonical_bytes
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Any
 
 
 # ---------------------------------------------------------------------------
