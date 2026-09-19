@@ -390,6 +390,66 @@ jobs:
           echo "macos_sensitive=$macos_sensitive"      | tee -a "$GITHUB_OUTPUT"
           echo "rpm_relevant_changed=$rpm_relevant_changed" | tee -a "$GITHUB_OUTPUT"
 
+  plan-affected-tests:
+    name: Plan affected tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      affected_count: ${{ steps.plan.outputs.affected_count }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/bootstrap
+        if: github.event_name == 'pull_request'
+        with:
+          python-version: "3.13"
+      - name: Fetch base commit for impacted-test selection
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin \
+            "${BASE_SHA}:refs/remotes/origin/pr-base"
+      - id: plan
+        name: Compute affected-test plan
+        if: github.event_name == 'pull_request'
+        run: |
+          uv run python scripts/plan_affected_tests.py plan \
+            --base refs/remotes/origin/pr-base \
+            --output affected-test-plan.json
+          echo "affected_count=$(jq '.affected | length' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$(jq -r '.base_sha' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(jq -r '.head_sha' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
+      - name: Nothing affected
+        if: github.event_name == 'pull_request' && steps.plan.outputs.affected_count == '0'
+        env:
+          BASE_SHA: ${{ steps.plan.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+        run: |
+          echo "No tests affected. Compared ${BASE_SHA}...${HEAD_SHA}."
+      - id: upload
+        name: Upload affected-test plan
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: affected-test-plan-${{ github.run_id }}
+          path: affected-test-plan.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
   # ─── Fast checks (never cancelled, <2 min each) ───────────────────────
 
   repo-hygiene:
@@ -1831,7 +1891,7 @@ jobs:
     # and push runs everything, so main keeps the full suite.
     if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
-    needs: [determine-changes, lint]  # fast-fail: don't waste 45min if lint fails
+    needs: [determine-changes, lint, plan-affected-tests]  # fast-fail: don't waste 45min if lint fails
     runs-on: ${{ matrix.os }}
     # Per-shard the unit suite is ~1/4 of the old wall time. Push-time
     # coverage is collected during the existing ubuntu/3.13 shard runs and
@@ -1947,23 +2007,12 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Fetch base commit for impacted-test selection
+      - name: Download affected-test plan
         if: github.event_name == 'pull_request' && runner.os != 'Windows'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          # Fetch the base by sha, never by branch name. `github.base_ref`
-          # resolves when the step runs, and the shards of one run do not run
-          # together - slot contention has staggered them by hours. Each shard
-          # then compared against a different `main`, computed a different
-          # affected set, and `--shard i/N` partitioned a different list in
-          # each job, so the four slices stopped covering the union: some
-          # files ran twice and others ran nowhere while every shard reported
-          # success (#5421). The payload sha is fixed for the run, so every
-          # shard - at any start time, in any re-run attempt - selects from
-          # one list and the slices are a partition of it again.
-          git fetch --no-tags --depth=1 origin \
-            "${BASE_SHA}:refs/remotes/origin/pr-base"
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: affected-test-plan-${{ github.run_id }}
+          path: .sdd/affected-test-plan
       - name: Fetch PR head commit for orphan-ratchet inspection
         # actions/checkout's default pull_request checkout resolves the
         # synthetic merge commit, not the head commit that produced it.
@@ -1972,41 +2021,61 @@ jobs:
         # <sha>^{commit}`) to inspect the real PR branch instead of the
         # merge artifact, and raises rather than silently skipping when it
         # is not there (#5565). Fetched by sha, not a branch or PR-number
-        # ref, for the same staggered-shard reason the base commit above
-        # is (#5421): the payload sha is fixed for the run.
-        #
-        # A separate step, not folded into the base-commit fetch above:
-        # tests/unit/scripts/test_run_tests_affected_base_pinned.py pins
-        # that step to writing exactly one ref for --affected to read, and
-        # a second fetch in the same run block would trip that guard.
+        # ref, because the payload sha is fixed for the run.
         if: github.event_name == 'pull_request' && runner.os != 'Windows'
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           git fetch --no-tags --depth=1 origin \
             "${HEAD_SHA}:refs/remotes/origin/pr-head"
+      - id: select_affected
+        name: Select affected-test shard
+        if: github.event_name == 'pull_request' && runner.os != 'Windows'
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
+        run: |
+          uv run python scripts/plan_affected_tests.py select \
+            --plan .sdd/affected-test-plan/affected-test-plan.json \
+            --shard "${SHARD}/${SHARD_COUNT}" \
+            --output .sdd/affected-test-plan/selected.txt
+      - name: Nothing affected in this shard
+        if: >-
+          github.event_name == 'pull_request' &&
+          runner.os != 'Windows' &&
+          steps.select_affected.outputs.selected_count == '0'
+        env:
+          BASE_SHA: ${{ needs.plan-affected-tests.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.plan-affected-tests.outputs.head_sha }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
+        run: |
+          echo "No affected tests in shard ${SHARD}/${SHARD_COUNT}. Compared ${BASE_SHA}...${HEAD_SHA}."
       - name: Run isolated test suite (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: >-
+          runner.os != 'Windows' &&
+          (github.event_name != 'pull_request' ||
+           steps.select_affected.outputs.selected_count != '0')
         env:
           EVENT_NAME: ${{ github.event_name }}
           PYTHON_VERSION: ${{ matrix.python-version }}
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
         run: |
-          # `--shard i/N` runs a deterministic disjoint slice of the
-          # discovered (and, on PRs, affected) file list. On PRs the
-          # affected set is sharded too, so each runner runs ~1/N of the
-          # impacted files.
+          # On PRs the shared plan selects this cell's deterministic shard.
+          # Other events shard the discovered full-suite list in run_tests.py.
           coverage_args=()
           if [ "${EVENT_NAME}" = "push" ] && [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
             coverage_args=(--coverage)
           fi
-          if [ "${EVENT_NAME}" = "pull_request" ] && \
-             git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            test_files=()
+            while IFS= read -r test_file; do
+              test_files+=("${test_file}")
+            done < .sdd/affected-test-plan/selected.txt
             uv run python scripts/run_tests.py --parallel 6 \
               "${coverage_args[@]}" \
-              --shard "${SHARD}/${SHARD_COUNT}" \
-              --affected refs/remotes/origin/pr-base
+              "${test_files[@]}"
           else
             uv run python scripts/run_tests.py --parallel 6 \
               "${coverage_args[@]}" \
@@ -2223,7 +2292,7 @@ jobs:
     # the full file list across all 4 cells instead of running a fixed
     # quarter of it.
     name: Test (macos-latest, Python 3.13, shard ${{ matrix.shard }})
-    needs: [lint, determine-changes]
+    needs: [lint, determine-changes, plan-affected-tests]
     if: >-
       github.event_name != 'merge_group' &&
       (needs.determine-changes.outputs.macos_sensitive == 'true' ||
@@ -2274,24 +2343,38 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Fetch base commit for impacted-test selection
+      - name: Download affected-test plan
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: affected-test-plan-${{ github.run_id }}
+          path: .sdd/affected-test-plan
+      - id: select_affected
+        name: Select affected-test shard
         if: github.event_name == 'pull_request'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.MACOS_SHARD_COUNT }}
         run: |
-          # Fetch the base by sha, never by branch name. `github.base_ref`
-          # resolves when the step runs, and the shards of one run do not run
-          # together - slot contention has staggered them by hours. Each shard
-          # then compared against a different `main`, computed a different
-          # affected set, and `--shard i/N` partitioned a different list in
-          # each job, so the four slices stopped covering the union: some
-          # files ran twice and others ran nowhere while every shard reported
-          # success (#5421). The payload sha is fixed for the run, so every
-          # shard - at any start time, in any re-run attempt - selects from
-          # one list and the slices are a partition of it again.
-          git fetch --no-tags --depth=1 origin \
-            "${BASE_SHA}:refs/remotes/origin/pr-base"
+          uv run python scripts/plan_affected_tests.py select \
+            --plan .sdd/affected-test-plan/affected-test-plan.json \
+            --shard "${SHARD}/${SHARD_COUNT}" \
+            --output .sdd/affected-test-plan/selected.txt
+      - name: Nothing affected in this shard
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.select_affected.outputs.selected_count == '0'
+        env:
+          BASE_SHA: ${{ needs.plan-affected-tests.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.plan-affected-tests.outputs.head_sha }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ env.MACOS_SHARD_COUNT }}
+        run: |
+          echo "No affected tests in shard ${SHARD}/${SHARD_COUNT}. Compared ${BASE_SHA}...${HEAD_SHA}."
       - name: Run isolated test suite
+        if: >-
+          github.event_name != 'pull_request' ||
+          steps.select_affected.outputs.selected_count != '0'
         env:
           EVENT_NAME: ${{ github.event_name }}
           SHARD: ${{ matrix.shard }}
@@ -2301,11 +2384,13 @@ jobs:
           # as the `test` job. On push to main: shard the full file list
           # across all 4 cells, so per-push macOS coverage is the
           # complete suite rather than a fixed quarter of it.
-          if [ "${EVENT_NAME}" = "pull_request" ] && \
-             git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            test_files=()
+            while IFS= read -r test_file; do
+              test_files+=("${test_file}")
+            done < .sdd/affected-test-plan/selected.txt
             uv run python scripts/run_tests.py --parallel 6 \
-              --shard "${SHARD}/${SHARD_COUNT}" \
-              --affected refs/remotes/origin/pr-base
+              "${test_files[@]}"
           else
             uv run python scripts/run_tests.py --parallel 6 \
               --shard "${SHARD}/${SHARD_COUNT}"
@@ -2398,6 +2483,7 @@ jobs:
     if: always() && !cancelled()
     needs:
       - determine-changes
+      - plan-affected-tests
       - repo-hygiene
       - lint
       - spelling
