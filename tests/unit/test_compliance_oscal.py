@@ -36,8 +36,12 @@ def test_validate_oscal_assessment_results_valid_minimal_passes():
                 "version": "1.0.0",
                 "oscal-version": OSCAL_VERSION,
                 "roles": [{"id": "assessor", "title": "Assessor"}],
-                "parties": [{"uuid": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "type": "organization", "name": "Test Org"}],
-                "responsible-parties": [{"role-id": "assessor", "party-uuids": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]}],
+                "parties": [
+                    {"uuid": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "type": "organization", "name": "Test Org"}
+                ],
+                "responsible-parties": [
+                    {"role-id": "assessor", "party-uuids": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]}
+                ],
             },
             "import-ap": {"href": "evidence-pack.zip"},
             "results": [
@@ -115,7 +119,11 @@ def test_validate_oscal_assessment_results_invalid_strict_raises():
     with pytest.raises(Exception) as exc_info:  # jsonschema.ValidationError
         validate_oscal_assessment_results(invalid_doc, strict=True)
     # Check that the error message contains JSON path and error text
-    assert "JSON path" in str(exc_info.value) or "$.json-path" in str(exc_info.value) or "validation failed" in str(exc_info.value)
+    assert (
+        "JSON path" in str(exc_info.value)
+        or "$.json-path" in str(exc_info.value)
+        or "validation failed" in str(exc_info.value)
+    )
 
 
 def test_build_oscal_assessment_results_with_synthetic_sdd(tmp_path):
@@ -271,7 +279,13 @@ def test_module_level_exports():
     import bernstein.compliance as compliance_module
 
     # Check that the expected attributes are present in the module's __all__ or at least accessible
-    expected = ["OSCAL_VERSION", "build_oscal_assessment_results", "validate_oscal_assessment_results", "export_oscal_assessment_results", "get_oscal_schema_path"]
+    expected = [
+        "OSCAL_VERSION",
+        "build_oscal_assessment_results",
+        "validate_oscal_assessment_results",
+        "export_oscal_assessment_results",
+        "get_oscal_schema_path",
+    ]
     for attr in expected:
         assert hasattr(compliance_module, attr), f"Missing attribute {attr} in bernstein.compliance"
 
