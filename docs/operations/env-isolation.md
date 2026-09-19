@@ -55,7 +55,7 @@ function in a Unix-like environment:
 | Group               | Vars |
 |---------------------|------|
 | Shell basics        | `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL` |
-| Locale              | `LANG`, `LC_ALL`, `LC_CTYPE`, `LC_MESSAGES` |
+| Locale / text encoding | `LANG`, `LC_ALL`, `LC_CTYPE`, `LC_MESSAGES`, `PYTHONUTF8`, `PYTHONIOENCODING` |
 | Terminal            | `TERM`, `COLORTERM`, `COLUMNS`, `LINES` |
 | Temp dirs           | `TMPDIR`, `TMP`, `TEMP` |
 | XDG                 | `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` |
@@ -63,6 +63,10 @@ function in a Unix-like environment:
 | SSH / git transport | `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `GIT_SSH` |
 | Python              | `PYTHONPATH`, `VIRTUAL_ENV`, `CONDA_DEFAULT_ENV`, `CONDA_PREFIX` |
 | Node                | `NVM_DIR`, `NVM_BIN`, `NVM_PATH`, `NODE_PATH` |
+
+`PYTHONUTF8` and `PYTHONIOENCODING` are passthrough settings: Bernstein
+preserves the operator-supplied values when present, but does not create,
+normalise, or otherwise force an encoding when they are absent.
 
 There is no built-in proxy entry. If you run behind a corporate proxy
 you probably want `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` -
