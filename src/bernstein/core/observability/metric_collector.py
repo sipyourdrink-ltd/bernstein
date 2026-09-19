@@ -333,6 +333,13 @@ class MetricsCollector:
         with self._lock:
             self._task_metrics.clear()
 
+    def reset_agent_metrics(self) -> None:
+        """Clear all agent metrics. Called on orchestrator restart so a
+        prior run's agents don't get merged into this run's retrospective
+        agent summary."""
+        with self._lock:
+            self._agent_metrics.clear()
+
     @property
     def privacy_level(self) -> PrivacyLevel:
         """Return the active analytics privacy preset."""

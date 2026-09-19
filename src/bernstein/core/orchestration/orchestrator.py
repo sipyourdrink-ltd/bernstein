@@ -935,8 +935,11 @@ class Orchestrator:
         # Reset error budget AND metric collector each run - stale failure
         # data from prior runs must not throttle a fresh run's agent capacity.
         self._slo_tracker = SLOTracker()
-        # Clear prior-run task metrics so error budget starts at 0/0
+        # Clear prior-run task metrics so error budget starts at 0/0, and
+        # prior-run agents so a stale agent (with a role from another run's
+        # spawner) never reaches this run's retrospective agent summary.
         get_collector().reset_task_metrics()
+        get_collector().reset_agent_metrics()
         self._runbook_engine = RunbookEngine()
         self._incident_manager = IncidentManager()
         self._consecutive_failures: int = 0

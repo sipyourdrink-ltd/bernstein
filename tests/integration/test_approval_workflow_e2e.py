@@ -15,6 +15,8 @@ from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
 from starlette.testclient import TestClient
 
+from bernstein.core.observability.metric_collector import get_collector
+from bernstein.core.quality.retrospective import generate_retrospective
 from bernstein.core.server import create_app
 
 
@@ -157,3 +159,55 @@ def test_approval_workflow_e2e(tmp_path: Path) -> None:
     assert len(approval_notifications) == 1
     assert approval_notifications[0]["task_id"] == task_high
     assert "Approval required (HIGH risk)" in approval_notifications[0]["title"]
+
+
+def test_agent_metrics_do_not_leak_across_orchestrator_restarts(tmp_path: Path) -> None:
+    """Regression test for #5944.
+
+    ``Orchestrator.__init__`` already resets task metrics each run so a
+    prior run's failures cannot poison this run's error budget
+    (orchestrator.py, "Clear prior-run task metrics so error budget starts
+    at 0/0"), but the process-wide collector's agent metrics were never
+    reset the same way. A second ``Orchestrator`` built in the same
+    process therefore inherited the first run's agents, including any
+    whose role was never set to a concrete string, and
+    ``_write_agent_summary``'s ``sorted(agent_metrics.values(), key=lambda
+    a: a.role)`` crashed comparing that leftover role against a real one.
+    """
+    first_app = create_app(jsonl_path=tmp_path / "first" / "tasks.jsonl")
+    Orchestrator(
+        config=OrchestratorConfig(server_url="http://testserver", max_agents=1),
+        spawner=_make_mock_spawner(),
+        workdir=tmp_path / "first",
+        client=TestClient(first_app),
+    )
+    # A leftover agent from the first run whose role was never given a
+    # concrete value, the same shape a mocked fixture elsewhere in this
+    # suite can leave behind.
+    get_collector().start_agent(
+        agent_id="leaked-from-first-run",
+        role=MagicMock(),
+        model="mock-model",
+        provider="mock",
+    )
+
+    second_app = create_app(jsonl_path=tmp_path / "second" / "tasks.jsonl")
+    Orchestrator(
+        config=OrchestratorConfig(server_url="http://testserver", max_agents=1),
+        spawner=_make_mock_spawner(),
+        workdir=tmp_path / "second",
+        client=TestClient(second_app),
+    )
+    collector = get_collector()
+    collector.start_agent(agent_id="real-agent", role="backend", model="mock-model", provider="mock")
+
+    generate_retrospective(
+        done_tasks=[],
+        failed_tasks=[],
+        collector=collector,
+        runtime_dir=tmp_path / "second" / ".sdd" / "runtime",
+        run_start_ts=0.0,
+    )
+
+    assert "leaked-from-first-run" not in collector._agent_metrics
+    assert set(collector._agent_metrics) == {"real-agent"}
