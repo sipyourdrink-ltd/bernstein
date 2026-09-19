@@ -211,7 +211,16 @@ def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Pat
         session: The completed agent session.
         completion_file: Path to the completion marker (cleaned up after reap).
     """
-    _save_partial_work(orch._spawner, session)
+    # Same recorder and a true reason as the dead-agent and orphan paths: a
+    # salvage merge that happens here is a recovery merge too, and a journal
+    # that only saw two of the four salvage paths was reporting the other two
+    # as "no merge happened" (#5271 review, F1).
+    _save_partial_work(
+        orch._spawner,
+        session,
+        recorder=getattr(orch, "_recorder", None),
+        reason="completed",
+    )
     with contextlib.suppress(Exception):
         orch._spawner.kill(session)
     # Bug fix (2026-07-04): every forced-kill path must reap the session's
@@ -285,7 +294,14 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
             reason,
             int(_IDLE_GRACE_S),
         )
-        _save_partial_work(orch._spawner, session)
+        # The idle reason is the reason the merge happened; the default
+        # ("dead_agent") would be wrong on every path through here.
+        _save_partial_work(
+            orch._spawner,
+            session,
+            recorder=getattr(orch, "_recorder", None),
+            reason=reason,
+        )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
         # Bug fix (2026-07-04): reap the heartbeat loop on every forced kill
