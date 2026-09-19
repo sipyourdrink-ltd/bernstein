@@ -14,6 +14,7 @@ network lives in ``tests/integration/`` or opts out with
 
 from __future__ import annotations
 
+import socket
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -30,6 +31,8 @@ if _SRC not in sys.path:
 # The helpers module keeps the ``make_popen_mock`` / ``inner_cmd`` callables
 # test modules import directly.
 import os
+from contextlib import contextmanager
+from typing import NoReturn
 
 from tests.unit._adapter_test_helpers import no_watchdog_threads  # noqa: F401
 from tests.unit._no_network import block_network
@@ -80,11 +83,11 @@ except ImportError:
 
 @pytest.fixture(autouse=True)
 def _block_real_network(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Block non-loopback connections for every unit test.
+    """Block non-loopback connections and DNS for every unit test.
 
-    A unit test that opens a real outbound connection is flaky by
-    construction: it passes only while the remote host answers. The guard
-    converts any such attempt into a clear, deterministic ``RuntimeError`` that
+    A unit test that opens a real outbound connection or performs a DNS lookup
+    is flaky by construction: it passes only while the remote host answers.
+    The guard converts any such attempt into a clear, deterministic error that
     names the host so the fix (mock it) is obvious.
 
     Loopback (``127.0.0.0/8``, ``::1``, ``localhost``) and Unix-domain sockets
@@ -96,8 +99,31 @@ def _block_real_network(request: pytest.FixtureRequest) -> Iterator[None]:
     if request.node.get_closest_marker("allow_network") is not None:
         yield
         return
-    with block_network():
+    with block_network(), _block_dns():
         yield
+
+
+@contextmanager
+def _block_dns() -> Iterator[None]:
+    """Patch ``socket.getaddrinfo`` to block real DNS resolution.
+
+    ``block_network()`` guards ``socket.socket.connect`` and ``connect_ex``,
+    but a name-resolution request still leaves the test process before any
+    connection attempt and can hang or leak resolver state. This context
+    monkeypatches ``socket.getaddrinfo`` to raise ``socket.gaierror`` with a
+    clear message. Existing tests that patch the resolver are unaffected because
+    they replace the same function on the module object.
+    """
+    real_getaddrinfo = socket.getaddrinfo
+
+    def _blocked_getaddrinfo(*_args: object, **_kwargs: object) -> NoReturn:
+        raise socket.gaierror("blocked in unit tests")
+
+    socket.getaddrinfo = _blocked_getaddrinfo  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = real_getaddrinfo  # type: ignore[method-assign]
 
 
 @pytest.fixture(autouse=True)
