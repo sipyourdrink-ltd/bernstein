@@ -4,7 +4,7 @@ A compaction mutates a worker's remaining run the way a merge mutates a
 branch, so it is receipted like one. The receipt is the primary artifact
 of every compaction (proactive or reactive):
 
-``{task_id, worker_id, trigger, pre_sha256, post_sha256, tokens_before,
+``{task_id, worker_id, trigger, pre_sha256, post_sha256, policy_version, tokens_before,
 tokens_after, validators: [{name, pass|fail}], retry_count, ts}``
 
 Three anchors make the receipt load-bearing rather than decorative:
@@ -15,8 +15,8 @@ Three anchors make the receipt load-bearing rather than decorative:
   is embedded in the payload before the HMAC is computed.
 * **Step journal** - :func:`record_compaction_journal_step` registers
   the compaction as a replay step whose hashed payload carries the
-  receipt's pre/post SHA-256. Replaying across the boundary re-verifies
-  those hashes: editing them on disk breaks the journal's hash chain.
+  receipt's pre/post SHA-256 and policy version. Replaying across the
+  boundary re-verifies those anchors: editing them on disk breaks the journal's hash chain.
   No journal schema change is needed - the compaction rides in the
   existing ``tool_call`` slot, so every pre-existing journal verifies
   unchanged.
@@ -101,6 +101,8 @@ class CompactionReceipt:
         ts: Unix epoch seconds when the receipt was built.
         correlation_id: Id shared by the chain event, the journal step,
             and the ledger row for this compaction.
+        policy_version: Version of the compaction policy. Empty for
+            legacy or otherwise unversioned compactions.
         gate_action: Sensitive-gate outcome reference (``allow`` /
             ``redacted`` / ``refused``). The gate's own events carry the
             evidence; the receipt only points at them.
@@ -120,6 +122,7 @@ class CompactionReceipt:
     retry_count: int
     ts: float
     correlation_id: str
+    policy_version: str = ""
     gate_action: str = "allow"
     gate_rule_ids: tuple[str, ...] = ()
     skills_reinjected: bool = False
@@ -137,6 +140,7 @@ class CompactionReceipt:
             "trigger": self.trigger,
             "pre_sha256": self.pre_sha256,
             "post_sha256": self.post_sha256,
+            "policy_version": self.policy_version,
             "tokens_before": self.tokens_before,
             "tokens_after": self.tokens_after,
             "validators": [{"name": name, "result": "pass" if passed else "fail"} for name, passed in self.validators],
@@ -160,6 +164,7 @@ def build_receipt(
     tokens_after: int,
     verdicts: Sequence[ValidatorVerdict],
     retry_count: int,
+    policy_version: str = "",
     gate_action: str = "allow",
     gate_rule_ids: Sequence[str] = (),
     skills_reinjected: bool = False,
@@ -178,6 +183,7 @@ def build_receipt(
         tokens_after: Token count after compaction.
         verdicts: Validator verdicts for the accepted summary.
         retry_count: Fix passes executed.
+        policy_version: Compaction-policy version; empty when unversioned.
         gate_action: Sensitive-gate outcome reference.
         gate_rule_ids: Gate deny-rule ids that fired.
         skills_reinjected: Whether skills were re-injected afterwards.
@@ -199,6 +205,7 @@ def build_receipt(
         retry_count=retry_count,
         ts=ts if ts is not None else time.time(),
         correlation_id=correlation_id or f"compact-{uuid.uuid4().hex[:8]}",
+        policy_version=policy_version,
         gate_action=gate_action,
         gate_rule_ids=tuple(gate_rule_ids),
         skills_reinjected=skills_reinjected,
@@ -228,6 +235,7 @@ def receipt_from_details(details: dict[str, Any]) -> CompactionReceipt:
         retry_count=int(details.get("retry_count", 0)),
         ts=float(details.get("ts", 0.0)),
         correlation_id=str(details.get("correlation_id", "")),
+        policy_version=str(details.get("policy_version", "")),
         gate_action=str(details.get("gate_action", "allow")),
         gate_rule_ids=tuple(str(r) for r in details.get("gate_rule_ids") or ()),
         skills_reinjected=bool(details.get("skills_reinjected", False)),
@@ -345,6 +353,7 @@ def record_compaction_journal_step(journal: Journal, receipt: CompactionReceipt)
             "trigger": receipt.trigger,
             "pre_sha256": receipt.pre_sha256,
             "post_sha256": receipt.post_sha256,
+            "policy_version": receipt.policy_version,
             "correlation_id": receipt.correlation_id,
         },
         tool_result={
@@ -379,13 +388,15 @@ def verify_compaction_receipts(
 ) -> tuple[bool, list[str]]:
     """Verify that every compaction event has a chain-verifiable receipt.
 
-    Three checks, all of which must hold:
+    Four checks, all of which must hold:
 
     1. The audit chain's HMAC chain verifies end to end.
     2. Every compaction step in the replay journal (when a reader is
        supplied) has a ``compaction.receipt`` event whose correlation id
        matches.
     3. The receipt's pre/post hashes equal the journaled step's hashes.
+    4. The receipt's policy version equals the journaled step's policy
+       version; a missing legacy value is treated as the empty string.
 
     Args:
         chain: The audit chain store for the run.
@@ -434,6 +445,12 @@ def verify_compaction_receipts(
             if pinned.pre_sha256 != call.get("pre_sha256") or pinned.post_sha256 != call.get("post_sha256"):
                 errors.append(
                     f"compaction step seq={step.seq} pre/post hash mismatch against chain receipt {correlation_id}"
+                )
+            journal_policy_version = str(call.get("policy_version", ""))
+            if pinned.policy_version != journal_policy_version:
+                errors.append(
+                    f"compaction step seq={step.seq} policy_version mismatch against chain receipt {correlation_id}: "
+                    f"journal={journal_policy_version!r}, receipt={pinned.policy_version!r}"
                 )
 
     return (not errors, errors)

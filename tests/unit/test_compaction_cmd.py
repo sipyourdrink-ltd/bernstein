@@ -45,6 +45,7 @@ def _receipt(task_id: str, worker_id: str, correlation_id: str) -> CompactionRec
         tokens_after=120,
         verdicts=run_validators(_PRE, _POST),
         retry_count=0,
+        policy_version="structural-v1",
         correlation_id=correlation_id,
         ts=1_700_000_000.0,
     )
@@ -86,6 +87,7 @@ class TestCompactionLog:
         receipt = data["receipts"][0]
         assert receipt["correlation_id"] == "compact-cccc"
         assert receipt["trigger"] == "proactive"
+        assert receipt["policy_version"] == "structural-v1"
         assert receipt["tokens_before"] == 400
         assert receipt["tokens_after"] == 120
         assert len(receipt["pre_sha256"]) == 64
