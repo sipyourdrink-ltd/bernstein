@@ -264,3 +264,19 @@ def test_parent_env_is_not_leaked(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "PROJECT=proj" in text
     # Cleanup: os.environ is scoped to this test via monkeypatch.
     assert os.environ.get("SUPER_SECRET_FOO") == "leak-me"
+
+
+def test_dispatch_post_merge_event(tmp_path: Path) -> None:
+    received: list[LifecycleContext] = []
+
+    def handler(ctx: LifecycleContext) -> None:
+        received.append(ctx)
+
+    registry = HookRegistry()
+    registry.register_callable(LifecycleEvent.POST_MERGE, handler)
+    ctx = LifecycleContext(event=LifecycleEvent.POST_MERGE, task="T-42", workdir=tmp_path)
+    registry.run(LifecycleEvent.POST_MERGE, ctx)
+
+    assert len(received) == 1
+    assert received[0].task == "T-42"
+    assert received[0].event is LifecycleEvent.POST_MERGE
