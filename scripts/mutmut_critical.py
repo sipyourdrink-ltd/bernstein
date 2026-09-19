@@ -108,11 +108,21 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="lineage_gate",
         source="src/bernstein/core/lineage/gate.py",
-        tests=("tests/unit/lineage/",),
+        # The four files that exercise the admission gate through `check`,
+        # plus the adversarial suite that attacks the same invariants. The
+        # directory has 707 tests and takes ~154s; these four have 76 and take
+        # ~7s, so the baseline stops paying for 631 tests that cannot kill a
+        # single mutant in gate.py (issue #5595).
+        tests=(
+            "tests/unit/lineage/test_gate.py",
+            "tests/unit/lineage/test_provenance_gate.py",
+            "tests/unit/lineage/test_sensitivity.py",
+            "tests/unit/security/test_lineage_adversarial.py",
+        ),
         threshold=0.75,
         budget_seconds=900,
         max_candidates=60,
-        note="Lineage v1 admission gate.",
+        note="Lineage v1 admission gate. Baseline ~7s over 76 tests (was ~154s over 707).",
     ),
     Module(
         key="lineage_tips",
