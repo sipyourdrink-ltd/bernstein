@@ -170,6 +170,43 @@ Full details: [reliability.md](reliability.md).
 
 ---
 
+## Cost per verdict
+
+A bundle reports verdicts. Until now it reported nothing about what producing
+them cost, so two bundles could be compared on score and not on money.
+
+Each task result may carry a `cost` block — `tokens`, `cost_usd`, `wall_time_s`
+— and the bundle derives `total_cost`, `measured_tasks` and `cost_per_verdict`
+from the rows.
+
+| Field | Meaning |
+|---|---|
+| `cost` (per task) | what that one verdict cost. **Absent** when the run did not measure it |
+| `total_cost` | the sum over tasks that *were* measured |
+| `measured_tasks` | how many that was, so a total is never read as the whole suite |
+| `cost_per_verdict` | `total_cost.cost_usd / measured_tasks` |
+
+**Absent, not zero.** A run that did not measure its cost and a run that was
+free are different facts, and `$0.00` reads as the second. An unmeasured cost
+is omitted from the JSON entirely, and the derived fields are `None`.
+
+That omission is also what keeps older bundles readable. `SubmissionBundle.load`
+recomputes `bundle_hash` over a payload that includes every task result, and
+refuses a mismatch as tampering — so a `"cost": null` written unconditionally
+would have made every bundle produced before this change fail to load.
+
+**Measured costs are sealed.** Once recorded, `cost` is part of the hash the
+signature commits to, so editing a cost after signing is caught on load. The
+derived totals are *not* hashed — they are read off the rows, the same way
+`pass_rate` is, so a bundle can never disagree with itself about its own cost.
+
+`bernstein bench compare` prints cost beside the score, with deltas always
+expressed as B relative to A (the argument order, not the ranked order — a sign
+that flipped with the ranking would be unusable), and says so explicitly when
+one of the bundles has no cost recorded rather than printing nothing.
+
+---
+
 ## Abstention, and the three rates
 
 A run that declines a task it cannot verify used to score exactly like one that
