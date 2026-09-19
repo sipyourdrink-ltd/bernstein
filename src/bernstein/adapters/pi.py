@@ -63,7 +63,12 @@ class PiAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = ["pi"]
+        # `-ne` isolates the session from the operator's user-global MCP
+        # configuration. Without it a spawned agent launches a private instance of
+        # every server that operator has installed, which across concurrent runs is
+        # dozens of background processes, and fills the agent's context with tools
+        # the task never asked for (#5965).
+        cmd = ["pi", "-ne"]
         if model_config.model and model_config.model.lower() != "auto":
             cmd.extend(["--model", model_config.model])
         cmd.append(prompt)

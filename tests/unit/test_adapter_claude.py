@@ -210,6 +210,34 @@ class TestSpawnCommandArgs:
         parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
         assert "bernstein" in parsed["mcpServers"]
 
+    def test_spawn_isolates_from_user_global_mcp_servers(self, tmp_path: Path) -> None:
+        """`--strict-mcp-config` rides with every `--mcp-config` (#5965).
+
+        Without it Claude Code MERGES the servers passed on the command line with
+        the operator's own user-global MCP configuration, so a spawned agent
+        launches a private instance of every server that operator happens to have
+        installed. Across concurrent runs that is dozens of background processes,
+        and a tool surface in the agent's context the task never asked for.
+        """
+        cmd, _, __ = self._spawn(tmp_path, mcp_config=None)
+
+        assert "--strict-mcp-config" in cmd
+
+    def test_isolation_does_not_drop_the_servers_the_task_declared(self, tmp_path: Path) -> None:
+        """Strict means "only --mcp-config", and the task's servers are in it.
+
+        The one thing this flag could plausibly break is a task that declares its
+        own MCP servers, so pin that it does not: they are merged into the payload
+        before the flag is applied, alongside the bernstein bridge.
+        """
+        mcp = {"mcpServers": {"my-server": {"command": "npx"}}}
+        cmd, _, __ = self._spawn(tmp_path, mcp_config=mcp)
+
+        assert "--strict-mcp-config" in cmd
+        parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
+        assert "my-server" in parsed["mcpServers"]
+        assert "bernstein" in parsed["mcpServers"]
+
     def test_bernstein_bridge_targets_the_package_entrypoint(self, tmp_path: Path) -> None:
         """The bridge spec must spawn a module that actually answers stdio (#4313).
 
