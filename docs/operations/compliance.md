@@ -402,3 +402,8 @@ EU AI Act high-risk classification or a HIPAA covered entity.
   verifier.
 - [`compliance/finos-aigf-mapping.md`](../compliance/finos-aigf-mapping.md)
   - bernstein's coverage of the 16 AIGF controls and 14 AIR risks.
+- [`compliance/iso42001-mapping.md`](../compliance/iso42001-mapping.md)
+  - ISO/IEC 42001 Annex A control map and evidence pack coverage.
+- [`compliance/cosai-mapping.md`](../compliance/cosai-mapping.md)
+  - CoSAI Secure-by-Design control map and Risk Map coverage.
+

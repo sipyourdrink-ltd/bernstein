@@ -70,13 +70,14 @@ SCHEMA_VERSION: str = "1.0.0"
 #: clauses; ``owasp-asi`` and ``owasp-skills`` map the OWASP Top 10 for
 #: Agentic Applications (ASI01-ASI10) and the Agentic Skills Top 10
 #: (AST01-AST10) onto the same audit-chain artefacts; ``iso-42001`` maps
-#: a records-derivable subset of ISO/IEC 42001 Annex A controls. DORA and
+#: a records-derivable subset of ISO/IEC 42001 Annex A controls; ``cosai``
+#: maps CoSAI Secure-by-Design principles and Risk Map controls. DORA and
 #: FINOS AIGF are tracked under #1316 and are not selectable until their
 #: clause maps are reviewed by subject-matter experts; emitting
 #: TODO-only bundles would mislead operators.
-Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001"]
+Standard = Literal["ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai"]
 
-SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills", "iso-42001")
+SUPPORTED_STANDARDS: tuple[str, ...] = ("ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai")
 
 #: Fixed mtime for every entry in the produced zip - required for
 #: byte-deterministic output. Zip cannot store dates before 1980.
@@ -164,6 +165,7 @@ _STANDARD_MAPS: dict[str, dict[str, Any]] = {
 # same way it reads ``ai-act``. Registration is a plain assignment - the
 # modules only depend on stdlib, so importing them at module load is cheap
 # and side-effect free.
+from bernstein.compliance import cosai as _cosai  # noqa: E402
 from bernstein.compliance import iso42001 as _iso42001  # noqa: E402
 from bernstein.compliance import owasp_asi as _owasp_asi  # noqa: E402
 from bernstein.compliance import owasp_skills as _owasp_skills  # noqa: E402
@@ -171,6 +173,7 @@ from bernstein.compliance import owasp_skills as _owasp_skills  # noqa: E402
 _STANDARD_MAPS[_owasp_asi.STANDARD_ID] = _owasp_asi.control_map()
 _STANDARD_MAPS[_owasp_skills.STANDARD_ID] = _owasp_skills.control_map()
 _STANDARD_MAPS[_iso42001.STANDARD_ID] = _iso42001.control_map()
+_STANDARD_MAPS[_cosai.STANDARD_ID] = _cosai.control_map()
 
 
 # ---------------------------------------------------------------------------

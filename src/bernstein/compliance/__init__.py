@@ -7,6 +7,7 @@ Mandatory by August 2027.
 
 from __future__ import annotations
 
+from bernstein.compliance.cosai import control_map as cosai_control_map
 from bernstein.compliance.eu_ai_act import (
     AnnexIIIDomain,
     ClassificationResult,
@@ -47,6 +48,7 @@ __all__ = [
     "TechDoc",
     "TechDocGenerator",
     "build_evidence_pack",
+    "cosai_control_map",
     "get_standard_map",
     "iso42001_control_map",
     "owasp_asi_control_map",
