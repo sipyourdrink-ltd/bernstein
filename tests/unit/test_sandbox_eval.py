@@ -120,6 +120,34 @@ class TestSandboxManager:
         assert s.status == SessionStatus.COMPLETED
         assert s.error == "Budget exhausted"
 
+    def test_record_cost_finishes_at_exact_cap(self, mgr: SandboxManager) -> None:
+        s = mgr.create_session("https://github.com/a/b", "code-quality")
+        mgr.mark_cloning(s.id)
+        mgr.mark_started(s.id)
+        mgr.record_cost(s.id, MAX_BUDGET_USD)
+        assert s.status == SessionStatus.COMPLETED
+        assert s.error == "Budget exhausted"
+
+    def test_record_cost_below_cap_keeps_session_running(self, mgr: SandboxManager) -> None:
+        s = mgr.create_session("https://github.com/a/b", "code-quality")
+        mgr.mark_cloning(s.id)
+        mgr.mark_started(s.id)
+        mgr.record_cost(s.id, MAX_BUDGET_USD - 0.01)
+        assert s.status == SessionStatus.RUNNING
+        assert s.error == ""
+
+    def test_record_cost_after_completion_is_noop(self, mgr: SandboxManager) -> None:
+        s = mgr.create_session("https://github.com/a/b", "code-quality")
+        mgr.mark_cloning(s.id)
+        mgr.mark_started(s.id)
+        mgr.record_cost(s.id, MAX_BUDGET_USD)
+        assert s.status == SessionStatus.COMPLETED
+        assert s.error == "Budget exhausted"
+        # Add more cost after completion
+        mgr.record_cost(s.id, 1.0)
+        assert s.status == SessionStatus.COMPLETED
+        assert s.error == "Budget exhausted"
+
     def test_lifecycle_transitions(self, mgr: SandboxManager) -> None:
         s = mgr.create_session("https://github.com/a/b", "code-quality")
         assert s.status == SessionStatus.QUEUED
