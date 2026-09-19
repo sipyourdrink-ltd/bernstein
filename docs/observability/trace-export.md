@@ -106,14 +106,20 @@ a TEE and checked by a verifier that issued the nonce.
 
 ### Vectors for testing
 
-Four committed test vectors under
-`tests/fixtures/trust-record-vectors/` cover the four record shapes:
+Seven committed test vectors under
+`tests/fixtures/trust-record-vectors/` cover the record shapes:
 
 - `single-execution-trust-record.json` — root, non-delegated execution
-- `delegated-parent-trust-record.json` — parent hop of a two-hop run
+- `delegated-parent-trust-record.json` — parent hop of a delegated run
 - `delegated-child-trust-record.json` — child hop, carries `delegation`
+- `delegated-grandchild-trust-record.json` — third hop, two links deep
 - `aggregate-trust-record.json` — run-level rollup, carries
   `references[rel=member-execution]`
+- `supplementary-plane-parent-trust-record.json` and
+  `supplementary-plane-child-trust-record.json` — a pair whose parent
+  `cnf.jwk` carries a key outside the Basic Multilingual Plane, so the
+  child's link resolves only under RFC 8785's UTF-16 key order and not
+  under a code-point sort (see the fixtures' README)
 
 Run the reference suite against any one:
 
@@ -125,7 +131,7 @@ uv run --with agentrust-trace-tests==0.5.1 trace-tests verify \
 
 (`--max-age` is set far above the default 24 h window because the
 fixture vectors use a frozen 2023-11-14 clock, not wall-clock time —
-an unmodified default would reject all four as stale.)
+an unmodified default would reject every vector as stale.)
 
 ## Relationship to other trace commands
 
