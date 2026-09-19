@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.path_scope import (
     ScopePatternError,
     paths_outside_scope,
@@ -672,7 +673,7 @@ class AgentIdentityStore:
                 raise TypeError(msg)
             return AgentIdentity.from_dict(cast("dict[str, Any]", data))
         except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
-            logger.warning("Skipping corrupt identity file: %s", sanitize_log(str(path)))
+            logger.warning("Skipping corrupt identity file: %s", for_log(path))
             return None
 
     def _load(self, identity_id: str) -> AgentIdentity | None:
@@ -1247,8 +1248,8 @@ class AgentIdentityStore:
         )
         logger.info(
             "Revoked agent identity %s: %s",
-            sanitize_log(identity_id),
-            sanitize_log(reason),
+            for_log(identity_id),
+            for_log(reason),
         )
         return True
 
