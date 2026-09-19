@@ -113,6 +113,7 @@ UNLISTED_COMMANDS: frozenset[str] = frozenset(
         "hooks",
         "impact",
         "init-wizard",
+        "insights",
         "integrations",
         "interop",
         "issue-to-pr",
