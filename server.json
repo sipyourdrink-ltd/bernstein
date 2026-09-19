@@ -24,5 +24,11 @@
         "type": "stdio"
       }
     }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.bernstein.run/mcp"
+    }
   ]
 }
