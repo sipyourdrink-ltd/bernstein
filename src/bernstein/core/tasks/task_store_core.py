@@ -22,6 +22,7 @@ from typing_extensions import TypedDict
 
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
+from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
@@ -864,7 +865,7 @@ class TaskStore:
             logger.info(
                 "reopen_tasks_for_node: reset %d task(s) for departed node %s",
                 reset_count,
-                sanitize_log(node_id),
+                for_log(node_id),
             )
         return reset_count
 
@@ -2360,7 +2361,7 @@ class TaskStore:
                 )
                 logger.warning(
                     "Planning task %s completed without creating child tasks; marked FAILED (%s).",
-                    sanitize_log(task_id),
+                    for_log(task_id),
                     _ZERO_YIELD_PLANNING_REASON,
                 )
                 return task
@@ -2645,7 +2646,7 @@ class TaskStore:
                 details=details,
             )
         except OSError as exc:
-            logger.warning("Contract audit event write failed for %s: %s", sanitize_log(task_id), exc)
+            logger.warning("Contract audit event write failed for %s: %s", for_log(task_id), exc)
 
     async def reopen(self, task_id: str, reason: str) -> Task:
         """Reopen a done task that failed janitor verification.
@@ -2687,9 +2688,9 @@ class TaskStore:
             self._record_release_receipt(task, snapshot, release_path="reopen", reason=reason)
             logger.info(
                 "task.reopen: task_id=%s reopen_count=%d reason=%s",
-                sanitize_log(task_id),
+                for_log(task_id),
                 reopen_count,
-                sanitize_log(reason),
+                for_log(reason),
             )
             return task
 
@@ -2752,8 +2753,8 @@ class TaskStore:
             )
             logger.info(
                 "task.release: task_id=%s reason=%s",
-                sanitize_log(task_id),
-                sanitize_log(reason or "released_to_pool"),
+                for_log(task_id),
+                for_log(reason or "released_to_pool"),
             )
             return task
 
@@ -3564,9 +3565,9 @@ class TaskStore:
                 except IllegalTransitionError:
                     logger.warning(
                         "Ignoring illegal heartbeat transition %s -> %s for %s",
-                        sanitize_log(str(agent.status)),
-                        sanitize_log(str(status)),
-                        sanitize_log(agent_id),
+                        for_log(str(agent.status)),
+                        for_log(str(status)),
+                        for_log(agent_id),
                     )
         else:
             self._agents[agent_id] = AgentSession(
