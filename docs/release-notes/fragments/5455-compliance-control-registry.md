@@ -1,0 +1,3 @@
+## Central compliance control registry
+
+`bernstein.compliance.controls` is the one place a compliance, security or governance control is defined: a `Control` with an id, title, description, evidence kinds and its clause in each of EU AI Act, OWASP ASI, OWASP Skills, NIST AI RMF, ISO/IEC 42001 and FINOS AIGF, held in a `ControlRegistry` whose default instance carries the standard catalogue. `bernstein compliance controls [--framework <name>] [--format text|json|markdown]` lists it, and the table in `docs/compliance/regulator-mapped-packs.md` is pinned by a test to what the registry renders. The suite control declaration that names these ids from `bench`, and its enforcement, are the second piece of this work (#5455).
