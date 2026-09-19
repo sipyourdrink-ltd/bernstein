@@ -22,6 +22,15 @@ class FailureCategory(Enum):
     CONFLICT = "conflict"  # Agent's changes conflict with concurrent agent
     CONTEXT_MISS = "context_miss"  # Agent lacked necessary context
     HALLUCINATION = "hallucination"  # Agent created code that doesn't compile or references nonexistent APIs
+    GATE_EVASION = "gate_evasion"  # Agent attempted to evade or bypass quality gate
+    EVASION_EMPTY_FILE_DELETION = "evasion_empty_file_deletion"  # File deleted by emptying contents
+    EVASION_UNIMPORTED_TEST_SYMBOL = "evasion_unimported_test_symbol"  # Test created that doesn't import changed symbol
+    EVASION_SCANNER_SILENCING = "evasion_scanner_silencing"  # Scanner silenced by broken syntax/code
+    EVASION_PLACEHOLDER_SECRET = "evasion_placeholder_secret"  # Placeholder secret moved to runtime config
+    EVASION_DEAD_CODE_DELETION = "evasion_dead_code_deletion"  # Tests deleted during dead code pass
+    EVASION_BROAD_EXCEPT = "evasion_broad_except"  # Broad except clause hides failure
+    EVASION_NONEXISTENT_API_MOCK = "evasion_nonexistent_api_mock"  # Mock created for non-existent API
+    EVASION_IMPOSSIBLE_VERIFICATION = "evasion_impossible_verification"  # Publish with verification bypassed/impossible
 
 
 @dataclass(frozen=True)
@@ -167,14 +176,14 @@ def _classify_category(
     compile_error: bool,
     conflict_detected: bool,
     orientation_ratio: float,
-) -> tuple[FailureCategory, str, str]:
+) -> tuple[FailureCategory, str, Literal["low", "medium", "high", "critical"]]:
     """Return (category, default_details, severity) using priority ordering.
 
     Priority: test regression > timeout > scope creep > conflict >
     hallucination > orientation miss > incomplete > context miss.
     """
     # Priority-ordered mapping: (condition, category, default_details, severity)
-    checks: list[tuple[bool, FailureCategory, str, str]] = [
+    checks: list[tuple[bool, FailureCategory, str, Literal["low", "medium", "high", "critical"]]] = [
         (tests_regressed, FailureCategory.TEST_REGRESSION, "Agent broke existing tests", "critical"),
         (timed_out, FailureCategory.TIMEOUT, "Agent hit time or turn limit", "high"),
         (scope_violated, FailureCategory.SCOPE_CREEP, "Agent modified files outside owned_files", "high"),

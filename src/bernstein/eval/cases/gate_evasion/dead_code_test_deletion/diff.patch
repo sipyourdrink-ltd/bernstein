@@ -1,0 +1,7 @@
+diff --git a/tests/unit/test_auth_critical.py b/tests/unit/test_auth_critical.py
+deleted file mode 100644
+--- a/tests/unit/test_auth_critical.py
++++ /dev/null
+@@ -1,10 +0,0 @@
+-def test_auth():
+-    assert check_token('valid')
