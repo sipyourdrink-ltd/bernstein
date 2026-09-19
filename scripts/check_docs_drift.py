@@ -58,6 +58,11 @@ _ROW_RE = re.compile(r"^\|\s*`([^`|]+?)`\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*`([a-z
 # ``backticked`` tokens. Any token that starts with src/, scripts/,
 # templates/, web/, pyproject.toml, .sdd/, .github/, .importlinter,
 # release-please-*, .cursor/, or a docs/ subdir is treated as a path.
+#
+# A root-level file with no directory component has to be written ``./NAME``
+# to survive that filter, so the leading ``./`` is stripped again here. Both
+# consumers compare against repo-relative paths - ``REPO_ROOT / src`` and the
+# output of ``git diff --name-only`` - and neither carries the prefix.
 _PATH_RE = re.compile(r"`([^`\s]+)`")
 
 
@@ -75,7 +80,7 @@ class DocRow:
         for match in _PATH_RE.finditer(self.sources_raw):
             tok = match.group(1)
             if tok.endswith(".py") or "/" in tok or tok.endswith(".toml"):
-                out.append(tok.rstrip("/"))
+                out.append(tok.removeprefix("./").rstrip("/"))
         return out
 
 

@@ -31,6 +31,14 @@ name: quorum
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  # An approval is not a `pull_request` event. Without this trigger the check
+  # is never recomputed after somebody reviews, so a pull request that has
+  # just earned its quorum keeps the red check it was given before the
+  # approvals landed, and the only thing that clears it is an unrelated push.
+  # Reviews are the event this check exists to measure; it has to listen to
+  # them.
+  pull_request_review:
+    types: [submitted, dismissed]
   merge_group: {}
   workflow_dispatch:
     inputs:
@@ -39,8 +47,16 @@ on:
         required: true
         type: string
 
+# `inputs.pr` is part of the key because a manual run carries no pull request
+# in its event payload. Without it every manual run fell into a single group
+# keyed on the default branch and cancelled the one before it: of the last 44
+# runs, 34 were cancelled that way and each cancellation was a manual check of
+# one pull request killed by the manual check of the next.
+#
+# Superseded pull_request runs still cancel, per the concurrency policy in
+# docs/operations/ci.md.
 concurrency:
-  group: quorum-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
+  group: quorum-${{ github.event.pull_request.number || inputs.pr || github.event.merge_group.head_ref || github.ref }}
   cancel-in-progress: true
 
 permissions:
