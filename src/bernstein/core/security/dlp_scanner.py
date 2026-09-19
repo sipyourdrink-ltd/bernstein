@@ -469,7 +469,6 @@ class DLPScanner:
     def _scan_lines(self, lines: list[str], *, diff_mode: bool = False) -> list[DLPFinding]:
         """Scan a list of text lines and return findings."""
         findings: list[DLPFinding] = []
-        seen_rules: set[str] = set()
 
         for line_num, raw_line in enumerate(lines, 1):
             line = self._extract_line_for_scan(raw_line, diff_mode)
@@ -477,8 +476,6 @@ class DLPScanner:
                 continue
 
             for category, rule_label, pattern, severity, description, block_default in self._rules:
-                if rule_label in seen_rules:
-                    continue
                 m = pattern.search(line)
                 if not m:
                     continue
@@ -494,7 +491,6 @@ class DLPScanner:
                         block_merge=self._should_block(category, block_default),
                     )
                 )
-                seen_rules.add(rule_label)
 
         return findings
 
