@@ -169,6 +169,35 @@ def test_a_later_approval_replaces_an_earlier_request_for_changes(qc: ModuleType
     assert _evaluate(qc, roster, pr).passed
 
 
+def test_a_dismissed_approval_does_not_revive_an_earlier_request_for_changes(qc: ModuleType, roster) -> None:
+    # GitHub dismisses an approval as stale on the next push. The reviewer had
+    # already withdrawn their request by approving; the dismissal must not
+    # bring the request back.
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "CHANGES_REQUESTED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "core2", "APPROVED"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_dismissed_request_for_changes_does_not_revive_an_earlier_approval(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "APPROVED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+
+
 # --- size and sensitivity (charter section 3) -------------------------------
 
 

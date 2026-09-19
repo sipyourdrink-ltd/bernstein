@@ -282,10 +282,16 @@ def standing_reviews(reviews: list[Review]) -> dict[str, Review]:
     A `commented` review does not replace an earlier approval or request for
     changes - GitHub keeps the earlier verdict standing - so it is skipped
     rather than treated as a newer state.
+
+    A dismissed review does replace it. GitHub dismisses an approval as stale
+    on the next push, and by then the approval had already withdrawn any
+    earlier request for changes; skipping the dismissal would bring that
+    request back. The dismissed review is kept as the person's latest, and it
+    counts as neither an approval nor a request for changes.
     """
     latest: dict[str, Review] = {}
     for review in reviews:
-        if not review.login or review.state in ("COMMENTED", "PENDING", "DISMISSED"):
+        if not review.login or review.state in ("COMMENTED", "PENDING"):
             continue
         current = latest.get(review.login)
         if current is None or review.submitted_at >= current.submitted_at:
