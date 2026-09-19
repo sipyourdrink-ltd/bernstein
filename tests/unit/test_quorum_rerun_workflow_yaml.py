@@ -14,6 +14,13 @@ check sat red (#5827).
 Nothing about that failure is visible: the sweep is green, its log is a list of reassuring lines, and
 the only symptom is a pull request that never goes green on its own. So the shape of the lookup is
 asserted here rather than left to be noticed.
+
+The sweep had a second blind spot with the same symptom. `pull_request_review` recomputes the check
+only since 2026-09-12 (#5858), so every approval given before that trigger existed sits in a check
+run nobody recomputed -- and the governance pass reaches only pull requests touching a governance
+file. #5713 stayed BLOCKED for two days with its quorum satisfied and a green run already on its
+head. The sweep now also re-runs a quorum run that is older than the newest review on its pull
+request, which is what that staleness looks like from the API; those guards are below too.
 """
 
 from __future__ import annotations
@@ -106,3 +113,80 @@ def test_the_sweep_logs_the_run_id_it_found() -> None:
 def test_the_quiet_line_does_not_claim_more_than_it_knows() -> None:
     """ "Already green or never ran" was wrong in a third way: still running."""
     assert "already green, still running, or never ran" in _rerun_step()
+
+
+def test_a_stale_verdict_is_found_by_comparing_a_review_to_the_run() -> None:
+    """An approval older than the `pull_request_review` trigger recomputes nothing on its own.
+
+    The governance pass covers only pull requests touching a governance file, so every other
+    pull request kept whatever verdict it was last given. What marks one is that a review is
+    newer than a quorum run still red on the head; the sweep has to read both timestamps.
+    """
+    step = _rerun_step()
+
+    assert "submittedAt" in step, "the sweep needs each review's timestamp to spot a stale verdict"
+    assert ".started_at" in step, "the run's own timestamp is the other half of the comparison"
+    assert "$before" in _rerun_code(), "the comparison has to reach the run filter"
+
+
+def test_a_pull_request_with_no_review_is_not_looked_at() -> None:
+    """Nothing to be stale against, and the lookup costs two API calls per pull request."""
+    assert "select(.reviews | length > 0)" in _rerun_step()
+
+
+def test_every_red_run_is_re_run_not_only_the_newest() -> None:
+    """Branch protection folds every check run of a required name into one verdict.
+
+    One leftover red holds the pull request at BLOCKED however many later runs concluded
+    success (#3042, #3154), so taking the first match left the pull request exactly as stuck.
+    """
+    code = _rerun_code()
+
+    assert "| head -1" not in code, (
+        "a `head -1` re-runs one red instance and leaves the rest; the fold means the pull "
+        "request stays BLOCKED on any one of them"
+    )
+    assert "while read -r started_at run" in code, "the sweep iterates the red runs"
+
+
+def test_the_sweep_has_a_re_run_budget() -> None:
+    """The pool ceiling is 20 concurrent jobs and the merge queue needs most of it.
+
+    A backlog of stale verdicts would otherwise start every re-run at once, on the hour, and
+    the thing being unblocked is the same queue that loses the runners.
+    """
+    code = _rerun_code()
+
+    assert "MAX_RERUNS" in code
+    assert 'started" -ge "$MAX_RERUNS' in code
+
+
+def test_the_budget_is_checked_before_the_lookups() -> None:
+    """An exhausted sweep must not spend two API calls per remaining pull request.
+
+    The check sits at the top of the function, before `gh pr view`, so a deferred pull request
+    costs a log line and nothing else.
+    """
+    code = _rerun_code()
+    body = code[code.index("rerun_for () {") :]
+    budget = body.index('"$started" -ge "$MAX_RERUNS"')
+    lookup = body.index("gh pr view")
+
+    assert budget < lookup, "the budget is checked after the lookup it is supposed to save"
+
+
+def test_a_governance_pull_request_is_not_swept_twice() -> None:
+    """Pass 1 already re-ran it; pass 2 would re-run the attempt pass 1 just started."""
+    assert "$handled" in _rerun_code()
+
+
+def test_the_quiet_line_distinguishes_current_from_absent() -> None:
+    """ "Already green, still running, or never ran" is wrong for a red run that is current.
+
+    A quorum run newer than every review is giving the right answer, and saying it is green
+    would hide a pull request that is genuinely failing the gate.
+    """
+    step = _rerun_step()
+
+    assert "quorum last ran after the newest review; its verdict is current" in step
+    assert "already green, still running, or never ran" in step
