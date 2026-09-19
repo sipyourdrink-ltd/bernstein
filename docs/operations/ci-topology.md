@@ -32,7 +32,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cleanup-runs.yml | Cleanup Action Runs | workflow_dispatch | {"cancel-in-progress": "false", "group": "cleanup-runs-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-e2e.yml | cluster-e2e | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
-| .github/workflows/codeql.yml | CodeQL Security Analysis | pull_request, push, schedule | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "codeql-${{ github.ref }}"} | 1 |
+| .github/workflows/codeql.yml | CodeQL Security Analysis | push, schedule | {"cancel-in-progress": "false", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/coverage-ratchet-weekly.yml | Coverage ratchet (weekly floor bump) | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "coverage-ratchet-weekly"} | 1 |
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | workflow_run | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
@@ -65,12 +65,12 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-homebrew.yml | Publish Homebrew Formula | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "publish-homebrew-${{ github.ref }}"} | 1 |
 | .github/workflows/publish.yml | Publish | push, workflow_dispatch | - | 10 |
 | .github/workflows/quorum-rerun.yml | quorum rerun | pull_request_review, schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "quorum-rerun-${{ github.event.pull_request.number \|\| 'sweep' }}"} | 1 |
-| .github/workflows/quorum.yml | quorum | merge_group, pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "quorum-${{ github.event.pull_request.number \|\| github.event.merge_group.head_ref \|\| github.ref }}"} | 1 |
+| .github/workflows/quorum.yml | quorum | merge_group, pull_request, pull_request_review, workflow_dispatch | {"cancel-in-progress": "true", "group": "quorum-${{ github.event.pull_request.number \|\| inputs.pr \|\| github.event.merge_group.head_ref \|\| github.ref }}"} | 1 |
 | .github/workflows/reconcile-release.yml | Reconcile release drift | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "reconcile-release"} | 1 |
 | .github/workflows/release-major-minor.yml | Major/Minor Release | workflow_dispatch | {"cancel-in-progress": "false", "group": "release-major-minor-${{ github.ref }}"} | 1 |
 | .github/workflows/rendering-lane.yml | Rendering lane | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "rendering-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| format('branch-{0}-{1}', github.ref, github.sha) }}"} | 1 |
 | .github/workflows/required-check-canary.yml | Required-check name canary | pull_request, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "required-check-canary-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
-| .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 2 |
+| .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
 | .github/workflows/soc2-evidence-weekly.yml | soc2-evidence-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
@@ -149,7 +149,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/rendering-lane.yml | rendering: Rendering fetcher (browser-backed) |
 | .github/workflows/required-check-canary.yml | verify: Required-check name canary |
-| .github/workflows/runner-canary.yml | canary: Runner canary<br>macos-canary: macOS runner canary |
+| .github/workflows/runner-canary.yml | canary: Runner canary |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
 | .github/workflows/soc2-evidence-weekly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |

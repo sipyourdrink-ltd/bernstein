@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.protocols.mcp.claim_receipt import (
     ClaimReceipt,
     backlog_head,
@@ -137,8 +138,8 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
         )
         logger.info(
             "task.claim_receipt refused: claimer=%s role=%s (no eligible row)",
-            sanitize_log(body.claimer_id),
-            sanitize_log(str(body.role)),
+            for_log(body.claimer_id),
+            for_log(str(body.role)),
         )
     else:
         chain_head = ""
@@ -170,7 +171,7 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
         logger.info(
             "task.claim_receipt granted: task_id=%s claimer=%s",
             sanitize_log(entry.id),
-            sanitize_log(body.claimer_id),
+            for_log(body.claimer_id),
         )
 
     from bernstein.core.lineage.identity import load_or_create_signing_identity

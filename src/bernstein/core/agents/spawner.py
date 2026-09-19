@@ -22,7 +22,6 @@ from bernstein.core.agents.spawner_core import (
     _render_predecessor_context,
     _render_prompt,
     _render_signal_check,
-    _sanitise_for_log,
     logger,
 )
 
@@ -52,7 +51,6 @@ __all__ = [
     "_render_predecessor_context",
     "_render_prompt",
     "_render_signal_check",
-    "_sanitise_for_log",
     "_select_batch_config",
     "_should_use_router",
     "build_tool_allowlist_env",

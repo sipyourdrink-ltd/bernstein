@@ -11,26 +11,14 @@ name: CI (macOS nightly)
 # tag. The job mirrors the `test` matrix in ci.yml so the signal is
 # directly comparable.
 #
-# Runner split: the scheduled matrix runs on a project-owned macOS
-# runner during a fixed nightly window; push-to-main and on-demand runs
-# stay on the hosted pool so an operator can always get a macOS answer
-# outside that window. `workflow_dispatch` carries a `runner` input so
-# the owned lane can be exercised on demand without waiting for the
-# schedule.
+# Every leg of this workflow runs on the hosted macOS pool, so a
+# scheduled run, a push to main and an on-demand dispatch all produce
+# the same signal on the same image.
 
 on:
   schedule:
-    # 23:00 UTC daily. Chosen so the run starts inside the nightly
-    # maintenance window of the project-owned macOS runner in both
-    # daylight-saving seasons (02:00 IDT / 01:00 IST).
-    - cron: "0 23 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
-    inputs:
-      runner:
-        description: "Runner pool for the macOS matrix"
-        type: choice
-        options: [hosted, mac-night]
-        default: hosted
   push:
     branches: [main]
     paths:
@@ -69,9 +57,7 @@ permissions:
 jobs:
   test-macos-nightly:
     name: Test (macOS, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
-    # Scheduled runs, and dispatches that ask for it, go to the
-    # project-owned macOS runner; everything else stays hosted.
-    runs-on: ${{ (github.event_name == 'schedule' || inputs.runner == 'mac-night') && fromJSON('["self-hosted","macOS","ARM64","mac-night"]') || 'macos-latest' }}
+    runs-on: macos-latest
     timeout-minutes: 90
     permissions:
       contents: read
@@ -94,9 +80,6 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - name: Harden runner (audit mode)
-        # Not supported on self-hosted runners; the owned lane relies on
-        # the single-job ephemeral VM instead.
-        if: runner.environment == 'github-hosted'
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
