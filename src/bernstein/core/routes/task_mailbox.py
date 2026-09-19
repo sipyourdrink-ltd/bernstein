@@ -21,6 +21,7 @@ from bernstein.core.communication.task_mailbox import (
     MailboxMessage,
     TaskMailbox,
 )
+from bernstein.core.log_safe import for_log
 from bernstein.core.routes.task_crud import (
     _get_sse_bus,
     _get_store,
@@ -121,7 +122,7 @@ async def post_task_message(task_id: str, body: TaskMessagePost, request: Reques
     _get_sse_bus(request).publish("task_message", json.dumps({"task_id": task_id, "seq": message.seq}))
     logger.info(
         "task.message posted: task_id=%s seq=%d kind=%s sender=%s redactions=%d",
-        sanitize_log(task_id),
+        for_log(task_id),
         message.seq,
         sanitize_log(message.kind),
         sanitize_log(message.sender),

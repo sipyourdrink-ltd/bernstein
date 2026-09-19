@@ -29,6 +29,7 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.trackers.webhook_receiver import (
@@ -115,14 +116,14 @@ async def tracker_webhook(adapter: str, request: Request) -> JSONResponse:
             except Exception as exc:  # boundary
                 logger.warning(
                     "Tracker webhook queue rejected event adapter=%s id=%s: %s",
-                    sanitize_log(adapter),
+                    for_log(adapter),
                     sanitize_log(str(result.delivery_id)),
                     exc,
                 )
         else:
             logger.info(
                 "Tracker webhook accepted adapter=%s id=%s ticket=%s",
-                sanitize_log(adapter),
+                for_log(adapter),
                 sanitize_log(str(result.delivery_id)),
                 sanitize_log(str(result.event.ticket.id)),
             )
