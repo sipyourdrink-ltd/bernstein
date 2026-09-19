@@ -1,0 +1,4 @@
+#!/bin/sh
+# Records the query, then declines to answer: git falls back to a full scan.
+PROBE_NAME=fsmonitor "$(dirname "$0")/../probe.sh"
+exit 1
