@@ -36,12 +36,14 @@ if TYPE_CHECKING:
 def _get_suite(name: str):
     """Resolve a suite name or .json path to a BenchSuite."""
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
+    from bernstein.eval.bench.leakage_suite import build_leakage_suite_v1
     from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     _BUILTIN = {
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
+        "leakage-v1": build_leakage_suite_v1,
     }
 
     if name in _BUILTIN:
@@ -127,6 +129,10 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import LeakageReplayAdapter
+
+        adapter = LeakageReplayAdapter()
     else:
         adapter = MockReplayAdapter()
     runner = BenchRunner(
@@ -183,6 +189,10 @@ def bench_verify(bundle: str, suite: str) -> None:
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import LeakageReplayAdapter
+
+        adapter = LeakageReplayAdapter()
     else:
         adapter = MockReplayAdapter()
     verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
