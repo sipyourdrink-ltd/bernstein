@@ -37,14 +37,10 @@ def _load_schema() -> dict[str, Any]:
         return json.loads(data.decode("utf-8"))
     except (FileNotFoundError, ImportError, ModuleNotFoundError):
         # Fallback to source tree for development
-        schema_path = (
-            Path(__file__).parent / "oscal_schema" / "assessment-results-schema.json"
-        )
+        schema_path = Path(__file__).parent / "oscal_schema" / "assessment-results-schema.json"
         if schema_path.is_file():
             return json.loads(schema_path.read_text(encoding="utf-8"))
-        raise FileNotFoundError(
-            "OSCAL assessment-results schema not found in package data or source tree"
-        ) from None
+        raise FileNotFoundError("OSCAL assessment-results schema not found in package data or source tree") from None
 
 
 # Cached schema for validation
@@ -92,9 +88,7 @@ def validate_oscal_assessment_results(
 
     messages = [f"{e.json_path}: {e.message}" for e in errors]
     if strict:
-        raise jsonschema.ValidationError(
-            f"OSCAL assessment-results validation failed: {'; '.join(messages)}"
-        )
+        raise jsonschema.ValidationError(f"OSCAL assessment-results validation failed: {'; '.join(messages)}")
     return False, messages
 
 
@@ -267,9 +261,7 @@ def build_oscal_assessment_results(
                             {
                                 "name": "parent_hashes",
                                 "ns": "https://bernstein.run/oscal",
-                                "value": ",".join(
-                                    str(h) for h in le.get("parent_hashes", [])
-                                ),
+                                "value": ",".join(str(h) for h in le.get("parent_hashes", [])),
                             },
                         ],
                         "remarks": "Sigstore-style transparency log entry",
@@ -296,9 +288,21 @@ def build_oscal_assessment_results(
                         ],
                         "subject-uuids": [result_uuid],
                         "props": [
-                            {"name": "model", "ns": "https://bernstein.run/oscal", "value": str(ce.get("model", ""))},
-                            {"name": "usd", "ns": "https://bernstein.run/oscal", "value": str(ce.get("usd", 0))},
-                            {"name": "task_id", "ns": "https://bernstein.run/oscal", "value": str(ce.get("task_id", ""))},
+                            {
+                                "name": "model",
+                                "ns": "https://bernstein.run/oscal",
+                                "value": str(ce.get("model", "")),
+                            },
+                            {
+                                "name": "usd",
+                                "ns": "https://bernstein.run/oscal",
+                                "value": str(ce.get("usd", 0)),
+                            },
+                            {
+                                "name": "task_id",
+                                "ns": "https://bernstein.run/oscal",
+                                "value": str(ce.get("task_id", "")),
+                            },
                         ],
                         "remarks": f"Tokens: {ce.get('tokens', 'n/a')}",
                     }
@@ -309,7 +313,11 @@ def build_oscal_assessment_results(
             {
                 "uuid": str(uuid.uuid4()),
                 "title": f"Control domain: {domain}",
-                "description": f"Evidence from {len(domain_events)} audit events, {len(lineage_entries)} lineage entries, {len(cost_entries)} cost snapshots",
+                "description": (
+                    f"Evidence from {len(domain_events)} audit events,"
+                    f" {len(lineage_entries)} lineage entries,"
+                    f" {len(cost_entries)} cost snapshots"
+                ),
                 "target": {
                     "type": "control",
                     "target-id": domain,
@@ -318,9 +326,7 @@ def build_oscal_assessment_results(
                         "reason": "Audit events present" if domain_events else "No audit events found for this domain",
                     },
                 },
-                "related-observations": [
-                    {"observation-uuid": o["uuid"], "title": o["title"]} for o in observations
-                ],
+                "related-observations": [{"observation-uuid": o["uuid"], "title": o["title"]} for o in observations],
                 "props": [
                     {"name": "event_count", "ns": "https://bernstein.run/oscal", "value": str(len(domain_events))},
                     {"name": "lineage_count", "ns": "https://bernstein.run/oscal", "value": str(len(lineage_entries))},
@@ -335,9 +341,7 @@ def build_oscal_assessment_results(
                 "uuid": result_uuid,
                 "title": f"Assessment result: {domain}",
                 "description": f"Evidence assessment for control domain {domain}",
-                "start": min(
-                    [str(e.get("timestamp", now)) for e in domain_events] + [now]
-                ),
+                "start": min([str(e.get("timestamp", now)) for e in domain_events] + [now]),
                 "end": now,
                 "observations": observations,
                 "findings": findings,
@@ -425,9 +429,7 @@ def export_oscal_assessment_results(
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(document, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    output_path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
 
     logger.info("OSCAL assessment-results written to %s", output_path)
     return output_path
@@ -440,9 +442,7 @@ def get_oscal_schema_path() -> Path:
     """
     try:
         # Try package data first (installed wheel)
-        with importlib.resources.path(
-            "bernstein.compliance.oscal_schema", "assessment-results-schema.json"
-        ) as p:
+        with importlib.resources.path("bernstein.compliance.oscal_schema", "assessment-results-schema.json") as p:
             return p
     except (FileNotFoundError, ImportError, ModuleNotFoundError):
         # Fallback to source tree
