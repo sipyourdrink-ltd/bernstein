@@ -298,7 +298,9 @@ def _app_with_agent_identity_store(tmp_path: Any) -> tuple[TestClient, Any]:
 def test_agent_jwt_with_task_scope_allows_own_task(tmp_path: Any) -> None:
     """An agent JWT scoped to task-A allows completing task-A."""
     client, store = _app_with_agent_identity_store(tmp_path)
-    _, token = store.create_identity("agent-session-1", "backend", task_ids=["task-abc"])
+    _, token = store.create_identity(
+        "agent-session-1", "backend", task_ids=["task-abc"], metadata={"tenant_id": "default"}
+    )
 
     response = client.post(
         "/tasks/task-abc/complete",
@@ -315,7 +317,9 @@ def test_agent_jwt_with_task_scope_allows_own_task(tmp_path: Any) -> None:
 def test_agent_jwt_with_task_scope_denies_out_of_scope_task(tmp_path: Any) -> None:
     """An agent JWT scoped to task-A must be denied when it tries to act on task-B."""
     client, store = _app_with_agent_identity_store(tmp_path)
-    _, token = store.create_identity("agent-session-2", "backend", task_ids=["task-abc"])
+    _, token = store.create_identity(
+        "agent-session-2", "backend", task_ids=["task-abc"], metadata={"tenant_id": "default"}
+    )
 
     response = client.post(
         "/tasks/task-xyz/complete",
@@ -333,7 +337,7 @@ def test_agent_jwt_without_task_scope_is_unrestricted(tmp_path: Any) -> None:
     """An orchestrator/manager agent JWT (task_ids=[]) may act on any task."""
     client, store = _app_with_agent_identity_store(tmp_path)
     # No task_ids → unrestricted manager token
-    _, token = store.create_identity("manager-session-1", "manager", task_ids=[])
+    _, token = store.create_identity("manager-session-1", "manager", task_ids=[], metadata={"tenant_id": "default"})
 
     response = client.post(
         "/tasks/any-task-id/complete",
@@ -347,7 +351,9 @@ def test_agent_jwt_without_task_scope_is_unrestricted(tmp_path: Any) -> None:
 def test_agent_jwt_read_requests_not_scope_checked(tmp_path: Any) -> None:
     """GET requests bypass task-scope enforcement even for scoped agents."""
     client, store = _app_with_agent_identity_store(tmp_path)
-    _, token = store.create_identity("agent-session-3", "backend", task_ids=["task-abc"])
+    _, token = store.create_identity(
+        "agent-session-3", "backend", task_ids=["task-abc"], metadata={"tenant_id": "default"}
+    )
 
     response = client.get("/status", headers={"Authorization": f"Bearer {token}"})
 
@@ -395,7 +401,7 @@ def test_agent_jwt_denied_on_shutdown_route(tmp_path: Any) -> None:
     from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = AgentIdentityStore(Path(str(tmp_path)))
-    _, token = store.create_identity("manager-1", "manager", task_ids=[])
+    _, token = store.create_identity("manager-1", "manager", task_ids=[], metadata={"tenant_id": "default"})
 
     app = FastAPI()
     app.add_middleware(SSOAuthMiddleware, agent_identity_store=store)
@@ -418,7 +424,7 @@ def test_agent_jwt_denied_on_broadcast_and_drain(tmp_path: Any) -> None:
     from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = AgentIdentityStore(Path(str(tmp_path)))
-    _, token = store.create_identity("mgr-2", "manager", task_ids=[])
+    _, token = store.create_identity("mgr-2", "manager", task_ids=[], metadata={"tenant_id": "default"})
 
     app = FastAPI()
     app.add_middleware(SSOAuthMiddleware, agent_identity_store=store)
@@ -447,3 +453,17 @@ def test_check_agent_task_scope_denies_out_of_scope_task() -> None:
     assert error is not None
     assert "task-xyz" in error
     assert "task-abc" in error
+
+
+def test_agent_jwt_without_a_tenant_is_refused_not_a_500(tmp_path: Any) -> None:
+    """A credential minted with no tenant names none; it is an auth failure (#5028)."""
+    client, store = _app_with_agent_identity_store(tmp_path)
+    _, token = store.create_identity("agent-no-tenant", "backend", task_ids=["task-abc"])
+
+    response = client.post(
+        "/tasks/task-abc/complete",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"result_summary": "done"},
+    )
+
+    assert response.status_code == 401
