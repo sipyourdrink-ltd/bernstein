@@ -44,6 +44,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows path
+    fcntl = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
 
@@ -234,6 +239,35 @@ def _lease_is_stale(meta: dict[str, Any] | None) -> bool:
     return not _holder_process_alive(meta)
 
 
+@contextlib.contextmanager
+def _reclaim_lock(path: Path) -> Generator[None]:
+    """Serialise a lease's reclaim decision against a concurrent keepalive.
+
+    ``LeaseStore._open_exclusive``'s stale-reclaim branch and
+    :meth:`Lease.keepalive` both read the same lease file, judge it, and then
+    write it; without a shared lock a keepalive can read while the lease is
+    still valid, then write *after* a legitimate reclaim has already recreated
+    the file underneath it, silently overwriting the new holder's record with
+    the old holder's stale one. Same primitive and Windows fallback as
+    ``bernstein.core.memory.chain._exclusive_lock``.
+    """
+    lock_path = path.with_name(f"{path.name}.lock")
+    if fcntl is None:  # pragma: no cover - Windows path
+        yield
+        return
+    fd = None
+    try:
+        fd = lock_path.open("a")
+        fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        if fd is not None:
+            try:
+                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            finally:
+                fd.close()
+
+
 # ---------------------------------------------------------------------------
 # Lease
 # ---------------------------------------------------------------------------
@@ -291,16 +325,17 @@ class Lease:
         """
         if self.released:
             raise LeaseConflictError(f"lease on {self.resource_id!r} was already released", name=self.resource_id)
-        recorded = _read_lease(self.path)
-        if recorded is None or recorded.get("lease_id") != self.lease_id:
-            raise LeaseConflictError(
-                f"lease on {self.resource_id!r} is no longer held by this process",
-                name=self.resource_id,
-                holder=recorded,
-            )
-        self.ttl_s = float(ttl_s) if ttl_s is not None else self.ttl_s
-        self.expires_at = time.time() + self.ttl_s
-        self._write()
+        with _reclaim_lock(self.path):
+            recorded = _read_lease(self.path)
+            if recorded is None or recorded.get("lease_id") != self.lease_id:
+                raise LeaseConflictError(
+                    f"lease on {self.resource_id!r} is no longer held by this process",
+                    name=self.resource_id,
+                    holder=recorded,
+                )
+            self.ttl_s = float(ttl_s) if ttl_s is not None else self.ttl_s
+            self.expires_at = time.time() + self.ttl_s
+            self._write()
         return self.expires_at
 
     def release(self) -> None:
@@ -406,23 +441,24 @@ class LeaseStore:
         try:
             return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError as exc:
-            meta = _read_lease(path)
-            if not _lease_is_stale(meta):
-                owner = f" held by {meta['owner']}" if isinstance(meta, dict) and meta.get("owner") else ""
-                raise LeaseConflictError(
-                    f"resource {name!r} is already leased ({path}{owner})", name=name, holder=meta
-                ) from exc
-            logger.warning("Reclaiming expired lease %s (previous holder gone or TTL passed): %s", path, meta)
-            # A competing claimant may win the race and re-create the lease;
-            # the retry below resolves that case.
-            with contextlib.suppress(OSError):
-                path.unlink()
-            try:
-                return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError as retry_exc:
-                raise LeaseConflictError(
-                    f"resource {name!r} is already leased ({path})", name=name, holder=_read_lease(path)
-                ) from retry_exc
+            with _reclaim_lock(path):
+                meta = _read_lease(path)
+                if not _lease_is_stale(meta):
+                    owner = f" held by {meta['owner']}" if isinstance(meta, dict) and meta.get("owner") else ""
+                    raise LeaseConflictError(
+                        f"resource {name!r} is already leased ({path}{owner})", name=name, holder=meta
+                    ) from exc
+                logger.warning("Reclaiming expired lease %s (previous holder gone or TTL passed): %s", path, meta)
+                # A competing claimant may win the race and re-create the lease;
+                # the retry below resolves that case.
+                with contextlib.suppress(OSError):
+                    path.unlink()
+                try:
+                    return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError as retry_exc:
+                    raise LeaseConflictError(
+                        f"resource {name!r} is already leased ({path})", name=name, holder=_read_lease(path)
+                    ) from retry_exc
 
     def acquire(self, name: str, *, owner: str | None = None, ttl_s: float = DEFAULT_LEASE_TTL_S) -> Lease:
         """Take a lease on *name*, or raise :class:`LeaseConflictError`.
