@@ -1828,17 +1828,6 @@ def model_call_invoke(
     a running agent session via the orchestrator. Use the ModelCallLedger
     library API directly for testing with mock adapters.
     """
-    from pathlib import Path
-
-    from bernstein.core.cost.model_call_ledger import ModelCallLedger
-
-    # Parse parameters JSON
-    try:
-        params_dict = json.loads(parameters)
-    except json.JSONDecodeError as exc:
-        console.print(f"[red]Invalid JSON in --parameters: {exc}[/red]")
-        raise click.Abort from exc
-
     # Fail closed: no real adapter session available in standalone CLI context
     console.print(
         "[red]Error: Real adapter invocation requires a running agent session.[/red]\n"
@@ -1862,12 +1851,6 @@ def model_call_replay(sdd_dir: str, record_id: str) -> None:
     a running agent session via the orchestrator. Use the ModelCallLedger
     library API directly for testing with mock adapters.
     """
-    from pathlib import Path
-
-    from bernstein.core.cost.model_call_ledger import ModelCallLedger
-
-    ledger = ModelCallLedger(Path(sdd_dir))
-
     # Fail closed: no real adapter session available in standalone CLI context
     console.print(
         "[red]Error: Real adapter invocation requires a running agent session.[/red]\n"
