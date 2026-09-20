@@ -338,6 +338,15 @@ class AgentIdentityCard:
         same idea. Both separators are examined, because a scope written on
         one host is read on another.
 
+        A path is refused if *any* segment is ``..``, not only a leading one,
+        so ``src/api/../api/x.py`` is refused even though it resolves back
+        inside the scope. That is the fail-closed direction on purpose -
+        normalising would mean deciding whether symlinks exist, which this
+        function cannot know - and it matches how ``guardrail_pipeline``
+        reaches the same outcome via ``validate_relative_path``. A ``..`` in a
+        *scope entry* is refused by the same policy through a different path:
+        ``_path_segments`` returns ``None`` and the entry names no segment.
+
         An entry that names no segment at all (``"/"``, ``""``) contains
         nothing rather than everything - otherwise a single stray ``"/"`` in a
         scope list would silently unrestrict the card. A scope that is
