@@ -254,6 +254,15 @@ def _tenant_kid(tenant_id: str) -> str:
     changes: an in-flight card names the key that actually signed it, and the
     archived entry published under that same thumbprint resolves it for as
     long as the grace window holds it open.
+
+    This may be called while :data:`_KEY_LOCK` is already held (the card
+    route does so), and relies on that lock being a reentrant ``RLock`` -
+    swapping it for a plain ``Lock`` would deadlock instead of failing a
+    test. It also touches the keystore: a private key whose mode is looser
+    than ``0600`` is refused here, so a permission problem that used to
+    surface only where the key was actually used now also surfaces from a
+    plain ``kid`` lookup. The function-level import below mirrors
+    ``agent_json_keys`` and avoids a module-level cycle.
     """
     from bernstein.core.identity.http_signing import install_identity_keyid
 
@@ -693,9 +702,10 @@ def agent_json_keys(request: Request) -> dict[str, Any]:
     """Return the JWKS for verifying ``/.well-known/agent.json`` signatures.
 
     JWKS shape per RFC 7517 - ``{"keys": [<jwk>, ...]}``. The current
-    orchestrator key always appears first, keyed by its RFC 7638 thumbprint,
-    and again under the historical fixed kid so a verifier that cached
-    ``agent-bernstein-orchestrator`` keeps resolving it. During a rotation
+    orchestrator key always appears first under the historical fixed kid, so
+    a verifier that cached ``agent-bernstein-orchestrator`` keeps resolving
+    it, and again immediately after under its RFC 7638 thumbprint, which is
+    the kid a freshly signed card carries. During a rotation
     grace window (24h by default) any archived public keys still inside the
     window are appended under *their* thumbprints, which is the kid a card
     signed by one of them carries - so a verifier routing by kid finds the
@@ -719,7 +729,7 @@ def agent_json_keys(request: Request) -> dict[str, Any]:
     jwks: list[dict[str, str]] = [ed25519_public_jwk(public_pem, kid=_legacy_tenant_kid(tenant_id))]
     # The same key again under its thumbprint, which is what a card signed
     # by it now carries. Same key material, second label - not a second key.
-    jwks.append(ed25519_public_jwk(public_pem, kid=install_identity_keyid(public_pem)))
+    jwks.append(ed25519_public_jwk(public_pem, kid=_tenant_kid(tenant_id)))
     for archived in _get_keystore(tenant_id).list_archived():
         # Published under the thumbprint a card signed by this key carries,
         # not under the timestamped keystore id, which nothing on the wire
