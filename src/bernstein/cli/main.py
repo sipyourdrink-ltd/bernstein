@@ -83,6 +83,7 @@ from bernstein.cli.commands.impact_cmd import (
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.issue_to_pr_cmd import issue_to_pr_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
+from bernstein.cli.commands.model_cmd import model_group
 from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.receipt_cmd import receipt_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
@@ -817,7 +818,7 @@ def cli(
 
     # Start background work, then show splash concurrently.
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _splash_future = executor.submit(_background_startup, workdir)
+    executor.submit(_background_startup, workdir)
 
     # Show splash immediately (gradient + logo) - no agent data needed for visuals.
     banner_shown = splash(
@@ -839,11 +840,9 @@ def cli(
     if banner_shown:
         ctx.obj["_BANNER_PRINTED"] = True
 
-    # Show immediate feedback while background finishes - no black screen.
-    console.print("[dim]Preparing...[/dim]", end="\r")
-
-    # Collect background results (should be done by now - splash took 3.5 seconds).
-    _bg = _splash_future.result(timeout=10)
+    # Startup results are cosmetic and not read downstream, so do not join the
+    # thread: a slow agent discovery pass would otherwise raise TimeoutError
+    # before the run callback (or --plan-only) ever executes.
     executor.shutdown(wait=False)
 
     if dry_run:
@@ -1500,4 +1499,5 @@ from bernstein.cli.commands.api_check_cmd import api_check_cmd  # noqa: E402
 cli.add_command(api_check_cmd, "api-check")
 cli.add_command(ab_test_cmd, "ab-test")
 cli.add_command(receipt_group, "receipt")
+cli.add_command(model_group, "model")
 cli.add_command(volunteer_group, "volunteer")

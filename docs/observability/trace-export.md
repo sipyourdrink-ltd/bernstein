@@ -91,7 +91,7 @@ from record member to the journal event and key it is sourced from:
 
 | Record member | Journal event | Journal key |
 |---|---|---|
-| `model.provider` | `agent_spawned` | `model_provider` |
+| `model.provider` | `agent_spawned` | `model_provider`, else the namespace prefix of `model_id` |
 | `model.model_id` | `agent_spawned` | `model_id` |
 | `model.version` | `agent_spawned` | `model_version` (optional) |
 | `policy.bundle_hash` | `run_started` | `gate_config` |
@@ -99,9 +99,24 @@ from record member to the journal event and key it is sourced from:
 | `tool_transcript` | `tool_call` | payload |
 | `iat` / `appraisal.timestamp` | last event | `ts` |
 
-An endpoint-routed worker resolves an endpoint, not a provider, so its
-`model_provider` is `null` and export keeps refusing rather than inventing
-a vendor name.
+When a session resolves no provider, a namespaced model identifier such as
+`omnilab/fleet-hard` journals `model_provider` as its namespace (`omnilab`)
+and keeps `model_id` whole. A bare identifier or an empty namespace is not a
+provider, so export still refuses rather than inventing a vendor name.
+
+`model_provider` is the model vendor the adapter declares (for example
+`anthropic` for a Claude Code worker), not the CLI adapter identifier that
+carried the spawn. An adapter that fronts several vendors, a gateway, or
+nothing it can name declares no vendor; its hop journals no
+`model_provider` key and export refuses it with the agent id, the same way
+it refuses an endpoint-routed worker.
+
+`model_id` is the identifier the operator configured, recorded as written. A
+role policy that asks for a tier - `sonnet`, `opus`, `haiku` - records that
+word, because that is what was asked for; the concrete dated identifier the
+adapter launched is not journaled. Pin a model in the role policy when the
+record has to name the exact model that ran, as it does for a record that
+leaves this install.
 
 ## What is deliberately NOT in a trust record
 

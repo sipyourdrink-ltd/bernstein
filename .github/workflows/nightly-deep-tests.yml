@@ -95,6 +95,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
+        with:
+          # Python 3.14 triggers HypothesisWorks/hypothesis intervalsets ValueError (#105126900451)
+          python-version: "3.13"
       - name: Run property suite under deep profile
         env:
           HYPOTHESIS_PROFILE: deep

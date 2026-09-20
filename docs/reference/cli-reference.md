@@ -906,6 +906,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
+| `bernstein model` | Model admission registry and impact analysis (group): `registry` reconstructs the permitted model set at any past instant from the audit chain; `impact` lists artefacts produced by a model. | `cli/commands/model_cmd.py` |
 | `bernstein identity` | Install-identity ops (group): fingerprint helpers, `keydir`, `export-verifier`, plus `agents` (the agent-principal registry projected from the chain). | `cli/commands/identity_cmd.py:identity_group` |
 | `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |

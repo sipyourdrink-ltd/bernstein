@@ -1250,6 +1250,16 @@ class CLIAdapter(ABC):
     #: the catalog) do not have to declare anything.
     provides: tuple[str, ...] = ()
 
+    #: Model vendor this adapter fronts, when that is a single, knowable
+    #: fact (for example ``"anthropic"`` for Claude Code, ``"openai"`` for
+    #: Codex). Consumed by the orchestrator to journal ``model_provider``
+    #: for trust-record export. Deliberately NOT derived from
+    #: :attr:`provides` (a registry alias list) or the adapter name: an
+    #: adapter that fronts several vendors, a gateway, or anything it cannot
+    #: establish from its own code declares nothing, and export refuses that
+    #: hop rather than guessing. Empty by default.
+    model_vendor: str = ""
+
     def _derive_session_namespace(self) -> str:
         """Return the namespace label used for deterministic session ids."""
         if self.registry_name:
