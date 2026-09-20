@@ -11,7 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from bernstein.eval.bench.suite import BenchTask, BenchmarkSuite, Score
+from bernstein.eval.bench.suite import BenchmarkSuite, BenchTask, Score
 
 if TYPE_CHECKING:
     from collections.abc import Generator
