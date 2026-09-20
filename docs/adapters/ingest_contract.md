@@ -99,13 +99,15 @@ The plugin manager collects declarations during discovery and stores them in
 `bernstein.core.trackers.registry._ingest_declarations`. Duplicate names are
 skipped with a warning; the first registration wins.
 
-## Built-in adapter
+## Built-in adapters
 
-Bernstein ships one built-in ingest adapter:
+Bernstein ships these built-in ingest adapters:
 
 | Adapter | Module | Event types |
 |---|---|---|
 | `OTLPIngestAdapter` | `bernstein.core.observability.otlp_ingest` | `gen_ai_activity`, `untyped_activity` |
+| `CrewIngestAdapter` | `bernstein.adapters.crew_ingest` | `gen_ai_activity`, `untyped_activity` |
 
 See [`OTLPIngestAdapter`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/observability/otlp_ingest.py)
-for its wire format and the full ingest pipeline.
+and [`CrewIngestAdapter`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/crew_ingest.py)
+for their wire formats and the full ingest pipeline.
