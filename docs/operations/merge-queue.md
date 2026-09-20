@@ -274,10 +274,17 @@ that commit changed `version = ` in `pyproject.toml`. Two questions had to
 be answered before the queue can be enabled.
 
 **Q1: do merge-queue CI runs dispatch the release listener?**
-No, and that is the desired behaviour. A `merge_group` run reports
-`head_branch = gh-readonly-queue/main/pr-<n>-<base_sha>`, which the
-dispatcher's `branches: [main]` filter excludes. Nothing is ever tagged
-from a queue ref that has not merged.
+No - and the dispatcher still has to route them anyway. A `merge_group`
+run reports `head_branch = gh-readonly-queue/main/pr-<n>-<base_sha>`, which
+the dispatcher's `branches: [main]` trigger filter excludes, so no listener
+run boots from the queue ref itself. But that merge_group run is the only
+CI the version-bump commit ever gets: the queue fast-forwards `main` onto
+the SHA it already built, so no `push` CI run follows. The dispatcher's
+`auto-release` job therefore also admits
+`startsWith(head_branch, 'gh-readonly-queue/main/')` and routes that single
+queue run to the release gate. Nothing is tagged from a queue ref that has
+not merged - the gate still inspects the triggering commit and the commit
+is on `main` by the time it runs.
 
 **Q2: does the post-queue merge still fire the release listener?**
 Yes. When a merge group goes green, GitHub advances the base branch and
