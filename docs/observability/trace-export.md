@@ -104,6 +104,13 @@ When a session resolves no provider, a namespaced model identifier such as
 and keeps `model_id` whole. A bare identifier or an empty namespace is not a
 provider, so export still refuses rather than inventing a vendor name.
 
+`model_provider` is the model vendor the adapter declares (for example
+`anthropic` for a Claude Code worker), not the CLI adapter identifier that
+carried the spawn. An adapter that fronts several vendors, a gateway, or
+nothing it can name declares no vendor; its hop journals no
+`model_provider` key and export refuses it with the agent id, the same way
+it refuses an endpoint-routed worker.
+
 ## What is deliberately NOT in a trust record
 
 Trust records are **provenance envelopes**, not data containers. They

@@ -96,13 +96,22 @@ def _record_run_started(journal: EventJournal, run_id: str, gate_config: Quality
     Orchestrator._record_run_started(stub)  # type: ignore[arg-type]
 
 
-def _session() -> AgentSession:
-    return AgentSession(
+def _session(*, model_vendor: str | None = "anthropic") -> AgentSession:
+    """Build a session the way the spawner builds it.
+
+    ``provider`` is the CLI/adapter identifier (``claude``), not the model
+    vendor. The spawner stamps the adapter's declared ``model_vendor`` onto
+    the session; ``model_vendor=None`` models an adapter that declares none.
+    """
+    session = AgentSession(
         id="session-1",
         role="backend",
         task_ids=["t-1"],
-        provider="anthropic",
+        provider="claude",
     )
+    if model_vendor is not None:
+        session.model_vendor = model_vendor
+    return session
 
 
 def _session_with_model(model: str, provider: str | None) -> AgentSession:
@@ -152,7 +161,36 @@ class TestAgentSpawnedCarriesModelIdentity:
         assert spawned["model_provider"] == "anthropic"
         # The existing keys stay: other readers may depend on them.
         assert spawned["model"] == "sonnet"
-        assert spawned["provider"] == "anthropic"
+        assert spawned["provider"] == "claude"
+
+
+class TestModelVendor:
+    def test_record_provider_is_the_vendor_when_the_session_provider_is_a_cli_name(self, tmp_path: Path) -> None:
+        journal = _orchestrator_written_journal(tmp_path / ".sdd", "vendor-run")
+        result = _emitter().emit_hop_records(journal.path, "vendor-run")
+
+        record = json.loads(result.records[0].record)
+        assert record["model"]["provider"] == "anthropic"
+
+    def test_adapter_without_a_declared_vendor_is_refused_with_the_agent_id(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="no-vendor", sdd_dir=tmp_path / ".sdd")
+        _record_run_started(journal, "no-vendor", QualityGatesConfig(lint=True))
+        _record_spawned_events(journal, _session(model_vendor=None))
+        journal.record("run_completed", run_id="no-vendor", ticks=1)
+
+        with pytest.raises(ValueError, match="session-1"):
+            _emitter().emit_hop_records(journal.path, "no-vendor")
+
+    def test_agent_spawned_provider_and_model_keys_are_unchanged(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="spawn-facts", sdd_dir=tmp_path / ".sdd")
+        _record_spawned_events(journal, _session())
+
+        events = load_events(journal.path).events
+        spawned = next(event for event in events if event["event"] == "agent_spawned")
+        assert spawned["model"] == "sonnet"
+        assert spawned["provider"] == "claude"
+        assert spawned["model_id"] == "sonnet"
+        assert spawned["model_provider"] == "anthropic"
 
 
 class TestRunStartJournalsGateConfig:
@@ -271,9 +309,11 @@ class TestModelNamespaceBecomesProvider:
             assert "model_id" not in spawned, model
             assert "model_provider" not in spawned, model
 
-    def test_resolved_provider_is_never_overwritten_by_the_namespace(self, tmp_path: Path) -> None:
+    def test_declared_vendor_is_never_overwritten_by_the_namespace(self, tmp_path: Path) -> None:
         journal = EventJournal(run_id="resolved-facts", sdd_dir=tmp_path / ".sdd")
-        _record_spawned_events(journal, _session_with_model("omnilab/fleet-hard", "anthropic"))
+        session = _session_with_model("omnilab/fleet-hard", None)
+        session.model_vendor = "anthropic"
+        _record_spawned_events(journal, session)
 
         spawned = _spawned_event(journal)
         assert spawned["model_id"] == "omnilab/fleet-hard"
