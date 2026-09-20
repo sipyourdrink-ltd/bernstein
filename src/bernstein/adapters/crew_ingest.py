@@ -19,9 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from bernstein.core.identity.delegation import (
+    GENESIS_HMAC,
     ChainResult,
     DelegationLedger,
     DelegationReceipt,
+    _compute_hmac,
     verify_run_chain,
 )
 from bernstein.core.observability.ingest_contract import (
@@ -73,12 +75,18 @@ class CrewToolCall:
         else:
             args = {"raw": str(raw_args)}
 
-        digest = str(raw.get("arguments_digest") or _digest_args(args))
+        computed = _digest_args(args)
+        supplied = raw.get("arguments_digest")
+        if supplied is not None and str(supplied) != computed:
+            raise ValueError(
+                f"Tool call arguments digest mismatch for {name or tool_call_id}: "
+                f"supplied {supplied!r}, computed {computed!r}"
+            )
         return cls(
             name=name,
             tool_call_id=tool_call_id,
             arguments=args,
-            arguments_digest=digest,
+            arguments_digest=computed,
             output=raw.get("output"),
         )
 
@@ -145,12 +153,16 @@ class CrewTask:
         desc = str(raw.get("description") or raw.get("name") or "")
         role = str(raw.get("assigned_role") or raw.get("role") or raw.get("agent") or "")
         raw_tools = raw.get("tool_calls") or ()
-        tools = tuple(CrewToolCall.from_dict(t) for t in raw_tools if isinstance(t, dict))
+        tools: list[CrewToolCall] = []
+        for idx, item in enumerate(raw_tools):
+            if not isinstance(item, dict):
+                raise ValueError(f"Tool call at index {idx} must be a dictionary")
+            tools.append(CrewToolCall.from_dict(item))
         return cls(
             task_id=task_id,
             description=desc,
             assigned_role=role,
-            tool_calls=tools,
+            tool_calls=tuple(tools),
             output=raw.get("output"),
         )
 
@@ -253,7 +265,7 @@ class CrewIngestAdapter:
             raise ValueError(f"Declaration does not declare required event types: {missing}")
 
     def ingest_trace(self, data: Mapping[str, Any] | str | Path) -> IngestedCrewRun:
-        """Parse and ingest a crew execution trace dictionary, JSON string, or file path.
+        """Parse and ingest a crew execution trace dictionary, JSON string, or Path.
 
         Raises:
             ValueError: If roles or tasks are malformed or missing required identifiers.
@@ -268,7 +280,9 @@ class CrewIngestAdapter:
         else:
             raise TypeError(f"Unsupported data type for Crew trace: {type(data)}")
 
-        run_id = str(raw_dict.get("run_id") or "foreign-crew-run")
+        run_id = str(raw_dict.get("run_id") or "")
+        if not run_id:
+            raise ValueError("Crew trace is missing 'run_id'")
         crew_id = str(raw_dict.get("crew_id") or "foreign-crew")
 
         raw_roles = raw_dict.get("roles")
@@ -301,8 +315,11 @@ class CrewIngestAdapter:
         if not isinstance(raw_handoffs, list):
             raise ValueError("Crew trace 'handoffs' must be a list when present")
 
-        handoffs = [CrewHandoff.from_dict(h) for h in raw_handoffs if isinstance(h, dict)]
-
+        handoffs: list[CrewHandoff] = []
+        for idx, item in enumerate(raw_handoffs):
+            if not isinstance(item, dict):
+                raise ValueError(f"Handoff at index {idx} must be a dictionary")
+            handoffs.append(CrewHandoff.from_dict(item))
         # Sort roles and tasks deterministically
         roles.sort(key=lambda r: r.role_id)
         tasks.sort(key=lambda t: t.task_id)
@@ -325,70 +342,119 @@ class CrewIngestAdapter:
     ) -> list[DelegationReceipt]:
         """Record foreign handoffs into *ledger* as HMAC-chained delegation receipts.
 
-        Idempotent: If receipts for this run already exist in the ledger with
-        the same sequence and content, re-ingestion returns the existing
-        receipts without adding duplicate hops.
+        Idempotent: If receipts for this run already exist with the same
+        content-derived chain, re-ingestion verifies and returns them without
+        adding duplicate hops.
 
         Raises:
-            ValueError: When a handoff requires a parent receipt that is absent,
-                failing closed rather than accepting an unauthorized root.
+            ValueError: When a handoff has an unresolvable parent, references an
+                undeclared role, or the trace fails to reproduce the recorded chain.
         """
-        existing_receipts: list[DelegationReceipt] = []
-        path = ledger.receipt_path(run.run_id)
-        if path.is_file():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line:
-                    existing_receipts.append(DelegationReceipt(**json.loads(line)))
+        if not run.run_id:
+            raise ValueError("Crew trace is missing 'run_id'")
 
-        # If existing receipts cover all handoffs with matching hops, return them
-        if existing_receipts and len(existing_receipts) == len(run.handoffs):
-            matched = True
-            for receipt, handoff in zip(existing_receipts, run.handoffs, strict=True):
-                if receipt.issuer != f"role:{handoff.from_role}" or receipt.subject != f"role:{handoff.to_role}":
-                    matched = False
-                    break
-            if matched:
-                return existing_receipts
+        declared_role_ids = {role.role_id for role in run.roles}
+        for handoff in run.handoffs:
+            if handoff.from_role not in declared_role_ids:
+                raise ValueError(f"Handoff from_role {handoff.from_role!r} is not a declared role")
+            if handoff.to_role not in declared_role_ids:
+                raise ValueError(f"Handoff to_role {handoff.to_role!r} is not a declared role")
 
-        recorded: list[DelegationReceipt] = []
+        # Validate-then-commit: resolve every parent and derive every HMAC in a
+        # first pass so a rejected trace raises before the append-only ledger is
+        # touched. The HMACs chain over the parent HMAC, so they are the exact
+        # linkage a verifier recomputes from the same tail.
+        parent_hmacs: list[str | None] = []
+        hmacs: list[str] = []
         for idx, handoff in enumerate(run.handoffs):
-            parent_hmac: str | None = None
             if handoff.parent_ref is not None:
-                matching = [r for r in recorded if r.hmac == handoff.parent_ref]
-                if not matching:
+                if idx == 0 or handoff.parent_ref not in hmacs:
                     raise ValueError(
                         f"Handoff {idx} ({handoff.from_role} -> {handoff.to_role}) references "
                         f"missing parent receipt HMAC: {handoff.parent_ref}"
                     )
                 parent_hmac = handoff.parent_ref
             elif handoff.parent_handoff_index is not None:
-                if handoff.parent_handoff_index < 0 or handoff.parent_handoff_index >= len(recorded):
+                if handoff.parent_handoff_index < 0 or handoff.parent_handoff_index >= idx:
                     raise ValueError(
                         f"Handoff {idx} ({handoff.from_role} -> {handoff.to_role}) references "
                         f"non-existent parent handoff index {handoff.parent_handoff_index}"
                     )
-                parent_hmac = recorded[handoff.parent_handoff_index].hmac
-            elif idx > 0:
-                # By default, a non-root handoff without an explicit index descends from
-                # the immediate prior hop, ensuring a connected chain.
-                parent_hmac = recorded[idx - 1].hmac
+                parent_hmac = hmacs[handoff.parent_handoff_index]
             elif handoff.requires_parent:
                 raise ValueError(
                     f"Root handoff {idx} ({handoff.from_role} -> {handoff.to_role}) "
                     "requires parent receipt but has none"
                 )
+            elif idx > 0:
+                raise ValueError(
+                    f"Handoff {idx} ({handoff.from_role} -> {handoff.to_role}) "
+                    "has no resolvable parent: an explicit parent_handoff_index or parent_ref is required"
+                )
+            else:
+                parent_hmac = None
 
-            receipt = ledger.record_hop(
-                run_id=run.run_id,
-                issuer=f"role:{handoff.from_role}",
-                subject=f"role:{handoff.to_role}",
-                audience=f"role:{handoff.to_role}",
-                act=handoff.act,
-                created=handoff.timestamp if handoff.timestamp else None,
-                parent_ref=parent_hmac,
-            )
-            recorded.append(receipt)
+            parent_hmacs.append(parent_hmac)
+            prev = parent_hmac if parent_hmac is not None else GENESIS_HMAC
+            body: dict[str, Any] = {
+                "run_id": run.run_id,
+                "hop_index": idx,
+                "issuer": f"role:{handoff.from_role}",
+                "subject": f"role:{handoff.to_role}",
+                "audience": f"role:{handoff.to_role}",
+                "act": handoff.act,
+                "created": handoff.timestamp,
+                "prev_hmac": prev,
+            }
+            if parent_hmac is not None:
+                body["parent_ref"] = parent_hmac
+            hmacs.append(_compute_hmac(ledger._key, prev, body))
+
+        # Idempotency: existing receipts that reproduce the exact planned chain
+        # (same hop count, same HMACs) are verified and returned as-is.
+        path = ledger.receipt_path(run.run_id)
+        if path.is_file():
+            existing: list[DelegationReceipt] = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    existing.append(DelegationReceipt(**json.loads(line)))
+            if len(existing) != len(hmacs):
+                raise ValueError(
+                    f"Ledger already holds {len(existing)} receipts for run {run.run_id!r} "
+                    f"but trace has {len(hmacs)} handoffs; the recorded run does not match this trace"
+                )
+            if [r.hmac for r in existing] != hmacs:
+                raise ValueError(f"Existing receipts for run {run.run_id!r} do not reproduce the trace content")
+            result = verify_run_chain(root=ledger.root, run_id=run.run_id, key=ledger._key)
+            if not result.valid:
+                raise ValueError(
+                    f"Existing receipts for run {run.run_id!r} fail verification: {'; '.join(result.errors)}"
+                )
+            return existing
+
+        # Commit: append all receipts under one critical section so a concurrent
+        # writer cannot interleave and fork the chain.
+        recorded: list[DelegationReceipt] = []
+        with ledger._append_lock(run.run_id):
+            for idx, handoff in enumerate(run.handoffs):
+                body: dict[str, Any] = {
+                    "run_id": run.run_id,
+                    "hop_index": idx,
+                    "issuer": f"role:{handoff.from_role}",
+                    "subject": f"role:{handoff.to_role}",
+                    "audience": f"role:{handoff.to_role}",
+                    "act": handoff.act,
+                    "created": handoff.timestamp,
+                    "prev_hmac": parent_hmacs[idx] if parent_hmacs[idx] is not None else GENESIS_HMAC,
+                }
+                if parent_hmacs[idx] is not None:
+                    body["parent_ref"] = parent_hmacs[idx]
+                entry = body.copy()
+                entry["hmac"] = hmacs[idx]
+                with path.open("a", encoding="utf-8", newline="") as fh:
+                    fh.write(json.dumps(entry, sort_keys=True) + "\n")
+                recorded.append(DelegationReceipt(**entry))
 
         return recorded
 
