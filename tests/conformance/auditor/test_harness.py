@@ -116,10 +116,18 @@ def test_scoreboard_target_prints_the_score_out_of_twenty_one(tmp_path: Path) ->
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert f"3/{TOTAL_QUESTIONS}" in completed.stdout
 
     report = json.loads((tmp_path / "score.json").read_text(encoding="utf-8"))
-    assert report["passed"] == [8, 9, 17]
+    passed = report["passed"]
+    assert passed == sorted(set(passed))
+    assert all(1 <= question <= TOTAL_QUESTIONS for question in passed)
+    # The printed score is the count the report carries, not a number kept in
+    # step with it by hand: pinning the count here made every newly answered
+    # question a failing test, which is the wrong way round.
+    assert f"{len(passed)}/{TOTAL_QUESTIONS}" in completed.stdout
+    # These three are answered by the committed fixture. Losing one is a
+    # regression in the bundle or in a vector, and must fail here.
+    assert {8, 9, 17} <= set(passed)
 
 
 def test_regenerating_the_fixture_rewrites_the_bundle(tmp_path: Path) -> None:

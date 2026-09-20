@@ -111,6 +111,13 @@ nothing it can name declares no vendor; its hop journals no
 `model_provider` key and export refuses it with the agent id, the same way
 it refuses an endpoint-routed worker.
 
+`model_id` is the identifier the operator configured, recorded as written. A
+role policy that asks for a tier - `sonnet`, `opus`, `haiku` - records that
+word, because that is what was asked for; the concrete dated identifier the
+adapter launched is not journaled. Pin a model in the role policy when the
+record has to name the exact model that ran, as it does for a record that
+leaves this install.
+
 ## What is deliberately NOT in a trust record
 
 Trust records are **provenance envelopes**, not data containers. They
