@@ -166,32 +166,38 @@ class TestCIWorkflowExists:
         assert len(fetch_steps) == 1
         fetch_step = fetch_steps[0]
         condition = " ".join(str(fetch_step.get("if", "")).split())
-        # Both selecting lanes, each taking its own payload sha. The queue lane
-        # selects against the GROUP's base, which is the same input
-        # determine-changes already reads (#5793).
-        assert "github.event_name == 'pull_request'" in condition
-        assert "github.event_name == 'merge_group'" in condition
-        assert "runner.os != 'Windows'" in condition
+        # Exact, not three substring checks: those also pass for
+        # `(pull_request || merge_group || runner.os != 'Windows')`, which
+        # drops the Windows exclusion and runs this step where the selector
+        # does not exist.
+        assert condition == (
+            "(github.event_name == 'pull_request' || github.event_name == 'merge_group') && runner.os != 'Windows'"
+        ), condition
         env = fetch_step.get("env") or {}
         base_sha = " ".join(str(env.get("BASE_SHA", "")).split())
         assert base_sha == "${{ github.event.pull_request.base.sha }}", (
             "BASE_SHA must be bound via env: to avoid template injection (zizmor)"
         )
         run_script = fetch_step.get("run", "")
-        assert "${BASE_SHA}:refs/remotes/origin/pr-base" in run_script
+        # One fetch serves both lanes; the pull_request lane supplies the sha.
+        assert 'base="${BASE_SHA}"' in run_script
+        assert "${base}:refs/remotes/origin/pr-base" in run_script
 
     def test_the_merge_queue_base_is_the_batch_root_not_the_entry_ahead_of_it(self) -> None:
-        """`merge_group.base_sha` is the previous entry's merge commit.
+        """The queue lane takes one base, resolved once, by sha.
 
-        The queue stacks up to five entries: for entry k that field names
-        entry k-1's merge commit, not the commit the batch was built on. Runs
-        `gh-readonly-queue/main/pr-5821-36f6c232...` (head `d11131d4b3`) and
-        `gh-readonly-queue/main/pr-5822-d11131d4b3...` one second later are the
-        same pair of shas one behind the other. Selecting against it would run
-        only entry k's impacted tests, never entry j's against k's change -
-        the combination the full-suite queue run covers today, so it would be
-        a weaker gate than the one it replaces, not a like-for-like one
-        (#5793).
+        Two commits must not be the base. `merge_group.base_sha` is entry
+        k-1's merge commit for a stacked group, so selecting against it runs
+        only entry k's impacted tests and never entry j's against k's change.
+        And a merge-base computed *in the shard* is no better: the queue lands
+        the exact commit it tested, so once the entry ahead merges it is an
+        ancestor of `main` and the merge-base returns that entry's commit
+        instead of the root. On this repository's own history, 7c9c9697
+        (#5989's tested head) is an ancestor of 9acba77a (#6009's), and both
+        are literally on `main`.
+
+        So the root is resolved once by `determine-changes` and handed down,
+        and this step only fetches the sha it was given (#5793).
         """
         data = _load_ci_workflow()
         steps = _ci_test_steps(data)
@@ -200,23 +206,45 @@ class TestCIWorkflowExists:
         assert "merge_group" not in " ".join(str(v) for v in env.values()), (
             "the queue lane must not take a base straight from the merge_group payload"
         )
+        queue_base = " ".join(str(env.get("QUEUE_BASE", "")).split())
+        assert queue_base == "${{ needs.determine-changes.outputs.queue_base }}", queue_base
         run_script = fetch_step.get("run", "")
-        assert 'git merge-base "${trunk_tip}" HEAD' in run_script, (
-            "the queue lane must resolve the batch root with merge-base"
+        assert 'base="${QUEUE_BASE}"' in run_script
+        assert "${base}:refs/remotes/origin/pr-base" in run_script
+        # Resolved there, never here: a second resolution is a second answer.
+        assert "git merge-base" not in run_script, (
+            "the shard must not compute the batch root; determine-changes owns it"
         )
-        assert "git update-ref refs/remotes/origin/pr-base" in run_script
-        # An unreachable merge-base must leave the ref unwritten so the
-        # selector below falls back to the full list.
+        # An unresolved root must leave the ref unwritten so the selector
+        # falls back to the full list.
         assert "::warning::" in run_script
-        # And it gets there without naming a branch. The trunk sha is read from
-        # the remote-tracking ref an earlier step already fetched, so this step
-        # resolves nothing that can move while it runs - the #5421 property
-        # test_base_is_not_fetched_from_a_branch_head enforces. Asserted here
-        # too, beside the merge-base, because the two constraints pull in
-        # opposite directions and the obvious way to satisfy this one breaks
-        # that one.
+        # And nothing here names a branch, the #5421 property
+        # test_base_is_not_fetched_from_a_branch_head enforces.
         assert "refs/heads/" not in run_script
-        assert 'trunk_tip=$(git rev-parse "refs/remotes/origin/${DEFAULT_BRANCH}")' in run_script
+
+    def test_the_queue_batch_root_is_resolved_once_for_every_shard(self) -> None:
+        """`determine-changes` publishes it; the shards read it.
+
+        The shards of one run are not scheduled together - slot contention has
+        staggered them by hours, and a re-run starts later still. Resolving the
+        root per shard put shards either side of a landing on two different
+        lists, and `--shard i/N` then partitioned neither of them completely,
+        which is #5421 one level up (#5793).
+        """
+        data = _load_ci_workflow()
+        determine = data["jobs"]["determine-changes"]
+        outputs = determine.get("outputs") or {}
+        assert " ".join(str(outputs.get("queue_base", "")).split()) == ("${{ steps.queue-base.outputs.queue_base }}")
+        step = next(s for s in determine["steps"] if s.get("id") == "queue-base")
+        assert "merge_group" in " ".join(str(step.get("if", "")).split())
+        run_script = step.get("run", "")
+        assert "git merge-base" in run_script, "the batch root is a merge-base"
+        assert 'echo "queue_base=' in run_script, "it has to reach $GITHUB_OUTPUT"
+        # Empty rather than absent, so the consumer reads a value and runs the
+        # full list rather than selecting against half a resolution.
+        assert 'echo "queue_base=" >> "$GITHUB_OUTPUT"' in run_script
+        # The job that reads it has to wait for it.
+        assert "determine-changes" in (data["jobs"]["test"].get("needs") or [])
 
     def test_the_merge_queue_selects_impacted_tests_like_the_pull_request_lane(self) -> None:
         """The queue lane ran the whole discovered list where the selector would do.
