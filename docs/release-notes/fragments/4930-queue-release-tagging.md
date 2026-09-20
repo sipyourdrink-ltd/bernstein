@@ -12,5 +12,8 @@ The dispatcher now also listens on `gh-readonly-queue/main/**` and routes a
 successful queue ref whose base is `main` to `auto-release.yml`. The release
 gate confirms the triggering SHA is an ancestor of `main` before tagging, so
 a queue entry that is later ejected is skipped with a message instead of
-publishing a release for a commit that never landed. A failure to fetch the
-ancestry is a hard error, not a silent skip (#4930).
+publishing a release for a commit that never landed. It waits for `main` to
+catch up before deciding that, because the dispatch fires when the
+`merge_group` run completes and the queue fast-forwards `main` a moment
+later. A failure to fetch the ancestry is a hard error, not a silent skip
+(#4930).
