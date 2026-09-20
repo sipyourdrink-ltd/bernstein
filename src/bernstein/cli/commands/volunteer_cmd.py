@@ -24,6 +24,7 @@ one that prints "not implemented yet" is a promise the code has not made.
 from __future__ import annotations
 
 import json
+import sys
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,13 +36,104 @@ if TYPE_CHECKING:
     from bernstein.core.volunteer.clean_room import CleanRoomResult
 
 
-@click.group("volunteer")
-def volunteer_group() -> None:
+@click.group("volunteer", invoke_without_command=True)
+@click.pass_context
+def volunteer_group(ctx: click.Context) -> None:
     """Volunteer-worker surfaces: donate agent capacity to opt-in projects.
 
     A project declares its policy in `.bernstein/volunteer.json`; see
     `docs/reference/volunteer-manifest.md` for the schema.
     """
+    # Bare invocation (no subcommand) routes to onboarding entry point
+    if ctx.invoked_subcommand is None:
+        _run_onboarding()
+
+
+def _run_onboarding() -> None:
+    """Onboarding flow: explain, get consent, hand off to autopilot.
+
+    This is the entry point for `bernstein volunteer` with no subcommand.
+    Per #3889, it must:
+    1. Explain in three sentences what will happen
+    2. Record explicit consent as a signed receipt (cannot be skipped)
+    3. Hand off to autopilot (after #3885 lands)
+
+    The consent step is real via consent.py (#3866 merged). Backend detection
+    and autopilot handoff depend on #3887 and #3885 respectively, so those
+    steps print honest "not yet available" messages naming the prerequisite.
+    """
+    # Step 1: Explain what will happen
+    click.echo("Bernstein volunteer onboarding")
+    click.echo()
+    click.echo(
+        "You are about to donate compute capacity to open-source projects. "
+        "This tool will select a beginner-safe task from a curated project index, "
+        "run it in a hardened sandbox, and submit the result for review."
+    )
+    click.echo()
+
+    # Step 2: Get explicit consent
+    click.echo("Explicit consent is required before proceeding.")
+    click.echo()
+    proceed = click.confirm("Do you consent to volunteer under these terms?", default=False)
+    if not proceed:
+        click.echo("Consent declined. Exiting.")
+        sys.exit(0)
+
+    # Record consent as a signed receipt
+    from datetime import datetime, timezone
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from bernstein.core.security.audit_dsse import export_public_key_pem, keyid_from_public_key
+    from bernstein.core.volunteer.consent import (
+        GENESIS_ANCHOR,
+        ChainLink,
+        ConsentReceipt,
+        build_consent_receipt,
+        write_consent,
+    )
+
+    # Generate a worker key (in production this would be persistent)
+    worker_key = Ed25519PrivateKey.generate()
+
+    consent_text = (
+        "I consent to donate compute capacity to open-source projects via Bernstein volunteer. "
+        "Tasks will run in a hardened sandbox with the project's declared policy enforced."
+    )
+
+    receipt = ConsentReceipt(
+        consent_text=consent_text,
+        manifest_digest="placeholder-no-project-selected-yet",
+        sandbox_profile_digest="hardened-sandbox-profile",
+        donor_keyid=keyid_from_public_key(worker_key.public_key()),
+        donor_public_key_pem=export_public_key_pem(worker_key.public_key()).decode("ascii"),
+        created_at=datetime.now(timezone.utc).isoformat(),
+        chain=ChainLink(anchor=GENESIS_ANCHOR, length=1),
+        donor_signature="",  # populated at envelope build time
+    )
+
+    envelope = build_consent_receipt(receipt, signing_key=worker_key)
+    consent_path = Path(".sdd/runtime/volunteer/consent.json")
+    consent_path.parent.mkdir(parents=True, exist_ok=True)
+    write_consent(envelope, consent_path)
+
+    click.echo()
+    click.echo(f"✓ Consent recorded: {consent_path}")
+    click.echo(f"  Receipt digest: {receipt.digest}")
+    click.echo()
+
+    # Step 3: Backend detection (depends on #3887)
+    click.echo("Next step: detect usable execution backend")
+    click.echo("  [Provider observability and threat model (#3887) not yet merged]")
+    click.echo()
+
+    # Step 4: Autopilot handoff (depends on #3885)
+    click.echo("Next step: hand off to autopilot")
+    click.echo("  [Autopilot profile loop (#3885) not yet merged]")
+    click.echo()
+
+    click.echo("Onboarding flow complete. The full volunteer path will be available once #3887 and #3885 land.")
 
 
 @volunteer_group.command("verify")
