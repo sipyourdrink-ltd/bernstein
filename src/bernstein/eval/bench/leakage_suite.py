@@ -264,7 +264,7 @@ def scan_surface(
             start = max(0, idx - 20)
             end = min(len(text), idx + len(canary.encoded_value) + 20)
             snippet = text[start:end]
-        elif canary.encoding == CanaryEncoding.SPLIT_LINES:
+        elif canary.encoding == CanaryEncoding.SPLIT_LINES and canary.raw_value not in text:
             # Check collapsed text for split lines
             raw_collapsed = re.sub(r"\s+", "", canary.raw_value)
             if raw_collapsed in text_collapsed:

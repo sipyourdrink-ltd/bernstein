@@ -210,3 +210,20 @@ def test_a_receipt_rewritten_to_clean_is_fabricated() -> None:
     )
     result = BenchVerifier(suite=suite, adapter=adapter).verify(bundle)
     assert result.status is VerificationStatus.DIVERGED
+
+
+def test_plain_unsplit_leak_not_mislabelled_split_lines() -> None:
+    canaries = generate_canaries(nonce="split_guard_1")
+    canary = next(c for c in canaries if c.encoding == CanaryEncoding.SPLIT_LINES)
+    text = f"log: {canary.raw_value} tail"
+    hits = scan_surface(ScanSurface.LOGS, text, [canary])
+    assert hits == []
+
+
+def test_true_split_lines_still_detected() -> None:
+    canaries = generate_canaries(nonce="split_guard_2")
+    canary = next(c for c in canaries if c.encoding == CanaryEncoding.SPLIT_LINES)
+    mid = len(canary.raw_value) // 2
+    text = f"log: {canary.raw_value[:mid]}\n{canary.raw_value[mid:]} tail"
+    hits = scan_surface(ScanSurface.LOGS, text, [canary])
+    assert [h.encoding for h in hits] == [CanaryEncoding.SPLIT_LINES]
