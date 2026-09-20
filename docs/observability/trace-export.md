@@ -6,12 +6,14 @@ and binds the run to the install identity. It is generated entirely
 offline from local state; no OTLP endpoint or network is required.
 
 ```
-bernstein trace export <RUN_ID> [--out PATH] [--json] [--last] [--sdd-dir PATH]
+bernstein trace export <RUN_ID> [--out PATH] [--out-dir DIR] [--json] [--last] [--sdd-dir PATH]
 ```
 
 - `--last` picks the most recently finished run in `.sdd/runs/`
   (a directory with a non-empty `journal.jsonl`), sorted by mtime.
 - `--out` writes the canonical JSON string to a file instead of stdout.
+- `--out-dir` writes one record per worker hop (`<exec_id>.json`) plus the
+  run-level `aggregate.json` into a directory.
 - `--json` emits the canonical JSON form (identical to the default output).
 - `--sdd-dir` overrides the `.sdd/` path; defaults to `./.sdd/` or `./.`.
 
@@ -19,6 +21,40 @@ Exit codes: `0` = exported, `1` = run not found / chain broken / emit
 error, `2` = missing `RUN_ID` argument.
 
 The trace extra (`bernstein[trace]`) is required.
+
+## Multi-worker runs
+
+A run that spawned more than one worker (more than one `agent_spawned`
+event in the journal) exports one Trust Record per worker hop plus a
+run-level aggregate:
+
+- `exec_id` of a hop record is that spawn event's `agent_id`; hops appear
+  in spawn order.
+- each hop's `model` comes from its own `agent_spawned` event, never
+  borrowed from a sibling; a hop whose spawn carries no
+  `model_provider`/`model_id` is refused and the agent id is named.
+- `policy.bundle_hash` is the run-level `gate_config`, identical across
+  hops.
+- `tool_transcript` is present only when the journal holds `tool_call`
+  events for that hop; an unobserved transcript is omitted. The aggregate
+  carries `tool_transcript` only when every member record carries one.
+- the aggregate's `references[]` list content-binds each hop record.
+
+With `--out-dir DIR` the CLI writes `DIR/<exec_id>.json` per hop and
+`DIR/aggregate.json`. Without `--out-dir`, a multi-worker run writes only
+the aggregate to `--out`/stdout and prints a note on stderr that the
+per-hop records require `--out-dir`.
+
+Each file (hop record or aggregate) verifies the same way as a
+single-record export:
+
+```
+trace-tests verify --record DIR/<exec_id>.json --level 0
+```
+
+A run with no `agent_spawned` event (legacy journal) keeps the
+single-record behaviour: one record, `exec_id` equal to the run id, and
+`tool_transcript` always present.
 
 ## What is in a trust record
 
