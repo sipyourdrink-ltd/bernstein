@@ -127,7 +127,7 @@ def test_cli_replay_record_id(
     assert "Real adapter invocation requires a running agent session" in result.output
     assert "test scaffolding" in result.output.lower()
     assert "ModelCallLedger library API" in result.output
-    
+
     # Verify the original record is untouched (no replay happened)
     fresh_ledger = ModelCallLedger(sdd_dir)
     records = fresh_ledger.list_records(limit=10)

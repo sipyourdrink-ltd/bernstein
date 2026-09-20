@@ -60,7 +60,7 @@ def test_invoke_fails_with_clear_message_without_real_adapter(
             json.dumps({"key": "value"}),
         ],
     )
-    
+
     # Must fail (non-zero exit) or refuse with clear message
     # Should NOT return mock output like "Mock output for test-model"
     assert "Mock output for" not in result.output
@@ -85,7 +85,7 @@ def test_replay_fails_with_clear_message_without_real_adapter(
         input_text="test input",
         parameters={"key": "value"},
     )
-    
+
     result = runner.invoke(
         cost_cmd,
         [
@@ -97,7 +97,7 @@ def test_replay_fails_with_clear_message_without_real_adapter(
             original.id,
         ],
     )
-    
+
     # Must fail (non-zero exit) or refuse with clear message
     # Should NOT return mock output like "Replayed output for test-model"
     assert "Replayed output for" not in result.output
