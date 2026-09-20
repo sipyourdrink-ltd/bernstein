@@ -410,33 +410,34 @@ class CrewIngestAdapter:
                 body["parent_ref"] = parent_hmac
             hmacs.append(_compute_hmac(ledger._key, prev, body))
 
-        # Idempotency: existing receipts that reproduce the exact planned chain
-        # (same hop count, same HMACs) are verified and returned as-is.
+        # Idempotency check and append share one critical section so a
+        # concurrent ingester cannot both pass the existence check and then
+        # double-append (forking the chain). The planned HMACs are deterministic
+        # in the handoff content, so they identify the exact recorded chain.
         path = ledger.receipt_path(run.run_id)
-        if path.is_file():
-            existing: list[DelegationReceipt] = []
-            for line in path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line:
-                    existing.append(DelegationReceipt(**json.loads(line)))
-            if len(existing) != len(hmacs):
-                raise ValueError(
-                    f"Ledger already holds {len(existing)} receipts for run {run.run_id!r} "
-                    f"but trace has {len(hmacs)} handoffs; the recorded run does not match this trace"
-                )
-            if [r.hmac for r in existing] != hmacs:
-                raise ValueError(f"Existing receipts for run {run.run_id!r} do not reproduce the trace content")
-            result = verify_run_chain(root=ledger.root, run_id=run.run_id, key=ledger._key)
-            if not result.valid:
-                raise ValueError(
-                    f"Existing receipts for run {run.run_id!r} fail verification: {'; '.join(result.errors)}"
-                )
-            return existing
-
-        # Commit: append all receipts under one critical section so a concurrent
-        # writer cannot interleave and fork the chain.
-        recorded: list[DelegationReceipt] = []
         with ledger._append_lock(run.run_id):
+            existing: list[DelegationReceipt] = []
+            if path.is_file():
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line:
+                        existing.append(DelegationReceipt(**json.loads(line)))
+            if existing:
+                if len(existing) != len(hmacs):
+                    raise ValueError(
+                        f"Ledger already holds {len(existing)} receipts for run {run.run_id!r} "
+                        f"but trace has {len(hmacs)} handoffs; the recorded run does not match this trace"
+                    )
+                if [r.hmac for r in existing] != hmacs:
+                    raise ValueError(f"Existing receipts for run {run.run_id!r} do not reproduce the trace content")
+                result = verify_run_chain(root=ledger.root, run_id=run.run_id, key=ledger._key)
+                if not result.valid:
+                    raise ValueError(
+                        f"Existing receipts for run {run.run_id!r} fail verification: {'; '.join(result.errors)}"
+                    )
+                return existing
+
+            recorded: list[DelegationReceipt] = []
             for idx, handoff in enumerate(run.handoffs):
                 body: dict[str, Any] = {
                     "run_id": run.run_id,
@@ -456,7 +457,7 @@ class CrewIngestAdapter:
                     fh.write(json.dumps(entry, sort_keys=True) + "\n")
                 recorded.append(DelegationReceipt(**entry))
 
-        return recorded
+            return recorded
 
     def verify_run(
         self,
