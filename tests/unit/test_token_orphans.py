@@ -229,7 +229,9 @@ def reachable_modules(importers: dict[str, set[Path]], package_dir: Path) -> set
 
 
 def _current_orphans(root: Path, package_dir: Path, package_name: str) -> set[str]:
-    importers = {name: _importers_of(name, package_name, package_dir, root) for name in _module_names(root, package_dir)}
+    importers = {
+        name: _importers_of(name, package_name, package_dir, root) for name in _module_names(root, package_dir)
+    }
     return set(importers) - reachable_modules(importers, package_dir=package_dir)
 
 
@@ -255,7 +257,11 @@ def test_no_new_orphan_token_modules() -> None:
     current = _current_orphans(REPO_ROOT, TOKENS_DIR, TOKENS_PKG)
 
     branch_ref = resolve_branch_only_ref(REPO_ROOT)
-    branch_only = scan_at_ref(branch_ref, REPO_ROOT, lambda r: _current_orphans(r, _package_dir_under(r, "tokens"), TOKENS_PKG)) if branch_ref else None
+    branch_only = (
+        scan_at_ref(branch_ref, REPO_ROOT, lambda r: _current_orphans(r, _package_dir_under(r, "tokens"), TOKENS_PKG))
+        if branch_ref
+        else None
+    )
 
     message = describe_ratchet_drift(
         baseline=KNOWN_ORPHANS_TOKENS,
@@ -282,7 +288,13 @@ def test_no_new_orphan_security_modules() -> None:
     current = _current_orphans(REPO_ROOT, SECURITY_DIR, SECURITY_PKG)
 
     branch_ref = resolve_branch_only_ref(REPO_ROOT)
-    branch_only = scan_at_ref(branch_ref, REPO_ROOT, lambda r: _current_orphans(r, _package_dir_under(r, "security"), SECURITY_PKG)) if branch_ref else None
+    branch_only = (
+        scan_at_ref(
+            branch_ref, REPO_ROOT, lambda r: _current_orphans(r, _package_dir_under(r, "security"), SECURITY_PKG)
+        )
+        if branch_ref
+        else None
+    )
 
     message = describe_ratchet_drift(
         baseline=KNOWN_ORPHANS_SECURITY,
