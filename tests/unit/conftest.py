@@ -111,12 +111,27 @@ def _block_dns() -> Iterator[None]:
     but a name-resolution request still leaves the test process before any
     connection attempt and can hang or leak resolver state. This context
     monkeypatches ``socket.getaddrinfo`` to raise ``socket.gaierror`` with a
-    clear message. Existing tests that patch the resolver are unaffected because
-    they replace the same function on the module object.
+    clear message for non-loopback addresses. Loopback addresses (127.0.0.0/8,
+    ::1, localhost) are allowed so local mock servers keep working. Existing
+    tests that patch the resolver are unaffected because they replace the same
+    function on the module object.
     """
+    import ipaddress
+
     real_getaddrinfo = socket.getaddrinfo
 
-    def _blocked_getaddrinfo(*_args: object, **_kwargs: object) -> NoReturn:
+    def _is_loopback_host(host: str) -> bool:
+        if host.lower() in ("localhost", "localhost.localdomain", ""):
+            return True
+        bare = host.split("%", 1)[0]
+        try:
+            return ipaddress.ip_address(bare).is_loopback
+        except ValueError:
+            return False
+
+    def _blocked_getaddrinfo(host: object, *args: object, **_kwargs: object) -> NoReturn:
+        if isinstance(host, str) and _is_loopback_host(host):
+            return real_getaddrinfo(host, *args, **_kwargs)
         raise socket.gaierror("blocked in unit tests")
 
     socket.getaddrinfo = _blocked_getaddrinfo  # type: ignore[method-assign]
