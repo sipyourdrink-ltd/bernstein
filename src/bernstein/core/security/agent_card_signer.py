@@ -397,10 +397,19 @@ def sign_agent_card(
     """
     from cryptography.hazmat.primitives import serialization
 
-    # ``load_pem_private_key`` is typed as the full private-key union. Agent
-    # cards are signed with EdDSA only (see the ``alg`` header below), so
-    # narrow it to the key type whose ``sign(data)`` shape this code uses.
-    private_key = cast("Ed25519PrivateKey", serialization.load_pem_private_key(private_key_pem, password=None))
+    import tempfile
+    from pathlib import Path
+    
+    from bernstein.core.security.key_custody import FileBasedKMSAdapter
+    
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".pem", delete=False) as f:
+        f.write(private_key_pem)
+        key_path = Path(f.name)
+    
+    try:
+        adapter = FileBasedKMSAdapter(key_path)
+    finally:
+        key_path.unlink(missing_ok=True)
 
     # Build the JWS protected header (RFC 7515 §4) then base64url it.
     header = {"alg": "EdDSA", "typ": "agent-card+jws", "kid": kid or f"agent-{card.agent_id}"}
@@ -411,7 +420,7 @@ def sign_agent_card(
     body_b64 = _b64url(canonicalize_jcs(_card_to_dict(card)))
 
     signing_input = f"{header_b64}.{body_b64}".encode("ascii")
-    signature = private_key.sign(signing_input)
+    signature = adapter.sign(signing_input)
     sig_b64 = _b64url(signature)
 
     # RFC 7515 §A.5: detached content omits the payload - represented as the
@@ -590,11 +599,20 @@ def sign_detached_jws_over_canonical(
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
-    if not isinstance(private_key, Ed25519PrivateKey):
-        msg = "sign_detached_jws_over_canonical requires an Ed25519 (EdDSA) private key"
-        raise ValueError(msg)
-    return sign_detached_jws_with_signer(canonical_body, private_key, typ=typ, kid=kid)
+    import tempfile
+    from pathlib import Path
+    
+    from bernstein.core.security.key_custody import FileBasedKMSAdapter
+    
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".pem", delete=False) as f:
+        f.write(private_key_pem)
+        key_path = Path(f.name)
+    
+    try:
+        adapter = FileBasedKMSAdapter(key_path)
+        return sign_detached_jws_with_signer(canonical_body, adapter, typ=typ, kid=kid)
+    finally:
+        key_path.unlink(missing_ok=True)
 
 
 class DetachedSigner(Protocol):

@@ -337,11 +337,21 @@ def sign_request(
     covered = _covered_components(headers)
     base, params = _signature_base(method=method, url=url, headers=headers, covered=covered, created=ts, keyid=keyid)
 
-    private_key = serialization.load_pem_private_key(private_pem, password=None)
-    if not isinstance(private_key, Ed25519PrivateKey):  # pragma: no cover - keystore invariant
-        msg = "install identity key is not Ed25519"
-        raise TypeError(msg)
-    signature = private_key.sign(base)
+    import tempfile
+    from pathlib import Path
+    
+    from bernstein.core.security.key_custody import FileBasedKMSAdapter
+    
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".pem", delete=False) as f:
+        f.write(private_pem)
+        key_path = Path(f.name)
+    
+    try:
+        adapter = FileBasedKMSAdapter(key_path)
+        signature = adapter.sign(base)
+    finally:
+        key_path.unlink(missing_ok=True)
+    
     sig_b64 = base64.b64encode(signature).decode("ascii")
 
     out = headers.copy()
