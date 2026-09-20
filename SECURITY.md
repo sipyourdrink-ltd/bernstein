@@ -139,7 +139,7 @@ See [`docs/security/bug-bounty.md`](docs/security/bug-bounty.md) for the full sa
 
 | Version | Supported |
 |---------|-----------|
-| 3.14.x  | Yes       |
-| < 3.14  | No        |
+| 3.19.x  | Yes       |
+| < 3.19  | No        |
 
 Fixes ship on the current release line. There is no backport branch.
