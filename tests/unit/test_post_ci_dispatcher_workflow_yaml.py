@@ -165,8 +165,5 @@ def test_auto_release_routes_queue_refs_only_on_success(dispatcher: dict) -> Non
     """
     condition = " ".join(dispatcher["jobs"]["auto-release"]["if"].split())
     assert "needs.meta.outputs.head_branch == 'main'" in condition
-    assert (
-        "startsWith(needs.meta.outputs.head_branch, 'gh-readonly-queue/main/')"
-        in condition
-    )
+    assert "startsWith(needs.meta.outputs.head_branch, 'gh-readonly-queue/main/')" in condition
     assert "needs.meta.outputs.conclusion == 'success'" in condition
