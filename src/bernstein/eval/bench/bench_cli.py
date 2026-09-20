@@ -290,7 +290,7 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
         click.echo(
             f"{rank}. {path.name}: score {bundle.overall_score * 100:.1f}%, "
             f"resolve rate {bundle.pass_rate * 100:.1f}%, "
-            f"expected value {ev:.3f}, {len(bundle.task_results)} tasks"
+            f"expected value {ev:.3f}"
         )
 
 
