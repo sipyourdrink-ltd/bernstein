@@ -1,8 +1,10 @@
 name: Required-check name canary
 
-# Branch protection on `main` requires two contexts: `CI gate` and
-# `shipped bundle matches the lockfile`. This workflow verifies the in-tree
-# `CI gate` emitters. The scheduled branch-protection audit reads
+# Branch protection on `main` requires three contexts: `CI gate`,
+# `shipped bundle matches the lockfile` and `quorum`. This workflow verifies
+# the in-tree `CI gate` emitters; `quorum` is emitted by `quorum.yml` and is
+# listed here because the scheduled audit compares this list with the live
+# settings. The scheduled branch-protection audit reads
 # `BRANCH_PROTECTION_CONTEXTS_JSON` below and compares it with live
 # repository settings, so that line is the tree's record of what protection
 # demands - it has to be updated in the same change as the setting itself.
@@ -70,7 +72,7 @@ jobs:
       - name: Verify required-check invariants
         env:
           REQUIRED_CONTEXT: "CI gate"
-          BRANCH_PROTECTION_CONTEXTS_JSON: '["CI gate", "shipped bundle matches the lockfile"]'
+          BRANCH_PROTECTION_CONTEXTS_JSON: '["CI gate", "shipped bundle matches the lockfile", "quorum"]'
           REQUIRED_JOB_KEY: "ci-gate"
           STUB_WORKFLOW: ".github/workflows/ci-gate-stub.yml"
         run: |

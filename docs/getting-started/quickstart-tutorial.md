@@ -58,10 +58,12 @@ bernstein doctor
 Example output:
 
 ```
- Check              Status  Detail               Fix
- Adapter: claude    ✗       not in PATH          Install claude CLI - see docs
- Adapter: codex     ✗       not in PATH          Install codex CLI - see docs
- Adapter: gemini    ✗       not in PATH          Install gemini CLI - see docs
+Check           Category  Status  Detail                   Remediation
+adapter:claude  adapter   ✗ FAIL  Binary `claude` not in PATH  Install via the adapter's vendor instructions or remove `claude` from bernstein.yaml
+adapter:codex   adapter   ✗ FAIL  Binary `codex` not in PATH   Install via the adapter's vendor instructions or remove `codex` from bernstein.yaml
+adapter:gemini  adapter   ✗ FAIL  Binary `gemini` not in PATH  Install via the adapter's vendor instructions or remove `gemini` from bernstein.yaml
+adapter:qwen    adapter   ✗ FAIL  Binary `qwen` not in PATH    Install via the adapter's vendor instructions or remove `qwen` from bernstein.yaml
+adapter:aider   adapter   ✗ FAIL  Binary `aider` not in PATH   Install via the adapter's vendor instructions or remove `aider` from bernstein.yaml
 ```
 
 You need at least one adapter row to turn ✓ (`doctor` also checks auth, ports,
@@ -113,9 +115,15 @@ bernstein init
 Expected output:
 
 ```
-✓ Initialized .sdd/ state directory
-✓ Created bernstein.yaml (edit to configure agents and budget)
-✓ Ready - run `bernstein -g "your goal"` to start
+Initialising Bernstein workspace in /path/to/your-project
+Created .sdd/config.yaml
+Created bernstein.yaml
+Created templates/ (default roles & prompts)
+Created .gitignore (added .sdd/runtime/)
+
+Done. Next steps:
+  1. Edit bernstein.yaml: set a goal
+  2. Run bernstein to start the orchestra
 ```
 
 This creates:
@@ -153,13 +161,9 @@ bernstein live
 bernstein status
 ```
 
-Example `bernstein status` output:
-
-```
-Tasks: 3 open · 1 in-progress · 0 done · 0 failed
-Agents: 1 running (agent/abc12345 - backend)
-Spend:  $0.04 so far
-```
+`bernstein status` prints a banner, the task counts, and a **Bernstein Agents**
+table with one row per running session (session, role, CLI, model, worker,
+skills, worker PID, agent PID, runtime), followed by the spend so far.
 
 ---
 
@@ -174,14 +178,16 @@ bernstein recap
 Example output:
 
 ```
-Run summary - 3 tasks completed in 4m 12s
-
-  ✓ backend-abc12345  Add hello() to utils.py          $0.03  2m 10s
-  ✓ qa-def67890       Write tests for hello()           $0.01  1m 45s
-  ✗ docs-ghi11111     Update README                     $0.00  failed (retrying)
-
-Total: $0.04 · 2 merged · 1 retrying
+  Metric          Value
+  Total tasks     3
+  Completed       3
+  Failed          0
+  Success rate    100.0%
 ```
+
+`bernstein recap` then prints a git diff summary, quality scores, and a
+per-model cost breakdown below that table. The exact numbers depend on what
+the run produced.
 
 Inspect a specific task's changes:
 
@@ -208,8 +214,8 @@ stages:
       - goal: "Create src/greeting.py with a greet(name: str) -> str function that returns 'Hello, {name}!'"
         role: backend
         priority: 1
-        scope: ["src/greeting.py"]
-        complexity: simple
+        files: ["src/greeting.py"]
+        complexity: low
 
   - name: tests
     depends_on: [implementation]    # Waits for implementation stage to finish
@@ -217,8 +223,8 @@ stages:
       - goal: "Write pytest tests for the greet() function in tests/test_greeting.py"
         role: qa
         priority: 2
-        scope: ["tests/test_greeting.py"]
-        complexity: simple
+        files: ["tests/test_greeting.py"]
+        complexity: low
 ```
 
 Run it:
@@ -241,13 +247,9 @@ bernstein cost
 Example output:
 
 ```
-Cost breakdown - last run
-
-  claude (backend)    2,341 tokens   $0.012
-  claude (qa)         1,102 tokens   $0.006
-
-  Total:              3,443 tokens   $0.018
-  Budget remaining:   $19.98 / $20.00
+Model   Tasks  Tokens In  Tokens Out  Cost USD  Cost/Task  Avg Duration
+claude  2      3,443      1,102       $0.0180   $0.0090    63.0s
+TOTAL   2      3,443      1,102       $0.0180
 ```
 
 Set a per-run budget limit in `bernstein.yaml`:
@@ -300,7 +302,7 @@ bernstein stop --force   # Hard kill without draining
 You have a working Bernstein setup. Here are common next steps:
 
 - **Add more adapters**: Run `bernstein integrations list` to see what else is installable
-- **Configure model routing**: Set `model_policy` in `bernstein.yaml` to use cheaper models for simple tasks
+- **Configure model routing**: Set `role_model_policy` in `bernstein.yaml` to use cheaper models for simple tasks
 - **Write a plan file**: For real project work, a plan file gives you more control than an inline goal
 - **Set up guardrails**: Add `.bernstein/rules.yaml` to control what agents are allowed to do
 

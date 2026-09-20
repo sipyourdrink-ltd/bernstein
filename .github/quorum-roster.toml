@@ -13,10 +13,10 @@
 maintainer = "chernistry"
 
 # Approve as a code owner; one core approval is part of every quorum.
-core_reviewers = ["vaibhav8a", "thegoodengineer", "tenequm", "Phoenix1504e"]
+core_reviewers = ["vaibhav8a", "thegoodengineer", "tenequm", "Phoenix1504e", "Chirag6722"]
 
 # Approve; two approvals of any kind form the quorum when one is a core one.
-committers = ["Chirag6722", "Silentpartnercoding"]
+committers = ["Silentpartnercoding"]
 
 # Accounts that merge their own changes on green CI (charter, section 1).
 # Their reviews never count toward a human quorum.

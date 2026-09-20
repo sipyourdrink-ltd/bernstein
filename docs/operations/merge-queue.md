@@ -95,18 +95,28 @@ required-context coverage by
 | `typecheck (packages/vscode)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (web)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (templates/cloudflare-mcp-server)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
-| `quorum` | `quorum.yml` :: `quorum` | Yes - `merge_group: {}` | **Through an organization ruleset, not a context name** |
+| `quorum` | `quorum.yml` :: `quorum` | Yes - `merge_group: {}` | **Yes - required by name through an organization ruleset** |
 
-`quorum` is required differently from everything else in this table. A
-required *context* is matched by name, and a branch can publish that name
-from a workflow of its own; the review verdict is the one check where that
-would be the whole attack. So it is pinned as a required workflow in an
-organization ruleset instead: GitHub runs the file from the ref the ruleset
-names, and nothing on the branch can substitute for it. Requiring the
-`quorum` context by name as well would add nothing and could be satisfied by
-a branch, so this table lists it as reporting rather than requirable. What it
-decides, and why the branch rule cannot decide it instead, is written at the
-top of `scripts/quorum_check.py`.
+`quorum` is required through an organization ruleset rather than the
+repository one, but by context name like every other row. It was pinned as a
+required *workflow* until 2026-09-17, and that form could only be satisfied
+by a run of the file itself: part of the verdict turns on elapsed time - the
+72-hour objection window in the charter - so a pull request whose window had
+closed kept the red check it was given hours earlier, and the only way to
+move it was a fresh pull-request event (close and reopen, in practice). A
+required context can be answered again whenever the answer changes, by a
+re-run or by re-publishing the context with
+`scripts/publish_required_check.py` from a workflow that holds
+`checks: write`.
+
+What the name buys back has to be replaced deliberately. A branch that can
+run workflows in this repository can publish a context by name, which a
+pinned workflow path could not; fork pull requests cannot, because their
+`GITHUB_TOKEN` is read-only. The replacement is a privileged re-evaluation
+that recomputes the verdict from the default branch and republishes it, so a
+published `quorum` that disagrees with the rules is overwritten rather than
+merged on. What the check decides, and why a branch rule cannot decide it
+instead, is written at the top of `scripts/quorum_check.py`.
 
 `typecheck-ts` occupies four rows because it publishes four contexts: its
 job is `typecheck (${{ matrix.package }})` and branch protection matches a
@@ -264,10 +274,17 @@ that commit changed `version = ` in `pyproject.toml`. Two questions had to
 be answered before the queue can be enabled.
 
 **Q1: do merge-queue CI runs dispatch the release listener?**
-No, and that is the desired behaviour. A `merge_group` run reports
-`head_branch = gh-readonly-queue/main/pr-<n>-<base_sha>`, which the
-dispatcher's `branches: [main]` filter excludes. Nothing is ever tagged
-from a queue ref that has not merged.
+No - and the dispatcher still has to route them anyway. A `merge_group`
+run reports `head_branch = gh-readonly-queue/main/pr-<n>-<base_sha>`, which
+the dispatcher's `branches: [main]` trigger filter excludes, so no listener
+run boots from the queue ref itself. But that merge_group run is the only
+CI the version-bump commit ever gets: the queue fast-forwards `main` onto
+the SHA it already built, so no `push` CI run follows. The dispatcher's
+`auto-release` job therefore also admits
+`startsWith(head_branch, 'gh-readonly-queue/main/')` and routes that single
+queue run to the release gate. Nothing is tagged from a queue ref that has
+not merged - the gate still inspects the triggering commit and the commit
+is on `main` by the time it runs.
 
 **Q2: does the post-queue merge still fire the release listener?**
 Yes. When a merge group goes green, GitHub advances the base branch and

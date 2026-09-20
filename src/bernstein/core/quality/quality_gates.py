@@ -14,7 +14,7 @@ import logging
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Literal
@@ -291,6 +291,15 @@ class QualityGatesConfig:
     behavior_probe_gate_timeout_s: int = 300
     behavior_probe_max_callables: int = 12
     behavior_probe_max_probes_per_callable: int = 6
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return this configuration as a plain JSON-able dict.
+
+        Nested dataclasses (``pipeline`` steps, ``intent_verification``,
+        ``benchmark``) are converted recursively by :func:`dataclasses.asdict`
+        so the result survives ``json.dumps``.
+        """
+        return asdict(self)
 
 
 @dataclass

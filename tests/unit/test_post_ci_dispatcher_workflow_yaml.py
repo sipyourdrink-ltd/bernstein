@@ -153,3 +153,17 @@ def test_upstream_trigger_is_still_a_single_workflow(dispatcher: dict) -> None:
     on = dispatcher.get("on", dispatcher.get(True))
     assert on["workflow_run"]["workflows"] == ["CI"]
     assert on["workflow_run"]["types"] == ["completed"]
+
+
+def test_auto_release_routes_queue_refs_only_on_success(dispatcher: dict) -> None:
+    """A version bump merged through the queue has no push CI run.
+
+    The only CI run for that commit reports the queue ref, so the
+    auto-release job must admit `gh-readonly-queue/main/...`. A failed
+    merge_group entry never lands on main and must not reach the stale
+    release alert, so the queue-ref path is gated on `success`.
+    """
+    condition = " ".join(dispatcher["jobs"]["auto-release"]["if"].split())
+    assert "needs.meta.outputs.head_branch == 'main'" in condition
+    assert "startsWith(needs.meta.outputs.head_branch, 'gh-readonly-queue/main/')" in condition
+    assert "needs.meta.outputs.conclusion == 'success'" in condition
