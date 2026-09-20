@@ -817,7 +817,7 @@ def cli(
 
     # Start background work, then show splash concurrently.
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _splash_future = executor.submit(_background_startup, workdir)
+    executor.submit(_background_startup, workdir)
 
     # Show splash immediately (gradient + logo) - no agent data needed for visuals.
     banner_shown = splash(
@@ -839,11 +839,9 @@ def cli(
     if banner_shown:
         ctx.obj["_BANNER_PRINTED"] = True
 
-    # Show immediate feedback while background finishes - no black screen.
-    console.print("[dim]Preparing...[/dim]", end="\r")
-
-    # Collect background results (should be done by now - splash took 3.5 seconds).
-    _bg = _splash_future.result(timeout=10)
+    # Startup results are cosmetic and not read downstream, so do not join the
+    # thread: a slow agent discovery pass would otherwise raise TimeoutError
+    # before the run callback (or --plan-only) ever executes.
     executor.shutdown(wait=False)
 
     if dry_run:
