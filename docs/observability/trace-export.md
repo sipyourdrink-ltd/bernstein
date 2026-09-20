@@ -104,6 +104,13 @@ When a session resolves no provider, a namespaced model identifier such as
 and keeps `model_id` whole. A bare identifier or an empty namespace is not a
 provider, so export still refuses rather than inventing a vendor name.
 
+`model_id` is the identifier the operator configured, recorded as written. A
+role policy that asks for a tier - `sonnet`, `opus`, `haiku` - records that
+word, because that is what was asked for; the concrete dated identifier the
+adapter launched is not journaled. Pin a model in the role policy when the
+record has to name the exact model that ran, as it does for a record that
+leaves this install.
+
 ## What is deliberately NOT in a trust record
 
 Trust records are **provenance envelopes**, not data containers. They
