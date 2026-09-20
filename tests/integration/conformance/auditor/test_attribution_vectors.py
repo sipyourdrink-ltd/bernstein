@@ -101,8 +101,7 @@ def test_question2_agent_per_action(auditor_bundle: BundleReader) -> None:
     agent_field = next((field for field in AGENT_FIELDS if field in tool_call_event), None)
 
     assert agent_field, (
-        f"the tool.called event carries no agent attribution; "
-        f"event keys: {list(tool_call_event.keys())}"
+        f"the tool.called event carries no agent attribution; event keys: {list(tool_call_event.keys())}"
     )
     # When the field exists, assert it matches the scenario constant.
     # Today this line is never reached.
@@ -139,8 +138,7 @@ def test_question7_identity_to_tool(auditor_bundle: BundleReader) -> None:
     identity_field = next((field for field in IDENTITY_FIELDS if field in tool_call_event), None)
 
     assert identity_field, (
-        f"the tool.called event carries no identity attribution; "
-        f"event keys: {list(tool_call_event.keys())}"
+        f"the tool.called event carries no identity attribution; event keys: {list(tool_call_event.keys())}"
     )
     # When the field exists, assert its presence. The scenario does not
     # define a specific identity constant to compare against.
