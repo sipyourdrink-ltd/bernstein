@@ -27,6 +27,7 @@ from bernstein.core.eu_ai_act import (
     merge_eu_ai_act_risk,
 )
 from bernstein.core.lifecycle import IllegalTransitionError
+from bernstein.core.log_safe import for_log
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
 from bernstein.core.routes._sse import SSE_RESPONSES
@@ -198,7 +199,7 @@ def _checked_claim_session(claimed_by_session: str | None) -> str | None:
     except PathContainmentError as exc:
         logger.warning(
             "claim rejected: claimed_by_session=%s reason=%s",
-            sanitize_log(str(claimed_by_session)),
+            for_log(str(claimed_by_session)),
             sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -765,7 +766,7 @@ def _try_check_realtime_anomaly(
     # intentional-broad-except: best-effort anomaly probe must never break the
     # progress route; surface modes include AttributeError on partial wiring.
     except Exception:
-        logger.debug("Realtime behavior check failed for task %s", sanitize_log(task_id), exc_info=True)
+        logger.debug("Realtime behavior check failed for task %s", for_log(task_id), exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1286,9 +1287,9 @@ async def next_task(
     if task is None:
         logger.info(
             "task.next 404: role=%s claimed_by_session=%s parent_session_id=%s no open tasks",
-            sanitize_log(role),
-            sanitize_log(str(claimed_by_session)),
-            sanitize_log(str(parent_session_id)),
+            for_log(role),
+            for_log(str(claimed_by_session)),
+            for_log(str(parent_session_id)),
         )
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     _record_claim_receipt(request, task, "next")
@@ -1324,7 +1325,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
         if failed:
             logger.warning(
                 "task.claim_batch partial failure: agent_id=%s requested=%d claimed=%d failed=%s",
-                sanitize_log(body.agent_id),
+                for_log(body.agent_id),
                 len(body.task_ids),
                 len(claimed),
                 sanitize_log(str(failed)),
@@ -1382,8 +1383,8 @@ async def claim_task(
         except KeyError:
             logger.warning(
                 "task.claim 404: task_id=%s not found (claimed_by_session=%s)",
-                sanitize_log(task_id),
-                sanitize_log(str(claimed_by_session)),
+                for_log(task_id),
+                for_log(str(claimed_by_session)),
             )
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
         except ValueError as exc:
@@ -1393,11 +1394,11 @@ async def claim_task(
             logger.warning(
                 "task.claim 409: task_id=%s expected_version=%s actual_version=%s "
                 "pre_claim_status=%s claimed_by_session=%s reason=%s",
-                sanitize_log(task_id),
-                sanitize_log(str(expected_version)),
+                for_log(task_id),
+                for_log(str(expected_version)),
                 pre_claim_version,
                 pre_claim_status,
-                sanitize_log(str(claimed_by_session)),
+                for_log(str(claimed_by_session)),
                 sanitize_log(str(exc)),
             )
             raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -1406,7 +1407,7 @@ async def claim_task(
             "task.claim ok: task_id=%s new_version=%s claimed_by_session=%s",
             sanitize_log(task.id),
             task.version,
-            sanitize_log(str(claimed_by_session)),
+            for_log(str(claimed_by_session)),
         )
         _record_claim_receipt(request, task, "by_id")
         return task_to_response(task)
@@ -1450,7 +1451,7 @@ async def _handle_contract_violation(
         return HTTPException(status_code=409, detail=str(exc))
     logger.warning(
         "task.complete contract_violation: task_id=%s path=%s",
-        sanitize_log(task_id),
+        for_log(task_id),
         sanitize_log(violation.path),
     )
     sse_bus.publish("task_update", json.dumps({"id": failed_task.id, "status": failed_task.status.value}))
@@ -1564,7 +1565,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             if task.status.value == "open":
                 logger.info(
                     "task.complete auto-claim: task_id=%s reverted to open, re-claiming before complete",
-                    sanitize_log(task_id),
+                    for_log(task_id),
                 )
                 await store.claim_by_id(task_id)
             structured = _parse_terminal_body(body)
@@ -1661,7 +1662,7 @@ async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, requ
     except IllegalTransitionError as exc:
         logger.warning(
             "task.wait_for_subtasks 409: task_id=%s current_status=%s reason=%s",
-            sanitize_log(task_id),
+            for_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
             sanitize_log(str(exc)),
         )
@@ -1687,7 +1688,7 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         if existing_task.status.value == "open":
             logger.info(
                 "task.fail auto-claim: task_id=%s reverted to open, re-claiming before fail",
-                sanitize_log(task_id),
+                for_log(task_id),
             )
             await store.claim_by_id(task_id)
         task = await store.fail(task_id, body.reason)
@@ -1696,7 +1697,7 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
     except IllegalTransitionError as exc:
         logger.warning(
             "task.fail 409: task_id=%s current_status=%s reason=%s",
-            sanitize_log(task_id),
+            for_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
             sanitize_log(str(exc)),
         )
@@ -1738,7 +1739,7 @@ async def release_task(task_id: str, body: TaskReleaseRequest, request: Request)
     except IllegalTransitionError as exc:
         logger.warning(
             "task.release 409: task_id=%s current_status=%s reason=%s",
-            sanitize_log(task_id),
+            for_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
             sanitize_log(str(exc)),
         )
@@ -1771,16 +1772,16 @@ async def reopen_task(task_id: str, body: TaskReopenRequest, request: Request) -
     except IllegalTransitionError as exc:
         logger.warning(
             "task.reopen 409: task_id=%s current_status=%s reason=%s",
-            sanitize_log(task_id),
+            for_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
             sanitize_log(str(exc)),
         )
         raise HTTPException(status_code=409, detail=str(exc)) from None
     logger.info(
         "task.reopen: task_id=%s reopen_count=%s reason=%s",
-        sanitize_log(task_id),
+        for_log(task_id),
         task.metadata.get("janitor_reopen_count"),
-        sanitize_log(str(body.reason)),
+        for_log(str(body.reason)),
     )
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "open"}))
     return task_to_response(task)
@@ -1805,7 +1806,7 @@ async def close_task(task_id: str, request: Request) -> TaskResponse:
     except IllegalTransitionError as exc:
         logger.warning(
             "task.close 409: task_id=%s current_status=%s reason=%s",
-            sanitize_log(task_id),
+            for_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
             sanitize_log(str(exc)),
         )
@@ -1852,7 +1853,7 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
     except ValueError as exc:
         logger.warning(
             "task.cancel 409: task_id=%s current_status=%s reason=%s",
-            sanitize_log(task_id),
+            for_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
             sanitize_log(str(exc)),
         )
@@ -1888,7 +1889,7 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
     except IllegalTransitionError as exc:
         logger.warning(
             "task.block 409: task_id=%s current_status=%s reason=%s",
-            sanitize_log(task_id),
+            for_log(task_id),
             existing_task.status.value if existing_task is not None else "unknown",
             sanitize_log(str(exc)),
         )
@@ -2568,8 +2569,8 @@ def post_bulletin(body: BulletinPostRequest, request: Request, response: Respons
     except SignalActionFailure as exc:
         logger.warning(
             "bulletin signal action pending retry for %s from %s",
-            sanitize_log(str(body.type)),
-            sanitize_log(body.agent_id),
+            for_log(str(body.type)),
+            for_log(body.agent_id),
         )
         stored = exc.message
         response.status_code = 202

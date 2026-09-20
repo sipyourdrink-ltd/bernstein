@@ -73,6 +73,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
+| .github/workflows/security-control-reachability.yml | Security control reachability | pull_request, push | {"cancel-in-progress": "true", "group": "security-control-reachability-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/soc2-evidence-weekly.yml | soc2-evidence-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
 | .github/workflows/spa-bundle-freshness.yml | SPA bundle freshness | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "spa-bundle-freshness-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
@@ -144,7 +145,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
 | .github/workflows/publish.yml | build: Build<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-copr: Publish RPM to Copr<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>rpm-install-smoke: RPM install smoke (${{ matrix.image }})<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
 | .github/workflows/quorum-rerun.yml | rerun |
-| .github/workflows/quorum.yml | quorum |
+| .github/workflows/quorum.yml | quorum: quorum |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs published channels |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/rendering-lane.yml | rendering: Rendering fetcher (browser-backed) |
@@ -152,6 +153,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/runner-canary.yml | canary: Runner canary |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
+| .github/workflows/security-control-reachability.yml | gate: Unreached security controls (#5053) |
 | .github/workflows/soc2-evidence-weekly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
 | .github/workflows/spa-bundle-freshness.yml | rebuild: shipped bundle matches the lockfile |
 | .github/workflows/spiffe-extra-e2e.yml | spiffe-extra-e2e: SPIFFE extra E2E (built wheel, extra-present + no-extra suites) |
@@ -231,6 +233,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/runner-canary.yml | - | - |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
+| .github/workflows/security-control-reachability.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/soc2-evidence-weekly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED, SOC2_EVIDENCE_SINK |
 | .github/workflows/spa-bundle-freshness.yml | workflow: {"contents": "read"}<br>rebuild: {"contents": "read"} | - |
 | .github/workflows/spiffe-extra-e2e.yml | workflow: {"contents": "read"} | - |

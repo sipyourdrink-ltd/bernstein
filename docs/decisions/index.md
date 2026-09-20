@@ -22,6 +22,12 @@ that is the part a record preserves and a commit message does not.
 | [009](009-lineage-v1.md) | Lineage v1: per-artefact transparency log | Accepted | 2026-05-13 |
 | [010](010-audit-chain-default-cost.md) | What turning the HMAC audit chain on by default costs, and the path to it | Accepted | 2026-07-24 |
 | [011](011-model-drafts-human-signs.md) | A model may draft an artefact a human must sign; it never decides what runs | Accepted | 2026-09-02 |
+| [012](012-govern-versus-observe.md) | Govern what we schedule, observe what we do not | Accepted | 2026-09-20 |
+| [013](013-typed-ingest-contract.md) | Ingest is a typed contract with plug-in adapters | Accepted | 2026-09-20 |
+| [014](014-agent-identity-plane.md) | Agents are principals, projected from the chain | Accepted | 2026-09-20 |
+| [015](015-artifact-contract-completion.md) | An artifact contract is a completion basis | Accepted | 2026-09-20 |
+| [016](016-trace-conformance-level.md) | TRACE conformance is claimed at Level 0 only | Accepted | 2026-09-20 |
+| [017](017-receipt-states-its-gap.md) | A receipt states its own coverage gap | Accepted | 2026-09-20 |
 
 ## When a record is required
 

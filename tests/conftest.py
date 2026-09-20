@@ -364,7 +364,6 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     # Clear report sections (captured stdout/stderr per test)
     if hasattr(item, "_report_sections"):
         item._report_sections.clear()
-    gc.collect()
 
 
 @pytest.fixture

@@ -501,7 +501,18 @@ def _print_clean_room_report(result: CleanRoomResult, *, receipt_digest: str, re
     default=None,
     help="Path to the JSONL lease store file.",
 )
-def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
+@click.option(
+    "--allow-origin",
+    "allowed_origins",
+    multiple=True,
+    help=(
+        "Browser origin allowed to call this hub cross-origin, e.g. "
+        "https://volunteers.example. Repeat for several. Omitted installs no "
+        "CORS middleware, so only same-origin and non-browser clients reach "
+        "the API. There is no wildcard."
+    ),
+)
+def hub_cmd(host: str, port: int, lease_store_path: str | None, allowed_origins: tuple[str, ...]) -> None:
     """Serve the volunteer hub HTTP interface.
 
     The hub exposes endpoints for workers to enroll, claim, heartbeat,
@@ -549,6 +560,6 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None) -> None:
     lease_log = Path(lease_store_path)
     store = LeaseStore(lease_log, budget=donor_budget)
     board = TaskBoard(lease_log.parent / "tasks.jsonl")
-    app = build_hub_app(store, task_board=board)
+    app = build_hub_app(store, task_board=board, allowed_origins=allowed_origins)
     click.echo(f"Bernstein volunteer hub listening on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")

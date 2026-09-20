@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from bernstein.cli.commands.advanced_cmd import trace_cmd
+from bernstein.core.observability.trust_record import HopExportResult, HopRecord
 
 
 # Helper function to create mock journal files
@@ -111,15 +112,18 @@ def test_trace_export_create_run_structure_and_succeed() -> None:
             # Now mock all downstream dependencies
             with patch("bernstein.core.replay.journal.run_journal_path") as mock_journal_path:
                 with patch("bernstein.core.replay.journal.verify_journal") as mock_verify:
-                    with patch("bernstein.core.observability.trust_record.TrustRecordEmitter") as mock_emitter:
+                    with patch(
+                        "bernstein.core.observability.trust_record.TrustRecordEmitter.emit_hop_records"
+                    ) as mock_emit_hops:
                         # Configure mocks
                         mock_journal_path.return_value = Path(".sdd/runs/test-run-123/journal.jsonl")
                         mock_verification = MagicMock()
                         mock_verification.chain_consistent = True
                         mock_verify.return_value = mock_verification
-                        mock_emitter_instance = MagicMock()
-                        mock_emitter_instance.emit_trust_record.return_value = '{"trust": "record"}'
-                        mock_emitter.return_value = mock_emitter_instance
+                        mock_emit_hops.return_value = HopExportResult(
+                            records=[HopRecord(exec_id="test-run-123", record='{"trust": "record"}')],
+                            aggregate='{"trust": "record"}',
+                        )
 
                         result = runner.invoke(trace_cmd, ["export", "test-run-123"])
 
@@ -140,14 +144,17 @@ def test_trace_export_create_run_structure_and_output_file() -> None:
             # Mock downstream dependencies
             with patch("bernstein.core.replay.journal.run_journal_path") as mock_journal_path:
                 with patch("bernstein.core.replay.journal.verify_journal") as mock_verify:
-                    with patch("bernstein.core.observability.trust_record.TrustRecordEmitter") as mock_emitter:
+                    with patch(
+                        "bernstein.core.observability.trust_record.TrustRecordEmitter.emit_hop_records"
+                    ) as mock_emit_hops:
                         mock_journal_path.return_value = Path(".sdd/runs/test-run-123/journal.jsonl")
                         mock_verification = MagicMock()
                         mock_verification.chain_consistent = True
                         mock_verify.return_value = mock_verification
-                        mock_emitter_instance = MagicMock()
-                        mock_emitter_instance.emit_trust_record.return_value = '{"to": "file"}'
-                        mock_emitter.return_value = mock_emitter_instance
+                        mock_emit_hops.return_value = HopExportResult(
+                            records=[HopRecord(exec_id="test-run-123", record='{"to": "file"}')],
+                            aggregate='{"to": "file"}',
+                        )
 
                         result = runner.invoke(trace_cmd, ["export", "test-run-123", "--out", "output.json"])
 

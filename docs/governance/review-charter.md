@@ -47,6 +47,8 @@ Changes here need the maintainer's approval in addition to the quorum:
 
 `.github/` · `src/bernstein/core/` · `src/bernstein/evolution/` · `src/bernstein/adapters/` · `pyproject.toml` and lockfiles · `schemas/` · `proto/` · `SECURITY.md`, `GOVERNANCE.md`, `MAINTAINERS.md`, this page, `.github/CODEOWNERS` · `docs/decisions/` · agent configuration files at the repository root · every path listed as in scope in [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md).
 
+Within `src/bernstein/core/` and `src/bernstein/adapters/` the code owner's approval may come from any core reviewer instead of the maintainer, except for `core/security/`, `core/identity/`, `core/sandbox/` and `core/tokens/`, which stay with the maintainer; a CODEOWNERS line that names several people is satisfied by any one of them.
+
 Reserved to the maintainer: creating tags and releases, changing repository settings or rulesets, changing rosters, running the publishing workflows, answering security reports, imposing sanctions.
 
 ## 5. Queue rules

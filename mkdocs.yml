@@ -689,6 +689,12 @@ nav:
           - Lineage v1: decisions/009-lineage-v1.md
           - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
           - A model drafts, a human signs: decisions/011-model-drafts-human-signs.md
+          - Govern versus observe: decisions/012-govern-versus-observe.md
+          - Typed ingest contract: decisions/013-typed-ingest-contract.md
+          - Agent identity plane: decisions/014-agent-identity-plane.md
+          - Artifact contract completion: decisions/015-artifact-contract-completion.md
+          - TRACE conformance level: decisions/016-trace-conformance-level.md
+          - Receipt coverage gap: decisions/017-receipt-states-its-gap.md
   - Contribute:
       - contributing/index.md
       - Project pulse: project-pulse.md

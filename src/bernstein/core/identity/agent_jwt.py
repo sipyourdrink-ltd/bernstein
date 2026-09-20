@@ -12,12 +12,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.path_scope import (
     ScopePatternError,
     paths_outside_scope,
@@ -36,6 +38,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: Identity ids are a single filename component under ``agent_identities/``.
+#: They are minted as ``<role>-<hex>`` / ``run-root-<run_id>`` but reach
+#: ``_load`` from request path parameters and JWT ``sub`` claims, so the
+#: alphabet excludes path separators and ``..`` (CodeQL path-injection).
+_IDENTITY_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +649,13 @@ class AgentIdentityStore:
     # -- persistence --------------------------------------------------------
 
     def _identity_path(self, identity_id: str) -> Path:
+        """Build the identity record path, refusing ids that are not a
+        single filename component.  ``identity_id`` reaches this method from
+        request path parameters and JWT ``sub`` claims, so a value that names
+        a directory or escapes the identities directory is rejected before any
+        filesystem access (CodeQL path-injection)."""
+        if not _IDENTITY_ID_RE.fullmatch(identity_id):
+            raise ValueError(f"invalid identity id {identity_id!r}")
         return self._identities_dir / f"{identity_id}.json"
 
     def _save(self, identity: AgentIdentity) -> None:
@@ -672,12 +687,15 @@ class AgentIdentityStore:
                 raise TypeError(msg)
             return AgentIdentity.from_dict(cast("dict[str, Any]", data))
         except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
-            logger.warning("Skipping corrupt identity file: %s", sanitize_log(str(path)))
+            logger.warning("Skipping corrupt identity file: %s", for_log(path))
             return None
 
     def _load(self, identity_id: str) -> AgentIdentity | None:
         """Read one identity by id, or None when it is missing or unusable."""
-        path = self._identity_path(identity_id)
+        try:
+            path = self._identity_path(identity_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         return self._read_identity(path)
@@ -1247,8 +1265,8 @@ class AgentIdentityStore:
         )
         logger.info(
             "Revoked agent identity %s: %s",
-            sanitize_log(identity_id),
-            sanitize_log(reason),
+            for_log(identity_id),
+            for_log(reason),
         )
         return True
 

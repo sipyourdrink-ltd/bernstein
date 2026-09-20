@@ -704,10 +704,12 @@ def test_ci_gate_rollup_fails_when_rpm_smoke_skips_on_an_rpm_relevant_diff(
 # "Required-check coverage under `merge_group`".
 # ---------------------------------------------------------------------------
 
-# Mirrors `repos/sipyourdrink-ltd/bernstein/branches/main/protection`
-# -> required_status_checks.contexts. Keep in sync with the canary's
-# BRANCH_PROTECTION_CONTEXTS_JSON.
-BRANCH_PROTECTION_CONTEXTS = (REQUIRED_CONTEXT,)
+# Mirrors the contexts the live branch rules require. Keep in sync with the
+# canary's BRANCH_PROTECTION_CONTEXTS_JSON. `quorum` comes from an
+# organization ruleset rather than the repository one, so it does not show up
+# in the repository's own protection payload, but the merge queue waits for
+# it exactly the same way.
+BRANCH_PROTECTION_CONTEXTS = (REQUIRED_CONTEXT, "quorum")
 
 
 def _on(doc: dict[str, object]) -> dict[str, object]:

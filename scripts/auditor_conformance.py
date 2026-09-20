@@ -32,12 +32,23 @@ if str(ROOT) not in sys.path:
 from tests.conformance.auditor import recorder  # noqa: E402
 from tests.conformance.auditor.scoreboard import REPORT_PATH_ENV, read_report  # noqa: E402
 
-VECTORS = (
-    "tests/conformance/auditor/test_vectors.py",
-    "tests/conformance/auditor/test_data_endpoint_vectors.py",
-    "tests/conformance/auditor/test_policy_vectors.py",
-)
+VECTOR_DIR = Path("tests/conformance/auditor")
+VECTOR_GLOB = "test_*vectors.py"
 SCORE_PLUGIN = "tests.conformance.auditor.scoreboard"
+
+
+def vector_files() -> tuple[str, ...]:
+    """Return every vector module under :data:`VECTOR_DIR`, in path order.
+
+    The modules were listed here by hand, and two of the four that existed
+    answered questions the score never ran: a vector file had to be named in
+    this script as well as written, and the second half was easy to forget.
+    Nothing distinguishes a vector module except its name, so the directory
+    listing is the list: a file added under that name is scored, and a file
+    that disappears makes the accompanying test fail rather than quietly
+    lowering the number.
+    """
+    return tuple(sorted(str(path.relative_to(ROOT).as_posix()) for path in (ROOT / VECTOR_DIR).glob(VECTOR_GLOB)))
 
 
 def regenerate(destination: Path) -> int:
@@ -63,7 +74,7 @@ def score() -> int:
                 sys.executable,
                 "-m",
                 "pytest",
-                *VECTORS,
+                *vector_files(),
                 "-q",
                 "--no-cov",
                 "-p",
