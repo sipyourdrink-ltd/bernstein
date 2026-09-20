@@ -180,16 +180,20 @@ class Filter:
             expression = token[1:]
             if not expression:
                 # An empty regex matches at every position, so `key ~` selects
-                # every node instead of narrowing to none of them. That is the
-                # dangerous direction for a selector: it is what an unset shell
-                # variable expands to (`region ~$REGION`), and the result is a
-                # reconcile lane or audit pass aimed at the whole inventory
-                # while reading as a filtered one. Refused for the same reason
-                # `{}` is refused below - a term that constrains nothing is not
-                # a term, and omitting the filter says so unambiguously.
+                # every node that has the attribute instead of narrowing to
+                # none of them. That is the dangerous direction for a selector:
+                # it is what an unset shell variable expands to
+                # (`region ~$REGION`), and the result is a reconcile lane or
+                # audit pass aimed at the whole inventory while reading as a
+                # filtered one. This is the second site of a known defect -
+                # security/redactor.py refuses to build a pattern for the same
+                # reason - and `{}` below is the same rule for sets. Only the
+                # empty expression is refused: it is the one spelling with no
+                # legitimate reading, while an explicit `~.*` still parses and
+                # means "any value".
                 raise SelectorSyntaxError(
-                    f"empty regex for key {key!r}: '~' matches every value, "
-                    f"so it narrows nothing - omit the filter to match all",
+                    f"empty regex for key {key!r}: '~' matches every value, so it narrows "
+                    "nothing - write '~.*' if you meant any value, or omit the filter entirely"
                 )
             try:
                 pattern = re.compile(expression)
