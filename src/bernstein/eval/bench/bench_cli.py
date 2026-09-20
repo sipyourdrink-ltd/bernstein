@@ -266,8 +266,13 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
     else:
         click.echo(f"Harness fingerprint: {fp_a} (match)")
 
-    def expected_value(bundle: SubmissionBundle, lam: float = 1.0) -> float:
-        """Compute expected value: (resolved - lam * wrong) / attempted."""
+    def expected_value(bundle: SubmissionBundle) -> float:
+        """Compute expected value: (resolved - lambda * wrong) / attempted."""
+        lam = bundle.scheduler_config.get('lambda', 1.0)
+        try:
+            lam = float(lam)
+        except (ValueError, TypeError):
+            lam = 1.0
         n = len(bundle.task_results)
         if n == 0:
             return 0.0
