@@ -186,6 +186,7 @@ def test_ordinary_run_id_is_contained(tmp_path: Path) -> None:
     journal = EventJournal(run_id="run-ok-123", sdd_dir=tmp_path)
     assert journal.path.resolve().is_relative_to((tmp_path / "runs").resolve())
 
+
 # ============================================================================
 # Tests for hash_profile (jcs-v2) support — issue #5274 slice 2
 # ============================================================================
@@ -193,14 +194,19 @@ def test_ordinary_run_id_is_contained(tmp_path: Path) -> None:
 
 def test_astral_emoji_vector_matches_rfc8785(tmp_path: Path) -> None:
     """Under jcs-v2 the payload hash uses RFC 8785 canonicalization."""
-    from bernstein.core.replay.journal import _payload_hash, compute_event_hash, HASH_PROFILE_JCS_V2
-    from bernstein.core.security.agent_card_signer import canonicalize_jcs
     import hashlib
+
+    from bernstein.core.replay.journal import HASH_PROFILE_JCS_V2, _payload_hash
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
 
     payload = {"model": "задача 🚀"}
 
     # Under jcs-v2 the payload hash should equal canonicalize_jcs
-    projected = {k: v for k, v in payload.items() if k not in {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"}}
+    projected = {
+        k: v
+        for k, v in payload.items()
+        if k not in {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"}
+    }
     projected["event"] = "agent_spawned"
     expected = hashlib.sha256(canonicalize_jcs(projected)).hexdigest()
 
@@ -211,7 +217,7 @@ def test_astral_emoji_vector_matches_rfc8785(tmp_path: Path) -> None:
 
 def test_non_json_value_rejected_at_write_time_under_v2(tmp_path: Path) -> None:
     """Under jcs-v2, non-JSON values at write time are errors (no default=str)."""
-    from bernstein.core.replay.journal import EventJournal, HASH_PROFILE_JCS_V2
+    from bernstein.core.replay.journal import HASH_PROFILE_JCS_V2, EventJournal
 
     # This test should fail on current main because legacy profile accepts non-JSON via default=str
     # We need to pass hash_profile="jcs-v2" to EventJournal to trigger the new behavior
@@ -222,7 +228,7 @@ def test_non_json_value_rejected_at_write_time_under_v2(tmp_path: Path) -> None:
 
 def test_legacy_profile_journal_still_verifies(tmp_path: Path) -> None:
     """A journal created under py-json-v1 still verifies when read with the same profile."""
-    from bernstein.core.replay.journal import EventJournal, verify_journal, JournalSeal
+    from bernstein.core.replay.journal import EventJournal, JournalSeal, verify_journal
 
     # Create a journal under legacy profile (default)
     journal = EventJournal(run_id="run-legacy", sdd_dir=tmp_path)
@@ -238,7 +244,7 @@ def test_legacy_profile_journal_still_verifies(tmp_path: Path) -> None:
 
 def test_unknown_profile_fails_closed(tmp_path: Path) -> None:
     """A journal claiming an unknown hash_profile is malformed, not skipped."""
-    from bernstein.core.replay.journal import EventJournal, verify_journal, JournalSeal
+    from bernstein.core.replay.journal import EventJournal, JournalSeal, verify_journal
 
     # Create a journal and manually inject unknown profile in first event
     journal = EventJournal(run_id="run-unknown", sdd_dir=tmp_path)
@@ -260,12 +266,17 @@ def test_unknown_profile_fails_closed(tmp_path: Path) -> None:
 
 def test_float_1e21_vector_matches_rfc8785(tmp_path: Path) -> None:
     """Float 1e21 should be encoded as 1e21 per RFC 8785, not 1e+21."""
-    from bernstein.core.replay.journal import _payload_hash, HASH_PROFILE_JCS_V2
-    from bernstein.core.security.agent_card_signer import canonicalize_jcs
     import hashlib
 
+    from bernstein.core.replay.journal import HASH_PROFILE_JCS_V2, _payload_hash
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
     payload = {"value": 1e21}
-    projected = {k: v for k, v in payload.items() if k not in {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"}}
+    projected = {
+        k: v
+        for k, v in payload.items()
+        if k not in {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"}
+    }
     projected["event"] = "test"
     expected = hashlib.sha256(canonicalize_jcs(projected)).hexdigest()
 
@@ -277,5 +288,3 @@ def test_non_ascii_payload_hashes_identically_in_journal_and_spine_under_v2(tmp_
     """Under jcs-v2, journal payload hash and spine row bytes agree on non-ASCII."""
     # This is a load-bearing integration test - will pass once both journal and spine use jcs-v2
     pass
-
-
