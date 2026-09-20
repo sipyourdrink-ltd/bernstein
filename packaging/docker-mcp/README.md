@@ -16,13 +16,34 @@ catalog ([docker/mcp-registry](https://github.com/docker/mcp-registry)).
    BuildKit provenance and SBOM enabled, plus a Sigstore keyless
    build-provenance attestation pushed to the registry.
 
-2. Open a PR against `docker/mcp-registry` adding
-   `servers/bernstein/server.yaml` with the contents of `server.yaml`
-   from this directory. Do not edit the fork copy directly; regenerate it
-   from this file so the repository stays the single source.
+2. Download the rendered catalog payload from the publish workflow run's
+   artifacts (`docker-mcp-catalog-rendered/server.yaml.rendered`). The
+   workflow renders this file at release time by substituting the release
+   commit into `server.yaml`'s `source.commit` field, so the catalog
+   listing carries the actual release commit rather than the stale pin in
+   the checked-in template.
 
-3. Catalog review is external and asynchronous; it is not on the release
+3. Open a PR against `docker/mcp-registry` adding
+   `servers/bernstein/server.yaml` with the contents of the rendered
+   artifact from step 2. Do not use the checked-in `server.yaml` directly
+   (its `source.commit` is always stale); always use the rendered artifact
+   from the workflow run that built the release.
+
+4. Catalog review is external and asynchronous; it is not on the release
    critical path. Track the submission PR in the release checklist.
+
+## Why server.yaml source.commit is always stale
+
+A file cannot contain the hash of the commit that contains it, and the
+release commit is additionally a merge-queue squash whose hash does not
+exist until after the merge completes. The `source.commit` field in the
+checked-in `server.yaml` is always behind the actual release.
+
+The `publish-mcp-registry` job in `.github/workflows/publish.yml` renders
+a copy of `server.yaml` with the release commit substituted at publish time
+(via `scripts/render_docker_mcp_catalog.py`) and uploads it as a job
+artifact. The catalog PR is opened from this rendered artifact, so the
+listing ships with the correct commit.
 
 ## Related manifests
 
