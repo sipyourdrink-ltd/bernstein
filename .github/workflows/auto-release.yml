@@ -247,6 +247,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ inputs.head_sha }}
+          HEAD_BRANCH: ${{ inputs.head_branch }}
         run: |
           # Skip bot commits (prevents release loop)
           AUTHOR=$(gh api "repos/${REPO}/commits/${HEAD_SHA}" \
@@ -255,6 +256,24 @@ jobs:
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             echo "Skipping: bot commit"
             exit 0
+          fi
+
+          # A queue ref is speculative: the merge_group run that produced
+          # it can still be ejected before it reaches main. Only release
+          # once the triggering SHA is actually on main. A fetch error is a
+          # hard failure; a compare that reports the SHA off main is a
+          # skip, not an error (#4930).
+          if [[ "${HEAD_BRANCH}" == gh-readonly-queue/main/* ]]; then
+            if ! MERGE_STATUS=$(gh api "repos/${REPO}/compare/main...${HEAD_SHA}" \
+              --jq '.status' 2>/dev/null); then
+              echo "::error::could not fetch main...${HEAD_SHA} ancestry for queue ref ${HEAD_BRANCH}"
+              exit 1
+            fi
+            if [[ "${MERGE_STATUS}" != "behind" && "${MERGE_STATUS}" != "identical" ]]; then
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "Skipping: ${HEAD_SHA} is not an ancestor of main (compare status ${MERGE_STATUS})"
+              exit 0
+            fi
           fi
 
           # Find latest release tag
