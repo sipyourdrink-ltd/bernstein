@@ -4,4 +4,5 @@ extensions:
       extensible: barrierModel
     data:
       - ["bernstein.core.security.sanitize", "Member[sanitize_log].ReturnValue", "log-injection"]
+      - ["bernstein.core.log_safe", "Member[for_log].ReturnValue", "log-injection"]
       - ["bernstein.core.planning.sla_store", "Member[_single_line].ReturnValue", "log-injection"]
