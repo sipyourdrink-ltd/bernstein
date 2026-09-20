@@ -176,3 +176,28 @@ def test_cap_is_enforced_against_the_rss_that_survived_the_collection() -> None:
     )
 
     assert enforced == [_GC_WATERMARK_BYTES]
+
+
+def test_runtest_teardown_does_not_force_full_collection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-test teardown must not walk the whole live heap.
+
+    ``pytest_runtest_teardown`` used to call ``gc.collect()`` after every test,
+    which is O(live heap) and made a file's teardown cost scale with the object
+    graph that file builds. The watermark-gated ``_memory_guard`` fixture is
+    the only place that should reclaim; this hook clears references and leaves
+    collection to the generational collector.
+    """
+    from tests.conftest import pytest_runtest_teardown
+
+    class FakeItem:
+        funcargs: dict[str, object] = {"tmp_path": object()}
+        _report_sections: list[object] = [object()]
+
+    collections: list[object] = []
+    monkeypatch.setattr("tests.conftest.gc.collect", lambda *a, **k: collections.append(1))
+
+    pytest_runtest_teardown(FakeItem(), None)  # type: ignore[arg-type]
+
+    assert collections == []
+    assert FakeItem.funcargs == {}
+    assert FakeItem._report_sections == []

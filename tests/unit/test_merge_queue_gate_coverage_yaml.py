@@ -66,9 +66,9 @@ QUEUE_REPORTING_WEB_LANES = {
         "Answers whether a pull request has the review the charter asks for. It runs on "
         "every pull request whatever it touches, `web/**` included, and on merge_group, so "
         "the answer is re-checked against the queued state rather than only against the "
-        "branch. It is required through an organization ruleset that pins this workflow "
-        "rather than through a required-context name, which is what stops a branch from "
-        "substituting its own copy; the name it publishes is `quorum`."
+        "branch. It is required through an organization ruleset, by the context name it "
+        "publishes, `quorum`, so the verdict can be answered again after the objection "
+        "window closes without waiting for a new pull-request event."
     ),
     "typecheck-ts.yml": (
         "`tsc --noEmit` over the TypeScript packages, `web/` among them. #4010's shape one "

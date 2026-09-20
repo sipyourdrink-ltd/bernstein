@@ -52,3 +52,16 @@ def test_release_gate_requires_triggering_commit_version_change(workflow: dict[s
     assert 'select(.filename == "pyproject.toml"' in run
     assert 'test("(?m)^[+-]version = ")' in run
     assert "triggering commit did not change pyproject.toml version" in run
+
+
+def test_release_gate_skips_queue_ref_not_ancestor_of_main(
+    workflow: dict[str, Any],
+) -> None:
+    """A queue-ref release is skipped unless the SHA is an ancestor of main."""
+    run = _step_run(workflow, "gate", "Check for meaningful changes")
+    assert "HEAD_BRANCH" in run
+    assert "gh-readonly-queue/main/" in run
+    assert "repos/${REPO}/compare/main...${HEAD_SHA}" in run
+    assert "should_release=false" in run
+    assert "not an ancestor of main" in run
+    assert "::error::could not fetch main...${HEAD_SHA} ancestry" in run
