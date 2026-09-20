@@ -125,14 +125,32 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # The commit the triggering CI run measured - NOT `main`, which
-          # has usually moved on by now, and not `github.sha`, which on a
-          # workflow_run event is the default-branch head rather than the
-          # measured commit. The tree we check out and the tree CI measured
-          # must be the same commit.
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # Check out a trusted ref only. The checkout action must never
+          # interpolate the event's head_sha: a `ref` built from
+          # `github.event.workflow_run.*` is the untrusted-checkout pattern
+          # Scorecard Dangerous-Workflow flags, because it can name a commit
+          # that never reached main. The measured commit is switched to below,
+          # after its ancestry is proven.
+          ref: main
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Check out the measured commit after proving it reached main
+        env:
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # The event's head_sha is untrusted until it is shown to be in
+          # main's history. The job-level guard already requires the run to
+          # come from this repository and a push, but that alone does not
+          # prove the SHA is one of our own commits. `--is-ancestor` does:
+          # a non-ancestor ref would otherwise be checked out and built with
+          # the repository write token.
+          if ! git merge-base --is-ancestor "${TARGET_SHA}" HEAD; then
+            echo "::error::${TARGET_SHA} is not an ancestor of main; refusing to check it out."
+            exit 1
+          fi
+          git checkout "${TARGET_SHA}"
 
       - uses: ./.github/actions/bootstrap
 

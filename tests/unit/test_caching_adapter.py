@@ -312,3 +312,21 @@ def test_concurrency_safe_spawns(adapter: CachingAdapter, mock_inner: MagicMock)
     # or multiple times if they raced before first write.
     # The key is that it didn't crash.
     assert mock_inner.spawn.call_count > 0
+
+
+def test_model_vendor_forwards_the_wrapped_adapter_declaration(tmp_path: Path) -> None:
+    """A caching-wrapped spawn must not lose the adapter's model vendor."""
+    inner = MagicMock(spec=CLIAdapter)
+    inner.model_vendor = "anthropic"
+    adapter = CachingAdapter(inner, tmp_path)
+
+    assert adapter.model_vendor == "anthropic"
+
+
+def test_model_vendor_defaults_to_empty_when_the_inner_adapter_declares_none(tmp_path: Path) -> None:
+    """An undeclared vendor stays empty rather than guessing a name."""
+    inner = MagicMock(spec=CLIAdapter)
+    inner.model_vendor = ""
+    adapter = CachingAdapter(inner, tmp_path)
+
+    assert adapter.model_vendor == ""

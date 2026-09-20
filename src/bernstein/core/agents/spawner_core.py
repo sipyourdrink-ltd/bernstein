@@ -5353,6 +5353,7 @@ class AgentSpawner:
                             session.provider = adapter_name
                         else:
                             session.provider = None
+                        session.model_vendor = getattr(target_adapter, "model_vendor", "") or ""
                         session.model_config = model_config
                         break
                     except RateLimitError as exc:
@@ -5836,6 +5837,7 @@ class AgentSpawner:
             role=role,
             task_ids=[t.id for t in tasks],
             model_config=model_config,
+            model_vendor=getattr(self._adapter, "model_vendor", "") or "",
             status="starting",
             timeout_s=self._resolve_spawn_timeout(tasks),
             context_receipt=receipt.to_dict()["entries"],

@@ -272,7 +272,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |
 | .github/workflows/pentest.yml | pentest: upload pentest-results-${{ github.run_number }} |
 | .github/workflows/project-pulse.yml | pulse: upload project-pulse |
-| .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist |
+| .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist<br>publish-mcp-registry: upload docker-mcp-catalog-rendered |
 | .github/workflows/sbom.yml | sbom: upload sbom |
 | .github/workflows/scorecard.yml | analysis: upload scorecard-results<br>upload: download scorecard-results |
 | .github/workflows/soc2-evidence-weekly.yml | pack: upload soc2-evidence-${{ github.run_id }} |
