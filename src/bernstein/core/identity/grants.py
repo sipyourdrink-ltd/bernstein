@@ -324,14 +324,14 @@ class GrantSigner:
     def sign(self, body: dict[str, Any]) -> str:
         """Return the hex Ed25519 signature over the canonical ``body``."""
         payload = _canonical(body).encode()
-        
+
         # Route through the custody boundary when given a KMSAdapter.
         if hasattr(self._signer, "sign"):
             return self._signer.sign(payload).hex()
-        
+
         # Legacy direct-load path for backward compatibility.
         from cryptography.hazmat.primitives import serialization
-        
+
         private_key = serialization.load_pem_private_key(self._signer, password=None)
         return private_key.sign(payload).hex()  # type: ignore[union-attr, call-arg]
 

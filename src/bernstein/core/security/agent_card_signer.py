@@ -34,10 +34,6 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-        Ed25519PrivateKey,
-    )
-
     from bernstein.core.identity.agent_card import AgentIdentityCard
 
 __all__ = [
@@ -395,17 +391,16 @@ def sign_agent_card(
         An :class:`AgentCardSignature` whose ``detached_jws`` carries an
         empty payload segment (RFC 7515 §A.5).
     """
-    from cryptography.hazmat.primitives import serialization
 
     import tempfile
     from pathlib import Path
-    
+
     from bernstein.core.security.key_custody import FileBasedKMSAdapter
-    
+
     with tempfile.NamedTemporaryFile(mode="wb", suffix=".pem", delete=False) as f:
         f.write(private_key_pem)
         key_path = Path(f.name)
-    
+
     try:
         adapter = FileBasedKMSAdapter(key_path)
     finally:
@@ -596,18 +591,16 @@ def sign_detached_jws_over_canonical(
     Returns:
         Compact detached JWS string ``base64url(header)..base64url(signature)``.
     """
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     import tempfile
     from pathlib import Path
-    
+
     from bernstein.core.security.key_custody import FileBasedKMSAdapter
-    
+
     with tempfile.NamedTemporaryFile(mode="wb", suffix=".pem", delete=False) as f:
         f.write(private_key_pem)
         key_path = Path(f.name)
-    
+
     try:
         adapter = FileBasedKMSAdapter(key_path)
         return sign_detached_jws_with_signer(canonical_body, adapter, typ=typ, kid=kid)

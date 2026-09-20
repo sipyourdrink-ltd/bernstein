@@ -234,8 +234,7 @@ def test_migrated_site_signs_identically_through_boundary() -> None:
 
 
 @pytest.mark.skipif(
-    not Path("/usr/lib/softhsm/libsofthsm2.so").exists()
-    and not Path("/usr/local/lib/softhsm/libsofthsm2.so").exists(),
+    not Path("/usr/lib/softhsm/libsofthsm2.so").exists() and not Path("/usr/local/lib/softhsm/libsofthsm2.so").exists(),
     reason="SoftHSM not installed",
 )
 def test_hsm_backend_signs_against_softhsm() -> None:
