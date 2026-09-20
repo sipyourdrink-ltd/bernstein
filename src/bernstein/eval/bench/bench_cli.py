@@ -268,7 +268,7 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
 
     def expected_value(bundle: SubmissionBundle) -> float:
         """Compute expected value: (resolved - lambda * wrong) / attempted."""
-        lam = bundle.scheduler_config.get('lambda', 1.0)
+        lam = bundle.scheduler_config.get("lambda", 1.0)
         try:
             lam = float(lam)
         except (ValueError, TypeError):
@@ -280,10 +280,7 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
         wrong = (1.0 - bundle.pass_rate) * n
         return (resolved - lam * wrong) / n
 
-    ordered = sorted(
-        [(path_a, bundle_a), (path_b, bundle_b)],
-        key=lambda p: -expected_value(p[1])
-    )
+    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -expected_value(p[1]))
     click.echo("")
     for rank, (path, bundle) in enumerate(ordered, start=1):
         ev = expected_value(bundle)

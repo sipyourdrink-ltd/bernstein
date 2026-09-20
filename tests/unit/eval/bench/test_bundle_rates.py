@@ -77,6 +77,7 @@ class TestBundleLambdaValue:
             bundle.save(path)
             # Manually remove lambda_value from the JSON to simulate old bundle
             import json
+
             raw = json.loads(path.read_text())
             del raw["lambda_value"]
             path.write_text(json.dumps(raw))
