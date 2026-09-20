@@ -295,3 +295,102 @@ def test_crew_callback_handler_handles_repeated_task_ids() -> None:
     assert trace["tasks"][1]["task_id"] == "retry-task:1"
     assert trace["tasks"][0]["output"] == "failed"
     assert trace["tasks"][1]["output"] == "success"
+
+
+def test_rejected_trace_leaves_no_receipt_on_disk(adapter: CrewIngestAdapter, ledger: DelegationLedger) -> None:
+    """A trace rejected at a later handoff must append nothing to the ledger."""
+    run = IngestedCrewRun(
+        run_id="crew-rejected-atomic",
+        crew_id="crew-rejected",
+        roles=(
+            CrewRole(role_id="lead", name="Lead"),
+            CrewRole(role_id="worker", name="Worker"),
+            CrewRole(role_id="auditor", name="Auditor"),
+        ),
+        tasks=(CrewTask(task_id="t1", description="task 1", assigned_role="lead"),),
+        handoffs=(
+            CrewHandoff(from_role="lead", to_role="worker", timestamp=1000),
+            CrewHandoff(from_role="worker", to_role="auditor", timestamp=2000, parent_handoff_index=42),
+        ),
+    )
+    with pytest.raises(ValueError, match="non-existent parent handoff index 42"):
+        adapter.record_handoffs_to_ledger(ledger, run)
+    assert not ledger.receipt_path(run.run_id).exists()
+
+
+def test_undeclared_from_role_rejected(adapter: CrewIngestAdapter, ledger: DelegationLedger) -> None:
+    """A handoff whose from_role is not a declared role fails closed."""
+    run = IngestedCrewRun(
+        run_id="crew-ghost",
+        crew_id="crew-ghost",
+        roles=(CrewRole(role_id="lead", name="Lead"), CrewRole(role_id="worker", name="Worker")),
+        tasks=(CrewTask(task_id="t1", description="task 1", assigned_role="lead"),),
+        handoffs=(CrewHandoff(from_role="ghost", to_role="worker", timestamp=1000),),
+    )
+    with pytest.raises(ValueError, match="not a declared role"):
+        adapter.record_handoffs_to_ledger(ledger, run)
+
+
+def test_non_root_handoff_without_parent_rejected(adapter: CrewIngestAdapter, ledger: DelegationLedger) -> None:
+    """A non-root handoff with no resolvable parent fails closed."""
+    run = IngestedCrewRun(
+        run_id="crew-no-parent",
+        crew_id="crew-no-parent",
+        roles=(CrewRole(role_id="lead", name="Lead"), CrewRole(role_id="worker", name="Worker")),
+        tasks=(CrewTask(task_id="t1", description="task 1", assigned_role="lead"),),
+        handoffs=(
+            CrewHandoff(from_role="lead", to_role="worker", timestamp=1000),
+            CrewHandoff(from_role="worker", to_role="lead", timestamp=2000),
+        ),
+    )
+    with pytest.raises(ValueError, match="has no resolvable parent"):
+        adapter.record_handoffs_to_ledger(ledger, run)
+
+
+def test_mismatched_digest_rejected() -> None:
+    """A trace-supplied arguments_digest that does not match is rejected."""
+    from bernstein.adapters.crew_ingest import CrewToolCall
+
+    with pytest.raises(ValueError, match="digest mismatch"):
+        CrewToolCall.from_dict(
+            {
+                "name": "web_search",
+                "id": "call-1",
+                "args": {"query": "agent governance"},
+                "arguments_digest": "sha256:lie",
+            }
+        )
+
+
+def test_non_dict_handoff_and_tool_call_rejected(adapter: CrewIngestAdapter) -> None:
+    """Malformed handoff/tool-call entries raise instead of being silently dropped."""
+    with pytest.raises(ValueError, match="Handoff at index 1 must be a dictionary"):
+        adapter.ingest_trace(
+            {
+                "run_id": "crew-malformed",
+                "roles": [{"role_id": "lead"}],
+                "tasks": [{"task_id": "t1"}],
+                "handoffs": [{"from_role": "lead", "to_role": "lead"}, "garbage"],
+            }
+        )
+
+    with pytest.raises(ValueError, match="Tool call at index 1 must be a dictionary"):
+        adapter.ingest_trace(
+            {
+                "run_id": "crew-malformed-tool",
+                "roles": [{"role_id": "lead"}],
+                "tasks": [
+                    {
+                        "task_id": "t1",
+                        "assigned_role": "lead",
+                        "tool_calls": [{"name": "a", "id": "c1", "args": {}}, 42],
+                    }
+                ],
+            }
+        )
+
+
+def test_missing_run_id_rejected(adapter: CrewIngestAdapter) -> None:
+    """A trace without a run_id is rejected instead of defaulting to a shared id."""
+    with pytest.raises(ValueError, match="missing 'run_id'"):
+        adapter.ingest_trace({"roles": [{"role_id": "lead"}], "tasks": []})
