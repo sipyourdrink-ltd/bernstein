@@ -6092,10 +6092,21 @@ class Orchestrator:
             if session is None:
                 continue
             self._record_mutation_capability_once(session)
-            model_id, model_provider = _model_identity(
-                session.model_config.model if session.model_config else None,
-                session.provider,
-            )
+            model = session.model_config.model if session.model_config else None
+            # Issue #6064: ``model_provider`` must name the model's vendor,
+            # not the CLI adapter that carried the spawn. A declared vendor
+            # wins; without one, the #6063 namespace fallback applies only to
+            # sessions that resolved no provider at all. A CLI/adapter or
+            # router provider name is a routing fact, not a vendor, so it is
+            # never journaled as ``model_provider`` - export refuses that hop
+            # by agent id rather than inventing a vendor name.
+            if session.model_vendor:
+                model_id: str | None = model
+                model_provider: str | None = session.model_vendor
+            elif session.provider is None:
+                model_id, model_provider = _model_identity(model, None)
+            else:
+                model_id, model_provider = None, None
             model_facts: dict[str, str] = {}
             if model_id is not None:
                 model_facts["model_id"] = model_id
@@ -6105,16 +6116,12 @@ class Orchestrator:
                 "agent_spawned",
                 agent_id=session.id,
                 role=session.role,
-                model=session.model_config.model if session.model_config else None,
+                model=model,
                 provider=session.provider,
                 # Issue #6045: the trust-record emitter reads model_id /
                 # model_provider, not model / provider. Journal the resolved
                 # facts under the emitter's names additively; the existing keys
                 # stay for the other run-journal readers that depend on them.
-                # A session with no provider but a namespaced model identifier
-                # journals the operator-supplied namespace as model_provider;
-                # a bare identifier journals neither and export keeps refusing
-                # honestly rather than inventing a vendor name.
                 **model_facts,
                 task_ids=session.task_ids,
                 agent_source=session.agent_source,
