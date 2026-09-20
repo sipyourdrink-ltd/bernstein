@@ -347,6 +347,29 @@ _complete_task = complete_task
 _parse_backlog_file = parse_backlog_file
 
 
+def _model_identity(
+    model: str | None,
+    provider: str | None,
+) -> tuple[str | None, str | None]:
+    """Return the ``(model_id, model_provider)`` pair for a spawned session.
+
+    A resolved *provider* always wins. When it is absent and *model* carries
+    a ``namespace/rest`` identifier, the namespace the operator configured is
+    journaled as the provider and the identifier is kept whole as the model id.
+    A bare identifier or an empty namespace on either side is not a provider:
+    neither fact is journaled and export keeps refusing rather than inventing
+    a vendor name.
+    """
+    if provider is not None:
+        return model, provider
+    if model is None:
+        return None, None
+    namespace, sep, rest = model.partition("/")
+    if sep and namespace and rest:
+        return model, namespace
+    return None, None
+
+
 class ShutdownInProgress(RuntimeError):
     """Raised when a spawn is attempted after shutdown has started."""
 
@@ -6069,6 +6092,15 @@ class Orchestrator:
             if session is None:
                 continue
             self._record_mutation_capability_once(session)
+            model_id, model_provider = _model_identity(
+                session.model_config.model if session.model_config else None,
+                session.provider,
+            )
+            model_facts: dict[str, str] = {}
+            if model_id is not None:
+                model_facts["model_id"] = model_id
+            if model_provider is not None:
+                model_facts["model_provider"] = model_provider
             self._recorder.record(
                 "agent_spawned",
                 agent_id=session.id,
@@ -6076,14 +6108,14 @@ class Orchestrator:
                 model=session.model_config.model if session.model_config else None,
                 provider=session.provider,
                 # Issue #6045: the trust-record emitter reads model_id /
-                # model_provider, not model / provider. Journal the same
-                # resolved facts under the emitter's names additively; the
-                # existing keys stay for the other run-journal readers that
-                # depend on them. An endpoint-routed worker has provider=None,
-                # so export keeps refusing honestly rather than inventing a
-                # vendor name.
-                model_id=session.model_config.model if session.model_config else None,
-                model_provider=session.provider,
+                # model_provider, not model / provider. Journal the resolved
+                # facts under the emitter's names additively; the existing keys
+                # stay for the other run-journal readers that depend on them.
+                # A session with no provider but a namespaced model identifier
+                # journals the operator-supplied namespace as model_provider;
+                # a bare identifier journals neither and export keeps refusing
+                # honestly rather than inventing a vendor name.
+                **model_facts,
                 task_ids=session.task_ids,
                 agent_source=session.agent_source,
                 # Issue #4908: record the resolved endpoint identity

@@ -17,18 +17,41 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
-from bernstein.core.models import AgentSession
+from bernstein.core.models import AgentSession, ModelConfig
+from click.testing import CliRunner
 
+from bernstein.cli.commands.advanced_cmd import trace_cmd
 from bernstein.core.observability.trust_record import TrustRecordEmitter
 from bernstein.core.orchestration.orchestrator import Orchestrator
 from bernstein.core.persistence.runtime_state import SessionReplayMetadata
 from bernstein.core.quality.quality_gates import QualityGatesConfig
 from bernstein.core.replay.journal import EventJournal, load_events
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+_KNOWN_KEY_PEM: bytes | None = None
+
+
+def _known_private_key_pem() -> bytes:
+    """Deterministic Ed25519 PKCS8 PEM so the record verifies against a fixed key."""
+    global _KNOWN_KEY_PEM
+    if _KNOWN_KEY_PEM is None:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        key = Ed25519PrivateKey.from_private_bytes(b"s" * 32)
+        _KNOWN_KEY_PEM = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    return _KNOWN_KEY_PEM
 
 
 def _spawn_stub(journal: EventJournal, session: AgentSession) -> SimpleNamespace:
@@ -82,6 +105,16 @@ def _session() -> AgentSession:
     )
 
 
+def _session_with_model(model: str, provider: str | None) -> AgentSession:
+    return AgentSession(
+        id="session-1",
+        role="backend",
+        task_ids=["t-1"],
+        provider=provider,
+        model_config=ModelConfig(model=model, effort="high"),
+    )
+
+
 def _orchestrator_written_journal(sdd_dir: Path, run_id: str) -> EventJournal:
     journal = EventJournal(run_id=run_id, sdd_dir=sdd_dir)
     _record_run_started(journal, run_id, QualityGatesConfig(lint=True))
@@ -93,6 +126,7 @@ def _orchestrator_written_journal(sdd_dir: Path, run_id: str) -> EventJournal:
 def _emitter() -> TrustRecordEmitter:
     return TrustRecordEmitter(
         install_rev_getter=lambda: "aaaaaaaaaaaaaaaa",
+        get_private_key_pem=_known_private_key_pem,
         get_installed_digest=lambda: "sha256:" + "0" * 64,
     )
 
@@ -202,3 +236,105 @@ class TestReplayAndRunReceiptIgnoreAddedKeys:
         # the added keys.
         loaded = load_events(journal.path)
         assert loaded.discarded_line_indices == ()
+
+
+def _spawned_event(journal: EventJournal) -> dict[str, object]:
+    events = load_events(journal.path).events
+    return next(event for event in events if event["event"] == "agent_spawned")
+
+
+class TestModelNamespaceBecomesProvider:
+    def test_namespaced_model_without_provider_journals_the_namespace(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="ns-facts", sdd_dir=tmp_path / ".sdd")
+        _record_spawned_events(journal, _session_with_model("omnilab/fleet-hard", None))
+
+        spawned = _spawned_event(journal)
+        assert spawned["model_id"] == "omnilab/fleet-hard"
+        assert spawned["model_provider"] == "omnilab"
+        assert spawned["model"] == "omnilab/fleet-hard"
+        assert spawned["provider"] is None
+
+    def test_bare_model_without_provider_journals_no_provider(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="bare-facts", sdd_dir=tmp_path / ".sdd")
+        _record_spawned_events(journal, _session_with_model("sonnet", None))
+
+        spawned = _spawned_event(journal)
+        assert "model_id" not in spawned
+        assert "model_provider" not in spawned
+
+    def test_empty_namespace_is_not_a_provider(self, tmp_path: Path) -> None:
+        for index, model in enumerate(("/fleet-hard", "omnilab/")):
+            journal = EventJournal(run_id=f"empty-ns-facts-{index}", sdd_dir=tmp_path / ".sdd")
+            _record_spawned_events(journal, _session_with_model(model, None))
+
+            spawned = _spawned_event(journal)
+            assert "model_id" not in spawned, model
+            assert "model_provider" not in spawned, model
+
+    def test_resolved_provider_is_never_overwritten_by_the_namespace(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="resolved-facts", sdd_dir=tmp_path / ".sdd")
+        _record_spawned_events(journal, _session_with_model("omnilab/fleet-hard", "anthropic"))
+
+        spawned = _spawned_event(journal)
+        assert spawned["model_id"] == "omnilab/fleet-hard"
+        assert spawned["model_provider"] == "anthropic"
+
+
+class TestExportNamespacedEndpointRunVerifies:
+    def test_export_of_a_namespaced_endpoint_run_verifies_at_level_0(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="ns-run", sdd_dir=tmp_path / ".sdd")
+        _record_run_started(journal, "ns-run", QualityGatesConfig(lint=True))
+        session = _session_with_model("omnilab/fleet-hard", None)
+        session.endpoint_adapter_name = "OpenCode"
+        session.endpoint_model = "omnilab/fleet-hard"
+        _record_spawned_events(journal, session)
+        journal.record("run_completed", run_id="ns-run", ticks=1)
+
+        record_path = tmp_path / "record.json"
+        runner = CliRunner()
+        mock_trace_module = MagicMock()
+        env = {"BERNSTEIN_AGENT_CARD_KEY_DIR": str(tmp_path / "keys")}
+        with patch.dict("sys.modules", {"agentrust_trace": mock_trace_module}):
+            result = runner.invoke(
+                trace_cmd,
+                ["export", "ns-run", "--sdd-dir", str(tmp_path / ".sdd"), "--out", str(record_path)],
+                env=env,
+            )
+        assert result.exit_code == 0, result.output
+        assert record_path.exists()
+
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        assert record["model"] == {"provider": "omnilab", "model_id": "omnilab/fleet-hard"}
+
+        if shutil.which("uv") is None:
+            pytest.skip("uv is not on PATH; agentrust-trace-tests cannot be resolved")
+        probe = subprocess.run(
+            ["uv", "run", "--no-sync", "--with", "agentrust-trace-tests==0.5.1", "trace-tests", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if probe.returncode != 0:
+            pytest.skip("agentrust-trace-tests could not be resolved (no network to PyPI)")
+
+        verify = subprocess.run(
+            [
+                "uv",
+                "run",
+                "--no-sync",
+                "--with",
+                "agentrust-trace-tests==0.5.1",
+                "trace-tests",
+                "verify",
+                "--record",
+                str(record_path),
+                "--level",
+                "0",
+                "--max-age",
+                "999999999",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert "Result: PASS" in verify.stdout, verify.stdout + verify.stderr
