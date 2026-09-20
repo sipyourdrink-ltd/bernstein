@@ -310,6 +310,11 @@ class AgentIdentityCard:
         not complements: a card whose ``created_at`` is in the future is not
         expired, and is not valid either.
 
+        The near end has no skew tolerance: a verifier whose clock is behind
+        the issuer's rejects a freshly minted card, and that rejection is
+        indistinguishable from a forged one. Callers own clock skew; a
+        ``leeway`` parameter would be the place to add one.
+
         Args:
             instant: Epoch seconds to judge the card at. Callers verifying a
                 historical attestation pass the time the card was originally
@@ -319,7 +324,7 @@ class AgentIdentityCard:
         Returns:
             True when the card may be relied on at *instant*.
         """
-        return self.created_at <= instant and (not self.expires_at or self.expires_at > instant)
+        return self.created_at <= instant and (self.expires_at == 0 or self.expires_at > instant)
 
 
 def issue_identity_card(

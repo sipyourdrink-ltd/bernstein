@@ -98,12 +98,11 @@ class IdentitySpawnAnchor:
         # and judge a fractionally different instant from the one recorded as
         # ``validated_at``.
         validated_at = float(self.clock())
-        # Window first, so the two failures keep separate messages. An
-        # in-date card with a bad signature is an attack; a well-signed card
-        # outside its window is an expiry, and an operator reading
-        # "signature is not trusted" for the second would look in the wrong
-        # place. The verifier's own window check stays as the default for
-        # every other caller.
+        # Window first, but the order is not about separating messages - both
+        # checks run either way. The reason for hoisting this is that
+        # ``validated_at`` is already the instant both checks are made
+        # against, so the window can be judged from the same read of the clock
+        # that the verifier will use below.
         if not _card_is_valid_at(snapshot, validated_at):
             raise IdentitySpawnAnchorError("agent card is not valid at spawn time")
         public_key = self.trusted_public_keys.get(kid)
