@@ -514,7 +514,7 @@ def test_unknown_profile_fails_closed(tmp_path: Path) -> None:
     head_data = json.loads(spine.head_path.read_text())
     head_data["hash_profile"] = "unknown-profile-v99"
     spine.head_path.write_text(json.dumps(head_data), encoding="utf-8")
-    
+
     result = spine.verify()
     assert result.status == SpineStatus.TAMPERED
     assert any("unknown" in err.lower() and "profile" in err.lower() for err in result.errors)
@@ -523,16 +523,16 @@ def test_unknown_profile_fails_closed(tmp_path: Path) -> None:
 def test_spine_bytes_use_jcs_under_v2(tmp_path: Path) -> None:
     """Spine entries use RFC 8785 canonical bytes under jcs-v2 profile."""
     from bernstein.core.security.agent_card_signer import canonicalize_jcs
-    
+
     spine = LineageSpine(
         tmp_path / ".sdd" / "lineage",
         run_id="run-jcs-v2",
         hmac_key=_KEY,
         hash_profile="jcs-v2",
     )
-    
+
     # Record with non-ASCII content that would differ between ensure_ascii=True/False
-    content = "задача 🚀".encode("utf-8")
+    content = "задача 🚀".encode()
     spine.record(
         artifact_path="src/test.py",
         content=content,
@@ -541,22 +541,22 @@ def test_spine_bytes_use_jcs_under_v2(tmp_path: Path) -> None:
         model="claude",
         timestamp=1,
     )
-    
+
     # Read the spine.head and verify it has the profile
     head_data = json.loads(spine.head_path.read_text())
     assert head_data["hash_profile"] == "jcs-v2"
-    
+
     # Read the entry and verify its body matches JCS canonicalization
     entries = list(spine.iter_entries())
     assert len(entries) == 1
     entry = entries[0]
-    
+
     # The entry body (excluding hmac) must be JCS-canonicalized
     body = entry.body()
-    expected_bytes = canonicalize_jcs(body)
-    
+    canonicalize_jcs(body)
+
     # Re-read the raw JSONL line and verify it uses JCS bytes
-    raw_line = spine.spine_path.read_bytes().rstrip(b"\n")
+    spine.spine_path.read_bytes().rstrip(b"\n")
     # The line includes the hmac field, but the body portion should be JCS
     # For now, just verify the spine verifies correctly under jcs-v2
     result = spine.verify()

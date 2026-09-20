@@ -71,7 +71,6 @@ from bernstein.core.security.key_derivation import (
     domain_tag,
 )
 
-
 #: Legacy hash profile: Python json.dumps with ensure_ascii=False.
 HASH_PROFILE_LEGACY: str = "py-json-v1"
 
@@ -284,6 +283,7 @@ class SpineEntry:
         row["hmac"] = self.hmac
         if hash_profile == HASH_PROFILE_JCS_V2:
             from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
             return canonicalize_jcs(row) + b"\n"
         return (json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
 
@@ -292,6 +292,7 @@ def _canonical_body_bytes(body: dict[str, Any], hash_profile: str = HASH_PROFILE
     """Canonicalize body dict to bytes according to hash_profile."""
     if hash_profile == HASH_PROFILE_JCS_V2:
         from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
         return canonicalize_jcs(body)
     return json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
@@ -646,7 +647,7 @@ class LineageSpine:
             return SpineVerifyResult(status=SpineStatus.NO_ENTRIES, count=0)
 
         errors: list[str] = []
-                # Detect hash_profile from spine.head if present
+        # Detect hash_profile from spine.head if present
         hash_profile = HASH_PROFILE_LEGACY
         if self.head_path.exists():
             try:
@@ -661,7 +662,7 @@ class LineageSpine:
                         )
             except (json.JSONDecodeError, OSError):
                 pass
-        
+
         prev_hash = _GENESIS_HASH
         count = 0
         # True until an entry that is *not* the internal journal-head seal is
