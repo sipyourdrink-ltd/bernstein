@@ -16,32 +16,28 @@ from pathlib import Path
 
 def render_catalog_yaml(template_text: str, release_commit: str) -> str:
     """Replace source.commit in template with release_commit.
-    
+
     Args:
         template_text: Original server.yaml content
         release_commit: 40-character hex SHA to substitute
-        
+
     Returns:
         Rendered YAML with substituted commit
-        
+
     Raises:
         ValueError: If release_commit is not 40 lowercase hex chars or if
             template has no source.commit field
     """
     if not re.fullmatch(r"[0-9a-f]{40}", release_commit):
-        raise ValueError(
-            f"release_commit must be 40 lowercase hex characters, got: {release_commit!r}"
-        )
-    
+        raise ValueError(f"release_commit must be 40 lowercase hex characters, got: {release_commit!r}")
+
     # Match the exact format: "  commit: <40hex>"
     pattern = r"^(  commit:\s*)[0-9a-f]{40}(\s*)$"
     match = re.search(pattern, template_text, re.MULTILINE)
-    
+
     if not match:
-        raise ValueError(
-            "template has no valid source.commit field (expected '  commit: <40hex>')"
-        )
-    
+        raise ValueError("template has no valid source.commit field (expected '  commit: <40hex>')")
+
     # Replace preserving whitespace
     rendered = re.sub(
         pattern,
@@ -50,7 +46,7 @@ def render_catalog_yaml(template_text: str, release_commit: str) -> str:
         count=1,
         flags=re.MULTILINE,
     )
-    
+
     return rendered
 
 
@@ -62,10 +58,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    
+
     template_path = Path(sys.argv[1])
     release_commit = sys.argv[2]
-    
+
     try:
         template_text = template_path.read_text(encoding="utf-8")
         rendered = render_catalog_yaml(template_text, release_commit)
