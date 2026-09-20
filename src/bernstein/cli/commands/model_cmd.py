@@ -186,6 +186,5 @@ def impact_cmd(model_ref: str, as_json: bool) -> None:
                     and entry.model_ref.model_reported != entry.model_ref.model_requested
                 ):
                     click.echo(
-                        f"    (requested {entry.model_ref.model_requested}, "
-                        f"got {entry.model_ref.model_reported})"
+                        f"    (requested {entry.model_ref.model_requested}, got {entry.model_ref.model_reported})"
                     )
