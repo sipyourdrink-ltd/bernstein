@@ -12,7 +12,6 @@ from pathlib import Path
 
 import click
 
-
 AUDIT_DIR = Path(".sdd/audit")
 LINEAGE_DIR = Path(".sdd/lineage")
 
@@ -63,7 +62,7 @@ def registry_cmd(at_timestamp: str | None, as_json: bool) -> None:
         state = project_registry(events, at=at_timestamp)
     except (ValueError, Exception) as exc:
         click.echo(f"✗ Failed to project registry: {exc}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
     if as_json:
         import json
@@ -181,6 +180,12 @@ def impact_cmd(model_ref: str, as_json: bool) -> None:
                 click.echo(f"  {entry.entry_hmac[:12]} — {entry.artefact_path}")
                 if entry.task_id:
                     click.echo(f"    Task: {entry.task_id}")
-                if entry.model_ref:
-                    if entry.model_ref.model_reported and entry.model_ref.model_reported != entry.model_ref.model_requested:
-                        click.echo(f"    (requested {entry.model_ref.model_requested}, got {entry.model_ref.model_reported})")
+                if (
+                    entry.model_ref
+                    and entry.model_ref.model_reported
+                    and entry.model_ref.model_reported != entry.model_ref.model_requested
+                ):
+                    click.echo(
+                        f"    (requested {entry.model_ref.model_requested}, "
+                        f"got {entry.model_ref.model_reported})"
+                    )

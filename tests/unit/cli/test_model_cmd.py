@@ -24,7 +24,7 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     key_path = tmp_path / "audit.key"
     monkeypatch.setenv(AUDIT_KEY_ENV, str(key_path))
     monkeypatch.chdir(tmp_path)
-    key = load_or_create_audit_key()
+    load_or_create_audit_key()
     audit_dir = tmp_path / ".sdd" / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     return tmp_path
@@ -43,7 +43,7 @@ def test_registry_at_a_past_timestamp_reconstructs_the_state_that_held_then(proj
     audit_dir = project / ".sdd" / "audit"
     key = load_or_create_audit_key()
     chain = AuditChainStore(audit_dir, key=key)
-    
+
     # Admit a model
     admitted = record_model_admission(
         chain=chain,
@@ -55,7 +55,7 @@ def test_registry_at_a_past_timestamp_reconstructs_the_state_that_held_then(proj
         expires_at=_future(30),
         evidence_ref="sha256:" + "e" * 64,
     )
-    
+
     # Withdraw it later
     withdrawn = record_model_withdrawal(
         chain=chain,
@@ -65,13 +65,13 @@ def test_registry_at_a_past_timestamp_reconstructs_the_state_that_held_then(proj
         withdrawn_by="operator@example.test",
         reason="superseded",
     )
-    
+
     # CLI should reconstruct state at admission time
     result = _run("registry", "--at", admitted.timestamp)
     assert result.exit_code == 0
     assert "anthropic/opus" in result.output or "opus" in result.output
     assert "operator@example.test" in result.output
-    
+
     # At withdrawal time, should show empty
     result = _run("registry", "--at", withdrawn.timestamp)
     assert result.exit_code == 0
@@ -83,7 +83,7 @@ def test_model_registry_without_at_shows_current_state(project: Path) -> None:
     audit_dir = project / ".sdd" / "audit"
     key = load_or_create_audit_key()
     chain = AuditChainStore(audit_dir, key=key)
-    
+
     record_model_admission(
         chain=chain,
         provider="anthropic",
@@ -94,7 +94,7 @@ def test_model_registry_without_at_shows_current_state(project: Path) -> None:
         expires_at=_future(30),
         evidence_ref="sha256:" + "e" * 64,
     )
-    
+
     result = _run("registry")
     assert result.exit_code == 0
     assert "sonnet" in result.output
@@ -105,7 +105,7 @@ def test_model_impact_lists_artefacts_by_model_ref(project: Path) -> None:
     # For now, verify the command exists and handles the ref parameter
     # This will work once lineage entries with model_ref exist
     result = _run("impact", "anthropic/opus")
-    
+
     # Should not crash; exit 1 for no artefacts found is acceptable
     assert result.exit_code in (0, 1)
     if result.exit_code == 1:
