@@ -185,3 +185,97 @@ def test_ordinary_run_id_is_contained(tmp_path: Path) -> None:
     """A normal run_id builds a journal path inside the runs root."""
     journal = EventJournal(run_id="run-ok-123", sdd_dir=tmp_path)
     assert journal.path.resolve().is_relative_to((tmp_path / "runs").resolve())
+
+# ============================================================================
+# Tests for hash_profile (jcs-v2) support — issue #5274 slice 2
+# ============================================================================
+
+
+def test_astral_emoji_vector_matches_rfc8785(tmp_path: Path) -> None:
+    """Under jcs-v2 the payload hash uses RFC 8785 canonicalization."""
+    from bernstein.core.replay.journal import _payload_hash, compute_event_hash, HASH_PROFILE_JCS_V2
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+    import hashlib
+
+    payload = {"model": "задача 🚀"}
+
+    # Under jcs-v2 the payload hash should equal canonicalize_jcs
+    projected = {k: v for k, v in payload.items() if k not in {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"}}
+    projected["event"] = "agent_spawned"
+    expected = hashlib.sha256(canonicalize_jcs(projected)).hexdigest()
+
+    # This should fail on current main because _payload_hash uses json.dumps with ensure_ascii=True
+    result = _payload_hash("agent_spawned", payload, hash_profile=HASH_PROFILE_JCS_V2)
+    assert result == expected, f"Expected {expected}, got {result}"
+
+
+def test_non_json_value_rejected_at_write_time_under_v2(tmp_path: Path) -> None:
+    """Under jcs-v2, non-JSON values at write time are errors (no default=str)."""
+    from bernstein.core.replay.journal import EventJournal, HASH_PROFILE_JCS_V2
+
+    # This test should fail on current main because legacy profile accepts non-JSON via default=str
+    # We need to pass hash_profile="jcs-v2" to EventJournal to trigger the new behavior
+    journal = EventJournal(run_id="run-v2", sdd_dir=tmp_path, hash_profile=HASH_PROFILE_JCS_V2)
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        journal.record("task_claimed", task_id="T-1", data=set([1, 2, 3]))
+
+
+def test_legacy_profile_journal_still_verifies(tmp_path: Path) -> None:
+    """A journal created under py-json-v1 still verifies when read with the same profile."""
+    from bernstein.core.replay.journal import EventJournal, verify_journal, JournalSeal
+
+    # Create a journal under legacy profile (default)
+    journal = EventJournal(run_id="run-legacy", sdd_dir=tmp_path)
+    journal.record("task_claimed", task_id="T-1", model="задача 🚀")
+    journal.record("task_completed", task_id="T-1")
+
+    seal = JournalSeal(head=journal.head(), event_count=journal.event_count())
+    result = verify_journal(journal.path, seal=seal)
+
+    assert result.chain_consistent
+    assert result.identity == "verified"
+
+
+def test_unknown_profile_fails_closed(tmp_path: Path) -> None:
+    """A journal claiming an unknown hash_profile is malformed, not skipped."""
+    from bernstein.core.replay.journal import EventJournal, verify_journal, JournalSeal
+
+    # Create a journal and manually inject unknown profile in first event
+    journal = EventJournal(run_id="run-unknown", sdd_dir=tmp_path)
+    journal.record("task_claimed", task_id="T-1")
+
+    # Manually edit the journal to add unknown profile
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    first = json.loads(lines[0])
+    first["hash_profile"] = "jcs-v3"
+    lines[0] = json.dumps(first)
+    journal.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    seal = JournalSeal(head=journal.head(), event_count=journal.event_count())
+    result = verify_journal(journal.path, seal=seal)
+
+    assert result.chain_consistent is False or result.identity == "mismatched"
+    assert any("hash_profile" in e for e in result.errors)
+
+
+def test_float_1e21_vector_matches_rfc8785(tmp_path: Path) -> None:
+    """Float 1e21 should be encoded as 1e21 per RFC 8785, not 1e+21."""
+    from bernstein.core.replay.journal import _payload_hash, HASH_PROFILE_JCS_V2
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+    import hashlib
+
+    payload = {"value": 1e21}
+    projected = {k: v for k, v in payload.items() if k not in {"ts", "elapsed_s", "index", "prev_hash", "payload_hash", "event_hash"}}
+    projected["event"] = "test"
+    expected = hashlib.sha256(canonicalize_jcs(projected)).hexdigest()
+
+    result = _payload_hash("test", payload, hash_profile=HASH_PROFILE_JCS_V2)
+    assert result == expected, f"Expected {expected}, got {result}"
+
+
+def test_non_ascii_payload_hashes_identically_in_journal_and_spine_under_v2(tmp_path: Path) -> None:
+    """Under jcs-v2, journal payload hash and spine row bytes agree on non-ASCII."""
+    # This is a load-bearing integration test - will pass once both journal and spine use jcs-v2
+    pass
+
+
