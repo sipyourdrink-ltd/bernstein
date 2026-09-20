@@ -213,7 +213,7 @@ if TYPE_CHECKING:
     from bernstein.core.container import ContainerConfig
     from bernstein.core.permission_mode import PermissionMode
     from bernstein.core.protocols.cluster.mesh_coordinator import MeshCoordinator
-    from bernstein.core.quality_gates import QualityGatesConfig
+    from bernstein.core.quality.quality_gates import QualityGatesConfig
     from bernstein.core.security.sandbox import SandboxRuntime
     from bernstein.core.spawner import AgentSpawner
     from bernstein.evolution.loop import EvolutionLoop
@@ -3141,6 +3141,34 @@ class Orchestrator:
         """
         time.sleep(seconds)
 
+    def _record_run_started(self) -> None:
+        """Journal the ``run_started`` event that opens a run.
+
+        Extracted from :meth:`run` so the load-bearing trace-export test can
+        drive the genuine write site against a real recorder (issue #6045).
+        """
+        _run_started_extra: dict[str, object] = {}
+        if self._workflow_executor is not None:
+            _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
+            _run_started_extra["workflow_hash"] = self._workflow_executor.definition_hash
+        self._recorder.record(
+            "run_started",
+            run_id=self._run_id,
+            max_agents=self._config.max_agents,
+            budget_usd=self._config.budget_usd,
+            git_sha=self._replay_metadata.git_sha,
+            git_branch=self._replay_metadata.git_branch,
+            config_hash=self._replay_metadata.config_hash,
+            # Issue #6045: the trust-record emitter requires a ``gate_config``
+            # on some event and hashes it with RFC 8785. Journal the resolved
+            # configuration once at run start as a plain JSON-able dict. When
+            # no gate configuration was resolved, the fact stays absent and
+            # export keeps refusing honestly rather than defaulting a policy
+            # that never ran.
+            gate_config=self._quality_gate_config.to_dict() if self._quality_gate_config is not None else None,
+            **_run_started_extra,
+        )
+
     def run(self) -> None:
         """Run the orchestrator loop until stopped.
 
@@ -3165,20 +3193,7 @@ class Orchestrator:
         # longer exist.  Must happen after the server is confirmed reachable but
         # before the first tick.
         self._reconcile_claimed_tasks()
-        _run_started_extra: dict[str, object] = {}
-        if self._workflow_executor is not None:
-            _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
-            _run_started_extra["workflow_hash"] = self._workflow_executor.definition_hash
-        self._recorder.record(
-            "run_started",
-            run_id=self._run_id,
-            max_agents=self._config.max_agents,
-            budget_usd=self._config.budget_usd,
-            git_sha=self._replay_metadata.git_sha,
-            git_branch=self._replay_metadata.git_branch,
-            config_hash=self._replay_metadata.config_hash,
-            **_run_started_extra,
-        )
+        self._record_run_started()
         # Record the skill and plugin set this install actually resolved,
         # once per run and before the first agent spawns. `bernstein skills`
         # and `bernstein plugins` report the declaration; a path override, a
@@ -6060,6 +6075,15 @@ class Orchestrator:
                 role=session.role,
                 model=session.model_config.model if session.model_config else None,
                 provider=session.provider,
+                # Issue #6045: the trust-record emitter reads model_id /
+                # model_provider, not model / provider. Journal the same
+                # resolved facts under the emitter's names additively; the
+                # existing keys stay for the other run-journal readers that
+                # depend on them. An endpoint-routed worker has provider=None,
+                # so export keeps refusing honestly rather than inventing a
+                # vendor name.
+                model_id=session.model_config.model if session.model_config else None,
+                model_provider=session.provider,
                 task_ids=session.task_ids,
                 agent_source=session.agent_source,
                 # Issue #4908: record the resolved endpoint identity

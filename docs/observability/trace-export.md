@@ -84,6 +84,25 @@ The signed body is the JCS canonical JSON form of all fields except
 entirely when absent, never emitted as `null`. RFC 8785 canonicalisation
 treats "key present" and "key absent" as different bytes.
 
+### Where each field is read from
+
+The emitter reads a run journal written by the orchestrator. The mapping
+from record member to the journal event and key it is sourced from:
+
+| Record member | Journal event | Journal key |
+|---|---|---|
+| `model.provider` | `agent_spawned` | `model_provider` |
+| `model.model_id` | `agent_spawned` | `model_id` |
+| `model.version` | `agent_spawned` | `model_version` (optional) |
+| `policy.bundle_hash` | `run_started` | `gate_config` |
+| `data_class` | any event | `data_class` (optional) |
+| `tool_transcript` | `tool_call` | payload |
+| `iat` / `appraisal.timestamp` | last event | `ts` |
+
+An endpoint-routed worker resolves an endpoint, not a provider, so its
+`model_provider` is `null` and export keeps refusing rather than inventing
+a vendor name.
+
 ## What is deliberately NOT in a trust record
 
 Trust records are **provenance envelopes**, not data containers. They
