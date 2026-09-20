@@ -9,12 +9,9 @@ Hermetic tests — no network, MockReplayAdapter only.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
-import pytest
-
-from bernstein.eval.bench.runner import MockReplayAdapter
-from bernstein.eval.bench.suite import BenchTask, BenchmarkSuite, Score
+from bernstein.eval.bench.suite import BenchmarkSuite, BenchTask, Score
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
