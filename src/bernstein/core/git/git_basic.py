@@ -110,9 +110,10 @@ def run_git(
         subprocess.TimeoutExpired: When the command exceeds *timeout*.
     """
     # ``env`` is passed only when a caller supplied one, so the subprocess
-    # call for the other ~200 call sites is byte-identical to before. Several
-    # tests assert the exact kwargs of this call; an unconditional
-    # ``env=None`` would change all of them for no behavioural reason.
+    # call for the other ~200 call sites is byte-identical to before.
+    # tests/unit/test_git_ops.py:75 and :103 assert the exact kwargs of this
+    # call with no ``env`` key present; an unconditional ``env=None`` would
+    # change both for no behavioural reason.
     extra: dict[str, Any] = {"env": dict(env)} if env is not None else {}
     result = subprocess.run(
         ["git", *args],
