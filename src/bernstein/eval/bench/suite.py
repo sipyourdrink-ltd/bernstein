@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
 
@@ -37,7 +37,7 @@ class Score:
 
     value: float
     passed: bool
-    details: dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
 
 
 @runtime_checkable
@@ -57,7 +57,7 @@ class BenchmarkSuite(Protocol):
         ...
 
     @contextmanager
-    def sandbox(self, task: BenchTask) -> Iterator[None]:
+    def sandbox(self, task: BenchTask) -> Generator[None]:
         """
         Context manager providing the execution environment for a task.
 

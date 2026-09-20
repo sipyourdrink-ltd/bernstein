@@ -9,12 +9,12 @@ Hermetic tests — no network, MockReplayAdapter only.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from bernstein.eval.bench.suite import BenchmarkSuite, BenchTask, Score
+from bernstein.eval.bench.suite import BenchTask, BenchmarkSuite, Score
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 # ---------------------------------------------------------------------------
@@ -38,11 +38,11 @@ class MinimalTestSuite:
         ]
 
     @contextmanager
-    def sandbox(self, task: BenchTask) -> Iterator[None]:
+    def sandbox(self, task: BenchTask) -> Generator[None]:
         """Minimal sandbox context manager."""
         yield
 
-    def score(self, task: BenchTask, result: dict) -> Score:
+    def score(self, task: BenchTask, result: dict[str, Any]) -> Score:
         """Minimal scoring."""
         passed = result.get("verdict") == "pass"
         return Score(
@@ -51,7 +51,7 @@ class MinimalTestSuite:
             details={"task_id": task.id},
         )
 
-    def metadata(self) -> dict:
+    def metadata(self) -> dict[str, Any]:
         return {
             "suite_name": "minimal-test",
             "version": "1.0",
@@ -83,7 +83,7 @@ class TestSuiteProtocolShape:
             pass  # Context manager works
 
         # score returns Score
-        result = {"verdict": "pass"}
+        result: dict[str, Any] = {"verdict": "pass"}
         score = suite.score(task, result)
         assert isinstance(score, Score)
         assert score.value == 1.0
@@ -91,7 +91,7 @@ class TestSuiteProtocolShape:
 
         # metadata returns dict
         meta = suite.metadata()
-        assert isinstance(meta, dict)
+        assert isinstance(meta, dict)  # type: ignore[arg-type]
         assert "suite_name" in meta
         assert "version" in meta
         assert "dataset_hash" in meta
