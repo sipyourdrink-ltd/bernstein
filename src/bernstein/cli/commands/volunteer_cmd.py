@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import sys
 import warnings
-from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -82,7 +81,7 @@ def _run_onboarding() -> None:
         sys.exit(0)
 
     # Record consent as a signed receipt
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
