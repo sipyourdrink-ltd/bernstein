@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import sys
 import warnings
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -81,7 +82,7 @@ def _run_onboarding() -> None:
         sys.exit(0)
 
     # Record consent as a signed receipt
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -108,7 +109,7 @@ def _run_onboarding() -> None:
         sandbox_profile_digest="hardened-sandbox-profile",
         donor_keyid=keyid_from_public_key(worker_key.public_key()),
         donor_public_key_pem=export_public_key_pem(worker_key.public_key()).decode("ascii"),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         chain=ChainLink(anchor=GENESIS_ANCHOR, length=1),
         donor_signature="",  # populated at envelope build time
     )
