@@ -1070,7 +1070,6 @@ class CLIAdapter(ABC):
         """Human-readable name of this CLI adapter."""
         ...
 
-    @abstractmethod
     def invoke(
         self,
         *,
@@ -1092,7 +1091,16 @@ class CLIAdapter(ABC):
         Returns:
             The model's text response.
         """
-        ...
+        # Create a minimal session context for the invoke call
+        # In a real implementation, this would come from the orchestrator/session
+        # For now, we use a placeholder session ID
+        session_id = f"invoke-{hash(model + input_text) % 10000:04d}"
+        
+        # This is a placeholder implementation - subclasses should override
+        # with actual model invocation logic
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.invoke() must be implemented by subclasses"
+        )
 
     def detect_tier(self) -> ApiTierInfo | None:
         """Detect the current API tier and remaining quota.
