@@ -469,7 +469,7 @@ class EventJournal:
             ValueError: The existing chain fails verification.
         """
         # Detect hash_profile from the first event, if present
-        loaded = load_events(sdd_dir / "runs" / run_id / "journal.jsonl")
+        loaded = load_events(run_journal_path(sdd_dir, run_id))
         hash_profile = HASH_PROFILE_LEGACY
         if loaded.events:
             first_event = loaded.events[0]
