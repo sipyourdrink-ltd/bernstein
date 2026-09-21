@@ -1090,13 +1090,12 @@ class CLIAdapter(ABC):
 
         Returns:
             The model's text response.
+            Note: Default implementation returns empty string. Subclasses that
+            support direct model invocation should override this method.
         """
-        # Create a minimal session context for the invoke call
-        # In a real implementation, this would come from the orchestrator/session
-        # For now, we use a placeholder session ID
-        # This is a placeholder implementation - subclasses should override
-        # with actual model invocation logic
-        raise NotImplementedError(f"{self.__class__.__name__}.invoke() must be implemented by subclasses")
+        # Default no-op implementation. Adapters that support direct
+        # model invocation should override this method.
+        return ""
 
     def detect_tier(self) -> ApiTierInfo | None:
         """Detect the current API tier and remaining quota.

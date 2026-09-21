@@ -5,7 +5,7 @@ from bernstein.adapters.generic import GenericAdapter
 
 
 class TestCLIAdapterInvoke:
-    def test_invoke_raises_not_implemented(self):
+    def test_invoke_returns_empty_string_by_default(self):
         class MinimalAdapter(CLIAdapter):
             def spawn(self, **kwargs):
                 pass
@@ -14,8 +14,8 @@ class TestCLIAdapterInvoke:
                 return "minimal"
 
         adapter = MinimalAdapter()
-        with pytest.raises(NotImplementedError):
-            adapter.invoke(model="test", input_text="test")
+        result = adapter.invoke(model="test", input_text="test")
+        assert result == ""
 
 
 class TestGenericAdapterInvoke:

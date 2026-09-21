@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
 from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
@@ -34,8 +33,8 @@ class MinimalAdapter(CLIAdapter):
         raise NotImplementedError("spawn not implemented for test")
 
 
-def test_base_invoke_raises_not_implemented() -> None:
-    """Calling invoke on a base adapter subclass that doesn't override it raises NotImplementedError."""
+def test_base_invoke_returns_empty_string_by_default() -> None:
+    """Calling invoke on a base adapter subclass that doesn't override it returns empty string (no-op default)."""
     adapter = MinimalAdapter()
-    with pytest.raises(NotImplementedError, match=r".*\.invoke\(\) must be implemented by subclasses"):
-        adapter.invoke(model="test-model", input_text="test prompt")
+    result = adapter.invoke(model="test-model", input_text="test prompt")
+    assert result == ""
