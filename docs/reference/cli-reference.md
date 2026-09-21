@@ -212,6 +212,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan validate PLAN.yaml` | Validate a plan file's schema (`bernstein validate` is a deprecated alias, removed in 4.0.0). | `cli/plan_validate_cmd.py:142` |
 | `bernstein validate PLAN.yaml` | Deprecated alias of `bernstein plan validate`; removed in v4.0.0. | `cli/plan_validate_cmd.py` |
 | `bernstein task` | Durable task lifecycle: complete, park, and resume a task. | `cli/commands/task_cmd.py:837` |
+| `bernstein scenario` | Manage Bernstein scenarios. | `cli/commands/scenario_cmd.py` |
 
 #### `bernstein plan`
 
