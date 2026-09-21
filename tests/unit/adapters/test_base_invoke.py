@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
+from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
-
-if __name__ == "__main__":
-    from pathlib import Path
-    from bernstein.core.models import ModelConfig
 
 
 class MinimalAdapter(CLIAdapter):

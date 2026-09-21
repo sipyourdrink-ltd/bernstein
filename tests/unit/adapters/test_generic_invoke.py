@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from bernstein.adapters.generic import GenericAdapter
-from bernstein.core.models import ModelConfig
 
 
 def test_generic_invoke_raises_not_implemented() -> None:

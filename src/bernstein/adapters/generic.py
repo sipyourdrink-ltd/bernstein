@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import subprocess
-import time
-import uuid
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
-from bernstein.core.cost.model_call_ledger import ModelCallLedger
-from bernstein.core.models import ModelConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bernstein.core.models import ModelConfig
 
 
 class GenericAdapter(CLIAdapter):

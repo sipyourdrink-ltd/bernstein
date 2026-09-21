@@ -1094,8 +1094,6 @@ class CLIAdapter(ABC):
         # Create a minimal session context for the invoke call
         # In a real implementation, this would come from the orchestrator/session
         # For now, we use a placeholder session ID
-        session_id = f"invoke-{hash(model + input_text) % 10000:04d}"
-        
         # This is a placeholder implementation - subclasses should override
         # with actual model invocation logic
         raise NotImplementedError(
