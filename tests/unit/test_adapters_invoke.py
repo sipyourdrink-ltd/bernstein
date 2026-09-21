@@ -1,4 +1,5 @@
 import pytest
+
 from bernstein.adapters.base import CLIAdapter
 from bernstein.adapters.generic import GenericAdapter
 
@@ -8,6 +9,7 @@ class TestCLIAdapterInvoke:
         class MinimalAdapter(CLIAdapter):
             def spawn(self, **kwargs):
                 pass
+
             def name(self):
                 return "minimal"
 

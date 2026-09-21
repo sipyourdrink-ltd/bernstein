@@ -1096,9 +1096,7 @@ class CLIAdapter(ABC):
         # For now, we use a placeholder session ID
         # This is a placeholder implementation - subclasses should override
         # with actual model invocation logic
-        raise NotImplementedError(
-            f"{self.__class__.__name__}.invoke() must be implemented by subclasses"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__}.invoke() must be implemented by subclasses")
 
     def detect_tier(self) -> ApiTierInfo | None:
         """Detect the current API tier and remaining quota.

@@ -13,10 +13,6 @@ def test_generic_invoke_raises_not_implemented() -> None:
     with pytest.raises(
         NotImplementedError,
         match=r"GenericAdapter does not support direct model invocation\. "
-              r"Use spawn\(\) for full agent processes instead\."
+        r"Use spawn\(\) for full agent processes instead\.",
     ):
-        adapter.invoke(
-            model="test-model",
-            input_text="test prompt",
-            parameters={"temperature": 0.7}
-        )
+        adapter.invoke(model="test-model", input_text="test prompt", parameters={"temperature": 0.7})
