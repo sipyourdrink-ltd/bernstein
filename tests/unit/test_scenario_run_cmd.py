@@ -51,8 +51,8 @@ tasks:
         assert result.exit_code == 0, f"scenario run failed: {result.output}"
 
         # Verify that the scenario ran by checking for expected output
-        assert "Running scenario: test-scenario" in result.output
-        assert "Task 1/1: Create a test file" in result.output
+        assert "Successfully spawned 1 tasks for scenario 'test-scenario'" in result.output
+        assert "task-123" in result.output
 
 
 def test_scenario_run_command_handles_missing_scenario(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,11 +68,11 @@ def test_scenario_run_command_handles_missing_scenario(tmp_path: Path, monkeypat
     # Try to run a non-existent scenario
     result = runner.invoke(cli, ["scenario", "run", "non-existent-scenario"])
     assert result.exit_code != 0
-    assert "not found" in result.output.lower() or "no such scenario" in result.output.lower()
+    assert "unknown scenario" in result.output.lower()
 
 
-def test_scenario_run_command_works_with_goal_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that bernstein scenario run works with goal override."""
+def test_scenario_run_command_works_with_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that bernstein scenario run works with context injection."""
     # Change to temp directory
     monkeypatch.chdir(tmp_path)
 
@@ -108,13 +108,15 @@ tasks:
 
         mock_post.side_effect = mock_post_impl
 
-        # Run the scenario with goal to only run first task
+        # Run the scenario with context
         result = runner.invoke(cli, [
             "scenario", "run", "multi-task-scenario",
-            "--goal", "First task"
+            "--context", "Test context from trigger",
+            "--pr-number", "42",
+            "--branch", "feature/test"
         ])
-        assert result.exit_code == 0, f"scenario run with goal failed: {result.output}"
+        assert result.exit_code == 0, f"scenario run with context failed: {result.output}"
 
-        # Verify that only the first task was mentioned
-        assert "Running scenario: multi-task-scenario" in result.output
-        assert "Task 1/2: First task" in result.output
+        # Verify that tasks were spawned
+        assert "Successfully spawned 2 tasks for scenario 'multi-task-scenario'" in result.output
+        assert "task-123" in result.output

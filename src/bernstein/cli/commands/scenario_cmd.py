@@ -95,7 +95,7 @@ def scenario_run(
 ) -> None:
     """Run a scenario end-to-end, emitting tasks to the task server."""
     from bernstein.cli.helpers import server_post
-    from bernstein.core.planning.routine_bridge import RoutineBridge
+    from bernstein.core.planning.routine_bridge import RoutineBridge, spawn_scenario_tasks
 
     workdir = Path.cwd()
     bridge = RoutineBridge.from_paths(
@@ -126,7 +126,7 @@ def scenario_run(
         return
 
     # Actually spawn the tasks
-    task_ids = bridge.provisioner.spawn_scenario_tasks(payloads, poster=server_post)
+    task_ids = spawn_scenario_tasks(payloads, poster=server_post)
     
     console.print(f"[green]Successfully spawned {len(task_ids)} tasks for scenario '{scenario_id}'[/green]")
     console.print(f"Orchestration ID: {invocation.orchestration_id}")
