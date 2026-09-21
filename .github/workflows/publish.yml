@@ -735,7 +735,7 @@ jobs:
           echo "Rendered catalog payload for commit ${RELEASE_COMMIT}"
 
       - name: Upload rendered catalog payload
-        uses: actions/upload-artifact@ea165f8d65b6e75b7fa7ce1b192a9e6ce434e6f3 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: docker-mcp-catalog-rendered
           path: server.yaml.rendered
