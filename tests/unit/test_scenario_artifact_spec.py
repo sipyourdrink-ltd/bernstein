@@ -1,4 +1,5 @@
 """Test scenario runs with non-default artifact_spec."""
+
 from __future__ import annotations
 
 import tempfile

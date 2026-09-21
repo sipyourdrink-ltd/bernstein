@@ -51,7 +51,7 @@ def scenario_list(scenarios_dir: Path | None) -> None:
             s.name,
             str(len(s.tasks)),
             ", ".join(s.tags),
-            f"[{source_color}]{s.source_root}[/{source_color}]"
+            f"[{source_color}]{s.source_root}[/{source_color}]",
         )
     console.print(table)
 
@@ -117,13 +117,19 @@ def scenario_run(
 
     if as_json:
         import json
-        console.print(json.dumps({
-            "orchestration_id": invocation.orchestration_id,
-            "scenario_id": invocation.scenario_id,
-            "task_count": invocation.task_count,
-            "estimated_minutes": invocation.estimated_minutes,
-            "task_ids": [],
-        }, indent=2))
+
+        console.print(
+            json.dumps(
+                {
+                    "orchestration_id": invocation.orchestration_id,
+                    "scenario_id": invocation.scenario_id,
+                    "task_count": invocation.task_count,
+                    "estimated_minutes": invocation.estimated_minutes,
+                    "task_ids": [],
+                },
+                indent=2,
+            )
+        )
         return
 
     # Actually spawn the tasks

@@ -94,6 +94,7 @@ class ScenarioTaskPayload:
     def as_server_payload(self) -> dict[str, Any]:
         """Return a dict suitable for ``POST /tasks``."""
         from bernstein.core.tasks.artifacts import ArtifactSpec
+
         payload = {
             "title": self.title,
             "description": self.description,
@@ -185,6 +186,7 @@ def build_task_payloads(
         order. Empty when the scenario has no tasks.
     """
     from bernstein.core.tasks.artifacts import ArtifactSpec
+
     orch_id = orchestration_id or f"scn-{uuid.uuid4().hex[:12]}"
     context_block = _build_context_block(context, pr_number, branch)
     out: list[ScenarioTaskPayload] = []

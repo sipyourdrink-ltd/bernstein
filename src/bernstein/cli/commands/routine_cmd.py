@@ -72,7 +72,7 @@ def routine_scenarios(scenarios_dir: Path | None) -> None:
             s.name,
             str(len(s.tasks)),
             ", ".join(s.tags),
-            f"[{source_color}]{s.source_root}[/{source_color}]"
+            f"[{source_color}]{s.source_root}[/{source_color}]",
         )
     console.print(table)
 

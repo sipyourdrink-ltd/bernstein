@@ -108,12 +108,20 @@ tasks:
         mock_post.side_effect = mock_post_impl
 
         # Run the scenario with context
-        result = runner.invoke(cli, [
-            "scenario", "run", "multi-task-scenario",
-            "--context", "Test context from trigger",
-            "--pr-number", "42",
-            "--branch", "feature/test"
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                "scenario",
+                "run",
+                "multi-task-scenario",
+                "--context",
+                "Test context from trigger",
+                "--pr-number",
+                "42",
+                "--branch",
+                "feature/test",
+            ],
+        )
         assert result.exit_code == 0, f"scenario run with context failed: {result.output}"
 
         # Verify that tasks were spawned

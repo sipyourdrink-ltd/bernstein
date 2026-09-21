@@ -140,7 +140,7 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
     packaged_root = workdir / "templates" / "scenarios"
     library = load_layered_scenario_library(workspace_root, packaged_root)
     scenarios_found = len(library.scenarios)
-    library_root = f'{workspace_root} and {packaged_root}'
+    library_root = f"{workspace_root} and {packaged_root}"
 
     roadmaps_dir = workdir / ".sdd" / "roadmaps" / "open"
     if not roadmaps_dir.exists():
