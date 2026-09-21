@@ -889,7 +889,7 @@ changes, including the combined merge-queue diff; see
 
 ## Leakage benchmark suite (`leakage-v1`)
 
-The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries — an AWS-shaped access key id, an internal e-mail address, an internal path and a nonce, each in five encodings (plain, base64, URL-encoded, split across lines, JSON-escaped) — into the inputs a run reads (workspace files, task prompt, tool output, adapter stderr) and scans the bytes the system actually emits on each output surface. Five surfaces are driven for real without an orchestrator run; the three that only a governed run produces are reported as **not exercised**, never as clean:
+The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries — an AWS-shaped access key id, an internal e-mail address, an internal path and a nonce — into the inputs a run reads and scans the bytes the system actually emits on each output surface. Five surfaces are driven for real without an orchestrator run; the three that only a governed run produces are reported as **not exercised**, never as clean:
 
 | Surface | Driven by | Today |
 | :--- | :--- | :--- |
@@ -902,6 +902,30 @@ The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canarie
 
 Run it with `bernstein bench run leakage-v1 --out leakage.json` and verify with `bernstein bench verify leakage.json --suite leakage-v1`. The nonce is fresh per run, so two bundles differ by design; a canary that survived one run must not match the next.
 
+### What the suite does not cover, and says so
+
+Each canary value carries the seed point it was injected at, so a hit names the path it travelled — a run archive that leaks an API key reports whether the key came from the workspace, the prompt, tool output or the adapter's stderr.
+
+Four of the five declared seed points are injected. **`environment` is not**: none of the five exercised surfaces reads the process environment — the archive and the evidence pack zip files off disk, the bundle is assembled in-process, the sanitizer is handed a string — so a canary in `os.environ` could only reach an output through an adapter subprocess, which needs a governed run. It is reported as unexercised and its canaries are excluded from the probe count, the same rule the three unexercised surfaces follow.
+
+Encodings are counted only where they are different bytes. `json.dumps` escapes nothing in any of the four canary shapes, and `urllib.parse.quote` leaves an alphanumeric key id and an underscore-separated nonce untouched, so `json_escaped` is the plaintext probe under another name for every type and `url_encoded` is for two of them. Those labels are dropped and listed rather than counted, which is why a run reports 56 canaries and not 100:
+
+```
+Canaries    : 56 across 5 surface(s)
+Not scanned : journal, receipts, telemetry_export (needs a governed run)
+Not seeded  : environment (needs a governed run)
+Same bytes  : api_key: url_encoded == plain
+Same bytes  : api_key: json_escaped == plain
+Same bytes  : email: json_escaped == plain
+Same bytes  : internal_path: json_escaped == plain
+Same bytes  : nonce: url_encoded == plain
+Same bytes  : nonce: json_escaped == plain
+```
+
+### Replay derives the verdict from bytes
+
+`bench verify` calls the adapter's `score_task` and never `run_task`, so a receipt that recorded only a `status` field was its own authority — editing one word to `clean` turned a leaking run into a passing one. Each receipt now carries the bytes the surface emitted, their SHA-256, and the nonce that generates the canaries; `score_task` regenerates the canaries, checks the bytes against their digest and rescans them, and the verdict comes from that scan. A receipt that cannot be re-derived, or that contradicts its own evidence, is reported as a divergence rather than as a failure — "I cannot verify this" is a different answer from "this failed".
+
 The eight surfaces are:
 1. `journal`
 2. `receipts`
@@ -912,7 +936,7 @@ The eight surfaces are:
 7. `bench_bundle`
 8. `run_archive`
 
-Zero hits on every exercised surface is the gate; a hit reports the surface, the canary type and encoding, and the redaction stage that should have caught it — or that no such stage exists on that path, which is what the four leaking surfaces above report today. Those are findings about the system, and each gets a follow-up against the path that emits the bytes.
+Zero hits on every exercised surface is the gate; a hit reports the surface, the seed point, the canary type and encoding, and the redaction stage that should have caught it — or that no such stage exists on that path, which is what the four leaking surfaces above report today. Those are findings about the system, and each gets a follow-up against the path that emits the bytes.
 
 ---
 

@@ -466,6 +466,17 @@ def bench_run(
     click.echo(f"Pass rate   : {bundle.pass_rate * 100:.1f}%")
     click.echo(f"Total tokens: {bundle.total_tokens:,}")
     click.echo(f"Total cost  : ${bundle.total_cost_usd:.4f}")
+    if suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import score_from_bundle
+
+        leakage = score_from_bundle(bundle)
+        click.echo(f"Canaries    : {leakage.total_canaries_tested} across {leakage.total_scanned_surfaces} surface(s)")
+        if leakage.surfaces_not_exercised:
+            click.echo(f"Not scanned : {', '.join(leakage.surfaces_not_exercised)} (needs a governed run)")
+        if leakage.seed_points_not_exercised:
+            click.echo(f"Not seeded  : {', '.join(leakage.seed_points_not_exercised)} (needs a governed run)")
+        for collapsed in leakage.encodings_collapsed:
+            click.echo(f"Same bytes  : {collapsed}")
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")

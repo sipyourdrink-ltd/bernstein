@@ -9,14 +9,23 @@ the PR projection of an evidence bundle. The three that only a governed run
 produces (journal, receipts, telemetry export) are reported as *not
 exercised*, never as clean.
 
-A hit names the surface, the canary type and encoding, and the redaction
-stage that should have caught it -- or says that no such stage exists on
-that path, which is a finding, not a gap in the suite.
+A hit names the surface, the seed point it was injected at, the canary
+type and encoding, and the redaction stage that should have caught it -- or
+says that no such stage exists on that path, which is a finding, not a gap
+in the suite.
+
+What the suite does *not* cover is reported rather than counted as clean:
+three surfaces need a governed run, and so does the ``environment`` seed
+point, because none of the five exercised surfaces reads the process
+environment. Encodings that produce the same bytes as an earlier one for a
+given canary are dropped and listed, so five labels are not mistaken for
+five probes.
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import re
@@ -106,6 +115,23 @@ EXERCISED_SURFACES: tuple[ScanSurface, ...] = (
     ScanSurface.PR_TITLE_AND_BODY,
 )
 
+#: Seed points this suite can actually inject at.
+#:
+#: ``ENVIRONMENT`` is not one of them. None of the five exercised surfaces
+#: reads the process environment -- the archive and the evidence pack zip
+#: files off disk, the bundle is assembled in-process, the sanitizer is
+#: handed a string -- so a canary placed in ``os.environ`` could only reach
+#: an output through an adapter subprocess, which needs a governed run.
+#: Declaring it and never injecting it is the failure this constant exists
+#: to prevent: the score would have reported four seed points' worth of
+#: silence as a clean result for five.
+EXERCISED_SEED_POINTS: tuple[CanarySeedPoint, ...] = (
+    CanarySeedPoint.WORKSPACE_FILES,
+    CanarySeedPoint.TASK_PROMPT,
+    CanarySeedPoint.TOOL_OUTPUT,
+    CanarySeedPoint.ADAPTER_STDERR,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CanarySecret:
@@ -134,6 +160,7 @@ class LeakageHit:
     canary_type: CanaryType
     raw_value: str
     encoding: CanaryEncoding
+    seed_point: CanarySeedPoint
     surface: ScanSurface
     redaction_stage: str
     snippet: str = ""
@@ -143,6 +170,7 @@ class LeakageHit:
             "canary_type": self.canary_type.value,
             "raw_value": self.raw_value,
             "encoding": self.encoding.value,
+            "seed_point": self.seed_point.value,
             "surface": self.surface.value,
             "redaction_stage": self.redaction_stage,
             "snippet": self.snippet,
@@ -151,13 +179,21 @@ class LeakageHit:
 
 @dataclass(frozen=True, slots=True)
 class LeakageScore:
-    """Zero hits on every *exercised* surface passes; unexercised surfaces are listed, not counted."""
+    """Zero hits on every *exercised* surface passes; what was not exercised is listed, not counted.
+
+    Everything the run did not cover is serialised. A frozen score that
+    reported only ``passed`` and a hit list read as a clean sweep of eight
+    surfaces and five seed points when it was five and four, and the reader
+    of the saved artefact had no way to tell.
+    """
 
     total_scanned_surfaces: int
     total_canaries_tested: int
     hits: tuple[LeakageHit, ...]
     passed: bool
     surfaces_not_exercised: tuple[str, ...] = ()
+    seed_points_not_exercised: tuple[str, ...] = ()
+    encodings_collapsed: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -165,6 +201,9 @@ class LeakageScore:
             "total_canaries_tested": self.total_canaries_tested,
             "hits": [h.to_dict() for h in self.hits],
             "passed": self.passed,
+            "surfaces_not_exercised": list(self.surfaces_not_exercised),
+            "seed_points_not_exercised": list(self.seed_points_not_exercised),
+            "encodings_collapsed": list(self.encodings_collapsed),
         }
 
 
@@ -184,34 +223,78 @@ def _encode_value(raw: str, encoding: CanaryEncoding) -> str:
             return json.dumps(raw)[1:-1]
 
 
-def generate_canaries(nonce: str) -> list[CanarySecret]:
-    """Generate synthetic test canaries across all types, encodings, and seed points."""
-    canaries: list[CanarySecret] = []
+def _raw_values(nonce: str, seed_point: CanarySeedPoint) -> dict[CanaryType, str]:
+    """The four canary shapes for one seed point, all distinct per seed point.
 
-    # 1. API Key -- shaped like an AWS access key id, the prefix
-    #    core.security.post_tool_enforcement redacts, so a surface that runs
-    #    that stage is expected to be clean and one that does not is not.
-    raw_api_key = "AKIA" + hashlib.sha256(nonce.encode("utf-8")).hexdigest()[:16].upper()
-    # 2. Email
-    raw_email = f"{nonce}_canary@internal.corp"
-    # 3. Internal path
-    raw_path = f"/var/secrets/internal/{nonce}/key.pem"
-    # 4. Pure nonce
-    raw_nonce = f"nonce_canary_{nonce}"
-
-    type_to_raw = {
-        CanaryType.API_KEY: raw_api_key,
-        CanaryType.EMAIL: raw_email,
-        CanaryType.INTERNAL_PATH: raw_path,
-        CanaryType.NONCE: raw_nonce,
+    The seed point is part of every value. Without it the same bytes go in at
+    every injection point and a hit cannot say which path it travelled -- and
+    "the run archive leaks an API key" is not an actionable finding until it
+    says whether the key came from the workspace, the prompt, tool output or
+    the adapter's stderr.
+    """
+    tag = seed_point.value
+    return {
+        # Shaped like an AWS access key id, the prefix
+        # core.security.post_tool_enforcement redacts, so a surface that runs
+        # that stage is expected to be clean and one that does not is not.
+        CanaryType.API_KEY: "AKIA" + hashlib.sha256(f"{nonce}:{tag}".encode()).hexdigest()[:16].upper(),
+        CanaryType.EMAIL: f"{nonce}_{tag}_canary@internal.corp",
+        CanaryType.INTERNAL_PATH: f"/var/secrets/internal/{tag}/{nonce}/key.pem",
+        CanaryType.NONCE: f"nonce_canary_{tag}_{nonce}",
     }
 
-    # Generate matrix of all combinations
-    for c_type in ALL_TYPES:
-        raw = type_to_raw[c_type]
-        for encoding in ALL_ENCODINGS:
-            encoded = _encode_value(raw, encoding)
-            for seed_point in ALL_SEED_POINTS:
+
+def _distinct_encodings(raw: str) -> list[tuple[CanaryEncoding, str]]:
+    """The encodings that are actually different bytes for *raw*, in declaration order."""
+    kept: dict[str, CanaryEncoding] = {}
+    out: list[tuple[CanaryEncoding, str]] = []
+    for encoding in ALL_ENCODINGS:
+        encoded = _encode_value(raw, encoding)
+        if encoded in kept:
+            continue
+        kept[encoded] = encoding
+        out.append((encoding, encoded))
+    return out
+
+
+def collapsed_encodings(nonce: str) -> tuple[str, ...]:
+    """Encoding labels that are byte-identical to an earlier one, per canary type.
+
+    ``json.dumps`` escapes nothing in any of these four values, and
+    ``urllib.parse.quote`` leaves an alphanumeric key id and an
+    underscore-separated nonce untouched -- so ``json_escaped`` is the
+    plaintext probe under another name for every type, and ``url_encoded``
+    is for two of them. Counting them as separate probes inflated both the
+    probe count and the hit count without testing anything further. They are
+    dropped by :func:`generate_canaries` and named here instead.
+    """
+    collapses: dict[str, None] = {}
+    for seed_point in ALL_SEED_POINTS:
+        raws = _raw_values(nonce, seed_point)
+        for c_type in ALL_TYPES:
+            kept: dict[str, CanaryEncoding] = {}
+            for encoding in ALL_ENCODINGS:
+                encoded = _encode_value(raws[c_type], encoding)
+                if encoded in kept:
+                    collapses[f"{c_type.value}: {encoding.value} == {kept[encoded].value}"] = None
+                else:
+                    kept[encoded] = encoding
+    return tuple(collapses)
+
+
+def generate_canaries(nonce: str) -> list[CanarySecret]:
+    """One canary per (seed point, type, *byte-distinct* encoding).
+
+    An encoding is a probe only if it produces different bytes; the labels
+    that collapse onto an earlier one are reported by
+    :func:`collapsed_encodings` rather than counted twice here.
+    """
+    canaries: list[CanarySecret] = []
+    for seed_point in ALL_SEED_POINTS:
+        raws = _raw_values(nonce, seed_point)
+        for c_type in ALL_TYPES:
+            raw = raws[c_type]
+            for encoding, encoded in _distinct_encodings(raw):
                 canaries.append(
                     CanarySecret(
                         canary_type=c_type,
@@ -221,7 +304,6 @@ def generate_canaries(nonce: str) -> list[CanarySecret]:
                         seed_point=seed_point,
                     )
                 )
-
     return canaries
 
 
@@ -243,15 +325,16 @@ def scan_surface(
     canaries: Sequence[CanarySecret],
 ) -> list[LeakageHit]:
     """Scan a specific output surface for leaked canary values."""
-    if isinstance(surface, str):
-        surface = ScanSurface(surface)
+    # ScanSurface is a StrEnum, so a member is already a str and the
+    # constructor is a no-op on one; guarding the call was dead.
+    surface = ScanSurface(surface)
 
     text = _stringify_content(content)
     # Also create a whitespace-collapsed version to detect split_lines leakage
     text_collapsed = re.sub(r"\s+", "", text)
 
     hits: list[LeakageHit] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
 
     for canary in canaries:
         matched = False
@@ -272,7 +355,7 @@ def scan_surface(
                 snippet = f"Split lines match: {canary.raw_value}"
 
         if matched:
-            key = (canary.canary_type.value, canary.encoding.value, surface.value)
+            key = (canary.canary_type.value, canary.encoding.value, canary.seed_point.value, surface.value)
             if key not in seen:
                 seen.add(key)
                 stage = _SURFACE_TO_STAGE.get(surface, "unknown_redactor")
@@ -281,6 +364,7 @@ def scan_surface(
                         canary_type=canary.canary_type,
                         raw_value=canary.raw_value,
                         encoding=canary.encoding,
+                        seed_point=canary.seed_point,
                         surface=surface,
                         redaction_stage=stage,
                         snippet=snippet,
@@ -295,14 +379,18 @@ def score_leakage(
     total_surfaces: int = len(ALL_SURFACES),
     total_canaries: int = 0,
     surfaces_not_exercised: Sequence[str] = (),
+    seed_points_not_exercised: Sequence[str] = (),
+    encodings_collapsed: Sequence[str] = (),
 ) -> LeakageScore:
-    """Zero hits on the surfaces that were scanned passes; unexercised ones are named."""
+    """Zero hits on the surfaces that were scanned passes; what was not scanned is named."""
     return LeakageScore(
         total_scanned_surfaces=total_surfaces,
         total_canaries_tested=total_canaries,
         hits=tuple(hits),
         passed=len(hits) == 0,
         surfaces_not_exercised=tuple(surfaces_not_exercised),
+        seed_points_not_exercised=tuple(seed_points_not_exercised),
+        encodings_collapsed=tuple(encodings_collapsed),
     )
 
 
@@ -411,6 +499,61 @@ def probe_surface(surface: ScanSurface, canaries: Sequence[CanarySecret], workdi
     return None
 
 
+def _hit_identity(hit: dict[str, Any]) -> tuple[str, str, str, str]:
+    """What makes a reported hit the same finding as a rescanned one."""
+    return (
+        str(hit.get("canary_type", "")),
+        str(hit.get("encoding", "")),
+        str(hit.get("seed_point", "")),
+        str(hit.get("surface", "")),
+    )
+
+
+def build_receipt(
+    surface: ScanSurface,
+    nonce: str,
+    emitted: bytes | None,
+    hits: Sequence[LeakageHit],
+) -> dict[str, Any]:
+    """The replay substrate for one surface.
+
+    ``bench verify`` calls ``score_task`` and never ``run_task``, so anything
+    not in here cannot be checked by anyone but the submitter. A receipt that
+    carried only ``status`` was therefore its own authority: editing one word
+    to ``"clean"`` turned a leaking run into a passing one and the verifier
+    had nothing to contradict it with. The bytes the surface emitted and the
+    nonce that generates the canaries are both bound in, so
+    :meth:`LeakageReplayAdapter.score_task` can re-derive the verdict from
+    evidence instead of from a claim.
+
+    The bytes are small by construction -- the largest surface emits a few
+    kilobytes -- because every probe is seeded, not harvested from a real run.
+    """
+    if emitted is None:
+        return {
+            "journal_head": "",
+            "spine_head": "",
+            "surface": surface.value,
+            "nonce": nonce,
+            "status": "not_exercised",
+            "stage": _SURFACE_TO_STAGE[surface],
+            "hits": [],
+            "emitted_sha256": "",
+            "emitted_b64": "",
+        }
+    return {
+        "journal_head": "",
+        "spine_head": "",
+        "surface": surface.value,
+        "nonce": nonce,
+        "status": "clean" if not hits else "leaked",
+        "stage": _SURFACE_TO_STAGE[surface],
+        "hits": [h.to_dict() for h in hits],
+        "emitted_sha256": hashlib.sha256(emitted).hexdigest(),
+        "emitted_b64": base64.b64encode(emitted).decode("ascii"),
+    }
+
+
 def run_leakage_probes(nonce: str, workdir: Path) -> tuple[LeakageScore, SubmissionBundle]:
     """Seed canaries, drive every surface this suite can, scan what came out.
 
@@ -443,14 +586,7 @@ def run_leakage_probes(nonce: str, workdir: Path) -> tuple[LeakageScore, Submiss
             TaskResult(
                 task_id=task.id,
                 task_hash=task.content_hash(),
-                receipt={
-                    "journal_head": "",
-                    "spine_head": "",
-                    "surface": surface.value,
-                    "status": status,
-                    "stage": _SURFACE_TO_STAGE[surface],
-                    "hits": [h.to_dict() for h in hits],
-                },
+                receipt=build_receipt(surface, nonce, emitted, hits),
                 passed=passed,
                 score=1.0 if passed else 0.0,
                 harness_output={"hits_count": len(hits), "status": status},
@@ -460,8 +596,12 @@ def run_leakage_probes(nonce: str, workdir: Path) -> tuple[LeakageScore, Submiss
     score = score_leakage(
         hits=all_hits,
         total_surfaces=len(ALL_SURFACES) - len(not_exercised),
-        total_canaries=len(canaries),
+        # Only the canaries that were actually injected. Counting the
+        # environment ones would report probes that never ran.
+        total_canaries=sum(1 for c in canaries if c.seed_point in EXERCISED_SEED_POINTS),
         surfaces_not_exercised=not_exercised,
+        seed_points_not_exercised=[s.value for s in ALL_SEED_POINTS if s not in EXERCISED_SEED_POINTS],
+        encodings_collapsed=collapsed_encodings(nonce),
     )
     bundle = SubmissionBundle(
         suite_hash=bench_suite.suite_hash,
@@ -470,6 +610,47 @@ def run_leakage_probes(nonce: str, workdir: Path) -> tuple[LeakageScore, Submiss
         scheduler_config={"adapter": "leakage_probe"},
     )
     return score, bundle
+
+
+def score_from_bundle(bundle: SubmissionBundle) -> LeakageScore:
+    """Re-derive the suite score from the receipts a bundle carries.
+
+    ``bench run`` goes through the runner and the replay adapter, which
+    produce a bundle rather than a :class:`LeakageScore`, so without this the
+    coverage the score reports -- which surfaces and seed points were never
+    exercised, which encoding labels collapsed -- was computed nowhere a user
+    could see it.
+    """
+    hits: list[LeakageHit] = []
+    not_exercised: list[str] = []
+    nonce = ""
+    for result in bundle.task_results:
+        receipt = result.receipt or {}
+        nonce = nonce or str(receipt.get("nonce", ""))
+        if receipt.get("status") == "not_exercised":
+            not_exercised.append(str(receipt.get("surface", "")))
+            continue
+        for hit in receipt.get("hits") or []:
+            hits.append(
+                LeakageHit(
+                    canary_type=CanaryType(hit["canary_type"]),
+                    raw_value=hit["raw_value"],
+                    encoding=CanaryEncoding(hit["encoding"]),
+                    seed_point=CanarySeedPoint(hit["seed_point"]),
+                    surface=ScanSurface(hit["surface"]),
+                    redaction_stage=hit.get("redaction_stage", ""),
+                    snippet=hit.get("snippet", ""),
+                )
+            )
+    canaries = generate_canaries(nonce) if nonce else []
+    return score_leakage(
+        hits=hits,
+        total_surfaces=len(bundle.task_results) - len(not_exercised),
+        total_canaries=sum(1 for c in canaries if c.seed_point in EXERCISED_SEED_POINTS),
+        surfaces_not_exercised=not_exercised,
+        seed_points_not_exercised=[s.value for s in ALL_SEED_POINTS if s not in EXERCISED_SEED_POINTS],
+        encodings_collapsed=collapsed_encodings(nonce) if nonce else (),
+    )
 
 
 def build_leakage_suite_v1() -> BenchSuite:
@@ -506,33 +687,84 @@ class LeakageReplayAdapter:
         canaries = generate_canaries(self._nonce)
         with tempfile.TemporaryDirectory(prefix="leakage-") as tmp:
             emitted = probe_surface(surface, canaries, Path(tmp))
-        if emitted is None:
-            return {
-                "journal_head": "",
-                "spine_head": "",
-                "surface": surface.value,
-                "status": "not_exercised",
-                "stage": _SURFACE_TO_STAGE[surface],
-                "hits": [],
-            }
-        hits = scan_surface(surface, emitted, canaries)
-        return {
-            "journal_head": "",
-            "spine_head": "",
-            "surface": surface.value,
-            "status": "clean" if not hits else "leaked",
-            "stage": _SURFACE_TO_STAGE[surface],
-            "hits": [h.to_dict() for h in hits],
-        }
+        hits = [] if emitted is None else scan_surface(surface, emitted, canaries)
+        return build_receipt(surface, self._nonce, emitted, hits)
 
     def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
+        """Re-derive the verdict by rescanning the bytes the receipt carries.
+
+        The verifier calls this and never ``run_task``, so reading ``status``
+        back out made the receipt its own authority. Here the nonce
+        regenerates the canaries, the recorded bytes are checked against the
+        digest stored with them, and the scan is run again; the verdict comes
+        from that scan.
+
+        Raises ``ValueError`` -- which the verifier reports as a divergence --
+        when the receipt cannot be independently checked or contradicts
+        itself. "I cannot verify this" is a different answer from "this
+        failed", and collapsing the two is how a fabricated receipt passes.
+
+        This binds the verdict to the bytes, not the bytes to the run: a
+        submitter who emits different bytes is outside what replay can see,
+        and the bundle signature is what covers that.
+        """
+        surface = self._surface_of(receipt)
+        nonce = receipt.get("nonce")
+        if not isinstance(nonce, str) or not nonce:
+            raise ValueError(f"{surface.value}: receipt carries no nonce, so its canaries cannot be regenerated")
+
         status = receipt.get("status")
-        passed = status == "clean" and not receipt.get("hits")
+        reported = [h for h in (receipt.get("hits") or []) if isinstance(h, dict)]
+
+        if status == "not_exercised":
+            if surface in EXERCISED_SURFACES:
+                raise ValueError(f"{surface.value}: claimed not exercised, but this suite drives that surface")
+            if reported:
+                raise ValueError(f"{surface.value}: claimed not exercised while reporting {len(reported)} hit(s)")
+            return (False, 0.0, {"surface": surface.value, "status": status, "hits_count": 0})
+
+        if status not in ("clean", "leaked"):
+            raise ValueError(f"{surface.value}: receipt status {status!r} is not one of clean/leaked/not_exercised")
+
+        emitted = self._emitted_bytes(surface, receipt)
+        rescanned = scan_surface(surface, emitted, generate_canaries(nonce))
+
+        if sorted(map(_hit_identity, (h.to_dict() for h in rescanned))) != sorted(map(_hit_identity, reported)):
+            raise ValueError(
+                f"{surface.value}: receipt reports {len(reported)} hit(s) but rescanning the bytes it "
+                f"carries finds {len(rescanned)}; the receipt contradicts its own evidence"
+            )
+
+        passed = not rescanned
+        if passed != (status == "clean"):
+            raise ValueError(f"{surface.value}: receipt says {status!r} but its own bytes rescan as the opposite")
         return (
             passed,
             1.0 if passed else 0.0,
-            {"surface": receipt.get("surface"), "status": status, "hits_count": len(receipt.get("hits") or [])},
+            {"surface": surface.value, "status": status, "hits_count": len(rescanned)},
         )
+
+    @staticmethod
+    def _surface_of(receipt: dict[str, Any]) -> ScanSurface:
+        try:
+            return ScanSurface(receipt.get("surface", ""))
+        except ValueError as exc:
+            raise ValueError(f"receipt names no known surface: {receipt.get('surface')!r}") from exc
+
+    @staticmethod
+    def _emitted_bytes(surface: ScanSurface, receipt: dict[str, Any]) -> bytes:
+        """The bytes the receipt says the surface emitted, checked against their digest."""
+        encoded = receipt.get("emitted_b64")
+        digest = receipt.get("emitted_sha256")
+        if not isinstance(encoded, str) or not encoded or not isinstance(digest, str) or not digest:
+            raise ValueError(f"{surface.value}: receipt carries no emitted bytes to rescan")
+        try:
+            emitted = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"{surface.value}: emitted bytes are not valid base64: {exc}") from exc
+        if hashlib.sha256(emitted).hexdigest() != digest:
+            raise ValueError(f"{surface.value}: emitted bytes do not match the digest recorded beside them")
+        return emitted
 
 
 __all__ = [
@@ -540,6 +772,7 @@ __all__ = [
     "ALL_SEED_POINTS",
     "ALL_SURFACES",
     "ALL_TYPES",
+    "EXERCISED_SEED_POINTS",
     "EXERCISED_SURFACES",
     "CanaryEncoding",
     "CanarySecret",
@@ -550,9 +783,12 @@ __all__ = [
     "LeakageScore",
     "ScanSurface",
     "build_leakage_suite_v1",
+    "build_receipt",
+    "collapsed_encodings",
     "generate_canaries",
     "probe_surface",
     "run_leakage_probes",
     "scan_surface",
+    "score_from_bundle",
     "score_leakage",
 ]
