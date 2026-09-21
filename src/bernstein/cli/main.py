@@ -1162,7 +1162,11 @@ cli.add_command(self_update_cmd, "self-update")
 # Provenance-verified update lifecycle: check, update, pin, rollback (#2942)
 from bernstein.cli.commands.self_update_cmd import self_group  # noqa: E402
 
+# Scenario commands
+from bernstein.cli.commands.scenario_cmd import scenario_group  # noqa: E402
+
 cli.add_command(self_group, "self")
+cli.add_command(scenario_group, "scenario")
 
 cli.add_command(undo_cmd, "undo")
 cli.add_command(worker, "worker")
