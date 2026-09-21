@@ -24,6 +24,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.planning.routine_provisioner import (
@@ -38,7 +39,6 @@ from bernstein.core.planning.scenario_library import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from bernstein.core.planning.scenario_library import ScenarioLibrary
 
