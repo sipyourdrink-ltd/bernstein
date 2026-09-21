@@ -11,28 +11,19 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import re
 import signal
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.defaults import AGENT
+from bernstein.core.log_safe import for_log
 from bernstein.core.platform_compat import IS_WINDOWS, kill_process, process_alive
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-# Pattern for sanitizing user-controlled strings before logging.
-_SAFE_LOG_RE = re.compile(r"[^a-zA-Z0-9._\-]")
-
-
-def _sanitize_for_log(value: str, max_len: int = 128) -> str:
-    """Sanitize a user-controlled string for safe logging."""
-    return _SAFE_LOG_RE.sub("_", value[:max_len])
-
 
 #: Grace period between SIGTERM and SIGKILL for orphaned agents (seconds).
 DEFAULT_SIGTERM_GRACE_S: int = 10
@@ -254,9 +245,9 @@ def _process_pid_file(
     for alive_pid in alive_pids:
         logger.warning(
             "Orphaned agent process: session=%s pid=%d role=%s",
-            _sanitize_for_log(session_id),
+            for_log(session_id, limit=128),
             alive_pid,
-            _sanitize_for_log(role),
+            for_log(role, limit=128),
         )
         if dry_run:
             continue

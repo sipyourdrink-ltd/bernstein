@@ -411,6 +411,7 @@ class Orchestrator:
         notifier: NotificationManager | None = None,
         quality_gate_config: QualityGatesConfig | None = None,
         formal_verification_config: Any | None = None,
+        data_class: str | None = None,
     ) -> None:
         self._config = config
         self._spawner = spawner
@@ -427,6 +428,7 @@ class Orchestrator:
         self._cluster_config = cluster_config
         self._quality_gate_config: QualityGatesConfig | None = quality_gate_config
         self._gate_coalescer: QualityGateCoalescer = QualityGateCoalescer()
+        self._data_class: str | None = data_class
         # Formal verification gate is invoked by task_lifecycle._run_verification_gates
         # only when OrchestratorConfig.formal_verification_enabled is True. Default
         # remains False so deployments without Z3/Lean4 installed are unaffected.
@@ -3174,6 +3176,8 @@ class Orchestrator:
         if self._workflow_executor is not None:
             _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
             _run_started_extra["workflow_hash"] = self._workflow_executor.definition_hash
+        if self._data_class is not None:
+            _run_started_extra["data_class"] = self._data_class
         self._recorder.record(
             "run_started",
             run_id=self._run_id,
@@ -7490,6 +7494,7 @@ if __name__ == "__main__":
                 notifier=notifier,
                 quality_gate_config=seed.quality_gates if seed else None,
                 formal_verification_config=seed.formal_verification if seed else None,
+                data_class=seed.data_class if seed else None,
             )
 
             def _signal_handler(signum: int, _frame: object) -> None:

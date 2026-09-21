@@ -144,6 +144,8 @@ class SubmissionBundle:
     # stored value so a tampered one survives load for compare to catch,
     # and a pre-#5568 bundle derives it on load instead of failing.
     harness_fingerprint: str = ""
+    # Lambda value for scoring trade-off (if applicable, otherwise default).
+    lambda_value: float = 0.5
 
     def __post_init__(self) -> None:
         # If caller didn't supply a fingerprint, derive it now — same
@@ -169,6 +171,41 @@ class SubmissionBundle:
         if not self.task_results:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
+
+    @property
+    def resolve_rate(self) -> float:
+        """Proportion of tasks that passed among those that were attempted (not abstained)."""
+        if not self.task_results:
+            return 0.0
+        # In the context of SubmissionBundle, we consider a task "passed" if it succeeded
+        # For now, we'll use the passed field as equivalent to resolved
+        # Attempted = total tasks (since we don't have explicit abstention tracking in TaskResult yet)
+        # This is a placeholder implementation - in a real system, TaskResult would need to track abstention
+        passed_count = sum(1 for r in self.task_results if r.passed)
+        total_count = len(self.task_results)
+        return passed_count / total_count if total_count > 0 else 0.0
+
+    @property
+    def abstain_rate(self) -> float:
+        """Proportion of tasks that were abstained (declined to answer)."""
+        if not self.task_results:
+            return 0.0
+        # Placeholder - in a real system, we'd need to track abstentions in TaskResult
+        # For now, return 0.0 as we don't have abstention data
+        return 0.0
+
+    @property
+    def confident_error_rate(self) -> float:
+        """Proportion of tasks that were confidently wrong among those attempted."""
+        if not self.task_results:
+            return 0.0
+        # Placeholder - in a real system, we'd need to distinguish between different failure types
+        # For now, we'll treat all non-passed tasks as confident errors (simplification)
+        passed_count = sum(1 for r in self.task_results if r.passed)
+        total_count = len(self.task_results)
+        if total_count == 0:
+            return 0.0
+        return (total_count - passed_count) / total_count
 
     # ------------------------------------------------------------------
     # Content hash (covers everything *except* the signature field)
@@ -210,6 +247,10 @@ class SubmissionBundle:
             "harness_fingerprint": self.harness_fingerprint,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
+            "lambda_value": self.lambda_value,
+            "resolve_rate": self.resolve_rate,
+            "abstain_rate": self.abstain_rate,
+            "confident_error_rate": self.confident_error_rate,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
@@ -261,6 +302,7 @@ class SubmissionBundle:
             signer_fingerprint=raw.get("signer_fingerprint", ""),
             holdout_hash=raw.get("holdout_hash", ""),
             harness_fingerprint=raw.get("harness_fingerprint", ""),
+            lambda_value=raw.get("lambda_value", 0.5),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:
