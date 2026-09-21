@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import click
 from pathlib import Path
+
+import click
 
 from bernstein.cli.helpers import console
 
@@ -46,9 +47,9 @@ def scenario_list(scenarios_dir: Path | None) -> None:
     for s in sorted(scenarios, key=lambda r: r.scenario_id):
         source_color = "green" if s.source_root == "workspace" else "blue"
         table.add_row(
-            s.scenario_id, 
-            s.name, 
-            str(len(s.tasks)), 
+            s.scenario_id,
+            s.name,
+            str(len(s.tasks)),
             ", ".join(s.tags),
             f"[{source_color}]{s.source_root}[/{source_color}]"
         )
@@ -102,7 +103,7 @@ def scenario_run(
         scenarios_dir=scenarios_dir or (workdir / ".bernstein" / "scenarios"),
         state_dir=workdir / ".sdd" / "routines",
     )
-    
+
     try:
         invocation, payloads = bridge.invoke_scenario(
             scenario_id,
@@ -127,11 +128,11 @@ def scenario_run(
 
     # Actually spawn the tasks
     task_ids = spawn_scenario_tasks(payloads, poster=server_post)
-    
+
     console.print(f"[green]Successfully spawned {len(task_ids)} tasks for scenario '{scenario_id}'[/green]")
     console.print(f"Orchestration ID: {invocation.orchestration_id}")
     console.print(f"Estimated time: {invocation.estimated_minutes} minutes")
-    
+
     if task_ids:
         console.print("Task IDs:")
         for task_id in task_ids:

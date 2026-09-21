@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from bernstein.core.planning.scenario_library import (
-    ScenarioLibrary,
     load_layered_scenario_library,
 )
 

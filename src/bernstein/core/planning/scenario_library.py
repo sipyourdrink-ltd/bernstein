@@ -74,7 +74,7 @@ def load_layered_scenario_library(
     The source_root field in each recipe indicates where it came from.
     """
     scenarios: dict[str, ScenarioRecipe] = {}
-    
+
     # Load workspace scenarios first (they win on collision)
     if workspace_root.exists():
         workspace_files = sorted(list(workspace_root.rglob("*.yaml")) + list(workspace_root.rglob("*.yml")))
@@ -92,7 +92,7 @@ def load_layered_scenario_library(
                 version=recipe.version,
                 source_root="workspace",
             )
-    
+
     # Load packaged scenarios, only adding those not already in workspace
     if packaged_root.exists():
         packaged_files = sorted(list(packaged_root.rglob("*.yaml")) + list(packaged_root.rglob("*.yml")))
@@ -110,7 +110,7 @@ def load_layered_scenario_library(
                     version=recipe.version,
                     source_root="packaged",
                 )
-    
+
     return ScenarioLibrary(scenarios=scenarios)
 
 
@@ -138,7 +138,7 @@ def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
         title = str(item_data.get("title", "")).strip()
         if not title:
             continue
-        
+
         # Parse artifact_spec if present
         artifact_spec: ArtifactSpec
         artifact_spec_raw = item_data.get("artifact_spec")
@@ -150,7 +150,7 @@ def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
             except (KeyError, TypeError, ValueError):
                 # Invalid artifact spec falls back to default (code_diff)
                 artifact_spec = ArtifactSpec()
-        
+
         tasks.append(
             ScenarioTaskTemplate(
                 title=title,

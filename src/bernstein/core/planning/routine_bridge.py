@@ -33,7 +33,6 @@ from bernstein.core.planning.routine_provisioner import (
 )
 from bernstein.core.planning.scenario_library import (
     ScenarioRecipe,
-    load_scenario_library,
     load_layered_scenario_library,
 )
 
@@ -41,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bernstein.core.planning.scenario_library import ScenarioLibrary
+    from bernstein.core.tasks.artifacts import ArtifactSpec
 
 logger = logging.getLogger(__name__)
 
