@@ -1070,6 +1070,30 @@ class CLIAdapter(ABC):
         """Human-readable name of this CLI adapter."""
         ...
 
+    @abstractmethod
+    def invoke(
+        self,
+        *,
+        model: str,
+        input_text: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> str:
+        """Invoke the model directly with a prompt and return the response.
+
+        This method is for direct model invocation without spawning a full
+        agent process. Used for lightweight tasks like classification,
+        summarization, or single-turn prompts.
+
+        Args:
+            model: The model identifier to invoke.
+            input_text: The prompt/input text to send to the model.
+            parameters: Optional model parameters (temperature, max_tokens, etc.).
+
+        Returns:
+            The model's text response.
+        """
+        ...
+
     def detect_tier(self) -> ApiTierInfo | None:
         """Detect the current API tier and remaining quota.
 
