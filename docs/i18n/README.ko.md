@@ -48,7 +48,7 @@ Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니
 - **협조 루프에 LLM이 없다.** 스케줄링은 순수 Python이라 실행이 처음부터 끝까지 재현된다. 어제의 플랜을 리플레이하면 어제의 태스크 그래프가 나온다.
 - **사후에 검증할 수 있다.** 리플레이 저널이 모든 실행을 기록하고, 항상 켜져 있는 리니지 스파인이 리니지를 가진 각 단계를 기록한다. 선택적으로 켜는 HMAC 체인 감사 로그(`BERNSTEIN_AUDIT=1`)는 오프라인에서 검증되는 영수증을 더한다. 비결정성은 재실행 편차가 아니라 해당 단계에서의 해시 불일치로 드러난다. 코드가 아닌 산출물도 같은 대우를 받는다. 태스크는 아티팩트 계약(리포트, 데이터셋, 액션 로그, 운영 결과)을 선언할 수 있고, git 커밋이 아니라 서명된 리니지 영수증으로 완료된다.
 - **구조적으로 격리된다.** 코딩 태스크는 각각 머지 게이트 뒤에 자신의 git worktree를 갖는다. 아티팩트 모드 태스크는 `.sdd/workspaces/` 아래에 작업 디렉터리를 갖는다. 에이전트는 기본적으로 가변 워크스페이스를 공유하지 않는다. 공유되는 상태는 태스크 백로그뿐이며 원자적으로 점유된다. 더 엄격한 파일시스템 강제는 [샌드박스 백엔드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) 중에서 선택하는 옵션이다. worktree를 끄면 모든 태스크가 공유 체크아웃에서 실행된다.
-- **넓고, 그리고 로컬이다.** 40여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
+- **넓고, 그리고 로컬이다.** 52여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
 
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
 
