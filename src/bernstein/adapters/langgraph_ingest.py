@@ -70,6 +70,9 @@ class LangGraphToolCall:
 
         computed_digest = _digest_args(args)
         given_digest = raw.get("arguments_digest")
+        # The computed digest is always the canonical value; we only verify that
+        # a caller-supplied digest (if present) matches it. If it does not match,
+        # we raise. The recorded digest is always the computed one.
         if given_digest is not None and str(given_digest) != computed_digest:
             raise ValueError(
                 f"Tool call arguments_digest mismatch for '{name}': "

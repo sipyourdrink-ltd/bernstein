@@ -347,7 +347,7 @@ verify-audit-receipt = "bernstein.core.verifier.audit_receipt_verifier:main"
 [project.entry-points."bernstein.plugins"]
 # Lifecycle/event plugins (hookimpl classes). Example:
 # my_plugin = "my_package:MyPlugin"
-
+langgraph_ingest = "bernstein.adapters.langgraph_ingest:LangGraphIngestPlugin"
 [project.entry-points."bernstein.adapters"]
 # Third-party CLI agent adapters (CLIAdapter subclasses). Example:
 # myagent = "my_package.adapter:MyAgentAdapter"
