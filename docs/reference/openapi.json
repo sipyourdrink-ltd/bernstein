@@ -667,7 +667,7 @@
           "authentication"
         ],
         "summary": "Get Group Mappings",
-        "description": "Get current SSO group → role mappings.",
+        "description": "Get current SSO group \u2192 role mappings.",
         "operationId": "get_group_mappings_auth_group_mappings_get",
         "responses": {
           "200": {
@@ -690,7 +690,7 @@
           "authentication"
         ],
         "summary": "Update Group Mappings",
-        "description": "Update SSO group → role mappings (admin only).",
+        "description": "Update SSO group \u2192 role mappings (admin only).",
         "operationId": "update_group_mappings_auth_group_mappings_put",
         "requestBody": {
           "content": {
@@ -4409,7 +4409,7 @@
     "/costs/current": {
       "get": {
         "summary": "Get Cost Current",
-        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx §6.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.\n\nScope: every figure here is the caller's tenant's, not the run's or the\ndeployment's - spend is replayed from the caller's scope only, and the\ncap it is measured against is that tenant's configured cap where one is\nconfigured.  ``tenant_id`` in the response names the scope, so a client\naggregating across tenants can tell these apart from run-wide totals.",
+        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx \u00a76.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.\n\nScope: every figure here is the caller's tenant's, not the run's or the\ndeployment's - spend is replayed from the caller's scope only, and the\ncap it is measured against is that tenant's configured cap where one is\nconfigured.  ``tenant_id`` in the response names the scope, so a client\naggregating across tenants can tell these apart from run-wide totals.",
         "operationId": "get_cost_current_costs_current_get",
         "responses": {
           "200": {
@@ -4632,7 +4632,7 @@
     "/costs/by-tag": {
       "get": {
         "summary": "Get Costs By Tag",
-        "description": "Aggregate cost data grouped by allocation tag *or* by adapter.\n\nThe endpoint serves three callers:\n\n* Web GUI (``Costs.tsx`` adapter table) - calls ``GET /costs/by-tag``\n  and expects an array of ``{adapter, calls, tokens, cost_usd,\n  share_pct, delta_7d_pct}`` rows. With ``shape=auto`` (default) and\n  no ``tag_key``, this is what we return.\n* Legacy callers passing ``tag_key=…`` - receive the existing\n  ``{by_tag: {key: {value: cost}}}`` envelope.\n* Legacy callers wanting the envelope explicitly - pass\n  ``shape=tags`` and get the envelope without supplying a key.\n\nThe ``hours`` parameter controls the GUI window (default 24h).",
+        "description": "Aggregate cost data grouped by allocation tag *or* by adapter.\n\nThe endpoint serves three callers:\n\n* Web GUI (``Costs.tsx`` adapter table) - calls ``GET /costs/by-tag``\n  and expects an array of ``{adapter, calls, tokens, cost_usd,\n  share_pct, delta_7d_pct}`` rows. With ``shape=auto`` (default) and\n  no ``tag_key``, this is what we return.\n* Legacy callers passing ``tag_key=\u2026`` - receive the existing\n  ``{by_tag: {key: {value: cost}}}`` envelope.\n* Legacy callers wanting the envelope explicitly - pass\n  ``shape=tags`` and get the envelope without supplying a key.\n\nThe ``hours`` parameter controls the GUI window (default 24h).",
         "operationId": "get_costs_by_tag_costs_by_tag_get",
         "parameters": [
           {
@@ -5409,7 +5409,7 @@
     "/quality/trend": {
       "get": {
         "summary": "Get Quality Trend",
-        "description": "Return time-series quality metrics for trend visualization.\n\nBuckets quality data by day (default) or week and returns per-bucket\nsuccess rates, gate pass rates, and average quality scores. Covers the\nlast 90 days by default so dashboards can show weeks-to-months trends.\n\nQuery parameters:\n- ``days``: lookback window in days (default 90, max 365).\n- ``granularity``: ``\"day\"`` (default) or ``\"week\"``.\n\nReturns a ``series`` list ordered by date, each entry containing:\n- ``date``: ISO date string (bucket start).\n- ``ts``: Unix timestamp of the bucket start.\n- ``tasks_total``, ``tasks_success``: raw task counts.\n- ``success_rate``: fraction of tasks that succeeded (omitted if no tasks).\n- ``gate_pass_rates``: dict of gate name → pass rate for that bucket.\n- ``avg_quality_score``: mean quality score 0-100 (omitted if no scores).",
+        "description": "Return time-series quality metrics for trend visualization.\n\nBuckets quality data by day (default) or week and returns per-bucket\nsuccess rates, gate pass rates, and average quality scores. Covers the\nlast 90 days by default so dashboards can show weeks-to-months trends.\n\nQuery parameters:\n- ``days``: lookback window in days (default 90, max 365).\n- ``granularity``: ``\"day\"`` (default) or ``\"week\"``.\n\nReturns a ``series`` list ordered by date, each entry containing:\n- ``date``: ISO date string (bucket start).\n- ``ts``: Unix timestamp of the bucket start.\n- ``tasks_total``, ``tasks_success``: raw task counts.\n- ``success_rate``: fraction of tasks that succeeded (omitted if no tasks).\n- ``gate_pass_rates``: dict of gate name \u2192 pass rate for that bucket.\n- ``avg_quality_score``: mean quality score 0-100 (omitted if no scores).",
         "operationId": "get_quality_trend_quality_trend_get",
         "responses": {
           "200": {
@@ -5460,7 +5460,7 @@
     "/quality/file-health/flagged": {
       "get": {
         "summary": "List Flagged Files",
-        "description": "Return files currently flagged for human review due to health degradation.\n\nA file is flagged when:\n- A task dropped its health score by ≥10 points, OR\n- Its total health score is below 60 (grade D or F).\n\nReturns ``files`` list with detailed health scores and degradation context.",
+        "description": "Return files currently flagged for human review due to health degradation.\n\nA file is flagged when:\n- A task dropped its health score by \u226510 points, OR\n- Its total health score is below 60 (grade D or F).\n\nReturns ``files`` list with detailed health scores and degradation context.",
         "operationId": "list_flagged_files_quality_file_health_flagged_get",
         "responses": {
           "200": {
@@ -6960,7 +6960,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 \u00a75 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
         "operationId": "service_provider_config_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -6980,7 +6980,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 schema resources",
-        "description": "List the schema resources this server serves (RFC 7643 §7).",
+        "description": "List the schema resources this server serves (RFC 7643 \u00a77).",
         "operationId": "list_schemas_scim_v2_Schemas_get",
         "responses": {
           "200": {
@@ -7044,7 +7044,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 resource types",
-        "description": "List the resource types this server serves (RFC 7643 §6).",
+        "description": "List the resource types this server serves (RFC 7643 \u00a76).",
         "operationId": "list_resource_types_scim_v2_ResourceTypes_get",
         "responses": {
           "200": {
@@ -7241,14 +7241,6 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
           "404": {
             "description": "Unknown principal"
           },
@@ -7272,7 +7264,7 @@
           "scim"
         ],
         "summary": "Update a user via PATCH operations",
-        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
+        "description": "Apply RFC 7644 \u00a73.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
         "operationId": "patch_user_scim_v2_Users__user_id__patch",
         "parameters": [
           {
@@ -9840,7 +9832,7 @@
           "authentication"
         ],
         "summary": "Get Group Mappings",
-        "description": "Get current SSO group → role mappings.",
+        "description": "Get current SSO group \u2192 role mappings.",
         "operationId": "get_group_mappings_api_v1_auth_group_mappings_get",
         "responses": {
           "200": {
@@ -9863,7 +9855,7 @@
           "authentication"
         ],
         "summary": "Update Group Mappings",
-        "description": "Update SSO group → role mappings (admin only).",
+        "description": "Update SSO group \u2192 role mappings (admin only).",
         "operationId": "update_group_mappings_api_v1_auth_group_mappings_put",
         "requestBody": {
           "content": {
@@ -13582,7 +13574,7 @@
     "/api/v1/costs/current": {
       "get": {
         "summary": "Get Cost Current",
-        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx §6.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.\n\nScope: every figure here is the caller's tenant's, not the run's or the\ndeployment's - spend is replayed from the caller's scope only, and the\ncap it is measured against is that tenant's configured cap where one is\nconfigured.  ``tenant_id`` in the response names the scope, so a client\naggregating across tenants can tell these apart from run-wide totals.",
+        "description": "Return real-time cost snapshot for the active run + GUI rollups.\n\nUpdated after each agent completion.  Designed for TUI sidebar polling\nand lightweight dashboard widgets.  Returns per-model input/output/cache\ntoken breakdown alongside spend and budget status.\n\nWeb GUI (Costs.tsx \u00a76.05) consumes the additive ``today_usd``,\n``week_usd``, ``projected_month_usd``, ``budget_usd``, ``used_pct``,\n``prior_week_usd``, ``delta_hour_usd``, ``resets_at`` and\n``last_sync_at`` fields. Existing TUI/CLI callers keep reading\n``spent_usd`` / ``percentage_used`` etc. unchanged.\n\nScope: every figure here is the caller's tenant's, not the run's or the\ndeployment's - spend is replayed from the caller's scope only, and the\ncap it is measured against is that tenant's configured cap where one is\nconfigured.  ``tenant_id`` in the response names the scope, so a client\naggregating across tenants can tell these apart from run-wide totals.",
         "operationId": "get_cost_current_api_v1_costs_current_get",
         "responses": {
           "200": {
@@ -13805,7 +13797,7 @@
     "/api/v1/costs/by-tag": {
       "get": {
         "summary": "Get Costs By Tag",
-        "description": "Aggregate cost data grouped by allocation tag *or* by adapter.\n\nThe endpoint serves three callers:\n\n* Web GUI (``Costs.tsx`` adapter table) - calls ``GET /costs/by-tag``\n  and expects an array of ``{adapter, calls, tokens, cost_usd,\n  share_pct, delta_7d_pct}`` rows. With ``shape=auto`` (default) and\n  no ``tag_key``, this is what we return.\n* Legacy callers passing ``tag_key=…`` - receive the existing\n  ``{by_tag: {key: {value: cost}}}`` envelope.\n* Legacy callers wanting the envelope explicitly - pass\n  ``shape=tags`` and get the envelope without supplying a key.\n\nThe ``hours`` parameter controls the GUI window (default 24h).",
+        "description": "Aggregate cost data grouped by allocation tag *or* by adapter.\n\nThe endpoint serves three callers:\n\n* Web GUI (``Costs.tsx`` adapter table) - calls ``GET /costs/by-tag``\n  and expects an array of ``{adapter, calls, tokens, cost_usd,\n  share_pct, delta_7d_pct}`` rows. With ``shape=auto`` (default) and\n  no ``tag_key``, this is what we return.\n* Legacy callers passing ``tag_key=\u2026`` - receive the existing\n  ``{by_tag: {key: {value: cost}}}`` envelope.\n* Legacy callers wanting the envelope explicitly - pass\n  ``shape=tags`` and get the envelope without supplying a key.\n\nThe ``hours`` parameter controls the GUI window (default 24h).",
         "operationId": "get_costs_by_tag_api_v1_costs_by_tag_get",
         "parameters": [
           {
@@ -14582,7 +14574,7 @@
     "/api/v1/quality/trend": {
       "get": {
         "summary": "Get Quality Trend",
-        "description": "Return time-series quality metrics for trend visualization.\n\nBuckets quality data by day (default) or week and returns per-bucket\nsuccess rates, gate pass rates, and average quality scores. Covers the\nlast 90 days by default so dashboards can show weeks-to-months trends.\n\nQuery parameters:\n- ``days``: lookback window in days (default 90, max 365).\n- ``granularity``: ``\"day\"`` (default) or ``\"week\"``.\n\nReturns a ``series`` list ordered by date, each entry containing:\n- ``date``: ISO date string (bucket start).\n- ``ts``: Unix timestamp of the bucket start.\n- ``tasks_total``, ``tasks_success``: raw task counts.\n- ``success_rate``: fraction of tasks that succeeded (omitted if no tasks).\n- ``gate_pass_rates``: dict of gate name → pass rate for that bucket.\n- ``avg_quality_score``: mean quality score 0-100 (omitted if no scores).",
+        "description": "Return time-series quality metrics for trend visualization.\n\nBuckets quality data by day (default) or week and returns per-bucket\nsuccess rates, gate pass rates, and average quality scores. Covers the\nlast 90 days by default so dashboards can show weeks-to-months trends.\n\nQuery parameters:\n- ``days``: lookback window in days (default 90, max 365).\n- ``granularity``: ``\"day\"`` (default) or ``\"week\"``.\n\nReturns a ``series`` list ordered by date, each entry containing:\n- ``date``: ISO date string (bucket start).\n- ``ts``: Unix timestamp of the bucket start.\n- ``tasks_total``, ``tasks_success``: raw task counts.\n- ``success_rate``: fraction of tasks that succeeded (omitted if no tasks).\n- ``gate_pass_rates``: dict of gate name \u2192 pass rate for that bucket.\n- ``avg_quality_score``: mean quality score 0-100 (omitted if no scores).",
         "operationId": "get_quality_trend_api_v1_quality_trend_get",
         "responses": {
           "200": {
@@ -14633,7 +14625,7 @@
     "/api/v1/quality/file-health/flagged": {
       "get": {
         "summary": "List Flagged Files",
-        "description": "Return files currently flagged for human review due to health degradation.\n\nA file is flagged when:\n- A task dropped its health score by ≥10 points, OR\n- Its total health score is below 60 (grade D or F).\n\nReturns ``files`` list with detailed health scores and degradation context.",
+        "description": "Return files currently flagged for human review due to health degradation.\n\nA file is flagged when:\n- A task dropped its health score by \u226510 points, OR\n- Its total health score is below 60 (grade D or F).\n\nReturns ``files`` list with detailed health scores and degradation context.",
         "operationId": "list_flagged_files_api_v1_quality_file_health_flagged_get",
         "responses": {
           "200": {
@@ -16133,7 +16125,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 \u00a75 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
         "operationId": "service_provider_config_api_v1_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -16153,7 +16145,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 schema resources",
-        "description": "List the schema resources this server serves (RFC 7643 §7).",
+        "description": "List the schema resources this server serves (RFC 7643 \u00a77).",
         "operationId": "list_schemas_api_v1_scim_v2_Schemas_get",
         "responses": {
           "200": {
@@ -16217,7 +16209,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 resource types",
-        "description": "List the resource types this server serves (RFC 7643 §6).",
+        "description": "List the resource types this server serves (RFC 7643 \u00a76).",
         "operationId": "list_resource_types_api_v1_scim_v2_ResourceTypes_get",
         "responses": {
           "200": {
@@ -16414,14 +16406,6 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
           "404": {
             "description": "Unknown principal"
           },
@@ -16445,7 +16429,7 @@
           "scim"
         ],
         "summary": "Update a user via PATCH operations",
-        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
+        "description": "Apply RFC 7644 \u00a73.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
         "operationId": "patch_user_api_v1_scim_v2_Users__user_id__patch",
         "parameters": [
           {
@@ -20177,7 +20161,7 @@
           "role"
         ],
         "title": "GroupMappingEntry",
-        "description": "A single group → role mapping."
+        "description": "A single group \u2192 role mapping."
       },
       "GroupMappingsResponse": {
         "properties": {
