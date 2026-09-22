@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 代理的開源治理層
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,17 +38,17 @@
 
 > **狀態：beta。** 由單人維護，正在積極開發中。版本號計的是發布次數，而非成熟度——次版本（minor）可能變更介面。凡有依賴請鎖定版本；回歸問題會被儘快修復，[歡迎回報](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein 是面向 AI 代理的開源治理層。它運作在 policy as code 之上:你撰寫政策——誰可以做什麼、什麼需要核准、什麼必須被記錄——Bernstein 據此執行並產生可驗證的紀錄。確定性排程器 - 協調迴圈中沒有模型 - 平行執行代理,以閘門把關它們的產出,並記錄每一步,因此一次執行可以事後離線驗證,僅憑工件本身。CLI 編碼代理開箱即用(Claude Code、Codex、Gemini CLI 及 40+ 款),同一治理層治理任何代理工作負載:交付物可以是 diff、研究報告、資料集,或一份稽核證據包。附帶 air-gap 安裝設定。Apache-2.0。
+Bernstein 是面向 AI 代理的開源治理層。它運作在 policy as code 之上:你撰寫政策——誰可以做什麼、什麼需要核准、什麼必須被記錄——Bernstein 據此執行並產生可驗證的紀錄。確定性排程器 - 協調迴圈中沒有模型 - 平行執行代理,以閘門把關它們的產出,並記錄每一步,因此一次執行可以事後離線驗證,僅憑工件本身。CLI 編碼代理開箱即用(Claude Code、Codex、Gemini CLI 及 52+ 款),同一治理層治理任何代理工作負載:交付物可以是 diff、研究報告、資料集,或一份稽核證據包。附帶 air-gap 安裝設定。Apache-2.0。
 
 ### 一覽
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
 
 有四件事讓它與眾不同；其餘都是細節。
 
 - **協調迴圈中沒有 LLM。** 排程是純 Python，因此執行可以端到端重現。重播昨天的計畫，得到昨天的任務圖。
 - **事後可核查。** 重播日誌記錄每一次執行，常駐的血統脊柱記錄每個產生血統的步驟；選用的 HMAC 鏈式稽核日誌（`BERNSTEIN_AUDIT=1`）增加了可離線驗證的收據。不確定性會在精確步驟處以雜湊失配的形式浮出水面，而不是一次偶發的重跑。非程式碼交付物也享有同樣待遇：任務可以宣告產物契約（報告、資料集、動作日誌、維運結果），並以簽署的血統收據而非 git 提交來宣告完成。
 - **構造上即隔離。** 每個編碼任務在合併門禁之後獲得自己的 git worktree；產物模式任務在 `.sdd/workspaces/` 下獲得工作目錄。代理之間預設不共享可變的工作區；唯一共享的狀態是任務積壓，並以原子方式認領。更嚴格的檔案系統強制是選用的，來自[沙箱後端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（停用 worktree 會在共享檢出中執行每個任務）。
-- **廣泛且本地。** 40 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
+- **廣泛且本地。** 52 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
 
 完整清單見[能力頁面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩陣](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是詳盡的索引。
 
