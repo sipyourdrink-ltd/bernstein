@@ -61,6 +61,7 @@ DEFAULT_PRECEDENCE: tuple[str, ...] = (
     "blaxel",
     "runloop",
     "vercel",
+    "sandbox0",
     # microvm is opt-in: it is not a FREE_BACKEND, so the heuristic path
     # never auto-selects it over worktree/docker. An explicit
     # ``sandbox.backend: microvm`` override reaches it, and an unsupported
@@ -287,6 +288,8 @@ def _missing_credentials(
     """Return required env-var names that *environment* does not supply."""
     needed = set(policy.required_credentials)
     needed |= BACKEND_CREDENTIAL_ENVS.get(backend.name, frozenset())
+    if backend.name == "sandbox0" and not {"SANDBOX0_API_KEY", "SANDBOX0_TOKEN"} & environment.available_credentials:
+        needed.add("SANDBOX0_API_KEY")
     return frozenset(needed - environment.available_credentials)
 
 

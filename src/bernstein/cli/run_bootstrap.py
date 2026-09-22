@@ -370,6 +370,7 @@ SANDBOX_CHOICES: tuple[str, ...] = (
     "blaxel",
     "runloop",
     "vercel",
+    "sandbox0",
     # Opt-in, never auto-selected: mirrors its trailing position in
     # DEFAULT_PRECEDENCE, and it is deliberately absent from
     # SANDBOX_FREE_CHOICES so only an explicit flag reaches it.
@@ -2141,7 +2142,7 @@ def exec_restart() -> None:
     type=click.Choice(list(SANDBOX_CHOICES), case_sensitive=False),
     help=(
         "Sandbox backend for agent isolation. Free: worktree, docker, podman. "
-        "Paid (require --allow-paid): e2b, modal, daytona, blaxel, runloop, vercel. "
+        "Paid (require --allow-paid): e2b, modal, daytona, blaxel, runloop, vercel, sandbox0. "
         "Overrides the selector's deterministic precedence; pass nothing to let "
         "the selector pick the cheapest backend that satisfies the manifest."
     ),
