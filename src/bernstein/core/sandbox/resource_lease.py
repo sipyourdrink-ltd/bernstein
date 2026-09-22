@@ -22,8 +22,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
-else:
-    pass
 
 from bernstein.core.process_utils import is_process_alive
 
