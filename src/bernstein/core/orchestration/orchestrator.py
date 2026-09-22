@@ -1148,6 +1148,12 @@ class Orchestrator:
         # to keep memory bounded under long-lived runs.
         self._llm_watcher_signals: collections.deque[Any] = collections.deque(maxlen=64)
 
+        # Clear deliberate-stop marker from any previous run (issue #6089 slice 1).
+        _marker_path = self._workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+        if _marker_path.exists():
+            with contextlib.suppress(OSError):
+                _marker_path.unlink()
+
     # -- Hot-reload source detection -----------------------------------------
 
     # Key source files whose modification triggers an orchestrator restart.
@@ -2618,6 +2624,10 @@ class Orchestrator:
                                 settled_agents,
                             )
                             self._regenerate_final_retrospective(trigger_path="tick-quiescence-self-stop")
+                            # Write deliberate-stop marker for watchdog (issue #6089 slice 1).
+                            _marker_path = self._workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+                            with contextlib.suppress(OSError):
+                                _marker_path.write_text("quiescence")
                             self._running = False
                     else:
                         logger.info(

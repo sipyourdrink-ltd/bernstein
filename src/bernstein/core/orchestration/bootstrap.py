@@ -958,6 +958,7 @@ def _watchdog_check_process(
     restart_fn: Any,
     post_restart_fn: Any | None = None,
     liveness: Liveness | None = None,
+    workdir: Path | None = None,
 ) -> tuple[float | None, int, bool]:
     """Check a single watchdog-monitored process and restart if it is not up.
 
@@ -1004,6 +1005,17 @@ def _watchdog_check_process(
         return alive_since, restarts, give_up_logged
 
     # Not positively alive: dead, or a pid we cannot attribute to our pidfile.
+    # Check for deliberate-stop marker (issue #6089 slice 1).
+    if workdir is not None and name == "Orchestrator":
+        marker_path = workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+        if marker_path.exists():
+            logger.info(
+                "%s stopped deliberately (marker present: %s) - not restarting",
+                name,
+                marker_path.read_text().strip()[:50],
+            )
+            return None, restarts, give_up_logged
+
     if restarts >= max_restarts:
         if not give_up_logged:
             logger.error(
