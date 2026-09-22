@@ -27,6 +27,8 @@ from bernstein.core.sandbox.manifest import WorkspaceManifest
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from bernstein.core.sandbox.manifest import GitRepoEntry
+
 # Capture byte streams in files instead of the context API's bounded text log.
 # os.execvpe preserves argv literally and replaces the context's process, so
 # deleting the context terminates the actual command on timeout/cancellation.
@@ -68,6 +70,61 @@ async def _owned_call(function: Any, *args: Any, cleanup: Any, **kwargs: Any) ->
         value = await task
         await asyncio.to_thread(cleanup, value)
         raise
+
+
+def _bundle_repository(repo: GitRepoEntry) -> tuple[bytes, str]:
+    """Export a branch, or detached HEAD, without changing any source refs.
+
+    Git bundles need a named ref, and sync-back fetches refs/heads/*. Stage a
+    detached commit in a temporary bare repository so agent commits remain
+    reachable through a branch without creating one in the operator's repo.
+    """
+    with tempfile.TemporaryDirectory(prefix="bernstein-bundle-") as directory:
+        bundle = Path(directory) / "repo.bundle"
+        source = Path(repo.src_path).resolve()
+        branch = repo.branch
+        if branch == "HEAD":
+            try:
+                commit = (
+                    subprocess.run(
+                        ["git", "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"],
+                        cwd=source,
+                        check=True,
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    .stdout.decode("ascii")
+                    .strip()
+                )
+            except subprocess.CalledProcessError as exc:
+                raise ValueError("Workspace Git HEAD must resolve to an existing commit") from exc
+            staging = Path(directory) / "source.git"
+            branch = "bernstein-detached"
+            subprocess.run(["git", "init", "--bare", str(staging)], check=True, capture_output=True, timeout=10)
+            subprocess.run(
+                ["git", "fetch", "--no-tags", "--", str(source), f"{commit}:refs/heads/{branch}"],
+                cwd=staging,
+                check=True,
+                capture_output=True,
+                timeout=120,
+            )
+            source = staging
+        else:
+            subprocess.run(
+                ["git", "check-ref-format", "--branch", branch],
+                cwd=source,
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+        subprocess.run(
+            ["git", "bundle", "create", str(bundle), f"refs/heads/{branch}"],
+            cwd=source,
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        return bundle.read_bytes(), branch
 
 
 class Sandbox0SandboxSession(SandboxSession):
@@ -307,25 +364,13 @@ class Sandbox0SandboxBackend:
         """Transfer committed local history without exposing host credentials/config."""
         assert manifest.repo is not None
         repo = manifest.repo
-        with tempfile.TemporaryDirectory(prefix="bernstein-bundle-") as directory:
-            bundle = Path(directory) / "repo.bundle"
-
-            def build() -> bytes:
-                subprocess.run(["git", "check-ref-format", "--branch", repo.branch], check=True, capture_output=True)
-                subprocess.run(
-                    ["git", "bundle", "create", str(bundle), repo.branch],
-                    cwd=repo.src_path,
-                    check=True,
-                    capture_output=True,
-                    timeout=120,
-                )
-                return bundle.read_bytes()
-
-            payload = await asyncio.to_thread(build)
+        payload, checkout_branch = await asyncio.to_thread(_bundle_repository, repo)
         remote = f"/tmp/bernstein-repo-{uuid.uuid4().hex}.bundle"
         await asyncio.to_thread(session._sandbox.write_file, remote, payload)
         try:
-            result = await session.exec(["git", "clone", "--branch", repo.branch, "--", remote, manifest.root], cwd="/")
+            result = await session.exec(
+                ["git", "clone", "--branch", checkout_branch, "--", remote, manifest.root], cwd="/"
+            )
             if result.exit_code:
                 raise RuntimeError(
                     f"Could not clone the workspace Git bundle: {result.stderr[:500].decode(errors='replace')}"

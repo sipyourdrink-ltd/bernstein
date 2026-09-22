@@ -8,6 +8,15 @@ The backend works with Sandbox0 Cloud or a self-hosted regional endpoint.
 
 ## Setup
 
+Enabling this backend uploads the selected branch's **committed Git history**
+and any explicit `FileEntry` content to the configured Sandbox0 endpoint. With
+Sandbox0 Cloud, that data leaves the operator's infrastructure; with a
+self-hosted endpoint, the deployment determines where it is stored. The Git
+bundle includes history reachable from the selected tip, not just current
+files: even previously deleted secrets can be in that history. Review the
+repository and choose the endpoint accordingly. Sparse checkout limits the
+checked-out files, not the history transferred in the bundle.
+
 ```shell
 pip install 'bernstein[sandbox0]'
 export SANDBOX0_API_KEY='<your key>'
@@ -69,7 +78,12 @@ a failed deletion remains retryable.
 
 `GitRepoEntry` transfers the requested committed branch with `git bundle`.
 Uncommitted/untracked host files and host Git credential configuration are not
-uploaded; use `FileEntry` for deliberate file injection. The template should
+uploaded; use `FileEntry` for deliberate file injection. A `branch="HEAD"`
+manifest (including an orchestrator running from a detached checkout) exports
+the current commit on a sandbox-local `bernstein-detached` branch, without
+creating or changing host refs. Its commits return under
+`refs/remotes/sandbox/<session>/bernstein-detached`. An unborn or invalid HEAD
+fails explicitly; it does not switch to host execution. The template should
 leave `/workspace` empty. Changes must be committed for Bernstein's existing
 sync-back path to retrieve them. Sync-back is best effort in the shared spawner;
 inspect `.sdd/runtime/sandbox/<session>.bundle` and
@@ -83,6 +97,20 @@ snapshot; it does not reconnect to the old running process. The workspace root,
 base environment and command timeout are restored. Environment values are kept
 inside the snapshot, not encoded in the reference. Treat snapshots as sensitive
 when the workspace/environment contains credentials.
+
+Specifically, **every value in `WorkspaceManifest.env` is written into RootFS
+snapshot metadata** and restored with the snapshot. Reserve this field for
+non-sensitive configuration. Do not put model API keys, task tokens or other
+credentials there; pass those through `session.exec(..., env={...})` for each
+command instead. Per-command overrides are not copied into snapshot metadata;
+the adapter's temporary exec files live under `/tmp` and are cleaned up. This
+does not prevent the command itself from writing credentials to persistent
+files or logs. Encryption and mode 0600 do not expire a credential: deleting a
+session preserves its snapshots, and rotation/revocation and snapshot deletion
+remain the caller's responsibility.
+
+The orchestrator currently uses an empty manifest environment and passes model
+credentials per command; task-scoped tokens also stay under `/tmp`.
 
 Automatic crashed-agent continuation through a host worktree is refused. Use
 an explicit snapshot restore; uncommitted changes from a crashed runtime are

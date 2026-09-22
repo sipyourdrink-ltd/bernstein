@@ -113,7 +113,8 @@ class TestSandbox0Conformance(SandboxBackendConformance):
         assert not any(name.startswith("bernstein-exec-") for name in await right.ls("/tmp"))
 
     @pytest.mark.asyncio
-    async def test_repository_and_injected_file(self, backend, tmp_path):
+    @pytest.mark.parametrize("detached", [False, True])
+    async def test_repository_and_injected_file(self, backend, tmp_path, detached):
         subprocess.run(["git", "init", "-b", "main", str(tmp_path)], check=True, capture_output=True)
         (tmp_path / "tracked.txt").write_text("committed")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
@@ -123,10 +124,18 @@ class TestSandbox0Conformance(SandboxBackendConformance):
             check=True,
             capture_output=True,
         )
+        if detached:
+            subprocess.run(["git", "checkout", "--detach"], cwd=tmp_path, check=True, capture_output=True)
+        tip = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path).strip()
         session = await backend.create(
-            WorkspaceManifest(repo=GitRepoEntry(str(tmp_path), "main"), files=(FileEntry("injected.txt", b"injected"),))
+            WorkspaceManifest(
+                repo=GitRepoEntry(str(tmp_path), "HEAD" if detached else "main"),
+                files=(FileEntry("injected.txt", b"injected"),),
+            )
         )
         assert await session.read("tracked.txt") == b"committed"
         assert await session.read("injected.txt") == b"injected"
         result = await session.exec(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-        assert result.stdout.strip() == b"main"
+        assert result.stdout.strip() == (b"bernstein-detached" if detached else b"main")
+        result = await session.exec(["git", "rev-parse", "HEAD"])
+        assert result.stdout.strip() == tip

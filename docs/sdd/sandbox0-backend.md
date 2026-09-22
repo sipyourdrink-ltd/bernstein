@@ -11,7 +11,10 @@ The registry discovers the backend without importing the SDK. The run-level
 provisioning failure never falls back to host execution. The sandbox is owned
 by the spawn, including prompt-injection failure and crash-recovery routing.
 
-Committed Git branches enter through bundles. Byte I/O uses SDK file APIs;
+Committed Git branches enter through bundles. Detached HEAD is staged as a
+named ref in a temporary bare repository, preserving the exact source commit
+and leaving host refs unchanged; the sandbox branch remains compatible with
+the spawner's refs/heads-based result retrieval. Byte I/O uses SDK file APIs;
 commands replace a Python launcher with literal argv and file-backed binary
 stdio. Timeout/cancellation deletes the command context. Session deletion is
 retryable and independent of snapshot retention. RootFS snapshots restore into
