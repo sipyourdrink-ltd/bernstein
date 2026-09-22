@@ -102,7 +102,9 @@ class CompactionReceipt:
         correlation_id: Id shared by the chain event, the journal step,
             and the ledger row for this compaction.
         policy_version: Version of the compaction policy. Empty for
-            legacy or otherwise unversioned compactions.
+            legacy or otherwise unversioned compactions so chain rows
+            written before this field existed still parse instead of
+            becoming receipt-verification errors.
         gate_action: Sensitive-gate outcome reference (``allow`` /
             ``redacted`` / ``refused``). The gate's own events carry the
             evidence; the receipt only points at them.
