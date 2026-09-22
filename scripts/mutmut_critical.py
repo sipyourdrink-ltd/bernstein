@@ -178,7 +178,6 @@ MODULES: tuple[Module, ...] = (
         max_candidates=80,
         note="bernstein.yaml seed parser + ${ENV} reference resolution.",
     ),
-
     Module(
         key="sandbox_eval",
         source="src/bernstein/core/security/sandbox_eval.py",
