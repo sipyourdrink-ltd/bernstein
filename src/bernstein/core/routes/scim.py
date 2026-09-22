@@ -472,7 +472,8 @@ def _principal_ledger_for_request(request: Request) -> Any:
 @router.delete(
     f"{SCIM_BASE_PATH}/Users/{{user_id}}",
     summary="Delete a user (soft delete with history retention)",
-    responses={404: {"description": "Unknown principal"}, 204: {"description": "Principal deprovisioned"}},
+    responses={404: {"description": "Unknown principal"}},
+    status_code=204,
 )
 def delete_user(user_id: str, request: Request) -> Response:
     """Soft-delete a user per SCIM 2.0 DELETE semantics.
@@ -507,6 +508,7 @@ def delete_user(user_id: str, request: Request) -> Response:
         404: {"description": "Unknown principal"},
         400: {"description": "Invalid PATCH operation"},
     },
+    status_code=200,
 )
 def patch_user(user_id: str, request: Request, body: dict[str, Any]) -> _SCIMResponse:
     """Apply RFC 7644 §3.5.2 PATCH operations to a user.
