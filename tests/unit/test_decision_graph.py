@@ -57,3 +57,57 @@ def test_empty_graph_allows():
     graph = DecisionGraph()
     result = graph.evaluate()
     assert result.type == DecisionType.ALLOW
+
+
+def test_deny_beats_immune_in_both_insertion_orders():
+    # DENY has higher precedence than IMMUNE. The result must not depend
+    # on insertion order: sorted() is stable, so a tie in the priority
+    # table would resolve by whichever decision was added first.
+    for decisions in (
+        [
+            PermissionDecision(DecisionType.DENY, "deny-reason"),
+            PermissionDecision(DecisionType.IMMUNE, "immune-reason", bypass_immune=True),
+        ],
+        [
+            PermissionDecision(DecisionType.IMMUNE, "immune-reason", bypass_immune=True),
+            PermissionDecision(DecisionType.DENY, "deny-reason"),
+        ],
+    ):
+        graph = DecisionGraph(bypass_enabled=False)
+        for d in decisions:
+            graph.add_decision(d)
+
+        result = graph.evaluate()
+
+        assert result.type == DecisionType.DENY, (
+            f"DENY must outrank IMMUNE regardless of insertion order; got {result.type} "
+            f"for order {[d.type for d in decisions]}"
+        )
+        assert result.reason == "deny-reason"
+
+
+def test_immune_survives_bypass_when_deny_is_bypassable():
+    # With bypass enabled, a DENY that is not bypass-immune is skipped, so
+    # the surviving decision is IMMUNE (bypass_immune=True). The result must
+    # not depend on insertion order.
+    for decisions in (
+        [
+            PermissionDecision(DecisionType.DENY, "deny-reason", bypass_immune=False),
+            PermissionDecision(DecisionType.IMMUNE, "immune-reason", bypass_immune=True),
+        ],
+        [
+            PermissionDecision(DecisionType.IMMUNE, "immune-reason", bypass_immune=True),
+            PermissionDecision(DecisionType.DENY, "deny-reason", bypass_immune=False),
+        ],
+    ):
+        graph = DecisionGraph(bypass_enabled=True)
+        for d in decisions:
+            graph.add_decision(d)
+
+        result = graph.evaluate()
+
+        assert result.type == DecisionType.IMMUNE, (
+            f"IMMUNE must survive bypass when DENY is bypassable; got {result.type} "
+            f"for order {[d.type for d in decisions]}"
+        )
+        assert result.reason == "immune-reason"
