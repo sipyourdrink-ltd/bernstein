@@ -20,10 +20,10 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
-
-    pass
+else:
+    from pathlib import Path
 
 from bernstein.core.process_utils import is_process_alive
 
@@ -93,7 +93,7 @@ def named_lock(
     *,
     max_age: float = _GC_LOCK_MAX_AGE_S,
     poll_interval: float = 0.1,
-) -> Iterator[None]:
+) -> Generator[dict[str, int | float], None, None]:
     """Context manager for a named lock with O_EXCL acquire and staleness reclamation.
 
     Parameters
@@ -121,6 +121,7 @@ def named_lock(
     while True:
         try:
             fd = _acquire_lock_fd(lock_path)
+            break  # Successfully acquired the lock
         except FileExistsError:
             # Lock exists; check if stale
             if _lock_is_stale(lock_path, max_age):
@@ -142,7 +143,7 @@ def named_lock(
         os.close(fd)
 
     try:
-        yield
+        yield payload
     finally:
         # Best-effort cleanup: ignore errors if lock already gone
         with contextlib.suppress(OSError):
