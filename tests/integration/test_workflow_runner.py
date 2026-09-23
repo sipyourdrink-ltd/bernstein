@@ -17,6 +17,7 @@ from bernstein.core.models import ModelConfig
 from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
+from bernstein.core.persistence.workspace import grant_workspace_trust
 from bernstein.core.workflows import (
     NodeStatus,
     WorkflowExecution,
@@ -32,9 +33,10 @@ from bernstein.core.workflows import (
 
 @pytest.fixture
 def runner_workdir(tmp_path: Path) -> Path:
-    """Provide a clean working directory for command nodes."""
+    """Provide a clean, trusted working directory for command nodes."""
     workdir = tmp_path / "run"
     workdir.mkdir()
+    grant_workspace_trust(workdir)
     return workdir
 
 
@@ -712,8 +714,9 @@ def test_state_persistence_functions_work_correctly(tmp_path: Path) -> None:
 
     workdir = tmp_path / "workdir"
     workdir.mkdir()
+    grant_workspace_trust(workdir)
     sdd_dir = workdir / ".sdd"
-    sdd_dir.mkdir()
+    sdd_dir.mkdir(exist_ok=True)
 
     # Create a simple workflow spec
     spec = _spec_from(
@@ -836,8 +839,9 @@ def test_workflow_resume_works_correctly(tmp_path: Path) -> None:
 
     workdir = tmp_path / "workdir"
     workdir.mkdir()
+    grant_workspace_trust(workdir)
     sdd_dir = workdir / ".sdd"
-    sdd_dir.mkdir()
+    sdd_dir.mkdir(exist_ok=True)
 
     # Create a workflow spec that will fail on node 2
     spec = _spec_from(

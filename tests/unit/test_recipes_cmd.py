@@ -23,6 +23,7 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.recipes_cmd import recipes_group
+from bernstein.core.persistence.workspace import grant_workspace_trust
 from bernstein.core.workflows.recipe_spec import (
     RecipeParam,
     RecipeParamError,
@@ -412,6 +413,7 @@ def test_cli_run_command_only_recipe_executes(isolated_workdir: Path) -> None:
     nodes, no API keys, no network - proves the run path is wired
     correctly from param resolution through WorkflowRunner.run().
     """
+    grant_workspace_trust(isolated_workdir)
     # Place a project-local recipe and let `recipes run` find it by name.
     local_dir = isolated_workdir / ".bernstein" / "recipes"
     local_dir.mkdir(parents=True)
@@ -439,6 +441,7 @@ nodes:
 
 def test_cli_run_command_only_recipe_with_param_override(isolated_workdir: Path) -> None:
     """``--param`` overrides flow through to command bodies at runtime."""
+    grant_workspace_trust(isolated_workdir)
     local_dir = isolated_workdir / ".bernstein" / "recipes"
     local_dir.mkdir(parents=True)
     (local_dir / "cmd-only.yaml").write_text(
