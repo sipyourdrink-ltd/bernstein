@@ -946,7 +946,7 @@ dev = [
 docs = [
     "mkdocs>=1.6.1,<2",
     "mkdocs-material[imaging]>=9.7.7,<10",
-    "mkdocs-redirects>=1.2,<1.2.3",
+    "mkdocs-redirects>=1.2,<1.2.4",
     "mkdocs-minify-plugin>=0.8,<1",
 ]
 

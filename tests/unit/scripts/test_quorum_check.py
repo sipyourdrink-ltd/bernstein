@@ -51,8 +51,10 @@ def roster(qc: ModuleType):
 OWNERS = [("*", ["core1", "core2"]), ("/.github/", ["owner"]), ("/src/bernstein/core/", ["owner"])]
 
 
-def _review(qc: ModuleType, login: str, state: str, *, sha: str = HEAD, at: str = "2026-09-10T10:00:00Z"):
-    return qc.Review(login=login, state=state, commit_id=sha, submitted_at=at)
+def _review(
+    qc: ModuleType, login: str, state: str, *, sha: str = HEAD, at: str = "2026-09-10T10:00:00Z", body: str = ""
+):
+    return qc.Review(login=login, state=state, commit_id=sha, submitted_at=at, body=body)
 
 
 def _pr(
@@ -167,6 +169,35 @@ def test_a_later_approval_replaces_an_earlier_request_for_changes(qc: ModuleType
         ],
     )
     assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_dismissed_approval_does_not_revive_an_earlier_request_for_changes(qc: ModuleType, roster) -> None:
+    # GitHub dismisses an approval as stale on the next push. The reviewer had
+    # already withdrawn their request by approving; the dismissal must not
+    # bring the request back.
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "CHANGES_REQUESTED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "core2", "APPROVED"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_dismissed_request_for_changes_does_not_revive_an_earlier_approval(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "APPROVED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
 
 
 # --- size and sensitivity (charter section 3) -------------------------------
@@ -363,6 +394,59 @@ def test_a_committer_can_block_the_maintainer(qc: ModuleType, roster) -> None:
 def test_a_stranger_cannot_block_the_maintainer(qc: ModuleType, roster) -> None:
     pr = _pr(qc, author="owner", contributors={"owner"}, reviews=[_review(qc, "passer-by", "CHANGES_REQUESTED")])
     assert _evaluate(qc, roster, pr).passed
+
+
+# --- adopted pull requests (charter section 3, until 2026-10-05) -------------
+
+
+def _adopted(qc: ModuleType, **overrides):
+    """A large, sensitive contributor change the maintainer has pushed to and declared adopted."""
+    fields = dict(
+        changed_lines=600,
+        paths=["src/bernstein/core/security/dlp_scanner.py"],
+        contributors={"outsider", "owner"},
+        reviews=[_review(qc, "owner", "COMMENTED", body=qc.ADOPTION_NOTICE)],
+    )
+    fields.update(overrides)
+    return _pr(qc, **fields)
+
+
+def test_an_adopted_change_merges_without_approvals(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc))
+    assert verdict.passed
+    assert any("Adopted by the maintainer" in note for note in verdict.notes)
+
+
+def test_the_notice_alone_does_not_adopt_a_change_the_maintainer_never_pushed_to(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, contributors={"outsider"}))
+    assert not verdict.passed
+    assert "3 approvals" in verdict.requirements[0].text
+
+
+def test_a_push_alone_does_not_adopt_and_the_summary_says_what_would(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, reviews=[]))
+    assert not verdict.passed
+    assert any(qc.ADOPTION_NOTICE in note for note in verdict.notes)
+
+
+def test_a_notice_given_before_the_last_push_does_not_adopt(qc: ModuleType, roster) -> None:
+    stale = [_review(qc, "owner", "COMMENTED", sha="e" * 40, body=qc.ADOPTION_NOTICE)]
+    assert not _evaluate(qc, roster, _adopted(qc, reviews=stale)).passed
+
+
+def test_a_committer_can_block_an_adopted_change(qc: ModuleType, roster) -> None:
+    reviews = [
+        _review(qc, "owner", "COMMENTED", body=qc.ADOPTION_NOTICE),
+        _review(qc, "comm1", "CHANGES_REQUESTED"),
+    ]
+    assert not _evaluate(qc, roster, _adopted(qc, reviews=reviews)).passed
+
+
+def test_adoption_ends_on_its_date(qc: ModuleType, roster) -> None:
+    after = qc.ADOPTION_ENDS + timedelta(seconds=1)
+    verdict = qc.evaluate(_adopted(qc), roster, OWNERS, after)
+    assert not verdict.passed
+    assert not any("dopted" in note for note in verdict.notes)
 
 
 # --- the objection window on governance files (charter section 10) ----------
