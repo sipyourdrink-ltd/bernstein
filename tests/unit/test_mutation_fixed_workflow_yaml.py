@@ -158,14 +158,18 @@ def test_upload_step_still_runs_after_a_failing_harness() -> None:
         "still uploads the module's survivor JSON as an artifact"
     )
 
+
 def test_matrix_modules_match_registry() -> None:
     from scripts.mutmut_critical import MODULES
+
     registry_keys = {m.key for m in MODULES}
     matrix_keys = set(_matrix_modules())
     assert matrix_keys == registry_keys
 
+
 def test_security_modules_registered() -> None:
     from scripts.mutmut_critical import MODULES
+
     keys = {m.key: m for m in MODULES}
     for m in ["sandbox_eval", "policy_engine", "compliance_policies", "audit_pack"]:
         assert m in keys, f"{m} missing in MODULES"
