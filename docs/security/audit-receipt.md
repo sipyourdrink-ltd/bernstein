@@ -81,6 +81,10 @@ python tools/verify_audit_receipt.py --receipt audit-receipt-....json --verbose
 It recomputes `head_sha256` from the embedded range, asserts every format binds
 that value, and validates each envelope with a stock verification path. Pin the
 key with `--jwk` or `--public-key`; scope with `--format cose|intoto|transparency|all`.
+Without a pin the receipt can only be checked against the key it carries
+(trust-on-first-use), so the `public_key` check fails and the overall result is
+`FAIL`; pass `--allow-unpinned-key` to accept that integrity-only result. The
+key-trust status is always printed on the `public_key` line.
 Exit code `0` means all checks passed, `1` a check failed, `2` bad arguments.
 
 The `bernstein audit receipt verify <path>` subcommand shells out to that

@@ -71,10 +71,11 @@ class TestQuestion17:
         self,
         auditor_bundle: BundleReader,
         isolated_python: Path,
+        trust_anchor: Path,
     ) -> None:
-        """The standalone verifier validates the bundle's receipt, alone."""
+        """The standalone verifier validates the bundle's receipt against the pinned operator key."""
         receipt = auditor_bundle.path(scenario.AUDIT_RECEIPT_NAME)
-        proc = run_isolated(isolated_python, str(RECEIPT_VERIFIER), "--receipt", str(receipt), "--verbose")
+        proc = _verify_receipt(isolated_python, receipt=receipt, public_key=trust_anchor)
 
         assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
         assert "OVERALL: PASS" in proc.stdout
@@ -352,6 +353,7 @@ def _verify_receipt(
     *,
     receipt: Path,
     public_key: Path | None = None,
+    allow_unpinned_key: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run the standalone verifier against *receipt* under the isolated interpreter.
 
@@ -363,6 +365,8 @@ def _verify_receipt(
             When given, the receipt's embedded key must match it, so a
             bundle re-signed with an unrelated key fails instead of
             trusting itself.
+        allow_unpinned_key: Accept a receipt checked only against its own
+            embedded key. Without it an unpinned receipt fails.
 
     Returns:
         The completed process; ``returncode == 0`` is a pass.
@@ -370,6 +374,8 @@ def _verify_receipt(
     args = [str(RECEIPT_VERIFIER), "--receipt", str(receipt), "--verbose"]
     if public_key is not None:
         args += ["--public-key", str(public_key)]
+    if allow_unpinned_key:
+        args.append("--allow-unpinned-key")
     return run_isolated(isolated_python, *args)
 
 
@@ -449,15 +455,6 @@ def test_q16_each_decision_can_be_recomputed_from_its_recorded_inputs(
 
 
 @pytest.mark.auditor_question(18)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the bundle carries its own verifying key in signing.public_key_jwk, "
-        "so a receipt re-issued under a key the forger generated verifies "
-        "exactly as well as the operator's; the standalone verifier can pin "
-        "a key but nothing in the bundle says which key to pin (#5033)"
-    ),
-)
 def test_q18_a_bundle_resigned_with_a_fresh_key_is_rejected(
     auditor_bundle: BundleReader,
     isolated_python: Path,
@@ -472,8 +469,10 @@ def test_q18_a_bundle_resigned_with_a_fresh_key_is_rejected(
     that nobody but the forger vouches for.
 
     An auditor holding the bundle and nothing else must be able to reject
-    it. Today the verifier reads the key out of the receipt it is checking
-    and reports ``trust-on-first-use``, which is not a trust decision.
+    it. The verifier reads the key out of the receipt it is checking, which
+    is ``trust-on-first-use`` and not a trust decision, so it reports that
+    receipt as FAIL unless a key is pinned out of band or the auditor opts
+    in with ``--allow-unpinned-key``.
     """
     genuine = auditor_bundle.read_json(scenario.AUDIT_RECEIPT_NAME)
     forged = reissue_receipt(genuine, Ed25519PrivateKey.generate())
@@ -522,17 +521,6 @@ def test_q19_the_run_can_be_replayed_from_what_the_bundle_records(
 
 
 @pytest.mark.auditor_question(20)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "an edited record can be re-issued end to end under a generated key "
-        "and the bundle-only verifier accepts it; the per-event HMAC that "
-        "would catch the edit can only be checked with the operator's "
-        "symmetric audit key, which is the same key that writes the chain "
-        "(core/security/audit.py load_audit_key), so nothing an auditor may "
-        "safely hold distinguishes the two (#5036)"
-    ),
-)
 def test_q20_an_edited_record_cannot_be_passed_off_as_the_original(
     auditor_bundle: BundleReader,
     isolated_python: Path,
@@ -547,12 +535,15 @@ def test_q20_an_edited_record_cannot_be_passed_off_as_the_original(
       operator's audit key, and that key also writes valid events, so an
       auditor who holds enough to check the chain holds enough to forge it;
     * the Ed25519 signatures are asymmetric, but the verifying key travels
-      inside the receipt, so re-issuing under another key costs nothing.
+      inside the receipt, so a check against that key alone says nothing
+      about who signed it.
 
     The edit here is the one that matters: the read of the sensitive file
     is rewritten to name an innocuous one. A naive edit is caught, because
-    the subject digest no longer matches the events - that much holds
-    today. The same edit re-issued under a generated key is not.
+    the subject digest no longer matches the events. The same edit
+    re-issued under a generated key is caught too: verified from the bundle
+    alone it carries only its own key, which the verifier does not accept
+    as a pass, and pinned against the operator's key it fails the pin.
     """
     genuine = auditor_bundle.read_json(scenario.AUDIT_RECEIPT_NAME)
     edited = copy.deepcopy(genuine)
@@ -566,6 +557,7 @@ def test_q20_an_edited_record_cannot_be_passed_off_as_the_original(
         receipt=_write_receipt(tmp_path / "edited-audit-receipt.json", edited),
     )
     assert naive.returncode != 0, f"an edited event passed unchanged bindings:\n{naive.stdout}"
+    assert "[FAIL] subject_binding" in naive.stdout
 
     reissued = _verify_receipt(
         isolated_python,
@@ -588,12 +580,13 @@ def test_a_pinned_trust_anchor_rejects_a_bundle_resigned_with_another_key(
 ) -> None:
     """The half of question 18 that does hold: a pin, given out of band, works.
 
-    The same forged receipt is verified twice. Pinned against the
+    The same forged receipt is verified three times. Pinned against the
     operator's public key - which the auditor received separately, not
-    from the bundle - it is rejected. Unpinned it verifies and the
-    verifier says so: ``trust-on-first-use``.
+    from the bundle - it is rejected. Unpinned it is rejected as well, and
+    the verifier says why: ``trust-on-first-use``. Only with the explicit
+    ``--allow-unpinned-key`` opt-in does it verify.
 
-    The unpinned pass is also the check on the forgery itself. A sloppy
+    That opted-in pass is the check on the forgery itself. A sloppy
     re-issue would fail for the wrong reason and make
     :func:`test_q18_a_bundle_resigned_with_a_fresh_key_is_rejected` look
     like a finding when it was only a broken fixture.
@@ -606,11 +599,14 @@ def test_a_pinned_trust_anchor_rejects_a_bundle_resigned_with_another_key(
     assert "does not match the pinned" in pinned.stdout
 
     unpinned = _verify_receipt(isolated_python, receipt=receipt_path)
-    assert unpinned.returncode == 0, (
-        f"the forgery is malformed, not merely unauthorised:\n{unpinned.stdout}{unpinned.stderr}"
+    assert unpinned.returncode != 0, f"an unpinned key verified as a pass:\n{unpinned.stdout}"
+    assert "[FAIL] public_key - trust-on-first-use" in unpinned.stdout
+
+    opted_in = _verify_receipt(isolated_python, receipt=receipt_path, allow_unpinned_key=True)
+    assert opted_in.returncode == 0, (
+        f"the forgery is malformed, not merely unauthorised:\n{opted_in.stdout}{opted_in.stderr}"
     )
-    assert "OVERALL: PASS" in unpinned.stdout
-    assert "trust-on-first-use" in unpinned.stdout
+    assert "OVERALL: PASS (unpinned key: integrity only)" in opted_in.stdout
 
 
 def test_a_changed_recorded_input_diverges_from_the_signed_head(auditor_bundle: BundleReader) -> None:
