@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### שכבת הגברנס בקוד פתוח לסוכני AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,17 +38,17 @@
 
 > **סטטוס: בטא.** מתוחזק על ידי אדם יחיד, בפיתוח פעיל. מספר הגרסה סופר שחרורים ולא בשלות — גרסאות משניות (minor) עשויות לשנות ממשקים. קבע גרסה עבור תלויות קריטיות; נסיגות (regressions) מתוקנות במהירות, [דווח עליהן](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא פועל לפי policy as code: אתה כותב את המדיניות - מי רשאי לעשות מה, מה טעון אישור, מה חייב להירשם - ו-Bernstein אוכף אותה ומפיק רשומה שניתנת לאימות. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI ועוד 40+), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
+Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא פועל לפי policy as code: אתה כותב את המדיניות - מי רשאי לעשות מה, מה טעון אישור, מה חייב להירשם - ו-Bernstein אוכף אותה ומפיק רשומה שניתנת לאימות. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI ועוד 52+), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
 
 ### במבט חטוף
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
 
 ארבעה דברים מייחדים אותו; כל השאר הם פרטים.
 
 - **ללא LLM בלולאת התיאום.** התזמון נכתב ב-Python טהור, כך שריצה ניתנת לשחזור מלא מקצה לקצה. הרץ שוב את התוכנית של אתמול וקבל בדיוק את אותו גרף משימות.
 - **ניתן לבדיקה בדיעבד.** יומן השחזור (replay journal) רושם כל ריצה, ועמוד השדרה של השושלת (lineage spine) הפעיל תמיד מתעד כל שלב נושא שושלת; יומן הביקורת האופציונלי המשורשר ב-HMAC (`BERNSTEIN_AUDIT=1`) מוסיף קבלות (receipts) שניתן לאמת במצב לא מקוון. אי-דטרמיניזם צף כאי-התאמת גיבוב (hash mismatch) בשלב המדויק, ולא כחוסר יציבות אקראי בהרצה חוזרת. תוצרים שאינם קוד זוכים לאותו יחס: משימה יכולה להצהיר על חוזה ארטיפקט (דוח, מערך נתונים, יומן פעולות, תוצאת ops) ומסתיימת בקבלת שושלת חתומה במקום ב-commit של git.
 - **מבודד מעצם המבנה.** כל משימת קידוד מקבלת git worktree משלה מאחורי שערי מיזוג; משימות במצב ארטיפקט מקבלות ספריית עבודה תחת `.sdd/workspaces/`. כברירת מחדל, סוכנים אינם חולקים סביבת עבודה הניתנת לשינוי; המצב המשותף היחיד הוא מאגר המשימות (backlog), הנתבע בצורה אטומית. אכיפה מחמירה יותר של מערכת הקבצים היא אופציונלית דרך [מנועי סביבת החול (sandbox)](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). השבת את ה-worktrees וכל משימה תרוץ בסביבת העבודה המשותפת.
-- **רחב ומקומי.** מעל 40 מתאמים לסוכני CLI בתוספת מעטפת `--prompt` גנרית, מצב מבוסס קבצים, ללא תלות ב-SaaS, ללא מישור נתונים של צד שלישי.
+- **רחב ומקומי.** מעל 52 מתאמים לסוכני CLI בתוספת מעטפת `--prompt` גנרית, מצב מבוסס קבצים, ללא תלות ב-SaaS, ללא מישור נתונים של צד שלישי.
 
 הרשימה המלאה נמצאת ב[דף היכולות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [מטריצת התכונות](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) מהווה את האינדקס הממצה.
 
