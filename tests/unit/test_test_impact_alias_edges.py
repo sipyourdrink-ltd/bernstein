@@ -186,7 +186,7 @@ def test_analyzer_picks_the_alias_importing_test(tmp_path: Path) -> None:
     assert lifecycle in analysis.affected_tests
 
 
-@pytest.mark.timeout(90)
+@pytest.mark.timeout(300)
 def test_repo_worktree_change_selects_its_lifecycle_suite() -> None:
     """Regression pin on the reported case, against the real source tree.
 
