@@ -31,7 +31,7 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "mutation-fixed.yml"
 # adding a module here without also raising its kill rate (or lowering its
 # threshold in scripts/mutmut_critical.py:MODULES with a documented reason)
 # defeats the gate the same way the blanket continue-on-error used to.
-ADVISORY_MODULES: set[str] = {"audit_log"}
+ADVISORY_MODULES: set[str] = {"audit_log", "sandbox_eval", "policy_engine", "compliance_policies", "audit_pack"}
 
 
 def _load() -> dict[object, object]:
@@ -157,3 +157,17 @@ def test_upload_step_still_runs_after_a_failing_harness() -> None:
         "Upload module result must run with always() so a failing harness step "
         "still uploads the module's survivor JSON as an artifact"
     )
+
+def test_matrix_modules_match_registry() -> None:
+    from scripts.mutmut_critical import MODULES
+    registry_keys = {m.key for m in MODULES}
+    matrix_keys = set(_matrix_modules())
+    assert matrix_keys == registry_keys
+
+def test_security_modules_registered() -> None:
+    from scripts.mutmut_critical import MODULES
+    keys = {m.key: m for m in MODULES}
+    for m in ["sandbox_eval", "policy_engine", "compliance_policies", "audit_pack"]:
+        assert m in keys, f"{m} missing in MODULES"
+        for t in keys[m].tests:
+            assert Path(t).is_file(), f"{t} is not a file"

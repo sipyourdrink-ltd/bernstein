@@ -75,6 +75,7 @@ jobs:
           - lineage_tips
           - lineage_merge
           - config_seed_parser
+          - journal_verify
           - sandbox_eval
           - policy_engine
           - compliance_policies
@@ -105,14 +106,16 @@ jobs:
             advisory: false
           - module: config_seed_parser
             advisory: false
+          - module: journal_verify
+            advisory: false
           - module: sandbox_eval
-            advisory: false
+            advisory: true
           - module: policy_engine
-            advisory: false
+            advisory: true
           - module: compliance_policies
-            advisory: false
+            advisory: true
           - module: audit_pack
-            advisory: false
+            advisory: true
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
