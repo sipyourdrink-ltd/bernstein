@@ -263,6 +263,7 @@ def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bo
                     "gen_time": result.gen_time.isoformat() if result.gen_time else None,
                     "tsa_subject": result.tsa_subject,
                     "tsa_url": anchor.tsa_url,
+                    "tree_size": result.tree_size,
                     "errors": result.errors,
                 }
             )
@@ -272,6 +273,8 @@ def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bo
         console.print(f"[{colour}]{result.status.value.upper()}[/{colour}] anchor for [bold]{run_id}[/bold]")
         if result.gen_time is not None:
             console.print(f"witnessed at {result.gen_time.isoformat()} by {result.tsa_subject}")
+        if result.tree_size is not None:
+            console.print(f"included at tree size {result.tree_size}")
         for error in result.errors:
             console.print(f"  {error}")
 

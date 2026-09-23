@@ -20,23 +20,31 @@ either way.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from bernstein.core.security.audit_receipt import _merkle_root_and_path
 from bernstein.core.security.rfc3161_verifier import load_trusted_tsa_certs
 from bernstein.core.security.seal_anchor import (
     ANCHOR_FILENAME,
+    ANCHOR_KIND_RFC3161,
+    ANCHOR_KIND_TRANSPARENCY_LOG,
     AnchorStatus,
     SealAnchor,
     SealAnchorError,
     _require_echoed_nonce,
     build_rfc3161_anchor,
     build_timestamp_request,
+    build_transparency_log_anchor,
     load_anchor,
     request_timestamp_token,
+    transparency_log_leaf,
     verify_anchor,
     write_anchor,
 )
@@ -221,3 +229,146 @@ def test_a_non_http_tsa_url_is_refused_before_any_request(sealed_head: str) -> N
     """The TSA endpoint is a URL to POST to, never a local file to read."""
     with pytest.raises(SealAnchorError, match="refusing to contact TSA"):
         request_timestamp_token("file:///etc/passwd", build_timestamp_request(sealed_head, nonce=1))
+
+
+# ---------------------------------------------------------------------------
+# Transparency-log anchors (#6208 slice 1)
+# ---------------------------------------------------------------------------
+
+#: Fixture Ed25519 seed for the log that signs the tree head.
+_LOG_SEED = bytes.fromhex("11" * 32)
+_OTHER_LOG_SEED = bytes.fromhex("22" * 32)
+
+
+def _log_key() -> Ed25519PrivateKey:
+    return Ed25519PrivateKey.from_private_bytes(_LOG_SEED)
+
+
+def _public_hex(key: Ed25519PrivateKey) -> str:
+    return key.public_key().public_bytes_raw().hex()
+
+
+def _five_leaf_transparency_anchor(
+    *,
+    head: str | None = None,
+    log_key: Ed25519PrivateKey | None = None,
+) -> tuple[str, SealAnchor]:
+    """Build a 5-leaf tree whose leaf 3 is the sealed head, and sign the STH."""
+    sealed_head = head or hashlib.sha256(b"sealed-head-fixture").hexdigest()
+    key = log_key or _log_key()
+    leaves = [
+        transparency_log_leaf(hashlib.sha256(f"padding-{index}".encode()).hexdigest())
+        if index != 3
+        else transparency_log_leaf(sealed_head)
+        for index in range(5)
+    ]
+    root, path = _merkle_root_and_path(leaves, 3)
+    audit_path = [{"hash": sibling, "left": is_left} for sibling, is_left in path]
+    sth = {"root_hash": root, "tree_size": 5}
+    signature = key.sign(json.dumps(sth, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    signed_tree_head = {
+        **sth,
+        "signature_b64": base64.b64encode(signature).decode("ascii"),
+    }
+    anchor = build_transparency_log_anchor(
+        run_id="run-log",
+        head_sha256=sealed_head,
+        leaf_hash=leaves[3],
+        tree_size=5,
+        audit_path=audit_path,
+        signed_tree_head=signed_tree_head,
+        log_public_key=_public_hex(key),
+    )
+    return sealed_head, anchor
+
+
+def test_inclusion_proof_recomputes_the_signed_tree_head() -> None:
+    """A 5-leaf tree whose leaf 3 is the sealed head verifies offline at tree_size=5."""
+    sealed_head, anchor = _five_leaf_transparency_anchor()
+
+    result = verify_anchor(anchor, sealed_head=sealed_head, trusted_tsa_certs=[])
+
+    assert result.status is AnchorStatus.VERIFIED, result.errors
+    assert result.errors == []
+    assert result.tree_size == 5
+    assert result.gen_time is None
+
+
+def test_tampered_sealed_head_fails_inclusion() -> None:
+    """Changing the stored head without rebuilding the proof is a loud failure."""
+    sealed_head, anchor = _five_leaf_transparency_anchor()
+    other_head = hashlib.sha256(b"different-sealed-head").hexdigest()
+    tampered = replace(anchor, head_sha256=other_head)
+
+    result = verify_anchor(tampered, sealed_head=other_head, trusted_tsa_certs=[])
+
+    assert result.status is AnchorStatus.INVALID
+    assert result.tree_size is None
+    assert any("leaf" in err or "root" in err for err in result.errors)
+    assert sealed_head != other_head
+
+
+def test_tree_head_signed_by_another_log_key_is_refused() -> None:
+    """An inclusion proof is not evidence if a different log key is attached."""
+    sealed_head, anchor = _five_leaf_transparency_anchor()
+    other_key = Ed25519PrivateKey.from_private_bytes(_OTHER_LOG_SEED)
+    tampered = replace(anchor, log_public_key=_public_hex(other_key))
+
+    result = verify_anchor(tampered, sealed_head=sealed_head, trusted_tsa_certs=[])
+
+    assert result.status is AnchorStatus.INVALID
+    assert any("signature" in err for err in result.errors)
+
+
+def test_existing_rfc3161_anchor_files_still_load(
+    freetsa_token: bytes,
+    sealed_head: str,
+    tmp_path: Path,
+) -> None:
+    """v3.19.2 records (RFC 3161 fields only) still load after the log fields landed."""
+    record = {
+        "schema_version": "1.0.0",
+        "run_id": "run-legacy",
+        "head_sha256": sealed_head,
+        "anchor_kind": "rfc3161",
+        "rfc3161_token_b64": base64.b64encode(freetsa_token).decode("ascii"),
+        "rfc3161_tsa_url": "https://freetsa.org/tsr",
+    }
+    assert "leaf_hash" not in record
+    assert "signed_tree_head" not in record
+    path = tmp_path / "legacy_seal_anchor.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    loaded = load_anchor(path)
+
+    assert loaded.anchor_kind == ANCHOR_KIND_RFC3161
+    assert loaded.head_sha256 == sealed_head
+    assert loaded.token_b64 == record["rfc3161_token_b64"]
+    assert loaded.leaf_hash is None
+    assert loaded.tree_size is None
+    assert loaded.audit_path is None
+    assert loaded.signed_tree_head is None
+    assert loaded.log_public_key is None
+
+
+def test_transparency_log_anchor_round_trips_through_disk(tmp_path: Path) -> None:
+    """A log anchor reloads as the same record, without TSA fields."""
+    _head, anchor = _five_leaf_transparency_anchor()
+    path = tmp_path / ANCHOR_FILENAME
+    write_anchor(path, anchor)
+
+    assert load_anchor(path) == anchor
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored["anchor_kind"] == ANCHOR_KIND_TRANSPARENCY_LOG
+    assert "rfc3161_token_b64" not in stored
+    assert "created_at" not in stored
+    assert "timestamp" not in stored
+
+
+def test_transparency_log_leaf_is_the_bare_sealed_head_digest() -> None:
+    """The leaf is domain-separated over the raw head bytes, not a run statement."""
+    from bernstein.core.persistence.merkle import _leaf_digest
+
+    head = hashlib.sha256(b"bare-head").hexdigest()
+    assert transparency_log_leaf(head) == _leaf_digest(bytes.fromhex(head))
+    assert transparency_log_leaf(head) != head
