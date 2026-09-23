@@ -1,18 +1,21 @@
-
-#
-#   <path>::<Class>.<method>      # <reason>
-#   <path>::<function>            # <reason>
-#   uv run python scripts/check_unreachable_controls.py --update
 # Allowlist for scripts/check_unreachable_controls.py (issue #5053).
+#
 # Each line names a public symbol under src/bernstein/core/security/ or
+# src/bernstein/core/identity/ that no production code path reaches, and
+# states why. The reason after '#' is mandatory - an entry without one, or
+# one still carrying the 'REASON REQUIRED' marker, fails the gate.
+#
 # Format:
+#   <path>::<function>            # <reason>
+#   <path>::<Class>.<method>      # <reason>
+#
 # Regenerate the entry list (reasons for existing entries are preserved):
+#   uv run python scripts/check_unreachable_controls.py --update
+#
 # Removing an entry is the goal: wire the symbol into a live code path, or
 # delete it. An entry whose symbol became reachable fails the gate too, so a
-# one still carrying the 'REASON REQUIRED' marker, fails the gate.
-# src/bernstein/core/identity/ that no production code path reaches, and
 # stale line cannot sit here unnoticed.
-# states why. The reason after '#' is mandatory - an entry without one, or
+
 src/bernstein/core/identity/agent_card.py::check_capability                                    # exercised by tests only; no production caller
 src/bernstein/core/identity/agent_card.py::issue_identity_card                                 # exercised by tests only; no production caller
 src/bernstein/core/identity/agent_card.py::load_identity_card                                  # exercised by tests only; no production caller
@@ -308,7 +311,6 @@ src/bernstein/core/security/promptware_ingest.py::build_lifecycle_payload       
 src/bernstein/core/security/promptware_ingest.py::get_default_detector                         # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/promptware_ingest.py::quarantine_untrusted_payload                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/promptware_ingest.py::scan_tool_output                             # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/quarantined_parser.py::FieldSpec                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/quarantined_parser.py::QuarantinedExtract                          # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/quarantined_parser.py::extract_structured                          # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/rbac.py::RBACEnforcer                                              # no production caller and no test reference; baseline entry from the first scan
