@@ -1,10 +1,6 @@
 # Modules under src/bernstein/core that the static reachability trace in
 # tests/unit/test_core_reachability.py cannot reach, one per line, as
 # `dotted.module: reason`.
-<<<<<<< HEAD
-
-# From origin/main:
-=======
 #
 # A line is a claim, and the claim is one of two things:
 #
@@ -21,7 +17,6 @@
 # a new module that nothing imports is a defect at the pull request that adds it.
 #
 # Sorted; keep it that way so a diff reads as one line added or removed.
->>>>>>> 7252891ea0e0ef1fd24c8c04e465bb49c6c5ffbb
 bernstein.core.admission.interop: #4526 audit in flight
 bernstein.core.agents.adapter_autodetect: #4526 audit in flight
 bernstein.core.agents.agent_cache: #4526 audit in flight
@@ -87,84 +82,6 @@ bernstein.core.evidence.render_receipt: #4526 audit in flight
 bernstein.core.finding_verify: #4526 audit in flight
 bernstein.core.git.commit_provenance: #4526 audit in flight
 bernstein.core.git.git_hooks: #4526 audit in flight
-<<<<<<< HEAD
-
-# From FETCH_HEAD:
-bernstein.core.admission.interop: #4526 audit in flight
-bernstein.core.agents.adapter_autodetect: #4526 audit in flight
-bernstein.core.agents.agent_cache: #4526 audit in flight
-bernstein.core.agents.agent_cost_ledger: #4526 audit in flight
-bernstein.core.agents.agent_profiling: #4526 audit in flight
-bernstein.core.agents.agent_state_refresh: #4526 audit in flight
-bernstein.core.agents.agent_turn_state: #4526 audit in flight
-bernstein.core.agents.agent_utilization: #4526 audit in flight
-bernstein.core.agents.claude_agent_card: #4526 audit in flight
-bernstein.core.agents.claude_max_turns: #4526 audit in flight
-bernstein.core.agents.claude_message_normalizer: #4526 audit in flight
-bernstein.core.agents.claude_model_prompts: #4526 audit in flight
-bernstein.core.agents.claude_session_resume: #4526 audit in flight
-bernstein.core.agents.cross_agent_consistency: #4526 audit in flight
-bernstein.core.agents.orphan_tool_result: #4526 audit in flight
-bernstein.core.agents.prompt_cache: #4526 audit in flight
-bernstein.core.agents.spawn_dry_run: #4526 audit in flight
-bernstein.core.agents.subagent_delegation: #4526 audit in flight
-bernstein.core.agents.tool_use_context: #4526 audit in flight
-bernstein.core.approval.card_inbound: #4526 audit in flight
-bernstein.core.autofix.tier3: #4526 audit in flight
-bernstein.core.autoheal.audit_log: #4526 audit in flight
-bernstein.core.autoheal.bandit: #4526 audit in flight
-bernstein.core.autoheal.bayesian: #4526 audit in flight
-bernstein.core.autoheal.categorizer: #4526 audit in flight
-bernstein.core.autoheal.idempotency: #4526 audit in flight
-bernstein.core.autoheal.kill_switch: #4526 audit in flight
-bernstein.core.autoheal.shadow_mode: #4526 audit in flight
-bernstein.core.autoheal.wire: #4526 audit in flight
-bernstein.core.checks.adapters: #4526 audit in flight
-bernstein.core.checks.contract: #4526 audit in flight
-bernstein.core.checks.registry: #4526 audit in flight
-bernstein.core.communication.direct: #4526 audit in flight
-bernstein.core.communication.rendezvous: #4526 audit in flight
-bernstein.core.communication.whiteboard: #4526 audit in flight
-bernstein.core.compat_redirect_ledger: #4526 audit in flight
-bernstein.core.config.prompt_versions: #4526 audit in flight
-bernstein.core.cost.budget_countdown: #4526 audit in flight
-bernstein.core.cost.claude_cost_tracking: #4526 audit in flight
-bernstein.core.cost.completion_confidence: #4526 audit in flight
-bernstein.core.cost.cost_arbitrage: #4526 audit in flight
-bernstein.src/bernstein.core.cost.cost_comparison: #4526 audit in flight
-
-# From FETCH_HEAD (truncated for brevity, but the rest is identical):
-bernstein.core.cost.cost_forecast: #4526 audit in flight
-bernstein.core.cost.cost_per_line: #4526 audit in flight
-bernstein.core.cost.cost_root_cause: #4526 audit in flight
-bernstein.core.cost.education_tier: #4526 audit in flight
-bernstein.core.cost.free_tier: #4526 audit in flight
-bernstein.core.cost.model_call_ledger: #4526 audit in flight
-bernstein.core.cost.outcome_pricing: #4526 audit in flight
-bernstein.core.cost.planned.cheaper_retry: #4526 audit in flight
-bernstein.core.cost.planned.retry_budget: #4526 audit in flight
-bernstein.core.cost.predictive_cost_model: #4526 audit in flight
-bernstein.core.cost.spend_forecast: #4526 audit in flight
-bernstein.core.datasources.query_driver: #4526 audit in flight
-bernstein.core.endpoints.certify: #4526 audit in flight
-bernstein.core.endpoints.verify: #4526 audit in flight
-bernstein.core.events.actions: #4526 audit in flight
-bernstein.core.events.receipts: #4526 audit in flight
-bernstein.core.events.state: #4526 audit in flight
-bernstein.core.events.triggers: #4526 audit in flight
-bernstein.core.events.webhook_template: #4526 audit in flight
-bernstein.core.evidence.render_receipt: #4526 audit in flight
-bernstein.core.finding_verify: #4526 audit in flight
-bernstein.core.git.commit_provenance: #4526 audit in flight
-bernstein.core.git.git_hooks: #4526 audit in flight
-bernstein.core.git.idempotent_merge: #4526 audit in flight
-
-# From FETCH_HEAD (truncated for brevity, but the rest is identical):
-bernstein.core.security.engagement.mandate: #4526 audit in flight
-bernstein.core.security.engagement_mandate: #4526 audit in flight
-
-# From FETCH_HEAD (truncated for brevity, but the rest is identical):
-=======
 bernstein.core.git.idempotent_merge: #4526 audit in flight
 bernstein.core.git.jira_sync: #4526 audit in flight
 bernstein.core.git.merge_tree_probe: #4526 audit in flight
@@ -370,7 +287,6 @@ bernstein.core.security.tenant_isolation_verify: #4526 audit in flight
 bernstein.core.security.tenant_rate_limiter: #4526 audit in flight
 bernstein.core.security.vault_injector: #4526 audit in flight
 bernstein.core.security.vuln_disclosure: #4526 audit in flight
->>>>>>> 7252891ea0e0ef1fd24c8c04e465bb49c6c5ffbb
 bernstein.core.server.api_compat: #4526 audit in flight
 bernstein.core.server.connection_pool: #4526 audit in flight
 bernstein.core.server.http_retry: #4526 audit in flight
@@ -415,12 +331,3 @@ bernstein.core.volunteer.reputation: #4526 audit in flight
 bernstein.core.volunteer.review_task: #4526 audit in flight
 bernstein.core.volunteer.submission: #4526 audit in flight
 bernstein.core.volunteer.verification_check_run: #4526 audit in flight
-<<<<<<< HEAD
-
-# Model registry for audit chain; consumed by dynamic imports in routing logic
-bernstein.core.routing.model_registry: Model registry for audit chain; consumed by dynamic imports in routing logic
-
-# Truncated for brevity, but all entries are identical.
-=======
-bernstein.core.routing.model_registry: Model registry for audit chain; consumed by dynamic imports in routing logic
->>>>>>> 7252891ea0e0ef1fd24c8c04e465bb49c6c5ffbb
