@@ -222,8 +222,11 @@ class ClaimedTask:
     issue_number: int
     issue_title: str
     issue_body: str
+    role: str | None = None
+
     ref: str | None = None
-    role: str = "backend"
+
+
 
 
 @dataclass(frozen=True, slots=True)

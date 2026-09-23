@@ -22,7 +22,7 @@ _logger = logging.getLogger(__name__)
 
 
 def select_adapter_for_volunteer(
-    role: str,
+    role: str | None,
     explicit_adapter: str | None,
     workdir: Path = Path("."),
     base_url: str = "",
