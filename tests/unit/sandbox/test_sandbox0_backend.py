@@ -52,6 +52,14 @@ async def test_rejects_mounts_before_allocating(backend):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("root,timeout", [("workspace", 30), ("/workspace", 0), ("/workspace", -1)])
+async def test_rejects_invalid_manifest_before_allocating(backend, root, timeout):
+    with pytest.raises(ValueError, match="Workspace root must be absolute and timeout_seconds positive"):
+        await backend.create(WorkspaceManifest(root=root, timeout_seconds=timeout))
+    backend.client.sandboxes.claim.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_retries_then_is_idempotent(backend):
     session = await backend.create(WorkspaceManifest())
     backend.client.delete_sandbox.side_effect = [OSError("unreachable"), None]

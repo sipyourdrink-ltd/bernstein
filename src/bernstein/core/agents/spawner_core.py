@@ -5832,8 +5832,8 @@ class AgentSpawner:
         if not tasks:
             raise ValueError("Cannot resume with empty task list")
 
-        if (self._sandbox_backend is not None and self._sandbox_backend.name == "sandbox0") or (
-            self._sandbox_session is not None and self._sandbox_session.backend_name == "sandbox0"
+        if getattr(getattr(self, "_sandbox_backend", None), "name", None) == "sandbox0" or (
+            getattr(getattr(self, "_sandbox_session", None), "backend_name", None) == "sandbox0"
         ):
             raise SandboxSelectionError(
                 "Sandbox0 crash recovery requires an explicit RootFS snapshot restore; "
