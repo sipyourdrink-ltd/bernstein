@@ -405,7 +405,7 @@ class TrustEvaluator:
         score.trust_level = to_level
         score.last_updated = now
 
-        from bernstein.core.sanitize import sanitize_log
+        from bernstein.core.security.sanitize import sanitize_log
 
         logger.info(
             "agent %s promoted %s → %s (reason=%s, by=%s)",
