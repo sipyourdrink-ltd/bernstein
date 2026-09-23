@@ -19,9 +19,20 @@
 // chain is #5067 slice 2; the "not covered" list and receipt verification are
 // slices 3 and 4. The fixture is shaped exactly like the projection those
 // slices will serve, so the panel does not change when the data becomes real.
+//
+// The "not covered" list below (#5069, slice 3 of #5067) is data, not markup:
+// a new gap is one entry in ``governance-not-covered.json``, not a new
+// component. Each entry carries its own ``resolved`` flag rather than
+// checking GitHub issue state live - the panel has no backend and no network
+// call, so "self-maintaining" here means the whole maintenance action is
+// flipping one boolean in the data file when the linked issue closes, not
+// writing a live status check. Two of the six checked-in gaps (#5047, #5051)
+// are already closed as of this list's writing, so ``resolved: true`` on
+// those two is this property demonstrated with real data, not a hypothetical.
 
 import { Pill, SectionLabel } from '@/lib/states';
 import fixture from './governance-coverage.fixture.json';
+import notCoveredFixture from './governance-not-covered.json';
 
 export type CoverageMetric = {
   id: string;
@@ -45,6 +56,22 @@ export type CoverageReport = {
 };
 
 export const coverageFixture: CoverageReport = fixture;
+
+export type CoverageGap = {
+  id: string;
+  /** Short, plain-language name of the gap (e.g. "tool calls"). */
+  label: string;
+  /** The consequence, in one line an operator understands without more context. */
+  consequence: string;
+  /** GitHub issue number that would close this gap, or ``null`` when the fix is a setting, not code. */
+  issue: number | null;
+  /** ``true`` once the linked issue has closed. The row stays, rendered differently, rather than vanishing. */
+  resolved: boolean;
+};
+
+export const notCoveredFixtureGaps: CoverageGap[] = notCoveredFixture.gaps;
+
+const ISSUE_BASE_URL = 'https://github.com/sipyourdrink-ltd/bernstein/issues/';
 
 type MeasuredMetric = CoverageMetric & { covered: number; total: number };
 
@@ -132,7 +159,84 @@ function MetricRow({ metric }: { metric: CoverageMetric }) {
   );
 }
 
-export function GovernancePanel({ coverage }: { coverage: CoverageReport }) {
+function GapRow({ gap }: { gap: CoverageGap }) {
+  return (
+    <div
+      data-gap={gap.id}
+      data-gap-state={gap.resolved ? 'resolved' : 'open'}
+      className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border-subtle py-3 last:border-0"
+    >
+      <div className="min-w-0">
+        <span
+          className={
+            gap.resolved
+              ? 'text-body text-muted-foreground line-through'
+              : 'text-body text-foreground'
+          }
+        >
+          {gap.label}
+        </span>
+        <p className="mt-0.5 text-body text-muted-foreground">{gap.consequence}</p>
+      </div>
+      {gap.resolved ? (
+        <Pill kind="ghost">resolved</Pill>
+      ) : gap.issue !== null ? (
+        <a
+          href={`${ISSUE_BASE_URL}${gap.issue}`}
+          target="_blank"
+          rel="noreferrer"
+          className="shrink-0 font-mono text-log text-meta-foreground underline decoration-dotted hover:text-foreground"
+        >
+          {`#${gap.issue}`}
+        </a>
+      ) : (
+        <span className="shrink-0 font-mono text-log text-meta-foreground">settings</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The "not covered" list: every gap this checked-in list knows about, each
+ * one linked to what would close it. An empty list is rendered explicitly
+ * ("nothing known to be uncovered") rather than as an absent section, which
+ * would read the same as "nothing was checked" - a very different claim this
+ * panel must never make by omission.
+ */
+function NotCoveredSection({ gaps }: { gaps: CoverageGap[] }) {
+  const openCount = gaps.filter((gap) => !gap.resolved).length;
+  return (
+    <section>
+      <SectionLabel
+        trailing={<Pill kind="ghost">{`${openCount} open of ${gaps.length}`}</Pill>}
+      >
+        not covered in this run
+      </SectionLabel>
+      {gaps.length === 0 ? (
+        <p
+          data-testid="not-covered-empty"
+          className="mt-2 rounded-md border border-dashed border-border-subtle p-4 text-body text-muted-foreground"
+        >
+          Nothing known to be uncovered - not the same claim as nothing having been checked.
+        </p>
+      ) : (
+        <div className="mt-2 rounded-md border border-border bg-card px-4 py-1">
+          {gaps.map((gap) => (
+            <GapRow key={gap.id} gap={gap} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function GovernancePanel({
+  coverage,
+  notCoveredGaps = notCoveredFixtureGaps,
+}: {
+  coverage: CoverageReport;
+  notCoveredGaps?: CoverageGap[];
+}) {
   const measuredCount = coverage.metrics.filter(isMeasured).length;
   return (
     <div className="space-y-6 p-6">
@@ -164,6 +268,8 @@ export function GovernancePanel({ coverage }: { coverage: CoverageReport }) {
           <MetricRow key={metric.id} metric={metric} />
         ))}
       </section>
+
+      <NotCoveredSection gaps={notCoveredGaps} />
     </div>
   );
 }

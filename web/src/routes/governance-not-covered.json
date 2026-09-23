@@ -1,0 +1,46 @@
+{
+  "gaps": [
+    {
+      "id": "tool_calls",
+      "label": "tool calls",
+      "consequence": "No per-call identity record is written, so a tool call cannot be attributed to the agent that made it.",
+      "issue": 5062,
+      "resolved": false
+    },
+    {
+      "id": "delegation",
+      "label": "delegation",
+      "consequence": "No grant chain is written for a delegation hop, so a narrowed authority cannot be proven from the chain.",
+      "issue": 5047,
+      "resolved": true
+    },
+    {
+      "id": "policy_version",
+      "label": "policy version",
+      "consequence": "A governance decision names no policy version, so which rule produced it cannot be recovered later.",
+      "issue": 5060,
+      "resolved": false
+    },
+    {
+      "id": "approvals",
+      "label": "approvals",
+      "consequence": "The approval gate is off by default, so a consequential action can proceed with no human sign-off.",
+      "issue": 5051,
+      "resolved": true
+    },
+    {
+      "id": "sensitivity",
+      "label": "sensitivity",
+      "consequence": "Taint flows into a derived artifact but its sensitivity classification does not flow out with it.",
+      "issue": 5042,
+      "resolved": false
+    },
+    {
+      "id": "permitted_models",
+      "label": "permitted models",
+      "consequence": "This installation keeps no record of which models it is permitted to use, so a policy question about last month cannot be answered.",
+      "issue": 5038,
+      "resolved": false
+    }
+  ]
+}
