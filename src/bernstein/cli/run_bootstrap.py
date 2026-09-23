@@ -16,6 +16,7 @@ from typing import Any, Final
 
 import click
 import httpx
+import yaml
 
 from bernstein.cli.first_run_guard import handle_first_run_exception
 from bernstein.cli.helpers import (
@@ -135,8 +136,51 @@ def _resolve_goal_and_team(workdir: Path, goal: str | None, seed_file: str | Non
     return seed.goal, team
 
 
+#: Plan-file suffixes parsed as YAML. Both spellings, because a plan is a file
+#: somebody writes by hand and the docs show `.yaml`.
+_YAML_PLAN_SUFFIXES = (".yaml", ".yml")
+
+
+def _yaml_plan_goal(content: str) -> str | None:
+    """The orchestration goal of a YAML plan, or ``None`` if it carries none.
+
+    Two shapes, because two things are spelled as plans here and
+    ``plan_loader`` reads both:
+
+    * a staged plan's ``name``, which :class:`PlanConfig` documents as "short
+      plan name used as the orchestration goal";
+    * a top-level ``goal``, which ``plan_loader._SEED_SHAPED_KEYS`` treats as
+      the mark of a seed config. Accepted here anyway: ``--from-plan`` on such
+      a file is a mistake that ``load_plan`` refuses a moment later with a
+      message naming ``--seed``, and refusing it HERE instead loses that
+      message and reports a missing goal on a file whose goal is right there.
+
+    ``goal`` wins when both are present: it is the more specific statement of
+    intent, and a plan carrying both is a seed somebody added stages to.
+    """
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("goal", "name"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _load_plan_goal(plan_path: Path) -> str:
-    """Extract the goal from a saved plan file (JSON or markdown).
+    """Extract the goal from a saved plan file (YAML, JSON or markdown).
+
+    Every shape ``--from-plan`` documents has to be readable here, because this
+    runs BEFORE ``load_plan`` and a failure stops the file ever reaching the
+    loader that understands it. YAML was missing, so
+    ``bernstein run --from-plan plan.yaml`` -- the exact command in
+    ``docs/architecture/plans.md`` -- failed with "Could not extract goal from
+    plan file" on a plan that was perfectly well-formed, and per-step model
+    routing had no reachable entry point at all (issue #6080).
 
     Args:
         plan_path: Path to the plan file.
@@ -155,6 +199,11 @@ def _load_plan_goal(plan_path: Path) -> str:
             data = json.loads(content)
             if "goal" in data:
                 return str(data["goal"])
+
+    if plan_path.suffix.lower() in _YAML_PLAN_SUFFIXES:
+        goal = _yaml_plan_goal(content)
+        if goal is not None:
+            return goal
 
     # Fall back to markdown: look for "**Goal:** ..." line
     for line in content.splitlines():
