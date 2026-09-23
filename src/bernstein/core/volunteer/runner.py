@@ -227,8 +227,6 @@ class ClaimedTask:
     ref: str | None = None
 
 
-
-
 @dataclass(frozen=True, slots=True)
 class DonorLimits:
     """What this particular machine is willing to lend.
