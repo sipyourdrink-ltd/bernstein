@@ -8,21 +8,22 @@
 #     --output-file docs/requirements.txt docs/requirements.in
 #
 # `--strip-extras` is not optional: it is what produced the committed file
-# (see its header), and omitting it leaves `mkdocs-material[imaging]` as an
-# extras-bearing entry that the pin gate then reports as a *missing*
-# dependency. Kept in step with `REGEN_COMMAND` in
+# (see its header). Kept in step with `REGEN_COMMAND` in
 # `scripts/check_docs_requirements_pins.py` by a test in that script's suite.
-#
-# The `imaging` extra pulls cairosvg/pillow for the Material `social` card
-# plugin (mkdocs.yml); the matching native libs (libcairo, ...) are installed
-# by `.readthedocs.yaml::build.apt_packages`.
 mkdocs>=1.6.1,<2
 # Material for MkDocs reaches EOL on 2026-11-05 (Issue #3990).
 # Decision matrix (documented in docs/reference/mkdocs-material-coupling.md):
 # 1. GHSA security advisory against mkdocs-material -> immediate theme migration.
 # 2. Build-chain incompatibility on required Python/mkdocs version -> forced migration.
 # 3. Calendar check at v3.19.0 milestone (2026-10-08) -> re-evaluate status.
-mkdocs-material[imaging]>=9.7.7,<10
+#
+# No `[imaging]` extra: the `social` plugin it fed made every docs build
+# fetch Inter/JetBrains Mono from fonts.google.com at build time (see
+# mkdocs.yml history and docs/reference/mkdocs-material-coupling.md). That
+# fetch is what broke the Read the Docs build - a network dependency inside
+# a build step for a project whose stated goal is air-gap friendliness.
+# Dropped rather than made resilient: nothing else in this repo needs it.
+mkdocs-material>=9.7.7,<10
 mkdocs-minify-plugin>=0.8,<1
 # Cap below 1.2.3: that release added a runtime dependency on `properdocs`
 # (a third-party fork of mkdocs 1.x). We build against upstream `mkdocs`
