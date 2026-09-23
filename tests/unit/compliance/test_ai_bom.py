@@ -32,6 +32,7 @@ from bernstein.core.compliance.ai_bom import (
     generate_bom,
     snapshot_from_spine,
     verify_bom,
+    verify_bom_against_spine,
 )
 from bernstein.core.lineage.spine import LineageSpine
 
@@ -728,6 +729,60 @@ class TestVerifyBOM:
         report = verify_bom(json.dumps(bad).encode("utf-8"))
         assert report.ok is False
         assert len(report.errors) >= 3
+
+    @staticmethod
+    def _seeded_spine(tmp_path: Path, run_id: str = "20260101-run-a") -> LineageSpine:
+        spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id=run_id, hmac_key=b"k" * 32)
+        spine.record(
+            artifact_path="src/a.py",
+            content=b"a",
+            actor="agent:worker",
+            step_id="s1",
+            model="claude-sonnet",
+            timestamp=1767225600,
+        )
+        return spine
+
+    def test_bom_verify_fails_closed_when_component_hash_does_not_resolve(self, tmp_path: Path) -> None:
+        spine = self._seeded_spine(tmp_path)
+        snapshot = snapshot_from_spine(spine)
+        doc = json.loads(encode_bom(generate_bom(snapshot), fmt="json"))
+
+        # Replace the line item's hash with a well-formed value that is not a
+        # verifying entry on the spine, then re-encode the document so the
+        # structural check alone passes and only resolution can catch it.
+        doc["models"][0]["sha256"] = _sha("unrelated-component")
+
+        report = verify_bom_against_spine(
+            json.dumps(doc).encode("utf-8"),
+            spine=spine,
+            hmac_key=b"k" * 32,
+        )
+        assert report.ok is False
+        assert any("claude-sonnet" in err and "models[0]" in err for err in report.errors)
+
+    def test_bom_verify_against_spine_passes_for_faithful_projection(self, tmp_path: Path) -> None:
+        spine = self._seeded_spine(tmp_path)
+        snapshot = snapshot_from_spine(spine)
+        payload = encode_bom(generate_bom(snapshot), fmt="json")
+
+        report = verify_bom_against_spine(payload, spine=spine, hmac_key=b"k" * 32)
+        assert report.ok is True
+        assert report.errors == ()
+
+    def test_bom_verify_against_spine_flags_head_anchor_mismatch(self, tmp_path: Path) -> None:
+        spine = self._seeded_spine(tmp_path)
+        snapshot = snapshot_from_spine(spine)
+        doc = json.loads(encode_bom(generate_bom(snapshot), fmt="json"))
+        doc["lineage_root_hash"] = _sha("wrong-head")
+
+        report = verify_bom_against_spine(
+            json.dumps(doc).encode("utf-8"),
+            spine=spine,
+            hmac_key=b"k" * 32,
+        )
+        assert report.ok is False
+        assert any("lineage_root_hash mismatch" in err for err in report.errors)
 
 
 # ---------------------------------------------------------------------------

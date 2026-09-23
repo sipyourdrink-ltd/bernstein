@@ -163,3 +163,24 @@ Real runs from the community. Submit yours via [issue #787](https://github.com/s
 | Startup latency (avg, 5 runs) | 3048.61 ms | `uv run python benchmarks/bench_startup.py` |
 
 **Notes:** Low-end consumer laptop (budget i3, 2016 generation, 3.7 GB RAM). Startup latency is higher than expected — likely cold import overhead from running a Python 3.14 pre-release build; expect lower on stable Python 3.12/3.13. Orchestrator tick and task store throughput look normal for this hardware class. Quality gate scaling is near-linear as the docs describe.
+
+---
+
+## BenchmarkSuite Protocol
+
+Foundation for pluggable benchmark suites. A suite implementation provides four methods:
+
+- `load(sample, seed)` → deterministic task sampling from the suite's dataset
+- `sandbox(task)` → context manager providing the execution environment (worktree, container, etc.)
+- `score(task, result)` → task-specific scoring logic returning a `Score`
+- `metadata()` → suite identification (name, version, dataset hash)
+
+### Score type
+
+Every benchmark task result is a `Score` dataclass:
+- `value`: float (+1 for resolved/pass, 0 for abstained, -lambda for wrong answer)
+- `passed`: bool (True if completed successfully)
+- `details`: dict for suite-specific metadata
+
+This protocol enables external benchmark suites to integrate with Bernstein's evaluation infrastructure without custom runner code.
+

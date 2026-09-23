@@ -1,21 +1,18 @@
-# Allowlist for scripts/check_unreachable_controls.py (issue #5053).
+
 #
-# Each line names a public symbol under src/bernstein/core/security/ or
-# src/bernstein/core/identity/ that no production code path reaches, and
-# states why. The reason after '#' is mandatory - an entry without one, or
-# one still carrying the 'REASON REQUIRED' marker, fails the gate.
-#
-# Format:
-#   <path>::<function>            # <reason>
 #   <path>::<Class>.<method>      # <reason>
-#
-# Regenerate the entry list (reasons for existing entries are preserved):
+#   <path>::<function>            # <reason>
 #   uv run python scripts/check_unreachable_controls.py --update
-#
+# Allowlist for scripts/check_unreachable_controls.py (issue #5053).
+# Each line names a public symbol under src/bernstein/core/security/ or
+# Format:
+# Regenerate the entry list (reasons for existing entries are preserved):
 # Removing an entry is the goal: wire the symbol into a live code path, or
 # delete it. An entry whose symbol became reachable fails the gate too, so a
+# one still carrying the 'REASON REQUIRED' marker, fails the gate.
+# src/bernstein/core/identity/ that no production code path reaches, and
 # stale line cannot sit here unnoticed.
-
+# states why. The reason after '#' is mandatory - an entry without one, or
 src/bernstein/core/identity/agent_card.py::check_capability                                    # exercised by tests only; no production caller
 src/bernstein/core/identity/agent_card.py::issue_identity_card                                 # exercised by tests only; no production caller
 src/bernstein/core/identity/agent_card.py::load_identity_card                                  # exercised by tests only; no production caller
@@ -37,7 +34,6 @@ src/bernstein/core/identity/principal.py::CredentialRef.is_valid_at             
 src/bernstein/core/identity/principal.py::principal_from_agent_identity                        # exercised by tests only; no production caller
 src/bernstein/core/identity/principal.py::principal_from_identity_card                         # exercised by tests only; no production caller
 src/bernstein/core/identity/principals.py::PrincipalReceipt.to_entry                           # exercised by tests only; no production caller
-src/bernstein/core/identity/principals.py::default_principal_ledger                            # no production caller and no test reference; baseline entry from the first scan
 src/bernstein/core/identity/spiffe/binding.py::BindingError                                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/spiffe/binding.py::bind_svid_to_card                               # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/spiffe/grant_identity.py::spiffe_grant_issuer                      # exported in the module's __all__ and exercised by tests; no production caller

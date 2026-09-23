@@ -27,6 +27,14 @@ skip:
 The one guarantee on top of both: it never raises. A value reaching a log
 call is exactly the value least worth trusting, and a hostile ``__str__``
 must not take the log call - or the request that produced it - down with it.
+
+Call this rather than writing a local escaper. CodeQL cannot infer that a
+function sanitizes; every barrier is declared by name in
+``.github/codeql/models/bernstein-sanitizers.model.yml``, so a module-local
+copy raises ``py/log-injection`` on each of its call sites until somebody
+adds a row for it. Those alerts are indistinguishable from real findings,
+which is what makes the duplication expensive rather than merely untidy.
+Pass ``limit=`` when a call site needs a tighter bound than the default.
 """
 
 from __future__ import annotations
@@ -37,7 +45,7 @@ __all__ = ["for_log"]
 
 #: Marker appended when a value is cut short, matching the truncation
 #: convention already used for bounded log/diff text elsewhere in this
-#: codebase (e.g. ``bernstein.core.planning.sla_store``).
+#: codebase.
 _TRUNCATION_MARKER = "...(truncated)"
 
 

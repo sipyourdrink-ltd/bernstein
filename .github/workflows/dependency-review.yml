@@ -105,8 +105,17 @@ jobs:
           # as one string rather than per term, so the compound fails as a
           # whole. Same package, same upstream terms as 2.5.1; the metadata got
           # more precise, not more restrictive.
+          #
+          # cairosvg is LGPL-3.0. It is part of the MkDocs Material imaging
+          # extra that renders the site's social cards, so it is installed only
+          # to build documentation, never imported by this project's sources and
+          # never resolved into a wheel install. The docs pin file has carried
+          # it at 2.9.1 since the social plugin was enabled; declaring the docs
+          # toolchain as a dependency group is what makes the reviewer look at a
+          # package the build already used.
           allow-dependencies-licenses: >-
             pkg:githubactions/trufflesecurity/trufflehog,
+            pkg:pypi/cairosvg,
             pkg:pypi/protobuf,
             pkg:pypi/crosshair-tool,
             pkg:pypi/numpy,

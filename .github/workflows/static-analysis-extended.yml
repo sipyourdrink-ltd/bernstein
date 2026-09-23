@@ -344,7 +344,7 @@ jobs:
           wc -l vulture.txt
       - name: Convert vulture output to SARIF
         run: |
-          python scripts/text_to_sarif.py \
+          python3 scripts/text_to_sarif.py \
             --tool vulture \
             --input vulture.txt \
             --output vulture.sarif
@@ -403,7 +403,7 @@ jobs:
           wc -l refurb.txt
       - name: Convert refurb output to SARIF
         run: |
-          python scripts/text_to_sarif.py \
+          python3 scripts/text_to_sarif.py \
             --tool refurb \
             --input refurb.txt \
             --output refurb.sarif
@@ -495,7 +495,7 @@ jobs:
           wc -l perflint.txt
       - name: Convert perflint output to SARIF
         run: |
-          python scripts/text_to_sarif.py \
+          python3 scripts/text_to_sarif.py \
             --tool perflint \
             --input perflint.txt \
             --output perflint.sarif

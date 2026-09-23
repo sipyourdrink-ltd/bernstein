@@ -71,6 +71,7 @@ see its docstring for the canonical shape.
 | `runtime` | `{"platform": "software-only", "measurement": "sha256:0000…"}` — software evidence only; never a real hardware measurement. The all-zero digest is the honest way to say "no hardware measurement exists". |
 | `policy` | `{"bundle_hash": <sha256>, "enforcement_mode": "enforce"}`. |
 | `data_class` | Operator-declared data sensitivity; defaults to `confidential` when undeclared. |
+| `data_class` | Operator-declared data sensitivity. Allowed values: `restricted`, `internal`, `confidential`, `public`. Defaults to `confidential` when undeclared. Set in `bernstein.yaml` via `data_class: <value>`. |
 | `tool_transcript` | `{"hash": <sha256>, "call_count": <int>}` — hash over tool-call entries in the journal. |
 | `build_provenance` | `{"slsa_level": 0, "digest": <sha256>, "provenance_uri": <release page URL>}`. |
 | `appraisal` | `{"status": "none", "verifier": "https://bernstein.run/trace/verifier", "timestamp": <int>}`. |

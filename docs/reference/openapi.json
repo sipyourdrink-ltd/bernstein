@@ -7221,6 +7221,100 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Delete a user (soft delete with history retention)",
+        "description": "Soft-delete a user per SCIM 2.0 DELETE semantics.\n\nSCIM clients expect DELETE to remove the resource. This server marks the\nprincipal inactive while retaining its history in the chain, as declared\nin ServiceProviderConfig. The 204 response signals successful removal to\nthe client; the ledger records the deprovisioning event.",
+        "operationId": "delete_user_scim_v2_Users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Update a user via PATCH operations",
+        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
+        "operationId": "patch_user_scim_v2_Users__user_id__patch",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "400": {
+            "description": "Invalid PATCH operation"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/hooks/{session_id}": {
@@ -16280,6 +16374,100 @@
           },
           "404": {
             "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Delete a user (soft delete with history retention)",
+        "description": "Soft-delete a user per SCIM 2.0 DELETE semantics.\n\nSCIM clients expect DELETE to remove the resource. This server marks the\nprincipal inactive while retaining its history in the chain, as declared\nin ServiceProviderConfig. The 204 response signals successful removal to\nthe client; the ledger records the deprovisioning event.",
+        "operationId": "delete_user_api_v1_scim_v2_Users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Update a user via PATCH operations",
+        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
+        "operationId": "patch_user_api_v1_scim_v2_Users__user_id__patch",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "400": {
+            "description": "Invalid PATCH operation"
           },
           "422": {
             "description": "Validation Error",
