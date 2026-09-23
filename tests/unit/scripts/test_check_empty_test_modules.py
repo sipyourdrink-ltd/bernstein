@@ -130,6 +130,7 @@ def test_main_exits_one_when_empty_modules_exist(
     assert "tests/unit/test_gutted.py: 0 collected" in out
 
 
+@pytest.mark.timeout(180)
 def test_repository_has_no_unexcused_empty_test_modules(check_module: ModuleType) -> None:
     """Live suite: every in-scope module collects ≥1, or is allowlisted."""
     report = check_module.build_report()

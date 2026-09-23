@@ -1073,9 +1073,13 @@ Every context compaction (proactive threshold or reactive overflow recovery)
 is recorded as a `compaction.receipt` event in the HMAC-chained audit log and
 as a step in the worker's replay journal. `log` prints those receipts
 (trigger, token delta, validator verdicts, retry count, pre/post SHA-256).
+JSON receipt objects also include `policy_version`; legacy and unversioned
+records use the empty string.
 `--verify` re-runs the receipt verification: the HMAC chain must verify and
 every journaled compaction step must have a chain receipt with matching
-hashes; the command exits non-zero otherwise.
+hashes and policy version; the command exits non-zero otherwise. A missing
+policy-version key on both sides of a legacy receipt/journal pair is treated
+as the empty string for backward-compatible verification.
 
 (`cli/commands/compaction_cmd.py:32+`.)
 

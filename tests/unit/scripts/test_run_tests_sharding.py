@@ -341,7 +341,7 @@ def test_sequential_timeout_message_matches_subprocess_timeout(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str]:
+    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str, str]:
         raise subprocess.TimeoutExpired(cmd=["pytest"], timeout=300)
 
     monkeypatch.setattr(run_tests_module, "run_file", fake_run_file)
@@ -370,7 +370,7 @@ def test_run_file_uses_timeout_env_override(
     monkeypatch.setenv("BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS", "600")
     monkeypatch.setattr(run_tests_module.subprocess, "run", fake_run)
 
-    _path, code, _duration, output = run_tests_module.run_file(Path("tests/unit/test_slow.py"), [])
+    _path, code, _duration, output, _stderr = run_tests_module.run_file(Path("tests/unit/test_slow.py"), [])
 
     assert code == 0
     assert output == "ok\n"
@@ -405,9 +405,9 @@ def test_retry_on_thread_exhaustion_reruns_and_can_recover(
     """A thread-exhaustion failure re-runs once serially and can pass on retry."""
     calls: list[Path] = []
 
-    def fake_run_file(path: Path, *_: object, **__: object) -> tuple[Path, int, float, str]:
+    def fake_run_file(path: Path, *_: object, **__: object) -> tuple[Path, int, float, str, str]:
         calls.append(path)
-        return path, 0, 0.2, "1 passed"
+        return path, 0, 0.2, "1 passed", ""
 
     monkeypatch.setattr(run_tests_module, "run_file", fake_run_file)
 
@@ -418,7 +418,7 @@ def test_retry_on_thread_exhaustion_reruns_and_can_recover(
         output="E   RuntimeError: can't start new thread",
     )
 
-    assert result == (0, 0.2, "1 passed")
+    assert result == (0, 0.2, "1 passed", "")
     assert calls == [Path("tests/unit/test_x.py")]
 
 
@@ -429,10 +429,10 @@ def test_retry_on_thread_exhaustion_skips_unrelated_failures(
     """A normal assertion failure is not retried (only thread exhaustion is)."""
     called = False
 
-    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str]:
+    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str, str]:
         nonlocal called
         called = True
-        return Path("x"), 0, 0.0, ""
+        return Path("x"), 0, 0.0, "", ""
 
     monkeypatch.setattr(run_tests_module, "run_file", fake_run_file)
 
@@ -453,7 +453,7 @@ def test_retry_on_thread_exhaustion_skips_passing_files(
 ) -> None:
     """A passing file is never retried even if the marker appears in output."""
 
-    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str]:
+    def fake_run_file(*_: object, **__: object) -> tuple[Path, int, float, str, str]:
         raise AssertionError("run_file must not be called for a passing file")
 
     monkeypatch.setattr(run_tests_module, "run_file", fake_run_file)

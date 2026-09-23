@@ -115,9 +115,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlparse
 
 from bernstein.adapters._contract import AuthBasis
+from bernstein.core.endpoints import discover_default_model, normalize_base_url
 from bernstein.core.git.worktree import WorktreeError, WorktreeManager
 from bernstein.core.integrations.tickets import fetch_ticket
-from bernstein.core.volunteer.adapter_selection import select_adapter_for_volunteer
+from bernstein.core.volunteer.adapter_selection import EndpointRef, select_adapter_for_volunteer
 from bernstein.core.volunteer.claim import (
     DEFAULT_CLAIM_STALENESS,
     build_claim_body,
@@ -535,7 +536,22 @@ def run_claimed_task(
     # Adapter selection: when no adapter is explicitly chosen and a certified
     # local endpoint exists for this role, select it to minimize provider
     # observability. The explicit choice always wins.
-    selected_adapter = select_adapter_for_volunteer(role=task.role, explicit_adapter=adapter_id)
+    local_endpoint = None
+    import os
+
+    raw_base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
+    if raw_base_url:
+        base_url = normalize_base_url(raw_base_url)
+        model = discover_default_model(base_url=base_url, api_key=os.environ.get("OPENAI_API_KEY"))
+        if model:
+            local_endpoint = EndpointRef(base_url=base_url, model=model)
+
+    selected_adapter = select_adapter_for_volunteer(
+        role=task.role,
+        explicit_adapter=adapter_id,
+        workdir=workspace,
+        local_endpoint=local_endpoint,
+    )
     if selected_adapter is not None and selected_adapter != adapter_id:
         adapter_id = selected_adapter
 

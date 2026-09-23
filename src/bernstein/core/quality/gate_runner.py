@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import shlex
 import subprocess
 import tempfile
@@ -48,6 +49,26 @@ from bernstein.core.quality.gate_pipeline import (
 )
 from bernstein.core.quality.run_config_gate import check_paths
 from bernstein.core.telemetry import start_span
+
+#: A runner that could not START, in the two shapes the platform reports it.
+#:
+#: 127 is the shell's answer, and it is what the lint, import-cycle and complexity gates already
+#: read. `python -m <missing>` does not use it: it exits 1 and puts the module name on stderr. So a
+#: gate whose command is a `-m` invocation never matched the exit-code rule, and reported "the tool
+#: is not installed" with the same status as "your code failed the gate" (#5869).
+#:
+#: Matched on the message as well as the code, because those two shapes are what a caller's
+#: `dead_code_command` can produce, and neither of them is a finding about the code under test.
+_MISSING_COMMAND = re.compile(
+    r"No module named |command not found|is not recognized as an internal",
+    re.IGNORECASE,
+)
+
+
+def _command_is_missing(exit_code: int, detail: str) -> bool:
+    """Whether the command never ran, as opposed to running and reporting something."""
+    return exit_code == 127 or _MISSING_COMMAND.search(detail) is not None
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -666,7 +687,24 @@ class GateRunner:
             return self._skipped(step, _NO_PYTHON_FILES)
 
         command = self._dead_code_command(step, python_files)
-        ok, vulture_detail, _exit_code = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        ok, vulture_detail, exit_code = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        # A gate whose tool is absent has no verdict to give. vulture is not a project dependency,
+        # so this is the state of a fresh checkout rather than an edge case -- and reporting it as
+        # `fail` told an operator their code had dead code in it, and told anything counting gate
+        # failures as findings that an uninstalled tool was a catch (#5869).
+        if _command_is_missing(exit_code, vulture_detail):
+            return GateResult(
+                name=step.name,
+                status="command_not_found",
+                required=step.required,
+                # Still blocks a REQUIRED gate: a gate that could not run has not cleared anything.
+                # What changes is that the reason now names the tool instead of the code.
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=f"Command not found: {command} -- {vulture_detail}".rstrip(" -"),
+                metadata={"command": command},
+            )
         if vulture_detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,

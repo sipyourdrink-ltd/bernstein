@@ -14,19 +14,30 @@ chosen?) and certified capabilities (is a local endpoint available?).
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
+from dataclasses import dataclass
 
 from bernstein.core.endpoints import certified_roles_for_endpoint
 
 _logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class EndpointRef:
+    """A resolved local endpoint candidate."""
+
+    base_url: str
+    model: str
+
+
 def select_adapter_for_volunteer(
     role: str | None,
     explicit_adapter: str | None,
-    workdir: Path = Path("."),
-    base_url: str = "",
-    model: str = "",
+    workdir: Path,
+    local_endpoint: EndpointRef | None = None,
 ) -> str | None:
     """Select adapter for volunteer mode with local-first default posture.
 
@@ -34,8 +45,8 @@ def select_adapter_for_volunteer(
         role: The task role (e.g. "backend", "qa").
         explicit_adapter: Adapter explicitly chosen by the donor, or None.
         workdir: Working directory to check for endpoint certification.
-        base_url: Base URL of the endpoint.
-        model: Model name of the endpoint.
+        local_endpoint: A resolved local endpoint candidate, or None if none
+            is configured by the donor.
 
     Returns:
         Adapter ID to use: the explicit choice if given, "local" if a certified
@@ -49,9 +60,15 @@ def select_adapter_for_volunteer(
     if explicit_adapter:
         return explicit_adapter
 
+    if not local_endpoint:
+        _logger.warning(
+            "No adapter chosen and no local endpoint candidate supplied. Falling back to configured default."
+        )
+        return None
+
     # Check if a local endpoint is certified for this role
     try:
-        certified = certified_roles_for_endpoint(workdir, base_url, model)
+        certified = certified_roles_for_endpoint(workdir, local_endpoint.base_url, local_endpoint.model)
         if role in certified:
             _logger.info("No adapter chosen; selecting local endpoint (certified for role=%s)", role)
             return "local"
@@ -60,7 +77,7 @@ def select_adapter_for_volunteer(
     except Exception as e:
         _logger.warning("Failed to check certified local endpoints: %s", e)
 
-    # No explicit choice, no local endpoint available
+    # No explicit choice, and local endpoint isn't certified
     _logger.warning(
         "No adapter chosen and no certified local endpoint for role=%s. "
         "Falling back to configured default. Consider certifying a local endpoint "
