@@ -189,12 +189,24 @@ if not result.ok:
 
 ## Cache and TTL
 
-The fetcher caches the upstream catalog under
-`.sdd/skills_catalog/catalog.json` (project-local). The cache TTL
-defaults to 6 hours; operators override it via
-`BERNSTEIN_SKILLS_CATALOG_TTL` (seconds). The cache and the audit log
-share a single source of truth: a stale fetch on a 5xx upstream serves
-the last validated copy instead of failing.
+The fetcher caches the upstream catalog in one user-level file,
+`$XDG_CACHE_HOME/bernstein/skills-catalog.json` (or
+`~/.cache/bernstein/skills-catalog.json` when `XDG_CACHE_HOME` is unset).
+Every worker and worktree reads the same file, so parallel agents resolve
+the same digests and the same signed revocations. Set
+`BERNSTEIN_SKILLS_CATALOG_CACHE_PATH` to put the cache somewhere else.
+
+The cache TTL defaults to 6 hours; operators override it via
+`BERNSTEIN_SKILLS_CATALOG_TTL` (seconds). Inside the TTL a fetch makes no
+request. After it, the request carries `If-None-Match` and a `304` reuses
+the cached copy. A body that fails validation is remembered by its `ETag`,
+so it is not downloaded again until it changes. A stale fetch on a 5xx
+upstream serves the last validated copy instead of failing.
+
+Releases before this one cached the catalog per project under
+`.sdd/skills_catalog/catalog.json`. Spawn-time revocation enforcement
+still reads that file until the shared cache holds a valid catalog, so
+revocations cached there keep applying across the upgrade.
 
 ## Drift detection
 
