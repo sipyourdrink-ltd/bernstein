@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from bernstein.eval.bench.bundle import is_refusal
+
 if TYPE_CHECKING:
     from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
     from bernstein.eval.bench.runner import ReplayAdapter
@@ -214,6 +216,34 @@ class BenchVerifier:
                     f"but suite computes {task.content_hash()!r}. "
                     "Task definition may have drifted."
                 ),
+            )
+
+        # --- b2. Refusal receipts (#5464) -------------------------------
+        #
+        # A task the runner refused (budget exhausted) never ran, so there is
+        # no harness output to replay; scoring the refusal receipt would give
+        # whatever the adapter says about an empty run and call the honest
+        # verdict "fabricated". What a refusal receipt has to prove instead is
+        # that the bundle claims nothing for the task: passed is False and the
+        # score is zero. Anything else is a score attached to work not done.
+        if is_refusal(result.receipt):
+            if result.passed or result.score != 0.0:
+                return TaskVerificationResult(
+                    task_id=task_id,
+                    status=VerificationStatus.FABRICATED_SCORE,
+                    replayed_score=0.0,
+                    replayed_passed=False,
+                    detail=(
+                        f"Refusal receipt carries a verdict: stored passed={result.passed}, "
+                        f"score={result.score}. A refused task scores nothing."
+                    ),
+                )
+            return TaskVerificationResult(
+                task_id=task_id,
+                status=VerificationStatus.MATCH,
+                replayed_score=0.0,
+                replayed_passed=False,
+                detail=f"refused: {result.receipt.get('refusal_reason', '(no reason recorded)')}",
             )
 
         # --- c. Re-derive verdict from receipt --------------------------

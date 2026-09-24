@@ -8,7 +8,8 @@ Registered in src/bernstein/cli/main.py alongside every other subcommand:
 
 This exposes:
     bernstein bench run <suite> [--out <path>] [--scheduler <name>] [--stub-signer]
-                        [--reliability K]
+                        [--reliability K] [--budget <usd>]
+    bernstein bench compare <a> <b> [--allow-harness-drift] [--format text|markdown|json]
     bernstein bench verify <bundle> [--suite <name>]
     bernstein bench reliability-verify <receipt> [--suite <name>]
     bernstein bench reliability-check <receipt> [--suite <name>] [--task <id>] [--attempt N]
@@ -19,6 +20,7 @@ Also registered as a standalone script in pyproject.toml:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -68,6 +70,7 @@ def bench_group() -> None:
 
     \b
     bernstein bench run golden-v1 --out bundle.json
+    bernstein bench compare bundle_a.json bundle_b.json
     bernstein bench verify bundle.json
     """
 
@@ -98,7 +101,20 @@ def bench_group() -> None:
         "pass^k reliability receipt instead of a submission bundle."
     ),
 )
-def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliability_k: int | None) -> None:
+@click.option(
+    "--budget",
+    type=float,
+    default=None,
+    help="Stop running tasks once cumulative cost reaches this USD limit. Not combined with --reliability.",
+)
+def bench_run(
+    suite: str,
+    out: str,
+    scheduler: str,
+    stub_signer: bool,
+    reliability_k: int | None,
+    budget: float | None,
+) -> None:
     """Execute a suite and emit a signed submission bundle.
 
     SUITE is a built-in suite name (e.g. golden-v1) or a path to a .json
@@ -118,6 +134,13 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     click.echo(f"Tasks       : {len(suite_obj.tasks)}")
 
     if reliability_k is not None:
+        # The reliability runner does not enforce a budget. A cap that is
+        # accepted and not applied is worse than one that is refused.
+        if budget is not None:
+            raise click.ClickException(
+                "--budget is not enforced on the --reliability path. "
+                "Run without --reliability to cap spend, or without --budget to measure pass^k."
+            )
         _run_reliability(suite_obj, scheduler, reliability_k, Path(out), stub_signer)
         return
 
@@ -133,6 +156,7 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         suite=suite_obj,
         adapter=adapter,
         scheduler_config={"scheduler": scheduler},
+        budget_usd=budget,
     )
 
     click.echo("\nRunning tasks…")
@@ -146,9 +170,27 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
 
     click.echo(f"\nScore       : {bundle.overall_score * 100:.1f}%")
     click.echo(f"Pass rate   : {bundle.pass_rate * 100:.1f}%")
+    click.echo(f"Total tokens: {bundle.total_tokens:,}")
+    click.echo(f"Total cost  : ${bundle.total_cost_usd:.4f}")
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
+
+    # A run the budget cut short is not a completed run. Say so where a CI
+    # log reader will see it, and exit non-zero: the bundle still records
+    # every refusal receipt, but "score 20%" alone cannot be told apart from
+    # "one of five passed" (#5464 review, F4).
+    # The same predicate the verifier scores against and the comparison
+    # counts. This read ``harness_output["refusal"]``, so a receipt carrying
+    # the canonical status and no harness output was refused, verified clean,
+    # and was never mentioned here.
+    refused = bundle.refused_results()
+    if refused:
+        click.echo(
+            f"\nBudget exceeded: limit ${budget:.4f}, spent ${bundle.total_cost_usd:.4f}; "
+            f"{len(refused)}/{len(bundle.task_results)} tasks refused and recorded as refusal receipts."
+        )
+        sys.exit(2)
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +248,15 @@ def bench_verify(bundle: str, suite: str) -> None:
     default=False,
     help="Rank even when the two bundles' harness fingerprints differ.",
 )
-def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "markdown", "json"]),
+    default="text",
+    show_default=True,
+    help="text ranks and prints deltas; markdown and json render the full comparison report.",
+)
+def bench_compare(a: str, b: str, allow_harness_drift: bool, output_format: str) -> None:
     """Compare two submission bundles, ranking by expected value.
 
     A and B are paths to submission bundle .json files.
@@ -246,6 +296,9 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
                 f"hashes to {expected[:12]}…."
             )
 
+    # With a machine-readable format the report owns stdout; the harness
+    # verdict still has to be said, so it goes to stderr there.
+    to_stderr = output_format != "text"
     fp_a, fp_b = bundle_a.harness_fingerprint, bundle_b.harness_fingerprint
     if fp_a != fp_b:
         differing = sorted(
@@ -253,18 +306,37 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
             for key in set(bundle_a.scheduler_config) | set(bundle_b.scheduler_config)
             if bundle_a.scheduler_config.get(key) != bundle_b.scheduler_config.get(key)
         )
-        click.echo(f"Harness fingerprints differ: {fp_a[:12]}… vs {fp_b[:12]}…")
-        click.echo(f"Differing harness settings: {', '.join(differing)}")
+        click.echo(f"Harness fingerprints differ: {fp_a[:12]}… vs {fp_b[:12]}…", err=to_stderr)
+        click.echo(f"Differing harness settings: {', '.join(differing)}", err=to_stderr)
         if not allow_harness_drift:
             click.echo(
                 "Refusing to rank: a score gap across differing harness settings "
                 "is a harness change, not a model change. "
-                "Pass --allow-harness-drift to rank anyway."
+                "Pass --allow-harness-drift to rank anyway.",
+                err=to_stderr,
             )
             sys.exit(1)
-        click.echo("--allow-harness-drift: ranking anyway.")
+        click.echo("--allow-harness-drift: ranking anyway.", err=to_stderr)
     else:
-        click.echo(f"Harness fingerprint: {fp_a} (match)")
+        click.echo(f"Harness fingerprint: {fp_a} (match)", err=to_stderr)
+
+    # The harness check above gates every format: a cost or token delta
+    # across differing harness settings is as meaningless as a score delta.
+    from bernstein.eval.bench.compare import compare_bundles
+
+    try:
+        report = compare_bundles(bundle_a, bundle_b)
+    except ValueError as exc:
+        if not allow_harness_drift:
+            raise
+        click.echo(f"--allow-harness-drift: {exc}", err=to_stderr)
+        report = compare_bundles(bundle_a, bundle_b, check_fingerprint=False)
+    if output_format == "json":
+        click.echo(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return
+    if output_format == "markdown":
+        click.echo(report.to_markdown())
+        return
 
     def expected_value(bundle: SubmissionBundle) -> float:
         """Compute expected value: (resolved - lambda * wrong) / attempted."""
@@ -289,6 +361,21 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
             f"resolve rate {bundle.pass_rate * 100:.1f}%, "
             f"expected value {ev:.3f}"
         )
+    # Resource deltas (#5464), b relative to a. Printed only when either
+    # bundle recorded any, so a pre-#5464 pair reads exactly as before.
+    if any(r.has_resource_metrics() for r in (*bundle_a.task_results, *bundle_b.task_results)):
+        click.echo("")
+        click.echo(
+            f"Cost     : ${report.cost_a_usd:.4f} -> ${report.cost_b_usd:.4f} "
+            f"({report.cost_delta_usd:+.4f}, {report.cost_delta_percent_text()})"
+        )
+        click.echo(f"Tokens   : {report.tokens_a:,} -> {report.tokens_b:,} ({report.tokens_delta:+,})")
+        click.echo(
+            f"Duration : {report.duration_a_seconds:.2f}s -> {report.duration_b_seconds:.2f}s "
+            f"({report.duration_delta_seconds:+.2f}s)"
+        )
+        if report.refused_a or report.refused_b:
+            click.echo(f"Refused  : {report.refused_a} -> {report.refused_b} tasks never ran (budget)")
 
 
 # ---------------------------------------------------------------------------

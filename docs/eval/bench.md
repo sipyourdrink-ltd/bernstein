@@ -15,6 +15,10 @@ machine), `bernstein-bench` is designed so that:
 2. **The posted score is recomputable** by anyone from the embedded run receipts.
 3. **A coordinator that puts a model in the scheduling loop cannot pass** the
    byte-identical reproducibility gate by construction.
+4. **What a verdict cost is part of the record**: tokens, USD and wall-clock
+   per task ride in the bundle, `bench compare` reports their deltas, and
+   `--budget` stops a run that would overspend and records each refusal as a
+   receipt the verifier checks (#5464).
 
 The primary artefact is not a leaderboard row — it is a **submission bundle** whose
 score is recomputable from the replayable run receipts it embeds.
@@ -66,12 +70,30 @@ bernstein bench run <suite>
 ```bash
 # Run the canonical golden-v1 suite and emit a submission bundle
 bernstein bench run golden-v1 --out my-bundle.json
+
+# The same, refusing to spend more than $0.50 (CI)
+bernstein bench run golden-v1 --out my-bundle.json --budget 0.50
 ```
 
 This executes every task in `golden-v1` via the real adapter, collects
 per-task run receipts (journal head + spine head), scores them with the
-`harness.py` multiplicative scorer, and writes a signed
+`harness.py` multiplicative scorer, records each task's tokens, USD cost
+and duration as the adapter reports them, and writes a signed
 `SubmissionBundle` to `my-bundle.json`.
+
+With `--budget <usd>`, the runner checks the cumulative spend before each
+task and, once it reaches the limit, stops running tasks: every remaining
+task gets a **refusal receipt** (`status: "refused"`, `refusal_reason:
+"budget_exceeded: …"`) with `passed: false` and `score: 0.0`, so the bundle
+says which tasks did not run and why. The command then prints
+`Budget exceeded: limit $…, spent $…; K/N tasks refused …` and **exits 2**,
+because a run the budget cut short is not a completed run and a CI log
+reader must not mistake its score for one. The check runs *before* each
+task, so the first task always runs and the task that crosses the limit
+completes: spend can overshoot by at most one task's cost, which cannot be
+known before that task runs. `--budget` does not combine with
+`--reliability` — the reliability runner enforces no budget, and the
+command refuses the pair rather than run K attempts uncapped.
 
 Two runs of the same suite on the same inputs produce **byte-identical
 per-task receipts** — this is the empirical determinism property.
@@ -146,6 +168,30 @@ still printed).  The stored fingerprint is recomputed from the raw
 `scheduler_config` beside it before it is trusted; a bundle whose stored
 fingerprint does not match its own settings fails with an integrity
 error even with the flag.
+
+When either bundle carries resource metrics, the ranking is followed by
+the deltas of B relative to A — cost in USD (absolute and percent),
+tokens, and wall-clock duration:
+
+```text
+Cost     : $0.0500 -> $0.0300 (-0.0200, -40.0%)
+Tokens   : 100 -> 80 (-20)
+Duration : 1.00s -> 0.80s (-0.20s)
+```
+
+The percentage is `n/a` when A cost nothing — a $0 to $0.05 jump is not a
+0.0% change. When either bundle carries budget refusals a further line,
+`Refused  : 0 -> 2 tasks never ran (budget)`, follows, and the markdown and
+JSON reports carry `refused_a` / `refused_b`: a budget-cut run is cheaper
+than a complete one only because tasks never ran, and the report says so
+rather than letting a truncation read as a saving.
+
+`--format markdown` renders the full report — summary table plus a
+per-task breakdown — and `--format json` emits it as a document (the
+`CompareResult` shape in `compare.py`); with either, stdout carries only
+the report and the harness verdict goes to stderr. The harness check
+gates every format: a cost delta across differing harness settings is
+as meaningless as a score delta.
 
 ---
 
@@ -276,13 +322,53 @@ Two runners on the same `suite_hash` provably ran the same task set.
       "receipt_hash": "<sha256 of receipt bytes>",
       "passed": true,
       "score": 1.0,
-      "harness_output": {"...": "..."}
+      "harness_output": {"...": "..."},
+      "tokens": 1250,
+      "cost_usd": 0.0045,
+      "duration_seconds": 1.82
     }
   ],
+  "total_tokens": 12500,
+  "total_cost_usd": 0.045,
+  "total_duration_seconds": 18.25,
   "signature": "<Ed25519 JWS>",
   "signer_fingerprint": "..."
 }
 ```
+
+`tokens` and `cost_usd` are what the adapter reported for the task (`0`
+when it reported nothing); `duration_seconds` is the adapter's figure, or
+the runner's own wall-clock measurement of the task when the adapter
+reported none. They are bound into
+`bundle_hash` through the task record, so a bundle cannot be re-labelled
+cheaper after signing — but they are written only when at least one of
+them is set, so a bundle emitted before the fields existed carries none,
+hashes exactly as it did, and still loads. The three `total_*` fields are
+sums, recomputable from the task records, and, like `overall_score`, are
+not part of the hash.
+
+A task the budget refused carries a refusal receipt instead of a run
+receipt:
+
+```json
+{
+  "task_id": "refactor_rename_symbol",
+  "receipt": {
+    "journal_head": "",
+    "spine_head": "",
+    "run_id": "refusal-refactor_rename_symbol",
+    "status": "refused",
+    "refusal_reason": "budget_exceeded: limit $0.0010 exceeded (spent $0.0010)"
+  },
+  "passed": false,
+  "score": 0.0,
+  "harness_output": {"refusal": "budget_exceeded"}
+}
+```
+
+`bench verify` does not replay a refusal — there is nothing to replay —
+it checks that the bundle claims nothing for the task: `passed` false and
+`score` zero, else the task is reported as `FABRICATED_SCORE`.
 
 The `receipt` is the replay substrate.  The `score` only means something
 because the receipt exists to replay it.  Removing or corrupting the receipt
@@ -314,7 +400,7 @@ from bernstein.eval.bench import (
     LeaderboardEntry,
 )
 
-# Build and run the golden suite (hermetic mock adapter)
+# Build and run the golden suite (hermetic mock adapter); budget_usd=None runs everything
 suite = build_golden_suite_v1()
 adapter = MockReplayAdapter()
 runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config={})
@@ -388,10 +474,11 @@ During task admission:
 src/bernstein/eval/bench/
 ├── __init__.py          # public API re-exports
 ├── suite.py             # BenchSuite, BenchTask (content-addressed, holdout binding)
-├── bundle.py            # SubmissionBundle, TaskResult (carries holdout_hash)
+├── bundle.py            # SubmissionBundle, TaskResult (carries holdout_hash; tokens, cost, duration)
+├── compare.py           # compare_bundles, CompareResult, TaskComparison (#5464)
 ├── contamination.py     # Contamination check & admission gate (n-gram fingerprinting)
 ├── rotation.py          # Suite saturation & rotation detection
-├── runner.py            # BenchRunner, HoldoutBenchRunner (isolated execution)
+├── runner.py            # BenchRunner (budget gate), HoldoutBenchRunner (isolated execution)
 ├── verifier.py          # BenchVerifier, VerificationStatus
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render & rotation alert
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
@@ -400,6 +487,7 @@ src/bernstein/eval/bench/
 
 tests/unit/eval/bench/
 ├── test_bench.py                   # TDD suite — core acceptance criteria
+├── test_bench_cost_budget.py       # cost accounting, compare deltas, budget gate and refusal receipts (#5464)
 ├── test_rotation_contamination.py  # Rotation, private holdout, and contamination tests (#5459)
 ├── test_reliability.py             # pass^k reliability floor tests
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
