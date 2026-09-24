@@ -70,7 +70,10 @@ def _lock_is_stale(lock_path: Path, max_age: float) -> bool:
     """
     meta = _read_lock(lock_path)
     if meta is None:
-        return False
+        # File exists but is empty or malformed JSON - treat as stale (abandoned).
+        # The only way to reach here is FileExistsError, so the file exists.
+        # An empty or malformed lock file indicates a crashed/abandoned holder.
+        return True
     pid = meta.get("pid")
     started = meta.get("started_at")
     if not isinstance(pid, int) or pid <= 0:
