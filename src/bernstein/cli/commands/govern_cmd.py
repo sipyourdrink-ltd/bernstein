@@ -3,6 +3,7 @@
 Issue #5085::
 
     bernstein govern reconcile --propose --desired desired.json [--workdir w] [--full]
+    bernstein govern reconcile --explain <target> --policy-set layers.json [--class c]...
 
 The propose run enumerates every registered adapter, cost lane, scheduled task
 and capability entry, diffs that snapshot against the desired-state document,
@@ -21,6 +22,19 @@ Output and exit codes:
 By default only drifted entities are printed -- a consecutive run reports what
 moved since the previous run's record. ``--full`` prints one ``state`` line per
 entity regardless.
+
+``--explain <target>`` answers the other question (issue #5117): not what
+drifted, but which layer wrote each clause that applies to one target. The
+composition order is fixed -- classification, baseline, instrumentation, then
+exactly one class overlay -- and each printed row names the tier AND the layer,
+because "the baseline said so" is not an answer when the baseline is an ordered
+list of named sub-policies. A target that matches zero or more than one overlay
+is reported as a finding rather than resolved by declaration order, and its
+lower layers still print: posture that is not in doubt should not be withheld
+because the class is.
+
+It reads the policy-set document and composes; it records nothing and touches
+no lineage, so it is safe to run against a production root.
 """
 
 from __future__ import annotations
@@ -31,6 +45,7 @@ from pathlib import Path
 
 import click
 
+from bernstein.core.govern.policy_layers import EffectivePolicy, PolicyCompositionError, PolicySet
 from bernstein.core.govern.reconcile import propose_reconcile, snapshot_surface
 from bernstein.core.govern.reconcile_models import DesiredState, ReconcileEntry
 from bernstein.core.security.audit import load_or_create_audit_key
@@ -51,9 +66,37 @@ RECONCILE_RUN_ID = "govern-reconcile"
 @click.option(
     "--desired",
     "desired_file",
-    required=True,
+    # Required for --propose, and meaningless for --explain. Enforced in the
+    # body rather than by click so the two modes can each name what THEY need,
+    # instead of one mode's requirement rejecting the other's call.
     type=click.Path(exists=True, dir_okay=False),
-    help="JSON desired-state document (entities with prune / self_heal).",
+    help="JSON desired-state document (entities with prune / self_heal). Required with --propose.",
+)
+@click.option(
+    "--explain",
+    "explain_target",
+    metavar="TARGET",
+    default=None,
+    help="Print one target's effective policy and the layer each clause came from.",
+)
+@click.option(
+    "--policy-set",
+    "policy_set_file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON layer document (classification / baseline / instrumentation / class overlays). Required with --explain.",
+)
+@click.option(
+    "--class",
+    "classifications",
+    multiple=True,
+    help="A classification value for the target; repeatable. Decides which class overlay applies.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="With --explain, print the composed policy as JSON instead of a table.",
 )
 @click.option(
     "--workdir",
@@ -69,13 +112,29 @@ RECONCILE_RUN_ID = "govern-reconcile"
     default=False,
     help="Print one line per entity instead of only what drifted.",
 )
-def govern_reconcile_cmd(propose: bool, desired_file: str, workdir: str, full: bool) -> None:
-    """Diff the governed surface against the desired state and record it.
+def govern_reconcile_cmd(
+    propose: bool,
+    desired_file: str | None,
+    workdir: str,
+    full: bool,
+    explain_target: str | None,
+    policy_set_file: str | None,
+    classifications: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    """Diff the governed surface against the desired state, or explain one target's policy.
 
-    Exit codes: 0 = no drift, 1 = unreadable desired state, 2 = drift.
+    Exit codes: 0 = no drift / composed cleanly, 1 = unreadable input,
+    2 = drift / the target's class overlay could not be chosen.
     """
+    if explain_target is not None:
+        _explain(explain_target, policy_set_file, classifications, as_json=as_json)
+        return
     if not propose:
-        click.echo("govern reconcile requires --propose; applying a diff is not implemented.", err=True)
+        click.echo("govern reconcile requires --propose or --explain; applying a diff is not implemented.", err=True)
+        raise SystemExit(1)
+    if desired_file is None:
+        click.echo("govern reconcile --propose requires --desired", err=True)
         raise SystemExit(1)
 
     root = Path(workdir).resolve()
@@ -108,6 +167,61 @@ def govern_reconcile_cmd(propose: bool, desired_file: str, workdir: str, full: b
         click.echo(f"no drift -- {len(diff.entries)} entities, all unchanged")
         raise SystemExit(0)
     raise SystemExit(2)
+
+
+def _explain(
+    target: str,
+    policy_set_file: str | None,
+    classifications: tuple[str, ...],
+    *,
+    as_json: bool,
+) -> None:
+    """Print one target's effective policy, and exit 2 when its overlay is ambiguous.
+
+    Composition lives in :mod:`bernstein.core.govern.policy_layers` and not here,
+    so the answer does not depend on which command asked for it.
+    """
+    if policy_set_file is None:
+        click.echo("govern reconcile --explain requires --policy-set", err=True)
+        raise SystemExit(1)
+    try:
+        raw = json.loads(Path(policy_set_file).read_text(encoding="utf-8"))
+        policy_set = PolicySet.from_dict(raw)
+    except (OSError, json.JSONDecodeError, PolicyCompositionError, TypeError, ValueError) as exc:
+        click.echo(f"unreadable policy set: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    policy = policy_set.compose(target, classifications)
+    if as_json:
+        click.echo(json.dumps(policy.to_dict(), ensure_ascii=False, sort_keys=True))
+    else:
+        _print_explain_table(policy)
+    if policy.is_ambiguous:
+        raise SystemExit(2)
+    raise SystemExit(0)
+
+
+def _print_explain_table(policy: EffectivePolicy) -> None:
+    """Render the composed policy as aligned rows, plus the finding when there is one.
+
+    Widths come from the rows themselves so a long surface name does not push the
+    origin column off into prose. Rows are already ordered by
+    :class:`EffectivePolicy`, so two runs over one document print identically.
+    """
+    rows, reason = policy.explain()
+    click.echo(f"target {policy.target}")
+    if not rows:
+        click.echo("no clause applies to this target")
+    else:
+        surface_width = max(len(surface) for surface, _, _ in rows)
+        origin_width = max(len(origin) for _, _, origin in rows)
+        for surface, clause, origin in rows:
+            click.echo(f"{origin:<{origin_width}}  {surface:<{surface_width}}  {clause}")
+    click.echo(f"clauses {len(rows)}")
+    if reason is not None:
+        # An error stream, because this is the thing the operator has to act on
+        # and a table is easy to read past.
+        click.echo(f"finding {reason}", err=True)
 
 
 def _verdict_line(entry: ReconcileEntry) -> str:

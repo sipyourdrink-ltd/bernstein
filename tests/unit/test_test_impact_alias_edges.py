@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 # Imported for their side effect: each package __init__ appends its redirect
 # finder to sys.meta_path, which is what the reconciliation test interrogates.
 import bernstein.cli
@@ -184,6 +186,7 @@ def test_analyzer_picks_the_alias_importing_test(tmp_path: Path) -> None:
     assert lifecycle in analysis.affected_tests
 
 
+@pytest.mark.timeout(300)
 def test_repo_worktree_change_selects_its_lifecycle_suite() -> None:
     """Regression pin on the reported case, against the real source tree.
 

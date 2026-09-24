@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.sanitize import sanitize_log
+from bernstein.core.security.sanitize import sanitize_log
 
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]

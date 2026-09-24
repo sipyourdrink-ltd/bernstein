@@ -24,7 +24,11 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bernstein.core.skills.catalog.fetcher import SkillCatalogFetcher, default_cache_path
+from bernstein.core.skills.catalog.fetcher import (
+    SkillCatalogFetcher,
+    default_cache_path,
+    legacy_project_cache_path,
+)
 from bernstein.core.skills.catalog.lockfile import CATALOG_LOCK_FILENAME, read_state
 from bernstein.core.skills.catalog.revocation import (
     RevocationChecker,
@@ -72,16 +76,22 @@ def build_revocation_checker(
     cache_path: Path | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> RevocationChecker:
-    """Build a :class:`RevocationChecker` backed by the project's cached catalog.
+    """Build a :class:`RevocationChecker` backed by the cached catalog.
 
-    The loader reads the cached catalog on each poll and returns only the
-    revocations that verify against the catalog signer key.
+    The loader reads the shared user-level catalog cache on each poll and
+    returns only the revocations that verify against the catalog signer key.
+    Until that cache holds a valid catalog, a copy left in the project by
+    releases that cached per project is read instead, so revocations cached
+    before the move keep applying. An explicit ``cache_path`` is read alone.
     """
-    resolved_cache = cache_path or default_cache_path(workdir)
+    candidates = [cache_path] if cache_path is not None else [default_cache_path(), legacy_project_cache_path(workdir)]
 
     def load() -> list[RevocationEntry]:
-        fetcher = SkillCatalogFetcher(cache_path=resolved_cache)
-        catalog = fetcher.cached()
+        catalog = None
+        for candidate in candidates:
+            catalog = SkillCatalogFetcher(cache_path=candidate).cached()
+            if catalog is not None:
+                break
         if catalog is None or not catalog.revocations:
             return []
         return parse_revocations(catalog.revocations, catalog.signer_pubkey)
