@@ -67,6 +67,12 @@ need a PR-body override a reviewer can see:
 test-count-drop: tests/unit/foo/test_bar.py -3
 ```
 
+Put it in the PR body, not in a commit message. The merge queue squashes
+(commit message = PR title + body), so the body is the only text the
+`merge_group` build reads; branch commit messages are discarded. The PR lane
+reads the body alone for the same reason. It does not re-run on a body edit,
+so push or re-run the job after adding the override.
+
 Unused overrides fail (stale). A deleted test whose matching `src/**/<stem>.py`
 was also deleted is carved out. An import failure under collect-only is named
 `cause=import_error` in the message so it is not mistaken for a silent count

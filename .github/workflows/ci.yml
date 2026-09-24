@@ -531,13 +531,14 @@ jobs:
       - name: Test-count drop vs merge base (#4873)
         # Catches a touched test module that still collects but lost cases
         # relative to the merge base. Parametrized consolidation stays green
-        # (collect-only counts). Override, in the PR body or in a commit
-        # message in the compared range:
+        # (collect-only counts). Override, in the PR body:
         #   test-count-drop: tests/unit/foo.py -N
-        # A merge_group event carries no pull_request payload, so PR_BODY is
-        # empty in this lane and a body-only override is invisible exactly
-        # where the merge is gated; the script reads the range's commit
-        # messages so one declaration holds in both lanes.
+        # The queue squashes (message = PR title + PR body), so the
+        # merge_group build reads the body through the one squash commit in
+        # its range; PR_BODY itself is empty there. A trailer in a branch
+        # commit message does not survive the squash, so the PR lane passes
+        # --no-commit-messages and reads the body alone: both lanes judge
+        # the same text.
         # Without a base (non-PR / missing ref) the script skips — never fake-green.
         env:
           PR_BODY: ${{ github.event.pull_request.body || '' }}
@@ -545,13 +546,16 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           BASE=""
+          COMMIT_MESSAGES="--commit-messages"
           if [ "$EVENT_NAME" = "pull_request" ]; then
             git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
             BASE="$(git merge-base "origin/${BASE_REF}" HEAD 2>/dev/null || true)"
+            COMMIT_MESSAGES="--no-commit-messages"
           elif [ "$EVENT_NAME" = "merge_group" ]; then
             BASE="${{ github.event.merge_group.base_sha }}"
           fi
-          uv run python scripts/check_test_count_drop.py --base "${BASE}"
+          # PR_BODY reaches --pr-body through the env default.
+          uv run python scripts/check_test_count_drop.py --base "${BASE}" "${COMMIT_MESSAGES}"
 
   lint:
     name: Lint
