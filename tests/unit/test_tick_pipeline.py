@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -75,7 +76,12 @@ def test_compute_total_spent_uses_cache_and_updates_when_file_changes(tmp_path: 
     first = compute_total_spent(tmp_path)
     with patch("bernstein.core.orchestration.tick_pipeline._parse_file_total") as mock_parse:
         second = compute_total_spent(tmp_path)
+    cached_mtime_ns = cost_file.stat().st_mtime_ns
     cost_file.write_text(json.dumps({"value": 2.0, "labels": {"task_id": "T-2"}}) + "\n", encoding="utf-8")
+    # Derive the new timestamp from the cached value so the cache miss does
+    # not depend on whether the filesystem clock advanced between writes.
+    updated_mtime_ns = cached_mtime_ns + 2_000_000_000
+    os.utime(cost_file, ns=(updated_mtime_ns, updated_mtime_ns))
     third = compute_total_spent(tmp_path)
 
     assert first == pytest.approx(1.5)

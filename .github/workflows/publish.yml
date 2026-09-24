@@ -34,6 +34,10 @@ on:
         required: false
         default: false
         type: boolean
+      ref:
+        description: "Git ref to checkout (branch, tag, or commit). Defaults to the tag to publish."
+        required: false
+        type: string
 
 # Permissions are declared per-job so that each job gets only what it
 # needs (Sonar S8264). The default permission for any job that does not
@@ -45,6 +49,8 @@ permissions: {}
 # name, the npm version, and the ref every job checks out.
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.ref != ''
+    && inputs.ref || inputs.tag) || github.ref }}
 
 jobs:
   # Protocol compatibility gate - blocks release if breaking changes found
@@ -65,7 +71,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -153,7 +159,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -177,7 +183,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
       - name: Compare tag to pyproject.toml version
         run: |
@@ -204,7 +210,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
@@ -277,7 +283,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -371,7 +377,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
       # zizmor cache-poisoning: explicit no-cache on tag-triggered npm publish
       # so a transitive lockfile bump can't be cached and re-served.
@@ -647,7 +653,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
       # Stdlib only, on purpose: this job installs no dependencies, so a
       # step here must not import the package. Regenerating the manifests
@@ -669,33 +675,34 @@ jobs:
             echo "::error::server.json version $MANIFEST_VERSION does not match release $VERSION"
             exit 1
           fi
-      - name: Check docker-mcp catalog source.commit matches the release commit
+      - name: Annotate stale docker-mcp catalog source.commit
         env:
           REGISTRY_ONLY: ${{ inputs.registry_only }}
         run: |
           set -euo pipefail
-          # server.yaml is hand-maintained: the commit hash cannot be known
-          # before the release commit exists, so nothing regenerates it. This
-          # step catches a forgotten refresh before the catalog PR ships a
-          # source.commit that does not point at the release being submitted.
+          # server.yaml source.commit cannot match the release commit on the tag
+          # path: a file cannot contain the hash of the commit that contains it,
+          # and the release commit is additionally a merge-queue squash whose
+          # hash does not exist until after the merge. The check always fails on
+          # tag releases and always succeeds on registry_only replays (because
+          # the commit that tagged the release is by then in history and can be
+          # pinned). Annotate the stale pin on every path so it is visible in
+          # job logs, but do not block the install/wait/publish steps.
           #
-          # The docker-mcp catalog is a separate channel from the registry
-          # listing this job submits, so it does not get to block a
-          # registry-only republish -- a stale pin here is worth flagging,
-          # not worth losing the listing over.
+          # The rendered catalog payload (next step) substitutes the release
+          # commit at publish time and uploads it as a job artifact, so the
+          # catalog PR is opened from the rendered file with the correct hash.
           python3 - <<'PY'
           import os
           import re
           import subprocess
           from pathlib import Path
 
-          registry_only = os.environ.get("REGISTRY_ONLY") == "true"
-          annotation = "warning" if registry_only else "error"
+          # Always warn; never block the registry listing over a stale catalog pin.
+          annotation = "warning"
 
           def report(message: str) -> None:
               print(f"::{annotation}::{message}")
-              if not registry_only:
-                  raise SystemExit(1)
 
           text = Path("packaging/docker-mcp/server.yaml").read_text(encoding="utf-8")
           match = re.search(r"^  commit:\s*([0-9a-f]{40})\s*$", text, re.MULTILINE)
@@ -712,6 +719,28 @@ jobs:
                       f"the release commit {head}; refresh it before opening the catalog PR"
                   )
           PY
+
+      - name: Render docker-mcp catalog with release commit
+        run: |
+          set -euo pipefail
+          # Substitute the release commit into server.yaml and upload the
+          # rendered payload as a job artifact. The catalog PR is opened from
+          # this rendered file so source.commit carries the actual release
+          # commit, not the stale pin from the checked-in template.
+          RELEASE_COMMIT=$(git rev-parse HEAD)
+          python3 scripts/render_docker_mcp_catalog.py \
+            packaging/docker-mcp/server.yaml \
+            "$RELEASE_COMMIT" \
+            > server.yaml.rendered
+          echo "Rendered catalog payload for commit ${RELEASE_COMMIT}"
+
+      - name: Upload rendered catalog payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: docker-mcp-catalog-rendered
+          path: server.yaml.rendered
+          retention-days: 90
+
       - name: Install mcp-publisher
         env:
           # Pinned mcp-publisher release. Bumping requires updating the tag and

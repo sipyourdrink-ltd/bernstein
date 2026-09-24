@@ -25,7 +25,7 @@
 # module uploads its JSON as an artifact for offline reading.
 #
 # `continue-on-error` is per-module (matrix `include` below), not a
-# blanket flag. Six of the seven modules hold their threshold with real
+# blanket flag. Six of the eleven modules hold their threshold with real
 # margin and gate for real: a kill-rate drop fails the workflow on the
 # weekly audit. `audit_log` is the one pinned exception - see its `include` entry and
 # tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES for
@@ -75,6 +75,11 @@ jobs:
           - lineage_tips
           - lineage_merge
           - config_seed_parser
+          - journal_verify
+          - sandbox_eval
+          - policy_engine
+          - compliance_policies
+          - audit_pack
         # Per-module advisory flag: `true` opts the module out of the run
         # conclusion. Keep this closed and reviewed - a module doesn't
         # get to stay advisory by default (mirrors the
@@ -101,6 +106,16 @@ jobs:
             advisory: false
           - module: config_seed_parser
             advisory: false
+          - module: journal_verify
+            advisory: false
+          - module: sandbox_eval
+            advisory: true
+          - module: policy_engine
+            advisory: true
+          - module: compliance_policies
+            advisory: true
+          - module: audit_pack
+            advisory: true
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1

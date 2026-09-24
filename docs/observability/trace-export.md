@@ -5,6 +5,12 @@ JWT-style JSON blob (Ed25519) that proves a run's journal chain is intact
 and binds the run to the install identity. It is generated entirely
 offline from local state; no OTLP endpoint or network is required.
 
+TRACE is an open specification hosted at the Linux Foundation. Bernstein
+implements it as an independent Apache-2.0 project; its author contributes
+to the specification as an outside contributor, and Bernstein is not
+affiliated with or endorsed by the specification's maintainers or the
+Foundation.
+
 ```
 bernstein trace export <RUN_ID> [--out PATH] [--out-dir DIR] [--json] [--last] [--sdd-dir PATH]
 ```
@@ -71,6 +77,7 @@ see its docstring for the canonical shape.
 | `runtime` | `{"platform": "software-only", "measurement": "sha256:0000…"}` — software evidence only; never a real hardware measurement. The all-zero digest is the honest way to say "no hardware measurement exists". |
 | `policy` | `{"bundle_hash": <sha256>, "enforcement_mode": "enforce"}`. |
 | `data_class` | Operator-declared data sensitivity; defaults to `confidential` when undeclared. |
+| `data_class` | Operator-declared data sensitivity. Allowed values: `restricted`, `internal`, `confidential`, `public`. Defaults to `confidential` when undeclared. Set in `bernstein.yaml` via `data_class: <value>`. |
 | `tool_transcript` | `{"hash": <sha256>, "call_count": <int>}` — hash over tool-call entries in the journal. |
 | `build_provenance` | `{"slsa_level": 0, "digest": <sha256>, "provenance_uri": <release page URL>}`. |
 | `appraisal` | `{"status": "none", "verifier": "https://bernstein.run/trace/verifier", "timestamp": <int>}`. |
@@ -202,6 +209,27 @@ uv run --with agentrust-trace-tests==0.5.1 trace-tests verify \
 (`--max-age` is set far above the default 24 h window because the
 fixture vectors use a frozen 2023-11-14 clock, not wall-clock time —
 an unmodified default would reject every vector as stale.)
+
+## Identifier URIs {#trace-identifiers}
+
+Two fixed URIs appear in every trust record this producer emits. Both
+resolve to this section.
+
+### `https://bernstein.run/trace/verifier` {#trace-verifier}
+
+The `appraisal.verifier` value. It names the appraisal method, not the
+workload: this producer always self-declares `status: "none"`, so the
+record carries no third-party appraisal. A verifier that needs a real
+appraisal must perform one itself.
+
+### `https://bernstein.run/trace/records` {#trace-records}
+
+The resolver named on an aggregate record's
+`references[rel=member-execution]` entries. It identifies the party
+obliged to resolve a member's `id` back to the record it names, which is
+always this producer. The entry's `digest` binds
+that id to specific bytes, so a verifier checks the member record it was
+given against the digest rather than fetching it from this URL.
 
 ## Relationship to other trace commands
 

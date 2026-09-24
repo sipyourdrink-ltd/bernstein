@@ -113,6 +113,7 @@ def _task(repo: Path | str, **overrides: Any) -> ClaimedTask:
         "issue_number": 7,
         "issue_title": "off-by-one in the items endpoint",
         "issue_body": "ITEMS[n] should be ITEMS[n - 1]",
+        "role": "backend",
     }
     defaults.update(overrides)
     return ClaimedTask(**defaults)

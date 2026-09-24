@@ -411,6 +411,7 @@ class Orchestrator:
         notifier: NotificationManager | None = None,
         quality_gate_config: QualityGatesConfig | None = None,
         formal_verification_config: Any | None = None,
+        data_class: str | None = None,
     ) -> None:
         self._config = config
         self._spawner = spawner
@@ -427,6 +428,7 @@ class Orchestrator:
         self._cluster_config = cluster_config
         self._quality_gate_config: QualityGatesConfig | None = quality_gate_config
         self._gate_coalescer: QualityGateCoalescer = QualityGateCoalescer()
+        self._data_class: str | None = data_class
         # Formal verification gate is invoked by task_lifecycle._run_verification_gates
         # only when OrchestratorConfig.formal_verification_enabled is True. Default
         # remains False so deployments without Z3/Lean4 installed are unaffected.
@@ -1146,6 +1148,12 @@ class Orchestrator:
         # to keep memory bounded under long-lived runs.
         self._llm_watcher_signals: collections.deque[Any] = collections.deque(maxlen=64)
 
+        # Clear deliberate-stop marker from any previous run (issue #6089 slice 1).
+        _marker_path = self._workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+        if _marker_path.exists():
+            with contextlib.suppress(OSError):
+                _marker_path.unlink()
+
     # -- Hot-reload source detection -----------------------------------------
 
     # Key source files whose modification triggers an orchestrator restart.
@@ -1444,6 +1452,7 @@ class Orchestrator:
             run_id=self._run_id,
             day_key=day_key,
             knob_matrix=knob_matrix,
+            default_adapter=str(getattr(self._spawner, "default_adapter_name", None) or ""),
         )
         entries = SpendLedger.load_entries(self._spend_ledger.path)
         outcome = evaluate_run_dispatch(
@@ -2616,6 +2625,10 @@ class Orchestrator:
                                 settled_agents,
                             )
                             self._regenerate_final_retrospective(trigger_path="tick-quiescence-self-stop")
+                            # Write deliberate-stop marker for watchdog (issue #6089 slice 1).
+                            _marker_path = self._workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+                            with contextlib.suppress(OSError):
+                                _marker_path.write_text("quiescence")
                             self._running = False
                     else:
                         logger.info(
@@ -3174,6 +3187,8 @@ class Orchestrator:
         if self._workflow_executor is not None:
             _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
             _run_started_extra["workflow_hash"] = self._workflow_executor.definition_hash
+        if self._data_class is not None:
+            _run_started_extra["data_class"] = self._data_class
         self._recorder.record(
             "run_started",
             run_id=self._run_id,
@@ -7490,6 +7505,7 @@ if __name__ == "__main__":
                 notifier=notifier,
                 quality_gate_config=seed.quality_gates if seed else None,
                 formal_verification_config=seed.formal_verification if seed else None,
+                data_class=seed.data_class if seed else None,
             )
 
             def _signal_handler(signum: int, _frame: object) -> None:

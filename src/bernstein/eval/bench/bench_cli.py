@@ -207,9 +207,13 @@ def bench_verify(bundle: str, suite: str) -> None:
     help="Rank even when the two bundles' harness fingerprints differ.",
 )
 def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
-    """Compare two submission bundles, ranking by score.
+    """Compare two submission bundles, ranking by expected value.
 
     A and B are paths to submission bundle .json files.
+
+    The expected value is computed as (resolved - lambda * wrong) / attempted,
+    where resolved is the number of passed tasks, wrong is the number of failed
+    tasks, attempted is the total tasks, and lambda defaults to 1.0.
 
     The harness fingerprint is recomputed from each bundle's raw
     scheduler_config before it is trusted.  Bundles from different
@@ -262,12 +266,28 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
     else:
         click.echo(f"Harness fingerprint: {fp_a} (match)")
 
-    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -p[1].overall_score)
+    def expected_value(bundle: SubmissionBundle) -> float:
+        """Compute expected value: (resolved - lambda * wrong) / attempted."""
+        lam = bundle.scheduler_config.get("lambda", 1.0)
+        try:
+            lam = float(lam)
+        except (ValueError, TypeError):
+            lam = 1.0
+        n = len(bundle.task_results)
+        if n == 0:
+            return 0.0
+        resolved = bundle.pass_rate * n
+        wrong = (1.0 - bundle.pass_rate) * n
+        return (resolved - lam * wrong) / n
+
+    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -expected_value(p[1]))
     click.echo("")
     for rank, (path, bundle) in enumerate(ordered, start=1):
+        ev = expected_value(bundle)
         click.echo(
             f"{rank}. {path.name}: score {bundle.overall_score * 100:.1f}%, "
-            f"pass rate {bundle.pass_rate * 100:.1f}%, {len(bundle.task_results)} tasks"
+            f"resolve rate {bundle.pass_rate * 100:.1f}%, "
+            f"expected value {ev:.3f}"
         )
 
 

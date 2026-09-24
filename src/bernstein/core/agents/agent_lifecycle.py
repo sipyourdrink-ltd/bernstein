@@ -215,7 +215,7 @@ def _capture_agent_crash(
             tags={
                 "abort_reason": abort_reason.value,
                 "role": session.role or "unknown",
-                "adapter": getattr(session, "adapter", "unknown") or "unknown",
+                "adapter": getattr(session, "endpoint_adapter_name", "") or "unknown",
             },
             extra={
                 "session_id": session.id,
@@ -391,7 +391,7 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     _capture_agent_crash(session, abort_reason, abort_detail)
     _propagate_abort_to_children(orch, session.id)
     if session.role:
-        adapter_name = getattr(session, "adapter", "unknown")
+        adapter_name = getattr(session, "endpoint_adapter_name", "") or "unknown"
         orch._agent_failure_timestamps[adapter_name] = time.time()
 
     _release_file_ownership(orch, session.id)

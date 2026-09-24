@@ -238,10 +238,10 @@ def _wait_for_recipe_completion(
     timeout_s: float = 3600.0,
 ) -> dict[str, Any] | None:
     """Wait for recipe run completion while printing live sprint/cost progress."""
-    deadline = time.time() + timeout_s
+    deadline = time.monotonic() + timeout_s
     last_status: dict[str, Any] | None = None
     last_line = ""
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         status_payload = server_get("/status")
         health_payload = server_get("/health")
         tasks_payload = server_get("/tasks")

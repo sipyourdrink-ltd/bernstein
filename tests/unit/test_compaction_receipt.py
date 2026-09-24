@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,11 @@ def _chain(tmp_path: Path) -> AuditChainStore:
     return AuditChainStore(tmp_path / "audit", key=b"k" * 32)
 
 
-def _receipt(task_id: str = "T-1", trigger: str = "proactive") -> CompactionReceipt:
+def _receipt(
+    task_id: str = "T-1",
+    trigger: str = "proactive",
+    policy_version: str = "",
+) -> CompactionReceipt:
     return build_receipt(
         task_id=task_id,
         worker_id="sess-1",
@@ -64,6 +69,7 @@ def _receipt(task_id: str = "T-1", trigger: str = "proactive") -> CompactionRece
             ValidatorVerdict(name="quoted_errors", passed=True),
         ),
         retry_count=0,
+        policy_version=policy_version,
         gate_action="redacted",
         gate_rule_ids=("content.pem-private-key",),
         skills_reinjected=True,
@@ -83,9 +89,10 @@ class TestReceiptShape:
         assert len(receipt.pre_sha256) == 64
 
     def test_details_round_trip(self) -> None:
-        receipt = _receipt()
+        receipt = _receipt(policy_version="structural-v1")
         details = receipt.to_details()
         assert details["trigger"] == "proactive"
+        assert details["policy_version"] == "structural-v1"
         assert details["validators"] == [
             {"name": "code_blocks", "result": "pass"},
             {"name": "quoted_errors", "result": "pass"},
@@ -93,6 +100,14 @@ class TestReceiptShape:
         assert details["skills_reinjected"] is True
         restored = receipt_from_details(details)
         assert restored == receipt
+
+    def test_legacy_details_without_policy_version_restore_empty_version(self) -> None:
+        details = _receipt(policy_version="structural-v1").to_details()
+        details.pop("policy_version")
+
+        restored = receipt_from_details(details)
+
+        assert restored.policy_version == ""
 
     def test_details_are_json_serialisable(self) -> None:
         assert json.loads(json.dumps(_receipt().to_details()))
@@ -160,7 +175,7 @@ class TestChainRecording:
 
 class TestJournalRegistration:
     def test_compaction_step_registered_and_journal_verifies(self, tmp_path: Path) -> None:
-        receipt = _receipt()
+        receipt = _receipt(policy_version="structural-v1")
         journal = Journal.open(tmp_path / "journal" / "sess-1")
         entry = record_compaction_journal_step(journal, receipt)
 
@@ -168,6 +183,7 @@ class TestJournalRegistration:
         assert entry.tool_call["kind"] == COMPACTION_STEP_KIND
         assert entry.tool_call["pre_sha256"] == receipt.pre_sha256
         assert entry.tool_call["post_sha256"] == receipt.post_sha256
+        assert entry.tool_call["policy_version"] == "structural-v1"
         assert entry.tool_call["correlation_id"] == receipt.correlation_id
 
         reader = JournalReader(tmp_path / "journal" / "sess-1")
@@ -280,6 +296,61 @@ class TestVerifyCompactionReceipts:
         )
         assert not ok
         assert any("hash" in err for err in errors)
+
+    def test_policy_version_mismatch_fails_verification(self, tmp_path: Path) -> None:
+        receipt = _receipt(policy_version="structural-v1")
+        chain = _chain(tmp_path)
+        record_compaction_receipt(chain=chain, receipt=receipt)
+        journal = Journal.open(tmp_path / "journal" / "sess-1")
+        record_compaction_journal_step(journal, replace(receipt, policy_version="structural-v2"))
+
+        ok, errors = verify_compaction_receipts(
+            chain,
+            journal_reader=JournalReader(tmp_path / "journal" / "sess-1"),
+        )
+
+        assert not ok
+        assert any(
+            "policy_version mismatch" in err and receipt.correlation_id in err and "seq=0" in err for err in errors
+        )
+
+    def test_legacy_receipt_and_journal_without_policy_version_verify(self, tmp_path: Path) -> None:
+        receipt = _receipt()
+        chain = _chain(tmp_path)
+        legacy_details = receipt.to_details()
+        legacy_details.pop("policy_version")
+        chain.log_with_prev_digest(
+            event_type=EVENT_COMPACTION_RECEIPT,
+            actor=receipt.worker_id,
+            resource_type="compaction",
+            resource_id=receipt.task_id,
+            details=legacy_details,
+        )
+        journal = Journal.open(tmp_path / "journal" / "sess-1")
+        journal.append(
+            input_hash=receipt.pre_sha256,
+            tool_call={
+                "kind": COMPACTION_STEP_KIND,
+                "task_id": receipt.task_id,
+                "trigger": receipt.trigger,
+                "pre_sha256": receipt.pre_sha256,
+                "post_sha256": receipt.post_sha256,
+                "correlation_id": receipt.correlation_id,
+            },
+            tool_result={
+                "tokens_before": receipt.tokens_before,
+                "tokens_after": receipt.tokens_after,
+                "retry_count": receipt.retry_count,
+                "validators": receipt.to_details()["validators"],
+            },
+        )
+
+        ok, errors = verify_compaction_receipts(
+            chain,
+            journal_reader=JournalReader(tmp_path / "journal" / "sess-1"),
+        )
+
+        assert ok, errors
 
     def test_broken_hmac_chain_fails_verification(self, tmp_path: Path) -> None:
         receipt = _receipt()

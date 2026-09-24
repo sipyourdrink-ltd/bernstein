@@ -71,7 +71,7 @@ def _record_spawned_events(journal: EventJournal, session: AgentSession) -> None
 
 
 def _run_started_stub(
-    journal: EventJournal, run_id: str, gate_config: QualityGatesConfig | None = None
+    journal: EventJournal, run_id: str, gate_config: QualityGatesConfig | None = None, data_class: str | None = None
 ) -> SimpleNamespace:
     """Return a stub carrying just what ``_record_run_started`` reads."""
     return SimpleNamespace(
@@ -87,12 +87,15 @@ def _run_started_stub(
             config_hash="",
         ),
         _quality_gate_config=gate_config,
+        _data_class=data_class,
     )
 
 
-def _record_run_started(journal: EventJournal, run_id: str, gate_config: QualityGatesConfig | None = None) -> None:
+def _record_run_started(
+    journal: EventJournal, run_id: str, gate_config: QualityGatesConfig | None = None, data_class: str | None = None
+) -> None:
     """Drive the orchestrator's real ``run_started`` write site."""
-    stub = _run_started_stub(journal, run_id, gate_config)
+    stub = _run_started_stub(journal, run_id, gate_config, data_class)
     Orchestrator._record_run_started(stub)  # type: ignore[arg-type]
 
 
@@ -378,3 +381,29 @@ class TestExportNamespacedEndpointRunVerifies:
             timeout=120,
         )
         assert "Result: PASS" in verify.stdout, verify.stdout + verify.stderr
+
+
+class TestDataClassDeclaredInSeed:
+    """Tests for issue #6088 - data_class field in SeedConfig."""
+
+    def test_declared_data_class_reaches_exported_record(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="data-class-run", sdd_dir=tmp_path / ".sdd")
+        _record_run_started(journal, "data-class-run", QualityGatesConfig(lint=True), "public")
+        _record_spawned_events(journal, _session())
+        journal.record("run_completed", run_id="data-class-run", ticks=1)
+
+        record = json.loads(_emitter().emit_trust_record(journal.path, "data-class-run", "data-class-run"))
+        assert record["data_class"] == "public"
+
+    def test_undeclared_data_class_exports_confidential(self, tmp_path: Path) -> None:
+        journal = _orchestrator_written_journal(tmp_path / ".sdd", "undeclared-run")
+        record = json.loads(_emitter().emit_trust_record(journal.path, "undeclared-run", "undeclared-run"))
+
+        assert record["data_class"] == "confidential"
+
+    def test_run_started_carries_declared_data_class(self, tmp_path: Path) -> None:
+        journal = EventJournal(run_id="data-class-event", sdd_dir=tmp_path / ".sdd")
+        _record_run_started(journal, "data-class-event", QualityGatesConfig(lint=True), "internal")
+
+        events = load_events(journal.path).events
+        assert events[0]["data_class"] == "internal"

@@ -64,8 +64,16 @@ def routine_scenarios(scenarios_dir: Path | None) -> None:
     table.add_column("name")
     table.add_column("tasks", justify="right")
     table.add_column("tags", style="dim")
+    table.add_column("source", style="green")
     for s in sorted(scenarios, key=lambda r: r.scenario_id):
-        table.add_row(s.scenario_id, s.name, str(len(s.tasks)), ", ".join(s.tags))
+        source_color = "green" if s.source_root == "workspace" else "blue"
+        table.add_row(
+            s.scenario_id,
+            s.name,
+            str(len(s.tasks)),
+            ", ".join(s.tags),
+            f"[{source_color}]{s.source_root}[/{source_color}]",
+        )
     console.print(table)
 
 

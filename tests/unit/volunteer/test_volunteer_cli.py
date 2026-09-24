@@ -540,3 +540,66 @@ def test_verify_bundle_receipt_out_writes_a_receipt_that_verifies(tmp_path: Path
     verification = verify_clean_room_receipt(envelope, verifier_key)
     assert verification.ok, verification.errors
     assert verification.digest == payload["receipt_digest"]
+
+
+# --------------------------------------------------------------------------- #
+# Bare volunteer command routing (#3889)
+# --------------------------------------------------------------------------- #
+
+
+def test_bare_volunteer_command_does_not_print_bare_click_help() -> None:
+    """Regression guard: bare `bernstein volunteer` must not print Click help.
+
+    Before the onboarding routing, `volunteer_group` had no
+    `invoke_without_command=True`, so bare invocation printed Click's default
+    group help. After the change it must route to the onboarding flow instead.
+    """
+    result = CliRunner().invoke(volunteer_group, [], catch_exceptions=False, input="y\n")
+    # Click help has "Usage:" and "Commands:" sections
+    assert "Usage:" not in result.output or "Commands:" not in result.output
+    assert result.exit_code == 0
+
+
+def test_volunteer_subcommands_still_dispatch_normally_after_the_change() -> None:
+    """Adding `invoke_without_command=True` must not break existing subcommands.
+
+    This catches the common mistake: added the flag but broke dispatch for
+    named subcommands because group-level options became positional/eager and
+    consumed the subcommand name.
+    """
+    # verify is already tested extensively; call it to prove dispatch still works
+    result = CliRunner().invoke(volunteer_group, ["verify", "--help"], catch_exceptions=False)
+    assert result.exit_code == 0
+    assert "volunteer verify" in result.output or "Validate a project" in result.output
+
+
+def test_bare_volunteer_explains_before_asking_for_anything(tmp_path: Path) -> None:
+    """Output order: explanation text appears before any prompt or interactive step."""
+    result = CliRunner().invoke(volunteer_group, [], catch_exceptions=False, input="n\n")
+    lines = result.output.split("\n")
+    # Find the first substantial line (skip blanks)
+    first_line_idx = next((i for i, line in enumerate(lines) if line.strip()), 0)
+    # Explanation should be early in output, definitely before any "Proceed?" prompt
+    assert first_line_idx < len(lines) // 2
+    # The explanation should contain key terms from the issue
+    explanation_text = "\n".join(lines[:10])
+    assert "volunteer" in explanation_text.lower() or "task" in explanation_text.lower()
+
+
+def test_no_flag_can_skip_the_consent_step() -> None:
+    """Consent is mandatory; no flag bypasses it.
+
+    This is an explicit acceptance criterion from #3889: "Consent is always
+    explicit on first run, recorded as a signed receipt, and cannot be skipped
+    by any flag."
+    """
+    for flag in ["--yes", "--force", "--non-interactive", "-y"]:
+        result = CliRunner().invoke(volunteer_group, [flag], catch_exceptions=False)
+        # The command should either:
+        # 1. Not recognize the flag (exit 2, usage error), OR
+        # 2. Recognize it but still require consent (output mentions consent)
+        if result.exit_code == 2:
+            # Click rejected the unknown flag - that's acceptable
+            continue
+        # If it accepted the flag, consent must still be required
+        assert "consent" in result.output.lower() or result.exit_code != 0

@@ -333,9 +333,12 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein ledger verify/anchor/fetch` | Full | 3 | Verify, anchor, and fetch work-ledger segments |
 | `bernstein seal publish/verify` | Full | 3 | Anchor a run's sealed journal head to an RFC 3161 timestamping authority and re-check the anchor offline against pinned TSA roots |
 | `bernstein mission define/status/verify` | Full | 3 | Define multi-phase missions and verify mission status (`mission digest verify` for digests) |
+| `bernstein model registry/impact` | Full | 3 | Model registry projection and impact analysis |
 | [`bernstein tournament show/verify`](../operations/tournament-runs.md) | Full | 3 | Inspect a tournament run and verify its selection receipt |
 | `bernstein spiffe id/verify-binding` | Full | 4 | Print the SPIFFE id and verify a workload-identity binding |
 | `bernstein spec check/auto-fix` | Full | 3 | Evaluate and auto-fix a spec against the quality checklist |
+| `bernstein scenario list` | Full | 3 | List all scenarios in the library |
+| `bernstein scenario run` | Full | 3 | Run a scenario end-to-end, emitting tasks to the task server |
 | [`bernstein run-service submit/attach/status`](../operations/run-service.md) | Full | 3 | Submit a detached run, then reattach to it later |
 | `bernstein compaction log` | Full | 3 | Inspect chain-anchored compaction receipts |
 | `bernstein identity keydir/decode/verify` | Full | 4 | Print the JWKS key directory and decode/verify install identity |

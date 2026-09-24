@@ -1,0 +1,67 @@
+name: docs-build
+
+# Builds the MkDocs site the same way Read the Docs does, with `--strict` so
+# a broken link, a bad anchor, or a toolchain regression fails the PR instead
+# of the published site (see #the-rtd-outage: the build silently stopped
+# working on RTD and nothing caught it until a human went looking).
+#
+# Deliberately does NOT reuse .readthedocs.yaml's build - that file is RTD's
+# own contract and is read by RTD directly - but installs the same
+# docs/requirements.txt on the same Python version and runs the same
+# `mkdocs build`, plus `--strict` to catch what RTD's own non-strict build
+# would not.
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".readthedocs.yaml"
+      - "docs/requirements.txt"
+      - "docs/requirements.in"
+      - "pyproject.toml"
+      - ".github/workflows/docs-build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".readthedocs.yaml"
+      - "docs/requirements.txt"
+      - "docs/requirements.in"
+      - "pyproject.toml"
+      - ".github/workflows/docs-build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: docs-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: mkdocs build --strict
+    # GitHub-hosted, not self-hosted: this job runs on `pull_request`, which
+    # can carry a contributor's revision (see
+    # tests/unit/test_self_hosted_runner_scope.py).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Install docs toolchain
+        run: uv sync --group docs
+      - name: mkdocs build --strict
+        run: uv run --group docs mkdocs build --strict

@@ -939,6 +939,17 @@ dev = [
     "playwright>=1.62.0",
 ]
 
+# Documentation toolchain (mkdocs.yml): MkDocs Material, the `social` card
+# plugin's imaging extra, and the `redirects` / `minify` plugins declared in
+# mkdocs.yml. Floors mirror docs/requirements.in so `uv run --group docs
+# mkdocs build --strict` resolves the same toolchain the docs pin file does.
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.7,<10",
+    "mkdocs-redirects>=1.2,<1.2.4",
+    "mkdocs-minify-plugin>=0.8,<1",
+]
+
 [tool.uv]
 # The checked-in gRPC gencode under src/bernstein/core/grpc_gen/ carries
 # `Protobuf Python Version: 7.35.1` and calls ValidateProtobufRuntimeVersion()

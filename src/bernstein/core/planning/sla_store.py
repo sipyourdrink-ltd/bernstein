@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from bernstein.core.security.sanitize import sanitize_log
+from bernstein.core.log_safe import for_log
 
 if TYPE_CHECKING:
     # `SLAStore.list` shadows the builtin inside the class body, so
@@ -96,22 +96,6 @@ class SLAContractIdError(SLAContractError):
     Subclasses :class:`SLAContractError` so a caller that already handles
     contract validation failures keeps handling this one.
     """
-
-
-def _single_line(value: object, *, limit: int = 256) -> str:
-    """Return *value* as a single-line, control-character-free log token.
-
-    Contract ids and store paths reach log records, and a log record is
-    newline-delimited both for an operator reading the file and for any shipper
-    parsing it. A value carrying CR or LF could therefore append a forged
-    record after the real one. :func:`sanitize_log` escapes every record
-    boundary and control character, and the result is length-capped, so an
-    untrusted value always occupies exactly one line of bounded width.
-    """
-    text = sanitize_log(str(value))
-    if len(text) > limit:
-        text = text[:limit] + "...(truncated)"
-    return text
 
 
 @dataclass(frozen=True)
@@ -403,11 +387,11 @@ class SLAStore:
                 if it does not land directly in the store directory.
         """
         if not _CONTRACT_ID_RE.match(contract_id):
-            raise SLAContractIdError(f"invalid SLA contract id '{_single_line(contract_id)}'")
+            raise SLAContractIdError(f"invalid SLA contract id '{for_log(contract_id, limit=256)}'")
         base = os.path.normpath(str(self._dir))
         candidate = os.path.normpath(os.path.join(base, f"{contract_id}.json"))
         if not candidate.startswith(base + os.sep) or os.path.dirname(candidate) != base:
-            raise SLAContractIdError(f"SLA contract id '{_single_line(contract_id)}' escapes the contract store")
+            raise SLAContractIdError(f"SLA contract id '{for_log(contract_id, limit=256)}' escapes the contract store")
         return Path(candidate)
 
     def add(self, contract: SLAContract, *, now: float | None = None) -> SLAContract:
@@ -460,7 +444,7 @@ def _load_contract(path: Path) -> SLAContract | None:
     try:
         raw: Any = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Could not load SLA contract %s: %s", _single_line(path), _single_line(exc))
+        logger.warning("Could not load SLA contract %s: %s", for_log(path, limit=256), for_log(exc, limit=256))
         return None
     if not isinstance(raw, dict):
         return None
@@ -468,7 +452,7 @@ def _load_contract(path: Path) -> SLAContract | None:
     try:
         return contract_from_dict(data)
     except SLAContractError as exc:
-        logger.warning("Malformed SLA contract %s: %s", _single_line(path), _single_line(exc))
+        logger.warning("Malformed SLA contract %s: %s", for_log(path, limit=256), for_log(exc, limit=256))
         return None
 
 

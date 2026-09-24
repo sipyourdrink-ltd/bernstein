@@ -334,7 +334,7 @@ def test_a_missing_gh_binary_does_not_raise_out_of_fetch_state(monkeypatch: Any)
 
 
 def _task(repo_url: str) -> ClaimedTask:
-    return ClaimedTask(repo_url=repo_url, issue_number=NUMBER, issue_title="t", issue_body="b")
+    return ClaimedTask(repo_url=repo_url, issue_number=NUMBER, issue_title="t", issue_body="b", role="backend")
 
 
 def _donor() -> DonorLimits:

@@ -83,6 +83,7 @@ from bernstein.cli.commands.impact_cmd import (
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.issue_to_pr_cmd import issue_to_pr_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
+from bernstein.cli.commands.model_cmd import model_group
 from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.receipt_cmd import receipt_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
@@ -1159,9 +1160,12 @@ cli.add_command(listen_cmd, "listen")
 cli.add_command(self_update_cmd, "self-update")
 
 # Provenance-verified update lifecycle: check, update, pin, rollback (#2942)
+# Scenario commands
+from bernstein.cli.commands.scenario_cmd import scenario_group  # noqa: E402
 from bernstein.cli.commands.self_update_cmd import self_group  # noqa: E402
 
 cli.add_command(self_group, "self")
+cli.add_command(scenario_group, "scenario")
 
 cli.add_command(undo_cmd, "undo")
 cli.add_command(worker, "worker")
@@ -1498,4 +1502,5 @@ from bernstein.cli.commands.api_check_cmd import api_check_cmd  # noqa: E402
 cli.add_command(api_check_cmd, "api-check")
 cli.add_command(ab_test_cmd, "ab-test")
 cli.add_command(receipt_group, "receipt")
+cli.add_command(model_group, "model")
 cli.add_command(volunteer_group, "volunteer")

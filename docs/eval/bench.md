@@ -201,6 +201,24 @@ raising it by guessing used to be free.
 crash is not the run being confidently wrong, and counting it as one would move
 the number for something the run did not do.
 
+### Lambda (λ): weight for wrong answers
+
+The `SubmissionBundle` carries a `lambda_value` (default `0.5`) that weights wrong
+answers in the expected-value score used to rank bundles:
+
+```
+expected_value = (resolved - lambda * wrong) / attempted
+```
+
+- `resolved` — tasks the run answered correctly
+- `wrong` — tasks the run answered incorrectly (confident errors)
+- `attempted` — tasks the run attempted (`resolved + wrong`, abstentions excluded)
+- `lambda` — penalty weight for a wrong answer relative to a correct one
+
+A `lambda` of `0.5` means a wrong answer costs half a correct one. Raising `lambda`
+penalises guessing more aggressively; lowering it makes the score closer to raw
+resolve rate. The value is recorded in the bundle so the ranking is reproducible.
+
 **Existing bundles are unaffected.** A bundle written before abstentions
 existed has `abstained: 0`, so `attempted` is `total - skipped` for it exactly
 as it always was and its published resolve rate does not move.
