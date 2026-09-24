@@ -39,7 +39,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/detached-workflow-canary.yml | Detached workflow canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "detached-workflow-canary-${{ github.ref }}"} | 1 |
-| .github/workflows/docs-build.yml | docs-build | pull_request, push | - | 1 |
+| .github/workflows/docs-build.yml | docs-build | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-build-${{ github.ref }}"} | 1 |
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/docs-requirements-staleness-weekly.yml | docs-requirements-staleness-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-requirements-staleness-${{ github.ref }}"} | 1 |
@@ -120,7 +120,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/dependabot-auto-merge.yml | auto-merge |
 | .github/workflows/dependency-review.yml | review: Dependency review |
 | .github/workflows/detached-workflow-canary.yml | canary: Detached workflow canary |
-| .github/workflows/docs-build.yml | build |
+| .github/workflows/docs-build.yml | build: mkdocs build --strict |
 | .github/workflows/docs-drift.yml | drift-check: Run drift check<br>drift-publish: Publish drift surfaces |
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture snapshot |
 | .github/workflows/docs-requirements-staleness-weekly.yml | staleness: recompile and diff |
