@@ -54,14 +54,6 @@ def _audit_dir() -> Path:
     return Path.cwd() / ".sdd" / "audit"
 
 
-def _cache_path() -> Path:
-    """Return the catalog cache file path, honouring env overrides."""
-    override = os.environ.get("BERNSTEIN_SKILLS_CATALOG_CACHE_PATH")
-    if override:
-        return Path(override)
-    return default_cache_path()
-
-
 def _parse_scope(scope_str: str) -> InstallScope:
     """Coerce the ``--scope`` CLI flag into an :class:`InstallScope`."""
     try:
@@ -74,7 +66,7 @@ def _build_service(scope_str: str) -> SkillCatalogService:
     """Construct a :class:`SkillCatalogService` wired to host paths."""
     scope = _parse_scope(scope_str)
     fetcher = SkillCatalogFetcher(
-        cache_path=_cache_path(),
+        cache_path=default_cache_path(),
         revalidate_seconds=env_ttl_seconds(DEFAULT_REVALIDATE_SECONDS),
     )
     auditor = SkillCatalogAuditor(audit_dir=_audit_dir())

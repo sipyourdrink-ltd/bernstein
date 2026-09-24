@@ -128,15 +128,6 @@ _PENDING_SHAPES: Final[tuple[_AllowedShape, ...]] = (
         ),
     ),
     _AllowedShape(
-        fields=frozenset({"catalog", "from_cache", "revalidated", "source_url"}),
-        classes=frozenset({"FetchResult"}),
-        reason=(
-            "core/protocols/mcp_catalog/fetcher.py and core/skills/catalog/"
-            "fetcher.py fetch different catalogs over the same HTTP caching "
-            "protocol. Not a verification result."
-        ),
-    ),
-    _AllowedShape(
         fields=frozenset({"commit_sha", "cost_usd", "message", "success"}),
         classes=frozenset({"DispatchResult", "GroundedDispatchResult"}),
         reason=(

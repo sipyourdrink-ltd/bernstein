@@ -12,7 +12,7 @@ The catalog is **fetched** (network call), **validated** against [`reference/mcp
 
 - **Catalog** - a JSON document listing MCP servers, their install commands, version pins, and verification status. Schema documented at [`reference/mcp-catalog-schema.json`](mcp-catalog-schema.json) (canonical) or below in [Schema example](#schema-example).
 - **Entry** - one record in the catalog. Has an `id` (slug), `version_pin` (semver), `install_command` (argv), `verified_by_bernstein` (bool), `signature` (optional), and `transports` (list of stdio / http / sse).
-- **Cache** - local JSON copy of the last-fetched catalog. Path resolved by `default_cache_path()`; overridable via `BERNSTEIN_MCP_CATALOG_CACHE_PATH`.
+- **Cache** - one user-level JSON file shared by every worker and worktree: `$XDG_CACHE_HOME/bernstein/mcp-catalog.json`, or `~/.cache/bernstein/mcp-catalog.json` when `XDG_CACHE_HOME` is unset. Overridable via `BERNSTEIN_MCP_CATALOG_CACHE_PATH`. Inside the revalidation window (6 hours by default) a fetch makes no request. After it, the request carries `If-None-Match` with the last `ETag`, and a `304` reuses the cached copy. A body that fails validation is remembered by its `ETag` too, so an unchanged invalid document is not downloaded again; the last valid catalog stays in the cache. `bernstein mcp serve` runs its startup check against the same window, so starting many agents does not multiply requests.
 - **User MCP config** - the file Bernstein writes installed servers into. Path resolved by `default_user_config_path()`; overridable via `BERNSTEIN_MCP_USER_CONFIG_PATH`. Edits are bracketed by a "bernstein-managed" block so manual entries elsewhere in the file are preserved.
 - **Audit log** - every fetch / install / upgrade / uninstall emits an HMAC-chained event under `.sdd/audit/`. Override directory via `BERNSTEIN_MCP_CATALOG_AUDIT_DIR` (`src/bernstein/cli/commands/mcp_catalog_cmd.py`).
 - **Sandbox preview** - `install` and `upgrade` execute the entry's `install_command` in a sandbox **first**, capturing any file changes as a diff. Only after you confirm does Bernstein touch your real user config.
@@ -229,14 +229,14 @@ Every field is required unless marked otherwise in the schema. `additionalProper
 
 ## Configuration & environment variables
 
-All five env vars come from `src/bernstein/cli/commands/mcp_catalog_cmd.py`.
+The cache path is resolved in `src/bernstein/core/protocols/mcp_catalog/fetcher.py`; the other four are read in `src/bernstein/cli/commands/mcp_catalog_cmd.py`.
 
 | Env var | Default | Purpose |
 |---|---|---|
 | `BERNSTEIN_MCP_CATALOG_AUDIT_DIR` | `.sdd/audit/` | Where HMAC-chained audit events are written. |
 | `BERNSTEIN_MCP_CATALOG_CHECK_INTERVAL` | `DEFAULT_CHECK_INTERVAL_SECONDS` (from `core/protocols/mcp_catalog`) | Minimum seconds between background catalog freshness checks. |
 | `BERNSTEIN_MCP_CATALOG_REVALIDATE_INTERVAL` | `DEFAULT_REVALIDATE_SECONDS` | Minimum seconds before re-fetch of the upstream catalog. |
-| `BERNSTEIN_MCP_CATALOG_CACHE_PATH` | `default_cache_path()` | Where the validated catalog JSON is cached on disk. |
+| `BERNSTEIN_MCP_CATALOG_CACHE_PATH` | `$XDG_CACHE_HOME/bernstein/mcp-catalog.json` (else `~/.cache/bernstein/mcp-catalog.json`) | Where the catalog cache lives. Every worker that sees the same value shares one cache. |
 | `BERNSTEIN_MCP_USER_CONFIG_PATH` | `default_user_config_path()` | The user MCP config file Bernstein writes installed entries into. |
 
 All five accept absolute or `~`-expanded paths (where applicable) and parse integer overrides safely (a non-integer value is silently ignored and the default is kept).

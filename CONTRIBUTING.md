@@ -223,7 +223,7 @@ Two markers are recognised:
 
 - `intentional-broad-except`: legitimate best-effort path (telemetry,
   optional analytics, lineage append, etc.). The body should route any
-  sensitive message through `bernstein.core.sanitize.sanitize_log`.
+  sensitive message through `bernstein.core.security.sanitize.sanitize_log`.
 - `bot-ack: <short-tag>`: previously reviewed broad clause; the tag
   identifies the rationale (e.g. `bot-ack: pre-existing-1723`,
   `bot-ack: legacy-shim`).

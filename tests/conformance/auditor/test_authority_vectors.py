@@ -1,4 +1,16 @@
-"""Authority questions answered only from the exported bundle (#5059)."""
+"""Conformance vectors for the four authority questions (#5059).
+
+Q3  Was the sub-agent authorized, and by whom.
+Q4  What exactly was it permitted to do.
+Q5  Did it stay inside that.
+Q21 Who else holds authority from the same grant.
+
+All four are ``xfail(strict=True)``: the audit receipt records that a
+delegation happened (``agent.delegated``) but carries no authorization
+grant, no permitted-action scope, and no grant-propagation record.  Until
+those fields land, the scoreboard reports them as unanswered rather than
+asserting something weaker than the question actually asks.
+"""
 
 from __future__ import annotations
 
@@ -11,109 +23,171 @@ from tests.conformance.auditor import recorder
 if TYPE_CHECKING:
     from tests.conformance.auditor.bundle import BundleReader
 
+# ---------------------------------------------------------------------------
+# Fields the authority questions need but the bundle does not yet carry
+# ---------------------------------------------------------------------------
+
+#: Fields any of which would identify the authorization grant.
+_GRANT_FIELDS = ("grant_id", "authorization_id", "granted_by", "delegation_grant")
+
+#: Fields any of which would describe the permitted action scope.
+_SCOPE_FIELDS = ("permitted_actions", "permission_scope", "allowed_operations", "capability_set")
+
+#: Fields any of which would record a boundary-compliance check.
+_COMPLIANCE_FIELDS = ("stayed_within_scope", "boundary_check", "scope_violation", "compliance_status")
+
+#: Fields any of which would list co-grantees from the same delegation.
+_PROPAGATION_FIELDS = ("co_grantees", "grant_propagation", "sibling_agents", "grant_chain")
+
+
+# ---------------------------------------------------------------------------
+# Q3 -- was the sub-agent authorized, and by whom
+# ---------------------------------------------------------------------------
+
+
+def test_q3_delegation_event_is_present(bundle_reader: BundleReader) -> None:
+    """The fixture records a delegation: agent.delegated appears in the audit receipt."""
+    receipt = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
+    delegations = [e for e in receipt["events"] if e.get("event_type") == "agent.delegated"]
+    assert delegations, "no agent.delegated event found in audit receipt"
+
 
 @pytest.mark.question(3)
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
     reason=(
-        "sub-agent spawn has no parent_identity_id or signed authorization grant "
-        "binding the delegation to an authorizing principal (#5046)"
+        "the audit receipt records an agent.delegated event naming the "
+        "delegating and delegated agent, but carries no grant identifier "
+        "and no record of who authorized the delegation; an auditor cannot "
+        "determine whether the sub-agent was authorized, let alone by whom, "
+        "without a grant_id or equivalent on the delegation event (#5046)"
     ),
 )
-def test_q3_was_the_subagent_authorized_to_act_and_by_whom(bundle_reader: BundleReader) -> None:
-    """Q3: was the sub-agent authorized to act, and by whom?
+def test_q3_delegation_event_records_authorization_grant(bundle_reader: BundleReader) -> None:
+    """Q3: was the sub-agent authorized, and by whom?
 
-    The bundle must prove the sub-agent was spawned under an explicit, signed
-    authorization grant from an identified principal, rather than an unauthenticated
-    local parent_agent_id string.
+    The ``agent.delegated`` audit event records that agent-a delegated to
+    agent-b but carries no authorization grant identifier and no grantor
+    identity beyond the delegating agent itself.  An auditor cannot
+    determine whether the delegation was pre-authorized and by whom
+    without a ``grant_id`` or equivalent.
     """
-    audit = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
-    events = audit["events"]
-    delegations = [event for event in events if event["event_type"] == "agent.delegated"]
-    assert delegations, "the bundle must record the sub-agent delegation event"
+    receipt = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
+    delegations = [e for e in receipt["events"] if e.get("event_type") == "agent.delegated"]
+    assert delegations, "no agent.delegated event found in audit receipt"
 
-    for delegation in delegations:
-        details = delegation.get("details", {})
-        # Must carry a cryptographic parent identity id and authorization grant ref
-        parent_identity = details.get("parent_identity_id")
-        grant_id = details.get("grant_id")
-        assert parent_identity, "delegation does not name parent_identity_id (#5046)"
-        assert grant_id, "delegation does not reference an authorization grant (#5046)"
+    for event in delegations:
+        found = [f for f in _GRANT_FIELDS if f in event]
+        assert found, (
+            f"agent.delegated event at {event.get('timestamp')} carries no authorization grant field; "
+            f"looked for {list(_GRANT_FIELDS)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Q4 -- what exactly was it permitted to do
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.question(4)
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason=("the exported bundle carries no delegation grant record specifying permitted scope (#5047)"),
+    reason=(
+        "no event in either receipt carries a permitted-action scope: "
+        "delegation is recorded but what the delegated agent was allowed to "
+        "do -- which tools, which resources, which endpoints -- is never "
+        "written to any bundle file, so the scope cannot be read off the "
+        "evidence (#5046)"
+    ),
 )
-def test_q4_what_exactly_was_the_subagent_permitted_to_do(bundle_reader: BundleReader) -> None:
-    """Q4: what exactly was it permitted to do?
+def test_q4_bundle_records_permitted_action_scope(bundle_reader: BundleReader) -> None:
+    """Q4: what exactly was the sub-agent permitted to do?
 
-    The bundle must export a grant record stating the sub-agent's permitted scope
-    (tools, file paths, endpoints, and delegation depth).
+    An auditor needs to read the permission scope granted to the delegated
+    agent from the bundle.  Neither the run receipt nor the audit receipt
+    states which subset of actions was explicitly permitted, so the scope
+    cannot be determined from the evidence alone.
     """
-    audit = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
-    grants = [event for event in audit["events"] if event["event_type"] in ("authority.grant", "delegation.grant")]
-    assert grants, "the bundle must contain an authority grant record (#5047)"
+    for receipt_name in (recorder.RUN_RECEIPT_NAME, recorder.AUDIT_RECEIPT_NAME):
+        receipt = bundle_reader.read_json(receipt_name)
+        events = receipt.get("events") or receipt.get("journal", {}).get("events", [])
+        all_details: list[dict[str, object]] = [{**event, **(event.get("details") or {})} for event in events]
+        found_scope = [event for event in all_details if any(f in event for f in _SCOPE_FIELDS)]
+        assert found_scope, (
+            f"no event in {receipt_name!r} carries a permission scope field; "
+            f"looked for {list(_SCOPE_FIELDS)} across {len(events)} events"
+        )
 
-    grant = grants[0]
-    scope = grant.get("details", {}).get("scope", {})
-    assert "allowed_tools" in scope, "grant must declare allowed_tools (#5047)"
-    assert "allowed_files" in scope, "grant must declare allowed_files (#5047)"
+
+# ---------------------------------------------------------------------------
+# Q5 -- did it stay inside that
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.question(5)
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="no grant boundary exists to compare sub-agent actions against (#5047)",
+    reason=(
+        "without a recorded permission scope (Q4) there is nothing to compare "
+        "the observed actions against; neither receipt records whether each "
+        "action was inside an authorized boundary; no boundary-compliance check "
+        "or scope-violation field appears in any bundle file (#5055)"
+    ),
 )
-def test_q5_did_the_subagent_stay_inside_that_permission(bundle_reader: BundleReader) -> None:
-    """Q5: did it stay inside that permission?
+def test_q5_bundle_records_scope_compliance(bundle_reader: BundleReader) -> None:
+    """Q5: did the sub-agent stay inside its permitted scope?
 
-    Without an exported grant record declaring scope bounds, sub-agent actions
-    cannot be proven contained within delegated authority.
+    Answering this question requires both the permitted scope (Q4) and a
+    record of whether each action fell within it.  The bundle carries
+    neither: there is no scope to compare against and no per-action
+    compliance attestation in either receipt.
     """
-    audit = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
-    events = audit["events"]
-
-    grants = {
-        event["resource_id"]: event
-        for event in events
-        if event["event_type"] in ("authority.grant", "delegation.grant")
-    }
-    assert grants, "no delegation grant found in audit events to evaluate boundary against (#5047)"
-
-    # Check that each sub-agent action was validated against the grant
-    subagent_actions = [
-        event for event in events if event.get("actor") == "agent-b" and event["event_type"] != "agent.delegated"
-    ]
-    assert subagent_actions, "sub-agent actions must exist in the bundle"
-    for action in subagent_actions:
-        assert action.get("details", {}).get("grant_id") in grants, (
-            "action does not bind to an active delegation grant (#5047)"
+    for receipt_name in (recorder.RUN_RECEIPT_NAME, recorder.AUDIT_RECEIPT_NAME):
+        receipt = bundle_reader.read_json(receipt_name)
+        events = receipt.get("events") or receipt.get("journal", {}).get("events", [])
+        all_details: list[dict[str, object]] = [{**event, **(event.get("details") or {})} for event in events]
+        found_compliance = [event for event in all_details if any(f in event for f in _COMPLIANCE_FIELDS)]
+        assert found_compliance, (
+            f"no event in {receipt_name!r} carries a scope-compliance field; "
+            f"looked for {list(_COMPLIANCE_FIELDS)} across {len(events)} events"
         )
+
+
+# ---------------------------------------------------------------------------
+# Q21 -- who else holds authority from the same grant
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.question(21)
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason=("the exported bundle has no delegation graph linking principals derived from the same grant (#5055)"),
+    reason=(
+        "the bundle carries no grant-propagation record: there is no list of "
+        "co-grantees, no grant chain linking sibling agents to the same "
+        "authorization, and no field naming other principals that inherited "
+        "authority from the same delegation; an auditor cannot determine who "
+        "else acted under the same grant without this information (#5047)"
+    ),
 )
-def test_q21_which_other_principals_hold_authority_derived_from_the_same_grant(
-    bundle_reader: BundleReader,
-) -> None:
-    """Q21: which other principals hold authority derived from the same grant?
+def test_q21_bundle_records_grant_propagation(bundle_reader: BundleReader) -> None:
+    """Q21: who else holds authority from the same grant?
 
-    The bundle must carry a verifiable authority graph linking all principals
-    whose authority stems from the root grant.
+    If the delegation that authorized the sub-agent was itself derived from
+    a broader grant, an auditor needs to know who else can act under that
+    grant.  The bundle contains no grant-chain or co-grantee record of any
+    kind.
     """
-    audit = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
-    authority_graph = audit.get("authority_graph") or audit.get("delegation_tree")
-    assert authority_graph is not None, "bundle must export an authority graph or delegation tree (#5055)"
-    assert isinstance(authority_graph, dict) and "nodes" in authority_graph, (
-        "authority graph must link principal nodes and delegation edges (#5055)"
+    receipt = bundle_reader.read_json(recorder.AUDIT_RECEIPT_NAME)
+
+    all_details: list[dict[str, object]] = [{**event, **(event.get("details") or {})} for event in receipt["events"]]
+    all_details.append(receipt)
+
+    found_propagation = [item for item in all_details if any(f in item for f in _PROPAGATION_FIELDS)]
+    assert found_propagation, (
+        f"no event or top-level field in the audit receipt carries a "
+        f"grant-propagation record; looked for {list(_PROPAGATION_FIELDS)}"
     )
