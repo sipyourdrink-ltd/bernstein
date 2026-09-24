@@ -7,7 +7,7 @@ or in the three preceding comment lines. Two markers are recognised:
 
   - ``intentional-broad-except``: legitimate best-effort path (telemetry,
     optional analytics, lineage append, etc.). The body should route any
-    sensitive message through ``bernstein.core.sanitize.sanitize_log``.
+    sensitive message through ``bernstein.core.security.sanitize.sanitize_log``.
   - ``bot-ack:`` followed by a short tag (e.g. ``bot-ack: legacy-shim``):
     used when a bot review has already acked the broad clause and a
     follow-up ticket exists.
