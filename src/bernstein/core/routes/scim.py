@@ -46,13 +46,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from bernstein.core.routes.identities import identity_store_for_request
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from pathlib import Path
 
 router = APIRouter(tags=["scim"])
 
@@ -294,7 +295,7 @@ def service_provider_config(request: Request) -> _SCIMResponse:
         content={
             "schemas": [_SCHEMA_SERVICE_PROVIDER_CONFIG],
             "documentationUri": _DOCUMENTATION_URI,
-            "patch": {"supported": False},
+            "patch": {"supported": True},
             "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
             "filter": {"supported": False, "maxResults": 0},
             "changePassword": {"supported": False},
@@ -313,9 +314,9 @@ def service_provider_config(request: Request) -> _SCIMResponse:
                 }
             ],
             SCIM_SPC_EXTENSION: {
-                "resourceMutability": "read-only",
+                "resourceMutability": "read-write",
                 "delete": {
-                    "supported": False,
+                    "supported": True,
                     "semantics": "soft",
                     "retainsHistory": True,
                     "description": (
@@ -438,6 +439,116 @@ def list_users(
 def get_user(user_id: str, request: Request) -> _SCIMResponse:
     """Fetch a single agent principal by its SCIM ``id``."""
     identity = identity_store_for_request(request).get(user_id)
-    if identity is None:
+    from bernstein.core.identity.agent_jwt import AgentIdentityStatus
+
+    if identity is None or identity.status == AgentIdentityStatus.REVOKED:
         return _scim_error(404, f"Principal {user_id} not found", scim_type="invalidValue")
     return _SCIMResponse(content=_scim_user(identity, request))
+
+
+# ---------------------------------------------------------------------------
+# DELETE and PATCH (slice 3: deactivation/deletion with history retention)
+# ---------------------------------------------------------------------------
+
+
+def _principal_ledger_for_request(request: Request) -> Any:
+    """Lazily create or retrieve the principal ledger from app state.
+
+    The SCIM write surface appends to the principal ledger, which is separate
+    from (but parallel to) the agent identity store used for reads.
+    """
+
+    from bernstein.core.identity.principals import default_principal_ledger
+
+    ledger = getattr(request.app.state, "principal_ledger", None)
+    if ledger is None:
+        runtime_dir: Path = request.app.state.runtime_dir  # type: ignore[assignment]
+        root = runtime_dir.parent
+        ledger = default_principal_ledger(root=root)
+        request.app.state.principal_ledger = ledger  # type: ignore[attr-defined]
+    return ledger
+
+
+@router.delete(
+    f"{SCIM_BASE_PATH}/Users/{{user_id}}",
+    summary="Delete a user (soft delete with history retention)",
+    responses={404: {"description": "Unknown principal"}},
+    status_code=204,
+)
+def delete_user(user_id: str, request: Request) -> Response:
+    """Soft-delete a user per SCIM 2.0 DELETE semantics.
+
+    SCIM clients expect DELETE to remove the resource. This server marks the
+    principal inactive while retaining its history in the chain, as declared
+    in ServiceProviderConfig. The 204 response signals successful removal to
+    the client; the ledger records the deprovisioning event.
+    """
+    from bernstein.adapters.directory.scim import deprovision_user
+
+    # Check if the identity exists
+    store: Any = identity_store_for_request(request)
+    identity = store.get(user_id)
+    if identity is None:
+        return _scim_error(404, f"Principal {user_id} not found", scim_type="invalidValue")
+
+    # Deprovision via the ledger
+    ledger = _principal_ledger_for_request(request)
+    deprovision_user(ledger, user_id)
+
+    # Also revoke in the identity store so GET returns 404
+    store.revoke(user_id, reason="scim_delete", actor="scim")
+
+    return Response(status_code=204)
+
+
+@router.patch(
+    f"{SCIM_BASE_PATH}/Users/{{user_id}}",
+    summary="Update a user via PATCH operations",
+    responses={
+        404: {"description": "Unknown principal"},
+        400: {"description": "Invalid PATCH operation"},
+    },
+    status_code=200,
+)
+def patch_user(user_id: str, request: Request, body: dict[str, Any]) -> _SCIMResponse:
+    """Apply RFC 7644 §3.5.2 PATCH operations to a user.
+
+    This slice implements only the active=false deactivation path. Full PATCH
+    support for arbitrary attribute updates belongs to a later slice.
+    """
+    from bernstein.adapters.directory.scim import deprovision_user
+
+    # Check if the identity exists
+    store: Any = identity_store_for_request(request)
+    identity = store.get(user_id)
+    if identity is None:
+        return _scim_error(404, f"Principal {user_id} not found", scim_type="invalidValue")
+
+    # Parse PATCH operations
+    operations = body.get("Operations", [])
+    if not isinstance(operations, list):
+        return _scim_error(400, "Operations must be a list", scim_type="invalidSyntax")
+
+    # Look for active=false
+    for op in operations:
+        if not isinstance(op, dict):
+            continue
+        if op.get("op") == "replace" and op.get("path") == "active" and op.get("value") is False:
+            # Deprovision via the ledger
+            ledger = _principal_ledger_for_request(request)
+            deprovision_user(ledger, user_id)
+
+            # Also revoke in the identity store
+            store.revoke(user_id, reason="scim_deactivate", actor="scim")
+
+            # Return the deactivated user
+            user_resource = _scim_user(identity, request)
+            user_resource["active"] = False
+            return _SCIMResponse(content=user_resource)
+
+    # If we get here, no active=false operation was found
+    return _scim_error(
+        400,
+        "This implementation supports only active=false PATCH operations",
+        scim_type="invalidValue",
+    )

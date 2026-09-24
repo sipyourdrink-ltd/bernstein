@@ -561,3 +561,77 @@ def test_long_lived_clean_exit_auto_complete_does_not_warn(
         )
     assert success is True
     assert not any("SUSPICIOUS auto-complete" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# adapter-keyed failure tracking (issue #5875)
+# ---------------------------------------------------------------------------
+
+
+def test_capture_agent_crash_tags_the_real_adapter_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Crash telemetry tags the session's actual adapter, not a dead field.
+
+    ``AgentSession`` has no ``adapter`` attribute -- the field is
+    ``endpoint_adapter_name`` (#4908) -- so the old ``getattr(session,
+    "adapter", "unknown")`` always fell back to the literal ``"unknown"``.
+    """
+    import bernstein.core.agents.agent_lifecycle as al
+    from bernstein.core.observability import error_capture
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        error_capture,
+        "capture_message",
+        lambda message, category, tags, extra: captured.update(tags=tags),
+    )
+    session = _session(sid="A-1")
+    session.endpoint_adapter_name = "claude_code"
+
+    al._capture_agent_crash(session, AbortReason.TIMEOUT, "timed out")
+
+    assert captured["tags"]["adapter"] == "claude_code"  # type: ignore[index]
+
+
+def test_dead_agent_records_failure_timestamp_under_the_real_adapter_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The per-adapter spawn cooldown is keyed by the session's real adapter.
+
+    Before the fix, every crash recorded its failure timestamp under the
+    literal key ``"unknown"`` regardless of which adapter actually served
+    the session, so ``SpawnerCore``'s cooldown lookup (keyed by the real
+    adapter name) never found it and the cooldown never engaged.
+    """
+    import bernstein.core.agents.agent_lifecycle as al
+
+    # Isolate the one behavior under test: stub out every other side effect
+    # _handle_dead_agent performs so this stays a unit test of the failure-
+    # timestamp key, not an integration test of the whole dead-agent path.
+    monkeypatch.setattr(al, "classify_agent_abort_reason", lambda session: (AbortReason.TIMEOUT, "timed out"))
+    monkeypatch.setattr(al, "transition_agent", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_capture_agent_crash", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_propagate_abort_to_children", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_release_file_ownership", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_release_task_to_session", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_preserve_runner_logs", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_maybe_preserve_worktree", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_handle_orphaned_task_guarded", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_save_partial_work", lambda *a, **k: False)
+
+    session = _session(sid="A-1")
+    session.endpoint_adapter_name = "claude_code"
+    orch = SimpleNamespace(
+        _agent_failure_timestamps={},
+        _crash_counts={},
+        _rate_limit_tracker=None,
+        _spawner=SimpleNamespace(
+            get_worktree_path=lambda sid: None,
+            cleanup_worktree=lambda sid: None,
+        ),
+        _signal_mgr=SimpleNamespace(clear_signals=lambda sid: None),
+    )
+
+    al._handle_dead_agent(orch, session, {"open": [], "claimed": [], "in_progress": [], "done": []})
+
+    assert "claude_code" in orch._agent_failure_timestamps
+    assert "unknown" not in orch._agent_failure_timestamps

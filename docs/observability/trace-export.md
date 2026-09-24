@@ -5,6 +5,12 @@ JWT-style JSON blob (Ed25519) that proves a run's journal chain is intact
 and binds the run to the install identity. It is generated entirely
 offline from local state; no OTLP endpoint or network is required.
 
+TRACE is an open specification hosted at the Linux Foundation. Bernstein
+implements it as an independent Apache-2.0 project; its author contributes
+to the specification as an outside contributor, and Bernstein is not
+affiliated with or endorsed by the specification's maintainers or the
+Foundation.
+
 ```
 bernstein trace export <RUN_ID> [--out PATH] [--out-dir DIR] [--json] [--last] [--sdd-dir PATH]
 ```
