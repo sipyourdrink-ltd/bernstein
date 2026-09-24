@@ -161,7 +161,11 @@ markdown_extensions:
 nav:
   - Home:
       - index.md
-      - Use cases: use-cases.md
+      - Use cases:
+          - Who it is for: use-cases.md
+          - Reproducible nightly runs: use-cases/reproducible-nightly-runs.md
+          - Tamper-evident audit trail: use-cases/tamper-evident-audit-trail.md
+          - Signed results from untrusted workers: use-cases/signed-worker-results.md
       - Scope (what this does not do): scope.md
       - What's new: whats-new.md
       - Mentions: mentions.md
@@ -181,6 +185,10 @@ nav:
       - First run: getting-started/first-run.md
       - Tutorial: getting-started/quickstart-tutorial.md
       - Zero-config demo: getting-started/quickstart-demo.md
+      - Tutorials:
+          - tutorials/index.md
+          - Verified scheduled run: tutorials/verified-scheduled-run.md
+          - Signed result receipt: tutorials/signed-result-receipt.md
   - Guides:
       - guides/index.md
       - Web GUI:
