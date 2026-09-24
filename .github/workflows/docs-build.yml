@@ -17,6 +17,9 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - ".readthedocs.yaml"
+      - "docs/requirements.txt"
+      - "docs/requirements.in"
+      - "pyproject.toml"
       - ".github/workflows/docs-build.yml"
   push:
     branches: [main]
@@ -24,6 +27,9 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - ".readthedocs.yaml"
+      - "docs/requirements.txt"
+      - "docs/requirements.in"
+      - "pyproject.toml"
       - ".github/workflows/docs-build.yml"
   workflow_dispatch:
 
@@ -37,6 +43,9 @@ permissions:
 jobs:
   build:
     name: mkdocs build --strict
+    # GitHub-hosted, not self-hosted: this job runs on `pull_request`, which
+    # can carry a contributor's revision (see
+    # tests/unit/test_self_hosted_runner_scope.py).
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -44,18 +53,15 @@ jobs:
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-
       - name: Install docs toolchain
-        run: uv pip install --system -r docs/requirements.txt
-
-      - name: Build docs (strict)
-        run: mkdocs build --strict --site-dir /tmp/site
+        run: uv sync --group docs
+      - name: mkdocs build --strict
+        run: uv run --group docs mkdocs build --strict
