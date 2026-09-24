@@ -118,6 +118,7 @@ bernstein.core.observability.eval_store: #4526 audit in flight
 bernstein.core.observability.progress_watch: #4526 audit in flight
 bernstein.core.observability.repository_flow: #4526 audit in flight
 bernstein.core.observability.repository_flow_series: #4526 audit in flight
+bernstein.core.observability.schema_registry: planned import by metric_collector for schema_version stamping (issue #5442 slice 2)
 bernstein.core.observability.stagnation: #4526 audit in flight
 bernstein.core.orchestration.adaptive_tick: #4526 audit in flight
 bernstein.core.orchestration.adaptive_timeout: #4526 audit in flight

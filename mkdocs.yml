@@ -96,10 +96,6 @@ extra:
 plugins:
   - search:
       separator: '[\s\-\.]+'
-  - social:
-      cards_layout_options:
-        background_color: "#4a148c"
-        color: "#ffffff"
   - redirects:
       redirect_maps:
         'operations/DEPLOYMENT.md': 'operations/deployment-guide.md'
