@@ -198,6 +198,66 @@ def test_keepalive_on_a_reclaimed_lease_refuses(store: LeaseStore) -> None:
     lease.release()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="_reclaim_lock is a documented no-op without fcntl, so this needs real POSIX flock semantics",
+)
+def test_keepalive_and_reclaim_serialise_on_the_same_resource(store: LeaseStore) -> None:
+    """The interleaving the sequential test above cannot reach: a keepalive's read
+    happens while the lease is still valid, and a concurrent reclaim attempt must not
+    be able to act until the keepalive's write has completed and released the lock.
+    """
+    from bernstein.core.sandbox import resource_lease
+
+    lease_a = store.acquire("gpu-0", ttl_s=0.02)
+    time.sleep(0.3)  # real TTL expiry: an unlocked reclaim attempt would now succeed
+
+    entered_write = threading.Event()
+    release_write = threading.Event()
+    original_write = resource_lease.Lease._write
+
+    def paced_write(self: resource_lease.Lease) -> None:
+        entered_write.set()
+        assert release_write.wait(timeout=5), "test did not release the paced write in time"
+        original_write(self)
+
+    resource_lease.Lease._write = paced_write  # type: ignore[method-assign]
+    keepalive_thread = threading.Thread(target=lambda: lease_a.keepalive(ttl_s=120.0))
+    keepalive_thread.start()
+
+    reclaim_result: dict[str, object] = {}
+
+    def reclaim() -> None:
+        try:
+            reclaim_result["lease"] = store.acquire("gpu-0")
+        except LeaseConflictError as exc:
+            reclaim_result["error"] = exc
+
+    try:
+        assert entered_write.wait(timeout=5), "keepalive never reached its write step"
+        reclaim_thread = threading.Thread(target=reclaim)
+        reclaim_thread.start()
+        # The reclaim thread must genuinely block on the same per-resource lock, not
+        # race ahead and reclaim the (real-clock-expired) lease while keepalive's
+        # write is paused.
+        reclaim_thread.join(timeout=0.3)
+        assert reclaim_thread.is_alive(), "reclaim proceeded while keepalive held the lock"
+    finally:
+        release_write.set()
+        keepalive_thread.join(timeout=5)
+        resource_lease.Lease._write = original_write
+
+    reclaim_thread.join(timeout=5)
+    assert "error" in reclaim_result, "reclaim must not steal a lease keepalive just renewed"
+    stolen = reclaim_result.get("lease")
+    if isinstance(stolen, resource_lease.Lease):  # pragma: no cover - safety net if the fix regresses
+        stolen.release()
+
+    recorded = json.loads(store.path_for("gpu-0").read_text(encoding="utf-8"))
+    assert recorded["lease_id"] == lease_a.lease_id, "keepalive's renewal must still be the record on disk"
+    lease_a.release()
+
+
 def test_lease_records_owner_from_session_identity(store: LeaseStore, monkeypatch: pytest.MonkeyPatch) -> None:
     """The owner field is sourced from the install identity, not invented."""
     from bernstein.core.sandbox import resource_lease
