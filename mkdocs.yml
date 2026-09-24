@@ -98,6 +98,17 @@ plugins:
   - search:
       separator: '[\s\-\.]+'
   - social:
+      # Card image generation makes a live, unauthenticated request to
+      # fonts.google.com per build (material.plugins.social._fetch_font_from_google_fonts)
+      # to resolve the "Inter" theme font, and Read the Docs starts every
+      # build from a fresh container, so the plugin's on-disk cache never
+      # gets a chance to warm up: every single build re-hits Google Fonts.
+      # That endpoint began rejecting the shared RTD/CI build IPs, which is
+      # what took bernstein.readthedocs.io down. Disable card image
+      # generation so the build has no runtime network dependency; the
+      # plugin still emits the per-page meta description tags. Re-enable
+      # once the fonts are vendored into a committed cache_dir instead.
+      cards: false
       cards_layout_options:
         background_color: "#4a148c"
         color: "#ffffff"
@@ -544,6 +555,7 @@ nav:
           - Volunteer task runner: reference/volunteer-runner.md
           - Volunteer lease store: reference/volunteer-lease-store.md
           - MCP catalog: reference/mcp-catalog.md
+          - Published identifiers: reference/published-identifiers.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:
           - Capabilities: reference/capabilities.md
