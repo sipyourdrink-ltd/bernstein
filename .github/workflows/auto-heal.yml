@@ -142,7 +142,7 @@ jobs:
         # SHA-pinned action vendors a pinned uv release, so the toolchain
         # is reproducible without an unpinned `pip install` step
         # (Scorecard pinned-dependencies).
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: true
           python-version: "3.14"
@@ -331,7 +331,7 @@ jobs:
           git -c advice.detachedHead=false checkout "$HEAD_SHA"
 
       - name: Install uv (provides Python via .python-version)
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: true
 
@@ -350,7 +350,7 @@ jobs:
         # `crate-ci/typos` is the upstream-recommended GH action and
         # mirrors the binary used by the spelling job in ci.yml.
         if: needs.triage.outputs.strategy == 'typos-allowlist'
-        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1
+        uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1
         with:
           # `--format json` would normally print findings; we only need
           # the binary on $PATH for the apply step below to invoke.
