@@ -50,7 +50,7 @@ ledger = BatchLedger(ledger_dir)
 head_before = ledger.head_hash()
 outcomes = []
 for item in items:
-    result = process(item)                     # your worker
+    result = process(item)  # your worker
     if result.ok:
         ledger.record(item.id)
     outcomes.append(
@@ -59,7 +59,7 @@ for item in items:
             "success" if result.ok else "failed",
             attempts=result.attempts,
             exit_code=result.exit_code,
-            output_tail=result.output_tail,   # digest + reason derived here
+            output_tail=result.output_tail,  # digest + reason derived here
         )
     )
 
