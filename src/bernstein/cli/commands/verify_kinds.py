@@ -181,12 +181,15 @@ def _verify_batch_pass(path: Path) -> VerifyOutcome:
     dispatcher has no channel for; see
     :func:`bernstein.core.persistence.batch_receipt.verify_batch_pass_against_ledger`.
     """
+    # Importing the producing module registers the kind, so the check below
+    # never depends on the protocol's lazy kind loader having run.
+    from bernstein.core.persistence.batch_receipt import RECEIPT_KIND
     from bernstein.core.receipts.protocol import verify_receipt
 
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        return VerifyOutcome(kind=_BATCH_PASS_KIND, ok=False, exit_code=1, message=f"could not parse receipt: {exc}")
+        return VerifyOutcome(kind=RECEIPT_KIND, ok=False, exit_code=1, message=f"could not parse receipt: {exc}")
 
     result = verify_receipt(document)
     if result.ok:
