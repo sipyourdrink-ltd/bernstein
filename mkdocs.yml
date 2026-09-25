@@ -503,6 +503,7 @@ nav:
           - A2A message receipts: operations/a2a-message-receipts.md
           - A2A JSON-RPC server surface: operations/a2a-server.md
           - Datasources & query receipts: operations/datasources.md
+          - Batch pass receipts: operations/batch-receipts.md
           - Verifiable audit receipts: security/audit-receipt.md
           - Evidence envelope: security/evidence-envelope.md
           - Gate adjudication records: operations/gate-adjudication.md

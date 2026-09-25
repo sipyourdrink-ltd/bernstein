@@ -200,11 +200,28 @@ def _recovery_payload() -> dict[str, Any]:
     ).canonical_payload()
 
 
+def _batch_pass_payload() -> dict[str, Any]:
+    from bernstein.core.persistence.batch_receipt import BatchItemOutcome, build_batch_pass_payload
+
+    return build_batch_pass_payload(
+        batch_id="nightly",
+        pass_id="2026-01-01",
+        items=[
+            BatchItemOutcome.from_output("a", "success", attempts=1, exit_code=0, output_tail="ok\n"),
+            BatchItemOutcome.from_output("b", "failed", attempts=2, exit_code=1, output_tail="boom\n"),
+            BatchItemOutcome.from_output("c", "skipped"),
+        ],
+        ledger_head_before="0" * 64,
+        ledger_head_after="1" * 64,
+    )
+
+
 #: One payload fixture per registered kind. A kind registered without a fixture
 #: fails ``test_every_registered_kind_round_trips``.
 KIND_PAYLOADS: dict[str, Any] = {
     "security.change": _change_payload,
     "planning.recovery": _recovery_payload,
+    "batch.pass": _batch_pass_payload,
 }
 
 

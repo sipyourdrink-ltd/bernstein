@@ -12,6 +12,7 @@ __all__ = ["RECEIPT_KIND_MODULES"]
 
 #: Dotted module paths, imported once by the protocol's kind loader.
 RECEIPT_KIND_MODULES: tuple[str, ...] = (
+    "bernstein.core.persistence.batch_receipt",
     "bernstein.core.planning.recovery_receipt",
     "bernstein.core.security.change_receipt",
 )
