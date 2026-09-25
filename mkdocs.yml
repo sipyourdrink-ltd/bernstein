@@ -200,6 +200,7 @@ nav:
           - DeepSeek V4: adapters/deepseek.md
           - Agy: adapters/agy.md
           - Antigravity: adapters/antigravity.md
+          - Deep-research agents: adapters/deep-research.md
           - Deferred adapters: adapter-deferred.md
           - Adapter operations: operations/adapters.md
           - Adapter security floor: adapters/security-floor.md

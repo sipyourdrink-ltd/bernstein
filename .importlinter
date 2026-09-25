@@ -62,6 +62,7 @@ modules =
     bernstein.adapters.gemini
     bernstein.adapters.generic
     bernstein.adapters.goose
+    bernstein.adapters.gpt_researcher
     bernstein.adapters.gptme
     bernstein.adapters.hermes
     bernstein.adapters.holmesgpt
@@ -88,6 +89,7 @@ modules =
     bernstein.adapters.ralphex
     bernstein.adapters.rovo
     bernstein.adapters.skyvern
+    bernstein.adapters.tongyi_deepresearch
 ignore_imports =
     # skyvern drives a Skyvern server over HTTP but owes the computer-use
     # contract -- artifact output, poll-pty events, per-task isolation -- so it

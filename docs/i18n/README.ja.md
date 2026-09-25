@@ -225,7 +225,7 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 ### 対応エージェント
 <!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen ほか。[アダプタ索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)はそのうち 30 個のインストールコマンドを載せている。`bernstein integrations list` は `src/bernstein/adapters/registry.py` から、配線済みの統合 54 件すべてを列挙する。このファイルが「何が解決されるか」の唯一の情報源である。うち 52 件は選択可能なエージェントアダプタで、残り 2 行は `mock` テストスタブと `self-hosted-endpoints` エンドポイントプロファイルである。`--prompt` フラグを持つそれ以外のものは、汎用ラッパー経由で動く。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen ほか。[アダプタ索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)はそのうち 30 個のインストールコマンドを載せている。`bernstein integrations list` は `src/bernstein/adapters/registry.py` から、配線済みの統合 56 件すべてを列挙する。このファイルが「何が解決されるか」の唯一の情報源である。うち 54 件は選択可能なエージェントアダプタで、残り 2 行は `mock` テストスタブと `self-hosted-endpoints` エンドポイントプロファイルである。`--prompt` フラグを持つそれ以外のものは、汎用ラッパー経由で動く。
 
 同じ実行の中でエージェントを混ぜられる。定型作業には安価なローカルモデル、設計には重いクラウドモデルというように。`bernstein integrations list --installed` は自分のマシンで使えるものを表示する。
 

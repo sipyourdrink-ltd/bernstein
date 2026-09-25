@@ -766,6 +766,15 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         dangerous_mode=DangerousModeStrategy.ENV_VAR,
     ),
     "gptme": AdapterStrategy(),
+    # gpt-researcher is a deep-research agent: it reads sources and writes a report, and
+    # its unit of work is that report bound to its source list by digest
+    # (deep_research_artifact), not a commit. No native resume; runs unattended.
+    "gpt_researcher": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+        output_mode=OutputMode.ARTIFACT,
+    ),
     # Hermes is driven through its one-shot mode, which auto-bypasses approvals
     # rather than exposing a flag to do so - the CLI is unattended by
     # construction there, so the axis is always-on, not unsupported. Declaring
@@ -853,6 +862,15 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "q_dev": AdapterStrategy(),
     "qwen": AdapterStrategy(),
     "ralphex": AdapterStrategy(),
+    # Tongyi DeepResearch is a deep-research agent: it reads sources and writes a report, and
+    # its unit of work is that report bound to its source list by digest
+    # (deep_research_artifact), not a commit. No native resume; runs unattended.
+    "tongyi_deepresearch": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+        output_mode=OutputMode.ARTIFACT,
+    ),
 }
 
 
@@ -1230,6 +1248,9 @@ _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
         "codex",
         "devin_terminal",
         "gemini",
+        # The deep-research adapters write the addendum after the task text
+        # into the runner's prompt file (DeepResearchAdapter.spawn).
+        "gpt_researcher",
         "junie",
         "muse",
         "opencode",
@@ -1237,6 +1258,7 @@ _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
         "q_dev",
         "qwen",
         "ralphex",
+        "tongyi_deepresearch",
     }
 )
 

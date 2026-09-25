@@ -225,7 +225,7 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 ### 支援的代理
 <!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 54 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 52 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 56 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 54 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
 
 在同一執行中混用代理：用便宜的本地模型處理樣板，用更重的雲端模型處理架構。`bernstein integrations list --installed` 顯示你的機器上可用的內容。
 

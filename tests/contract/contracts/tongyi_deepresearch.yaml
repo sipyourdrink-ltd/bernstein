@@ -1,0 +1,25 @@
+# Contract for the Tongyi DeepResearch adapter (adapter: tongyi_deepresearch).
+#
+# The adapter runs tongyi_deepresearch_runner.py, a standalone script shipped
+# with bernstein, under the interpreter the agent's requirements are installed
+# in, against an operator-provided checkout; the runner's own command line is
+# the surface asserted here.
+adapter: tongyi_deepresearch
+binary: python3
+install:
+  method: none
+  spec: ""
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: ""
+  basis: unknown
+required_flags:
+  - "--prompt-file"
+  - "--out-dir"
+  - "--repo-dir"
+  - "--model"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
