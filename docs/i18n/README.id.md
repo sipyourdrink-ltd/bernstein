@@ -223,7 +223,7 @@ Status eksekusi disimpan sebagai checkpoint ke `.sdd/runs/<run_id>/` pada setiap
 Gerbang kebersihan repositori: `bernstein readme-l10n verify` menggagalkan PR yang terjemahan README-nya menyimpang dari sumber bahasa Inggris (menyebutkan bagian yang usang), `bernstein readme-l10n sync` mengikat ulang tautan setelah pengeditan bahasa Inggris. Lihat [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### agen yang didukung
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
 Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, dan banyak lagi. [Indeks adaptor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) memuat perintah instalasi untuk 30 di antaranya. `bernstein integrations list` menampilkan ke-56 integrasi aktif dari `src/bernstein/adapters/registry.py`, satu-satunya sumber kebenaran. 54 di antaranya adalah adaptor agen yang dapat dipilih; dua baris lainnya adalah stub uji `mock` dan profil endpoint `self-hosted-endpoints`. Alat lain dengan flag `--prompt` dapat berjalan melalui wrapper generik.
 
