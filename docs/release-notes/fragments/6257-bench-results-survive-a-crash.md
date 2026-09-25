@@ -21,4 +21,4 @@ the first result of a resumed run was written onto the end of the torn line,
 fused with it into one invalid line, and dropped on the next load. The append
 after that pushed the bad line into the middle of the file, so every later load
 raised. A final line that is a complete result missing only its newline gets the
-newline instead of being cut, because `load` already counts it as done.
+newline instead of being cut, because `load` already counts it as done (#6257).
