@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import zipfile
 from contextlib import suppress
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -324,7 +324,7 @@ def test_a_modified_byte_fails_verification(tmp_path: Path) -> None:
     _populate_sdd(tmp_path)
     archive = tmp_path / "run.zip"
     create_archive(tmp_path, archive)
-    target = str(Path(".sdd") / "metrics" / "perf.jsonl")
+    target = (Path(".sdd") / "metrics" / "perf.jsonl").as_posix()
 
     with zipfile.ZipFile(archive) as zf:
         original = zf.read(target)
@@ -347,7 +347,7 @@ def test_a_file_that_did_not_survive_is_reported_as_missing_not_modified(tmp_pat
     _populate_sdd(tmp_path)
     archive = tmp_path / "run.zip"
     create_archive(tmp_path, archive)
-    target = str(Path(".sdd") / "audit" / "events.jsonl")
+    target = (Path(".sdd") / "audit" / "events.jsonl").as_posix()
 
     truncated = tmp_path / "truncated.zip"
     _rewrite_member(archive, truncated, target, None)
@@ -425,3 +425,100 @@ def test_a_manifest_from_an_older_bernstein_still_reads(tmp_path: Path) -> None:
         read_archive_manifest(forward).run_id
         == ArchiveManifest(**{k: v for k, v in payload.items() if k != "a_field_from_the_future"}).run_id
     )
+
+
+class _WindowsRelativePath(type(Path())):  # type: ignore[misc]
+    """A real file whose ``relative_to`` answers the way it does on Windows.
+
+    ``str()`` of the result renders ``\\``, which is what ``str(f.relative_to(base))``
+    produced on the Windows lane. Lets a Linux run see the Windows naming.
+    """
+
+    def relative_to(self, *other: object, **kwargs: object) -> PureWindowsPath:  # type: ignore[override]
+        return PureWindowsPath(*super().relative_to(*other, **kwargs).parts)  # type: ignore[arg-type]
+
+
+def test_member_names_are_posix_whichever_host_writes_the_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same tree must produce the same member names and manifest on any host.
+
+    ``str(Path)`` renders ``\\`` on Windows, so an archive written there named
+    its members ``.sdd\\metrics\\perf.jsonl`` and keyed the manifest the same way.
+    Self-consistent, which is why every same-host test was green, and not what
+    any other host or third-party zip tool expects.
+    """
+    import bernstein.cli.run_archive as run_archive
+
+    _populate_sdd(tmp_path)
+    real = run_archive.collect_archive_files
+
+    def windows_files(base_dir: Path, sections: list[str] | None = None) -> list[Path]:
+        return [_WindowsRelativePath(f) for f in real(base_dir, sections)]
+
+    monkeypatch.setattr(run_archive, "collect_archive_files", windows_files)
+    archive = tmp_path / "run.zip"
+    manifest = create_archive(tmp_path, archive)
+
+    with zipfile.ZipFile(archive) as zf:
+        members = {name for name in zf.namelist() if name != "manifest.json"}
+    nested = ".sdd/metrics/perf.jsonl"
+    assert nested in members
+    assert nested in manifest.files
+    assert not any("\\" in name for name in members | set(manifest.files))
+    assert verify_archive(archive).ok is True
+
+
+def test_a_manifest_missing_a_required_field_is_refused_not_a_traceback(tmp_path: Path) -> None:
+    """Parses, is an object, lacks ``file_count``: the third way a manifest fails to mean something."""
+    _populate_sdd(tmp_path)
+    archive = tmp_path / "run.zip"
+    create_archive(tmp_path, archive)
+    payload = json.loads(zipfile.ZipFile(archive).read("manifest.json"))
+    del payload["file_count"]
+    truncated = tmp_path / "truncated-manifest.zip"
+    _rewrite_member(archive, truncated, "manifest.json", json.dumps(payload).encode("utf-8"))
+
+    with pytest.raises(ArchiveManifestError, match="incomplete manifest.json"):
+        read_archive_manifest(truncated)
+    with pytest.raises(ArchiveManifestError, match="incomplete manifest.json"):
+        verify_archive(truncated)
+
+
+def test_a_manifest_that_contradicts_itself_is_unverifiable(tmp_path: Path) -> None:
+    """``file_count`` and ``files`` are written from one list, so they must agree."""
+    _populate_sdd(tmp_path)
+    archive = tmp_path / "run.zip"
+    create_archive(tmp_path, archive)
+    payload = json.loads(zipfile.ZipFile(archive).read("manifest.json"))
+    payload["file_count"] += 1
+    edited = tmp_path / "edited-manifest.zip"
+    _rewrite_member(archive, edited, "manifest.json", json.dumps(payload).encode("utf-8"))
+
+    result = verify_archive(edited)
+    assert result.ok is False
+    assert result.unverifiable is not None
+    assert "contradicts itself" in result.unverifiable
+
+
+def test_a_member_that_fails_its_crc_is_modified_not_an_unreadable_archive(tmp_path: Path) -> None:
+    """Bytes changed in place without rewriting the header trip zipfile's CRC check first."""
+    _populate_sdd(tmp_path)
+    archive = tmp_path / "run.zip"
+    create_archive(tmp_path, archive)
+    target = ".sdd/metrics/perf.jsonl"
+    # Rewritten uncompressed, so a byte of the member's data sits at a known offset.
+    stored = tmp_path / "stored.zip"
+    with zipfile.ZipFile(archive) as source, zipfile.ZipFile(stored, "w") as out:
+        for member in source.infolist():
+            out.writestr(member.filename, source.read(member.filename))
+    data = bytearray(stored.read_bytes())
+    with zipfile.ZipFile(stored) as zf:
+        offset = zf.getinfo(target).header_offset
+    # 30-byte local header, then the name; writestr adds no extra field.
+    data[offset + 30 + len(target.encode())] ^= 0x01
+    stored.write_bytes(bytes(data))
+
+    result = verify_archive(stored)
+    assert result.ok is False
+    assert result.modified == [target]

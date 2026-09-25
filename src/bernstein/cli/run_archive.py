@@ -144,11 +144,17 @@ def create_archive(
     files = collect_archive_files(base_dir, sections)
     total_size = sum(f.stat().st_size for f in files)
     chosen_sections = sections if sections is not None else list(ARCHIVE_SECTIONS)
+    # One member name per file, computed once and used for BOTH the arcname and
+    # the manifest key, so the two cannot drift apart. POSIX-style, because
+    # ``str(Path)`` renders ``\\`` on Windows: the same tree would otherwise
+    # produce different member names and a different manifest depending on
+    # which host wrote it, and an archive exists to be read somewhere else.
+    members = [(f, f.relative_to(base_dir).as_posix()) for f in files]
     # Hashed from the bytes actually written, keyed by the name they are written
     # under, so the manifest describes the archive rather than the workspace it
     # came from - the workspace is usually deleted immediately afterwards, which
     # is the whole reason the archive exists.
-    digests = {str(f.relative_to(base_dir)): _sha256_file(f) for f in files}
+    digests = {name: _sha256_file(f) for f, name in members}
 
     # Attempt to read a run-id from .sdd/runtime/run_id, if present.
     run_id: str | None = None
@@ -167,9 +173,8 @@ def create_archive(
     )
 
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for file_path in files:
-            arcname = str(file_path.relative_to(base_dir))
-            zf.write(file_path, arcname)
+        for file_path, name in members:
+            zf.write(file_path, name)
 
         zf.writestr("manifest.json", json.dumps(asdict(manifest), indent=2) + "\n")
 
@@ -190,17 +195,24 @@ def read_archive_manifest(archive_path: Path) -> ArchiveManifest:
 
     Raises:
         ArchiveManifestError: The archive has no manifest, or one that cannot
-            be parsed. Both are refusals rather than an empty manifest: a
-            missing manifest that read as "no files recorded" would verify
-            clean, which is the answer an operator must never be given.
+            be parsed, is not an object, or lacks a required field. All are
+            refusals rather than an empty manifest: a missing manifest that
+            read as "no files recorded" would verify clean, which is the answer
+            an operator must never be given.
     """
     try:
         with zipfile.ZipFile(archive_path) as zf:
-            raw = zf.read("manifest.json").decode("utf-8")
-    except KeyError as exc:
-        raise ArchiveManifestError(f"{archive_path} has no manifest.json") from exc
+            return _manifest_from_zip(zf, archive_path)
     except (OSError, zipfile.BadZipFile) as exc:
         raise ArchiveManifestError(f"{archive_path} is not a readable archive: {exc}") from exc
+
+
+def _manifest_from_zip(zf: zipfile.ZipFile, archive_path: Path) -> ArchiveManifest:
+    """Parse ``manifest.json`` out of an already open archive."""
+    try:
+        raw = zf.read("manifest.json").decode("utf-8")
+    except KeyError as exc:
+        raise ArchiveManifestError(f"{archive_path} has no manifest.json") from exc
     try:
         payload = json.loads(raw)
     except ValueError as exc:
@@ -208,7 +220,13 @@ def read_archive_manifest(archive_path: Path) -> ArchiveManifest:
     if not isinstance(payload, dict):
         raise ArchiveManifestError(f"{archive_path} manifest.json is not an object")
     known = {f.name for f in fields(ArchiveManifest)}
-    return ArchiveManifest(**{k: v for k, v in payload.items() if k in known})
+    try:
+        return ArchiveManifest(**{k: v for k, v in payload.items() if k in known})
+    except TypeError as exc:
+        # Parses, is an object, and still lacks a required field such as
+        # ``file_count``: a truncated manifest. Same refusal as the other two
+        # ways a manifest can fail to mean something, not a bare traceback.
+        raise ArchiveManifestError(f"{archive_path} has an incomplete manifest.json: {exc}") from exc
 
 
 def verify_archive(archive_path: Path) -> ArchiveVerification:
@@ -234,7 +252,16 @@ def verify_archive(archive_path: Path) -> ArchiveVerification:
     Raises:
         ArchiveManifestError: The archive or its manifest cannot be read.
     """
-    manifest = read_archive_manifest(archive_path)
+    try:
+        with zipfile.ZipFile(archive_path) as zf:
+            return _verify_open_archive(zf, archive_path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ArchiveManifestError(f"{archive_path} is not a readable archive: {exc}") from exc
+
+
+def _verify_open_archive(zf: zipfile.ZipFile, archive_path: Path) -> ArchiveVerification:
+    """`verify_archive` over one open handle, so the manifest and members come from one read."""
+    manifest = _manifest_from_zip(zf, archive_path)
     if not manifest.files:
         # An archive written before hashes existed. Reporting it as verified
         # would claim a check that never ran.
@@ -245,21 +272,37 @@ def verify_archive(archive_path: Path) -> ArchiveVerification:
                 f"{manifest.bernstein_version or 'unknown'}); its contents cannot be checked"
             ),
         )
+    if manifest.file_count != len(manifest.files):
+        # The writer sets both from the same list, so a disagreement means the
+        # manifest itself was edited or damaged, and nothing it vouches for can
+        # be taken at its word.
+        return ArchiveVerification(
+            ok=False,
+            unverifiable=(
+                f"{archive_path} manifest contradicts itself: file_count is "
+                f"{manifest.file_count} but it lists {len(manifest.files)} hashes"
+            ),
+        )
 
     modified: list[str] = []
     missing: list[str] = []
-    with zipfile.ZipFile(archive_path) as zf:
-        present = {name for name in zf.namelist() if not name.endswith("/")}
-        for name, expected in sorted(manifest.files.items()):
-            if name not in present:
-                missing.append(name)
-                continue
-            digest = hashlib.sha256()
+    present = {name for name in zf.namelist() if not name.endswith("/")}
+    for name, expected in sorted(manifest.files.items()):
+        if name not in present:
+            missing.append(name)
+            continue
+        digest = hashlib.sha256()
+        try:
             with zf.open(name) as member:
                 for chunk in iter(lambda: member.read(_HASH_CHUNK_BYTES), b""):
                     digest.update(chunk)
-            if digest.hexdigest() != expected:
-                modified.append(name)
+        except zipfile.BadZipFile:
+            # zipfile's own CRC check fired: the bytes changed without the
+            # member's header being rewritten. Still a modified member.
+            modified.append(name)
+            continue
+        if digest.hexdigest() != expected:
+            modified.append(name)
 
     unexpected = sorted(present - set(manifest.files) - {"manifest.json"})
     return ArchiveVerification(

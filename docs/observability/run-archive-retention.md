@@ -21,7 +21,8 @@ and every one of them is collected unless you name a subset:
 | `traces` | `.sdd/traces/*.json` |
 | `config` | `.sdd/config/*`, `bernstein.yaml` |
 
-Each file is stored under its path relative to the project root, and a
+Each file is stored under its POSIX-style path relative to the project root
+(`/`-separated on every host, so the same tree produces the same archive), and a
 `manifest.json` is written at the archive root.
 
 ## The manifest is the contract
@@ -57,6 +58,16 @@ An archive written before per-file hashes existed reports
 failed" is not the same claim as "everything matched" — reporting success there
 would be exactly the false assurance the hashes remove.
 
-An archive with no `manifest.json`, or an unreadable one, raises
-`ArchiveManifestError`. It is deliberately not treated as an empty manifest:
-that would verify clean having checked nothing.
+An archive with no `manifest.json`, or one that cannot be parsed, is not a JSON
+object, or lacks a required field, raises `ArchiveManifestError`. It is
+deliberately not treated as an empty manifest: that would verify clean having
+checked nothing. A manifest whose `file_count` disagrees with the number of
+hashes it lists contradicts itself, and reports `unverifiable`.
+
+## What the hashes do not prove
+
+Per-file hashes detect modification; they do not attest authorship. The
+manifest travels inside the archive with nothing outside it to check against, so
+someone who can edit a member can also recompute its hash and rewrite the
+manifest. Whether the manifest should be anchored or signed is tracked in
+[#6258](https://github.com/sipyourdrink-ltd/bernstein/issues/6258).
