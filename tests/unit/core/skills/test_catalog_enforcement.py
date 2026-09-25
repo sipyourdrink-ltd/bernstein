@@ -70,7 +70,7 @@ def _seed(tmp_path: Path, *, installed_version: str, revocations: list[dict[str,
         _install_row("code-review", installed_version),
         workdir=tmp_path,
     )
-    fetcher = SkillCatalogFetcher(cache_path=default_cache_path(tmp_path))
+    fetcher = SkillCatalogFetcher(cache_path=default_cache_path())
     fetcher.write_cache_payload(_catalog_payload(pub, revocations))
 
 
@@ -180,7 +180,7 @@ def test_enforcement_honours_revocation_within_one_poll_interval(tmp_path: Path)
         ),
         priv,
     )
-    fetcher = SkillCatalogFetcher(cache_path=default_cache_path(tmp_path))
+    fetcher = SkillCatalogFetcher(cache_path=default_cache_path())
     fetcher.write_cache_payload(_catalog_payload(pub, [revocation.to_dict()]))
 
     # Still within the interval: stale cache, not yet enforced.

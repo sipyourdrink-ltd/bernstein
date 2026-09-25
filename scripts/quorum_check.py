@@ -53,6 +53,12 @@ The rules, in the order they are applied
    one of them, as GitHub's own code-owner review works, and never by the
    author or by anyone who pushed to the branch.
 
+   A protected path (any CODEOWNERS entry that is not `*`) needs its owner.
+   Until 2026-10-05 the maintainer's approval alone satisfies the ordinary
+   two-approval quorum (the backlog window, charter section 3); the third
+   approval on large or sensitive changes is unchanged.
+
+
 Approvals count only when they were given on the current head commit: a push
 after an approval means nobody has read what is about to merge. A `changes
 requested` survives a push, and stays counted until its author withdraws it.
@@ -128,6 +134,15 @@ GOVERNANCE_PATHS = (
 )
 
 GITHUB_ACTIONS_BOT = "github-actions[bot]"
+
+# Section 3, backlog window: until this moment the maintainer's approval on
+# the current head satisfies the ordinary quorum (two approvals, one core) on
+# its own. Over a hundred pull requests were waiting on a second approval with
+# four core reviewers carrying 40-80 open review requests each; the window
+# lets the maintainer drain that backlog without lowering the bar on large or
+# sensitive changes, which keep the third approval. After the date this
+# constant is dead code and the branch below goes with it.
+BACKLOG_WINDOW_ENDS = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 
 
 def gh_json(*args: str) -> Any:
@@ -450,13 +465,15 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             else (f"touches `{sensitive[0]}`" if sensitive else f"{pr.changed_lines} changed lines")
         )
 
-        verdict.requirements.append(
-            Requirement(
-                f"{need_total} approvals, {need_core} from a core reviewer ({reason})",
-                len(approving) >= need_total and len(approving_core) >= need_core,
-                _names(eligible - approving),
-            )
-        )
+        text = f"{need_total} approvals, {need_core} from a core reviewer ({reason})"
+        met = len(approving) >= need_total and len(approving_core) >= need_core
+        who = _names(eligible - approving)
+        if need_total == 2 and now < BACKLOG_WINDOW_ENDS:
+            text += f", or the maintainer's alone until {BACKLOG_WINDOW_ENDS:%Y-%m-%d}"
+            met = met or roster.maintainer in approving
+            if roster.maintainer not in approving:
+                who += f", or @{roster.maintainer} alone"
+        verdict.requirements.append(Requirement(text, met, who))
 
         if pr.changed_lines > MAINTAINER_OR_SPLIT_LINES:
             verdict.requirements.append(

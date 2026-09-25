@@ -1557,8 +1557,10 @@ def _wait_for_run_completion(
     cost of the opposite bias is telling an operator that a run which is still
     working has failed.
     """
-    start = time.time()
-    deadline = start + timeout_s
+    # Monotonic, matching the comment below and
+    # _ORCHESTRATOR_GONE_CONFIRM_WINDOW_S: a wall clock stepped forward
+    # satisfies this window without any real time passing.
+    deadline = time.monotonic() + timeout_s
     orchestrator_seen_alive = False
     # Streak state. All timing here is monotonic: see
     # _ORCHESTRATOR_GONE_CONFIRM_WINDOW_S for why the wall clock cannot be used.
@@ -1583,10 +1585,10 @@ def _wait_for_run_completion(
         gone_pid = None
 
     while True:
-        now = time.time()
+        now = time.monotonic()
         if now >= deadline:
             break
-        mono = time.monotonic()
+        mono = now
         status_payload = server_get("/status")
         health_payload = server_get("/health")
         if not (isinstance(status_payload, dict) and isinstance(health_payload, dict)):
@@ -1779,7 +1781,7 @@ def _await_first_spawn_outcome(
         any agent did work, or ``("unknown", None)`` when no verdict arrived
         within ``timeout_s`` (including an unreachable server).
     """
-    deadline = time.time() + timeout_s
+    deadline = time.monotonic() + timeout_s
     transient_reason: str | None = None
     unreachable_polls = 0
 
@@ -1817,7 +1819,7 @@ def _await_first_spawn_outcome(
     first = _poll_once()
     if first is not None:
         return first
-    if time.time() >= deadline:
+    if time.monotonic() >= deadline:
         if transient_reason is not None:
             return "refused", transient_reason
         return "unknown", None
@@ -1828,7 +1830,7 @@ def _await_first_spawn_outcome(
             result = _poll_once()
             if result is not None:
                 return result
-            if time.time() >= deadline:
+            if time.monotonic() >= deadline:
                 break
         if transient_reason is not None:
             return "refused", transient_reason

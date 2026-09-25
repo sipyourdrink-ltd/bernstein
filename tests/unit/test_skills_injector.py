@@ -438,7 +438,7 @@ class TestRevokedSkillGuard:
             RevocationEntry(skill_id=skill_id, version_range="*", reason="CVE", issued_at="2026-07-16T00:00:00Z"),
             priv,
         )
-        SkillCatalogFetcher(cache_path=default_cache_path(workdir)).write_cache_payload(
+        SkillCatalogFetcher(cache_path=default_cache_path()).write_cache_payload(
             {
                 "version": 1,
                 "generated_at": "2026-07-16T00:00:00Z",

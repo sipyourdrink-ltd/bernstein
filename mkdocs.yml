@@ -553,6 +553,7 @@ nav:
           - Volunteer task runner: reference/volunteer-runner.md
           - Volunteer lease store: reference/volunteer-lease-store.md
           - MCP catalog: reference/mcp-catalog.md
+          - Published identifiers: reference/published-identifiers.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:
           - Capabilities: reference/capabilities.md

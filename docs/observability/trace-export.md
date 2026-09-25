@@ -210,6 +210,27 @@ uv run --with agentrust-trace-tests==0.5.1 trace-tests verify \
 fixture vectors use a frozen 2023-11-14 clock, not wall-clock time —
 an unmodified default would reject every vector as stale.)
 
+## Identifier URIs {#trace-identifiers}
+
+Two fixed URIs appear in every trust record this producer emits. Both
+resolve to this section.
+
+### `https://bernstein.run/trace/verifier` {#trace-verifier}
+
+The `appraisal.verifier` value. It names the appraisal method, not the
+workload: this producer always self-declares `status: "none"`, so the
+record carries no third-party appraisal. A verifier that needs a real
+appraisal must perform one itself.
+
+### `https://bernstein.run/trace/records` {#trace-records}
+
+The resolver named on an aggregate record's
+`references[rel=member-execution]` entries. It identifies the party
+obliged to resolve a member's `id` back to the record it names, which is
+always this producer. The entry's `digest` binds
+that id to specific bytes, so a verifier checks the member record it was
+given against the digest rather than fetching it from this URL.
+
 ## Relationship to other trace commands
 
 | Command | What it emits / checks |

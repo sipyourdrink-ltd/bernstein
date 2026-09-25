@@ -19,9 +19,14 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.routing.route_decision import enforce_model_registry as _enforce_model_registry
 from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+if TYPE_CHECKING:
+    from bernstein.core.lineage.entry import ModelRef
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 #: Bumped when hop-record fields that enter the digest change shape.
 LADDER_POLICY_VERSION = 1
@@ -239,6 +244,27 @@ def hop_record_digest(record: dict[str, Any]) -> str:
 def verify_hop_record_digest(record: dict[str, Any], expected: str) -> bool:
     """True when recomputing :func:`hop_record_digest` matches ``expected``."""
     return hop_record_digest(record) == expected
+
+
+def enforce_model_registry(
+    *,
+    chain: AuditChainStore | None,
+    ref: ModelRef,
+    task_class: str,
+    at: str | None = None,
+    run_id: str = "",
+    task_id: str = "",
+) -> None:
+    """Fail closed on the escalation ladder path unless *ref* has a live admission."""
+    _enforce_model_registry(
+        chain=chain,
+        ref=ref,
+        task_class=task_class,
+        at=at,
+        run_id=run_id,
+        task_id=task_id,
+        routing_path="escalation_ladder",
+    )
 
 
 def decide_ladder_advance(inp: LadderAdvanceInput) -> LadderDecision:
