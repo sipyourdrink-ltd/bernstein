@@ -194,7 +194,8 @@ def render_report(rows: tuple[Row, ...]) -> str:
             "  names the remainder.",
             "* `none` — no control. The linked issue is the one that would add it.",
             "",
-            "See [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) for how to report a gap this table does not list.",
+            "See [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md)"
+            " for how to report a gap this table does not list.",
             "",
         ]
     )
