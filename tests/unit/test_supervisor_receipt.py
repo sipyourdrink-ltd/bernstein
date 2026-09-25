@@ -16,12 +16,12 @@ from bernstein.core.orchestration.supervisor_receipt import (
     StallReason,
     assemble_receipt,
     assert_cross_worktree_fence,
-    canonical_receipt_bytes,
+    canonical_supervisor_receipt_bytes,
     receipt_from_dict,
     receipt_to_dict,
     recommend_action,
-    sign_receipt,
-    verify_receipt,
+    sign_supervisor_receipt,
+    verify_supervisor_receipt,
 )
 
 # ---------------------------------------------------------------------------
@@ -256,14 +256,14 @@ def test_sign_and_verify_roundtrip(tmp_path: Path) -> None:
         prev_chain_digest="0" * 64,
         respawn_budget_remaining=2,
     )
-    signed = sign_receipt(receipt, signing_key=key)
-    result = verify_receipt(signed, key.public_key())
+    signed = sign_supervisor_receipt(receipt, signing_key=key)
+    result = verify_supervisor_receipt(signed, key.public_key())
     assert result.ok, result.errors
 
     # Roundtrip through dict <-> dataclass and verify again.
     blob = json.dumps(receipt_to_dict(signed), sort_keys=True)
     reloaded = receipt_from_dict(json.loads(blob))
-    result2 = verify_receipt(reloaded, key.public_key())
+    result2 = verify_supervisor_receipt(reloaded, key.public_key())
     assert result2.ok, result2.errors
 
 
@@ -280,14 +280,14 @@ def test_verify_rejects_signature_tampering() -> None:
         prev_chain_digest="0" * 64,
         respawn_budget_remaining=2,
     )
-    signed = sign_receipt(receipt, signing_key=key)
+    signed = sign_supervisor_receipt(receipt, signing_key=key)
     tampered_dict = receipt_to_dict(signed)
     # Flip a base64 byte that doesn't break decode but breaks the signature.
     tampered_dict["signature_b64"] = tampered_dict["signature_b64"][:-2] + (
         "AA" if tampered_dict["signature_b64"][-2:] != "AA" else "BB"
     )
     tampered = receipt_from_dict(tampered_dict)
-    result = verify_receipt(tampered, key.public_key())
+    result = verify_supervisor_receipt(tampered, key.public_key())
     assert not result.ok
 
 
@@ -304,13 +304,13 @@ def test_verify_rejects_recommended_action_swap() -> None:
         prev_chain_digest="0" * 64,
         respawn_budget_remaining=2,
     )
-    signed = sign_receipt(receipt, signing_key=key)
+    signed = sign_supervisor_receipt(receipt, signing_key=key)
     tampered_dict = receipt_to_dict(signed)
     # Swap ESCALATE for RESPAWN - signature still covers the original
     # bytes, but the determinism check catches the mismatch.
     tampered_dict["recommended_action"] = RecommendedAction.RESPAWN.value
     tampered = receipt_from_dict(tampered_dict)
-    result = verify_receipt(tampered, key.public_key())
+    result = verify_supervisor_receipt(tampered, key.public_key())
     assert not result.ok
     assert any("recommended_action" in err for err in result.errors)
 
@@ -350,13 +350,13 @@ def test_canonical_bytes_are_byte_stable_under_dict_reorder() -> None:
         prev_chain_digest="0" * 64,
         respawn_budget_remaining=2,
     )
-    signed = sign_receipt(receipt, signing_key=key)
+    signed = sign_supervisor_receipt(receipt, signing_key=key)
     a = receipt_to_dict(signed)
     # Reorder keys in details + identity.
     b = json.loads(json.dumps(a))
     reordered = {k: a[k] for k in sorted(a.keys(), reverse=True)}
     reloaded = receipt_from_dict(reordered)
-    assert canonical_receipt_bytes(reloaded) == canonical_receipt_bytes(receipt_from_dict(b))
+    assert canonical_supervisor_receipt_bytes(reloaded) == canonical_supervisor_receipt_bytes(receipt_from_dict(b))
 
 
 def test_unsigned_receipt_fails_verification() -> None:
@@ -371,6 +371,6 @@ def test_unsigned_receipt_fails_verification() -> None:
         identity=_identity(),
         prev_chain_digest="0" * 64,
     )
-    result = verify_receipt(receipt, key.public_key())
+    result = verify_supervisor_receipt(receipt, key.public_key())
     assert not result.ok
     assert any("unsigned" in err for err in result.errors)

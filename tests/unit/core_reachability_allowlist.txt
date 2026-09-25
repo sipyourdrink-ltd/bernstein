@@ -235,7 +235,6 @@ bernstein.core.routing.fast_mode: #4526 audit in flight
 bernstein.core.routing.hijacker: #4526 audit in flight
 bernstein.core.routing.model_recommender: #4526 audit in flight
 bernstein.core.routing.model_routing: #4526 audit in flight
-bernstein.core.routing.route_decision: #4526 audit in flight
 bernstein.core.sandbox.backends.e2b: #4526 audit in flight
 bernstein.core.sandbox.backends.modal: #4526 audit in flight
 bernstein.core.sandbox.conformance: #4526 audit in flight

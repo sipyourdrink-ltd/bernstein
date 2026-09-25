@@ -18,15 +18,15 @@ from bernstein.core.sandbox.selection_receipt import (
     SelectionReceipt,
     SelectionReceiptError,
     build_selection_receipt,
-    canonical_receipt_bytes,
+    canonical_selection_receipt_bytes,
     keyid_for,
     load_or_create_signing_key,
     read_receipt_file,
     receipt_from_dict,
     receipt_to_dict,
-    sign_receipt,
+    sign_selection_receipt,
     snapshot_digests,
-    verify_receipt,
+    verify_selection_receipt,
     write_receipt,
 )
 
@@ -52,7 +52,7 @@ def _build_signed(key: Ed25519PrivateKey):
         ranker_profile={"method": "topsis", "criteria": []},
         public_key=key.public_key(),
     )
-    return sign_receipt(receipt, private_key=key)
+    return sign_selection_receipt(receipt, private_key=key)
 
 
 def test_build_orders_candidates_and_derives_losers() -> None:
@@ -69,7 +69,7 @@ def test_build_orders_candidates_and_derives_losers() -> None:
 def test_signed_receipt_verifies() -> None:
     key = Ed25519PrivateKey.generate()
     signed = _build_signed(key)
-    result = verify_receipt(signed)
+    result = verify_selection_receipt(signed)
     assert result.ok, result.errors
 
 
@@ -80,15 +80,15 @@ def test_verify_receipt_expected_keyid_binds_to_trusted_signer() -> None:
     signed = _build_signed(key)
 
     # The correct trusted keyid still accepts.
-    assert verify_receipt(signed, expected_keyid=signed.keyid).ok
+    assert verify_selection_receipt(signed, expected_keyid=signed.keyid).ok
 
     # A receipt re-signed under a *different* key is self-consistent (its own
     # keyid matches its own embedded key) yet must be rejected against the
     # trusted keyid - this is the attack the check closes.
     attacker = Ed25519PrivateKey.generate()
     forged = _build_signed(attacker)
-    assert verify_receipt(forged).ok  # self-consistent on its own
-    result = verify_receipt(forged, expected_keyid=keyid_for(key.public_key()))
+    assert verify_selection_receipt(forged).ok  # self-consistent on its own
+    result = verify_selection_receipt(forged, expected_keyid=keyid_for(key.public_key()))
     assert not result.ok
     assert any("trusted signer" in e for e in result.errors)
 
@@ -100,7 +100,7 @@ def test_verify_receipt_expected_keyid_tolerates_none_keyid() -> None:
     key = Ed25519PrivateKey.generate()
     signed = _build_signed(key)
     forged = dataclasses.replace(signed, keyid=None)  # type: ignore[arg-type]
-    result = verify_receipt(forged, expected_keyid="deadbeef")
+    result = verify_selection_receipt(forged, expected_keyid="deadbeef")
     assert not result.ok
     assert any("trusted signer" in e for e in result.errors)
 
@@ -134,7 +134,7 @@ def test_verify_rejects_duplicate_candidate_task_ids() -> None:
     signed = _build_signed(key)
     tampered = receipt_to_dict(signed)
     tampered["candidates"] = [dict(tampered["candidates"][0]), dict(tampered["candidates"][0])]
-    result = verify_receipt(receipt_from_dict(tampered))
+    result = verify_selection_receipt(receipt_from_dict(tampered))
     assert not result.ok
     assert any("not unique" in e for e in result.errors)
 
@@ -143,7 +143,7 @@ def test_receipt_is_byte_identical_across_builds_with_same_key() -> None:
     key = Ed25519PrivateKey.generate()
     a = _build_signed(key)
     b = _build_signed(key)
-    assert canonical_receipt_bytes(a) == canonical_receipt_bytes(b)
+    assert canonical_selection_receipt_bytes(a) == canonical_selection_receipt_bytes(b)
     assert a.signature_b64 == b.signature_b64
     assert receipt_to_dict(a) == receipt_to_dict(b)
 
@@ -152,7 +152,7 @@ def test_dict_roundtrip_preserves_verification() -> None:
     key = Ed25519PrivateKey.generate()
     signed = _build_signed(key)
     restored = receipt_from_dict(receipt_to_dict(signed))
-    assert verify_receipt(restored).ok
+    assert verify_selection_receipt(restored).ok
 
 
 def test_single_byte_mutation_fails_verification() -> None:
@@ -160,7 +160,7 @@ def test_single_byte_mutation_fails_verification() -> None:
     signed = _build_signed(key)
     tampered = receipt_to_dict(signed)
     tampered["winner_task_id"] = "candidate-0"  # lie about the winner
-    result = verify_receipt(receipt_from_dict(tampered))
+    result = verify_selection_receipt(receipt_from_dict(tampered))
     assert not result.ok
 
 
@@ -169,7 +169,7 @@ def test_winner_digest_tamper_is_caught() -> None:
     signed = _build_signed(key)
     tampered = receipt_to_dict(signed)
     tampered["winner_snapshot_digest"] = "d" * 64
-    result = verify_receipt(receipt_from_dict(tampered))
+    result = verify_selection_receipt(receipt_from_dict(tampered))
     assert not result.ok
 
 
@@ -182,7 +182,7 @@ def test_unsigned_receipt_does_not_verify() -> None:
         ranker_profile={},
         public_key=key.public_key(),
     )
-    assert not verify_receipt(receipt).ok
+    assert not verify_selection_receipt(receipt).ok
 
 
 def test_nan_score_is_refused_at_build() -> None:
@@ -225,7 +225,7 @@ def test_write_and_read_roundtrip(tmp_path) -> None:
     write_receipt(path, signed)
     loaded = read_receipt_file(path)
     assert loaded is not None
-    assert verify_receipt(loaded).ok
+    assert verify_selection_receipt(loaded).ok
 
 
 def test_signing_key_is_created_and_reused(tmp_path) -> None:
@@ -256,7 +256,7 @@ def test_only_the_signature_is_wrong_and_verification_fails() -> None:
     signed = _build_signed(key)
     # Baseline: the genuine receipt verifies. The only delta below is the
     # signature bytes, so any failure must be attributable to them.
-    assert verify_receipt(signed).ok, verify_receipt(signed).errors
+    assert verify_selection_receipt(signed).ok, verify_selection_receipt(signed).errors
 
     # Corrupt exactly one byte of the otherwise-genuine signature. It stays the
     # correct length and valid base64; the embedded public key, keyid, and
@@ -267,7 +267,7 @@ def test_only_the_signature_is_wrong_and_verification_fails() -> None:
     data["signature_b64"] = base64.b64encode(bytes(raw)).decode("ascii")
     forged = receipt_from_dict(data)
 
-    result = verify_receipt(forged)
+    result = verify_selection_receipt(forged)
     assert not result.ok
     # Sole line of defence: the signature is the *only* failing check. If any
     # earlier check also tripped, this receipt would not isolate the signature
@@ -329,5 +329,5 @@ def test_canonical_digest_is_independent_of_score_vector_key_order() -> None:
     unsorted = _build({"reversibility": 1.0, "correctness": 0.5, "cost": 0.25})
     sorted_twin = _build({"correctness": 0.5, "cost": 0.25, "reversibility": 1.0})
 
-    assert canonical_receipt_bytes(unsorted) == canonical_receipt_bytes(sorted_twin)
+    assert canonical_selection_receipt_bytes(unsorted) == canonical_selection_receipt_bytes(sorted_twin)
     assert unsorted.payload_digest == sorted_twin.payload_digest

@@ -49,7 +49,7 @@ def list_receipts(request: Request) -> JSONResponse:
 @router.get("/sla/receipts/{receipt_id}/verify")
 def verify_receipt_endpoint(request: Request, receipt_id: str) -> JSONResponse:
     """Verify a persisted violation receipt offline and return the verdict."""
-    from bernstein.core.orchestration.sla_receipt import SLAReceiptError, read_receipt, verify_receipt
+    from bernstein.core.orchestration.sla_receipt import SLAReceiptError, read_receipt, verify_sla_receipt
 
     try:
         receipt = read_receipt(_sdd_dir(request), receipt_id)
@@ -60,7 +60,7 @@ def verify_receipt_endpoint(request: Request, receipt_id: str) -> JSONResponse:
         receipt = None
     if receipt is None:
         return JSONResponse({"error": "receipt not found", "receipt_id": receipt_id}, status_code=404)
-    result = verify_receipt(receipt)
+    result = verify_sla_receipt(receipt)
     return JSONResponse({"receipt_id": receipt_id, "ok": result.ok, "errors": list(result.errors)})
 
 

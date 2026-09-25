@@ -52,11 +52,14 @@ from bernstein.core.cost import (
     _model_cost,
 )
 from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.routing.route_decision import enforce_model_registry as _enforce_model_registry
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.lineage.entry import ModelRef
     from bernstein.core.routing.rework_ledger import ReworkLedger
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
 
@@ -927,3 +930,24 @@ def load_cascade_savings_summary(metrics_dir: Path) -> dict[str, Any]:
         "saved_vs_opus_usd": round(saved, 6),
         "escalation_rate": round(escalation_rate, 3),
     }
+
+
+def enforce_model_registry(
+    *,
+    chain: AuditChainStore | None,
+    ref: ModelRef,
+    task_class: str,
+    at: str | None = None,
+    run_id: str = "",
+    task_id: str = "",
+) -> None:
+    """Fail closed on the cascade router path unless *ref* has a live admission."""
+    _enforce_model_registry(
+        chain=chain,
+        ref=ref,
+        task_class=task_class,
+        at=at,
+        run_id=run_id,
+        task_id=task_id,
+        routing_path="cascade_router",
+    )

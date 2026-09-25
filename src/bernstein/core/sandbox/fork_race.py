@@ -54,7 +54,9 @@ from bernstein.core.sandbox.selection_receipt import (
     RaceCandidate,
     SelectionReceipt,
     build_selection_receipt,
-    sign_receipt,
+)
+from bernstein.core.sandbox.selection_receipt import (
+    sign_selection_receipt as sign_receipt,
 )
 
 if TYPE_CHECKING:

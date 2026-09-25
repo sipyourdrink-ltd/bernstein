@@ -178,13 +178,13 @@ def _signing_payload_dict(receipt: SelectionReceipt) -> dict[str, Any]:
     }
 
 
-def canonical_receipt_bytes(receipt: SelectionReceipt) -> bytes:
+def canonical_selection_receipt_bytes(receipt: SelectionReceipt) -> bytes:
     """Return the canonical signing bytes for *receipt*."""
     return _canonical_json(_signing_payload_dict(receipt))
 
 
 def _payload_digest(receipt: SelectionReceipt) -> str:
-    return hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
+    return hashlib.sha256(canonical_selection_receipt_bytes(receipt)).hexdigest()
 
 
 def receipt_to_dict(receipt: SelectionReceipt) -> dict[str, Any]:
@@ -332,9 +332,9 @@ def _with_digest(receipt: SelectionReceipt, digest: str) -> SelectionReceipt:
     return replace(receipt, payload_digest=digest)
 
 
-def sign_receipt(receipt: SelectionReceipt, *, private_key: Ed25519PrivateKey) -> SelectionReceipt:
+def sign_selection_receipt(receipt: SelectionReceipt, *, private_key: Ed25519PrivateKey) -> SelectionReceipt:
     """Attach an Ed25519 signature. Ed25519 is deterministic (RFC 8032)."""
-    sig = private_key.sign(canonical_receipt_bytes(receipt))
+    sig = private_key.sign(canonical_selection_receipt_bytes(receipt))
     return replace(receipt, signature_b64=base64.b64encode(sig).decode("ascii"))
 
 
@@ -351,7 +351,7 @@ def _candidate_digest_map(receipt: SelectionReceipt) -> dict[str, str]:
     return out
 
 
-def verify_receipt(
+def verify_selection_receipt(
     receipt: SelectionReceipt,
     *,
     expected_keyid: str | None = None,
@@ -449,7 +449,7 @@ def verify_receipt(
             errors.append(f"signature_b64 not valid base64: {exc}")
             return ReceiptVerification(ok=False, errors=tuple(errors))
         try:
-            public_key.verify(sig, canonical_receipt_bytes(receipt))
+            public_key.verify(sig, canonical_selection_receipt_bytes(receipt))
         except InvalidSignature:
             errors.append("Ed25519 signature does not verify")
 
@@ -553,7 +553,7 @@ def verify_receipt_full(
     never ``verified``/exit 0 - an unanchored receipt proves only that it was
     signed by *the key it carries*, which an attacker can also produce.
     """
-    base = verify_receipt(receipt, expected_keyid=expected_keyid)
+    base = verify_selection_receipt(receipt, expected_keyid=expected_keyid)
     tampered: list[str] = []
     absent: list[str] = []
     unreadable: list[str] = []
@@ -685,14 +685,22 @@ __all__ = [
     "SelectionReceiptError",
     "build_selection_receipt",
     "canonical_receipt_bytes",
+    "canonical_selection_receipt_bytes",
     "keyid_for",
     "load_or_create_signing_key",
     "read_receipt_file",
     "receipt_from_dict",
     "receipt_to_dict",
     "sign_receipt",
+    "sign_selection_receipt",
     "snapshot_digests",
     "verify_receipt",
     "verify_receipt_full",
+    "verify_selection_receipt",
     "write_receipt",
 ]
+verify_receipt = verify_selection_receipt
+
+# Backward-compat aliases for old import paths
+canonical_receipt_bytes = canonical_selection_receipt_bytes
+sign_receipt = sign_selection_receipt

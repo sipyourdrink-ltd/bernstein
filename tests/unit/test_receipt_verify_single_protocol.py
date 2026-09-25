@@ -49,32 +49,15 @@ PROTOCOL_MODULE = "core/receipts/protocol.py"
 #: slice 3). Delete an entry when its module stops defining the name; never
 #: add one.
 PENDING_VERIFY_RECEIPT = frozenset(
-    {
-        "core/admission/receipts.py",
-        "core/orchestration/sla_receipt.py",
-        "core/orchestration/supervisor_receipt.py",
-        "core/payments/receipt.py",
-        "core/persistence/journal_export.py",
-        "core/sandbox/selection_receipt.py",
-    },
+    {},
 )
 
 PENDING_SIGN_RECEIPT = frozenset(
-    {
-        "core/admission/receipts.py",
-        "core/orchestration/sla_receipt.py",
-        "core/orchestration/supervisor_receipt.py",
-        "core/sandbox/selection_receipt.py",
-    },
+    {},
 )
 
 PENDING_CANONICAL_RECEIPT_BYTES = frozenset(
-    {
-        "core/admission/receipts.py",
-        "core/orchestration/sla_receipt.py",
-        "core/orchestration/supervisor_receipt.py",
-        "core/sandbox/selection_receipt.py",
-    },
+    {},
 )
 
 
@@ -125,44 +108,28 @@ def _definition_sites(name: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_exactly_one_verify_receipt_definition() -> None:
-    """Only the protocol module defines ``verify_receipt`` (bar the allowlist)."""
-    sites = _definition_sites("verify_receipt")
-    assert sites - PENDING_VERIFY_RECEIPT == {PROTOCOL_MODULE}, (
-        f"verify_receipt must be defined once, in {PROTOCOL_MODULE}; found {sorted(sites)}"
-    )
+def test_exactly_one_protocol_definition() -> None:
+    """Only the protocol module defines the three core receipt functions (bar allowlists)."""
+    for name, pending in [
+        ("verify_receipt", PENDING_VERIFY_RECEIPT),
+        ("sign_receipt", PENDING_SIGN_RECEIPT),
+        ("canonical_receipt_bytes", PENDING_CANONICAL_RECEIPT_BYTES),
+    ]:
+        sites = _definition_sites(name)
+        assert sites - pending == {PROTOCOL_MODULE}, (
+            f"{name} must be defined once, in {PROTOCOL_MODULE}; found {sorted(sites)}"
+        )
 
 
-def test_exactly_one_sign_receipt_definition() -> None:
-    """Only the protocol module defines ``sign_receipt`` (bar the allowlist)."""
-    sites = _definition_sites("sign_receipt")
-    assert sites - PENDING_SIGN_RECEIPT == {PROTOCOL_MODULE}, (
-        f"sign_receipt must be defined once, in {PROTOCOL_MODULE}; found {sorted(sites)}"
-    )
-
-
-def test_exactly_one_canonical_receipt_bytes_definition() -> None:
-    """Only the protocol module defines ``canonical_receipt_bytes``."""
-    sites = _definition_sites("canonical_receipt_bytes")
-    assert sites - PENDING_CANONICAL_RECEIPT_BYTES == {PROTOCOL_MODULE}, (
-        f"canonical_receipt_bytes must be defined once, in {PROTOCOL_MODULE}; found {sorted(sites)}"
-    )
-
-
-def test_pending_verify_receipt_allowlist_has_no_stale_entries() -> None:
-    """A migrated module must be struck from the allowlist, not left in it."""
-    stale = PENDING_VERIFY_RECEIPT - _definition_sites("verify_receipt")
-    assert stale == set(), (
-        f"these modules no longer define verify_receipt; drop them from the allowlist: {sorted(stale)}"
-    )
-
-
-def test_pending_sign_and_canonical_allowlists_have_no_stale_entries() -> None:
-    """The sign/canonicalise allowlists shrink with their migrations too."""
-    stale_sign = PENDING_SIGN_RECEIPT - _definition_sites("sign_receipt")
-    stale_canonical = PENDING_CANONICAL_RECEIPT_BYTES - _definition_sites("canonical_receipt_bytes")
-    assert stale_sign == set(), f"drop from the sign_receipt allowlist: {sorted(stale_sign)}"
-    assert stale_canonical == set(), f"drop from the canonical_receipt_bytes allowlist: {sorted(stale_canonical)}"
+def test_pending_allowlists_have_no_stale_entries() -> None:
+    """Migrated modules must be struck from all allowlists, not left in them."""
+    for name, pending in [
+        ("verify_receipt", PENDING_VERIFY_RECEIPT),
+        ("sign_receipt", PENDING_SIGN_RECEIPT),
+        ("canonical_receipt_bytes", PENDING_CANONICAL_RECEIPT_BYTES),
+    ]:
+        stale = pending - _definition_sites(name)
+        assert stale == set(), f"drop from the {name} allowlist: {sorted(stale)}"
 
 
 def test_route_handlers_are_not_counted_as_verifier_definitions() -> None:

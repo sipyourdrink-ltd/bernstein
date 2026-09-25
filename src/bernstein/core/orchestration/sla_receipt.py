@@ -162,13 +162,13 @@ def _signing_payload_dict(receipt: SLAViolationReceipt) -> dict[str, Any]:
     }
 
 
-def canonical_receipt_bytes(receipt: SLAViolationReceipt) -> bytes:
+def canonical_sla_receipt_bytes(receipt: SLAViolationReceipt) -> bytes:
     """Return the canonical signing bytes for a receipt."""
     return _canonical_json(_signing_payload_dict(receipt))
 
 
 def _payload_digest(receipt: SLAViolationReceipt) -> str:
-    return hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
+    return hashlib.sha256(canonical_sla_receipt_bytes(receipt)).hexdigest()
 
 
 def receipt_to_dict(receipt: SLAViolationReceipt) -> dict[str, Any]:
@@ -325,9 +325,9 @@ def _replace_digest(receipt: SLAViolationReceipt, digest: str) -> SLAViolationRe
     )
 
 
-def sign_receipt(receipt: SLAViolationReceipt, *, signing_key: Ed25519PrivateKey) -> SLAViolationReceipt:
+def sign_sla_receipt(receipt: SLAViolationReceipt, *, signing_key: Ed25519PrivateKey) -> SLAViolationReceipt:
     """Attach an Ed25519 signature. Ed25519 is deterministic (RFC 8032)."""
-    sig = signing_key.sign(canonical_receipt_bytes(receipt))
+    sig = signing_key.sign(canonical_sla_receipt_bytes(receipt))
     sig_b64 = base64.b64encode(sig).decode("ascii")
     return SLAViolationReceipt(
         schema_version=receipt.schema_version,
@@ -378,7 +378,7 @@ def _verify_chain_linkage(entries: tuple[dict[str, Any], ...]) -> list[str]:
     return errors
 
 
-def verify_receipt(receipt: SLAViolationReceipt) -> ReceiptVerification:
+def verify_sla_receipt(receipt: SLAViolationReceipt) -> ReceiptVerification:
     """Verify a receipt offline, using nothing but the receipt itself.
 
     Order: payload digest, contract-hash recomputation, verdict re-derivation,
@@ -450,7 +450,7 @@ def verify_receipt(receipt: SLAViolationReceipt) -> ReceiptVerification:
             errors.append(f"signature_b64 not valid base64: {exc}")
             return ReceiptVerification(ok=False, errors=tuple(errors))
         try:
-            public_key.verify(sig, canonical_receipt_bytes(receipt))
+            public_key.verify(sig, canonical_sla_receipt_bytes(receipt))
         except InvalidSignature:
             errors.append("Ed25519 signature does not verify")
 
@@ -541,6 +541,11 @@ def load_receipts(sdd_dir: Path) -> list[SLAViolationReceipt]:
     return out
 
 
+# Backward-compat aliases for callers still using the old names
+sign_receipt = sign_sla_receipt
+verify_receipt = verify_sla_receipt
+canonical_receipt_bytes = canonical_sla_receipt_bytes
+
 __all__ = [
     "SLA_RECEIPT_SCHEMA_VERSION",
     "IdentityTokens",
@@ -549,6 +554,7 @@ __all__ = [
     "SLAViolationReceipt",
     "build_receipt",
     "canonical_receipt_bytes",
+    "canonical_sla_receipt_bytes",
     "keyid_for",
     "load_receipts",
     "project_receipt",
@@ -558,6 +564,8 @@ __all__ = [
     "receipt_path",
     "receipt_to_dict",
     "sign_receipt",
+    "sign_sla_receipt",
     "verify_receipt",
+    "verify_sla_receipt",
     "write_receipt",
 ]

@@ -13,8 +13,37 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from bernstein.core.routing.route_decision import enforce_model_registry as _enforce_model_registry
+
+if TYPE_CHECKING:
+    from bernstein.core.lineage.entry import ModelRef
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
+
+
+def enforce_model_registry(
+    *,
+    chain: AuditChainStore | None,
+    ref: ModelRef,
+    task_class: str,
+    at: str | None = None,
+    run_id: str = "",
+    task_id: str = "",
+) -> None:
+    """Fail closed on the fallback path unless *ref* has a live admission."""
+    _enforce_model_registry(
+        chain=chain,
+        ref=ref,
+        task_class=task_class,
+        at=at,
+        run_id=run_id,
+        task_id=task_id,
+        routing_path="model_fallback",
+    )
+
 
 #: Default number of consecutive errors before fallback is triggered.
 DEFAULT_529_STRIKE_LIMIT: int = 3

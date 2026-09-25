@@ -21,7 +21,7 @@ from bernstein.core.persistence.journal import Journal, JournalReader
 from bernstein.core.persistence.journal_export import (
     ReceiptError,
     export_receipt,
-    verify_receipt,
+    verify_receipt_tarball,
 )
 
 
@@ -67,7 +67,7 @@ class TestExport:
         agent_dir.rename(scrubbed)
         assert not agent_dir.exists()
 
-        result = verify_receipt(receipt_path, expected_head=head)
+        result = verify_receipt_tarball(receipt_path, expected_head=head)
         assert result.ok, result.errors
         assert result.head_hash == head
         assert result.steps == 3
@@ -97,7 +97,7 @@ class TestExport:
             for item in extract_dir.rglob("*"):
                 tar.add(item, arcname=item.relative_to(extract_dir))
 
-        result = verify_receipt(repacked, expected_head=head)
+        result = verify_receipt_tarball(repacked, expected_head=head)
         assert not result.ok
 
     def test_missing_head_raises(self, tmp_path: Path) -> None:
@@ -107,7 +107,7 @@ class TestExport:
         export_receipt(agent_dir, receipt_path, agent_id="agent-1")
 
         # Verifier insists on an expected head; supplying the wrong one fails.
-        result = verify_receipt(receipt_path, expected_head="f" * 64)
+        result = verify_receipt_tarball(receipt_path, expected_head="f" * 64)
         assert not result.ok
 
     def test_export_refuses_when_journal_empty(self, tmp_path: Path) -> None:
@@ -146,6 +146,6 @@ class TestExportEffortRoundTrip:
         # OFFLINE third-party verify must reproduce the same head_hash from the
         # bundled bytes, which only holds if the walker folds effort into the
         # recomputed step hash.
-        verified = verify_receipt(receipt_path, expected_head=head)
+        verified = verify_receipt_tarball(receipt_path, expected_head=head)
         assert verified.ok, f"offline verify must pass; errors={verified.errors}"
         assert verified.steps == 2
