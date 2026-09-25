@@ -31,6 +31,7 @@ src/bernstein/core/identity/delegation_scope.py::DelegationScope.is_narrowing_of
 src/bernstein/core/identity/grants.py::GrantLedger.issue_grant                                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantReceipt.to_entry                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantSigner.with_issuer                                 # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/identity/http_signing.py::verify_request                                    # exported and exercised by tests; no production caller
 src/bernstein/core/identity/principal.py::AgentPrincipal.credential_for                        # exercised by tests only; no production caller
 src/bernstein/core/identity/principal.py::AgentPrincipal.with_credential                       # exercised by tests only; no production caller
 src/bernstein/core/identity/principal.py::CredentialRef.is_valid_at                            # exercised by tests only; no production caller
@@ -279,7 +280,9 @@ src/bernstein/core/security/permission_graph.py::ClassifierLayer                
 src/bernstein/core/security/permission_graph.py::DenyRulesLayer                                # exercised by tests only; no production caller
 src/bernstein/core/security/permission_graph.py::PermissionGraph                               # exercised by tests only; no production caller
 src/bernstein/core/security/permission_graph.py::PromptLayer                                   # exercised by tests only; no production caller
+src/bernstein/core/security/permission_matrix.py::PermissionResolutionMatrix                   # exercised by tests and the unused resolve_permission wrapper; no production caller
 src/bernstein/core/security/permission_matrix.py::log_resolution                               # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/permission_matrix.py::resolve_permission                           # exercised by tests only; no production caller
 src/bernstein/core/security/permission_mode.py::default_for_no_match                           # exercised by tests only; no production caller
 src/bernstein/core/security/permission_policy.py::check_tool_call                              # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/permission_policy.py::list_builtin_profiles                        # exported in the module's __all__ and exercised by tests; no production caller
@@ -398,6 +401,7 @@ src/bernstein/core/security/state_encryption.py::EncryptedFile.encrypted_path   
 src/bernstein/core/security/state_encryption.py::KeyManager                                    # exercised by tests only; no production caller
 src/bernstein/core/security/state_encryption.py::decrypt_file                                  # exercised by tests only; no production caller
 src/bernstein/core/security/state_encryption.py::encrypt_file                                  # exercised by tests only; no production caller
+src/bernstein/core/security/state_encryption.py::generate_key                                  # called by KeyManager.ensure_key, whose class has no production caller
 src/bernstein/core/security/state_encryption.py::is_encrypted                                  # exercised by tests only; no production caller
 src/bernstein/core/security/surface_grant_delta.py::SurfaceGrantChange                         # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/surface_grant_delta.py::SurfaceGrantDelta                          # exported in the module's __all__ and exercised by tests; no production caller
