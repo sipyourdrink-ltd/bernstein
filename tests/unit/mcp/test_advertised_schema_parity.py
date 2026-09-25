@@ -51,7 +51,7 @@ def _advertised_schemas() -> dict[str, dict[str, Any]]:
     """Return ``{tool_name: inputSchema}`` exactly as a client would see it."""
     mcp = create_mcp_server(tier="all", lineage_enabled=True)
     tools = asyncio.run(mcp.list_tools())
-    return {tool.name: copy.deepcopy(tool.inputSchema) for tool in tools}
+    return {tool.name: copy.deepcopy(tool.input_schema) for tool in tools}
 
 
 def _enforced_schemas() -> dict[str, dict[str, Any]]:
@@ -267,7 +267,7 @@ async def test_a_call_matching_the_advertised_shape_reaches_the_task_server(seed
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
         result = await mcp.call_tool("bernstein_post_artifact", dict(seed))
 
-    text = result[0][0].text  # type: ignore[index]
+    text = result.content[0].text  # type: ignore[index]
     assert "jsonrpc_error" not in text, text
     mock_client.post.assert_awaited_once()
     posted = mock_client.post.call_args.kwargs["json"]

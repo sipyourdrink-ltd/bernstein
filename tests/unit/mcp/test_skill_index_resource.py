@@ -22,7 +22,7 @@ async def test_no_arg_tool_and_resource_return_the_same_compact_index(
     mcp = create_mcp_server(tier="all")
 
     tool_result = await mcp.call_tool("load_skill", {})
-    tool_body = tool_result[0][0].text  # type: ignore[index]
+    tool_body = tool_result.content[0].text  # type: ignore[index]
     resource_contents = await mcp.read_resource(SKILL_INDEX_RESOURCE_URI)
     resource_body = next(iter(resource_contents)).content
 
@@ -45,11 +45,11 @@ async def test_named_load_skill_keeps_returning_the_full_body(
     monkeypatch.setenv("BERNSTEIN_MCP_COST_METER", "0")
     mcp = create_mcp_server(tier="all")
     index_result = await mcp.call_tool("load_skill", {})
-    index = json.loads(index_result[0][0].text)  # type: ignore[index]
+    index = json.loads(index_result.content[0].text)  # type: ignore[index]
     name = index["skills"][0]["name"]
 
     named_result = await mcp.call_tool("load_skill", {"name": name})
-    loaded = json.loads(named_result[0][0].text)  # type: ignore[index]
+    loaded = json.loads(named_result.content[0].text)  # type: ignore[index]
 
     assert loaded["name"] == name
     assert loaded["body"]

@@ -66,16 +66,16 @@ def test_structured_tools_declare_an_output_schema(_meter_on: None) -> None:
     mcp = create_mcp_server(server_url="http://localhost:8052")
     tools = _wire_tools(mcp)
     for name in _STRUCTURED:
-        assert tools[name].outputSchema is not None, name
+        assert tools[name].output_schema is not None, name
         # With the meter on, the declared schema is the envelope as emitted.
-        assert tools[name].outputSchema["required"] == ["result", "_meter"], name
+        assert tools[name].output_schema["required"] == ["result", "_meter"], name
 
 
 def test_output_schema_describes_the_bare_payload_when_meter_off(_meter_off: None) -> None:
     mcp = create_mcp_server(server_url="http://localhost:8052")
     tools = _wire_tools(mcp)
     for name in _STRUCTURED:
-        schema = tools[name].outputSchema
+        schema = tools[name].output_schema
         assert schema is not None, name
         assert "_meter" not in json.dumps(schema.get("required", [])), name
 
@@ -90,7 +90,7 @@ def test_unstructured_tools_keep_the_sdk_derived_schema(_meter_on: None) -> None
     mcp = create_mcp_server(server_url="http://localhost:8052")
     tools = _wire_tools(mcp)
     for name in ("bernstein_approve", "load_skill"):
-        schema = tools[name].outputSchema
+        schema = tools[name].output_schema
         assert schema is None or schema.get("required") != ["result", "_meter"], name
 
 
@@ -106,7 +106,7 @@ async def test_live_poll_result_validates_against_its_declared_schema(
     monkeypatch.chdir(tmp_path)
     _seed_journal(tmp_path)
     mcp = create_mcp_server(server_url="http://localhost:8052")
-    declared = (await _wire_tools_async(mcp))["bernstein_run_status"].outputSchema
+    declared = (await _wire_tools_async(mcp))["bernstein_run_status"].output_schema
     result = await _poll(mcp)
     assert result.structuredContent is not None
     jsonschema.Draft7Validator(declared).validate(result.structuredContent)
@@ -121,7 +121,7 @@ async def test_live_poll_result_validates_with_the_meter_off(
     monkeypatch.chdir(tmp_path)
     _seed_journal(tmp_path)
     mcp = create_mcp_server(server_url="http://localhost:8052")
-    declared = (await _wire_tools_async(mcp))["bernstein_run_status"].outputSchema
+    declared = (await _wire_tools_async(mcp))["bernstein_run_status"].output_schema
     result = await _poll(mcp)
     assert result.structuredContent is not None
     jsonschema.Draft7Validator(declared).validate(result.structuredContent)

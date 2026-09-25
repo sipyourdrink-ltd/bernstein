@@ -2188,7 +2188,7 @@ def _shape_tools_list(mcp: FastMCP[None]) -> None:
                 tool.execution = ToolExecution(taskSupport=mode)
             output_schema = _output_schema_for(tool.name)
             if output_schema is not None:
-                tool.outputSchema = output_schema
+                tool.output_schema = output_schema
         return tools
 
     mcp.list_tools = shaped_list_tools
