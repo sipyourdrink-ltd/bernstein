@@ -1,0 +1,92 @@
+{
+  "edges": [
+    {
+      "conditional": false,
+      "source": "router",
+      "target": "retriever"
+    },
+    {
+      "conditional": false,
+      "source": "retriever",
+      "target": "synthesizer"
+    }
+  ],
+  "graph_id": "compliance-assistant-graph",
+  "metadata": {
+    "framework": "langgraph",
+    "runtime_version": "0.2.14",
+    "thread_id": "thread-1092"
+  },
+  "nodes": [
+    {
+      "id": "router",
+      "inputs": {
+        "messages": [
+          {
+            "content": "What is our SOC2 data retention requirement?",
+            "role": "user"
+          }
+        ]
+      },
+      "name": "QueryRouterNode",
+      "outputs": {
+        "next_step": "retriever"
+      },
+      "role": "router",
+      "tool_calls": []
+    },
+    {
+      "id": "retriever",
+      "inputs": {
+        "framework": "soc2",
+        "target_domain": "compliance"
+      },
+      "name": "PolicyRetrieverNode",
+      "outputs": {
+        "documents": [
+          "SOC2 CC6.5: Audit logs and evidence must be retained for at least 365 days."
+        ]
+      },
+      "role": "retrieval",
+      "tool_calls": [
+        {
+          "args": {
+            "filter_tags": [
+              "audit",
+              "compliance"
+            ],
+            "query": "SOC2 retention requirement",
+            "top_k": 3
+          },
+          "id": "call_retrieval_001",
+          "name": "search_compliance_policies",
+          "output": "Found 1 matching control: CC6.5"
+        }
+      ]
+    },
+    {
+      "id": "synthesizer",
+      "inputs": {
+        "context": "SOC2 CC6.5: Audit logs and evidence must be retained for at least 365 days."
+      },
+      "name": "ResponseSynthesizerNode",
+      "outputs": {
+        "final_answer": "Under SOC2 CC6.5, audit logs and associated evidence must be retained for at least 365 days."
+      },
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "args": {
+            "citation": "SOC2-CC6.5",
+            "format": "bullet_points",
+            "sign_off": true
+          },
+          "id": "call_synth_002",
+          "name": "format_markdown_report",
+          "output": "Formatted summary report"
+        }
+      ]
+    }
+  ],
+  "run_id": "langgraph-run-7a8b9c"
+}
