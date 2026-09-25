@@ -2,7 +2,7 @@
 
 `ResultStore` is the resume point: the harness calls `already_evaluated` per
 instance so a restarted run skips work it has finished. Appending is not
-atomic, so a process killed mid-write leaves a partial last line — and a bare
+atomic, so a process killed mid-write leaves a partial last line, and a bare
 `json.loads` over every line made that one fragment poison the whole file.
 `already_evaluated` raised, so the run could not resume, and every instance it
 *had* completed was evaluated again. On SWE-Bench that is a real model call and
@@ -15,3 +15,10 @@ one failure for silent data loss in the middle of a file.
 
 `append` also flushes and `fsync`s. A finished instance sitting in the page
 cache when the process dies is the same cost in the other direction.
+
+The next `append` removes what the crash left before it writes. Without that,
+the first result of a resumed run was written onto the end of the torn line,
+fused with it into one invalid line, and dropped on the next load. The append
+after that pushed the bad line into the middle of the file, so every later load
+raised. A final line that is a complete result missing only its newline gets the
+newline instead of being cut, because `load` already counts it as done.

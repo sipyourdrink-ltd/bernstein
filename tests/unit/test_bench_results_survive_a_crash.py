@@ -11,6 +11,7 @@ model call and real money, paid again for work already done.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -101,3 +102,75 @@ def test_an_appended_result_is_on_disk_before_append_returns(tmp_path: Path) -> 
     """
     ResultStore(tmp_path).append(_result("i-1"))
     assert [r.instance_id for r in ResultStore(tmp_path).load("solo")] == ["i-1"]
+
+
+def test_the_first_append_after_a_resume_survives_the_tear(tmp_path: Path) -> None:
+    """Resume is a read followed by a write, so the write has to be tested too.
+
+    Appending straight after the fragment fused it with the new result into
+    one invalid final line. The next load dropped the result the resumed run
+    had just paid for, and the append after that moved the bad line into the
+    middle of the file, where every load raised.
+    """
+    store = ResultStore(tmp_path)
+    store.append(_result("i-1"))
+    _tear(tmp_path / "solo.jsonl")
+    assert store.already_evaluated("solo", "i-3") is False
+
+    store.append(_result("i-3"))
+    assert [r.instance_id for r in store.load("solo")] == ["i-1", "i-3"]
+
+    store.append(_result("i-4"))
+    assert [r.instance_id for r in store.load("solo")] == ["i-1", "i-3", "i-4"]
+
+
+def test_a_tear_in_the_very_first_append_leaves_an_empty_file_to_append_to(tmp_path: Path) -> None:
+    store = ResultStore(tmp_path)
+    _tear(tmp_path / "solo.jsonl")
+
+    store.append(_result("i-1"))
+
+    assert [r.instance_id for r in store.load("solo")] == ["i-1"]
+
+
+def test_a_result_that_lost_only_its_newline_is_kept_not_cut(tmp_path: Path) -> None:
+    """The one tail that parses: the crash landed between the closing brace and the newline.
+
+    `load` counts that result, so `already_evaluated` says it is done and the
+    resumed run skips it. Cutting it back to the last newline would then
+    lose it for good. It gets its newline instead.
+    """
+    store = ResultStore(tmp_path)
+    store.append(_result("i-1"))
+    store.append(_result("i-2"))
+    path = tmp_path / "solo.jsonl"
+    path.write_bytes(path.read_bytes().rstrip(b"\n"))
+    assert store.already_evaluated("solo", "i-2") is True
+
+    store.append(_result("i-3"))
+
+    assert [r.instance_id for r in store.load("solo")] == ["i-1", "i-2", "i-3"]
+
+
+def test_the_drop_warning_says_how_many_results_survived(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store = ResultStore(tmp_path)
+    store.append(_result("i-1"))
+    store.append(_result("i-2"))
+    _tear(tmp_path / "solo.jsonl")
+
+    with caplog.at_level(logging.WARNING, logger="benchmarks.swe_bench.metrics"):
+        store.load("solo")
+
+    assert "torn final line" in caplog.text
+    assert "The 2 complete result(s) before it are intact." in caplog.text
+
+
+def test_bytes_that_are_not_utf8_are_corruption_under_the_same_contract(tmp_path: Path) -> None:
+    """Every line the store writes is ASCII, so undecodable bytes cannot be a tear."""
+    store = ResultStore(tmp_path)
+    store.append(_result("i-1"))
+    with (tmp_path / "solo.jsonl").open("ab") as handle:
+        handle.write(b"\xff\xfe\n")
+
+    with pytest.raises(ValueError, match="corrupt rather than torn"):
+        store.load("solo")
