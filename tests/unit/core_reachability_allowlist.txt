@@ -154,7 +154,6 @@ bernstein.core.parallel_admission: #4526 audit in flight
 bernstein.core.payments.adapters.base: #4526 audit in flight
 bernstein.core.payments.adapters.jws_passthrough: #4526 audit in flight
 bernstein.core.payments.adapters.native: #4526 audit in flight
-bernstein.core.persistence.batch_ledger: #4526 audit in flight
 bernstein.core.persistence.cache_dedup: #4526 audit in flight
 bernstein.core.persistence.cache_served_from: #4526 audit in flight
 bernstein.core.persistence.insights: #4526 audit in flight
