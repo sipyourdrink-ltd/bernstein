@@ -50,6 +50,8 @@ These are the most exercised adapters in the test matrix.
 - `goose` - Block Goose.
 - `muse` - Muse Code, Meta's terminal coding agent, driven headless via
   `muse exec` (see [`muse.md`](muse.md)).
+- `openclaw` - OpenClaw, one embedded turn per task via
+  `openclaw agent exec` (see [`openclaw.md`](openclaw.md)).
 
 ### Local and offline
 
@@ -146,6 +148,7 @@ locally with `bernstein integrations list --installed`.
 | [Kiro](https://kiro.dev) | See [Kiro docs](https://kiro.dev) |
 | [AWS Q Developer](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html) | `brew install --cask amazon-q` then `q login` |
 | [Ollama](https://ollama.ai) + Aider | `brew install ollama` |
+| [OpenClaw](openclaw.md) | `npm install -g openclaw` (Node 24.16+) |
 | [OpenCode](https://opencode.ai) | See [OpenCode docs](https://opencode.ai) |
 | [Qwen](https://github.com/QwenLM/qwen-code) | `npm install -g @qwen-code/qwen-code` |
 | [OpenHands](https://github.com/OpenHands/OpenHands) | `uv tool install openhands --python 3.12` |
