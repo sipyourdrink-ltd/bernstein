@@ -1,188 +1,1346 @@
 /*
  * Bernstein docs theme.
  *
- * Maps the project's design tokens (docs/design/tokens.md /
- * docs/design/tokens.json) onto Material for MkDocs' CSS custom
- * properties, so the docs site uses the same palette and type ramp as
- * the rest of the project instead of Material's stock colours.
+ * Maps the design tokens in docs/design/tokens.md (machine-readable copy:
+ * docs/design/tokens.json) onto Material for MkDocs. Light values come from
+ * the website surface, dark from the operator UI, per the canonical-accent
+ * decision in tokens.md. Every colour below is a token or a token at a stated
+ * opacity; the three derived values (--bn-faint, --bn-rule-strong,
+ * --bn-code-bg) are the website's own oklch() steps converted to hex, with the
+ * contrast measured against the backgrounds they sit on.
  *
- * Light values come from the website surface, dark from the operator
- * UI, per the canonical-accent decision in docs/design/tokens.md.
+ * Layout of this file:
+ *   1. tokens (light, dark) and their mapping onto Material variables
+ *   2. base: fonts, links, focus, selection, scrollbars
+ *   3. chrome: header, tabs, sidebars, table of contents, footer
+ *   4. content: headings, code, admonitions, tables, content tabs, cards,
+ *      buttons, images
+ *   5. search
+ *   6. home page
+ *   7. reduced motion, print
  */
 
+/* ===================================================================
+ * 1. Tokens
+ * =================================================================== */
+
 :root {
-  --bernstein-font-display: "Fraunces", "Iowan Old Style", Charter, Georgia, serif;
+  --bn-font-display: "Fraunces", "Iowan Old Style", Charter, Georgia, serif;
+  --bn-font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --bn-font-mono: "JetBrains Mono", "SF Mono", "Fira Code", "Cascadia Code", monospace;
+
+  /* 8px grid, from tokens.md "Spacing and radii". Material sets the root
+     font-size to 125% (1rem = 20px), so spacing is written in px. */
+  --bn-space-1: 4px;
+  --bn-space-2: 8px;
+  --bn-space-3: 12px;
+  --bn-space-4: 16px;
+  --bn-space-5: 24px;
+  --bn-space-6: 32px;
+  --bn-space-7: 48px;
+
+  --bn-radius-sm: 4px;   /* inline code, focus rings, chips */
+  --bn-radius: 8px;      /* code blocks, admonitions, inputs, buttons */
+  --bn-radius-lg: 12px;  /* cards, panels */
+
+  --bn-dur-1: 100ms;
+  --bn-dur-2: 150ms;
+  --bn-dur-3: 200ms;
 }
 
-/* ---------------------------------------------------------------------
- * Light (Material scheme name: "default")
- * ------------------------------------------------------------------- */
+/* Light: Material scheme "default". */
 [data-md-color-scheme="default"] {
-  --md-default-bg-color: #F8F1E7;
-  --md-default-bg-color--light: #F8F1E7;
-  --md-default-bg-color--lighter: #F8F1E7;
-  --md-default-bg-color--dark: #F3EADD;
-
-  --md-default-fg-color: #181614;
-  --md-default-fg-color--light: #575552;
-  --md-default-fg-color--lighter: #8A857D;
-  --md-default-fg-color--lightest: #D2CDC7;
-
-  --md-primary-fg-color: #181614;
-  --md-primary-fg-color--light: #3C3A36;
-  --md-primary-fg-color--dark: #181614;
-  --md-primary-bg-color: #F8F1E7;
-  --md-primary-bg-color--light: #F8F1E7;
-
-  --md-accent-fg-color: #A35B48;
-  --md-accent-fg-color--transparent: rgba(163, 91, 72, 0.1);
-  --md-accent-bg-color: #F8F1E7;
-  --md-accent-bg-color--light: #F8F1E7;
-
-  --md-typeset-a-color: #A35B48;
-
-  --md-code-bg-color: #F3EADD;
-  --md-code-fg-color: #181614;
-  --md-code-hl-color: rgba(163, 91, 72, 0.14);
-
-  --md-footer-bg-color: #181614;
-  --md-footer-bg-color--dark: #13130F;
-  --md-footer-fg-color: #F2EFE6;
-  --md-footer-fg-color--light: #A39D8C;
-
-  --md-typeset-mark-color: rgba(245, 165, 36, 0.4);
-
-  --md-admonition-fg-color: #181614;
-  --md-admonition-bg-color: #F3EADD;
+  --bn-bg: #F8F1E7;           /* bg */
+  --bn-surface: #F3EADD;      /* surface */
+  --bn-code-bg: #E9E0D4;      /* website --code-paper, oklch(91% 0.018 75) */
+  --bn-ink: #181614;          /* text          16.1:1 on bg */
+  --bn-muted: #575552;        /* muted          6.6:1 on bg, 5.7:1 on code */
+  --bn-faint: #656360;        /* oklch(50% 0.005 60): 5.3:1 on bg, 4.6:1 on code */
+  --bn-rule: #D2CDC7;         /* border */
+  --bn-rule-strong: #A29E98;  /* oklch(70% 0.01 75), lines only */
+  --bn-accent: #A35B48;       /* accent: 4.5:1 on bg, so accent text sits on bg only */
+  --bn-accent-ink: #934C3A;   /* oklch(50% 0.10 35): accent text on surface / code, 4.8-5.3:1 */
+  --bn-accent-tint: rgba(163, 91, 72, 0.10);
+  --bn-success: #376139;
+  --bn-warning: #9C622F;      /* 4.4:1 on bg: rails, icons and fills only */
+  --bn-danger: #9C433F;
+  --bn-selection: rgba(163, 91, 72, 0.22);
+  --bn-shadow-pop: 0 6px 16px rgba(24, 22, 20, 0.10);
 }
 
-/* ---------------------------------------------------------------------
- * Dark (Material scheme name: "slate")
- * ------------------------------------------------------------------- */
+/* Dark: Material scheme "slate". */
 [data-md-color-scheme="slate"] {
   --md-hue: 60;
 
-  --md-default-bg-color: #13130F;
-  --md-default-bg-color--light: #13130F;
-  --md-default-bg-color--lighter: #13130F;
-  --md-default-bg-color--dark: #1A1A15;
-
-  --md-default-fg-color: #F2EFE6;
-  --md-default-fg-color--light: #A39D8C;
-  --md-default-fg-color--lighter: #6E695E;
-  --md-default-fg-color--lightest: #33332B;
-
-  --md-primary-fg-color: #1A1A15;
-  --md-primary-fg-color--light: #262620;
-  --md-primary-fg-color--dark: #13130F;
-  --md-primary-bg-color: #F2EFE6;
-  --md-primary-bg-color--light: #F2EFE6;
-
-  --md-accent-fg-color: #DB8E7A;
-  --md-accent-fg-color--transparent: rgba(219, 142, 122, 0.14);
-  --md-accent-bg-color: #13130F;
-  --md-accent-bg-color--light: #13130F;
-
-  --md-typeset-a-color: #DB8E7A;
-
-  --md-code-bg-color: #1A1A15;
-  --md-code-fg-color: #F2EFE6;
-  --md-code-hl-color: rgba(219, 142, 122, 0.16);
-
-  --md-footer-bg-color: #0D0D0A;
-  --md-footer-bg-color--dark: #0D0D0A;
-  --md-footer-fg-color: #F2EFE6;
-  --md-footer-fg-color--light: #A39D8C;
-
-  --md-typeset-mark-color: rgba(245, 165, 36, 0.32);
-
-  --md-admonition-fg-color: #F2EFE6;
-  --md-admonition-bg-color: #1A1A15;
-
-  /* Material derives shadows from --md-hue; the default (indigo) hue
-     makes card/table shadows read blue against the warm dark bg. */
-  --md-shadow-z1: 0 4px 10px hsla(60, 8%, 2%, 0.35), 0 0 1px hsla(60, 8%, 2%, 0.5);
-  --md-shadow-z2: 0 4px 10px hsla(60, 8%, 2%, 0.45), 0 0 1px hsla(60, 8%, 2%, 0.6);
-  --md-shadow-z3: 0 4px 18px hsla(60, 8%, 2%, 0.55), 0 0 1px hsla(60, 8%, 2%, 0.7);
+  --bn-bg: #13130F;
+  --bn-surface: #1A1A15;
+  --bn-code-bg: #1A1A15;
+  --bn-ink: #F2EFE6;
+  --bn-muted: #A39D8C;        /* 6.9:1 on bg, 6.5:1 on surface */
+  --bn-faint: #A39D8C;
+  --bn-rule: #33332B;
+  --bn-rule-strong: #4A4A40;
+  --bn-accent: #DB8E7A;
+  --bn-accent-ink: #DB8E7A;   /* 6.8:1 on surface */
+  --bn-accent-tint: rgba(219, 142, 122, 0.12);
+  --bn-success: #7FC58A;
+  --bn-warning: #D9B26B;
+  --bn-danger: #E58B80;
+  --bn-selection: rgba(219, 142, 122, 0.28);
+  --bn-shadow-pop: 0 6px 16px rgba(0, 0, 0, 0.45);
 }
 
-/* ---------------------------------------------------------------------
- * Structural tweaks that apply in both schemes
- * ------------------------------------------------------------------- */
+/* Token → Material variable mapping, shared by both schemes. */
+[data-md-color-scheme] {
+  --md-default-bg-color: var(--bn-bg);
+  --md-default-bg-color--light: var(--bn-bg);
+  --md-default-bg-color--lighter: var(--bn-bg);
+  --md-default-bg-color--lightest: var(--bn-surface);
+  --md-default-bg-color--dark: var(--bn-surface);
 
-/* Calm, dense reference feel: quieter borders, no bold primary header. */
+  --md-default-fg-color: var(--bn-ink);
+  --md-default-fg-color--light: var(--bn-muted);
+  --md-default-fg-color--lighter: var(--bn-rule-strong);
+  --md-default-fg-color--lightest: var(--bn-rule);
+
+  /* Header and tabs sit on the page background, as on the website; the
+     palette is "custom" in mkdocs.yml so Material adds no colours of its own. */
+  --md-primary-fg-color: var(--bn-ink);
+  --md-primary-fg-color--light: var(--bn-muted);
+  --md-primary-fg-color--dark: var(--bn-ink);
+  --md-primary-bg-color: var(--bn-bg);
+  --md-primary-bg-color--light: var(--bn-muted);
+
+  --md-accent-fg-color: var(--bn-accent);
+  --md-accent-fg-color--transparent: var(--bn-accent-tint);
+  --md-accent-bg-color: var(--bn-bg);
+  --md-accent-bg-color--light: var(--bn-bg);
+
+  --md-typeset-color: var(--bn-ink);
+  --md-typeset-a-color: var(--bn-ink);
+  --md-typeset-mark-color: var(--bn-accent-tint);
+  --md-typeset-del-color: rgba(156, 67, 63, 0.15);
+  --md-typeset-ins-color: rgba(55, 97, 57, 0.15);
+  --md-typeset-kbd-color: var(--bn-surface);
+  --md-typeset-kbd-accent-color: var(--bn-rule);
+  --md-typeset-kbd-border-color: var(--bn-rule-strong);
+  --md-typeset-table-color: var(--bn-rule);
+  --md-typeset-table-color--light: var(--bn-surface);
+
+  --md-code-bg-color: var(--bn-code-bg);
+  --md-code-fg-color: var(--bn-ink);
+  --md-code-hl-color: var(--bn-accent);
+  --md-code-hl-color--light: var(--bn-accent-tint);
+
+  --md-admonition-fg-color: var(--bn-ink);
+  --md-admonition-bg-color: var(--bn-surface);
+
+  --md-footer-bg-color: var(--bn-bg);
+  --md-footer-bg-color--dark: var(--bn-bg);
+  --md-footer-fg-color: var(--bn-ink);
+  --md-footer-fg-color--light: var(--bn-muted);
+  --md-footer-fg-color--lighter: var(--bn-faint);
+
+  --md-shadow-z1: none;
+  --md-shadow-z2: var(--bn-shadow-pop);
+  --md-shadow-z3: var(--bn-shadow-pop);
+
+  --md-text-font: "Inter";
+  --md-code-font: "JetBrains Mono";
+}
+
+/* Syntax highlighting: four semantic roles plus ink and muted, the same
+   rule the terminal palette follows. Every colour clears 4.5:1 on the
+   code background in its scheme. */
+[data-md-color-scheme="default"] {
+  --md-code-hl-keyword-color: #934C3A;     /* 4.8:1 */
+  --md-code-hl-string-color: #376139;      /* 5.5:1 */
+  --md-code-hl-number-color: #8C541F;      /* 4.7:1 */
+  --md-code-hl-constant-color: #8C541F;
+  --md-code-hl-special-color: #9C433F;     /* 4.9:1 */
+  --md-code-hl-function-color: #181614;
+  --md-code-hl-name-color: #181614;
+  --md-code-hl-variable-color: #181614;
+  --md-code-hl-operator-color: #575552;    /* 5.7:1 */
+  --md-code-hl-punctuation-color: #575552;
+  --md-code-hl-comment-color: #656360;     /* 4.6:1 */
+  --md-code-hl-generic-color: #575552;
+}
+[data-md-color-scheme="slate"] {
+  --md-code-hl-keyword-color: #DB8E7A;     /* 6.8:1 */
+  --md-code-hl-string-color: #7FC58A;      /* 8.5:1 */
+  --md-code-hl-number-color: #D9B26B;      /* 8.8:1 */
+  --md-code-hl-constant-color: #D9B26B;
+  --md-code-hl-special-color: #E58B80;     /* 6.9:1 */
+  --md-code-hl-function-color: #F2EFE6;
+  --md-code-hl-name-color: #F2EFE6;
+  --md-code-hl-variable-color: #F2EFE6;
+  --md-code-hl-operator-color: #A39D8C;    /* 6.5:1 */
+  --md-code-hl-punctuation-color: #A39D8C;
+  --md-code-hl-comment-color: #A39D8C;
+  --md-code-hl-generic-color: #A39D8C;
+}
+
+/* ===================================================================
+ * 2. Base
+ * =================================================================== */
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 1;
+}
+
+body,
+input {
+  font-family: var(--bn-font-body);
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--bn-font-mono);
+  font-feature-settings: "kern" 1, "zero" 0;
+}
+
+::selection {
+  background-color: var(--bn-selection);
+  color: var(--bn-ink);
+}
+
+/* Focus: one accent ring with an offset, everywhere. */
+:focus-visible,
+.md-typeset a:focus-visible,
+.md-nav__link:focus-visible,
+.md-tabs__link:focus-visible,
+.md-header__button:focus-visible,
+.md-search__input:focus-visible,
+.md-typeset .tabbed-labels > label:focus-visible,
+.md-clipboard:focus-visible {
+  outline: 2px solid var(--bn-accent);
+  outline-offset: 2px;
+  border-radius: var(--bn-radius-sm);
+}
+
+/* Scrollbars stay on the warm neutrals. */
+html {
+  scrollbar-color: var(--bn-rule-strong) transparent;
+}
+.md-sidebar__scrollwrap,
+.md-search__scrollwrap,
+.md-typeset pre > code {
+  scrollbar-color: var(--bn-rule-strong) transparent;
+}
+.md-sidebar__scrollwrap:hover,
+.md-typeset pre > code:hover {
+  scrollbar-color: var(--bn-faint) transparent;
+}
+
+/* Links in running text: ink with a hairline underline; hover moves both
+   to the accent. Colour alone never carries the link. */
+.md-typeset a {
+  color: var(--bn-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--bn-rule-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: color var(--bn-dur-2) ease-out, text-decoration-color var(--bn-dur-2) ease-out;
+}
+.md-typeset a:hover,
+.md-typeset a:focus-visible {
+  color: var(--bn-accent);
+  text-decoration-color: var(--bn-accent);
+}
+.md-typeset a code {
+  color: inherit;
+}
+/* Heading permalinks, buttons, cards and footnote refs carry their own
+   affordance; the underline would be noise there. */
+.md-typeset .headerlink,
+.md-typeset .tabbed-labels a,
+.md-typeset .md-button,
+.md-typeset .footnote-ref,
+.md-typeset .footnote-backref,
+.md-typeset .grid.cards a:has(> img),
+.md-typeset .bn-hero a {
+  text-decoration: none;
+}
+
+/* ===================================================================
+ * 3. Chrome
+ * =================================================================== */
+
+/* Header: page background, one hairline, no shadow. */
 .md-header {
+  background-color: var(--bn-bg);
+  color: var(--bn-ink);
   box-shadow: none;
-  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  border-bottom: 1px solid var(--bn-rule);
+}
+.md-header--shadow {
+  box-shadow: none;
+}
+.md-header__button {
+  color: var(--bn-ink);
+}
+.md-header__button.md-logo {
+  padding: var(--bn-space-2);
+  margin-right: 0;
+}
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 26px;
+  width: auto;
 }
 
-.md-tabs {
-  border-bottom: 1px solid var(--md-default-fg-color--lightest);
-}
-
-.md-nav__title,
-.md-nav__link--active {
-  color: var(--md-accent-fg-color);
-}
-
-/* Page titles and card/tab headings pick up the brand display serif;
-   body copy and nav stay on the Material sans/mono fonts. */
-.md-content h1,
-.md-typeset h1 {
-  font-family: var(--bernstein-font-display);
+/* Lock-up: the mark, then "bernstein" in the display serif, then an
+   italic "docs" in the faint ink - the same shape as the website's
+   "bernstein.run". */
+.md-header__title {
+  margin-left: var(--bn-space-1);
+  font-family: var(--bn-font-display);
+  font-size: 20px;
   font-weight: 500;
   letter-spacing: -0.01em;
 }
-
-/* Tables: quieter zebra + border, matching the "quiet command" density
-   already used for the operator UI. */
-.md-typeset table:not([class]) {
-  border: 1px solid var(--md-default-fg-color--lightest);
+.md-header__topic:first-child .md-ellipsis {
+  text-transform: lowercase;
+}
+.md-header__topic:first-child .md-ellipsis::after {
+  content: " docs";
+  font-style: italic;
+  font-weight: 400;
+  color: var(--bn-faint);
+}
+/* The second topic (current page title, shown on scroll) stays in the
+   UI face so it does not compete with the lock-up. */
+.md-header__topic + .md-header__topic {
+  font-family: var(--bn-font-body);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
 }
 
-.md-typeset table:not([class]) th {
-  background-color: var(--md-code-bg-color);
+.md-header__option .md-header__button,
+.md-header__source {
+  color: var(--bn-muted);
+}
+.md-header__option .md-header__button:hover,
+.md-header__source:hover {
+  color: var(--bn-ink);
+  opacity: 1;
+}
+.md-source {
+  font-family: var(--bn-font-body);
+  font-size: 13px;
+  color: var(--bn-muted);
+  transition: color var(--bn-dur-2) ease-out;
+}
+.md-source:hover {
+  color: var(--bn-ink);
+  opacity: 1;
+}
+.md-source__facts {
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Admonitions: flatten to a left border + tinted background rather than
-   Material's saturated colour blocks, so warning/danger/note read as
-   the same restrained palette as the rest of the page. */
-.md-typeset .admonition,
-.md-typeset details {
-  border: 1px solid var(--md-default-fg-color--lightest);
-  border-left-width: 4px;
+/* Section tabs: UI text in muted ink; the active tab goes to ink with a
+   1px accent rule under it, the website's nav treatment. */
+.md-tabs {
+  background-color: var(--bn-bg);
+  color: var(--bn-muted);
+  border-bottom: 1px solid var(--bn-rule);
+}
+.md-tabs__list {
+  contain: none;
+}
+.md-tabs__item {
+  height: auto;
+  padding-left: var(--bn-space-3);
+  padding-right: var(--bn-space-3);
+}
+.md-tabs__link {
+  position: relative;
+  margin-top: 0;
+  padding: 11px 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--bn-muted);
+  opacity: 1;
+  transition: color var(--bn-dur-2) ease-out;
+}
+.md-tabs__link:hover,
+.md-tabs__link:focus-visible {
+  color: var(--bn-ink);
+}
+.md-tabs__item--active .md-tabs__link {
+  color: var(--bn-ink);
+}
+.md-tabs__item--active .md-tabs__link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background-color: var(--bn-accent);
+}
+
+/* Sidebars. */
+.md-nav {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.md-nav__title {
+  color: var(--bn-muted);
+}
+.md-nav__link {
+  margin-top: 6px;
+  color: var(--bn-muted);
+  transition: color var(--bn-dur-2) ease-out;
+}
+.md-nav__link:hover,
+.md-nav__link:focus-visible,
+.md-nav__item .md-nav__link--active:hover {
+  color: var(--bn-ink);
+}
+.md-nav__item .md-nav__link--active,
+.md-nav__item .md-nav__link--active code {
+  color: var(--bn-ink);
+  font-weight: 600;
+}
+
+/* Section headings in the primary nav become mono eyebrows. */
+.md-nav--primary .md-nav__item--section > .md-nav__link,
+.md-nav--primary .md-nav__item--section > .md-nav__link[for] {
+  margin-top: var(--bn-space-5);
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bn-faint);
+}
+.md-nav--primary .md-nav__item--section:first-child > .md-nav__link {
+  margin-top: var(--bn-space-2);
+}
+
+/* Active page in the primary nav: a 2px accent rail on the left edge. */
+@media screen and (min-width: 76.25em) {
+  .md-nav--primary .md-nav__item > .md-nav__link--active {
+    position: relative;
+  }
+  .md-nav--primary .md-nav__item > .md-nav__link--active::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    border-radius: 1px;
+    background-color: var(--bn-accent);
+  }
+}
+
+/* Table of contents: a hairline rail; the section in view is ink with the
+   rail segment in the accent. */
+.md-nav--secondary > .md-nav__title {
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bn-faint);
+  box-shadow: none;
+  background: transparent;
+}
+@media screen and (min-width: 60em) {
+  .md-nav--secondary > .md-nav__list {
+    border-left: 1px solid var(--bn-rule);
+  }
+  .md-nav--secondary .md-nav__link {
+    position: relative;
+    font-size: 13px;
+    margin-top: 0;
+    padding: 4px 0 4px 12px;
+  }
+  .md-nav--secondary .md-nav .md-nav__link {
+    padding-left: 24px;
+  }
+  .md-nav--secondary .md-nav__link--active {
+    font-weight: 500;
+  }
+  .md-nav--secondary .md-nav__link--active::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 4px;
+    bottom: 4px;
+    width: 1px;
+    background-color: var(--bn-accent);
+  }
+  .md-nav--secondary .md-nav__list .md-nav__list {
+    border-left: 0;
+  }
+}
+
+/* Mobile drawer: page background, lock-up row on a hairline instead of
+   Material's coloured band. */
+@media screen and (max-width: 76.234375em) {
+  .md-nav--primary,
+  .md-nav--primary .md-nav {
+    background-color: var(--bn-bg);
+  }
+  .md-nav--primary .md-nav__title {
+    background-color: var(--bn-bg);
+    color: var(--bn-ink);
+    border-bottom: 1px solid var(--bn-rule);
+    font-family: var(--bn-font-display);
+    font-weight: 500;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+  }
+  .md-nav--primary .md-nav__title .md-nav__icon {
+    color: var(--bn-muted);
+  }
+  .md-nav--primary .md-nav__title[for="__drawer"] {
+    background-color: var(--bn-bg);
+    color: var(--bn-ink);
+    border-bottom: 1px solid var(--bn-rule);
+    font-family: var(--bn-font-display);
+    font-weight: 500;
+    font-size: 20px;
+    text-transform: lowercase;
+  }
+  .md-nav--primary .md-nav__title .md-nav__button.md-logo img {
+    height: 32px;
+    width: auto;
+  }
+  .md-nav__source {
+    background-color: var(--bn-surface);
+    color: var(--bn-muted);
+    border-bottom: 1px solid var(--bn-rule);
+  }
+  .md-nav--primary .md-nav__item {
+    border-top: 0;
+  }
+  .md-nav--primary .md-nav__link {
+    margin-top: 0;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .md-nav--primary .md-nav__item--section > .md-nav__link {
+    margin-top: var(--bn-space-4);
+  }
+}
+
+/* Footer: page background with one hairline above, as on the website. */
+.md-footer {
+  background-color: var(--bn-bg);
+  color: var(--bn-ink);
+  border-top: 1px solid var(--bn-rule);
+}
+.md-footer__link {
+  color: var(--bn-muted);
+  opacity: 1;
+  transition: color var(--bn-dur-2) ease-out;
+}
+.md-footer__link:hover,
+.md-footer__link:focus-visible {
+  color: var(--bn-ink);
+  opacity: 1;
+}
+.md-footer__direction {
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bn-faint);
+  opacity: 1;
+}
+.md-footer__title .md-ellipsis {
+  font-family: var(--bn-font-display);
+  font-weight: 500;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+.md-footer-meta {
+  background-color: var(--bn-bg);
+  border-top: 1px solid var(--bn-rule);
+}
+.md-footer-meta.md-typeset a {
+  color: var(--bn-muted);
+}
+.md-footer-meta.md-typeset a:hover {
+  color: var(--bn-ink);
+}
+.md-copyright {
+  color: var(--bn-faint);
+  font-size: 13px;
+}
+.md-social__link {
+  color: var(--bn-muted);
+}
+.md-social__link:hover {
+  color: var(--bn-ink);
+}
+
+/* Back-to-top and the instant-loading progress bar. */
+.md-top {
+  background-color: var(--bn-surface);
+  color: var(--bn-ink);
+  border: 1px solid var(--bn-rule);
+  box-shadow: none;
+  font-size: 13px;
+}
+.md-top:hover,
+.md-top:focus-visible {
+  background-color: var(--bn-surface);
+  color: var(--bn-ink);
+  border-color: var(--bn-rule-strong);
+}
+.md-progress {
+  background-color: var(--bn-accent);
+}
+
+/* ===================================================================
+ * 4. Content
+ * =================================================================== */
+
+.md-grid {
+  max-width: 1320px;
+}
+
+.md-typeset {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--bn-ink);
+}
+.md-typeset p,
+.md-typeset li {
+  text-wrap: pretty;
+}
+.md-typeset strong {
+  font-weight: 600;
+}
+
+/* Headings: the display serif at weight 500 with tight tracking, sized
+   from the website's display and title steps. */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-family: var(--bn-font-display);
+  font-weight: 500;
+  color: var(--bn-ink);
+  text-wrap: balance;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+}
+.md-typeset h1 {
+  font-size: clamp(32px, 22px + 1.6vw, 40px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--bn-space-5);
+}
+.md-typeset h2 {
+  font-size: clamp(24px, 21px + 0.6vw, 28px);
+  line-height: 1.2;
+  letter-spacing: -0.014em;
+  margin: var(--bn-space-7) 0 var(--bn-space-3);
+  padding-top: var(--bn-space-5);
+  border-top: 1px solid var(--bn-rule);
+}
+.md-typeset h1 + h2,
+.md-typeset hr + h2,
+.md-typeset .bn-hero + figure + h2 {
+  border-top: 0;
+  padding-top: 0;
+}
+.md-typeset h3 {
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: var(--bn-space-6) 0 var(--bn-space-2);
+}
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6 {
+  font-family: var(--bn-font-body);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--bn-ink);
+  text-transform: none;
+  margin: var(--bn-space-5) 0 var(--bn-space-2);
+}
+.md-typeset .headerlink {
+  color: var(--bn-rule-strong);
+  font-family: var(--bn-font-body);
+  font-weight: 400;
+}
+.md-typeset .headerlink:hover,
+.md-typeset .headerlink:focus-visible,
+.md-typeset :target > .headerlink {
+  color: var(--bn-accent);
+}
+
+.md-typeset hr {
+  border-bottom: 1px solid var(--bn-rule);
+  margin: var(--bn-space-6) 0;
+}
+
+.md-typeset blockquote {
+  border-left: 2px solid var(--bn-accent);
+  color: var(--bn-muted);
+  padding-left: var(--bn-space-4);
+}
+
+.md-typeset figcaption {
+  max-width: 44rem;
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--bn-faint);
+}
+
+.md-typeset img,
+.md-typeset figure img {
+  border-radius: var(--bn-radius);
+}
+
+/* Inline code: code paper with a hairline, 4px radius. */
+.md-typeset code {
+  font-size: 0.875em;
+  border-radius: var(--bn-radius-sm);
+}
+.md-typeset :not(pre) > code {
+  padding: 0.1em 0.35em;
+  background-color: var(--bn-code-bg);
+  border: 1px solid var(--bn-rule);
+  color: var(--bn-ink);
+  word-break: break-word;
+}
+.md-typeset h1 code,
+.md-typeset h2 code,
+.md-typeset h3 code {
+  font-size: 0.8em;
+}
+
+/* Code blocks: code paper, hairline border, 8px radius, no shadow. */
+.md-typeset pre {
+  margin: var(--bn-space-5) 0;
+}
+.md-typeset pre > code {
+  padding: var(--bn-space-4) var(--bn-space-5);
+  font-size: 13px;
+  line-height: 1.6;
+  background-color: var(--bn-code-bg);
+  border: 1px solid var(--bn-rule);
+  border-radius: var(--bn-radius);
   box-shadow: none;
 }
-
-.md-typeset .admonition.note,
-.md-typeset details.note {
-  border-left-color: var(--md-accent-fg-color);
+.md-typeset .highlight {
+  border-radius: var(--bn-radius);
+}
+.md-typeset .highlight span.filename,
+.md-typeset .highlighttable .filename {
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--bn-faint);
+  background-color: var(--bn-surface);
+  border: 1px solid var(--bn-rule);
+  border-bottom: 0;
+  border-radius: var(--bn-radius) var(--bn-radius) 0 0;
+  padding: var(--bn-space-2) var(--bn-space-4);
+}
+.md-typeset .highlight span.filename + pre > code {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.md-typeset .highlight .hll {
+  background-color: var(--bn-accent-tint);
+  box-shadow: inset 2px 0 0 var(--bn-accent);
+}
+.md-typeset .highlighttable .linenos {
+  background-color: var(--bn-code-bg);
+  border-radius: var(--bn-radius) 0 0 var(--bn-radius);
+}
+.md-typeset .highlight .linenodiv pre,
+.md-typeset .highlight [data-linenos]::before {
+  color: var(--bn-faint);
+  background-color: transparent;
+  box-shadow: none;
+}
+.md-typeset .highlight .c,
+.md-typeset .highlight .c1,
+.md-typeset .highlight .ch,
+.md-typeset .highlight .cm,
+.md-typeset .highlight .cs {
+  font-style: italic;
 }
 
-.md-typeset .admonition.warning,
-.md-typeset details.warning {
-  border-left-color: #9C622F;
+/* Copy button: quiet until hovered. */
+.md-clipboard {
+  color: var(--bn-faint);
+  opacity: 1;
+  transition: color var(--bn-dur-2) ease-out;
 }
-[data-md-color-scheme="slate"] .md-typeset .admonition.warning,
-[data-md-color-scheme="slate"] .md-typeset details.warning {
-  border-left-color: #D9B26B;
+.md-clipboard:hover,
+.md-clipboard:focus-visible,
+.md-typeset .md-code__button:hover {
+  color: var(--bn-accent);
 }
-
-.md-typeset .admonition.danger,
-.md-typeset details.danger {
-  border-left-color: #9C433F;
-}
-[data-md-color-scheme="slate"] .md-typeset .admonition.danger,
-[data-md-color-scheme="slate"] .md-typeset details.danger {
-  border-left-color: #E58B80;
+.md-typeset .md-code__nav {
+  background-color: transparent;
 }
 
-/* Footer: single quiet colour, not the accent-heavy default gradient. */
-.md-footer-meta {
-  background-color: var(--md-footer-bg-color--dark);
+/* Keyboard keys. */
+.md-typeset kbd {
+  font-size: 0.8em;
+  border-radius: var(--bn-radius-sm);
+  color: var(--bn-ink);
 }
 
-/* Search + nav scrollbars stay unobtrusive on the warm neutrals. */
-.md-search__input {
-  background-color: var(--md-code-bg-color);
+/* Admonitions and details: surface card with a hairline and a 2px rail in
+   the role colour. The title is ink UI text; the icon carries the role. */
+.md-typeset .admonition,
+.md-typeset details {
+  --bn-role: var(--bn-accent);
+  margin: var(--bn-space-5) 0;
+  padding: 0 var(--bn-space-4);
+  font-size: 15px;
+  line-height: 1.6;
+  background-color: var(--bn-surface);
+  border: 1px solid var(--bn-rule);
+  border-left: 2px solid var(--bn-role);
+  border-radius: 0 var(--bn-radius) var(--bn-radius) 0;
+  box-shadow: none;
+  color: var(--bn-ink);
+}
+.md-typeset .admonition > .admonition-title,
+.md-typeset details > summary {
+  margin: 0 calc(-1 * var(--bn-space-4));
+  padding: var(--bn-space-3) var(--bn-space-4) var(--bn-space-2) 44px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.003em;
+  color: var(--bn-ink);
+  background-color: transparent;
+  border: 0;
+}
+.md-typeset .admonition > .admonition-title::before,
+.md-typeset details > summary::before {
+  left: var(--bn-space-4);
+  top: 14px;
+  width: 18px;
+  height: 18px;
+  background-color: var(--bn-role);
+}
+.md-typeset .admonition > .admonition-title::after,
+.md-typeset details > summary::after {
+  color: var(--bn-muted);
+  top: 14px;
+}
+.md-typeset details:not([open]) > summary {
+  padding-bottom: var(--bn-space-3);
+}
+.md-typeset .admonition > :last-child,
+.md-typeset details > :last-child {
+  margin-bottom: var(--bn-space-4);
+}
+.md-typeset .admonition pre > code,
+.md-typeset details pre > code {
+  background-color: var(--bn-bg);
+}
+/* Accent text on the admonition surface uses the darker accent step,
+   which clears 4.5:1 there (the canonical accent measures 4.25:1). */
+.md-typeset .admonition a:hover,
+.md-typeset details a:hover {
+  color: var(--bn-accent-ink);
+  text-decoration-color: var(--bn-accent-ink);
+}
+
+/* Role colours. The site defines no info token, so the informational
+   kinds use the accent and the neutral kinds use muted. */
+.md-typeset :is(.admonition, details):is(.note, .info, .todo, .abstract, .summary, .tldr) {
+  --bn-role: var(--bn-accent);
+  border-color: var(--bn-rule);
+  border-left-color: var(--bn-role);
+}
+.md-typeset :is(.admonition, details):is(.tip, .hint, .important, .success, .check, .done) {
+  --bn-role: var(--bn-success);
+  border-color: var(--bn-rule);
+  border-left-color: var(--bn-role);
+}
+.md-typeset :is(.admonition, details):is(.warning, .caution, .attention, .question, .help, .faq) {
+  --bn-role: var(--bn-warning);
+  border-color: var(--bn-rule);
+  border-left-color: var(--bn-role);
+}
+.md-typeset :is(.admonition, details):is(.danger, .error, .failure, .fail, .missing, .bug) {
+  --bn-role: var(--bn-danger);
+  border-color: var(--bn-rule);
+  border-left-color: var(--bn-role);
+}
+.md-typeset :is(.admonition, details):is(.example, .quote, .cite) {
+  --bn-role: var(--bn-muted);
+  border-color: var(--bn-rule);
+  border-left-color: var(--bn-role);
+}
+
+/* Tables: no outer box, no zebra. Mono uppercase header row in the faint
+   ink, hairlines between rows, numbers aligned. */
+.md-typeset table:not([class]) {
+  font-size: 14px;
+  line-height: 1.5;
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+.md-typeset table:not([class]) th {
+  min-width: 0;
+  padding: var(--bn-space-2) var(--bn-space-3);
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bn-faint);
+  background-color: transparent;
+  border-bottom: 1px solid var(--bn-rule-strong);
+  vertical-align: bottom;
+}
+.md-typeset table:not([class]) td {
+  padding: var(--bn-space-2) var(--bn-space-3);
+  border-top: 1px solid var(--bn-rule);
+  vertical-align: top;
+}
+.md-typeset table:not([class]) td:has(> img:only-child) {
+  vertical-align: middle;
+}
+.md-typeset table:not([class]) tbody tr:first-child td {
+  border-top: 0;
+}
+.md-typeset table:not([class]) tbody tr {
+  transition: background-color var(--bn-dur-1) ease-out;
+}
+.md-typeset table:not([class]) tbody tr:hover {
+  background-color: var(--bn-surface);
+  box-shadow: none;
+}
+.md-typeset table:not([class]) th:first-child,
+.md-typeset table:not([class]) td:first-child {
+  padding-left: 0;
+}
+.md-typeset table:not([class]) tbody tr:hover td:first-child {
+  padding-left: 0;
+}
+.md-typeset__scrollwrap {
+  margin: var(--bn-space-4) 0;
+}
+
+/* Content tabs: UI labels in muted ink; the active label is ink with the
+   accent indicator on a hairline. */
+.md-typeset .tabbed-set {
+  margin: var(--bn-space-5) 0;
+  border-radius: 0;
+}
+.md-typeset .tabbed-labels {
+  box-shadow: inset 0 -1px 0 var(--bn-rule);
+}
+.md-typeset .tabbed-labels > label {
+  padding: var(--bn-space-2) var(--bn-space-4) 10px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.003em;
+  color: var(--bn-muted);
+  border-bottom: 0;
+  transition: color var(--bn-dur-2) ease-out;
+}
+.md-typeset .tabbed-labels > label:hover {
+  color: var(--bn-ink);
+}
+.md-typeset .tabbed-set > input:checked + label,
+.md-typeset .tabbed-labels > label.tabbed-labels__active {
+  color: var(--bn-ink);
+}
+.js .md-typeset .tabbed-labels::before {
+  height: 2px;
+  background-color: var(--bn-accent);
+}
+.md-typeset .tabbed-content > .tabbed-block > .highlight:first-child > pre {
+  margin-top: var(--bn-space-3);
+}
+.md-typeset .tabbed-button {
+  color: var(--bn-muted);
+}
+.md-typeset .tabbed-button:hover {
+  background-color: var(--bn-surface);
+  color: var(--bn-ink);
+}
+
+/* Grid cards: surface panel, hairline, 12px radius; hover raises the
+   border to the strong rule. No shadow, no lift. */
+.md-typeset .grid {
+  grid-gap: var(--bn-space-4);
+}
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card {
+  padding: var(--bn-space-5);
+  background-color: var(--bn-surface);
+  border: 1px solid var(--bn-rule);
+  border-radius: var(--bn-radius-lg);
+  box-shadow: none;
+  transition: border-color var(--bn-dur-2) ease-out;
+}
+.md-typeset .grid.cards > ul > li:hover,
+.md-typeset .grid > .card:hover,
+.md-typeset .grid.cards > ul > li:focus-within,
+.md-typeset .grid > .card:focus-within {
+  border-color: var(--bn-rule-strong);
+  box-shadow: none;
+}
+.md-typeset .grid.cards > ul > li > hr,
+.md-typeset .grid > .card > hr {
+  margin: var(--bn-space-3) 0;
+  border-bottom-color: var(--bn-rule);
+}
+.md-typeset .grid.cards > ul > li > p:first-child strong,
+.md-typeset .grid > .card > p:first-child strong {
+  font-family: var(--bn-font-display);
+  font-weight: 500;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+.md-typeset .grid.cards .twemoji,
+.md-typeset .grid.cards .md-icon {
+  color: var(--bn-accent);
+}
+.md-typeset .grid.cards > ul > li > p,
+.md-typeset .grid.cards > ul > li > :not(p:first-child) {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Buttons: the website's primary (ink fill) and secondary (hairline). */
+.md-typeset .md-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bn-space-2);
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--bn-ink);
+  background-color: transparent;
+  border: 1px solid var(--bn-rule-strong);
+  border-radius: var(--bn-radius);
+  transition: background-color var(--bn-dur-2) ease-out, border-color var(--bn-dur-2) ease-out, color var(--bn-dur-2) ease-out;
+}
+.md-typeset .md-button:hover,
+.md-typeset .md-button:focus-visible {
+  color: var(--bn-ink);
+  background-color: var(--bn-surface);
+  border-color: var(--bn-ink);
+}
+.md-typeset .md-button--primary {
+  color: var(--bn-bg);
+  background-color: var(--bn-ink);
+  border-color: var(--bn-ink);
+}
+.md-typeset .md-button--primary:hover,
+.md-typeset .md-button--primary:focus-visible {
+  color: var(--bn-bg);
+  background-color: var(--bn-accent);
+  border-color: var(--bn-accent);
+}
+[data-md-color-scheme="default"] .md-typeset .md-button--primary:hover,
+[data-md-color-scheme="default"] .md-typeset .md-button--primary:focus-visible {
+  background-color: var(--bn-accent-ink);
+  border-color: var(--bn-accent-ink);
+}
+
+/* Page action icons (edit on GitHub) stay quiet. */
+.md-content__button {
+  color: var(--bn-faint);
+}
+.md-content__button:hover {
+  color: var(--bn-ink);
+}
+
+/* Feedback widget and tags. */
+.md-feedback__icon:not(:disabled):hover {
+  color: var(--bn-accent);
+}
+.md-typeset .md-tag {
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--bn-muted);
+  background-color: var(--bn-surface);
+  border: 1px solid var(--bn-rule);
+  border-radius: var(--bn-radius-sm);
+}
+
+/* Announcement bar. */
+.md-banner {
+  background-color: var(--bn-surface);
+  color: var(--bn-ink);
+  border-bottom: 1px solid var(--bn-rule);
+}
+
+/* Cookie consent: page background on a hairline, the site's buttons. */
+.md-consent__inner {
+  background-color: var(--bn-bg);
+  border-top: 1px solid var(--bn-rule);
+  box-shadow: 0 -6px 16px rgba(24, 22, 20, 0.06);
+}
+.md-consent__overlay {
+  background-color: rgba(19, 19, 15, 0.45);
+  backdrop-filter: none;
+}
+.md-consent .md-typeset h4 {
+  margin-top: 0;
+}
+
+/* Mermaid diagrams inherit the palette. */
+.mermaid {
+  --md-mermaid-font-family: var(--bn-font-body);
+  --md-mermaid-edge-color: var(--bn-muted);
+  --md-mermaid-node-bg-color: var(--bn-surface);
+  --md-mermaid-node-fg-color: var(--bn-ink);
+  --md-mermaid-label-bg-color: var(--bn-bg);
+  --md-mermaid-label-fg-color: var(--bn-ink);
+}
+
+/* ===================================================================
+ * 5. Search
+ * =================================================================== */
+
+.md-search__form {
+  background-color: var(--bn-surface);
+  border: 1px solid var(--bn-rule);
+  border-radius: var(--bn-radius);
+  box-shadow: none;
+  transition: border-color var(--bn-dur-2) ease-out, background-color var(--bn-dur-2) ease-out;
+}
+.md-search__form:hover {
+  background-color: var(--bn-surface);
+  border-color: var(--bn-rule-strong);
+}
+.md-search__input,
+.md-search__suggest {
+  font-family: var(--bn-font-body);
+  font-size: 14px;
+  color: var(--bn-ink);
+  background: transparent;
+}
+.md-search__input::placeholder {
+  color: var(--bn-faint);
+}
+.md-search__input + .md-search__icon,
+.md-search__icon {
+  color: var(--bn-faint);
+}
+.md-search__input:focus-visible {
+  outline: none;
+}
+.md-search__form:focus-within {
+  border-color: var(--bn-accent);
+  box-shadow: 0 0 0 1px var(--bn-accent);
+}
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+  background-color: var(--bn-bg);
+  border-color: var(--bn-accent);
+  border-radius: var(--bn-radius) var(--bn-radius) 0 0;
+}
+.md-search__output {
+  border-radius: 0 0 var(--bn-radius) var(--bn-radius);
+}
+.md-search__scrollwrap {
+  background-color: var(--bn-bg);
+}
+@media screen and (min-width: 60em) {
+  .md-search__output {
+    border: 1px solid var(--bn-rule);
+    border-top: 0;
+    box-shadow: var(--bn-shadow-pop);
+  }
+}
+.md-search-result {
+  color: var(--bn-ink);
+}
+.md-search-result__meta {
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bn-faint);
+  background-color: var(--bn-surface);
+  border-bottom: 1px solid var(--bn-rule);
+}
+.md-search-result__item {
+  box-shadow: 0 -1px var(--bn-rule);
+}
+.md-search-result__link:hover,
+.md-search-result__link:focus,
+.md-search-result__more > summary:hover,
+.md-search-result__more > summary:focus {
+  background-color: var(--bn-surface);
+}
+.md-search-result__article h1 {
+  font-family: var(--bn-font-display);
+  font-weight: 500;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  color: var(--bn-ink);
+}
+.md-search-result__article h2 {
+  font-family: var(--bn-font-body);
+  font-weight: 600;
+  font-size: 14px;
+  border-top: 0;
+  padding-top: 0;
+  margin: 0;
+}
+.md-search-result__teaser {
+  color: var(--bn-muted);
+}
+.md-search-result mark,
+.md-search-result__teaser mark {
+  color: var(--bn-ink);
+  background-color: var(--bn-accent-tint);
+  text-decoration: underline;
+  text-decoration-color: var(--bn-accent);
+  text-underline-offset: 0.15em;
+}
+.md-search-result__icon {
+  color: var(--bn-faint);
+}
+.md-search__suggest {
+  color: var(--bn-faint);
+}
+.md-search__options > .md-icon {
+  color: var(--bn-faint);
+}
+.md-search__options > .md-icon:hover {
+  color: var(--bn-ink);
+}
+
+/* ===================================================================
+ * 6. Home page (docs/index.md)
+ * =================================================================== */
+
+.md-typeset .bn-hero {
+  margin: var(--bn-space-2) 0 var(--bn-space-7);
+}
+.md-typeset .bn-eyebrow {
+  margin: 0 0 var(--bn-space-4);
+  font-family: var(--bn-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bn-faint);
+}
+.md-typeset .bn-hero h1 {
+  max-width: 18ch;
+  margin: 0 0 var(--bn-space-4);
+  font-size: clamp(36px, 22px + 3vw, 56px);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  font-weight: 400;
+}
+.md-typeset .bn-hero h1 em {
+  font-style: italic;
+  color: var(--bn-accent);
+}
+.md-typeset .bn-lede {
+  max-width: 62ch;
+  margin: 0 0 var(--bn-space-5);
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--bn-muted);
+}
+.md-typeset .bn-actions,
+.md-typeset .bn-actions > p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bn-space-3);
+  margin: 0;
+}
+.md-typeset .bn-actions > p {
+  flex: 1 1 100%;
+}
+.md-typeset .bn-actions .md-button {
+  margin: 0;
+}
+.md-typeset .bn-hero + hr {
+  display: none;
+}
+
+/* The demo recording and the two surface renders are the page's evidence:
+   framed like the website's panels. */
+.md-typeset .bn-proof img,
+.md-typeset .bn-hero ~ figure img {
+  border: 1px solid var(--bn-rule);
+  border-radius: var(--bn-radius-lg);
+}
+.md-typeset .bn-hero ~ figure {
+  margin: 0 0 var(--bn-space-7);
+}
+
+@media screen and (max-width: 44.984375em) {
+  /* Material bleeds top-level code blocks to the screen edge here. */
+  .md-content__inner > pre > code,
+  .md-content__inner > .highlight > pre > code,
+  .md-content__inner > .highlight > .filename,
+  .md-content__inner > .tabbed-set pre > code {
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+  .md-typeset .bn-hero {
+    margin-bottom: var(--bn-space-6);
+  }
+  .md-typeset .bn-actions .md-button {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}
+
+/* ===================================================================
+ * 7. Reduced motion, print
+ * =================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media print {
+  .md-typeset a {
+    text-decoration: none;
+  }
+  .md-typeset h2 {
+    border-top: 0;
+  }
 }
