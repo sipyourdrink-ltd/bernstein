@@ -132,7 +132,6 @@ src/bernstein/core/security/capability_tokens.py::Caveats.is_narrowing_of       
 src/bernstein/core/security/capability_tokens.py::TokenVerificationError                       # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/capability_tokens.py::attenuate                                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/capability_tokens.py::caveats_for_scope                            # exported in the module's __all__ as public surface; no in-tree caller
-src/bernstein/core/security/capability_tokens.py::globs_narrow                                 # exercised by tests only; no production caller
 src/bernstein/core/security/capability_tokens.py::mint_root                                    # root of the capability-token chain; the delegation CLI verifies chains but nothing mints one, so no production path reaches it
 src/bernstein/core/security/capability_tokens.py::sign_token                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/capability_tokens.py::to_actor_claims                              # exported in the module's __all__ and exercised by tests; no production caller

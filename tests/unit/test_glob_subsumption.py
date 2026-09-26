@@ -117,6 +117,32 @@ def test_none_is_the_widest_set_and_is_narrowed_only_by_none() -> None:
     assert globs_narrow(None, narrow) is False
 
 
+@pytest.mark.parametrize(
+    ("child", "parent"),
+    [
+        (None, None),
+        (frozenset({"src/**"}), None),
+        (None, frozenset({"src/**"})),
+    ],
+)
+def test_none_sided_glob_sets_grade_by_the_none_is_widest_rule(child, parent) -> None:
+    """`None` narrows only under an unrestricted parent."""
+    assert globs_narrow(child, parent) is (parent is None)
+
+
+def test_empty_child_set_is_widest_and_cannot_narrow_a_parent() -> None:
+    """An empty set is "no restriction", so it never narrows a non-empty scope."""
+    assert globs_narrow(frozenset(), frozenset({"src/**"})) is False
+    assert globs_narrow(frozenset(), None) is True
+
+
+def test_empty_parent_set_is_unrestricted_and_subsumes_every_child() -> None:
+    """An empty parent means no restriction, the mirror of the empty child."""
+    assert globs_narrow(frozenset({"src/**"}), frozenset()) is True
+    assert globs_narrow(None, frozenset()) is True
+    assert globs_narrow(frozenset(), frozenset()) is True
+
+
 def test_every_child_pattern_must_be_subsumed_not_merely_most() -> None:
     """One pattern outside the parent's scope widens the whole set."""
     assert globs_narrow(frozenset({"src/a/**", "docs/**"}), frozenset({"src/**"})) is False
