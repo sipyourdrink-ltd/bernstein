@@ -537,6 +537,94 @@ def _stamp_checkpoint_retry_metadata_safe(
         return retry_metadata
 
 
+def _write_retry_checkpoint(orch: Any, session: AgentSession, *, detector: str) -> None:
+    """Record a checkpointed-retry reference before an ordinary crash/timeout retry (#5844).
+
+    ``checkpoint_retry.record_task_checkpoint`` had exactly one production
+    caller (an operator's ``steer.pause``), so ``latest_checkpoint`` always
+    saw nothing and ``_stamp_checkpoint_retry_metadata_safe`` above always
+    stamped ``cold``/``no_checkpoint`` on the ordinary failure path. The
+    warm-resume machinery from #2359/#2403 never fired for the crash/timeout
+    cases it exists for. This writes the checkpoint that stamp reads back, at
+    the moment the dying session's adapter and worktree are still known,
+    mirroring ``heartbeat._write_stall_checkpoint``'s resume-checkpoint write
+    beside it (issue #3376), one journal write earlier in the same death path.
+
+    ``session.id`` (``f"{role}-{uuid.uuid4().hex[:8]}"``) is Bernstein's own
+    label for the session, not what ``CheckpointRef.session_id`` is
+    documented to hold: "the native session identifier the adapter handed
+    back". No adapter in this repo currently returns one: ``Adapter.resume``
+    (``adapters/base.py``) is unoverridden everywhere, so its default
+    ``return None`` (fall back to a fresh spawn) is the only behavior any
+    adapter has, so there is nothing native to record here yet. Recording
+    ``session.id`` under this field would stamp ``retry_mode: warm`` for a
+    resume no adapter can perform and seal that claim into the HMAC audit
+    chain with no way for a later reader to tell it was never resumable. This
+    writer therefore leaves ``session_id`` empty; ``decide_retry`` already
+    downgrades a checkpoint with no session id to cold (``no_session_id``),
+    the same as if no checkpoint existed, while the adapter name and
+    workspace hash still get recorded for whichever future adapter grows a
+    real ``resume()`` and can be threaded through here.
+
+    Fail-open by design, like the stall checkpoint beside it: a write
+    failure must never block the retry/DLQ decision that follows.
+
+    Ordering assumption: the two calls between this write and the actual
+    retry decision, ``_maybe_preserve_worktree`` (records a path in a
+    dict, touches no file) and the orphan-handling call that reaches
+    ``retry_or_fail_task``, run before ``_save_partial_work``'s WIP
+    commit/merge/cleanup ever touches this worktree, so the live
+    ``workspace_hash`` recompute that decides warm-vs-cold sees the same
+    tree this function just hashed. ``workspace_hash`` also excludes
+    ``.git``, so even a same-tree WIP commit taken later would not move it.
+    ``_save_partial_work``'s merge-and-cleanup step can and does remove the
+    worktree outright, but only after the decision above has already been
+    made and stamped onto the retry task's metadata, so a later destruction
+    cannot retroactively un-stamp it. If a future change moves the retry
+    decision to run after ``_save_partial_work``, this assumption breaks and
+    warm resume goes silently cold.
+    """
+    workdir = getattr(orch, "_workdir", None)
+    if not isinstance(workdir, Path):
+        return
+    task_ids = list(getattr(session, "task_ids", None) or [])
+    if not task_ids:
+        return
+    try:
+        from bernstein.adapters.registry import adapter_name_for_provider
+        from bernstein.core.tasks import checkpoint_retry
+
+        worktree_path = orch._spawner.get_worktree_path(session.id)
+        if worktree_path is None:
+            return
+        adapter_name = adapter_name_for_provider(session.provider, session.model_config.model) or getattr(
+            orch._spawner, "default_adapter_name", None
+        )
+        ws_hash = checkpoint_retry.workspace_hash(Path(worktree_path))
+        for task_id in task_ids:
+            checkpoint_retry.record_task_checkpoint(
+                sdd_dir=workdir / ".sdd",
+                task_id=task_id,
+                adapter=adapter_name or "",
+                # Not session.id: see the docstring above. No adapter hands
+                # back a native session id yet, so there is nothing
+                # resumable to record; an empty session_id makes
+                # decide_retry downgrade this to cold (no_session_id)
+                # instead of claiming a warm resume nothing can perform.
+                session_id="",
+                workspace_hash=ws_hash,
+                worktree_path=str(worktree_path),
+            )
+    except Exception as exc:
+        logger.warning(
+            "Could not write retry checkpoint for session %s (%s): %s: %s",
+            session.id,
+            detector,
+            type(exc).__name__,
+            exc,
+        )
+
+
 def _extract_failure_context(
     task: Task,
     workdir: Path | None,
