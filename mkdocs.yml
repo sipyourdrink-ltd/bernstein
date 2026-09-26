@@ -408,6 +408,7 @@ nav:
           - Error telemetry & SBOM: operations/error-telemetry.md
           - Telemetry disclosure: telemetry.md
           - Side-channel telemetry: observability/side-channel.md
+          - Run archive retention: observability/run-archive-retention.md
           - LLM watcher: observability/llm-watcher.md
           - Ticket bundle: observability/ticket-bundle.md
           - Trace store: observability/trace-store.md
