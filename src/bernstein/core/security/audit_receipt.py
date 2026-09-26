@@ -377,9 +377,7 @@ def _root_from_inclusion(leaf_hash: str, audit_path: list[dict[str, Any]]) -> st
     node = leaf_hash
     for step in audit_path:
         sibling = str(step.get("hash", ""))
-        node = (
-            _combine_internal(sibling, node) if step.get("left") else _combine_internal(node, sibling)
-        )
+        node = _combine_internal(sibling, node) if step.get("left") else _combine_internal(node, sibling)
     return node
 
 
