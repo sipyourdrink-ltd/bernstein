@@ -175,6 +175,8 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `openai_agents_runner.py`       | Python entrypoint that runs an OpenAI Agents SDK session |
 | `opencode.py`                   | OpenCode CLI adapter |
 | `openhands.py`                  | OpenHands CLI adapter |
+| `paper_qa.py`                   | PaperQA2 adapter for Bernstein |
+| `paper_qa_runner.py`            | Standalone runner for PaperQA2, launched by path |
 | `pi.py`                         | Pi (pi-coding-agent) CLI adapter |
 | `plandex.py`                    | Plandex CLI adapter |
 | `plugin_sdk.py`                 | Adapter plugin SDK for third-party agent integration |

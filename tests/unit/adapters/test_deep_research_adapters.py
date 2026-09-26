@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +27,8 @@ from bernstein.adapters.deep_research import (
     read_gateway,
 )
 from bernstein.adapters.gpt_researcher import GPTResearcherAdapter
+from bernstein.adapters.paper_qa import PaperQAAdapter
+from bernstein.adapters.paper_qa_runner import cited_sources
 from bernstein.adapters.registry import get_adapter
 from bernstein.adapters.tongyi_deepresearch import TongyiDeepResearchAdapter
 from bernstein.adapters.tongyi_deepresearch_runner import visited_urls
@@ -40,6 +43,10 @@ GATEWAY = {
     "BERNSTEIN_TONGYI_DEEPRESEARCH_OPENAI_API_KEY": "sk-tongyi-secret",
     "BERNSTEIN_TONGYI_DEEPRESEARCH_MODEL": "tongyi-planner",
     "BERNSTEIN_TONGYI_DEEPRESEARCH_HOME": "/opt/tongyi",
+    "BERNSTEIN_PAPER_QA_OPENAI_BASE_URL": "http://gw.test/v1",
+    "BERNSTEIN_PAPER_QA_OPENAI_API_KEY": "sk-pqa-secret",
+    "BERNSTEIN_PAPER_QA_MODEL": "pqa-model",
+    "BERNSTEIN_PAPER_QA_PAPERS": "/srv/papers",
 }
 
 
@@ -192,7 +199,12 @@ def test_a_missing_run_record_is_a_driver_failure(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("name", "cls"), [("gpt_researcher", GPTResearcherAdapter), ("tongyi_deepresearch", TongyiDeepResearchAdapter)]
+    ("name", "cls"),
+    [
+        ("gpt_researcher", GPTResearcherAdapter),
+        ("paper_qa", PaperQAAdapter),
+        ("tongyi_deepresearch", TongyiDeepResearchAdapter),
+    ],
 )
 def test_adapters_are_registered_with_artifact_output(name: str, cls: type) -> None:
     assert isinstance(get_adapter(name), cls)
@@ -200,7 +212,8 @@ def test_adapters_are_registered_with_artifact_output(name: str, cls: type) -> N
 
 
 @pytest.mark.parametrize(
-    "module", ["deep_research_artifact.py", "gpt_researcher_runner.py", "tongyi_deepresearch_runner.py"]
+    "module",
+    ["deep_research_artifact.py", "gpt_researcher_runner.py", "paper_qa_runner.py", "tongyi_deepresearch_runner.py"],
 )
 def test_runner_side_modules_import_nothing_from_bernstein(module: str) -> None:
     """They run inside the agent's own interpreter, where bernstein is not installed."""
@@ -210,6 +223,51 @@ def test_runner_side_modules_import_nothing_from_bernstein(module: str) -> None:
             assert not (node.module or "").startswith("bernstein"), module
         elif isinstance(node, ast.Import):
             assert not any(a.name.startswith("bernstein") for a in node.names), module
+
+
+# --- PaperQA2 adapter ------------------------------------------------------------
+
+
+def test_paper_qa_env_points_litellm_at_the_gateway() -> None:
+    env = PaperQAAdapter().build_env(GATEWAY)
+    assert env["OPENAI_API_BASE"] == env["OPENAI_BASE_URL"] == "http://gw.test/v1"
+    assert env["OPENAI_API_KEY"] == "sk-pqa-secret"
+    assert not any(k.startswith(("BERNSTEIN_TONGYI", "BERNSTEIN_GPT_RESEARCHER")) for k in env)
+
+
+def test_paper_qa_command_names_the_papers_and_models(tmp_path: Path) -> None:
+    cmd = PaperQAAdapter().build_command(tmp_path / "p", tmp_path / "o", GATEWAY)
+    assert cmd[1] == str(ADAPTERS_DIR / "paper_qa_runner.py")
+    assert cmd[cmd.index("--papers-dir") + 1] == "/srv/papers"
+    assert cmd[cmd.index("--model") + 1] == "pqa-model"
+    assert cmd[cmd.index("--embedding") + 1] == "text-embedding-3-small"
+    cmd = PaperQAAdapter().build_command(
+        tmp_path / "p", tmp_path / "o", {**GATEWAY, "BERNSTEIN_PAPER_QA_EMBEDDING": "embeddings-x-y"}
+    )
+    assert cmd[cmd.index("--embedding") + 1] == "embeddings-x-y"
+
+
+def test_paper_qa_without_papers_is_a_config_error(tmp_path: Path) -> None:
+    env = {k: v for k, v in GATEWAY.items() if k != "BERNSTEIN_PAPER_QA_PAPERS"}
+    with pytest.raises(GatewayConfigError, match="BERNSTEIN_PAPER_QA_PAPERS"):
+        PaperQAAdapter().build_command(tmp_path / "p", tmp_path / "o", env)
+
+
+def test_paper_qa_sources_are_the_cited_papers_only() -> None:
+    def ctx(cid: str, **doc: str | None) -> SimpleNamespace:
+        return SimpleNamespace(id=cid, text=SimpleNamespace(doc=SimpleNamespace(**doc)))
+
+    session = SimpleNamespace(
+        used_contexts={"a", "b", "c", "d"},
+        contexts=[
+            ctx("a", url="https://x.test/p1", doi_url="https://doi.org/1", citation="P1"),
+            ctx("b", url=None, doi_url="https://doi.org/2", citation="P2"),
+            ctx("c", url=None, doi_url=None, citation="Smith 2024, P3"),
+            ctx("d", url="https://x.test/p1", doi_url=None, citation="P1 again"),
+            ctx("unused", url="https://x.test/p9", doi_url=None, citation="P9"),
+        ],
+    )
+    assert cited_sources(session) == ["Smith 2024, P3", "https://doi.org/2", "https://x.test/p1"]
 
 
 # --- runners, end to end against stub agents ------------------------------------------
@@ -319,3 +377,102 @@ def test_tongyi_runner_binds_the_agent_to_the_gateway(tmp_path: Path) -> None:
     run = load_research_run(tmp_path / "out")
     assert run.state is ResearchTerminalState.OK
     assert run.sources_count == 2
+
+
+_STUB_PAPERQA = """
+import os
+from types import SimpleNamespace as NS
+class Settings:
+    def __init__(self, **kw):
+        self.kw = kw
+        self.agent = NS(agent_type="ToolSelector")
+async def agent_query(query, settings, agent_type):
+    kw = settings.kw
+    assert kw["llm"] == kw["summary_llm"] == kw["agent"]["agent_llm"] == kw["parsing"]["enrichment_llm"] == "openai/m3"
+    assert kw["embedding"] == "openai/e3" and kw["parsing"]["use_doc_details"] is False
+    assert os.path.isdir(kw["agent"]["index"]["paper_directory"])
+    status = os.environ["STUB_STATUS"]
+    if status == "raise":
+        raise ValueError("index broke")
+    doc = NS(url=None, doi_url="https://doi.org/9", citation="P9")
+    session = NS(
+        answer="" if status == "unsure" else "X is Y.",
+        formatted_answer="X is Y. (P9)",
+        contexts=[NS(id="c1", text=NS(doc=doc))],
+        used_contexts={"c1"},
+    )
+    return NS(status=status, session=session)
+"""
+
+
+def _run_paper_qa(tmp_path: Path, status: str) -> subprocess.CompletedProcess[str]:
+    pkg = tmp_path / "site" / "paperqa"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text(_STUB_PAPERQA)
+    (tmp_path / "papers").mkdir(exist_ok=True)
+    (tmp_path / "p.txt").write_text("What is X?")
+    return subprocess.run(
+        [
+            sys.executable,
+            str(ADAPTERS_DIR / "paper_qa_runner.py"),
+            "--prompt-file",
+            str(tmp_path / "p.txt"),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--papers-dir",
+            str(tmp_path / "papers"),
+            "--model",
+            "m3",
+            "--embedding",
+            "e3",
+        ],
+        env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(tmp_path / "site"), "STUB_STATUS": status},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "state"),
+    [
+        ("success", 0, ResearchTerminalState.OK),
+        ("unsure", 3, ResearchTerminalState.INCONCLUSIVE),
+        ("truncated", 3, ResearchTerminalState.INCONCLUSIVE),
+        ("fail", 1, ResearchTerminalState.DRIVER_FAILURE),
+        ("raise", 1, ResearchTerminalState.DRIVER_FAILURE),
+    ],
+)
+def test_paper_qa_runner_maps_the_agent_status(
+    tmp_path: Path, status: str, code: int, state: ResearchTerminalState
+) -> None:
+    proc = _run_paper_qa(tmp_path, status)
+    assert proc.returncode == code, proc.stderr
+    run = load_research_run(tmp_path / "out")
+    assert run.state is state
+    if state is ResearchTerminalState.OK:
+        assert run.sources_count == 1
+        assert (tmp_path / "out" / "report.md").read_text() == "X is Y. (P9)"
+
+
+def test_paper_qa_runner_without_papers_exits_2(tmp_path: Path) -> None:
+    (tmp_path / "p.txt").write_text("q")
+    proc = _run_runner(
+        "paper_qa_runner.py",
+        [
+            "--prompt-file",
+            str(tmp_path / "p.txt"),
+            "--out-dir",
+            str(tmp_path / "o"),
+            "--papers-dir",
+            str(tmp_path / "missing"),
+            "--model",
+            "m",
+            "--embedding",
+            "e",
+        ],
+        {},
+    )
+    assert proc.returncode == 2
+    assert "no papers directory" in proc.stderr

@@ -1,6 +1,6 @@
 """Shared machinery for the deep-research adapters.
 
-Each deep-research agent (gpt-researcher, Tongyi DeepResearch, ...) has its
+Each deep-research agent (gpt-researcher, Tongyi DeepResearch, PaperQA2, ...) has its
 own adapter module; this one holds what they share:
 
 * the gateway contract - every agent reaches its models through one

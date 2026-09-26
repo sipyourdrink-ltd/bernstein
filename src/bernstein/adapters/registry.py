@@ -56,6 +56,7 @@ from bernstein.adapters.open_interpreter import OpenInterpreterAdapter
 from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.openhands import OpenHandsAdapter
+from bernstein.adapters.paper_qa import PaperQAAdapter
 from bernstein.adapters.pi import PiAdapter
 from bernstein.adapters.plandex import PlandexAdapter
 from bernstein.adapters.python_runtime import PythonRuntimeAdapter
@@ -141,6 +142,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "openai_agents": OpenAIAgentsAdapter,
     "opencode": OpenCodeAdapter,
     "openhands": OpenHandsAdapter,
+    "paper_qa": PaperQAAdapter,
     "pi": PiAdapter,
     "plandex": PlandexAdapter,
     "python_runtime": PythonRuntimeAdapter,
