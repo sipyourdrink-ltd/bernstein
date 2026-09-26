@@ -1,0 +1,188 @@
+/*
+ * Bernstein docs theme.
+ *
+ * Maps the project's design tokens (docs/design/tokens.md /
+ * docs/design/tokens.json) onto Material for MkDocs' CSS custom
+ * properties, so the docs site uses the same palette and type ramp as
+ * the rest of the project instead of Material's stock colours.
+ *
+ * Light values come from the website surface, dark from the operator
+ * UI, per the canonical-accent decision in docs/design/tokens.md.
+ */
+
+:root {
+  --bernstein-font-display: "Fraunces", "Iowan Old Style", Charter, Georgia, serif;
+}
+
+/* ---------------------------------------------------------------------
+ * Light (Material scheme name: "default")
+ * ------------------------------------------------------------------- */
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #F8F1E7;
+  --md-default-bg-color--light: #F8F1E7;
+  --md-default-bg-color--lighter: #F8F1E7;
+  --md-default-bg-color--dark: #F3EADD;
+
+  --md-default-fg-color: #181614;
+  --md-default-fg-color--light: #575552;
+  --md-default-fg-color--lighter: #8A857D;
+  --md-default-fg-color--lightest: #D2CDC7;
+
+  --md-primary-fg-color: #181614;
+  --md-primary-fg-color--light: #3C3A36;
+  --md-primary-fg-color--dark: #181614;
+  --md-primary-bg-color: #F8F1E7;
+  --md-primary-bg-color--light: #F8F1E7;
+
+  --md-accent-fg-color: #A35B48;
+  --md-accent-fg-color--transparent: rgba(163, 91, 72, 0.1);
+  --md-accent-bg-color: #F8F1E7;
+  --md-accent-bg-color--light: #F8F1E7;
+
+  --md-typeset-a-color: #A35B48;
+
+  --md-code-bg-color: #F3EADD;
+  --md-code-fg-color: #181614;
+  --md-code-hl-color: rgba(163, 91, 72, 0.14);
+
+  --md-footer-bg-color: #181614;
+  --md-footer-bg-color--dark: #13130F;
+  --md-footer-fg-color: #F2EFE6;
+  --md-footer-fg-color--light: #A39D8C;
+
+  --md-typeset-mark-color: rgba(245, 165, 36, 0.4);
+
+  --md-admonition-fg-color: #181614;
+  --md-admonition-bg-color: #F3EADD;
+}
+
+/* ---------------------------------------------------------------------
+ * Dark (Material scheme name: "slate")
+ * ------------------------------------------------------------------- */
+[data-md-color-scheme="slate"] {
+  --md-hue: 60;
+
+  --md-default-bg-color: #13130F;
+  --md-default-bg-color--light: #13130F;
+  --md-default-bg-color--lighter: #13130F;
+  --md-default-bg-color--dark: #1A1A15;
+
+  --md-default-fg-color: #F2EFE6;
+  --md-default-fg-color--light: #A39D8C;
+  --md-default-fg-color--lighter: #6E695E;
+  --md-default-fg-color--lightest: #33332B;
+
+  --md-primary-fg-color: #1A1A15;
+  --md-primary-fg-color--light: #262620;
+  --md-primary-fg-color--dark: #13130F;
+  --md-primary-bg-color: #F2EFE6;
+  --md-primary-bg-color--light: #F2EFE6;
+
+  --md-accent-fg-color: #DB8E7A;
+  --md-accent-fg-color--transparent: rgba(219, 142, 122, 0.14);
+  --md-accent-bg-color: #13130F;
+  --md-accent-bg-color--light: #13130F;
+
+  --md-typeset-a-color: #DB8E7A;
+
+  --md-code-bg-color: #1A1A15;
+  --md-code-fg-color: #F2EFE6;
+  --md-code-hl-color: rgba(219, 142, 122, 0.16);
+
+  --md-footer-bg-color: #0D0D0A;
+  --md-footer-bg-color--dark: #0D0D0A;
+  --md-footer-fg-color: #F2EFE6;
+  --md-footer-fg-color--light: #A39D8C;
+
+  --md-typeset-mark-color: rgba(245, 165, 36, 0.32);
+
+  --md-admonition-fg-color: #F2EFE6;
+  --md-admonition-bg-color: #1A1A15;
+
+  /* Material derives shadows from --md-hue; the default (indigo) hue
+     makes card/table shadows read blue against the warm dark bg. */
+  --md-shadow-z1: 0 4px 10px hsla(60, 8%, 2%, 0.35), 0 0 1px hsla(60, 8%, 2%, 0.5);
+  --md-shadow-z2: 0 4px 10px hsla(60, 8%, 2%, 0.45), 0 0 1px hsla(60, 8%, 2%, 0.6);
+  --md-shadow-z3: 0 4px 18px hsla(60, 8%, 2%, 0.55), 0 0 1px hsla(60, 8%, 2%, 0.7);
+}
+
+/* ---------------------------------------------------------------------
+ * Structural tweaks that apply in both schemes
+ * ------------------------------------------------------------------- */
+
+/* Calm, dense reference feel: quieter borders, no bold primary header. */
+.md-header {
+  box-shadow: none;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-tabs {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-nav__title,
+.md-nav__link--active {
+  color: var(--md-accent-fg-color);
+}
+
+/* Page titles and card/tab headings pick up the brand display serif;
+   body copy and nav stay on the Material sans/mono fonts. */
+.md-content h1,
+.md-typeset h1 {
+  font-family: var(--bernstein-font-display);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Tables: quieter zebra + border, matching the "quiet command" density
+   already used for the operator UI. */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-code-bg-color);
+}
+
+/* Admonitions: flatten to a left border + tinted background rather than
+   Material's saturated colour blocks, so warning/danger/note read as
+   the same restrained palette as the rest of the page. */
+.md-typeset .admonition,
+.md-typeset details {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-left-width: 4px;
+  box-shadow: none;
+}
+
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-left-color: var(--md-accent-fg-color);
+}
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-left-color: #9C622F;
+}
+[data-md-color-scheme="slate"] .md-typeset .admonition.warning,
+[data-md-color-scheme="slate"] .md-typeset details.warning {
+  border-left-color: #D9B26B;
+}
+
+.md-typeset .admonition.danger,
+.md-typeset details.danger {
+  border-left-color: #9C433F;
+}
+[data-md-color-scheme="slate"] .md-typeset .admonition.danger,
+[data-md-color-scheme="slate"] .md-typeset details.danger {
+  border-left-color: #E58B80;
+}
+
+/* Footer: single quiet colour, not the accent-heavy default gradient. */
+.md-footer-meta {
+  background-color: var(--md-footer-bg-color--dark);
+}
+
+/* Search + nav scrollbars stay unobtrusive on the warm neutrals. */
+.md-search__input {
+  background-color: var(--md-code-bg-color);
+}

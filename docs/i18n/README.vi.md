@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### tầng governance mã nguồn mở cho AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -134,7 +134,7 @@ flowchart LR
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm và Docker được trình bày trong [hướng dẫn cài đặt](https://bernstein.readthedocs.io/en/latest/getting-started/install/); gói cài đặt cách ly mạng có [hướng dẫn air-gap](https://bernstein.readthedocs.io/en/latest/installation/air-gap/) riêng.
+pipx, pip, brew, dnf, npm và Docker được trình bày trong [hướng dẫn cài đặt](https://docs.bernstein.run/en/latest/getting-started/install/); gói cài đặt cách ly mạng có [hướng dẫn air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) riêng.
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,9 +223,9 @@ Trạng thái phiên chạy được ghi điểm kiểm tra (checkpoint) vào `.
 Cổng kiểm soát chất lượng kho lưu trữ: `bernstein readme-l10n verify` sẽ báo lỗi PR nếu các bản dịch README lệch khỏi bản gốc tiếng Anh (chỉ rõ phần lỗi thời), `bernstein readme-l10n sync` liên kết lại chúng sau khi chỉnh sửa tiếng Anh. Xem [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### các tác tử được hỗ trợ
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen và nhiều tác tử khác. [Mục lục bộ điều hợp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) cung cấp lệnh cài đặt cho 30 tác tử trong số đó. `bernstein integrations list` liệt kê toàn bộ 54 tích hợp sẵn có từ `src/bernstein/adapters/registry.py`, nguồn thông tin chuẩn xác duy nhất. 52 trong số đó là bộ điều hợp tác tử có thể lựa chọn; hai dòng còn lại là stub kiểm thử `mock` và hồ sơ điểm cuối `self-hosted-endpoints`. Mọi công cụ khác có gắn cờ `--prompt` đều hoạt động qua lớp bọc tổng quát.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen và nhiều tác tử khác. [Mục lục bộ điều hợp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) cung cấp lệnh cài đặt cho 30 tác tử trong số đó. `bernstein integrations list` liệt kê toàn bộ 56 tích hợp sẵn có từ `src/bernstein/adapters/registry.py`, nguồn thông tin chuẩn xác duy nhất. 54 trong số đó là bộ điều hợp tác tử có thể lựa chọn; hai dòng còn lại là stub kiểm thử `mock` và hồ sơ điểm cuối `self-hosted-endpoints`. Mọi công cụ khác có gắn cờ `--prompt` đều hoạt động qua lớp bọc tổng quát.
 
 Kết hợp các tác tử trong cùng một phiên chạy: mô hình cục bộ chi phí thấp cho mã khuôn mẫu, mô hình đám mây mạnh mẽ hơn cho kiến trúc. `bernstein integrations list --installed` hiển thị những gì đang khả dụng trên máy của bạn.
 
@@ -242,9 +242,9 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse` và `hub` là các lệnh con hoạt động.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://bernstein.readthedocs.io/):
+Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
 | trang | nội dung bao quát |
 |---|---|

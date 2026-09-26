@@ -1065,7 +1065,7 @@ def _init_impl(
     # scenario behind ``demo --flask-todo`` carries its own inline copy of the
     # sample project and works from any install.
     console.print(
-        "  See [link=https://bernstein.readthedocs.io/en/latest/]docs[/link] "
+        "  See [link=https://docs.bernstein.run/en/latest/]docs[/link] "
         "or run [bold]bernstein demo --flask-todo[/bold] for a working example."
     )
 
