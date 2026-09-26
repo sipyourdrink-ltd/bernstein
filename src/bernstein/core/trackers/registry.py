@@ -33,6 +33,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from bernstein.core.registry_guard import DuplicateGuard, caller_module_name
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
@@ -105,6 +107,7 @@ class TrackerRegistry:
 
     def __init__(self) -> None:
         self._entries: dict[str, TrackerRegistration] = {}
+        self._guard = DuplicateGuard("tracker adapter")
 
     def register(
         self,
@@ -137,14 +140,12 @@ class TrackerRegistry:
             DuplicateTrackerError: When ``name`` is already registered
                 and ``overwrite`` is ``False``.
         """
-        if name in self._entries and not overwrite:
-            existing = self._entries[name]
-            msg = (
-                f"Tracker {name!r} is already registered "
-                f"(source={existing.source}, provenance={existing.provenance!r}). "
-                "Pass overwrite=True to replace it."
-            )
-            raise DuplicateTrackerError(msg)
+        if overwrite:
+            self._guard.forget(name)
+        module_name = provenance or caller_module_name()
+        if module_name == __name__:
+            module_name = caller_module_name(depth=2)
+        self._guard.register(name, module_name, error_type=DuplicateTrackerError)
         entry = TrackerRegistration(
             name=name,
             factory=factory,
@@ -160,6 +161,7 @@ class TrackerRegistry:
     def unregister(self, name: str) -> None:
         """Remove ``name`` from the registry (no-op if absent)."""
         self._entries.pop(name, None)
+        self._guard.forget(name)
 
     def get(self, name: str) -> TrackerRegistration:
         """Return the registration for ``name``.
