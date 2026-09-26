@@ -129,7 +129,9 @@ def test_every_mutating_task_route_denies_out_of_scope_identity(app: FastAPI) ->
     for a task the token was not issued for.
     """
     store: Any = app.state.identity_store
-    _, token = store.create_identity("session-scope-probe", "backend", task_ids=[_IN_SCOPE_TASK_ID])
+    _, token = store.create_identity(
+        "session-scope-probe", "backend", task_ids=[_IN_SCOPE_TASK_ID], metadata={"tenant_id": "default"}
+    )
     headers = {"Authorization": f"Bearer {token}"}
 
     routes = _mutating_task_id_routes(app)
@@ -330,7 +332,9 @@ def test_body_scoped_routes_deny_an_out_of_scope_task_id(authed_app: FastAPI) ->
     victim_id = _create_task(authed_app, 0, "victim")
     own_id = _create_task(authed_app, 1, "own")
     store: Any = authed_app.state.identity_store
-    _, token = store.create_identity("session-body-scope", "backend", task_ids=[own_id])
+    _, token = store.create_identity(
+        "session-body-scope", "backend", task_ids=[own_id], metadata={"tenant_id": "default"}
+    )
     headers = {"Authorization": f"Bearer {token}"}
     before = authed_app.state.store.get_task(victim_id)
     assert before is not None
@@ -356,7 +360,9 @@ def test_body_scoped_routes_allow_the_agents_own_task(authed_app: FastAPI) -> No
 
     for index, segment in enumerate(sorted(TASK_BODY_SCOPED_SEGMENTS)):
         own_id = _create_task(authed_app, 20 + index, f"own-{segment}")
-        _, token = store.create_identity(f"session-own-{segment}", "backend", task_ids=[own_id])
+        _, token = store.create_identity(
+            f"session-own-{segment}", "backend", task_ids=[own_id], metadata={"tenant_id": "default"}
+        )
         response = _client(authed_app, 30 + index).post(
             f"/tasks/{segment}",
             headers={"Authorization": f"Bearer {token}"},
@@ -371,7 +377,7 @@ def test_body_scoped_routes_allow_the_agents_own_task(authed_app: FastAPI) -> No
 def test_body_scoped_routes_allow_an_unscoped_manager_token(authed_app: FastAPI) -> None:
     """A token with ``task_ids == []`` stays unrestricted, as on the path gate."""
     store: Any = authed_app.state.identity_store
-    _, token = store.create_identity("session-manager", "backend", task_ids=[])
+    _, token = store.create_identity("session-manager", "backend", task_ids=[], metadata={"tenant_id": "default"})
 
     for index, segment in enumerate(sorted(TASK_BODY_SCOPED_SEGMENTS)):
         # A task the manager token was never scoped to, fresh per segment so
@@ -398,7 +404,9 @@ def test_batch_ops_scope_check_sees_the_normalised_id(authed_app: FastAPI) -> No
     victim_id = _create_task(authed_app, 60, "victim-normalised")
     own_id = _create_task(authed_app, 61, "own-normalised")
     store: Any = authed_app.state.identity_store
-    _, token = store.create_identity("session-normalised", "backend", task_ids=[own_id])
+    _, token = store.create_identity(
+        "session-normalised", "backend", task_ids=[own_id], metadata={"tenant_id": "default"}
+    )
 
     response = _client(authed_app, 62).post(
         "/tasks/batch-ops",
