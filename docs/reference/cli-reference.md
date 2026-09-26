@@ -126,7 +126,12 @@ when cumulative routed spend crosses the threshold. Precedence is
 
 **Non-interactive output (pipes, CI).** When stdout is not a terminal the
 CLI detaches after bootstrap instead of opening the dashboard. Before
-exiting it waits up to ~10 seconds for the first spawn outcome:
+exiting it waits up to ~10 seconds for the first spawn outcome. While
+waiting, it prints one line per observed task state transition
+(`task <id> <state> adapter=<name> model=<route> title="..."`), plus a
+`planned` line the first time a task is seen in a non-terminal state.
+On a goal-driven run the window typically covers the planner's decompose
+task and the first spawned task, not a full per-task execution log.
 
 - If the first spawn attempt was refused or errored before any work
   started, the failure reason is printed and the command exits `1`.
@@ -357,6 +362,11 @@ hand-assembled as a request with a bearer header.
 #### `bernstein status`
 
 Compact one-screen project view.
+
+The interactive task table renders `Adapter` and `Model` columns. When
+stdout is not a terminal the table is replaced by the plain summary; use
+`--json` to inspect per-task adapter and model fields in CI. Unrecorded
+routing is shown as `unknown`.
 
 | Flag | Default | Meaning |
 |---|---|---|
