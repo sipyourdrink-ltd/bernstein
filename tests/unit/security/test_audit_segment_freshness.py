@@ -6,6 +6,11 @@ can be removed and regrown: two identically shaped records are exactly the same
 size, so a replaced segment can present the cached length while holding a
 different chain, and the append lands on a head that is no longer there.
 
+Nor is the full ``(st_dev, st_ino, st_size, st_mtime_ns)`` stamp (#5953): a
+regrow landing on a reused inode within one mtime tick can present an
+identical stamp too, which is what the intermittent CI failure the fix
+comment describes turned out to be.
+
 Also pinned here: the retention job may not leave a reader looking at a segment
 it is in the middle of removing, and the fast path this fix touches must keep
 firing in steady state, so the fix does not quietly undo the optimisation.
@@ -13,11 +18,13 @@ firing in steady state, so the fix does not quietly undo the optimisation.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
+import bernstein.core.security.audit as audit_module
 from bernstein.core.security.audit import AuditLog, RetentionPolicy, _inside_append_section
 
 KEY = b"f" * 32
@@ -54,6 +61,145 @@ def test_removed_and_regrown_segment_of_equal_length_does_not_fork(tmp_path: Pat
     assert ok, errors
 
 
+def test_regrown_segment_with_identical_stamp_is_still_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Forces the collision the test above only observes if the OS produces it (#5953).
+
+    ``_segment_stamp`` reports what ``stat()`` gives it; it cannot itself tell
+    "still the same file" from "a different file that happens to present an
+    identical stat tuple". A real inode-reuse-plus-coincident-mtime-tick regrow
+    only forces that ambiguity 1 run in 7 in CI, which is too rare to gate a
+    fix on. This manufactures the same ambiguity directly by making exactly one
+    ``_segment_stamp`` call - the one inside the writer's own resync - return
+    the pre-unlink stamp, so the outcome no longer depends on the filesystem's
+    inode allocator or clock resolution.
+    """
+    audit_dir = tmp_path / "audit"
+    writer = AuditLog(audit_dir=audit_dir, key=KEY)
+    writer.log("e", "a", "r", "1", {"n": 1})
+    cached_stamp = writer._synced_stamp
+
+    segment = _segment(audit_dir)
+    segment.unlink()
+    replacement = AuditLog(audit_dir=audit_dir, key=KEY)
+    replacement.log("e", "a", "r", "1", {"n": 1})
+
+    real_segment_stamp = audit_module._segment_stamp
+    forced_once: list[bool] = []
+
+    def _stamp_that_lies_once(path: Path) -> tuple[int, int, int, int]:
+        if not forced_once:
+            forced_once.append(True)
+            return cached_stamp
+        return real_segment_stamp(path)
+
+    monkeypatch.setattr(audit_module, "_segment_stamp", _stamp_that_lies_once)
+
+    writer.log("e", "a", "r", "2", {"n": 2})
+
+    assert forced_once, "the fixture must actually force the colliding stamp"
+    ok, errors = AuditLog(audit_dir=audit_dir, key=KEY).verify()
+    assert ok, errors
+
+
+def test_tail_read_widens_its_window_for_a_record_bigger_than_the_first_probe(tmp_path: Path) -> None:
+    """A record past ``_TAIL_PROBE_BYTES`` must still be found, not truncated.
+
+    ``_tail_line`` (#5953) starts with a bounded backward read and doubles it
+    until a newline boundary turns up. An oversized ``details`` payload (a
+    large stack trace, a big diff) forces at least one doubling; this pins
+    that the widened read still returns the complete, correctly-framed line
+    rather than a truncated fragment.
+    """
+    audit_dir = tmp_path / "audit"
+    writer = AuditLog(audit_dir=audit_dir, key=KEY)
+    writer.log("e", "a", "r", "1", {"blob": "x" * (audit_module._TAIL_PROBE_BYTES * 2)})
+    segment = _segment(audit_dir)
+    assert segment.stat().st_size > audit_module._TAIL_PROBE_BYTES, (
+        "the fixture must actually exceed the first probe window"
+    )
+
+    tail = audit_module._tail_line(segment)
+
+    assert tail is not None
+    entry = json.loads(tail)
+    assert entry["details"]["blob"] == "x" * (audit_module._TAIL_PROBE_BYTES * 2)
+    assert entry["hmac"] == writer._prev_hmac
+
+
+def test_fast_path_survives_the_segment_vanishing_between_stat_and_tail_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The confirmatory tail read (#5953) must not turn a benign race into a crash.
+
+    Retention can unlink a live segment between this instance's stamp check
+    and the tail read a moment later, the same race already pinned for chain
+    recovery, query and verify elsewhere in this file. ``_tail_line`` reports
+    the absence rather than raising, so the caller falls through to the
+    ordinary slow path instead of crashing the append.
+    """
+    audit_dir = tmp_path / "audit"
+    writer = AuditLog(audit_dir=audit_dir, key=KEY)
+    writer.log("e", "a", "r", "1", {"n": 1})
+    segment = _segment(audit_dir)
+
+    real_tail_line = audit_module._tail_line
+    vanished: list[bool] = []
+
+    def _vanish_then_read(path: Path) -> bytes | None:
+        if path == segment and not vanished:
+            vanished.append(True)
+            path.unlink()
+        return real_tail_line(path)
+
+    monkeypatch.setattr(audit_module, "_tail_line", _vanish_then_read)
+
+    writer.log("e", "a", "r", "2", {"n": 2})
+
+    assert vanished, "the fixture must actually remove the segment mid-check"
+    ok, errors = AuditLog(audit_dir=audit_dir, key=KEY).verify()
+    assert ok, errors
+
+
+@pytest.mark.parametrize(
+    "poisoned_tail",
+    [
+        pytest.param(b"not even json", id="unparseable"),
+        pytest.param(b"[1, 2, 3]", id="not-an-object"),
+    ],
+)
+def test_fast_path_falls_back_on_a_tail_line_that_fails_to_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, poisoned_tail: bytes
+) -> None:
+    """A tail read that cannot be trusted must fall back, not fast-path.
+
+    ``_tail_still_matches_cached_head`` (#5953) treats a tail line it cannot
+    parse as a canonical ``hmac``-bearing record the same as one that plainly
+    disagrees with the cached head: neither is grounds to skip the resync.
+    """
+    audit_dir = tmp_path / "audit"
+    writer = AuditLog(audit_dir=audit_dir, key=KEY)
+    writer.log("e", "a", "r", "1", {"n": 1})
+
+    real_tail_line = audit_module._tail_line
+    poisoned_once: list[bool] = []
+
+    def _poison_once(path: Path) -> bytes | None:
+        if not poisoned_once:
+            poisoned_once.append(True)
+            return poisoned_tail
+        return real_tail_line(path)
+
+    monkeypatch.setattr(audit_module, "_tail_line", _poison_once)
+
+    writer.log("e", "a", "r", "2", {"n": 2})
+
+    assert poisoned_once, "the fixture must actually poison the tail read"
+    ok, errors = AuditLog(audit_dir=audit_dir, key=KEY).verify()
+    assert ok, errors
+
+
 def test_same_length_rewrite_in_place_does_not_fork(tmp_path: Path) -> None:
     """Replacement need not go through a fresh inode to be invisible.
 
@@ -85,9 +231,10 @@ def test_same_length_rewrite_in_place_does_not_fork(tmp_path: Path) -> None:
 def test_steady_state_appends_take_the_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The optimisation this fix touches must still fire.
 
-    A run of ordinary appends by one writer re-reads the segment exactly once
-    (the first append, which has nothing cached); every later append is a stat
-    and nothing more.
+    A run of ordinary appends by one writer reads the *whole* segment exactly
+    once (the first append, which has nothing cached); every later append is a
+    stat plus a bounded read of only the last line (``_tail_still_matches_
+    cached_head``, #5953), never another full-segment rescan.
     """
     audit_dir = tmp_path / "audit"
     writer = AuditLog(audit_dir=audit_dir, key=KEY)
