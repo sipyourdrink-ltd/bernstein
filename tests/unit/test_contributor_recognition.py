@@ -1,6 +1,6 @@
 """The recognition script decides who is listed and how; that logic is pinned here.
 
-Every test is offline: the GitHub client is a fake keyed by path, and the
+Every test is offline: the GitHub client is a fake GraphQL search, and the
 render functions are pure. The invariants that matter to a person are the
 ones tested first: windows, merged-only, alphabetical order, who is never
 credited, and that nothing in the drafts is invented.
@@ -31,41 +31,53 @@ def pr(
     number: int,
     login: str,
     merged_at: str | None,
-    updated_at: str | None = None,
     *,
     kind: str = "User",
     base: str = "main",
     title: str | None = None,
+    files: list[dict] | None = None,
+    changed_files: int | None = None,
+    additions: int | None = None,
 ):
+    """One PullRequest node as the GraphQL search returns it."""
+    files = files if files is not None else [f("src/x.py", 10)]
     return {
         "number": number,
         "title": title or f"pr {number}",
-        "merged_at": merged_at,
-        "updated_at": updated_at or merged_at or "2026-09-26T00:00:00Z",
-        "user": {"login": login, "type": kind},
-        "base": {"ref": base},
+        "mergedAt": merged_at,
+        "baseRefName": base,
+        "author": {"login": login, "__typename": "Bot" if kind == "Bot" else "User"},
+        "changedFiles": changed_files if changed_files is not None else len(files),
+        "additions": additions if additions is not None else sum(x["additions"] for x in files),
+        "files": {"nodes": files},
     }
 
 
 class FakeClient:
-    """Answers ``repos/o/r/pulls`` and ``repos/o/r/pulls/<n>/files`` from dicts."""
+    """Answers the merged-PR search from a list of nodes, honouring the merged:<from>..<to> range and paging by 50."""
 
-    def __init__(self, pulls: list[dict], files: dict[int, list[dict]] | None = None):
-        self.pulls = pulls
-        self.files = files or {}
-        self.calls: list[str] = []
+    def __init__(self, nodes: list[dict], issue_count: int | None = None):
+        self.nodes = nodes
+        self.issue_count = issue_count
+        self.queries: list[tuple[str, str | None]] = []
 
-    def get(self, path: str, params: dict[str, str] | None = None):
-        self.calls.append(path)
-        page = int((params or {}).get("page", "1"))
-        if path == f"repos/{REPO}/pulls":
-            items = self.pulls[(page - 1) * 100 : page * 100]
-            return items, {}
-        if path.startswith(f"repos/{REPO}/pulls/") and path.endswith("/files"):
-            number = int(path.split("/")[-2])
-            items = self.files.get(number, [])[(page - 1) * 100 : page * 100]
-            return items, {}
-        raise AssertionError(f"unexpected path {path}")
+    def graphql(self, query: str, variables: dict):
+        q, after = variables["q"], variables.get("after")
+        self.queries.append((q, after))
+        lo, hi = q.split("merged:")[1].split("..")
+        hits = [n for n in self.nodes if n["mergedAt"] and lo <= n["mergedAt"] <= hi]
+        offset = int(after or 0)
+        page = hits[offset : offset + 50]
+        more = offset + 50 < len(hits)
+        return {
+            "data": {
+                "search": {
+                    "issueCount": self.issue_count if self.issue_count is not None else len(hits),
+                    "pageInfo": {"hasNextPage": more, "endCursor": str(offset + 50) if more else None},
+                    "nodes": page,
+                }
+            }
+        }
 
 
 def registry(*rows: dict, agents: tuple[str, ...] = ()) -> cr.Registry:
@@ -77,7 +89,7 @@ def registry(*rows: dict, agents: tuple[str, ...] = ()) -> cr.Registry:
 
 
 def f(name: str, additions: int) -> dict:
-    return {"filename": name, "additions": additions}
+    return {"path": name, "additions": additions}
 
 
 # ---------------------------------------------------------------- windows and filters
@@ -85,74 +97,112 @@ def f(name: str, additions: int) -> dict:
 
 class TestCollectWindows:
     def test_cohort_is_90_days_and_gate_is_30_days(self):
-        pulls = [
-            pr(1, "ann", "2026-09-20T00:00:00Z"),  # inside both windows
-            pr(2, "ann", "2026-08-01T00:00:00Z"),  # inside 90 d, outside 30 d
-            pr(3, "bob", "2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z"),  # outside 90 d
+        nodes = [
+            pr(1, "ann", "2026-09-20T00:00:00Z", files=[f("src/a.py", 120)]),  # inside both windows
+            pr(2, "ann", "2026-08-01T00:00:00Z", files=[f("src/b.py", 999)]),  # inside 90 d, outside 30 d
+            pr(3, "bob", "2026-06-01T00:00:00Z"),  # outside 90 d
         ]
-        files = {1: [f("src/a.py", 120)], 2: [f("src/b.py", 999)]}
-        state = cr.collect(FakeClient(pulls, files), REPO, NOW, registry(), {})
+        state = cr.collect(FakeClient(nodes), REPO, NOW, registry(), {})
         logins = [c["login"] for c in state["contributors"]]
         assert logins == ["ann"]
         ann = state["contributors"][0]
         assert [p["number"] for p in ann["merged_prs_90d"]] == [1, 2]
         assert ann["added_30d"] == 120 and ann["prs_30d"] == 1
 
-    def test_closed_but_unmerged_prs_do_not_count(self):
-        pulls = [pr(1, "ann", None, "2026-09-25T00:00:00Z")]
-        state = cr.collect(FakeClient(pulls), REPO, NOW, registry(), {})
+    def test_unmerged_nodes_do_not_count(self):
+        client = FakeClient([])
+        client.nodes = [pr(1, "ann", None)]
+        client.graphql = lambda q, v: {  # a search that leaks an unmerged PR still credits nobody
+            "data": {"search": {"issueCount": 1, "pageInfo": {"hasNextPage": False}, "nodes": client.nodes}}
+        }
+        state = cr.collect(client, REPO, NOW, registry(), {})
         assert state["contributors"] == []
 
-    def test_maintainer_bots_and_agent_lanes_are_never_credited(self):
-        pulls = [
+    def test_maintainer_bots_agent_lanes_and_deleted_accounts_are_never_credited(self):
+        nodes = [
             pr(1, cr.MAINTAINER_LOGIN, "2026-09-20T00:00:00Z"),
             pr(2, "renovate[bot]", "2026-09-20T00:00:00Z", kind="Bot"),
             pr(3, "sujeito-operator", "2026-09-20T00:00:00Z"),
             pr(4, "lane-42", "2026-09-20T00:00:00Z"),
             pr(5, "carol", "2026-09-20T00:00:00Z"),
+            {**pr(6, "x", "2026-09-20T00:00:00Z"), "author": None},
         ]
-        files = {n: [f("src/x.py", 10)] for n in range(1, 6)}
-        state = cr.collect(FakeClient(pulls, files), REPO, NOW, registry(agents=("lane-42",)), {})
+        state = cr.collect(FakeClient(nodes), REPO, NOW, registry(agents=("lane-42",)), {})
         assert [c["login"] for c in state["contributors"]] == ["carol"]
 
     def test_a_pr_into_another_branch_is_not_a_main_merge(self):
-        pulls = [pr(1, "ann", "2026-09-20T00:00:00Z", base="feat/stack")]
-        state = cr.collect(FakeClient(pulls), REPO, NOW, registry(), {})
+        nodes = [pr(1, "ann", "2026-09-20T00:00:00Z", base="feat/stack")]
+        state = cr.collect(FakeClient(nodes), REPO, NOW, registry(), {})
         assert state["contributors"] == []
 
-    def test_paging_stops_once_updates_predate_the_window(self):
-        old = [pr(1000 + i, "zed", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z") for i in range(100)]
-        recent = [pr(1, "ann", "2026-09-20T00:00:00Z")]
-        client = FakeClient(recent + old, {1: [f("src/a.py", 1)]})
-        cr.collect(client, REPO, NOW, registry(), {})
-        assert client.calls.count(f"repos/{REPO}/pulls") == 1  # page 1's oldest update already predates the window
+    def test_search_is_sliced_into_windows_and_follows_cursors(self):
+        nodes = [pr(i, f"u{i % 7}", "2026-09-20T00:00:00Z") for i in range(1, 121)]
+        client = FakeClient(nodes)
+        state = cr.collect(client, REPO, NOW, registry(), {})
+        slices = {q for q, _ in client.queries}
+        assert len(slices) == cr.COHORT_DAYS // cr.SLICE_DAYS
+        assert sum(len(c["merged_prs_90d"]) for c in state["contributors"]) == 120
+        assert ("repo:o/r is:pr is:merged merged:2026-09-16T12:00:00Z..2026-09-26T12:00:00Z", "50") in client.queries
 
-    def test_malformed_payload_fails_closed(self):
+    def test_a_pr_on_a_slice_boundary_is_counted_once(self):
+        nodes = [pr(1, "ann", "2026-09-16T12:00:00Z")]
+        state = cr.collect(FakeClient(nodes), REPO, NOW, registry(), {})
+        assert len(state["contributors"][0]["merged_prs_90d"]) == 1
+
+    def test_a_slice_over_the_search_cap_fails_closed(self):
+        with pytest.raises(cr.RecognitionError, match="more than"):
+            cr.collect(FakeClient([], issue_count=cr.SEARCH_CAP + 1), REPO, NOW, registry(), {})
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"message": "nope"},
+            {"errors": [{"message": "rate limited"}], "data": None},
+            {"data": {"search": {"nodes": "x"}}},
+            {"data": {"search": {"issueCount": 1, "pageInfo": {"hasNextPage": True}, "nodes": []}}},
+        ],
+    )
+    def test_malformed_payload_fails_closed(self, body):
         class Broken(FakeClient):
-            def get(self, path, params=None):
-                return {"message": "nope"}, {}
+            def graphql(self, query, variables):
+                return body
 
         with pytest.raises(cr.RecognitionError):
             cr.collect(Broken([]), REPO, NOW, registry(), {})
 
+    def test_on_slice_runs_after_every_window_so_the_cache_is_saved_as_it_grows(self):
+        saved: list[int] = []
+        cache: dict = {}
+        nodes = [pr(1, "ann", "2026-09-20T00:00:00Z")]
+        cr.collect(FakeClient(nodes), REPO, NOW, registry(), cache, on_slice=lambda: saved.append(len(cache)))
+        assert len(saved) == cr.COHORT_DAYS // cr.SLICE_DAYS
+
 
 class TestAdditions:
     def test_generated_paths_are_excluded_from_the_gate_count(self):
-        pulls = [pr(1, "ann", "2026-09-20T00:00:00Z")]
-        files = {
-            1: [f("src/a.py", 300), f("uv.lock", 5000), f("docs/i18n/README.ru.md", 40), f("web/dist/app.js", 900)]
-        }
-        state = cr.collect(FakeClient(pulls, files), REPO, NOW, registry(), {})
+        files = [f("src/a.py", 300), f("uv.lock", 5000), f("docs/i18n/README.ru.md", 40), f("web/dist/app.js", 900)]
+        state = cr.collect(FakeClient([pr(1, "ann", "2026-09-20T00:00:00Z", files=files)]), REPO, NOW, registry(), {})
         ann = state["contributors"][0]
         assert ann["added_30d"] == 300 and ann["added_30d_raw"] == 6240
 
-    def test_cache_hit_skips_the_files_call(self):
-        pulls = [pr(1, "ann", "2026-09-20T00:00:00Z")]
+    def test_files_beyond_the_first_hundred_count_as_non_generated(self):
+        files = [f("uv.lock", 50)] + [f(f"src/m{i}.py", 1) for i in range(99)]
+        node = pr(1, "ann", "2026-09-20T00:00:00Z", files=files, changed_files=140, additions=500)
+        state = cr.collect(FakeClient([node]), REPO, NOW, registry(), {})
+        ann = state["contributors"][0]
+        assert ann["added_30d_raw"] == 500
+        assert ann["added_30d"] == 99 + (500 - 149)  # listed non-generated + unlisted remainder
+
+    def test_a_pr_without_its_file_list_fails_closed(self):
+        node = {**pr(1, "ann", "2026-09-20T00:00:00Z"), "files": None}
+        with pytest.raises(cr.RecognitionError, match="file list"):
+            cr.collect(FakeClient([node]), REPO, NOW, registry(), {})
+
+    def test_cache_hit_wins_over_the_search_payload(self):
         cache = {"1": {"merged_at": "2026-09-20T00:00:00Z", "counted": 42, "raw": 42, "files": 1}}
-        client = FakeClient(pulls, {1: [f("src/a.py", 9999)]})
-        state = cr.collect(client, REPO, NOW, registry(), cache)
+        node = pr(1, "ann", "2026-09-20T00:00:00Z", files=[f("src/a.py", 9999)])
+        state = cr.collect(FakeClient([node]), REPO, NOW, registry(), cache)
         assert state["contributors"][0]["added_30d"] == 42
-        assert not any(c.endswith("/files") for c in client.calls)
 
     @pytest.mark.parametrize(
         "path",

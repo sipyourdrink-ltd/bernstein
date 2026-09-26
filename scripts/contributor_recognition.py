@@ -40,7 +40,10 @@ import os
 import re
 import subprocess
 import sys
+import time
 import tomllib
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -223,96 +226,181 @@ def load_registry(path: Path) -> Registry:
 # ---------------------------------------------------------------- collect
 
 
-def _import_pulse_client() -> Any:
-    """The read-only GitHub client project_pulse already carries (throttle, fail-closed)."""
-    import importlib.util
+GRAPHQL_URL = "https://api.github.com/graphql"
+#: Search returns at most 1,000 results per query; ten days of merges stays
+#: well under that on this repository, and a slice that does not fails closed.
+SLICE_DAYS = 10
+SEARCH_CAP = 1000
+FILES_PER_PR = 100
+RATE_LIMIT_RETRIES = 3
 
-    here = Path(__file__).resolve().parent
-    spec = importlib.util.spec_from_file_location("project_pulse", here / "project_pulse.py")
-    if spec is None or spec.loader is None:
-        raise RecognitionError("project_pulse.py missing beside this script")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault(spec.name, module)
-    spec.loader.exec_module(module)
-    return module
+SEARCH_QUERY = f"""
+query($q: String!, $after: String) {{
+  search(query: $q, type: ISSUE, first: 50, after: $after) {{
+    issueCount
+    pageInfo {{ hasNextPage endCursor }}
+    nodes {{
+      ... on PullRequest {{
+        number title mergedAt baseRefName changedFiles additions
+        author {{ login __typename }}
+        files(first: {FILES_PER_PR}) {{ nodes {{ path additions }} }}
+      }}
+    }}
+  }}
+}}
+"""
 
 
-def _pages(
-    client: Any, path: str, params: dict[str, str], stop: Any = None, max_pages: int = 60
-) -> list[dict[str, Any]]:
-    """Explicit ``page=N`` paging; ``stop(item)`` true on the last needed page ends it."""
+class GraphQLClient:
+    """POST to the GitHub GraphQL API. Every failure raises RecognitionError; there is no partial result."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        data = json.dumps({"query": query, "variables": variables}).encode("utf-8")
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            request = urllib.request.Request(
+                GRAPHQL_URL,
+                data=data,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "bernstein-contributor-recognition",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    raw = response.read()
+                break
+            except urllib.error.HTTPError as exc:
+                retry_after = exc.headers.get("retry-after")
+                if exc.code not in (403, 429) or retry_after is None or attempt == RATE_LIMIT_RETRIES:
+                    raise RecognitionError(f"GitHub GraphQL {exc.code}") from exc
+                time.sleep(min(float(retry_after), 120.0))
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise RecognitionError(f"GitHub GraphQL request failed: {exc}") from exc
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RecognitionError("GitHub GraphQL returned an undecodable body") from exc
+        if not isinstance(body, dict):
+            raise RecognitionError("GitHub GraphQL returned a non-object body")
+        return body
+
+
+def _search_merged(client: Any, repo: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    """Every pull request merged in [start, end], all pages; malformed or truncated -> RecognitionError."""
+    q = f"repo:{repo} is:pr is:merged merged:{iso(start)}..{iso(end)}"
     out: list[dict[str, Any]] = []
-    for page in range(1, max_pages + 1):
-        body, _ = client.get(path, {**params, "per_page": "100", "page": str(page)})
-        if not isinstance(body, list):
-            raise RecognitionError(f"unexpected payload for {path}: {type(body).__name__}")
-        out.extend(body)
-        if len(body) < 100 or (stop is not None and body and stop(body[-1])):
-            break
-    return out
+    after: str | None = None
+    while True:
+        body = client.graphql(SEARCH_QUERY, {"q": q, "after": after})
+        if body.get("errors"):
+            raise RecognitionError(f"GitHub GraphQL errors for {q}: {body['errors']}")
+        search = (body.get("data") or {}).get("search") if isinstance(body.get("data"), dict) else None
+        if not isinstance(search, dict) or not isinstance(search.get("nodes"), list):
+            raise RecognitionError(f"unexpected search payload for {q}")
+        if int(search.get("issueCount") or 0) > SEARCH_CAP:
+            raise RecognitionError(f"{q} matches more than {SEARCH_CAP} pull requests; shorten SLICE_DAYS")
+        out.extend(n for n in search["nodes"] if isinstance(n, dict) and n)
+        info = search.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return out
+        after = info.get("endCursor")
+        if not isinstance(after, str):
+            raise RecognitionError(f"search page without a cursor for {q}")
 
 
-def collect(client: Any, repo: str, now: datetime, registry: Registry, cache: dict[str, Any]) -> dict[str, Any]:
+def collect(
+    client: Any,
+    repo: str,
+    now: datetime,
+    registry: Registry,
+    cache: dict[str, Any],
+    on_slice: Any = None,
+) -> dict[str, Any]:
+    """Merged PRs of the 90-day cohort via GraphQL search in SLICE_DAYS windows.
+
+    ``on_slice()`` runs after each window, so a caller can persist ``cache``
+    as it grows; an interrupted run keeps what it already counted.
+    """
     cohort_since = now - timedelta(days=COHORT_DAYS)
     gate_since = now - timedelta(days=GATE_DAYS)
-    since_s = iso(cohort_since)
-    # updated_at >= merged_at, so a page whose oldest update predates the
-    # cohort window holds no merge inside it: paging can stop there.
-    closed = _pages(
-        client,
-        f"repos/{repo}/pulls",
-        {"state": "closed", "sort": "updated", "direction": "desc"},
-        stop=lambda p: str(p.get("updated_at") or "") < since_s,
-    )
+    since_s, gate_s = iso(cohort_since), iso(gate_since)
+    prs: dict[int, dict[str, Any]] = {}
+    start = cohort_since
+    while start < now:
+        end = min(start + timedelta(days=SLICE_DAYS), now)
+        for node in _search_merged(client, repo, start, end):
+            try:
+                prs[int(node["number"])] = node  # slice bounds are inclusive; the number dedups
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RecognitionError(f"pull request without a number in {repo} search") from exc
+        start = end
+        if on_slice is not None:
+            on_slice()
     people: dict[str, dict[str, Any]] = {}
-    for pr in closed:
-        merged_at = pr.get("merged_at")
-        if not isinstance(merged_at, str) or merged_at < since_s:
+    for number in sorted(prs):
+        pr = prs[number]
+        merged_at = pr.get("mergedAt")
+        if not isinstance(merged_at, str) or merged_at < since_s or merged_at > iso(now):
             continue
-        user = pr.get("user") or {}
+        author = pr.get("author")
+        if not isinstance(author, dict) or not author.get("login"):
+            continue  # deleted account ("ghost"): nobody to credit
+        user = {"login": str(author["login"]), "type": "Bot" if author.get("__typename") == "Bot" else "User"}
         if author_class(user, registry.extra_agents) != "outside":
             continue
-        if (pr.get("base") or {}).get("ref") not in (None, "main"):
+        if pr.get("baseRefName") != "main":
             continue
-        login = str(user["login"])
+        login = user["login"]
         entry = people.setdefault(
             login, {"login": login, "merged_prs_90d": [], "added_30d": 0, "added_30d_raw": 0, "prs_30d": 0}
         )
-        number = int(pr["number"])
         entry["merged_prs_90d"].append({"number": number, "title": str(pr.get("title") or ""), "merged_at": merged_at})
-        if merged_at >= iso(gate_since):
-            counted, raw = _pr_additions(client, repo, number, merged_at, cache)
+        if merged_at >= gate_s:
+            counted, raw = _pr_additions(pr, merged_at, cache)
             entry["added_30d"] += counted
             entry["added_30d_raw"] += raw
             entry["prs_30d"] += 1
-    for entry in people.values():
-        entry["merged_prs_90d"].sort(key=lambda p: p["number"])
     return {
         "schema": 1,
         "repo": repo,
         "generated_at": iso(now),
         "cohort_since": since_s,
-        "gate_since": iso(gate_since),
+        "gate_since": gate_s,
         "gate_days": GATE_DAYS,
         "cohort_days": COHORT_DAYS,
         "contributors": [people[k] for k in sort_logins(people)],
     }
 
 
-def _pr_additions(client: Any, repo: str, number: int, merged_at: str, cache: dict[str, Any]) -> tuple[int, int]:
-    """Added lines of one merged PR, generated paths excluded; a merged PR's files never change, so cached."""
-    key = str(number)
+def _pr_additions(pr: dict[str, Any], merged_at: str, cache: dict[str, Any]) -> tuple[int, int]:
+    """Added lines of one merged PR, generated paths excluded; a merged PR's files never change, so cached.
+
+    The search returns the first FILES_PER_PR files. Past that, the unlisted
+    additions (``additions`` minus the listed ones) count as non-generated:
+    over-counting a huge PR is safer for a soft gate than silently dropping it.
+    """
+    key = str(pr["number"])
     hit = cache.get(key)
     if isinstance(hit, dict) and hit.get("merged_at") == merged_at:
         return int(hit["counted"]), int(hit["raw"])
-    files = _pages(client, f"repos/{repo}/pulls/{number}/files", {}, max_pages=30)
-    counted = raw = 0
+    files = (pr.get("files") or {}).get("nodes")
+    if not isinstance(files, list):
+        raise RecognitionError(f"pull request #{key} came back without its file list")
+    counted = listed = 0
     for f in files:
-        adds = int(f.get("additions") or 0)
-        raw += adds
-        if not is_generated(str(f.get("filename") or "")):
+        adds = int((f or {}).get("additions") or 0)
+        listed += adds
+        if not is_generated(str((f or {}).get("path") or "")):
             counted += adds
-    cache[key] = {"merged_at": merged_at, "counted": counted, "raw": raw, "files": len(files)}
+    raw = int(pr.get("additions") or listed)
+    if int(pr.get("changedFiles") or 0) > len(files):
+        counted += max(raw - listed, 0)
+    cache[key] = {"merged_at": merged_at, "counted": counted, "raw": raw, "files": int(pr.get("changedFiles") or 0)}
     return counted, raw
 
 
@@ -657,8 +745,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         token = args.token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if not token:
             raise RecognitionError("a GitHub token is required (GITHUB_TOKEN or --token)")
-        pulse = _import_pulse_client()
-        client = pulse.GitHubClient(token)
+        client = GraphQLClient(token)
         registry = load_registry(args.opt_ins)
         cache: dict[str, Any] = {}
         if args.cache and args.cache.is_file():
@@ -666,13 +753,14 @@ def _dispatch(args: argparse.Namespace) -> int:
                 cache = json.loads(args.cache.read_text(encoding="utf-8"))
             except ValueError:
                 cache = {}
-        try:
-            state = collect(client, args.repo, _now(args.now), registry, cache)
-        except pulse.PulseError as exc:
-            raise RecognitionError(str(exc)) from exc
+
+        def save_cache() -> None:
+            if args.cache:
+                args.cache.write_text(json.dumps(cache, indent=0, sort_keys=True) + "\n", encoding="utf-8")
+
+        state = collect(client, args.repo, _now(args.now), registry, cache, on_slice=save_cache)
         args.out.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        if args.cache:
-            args.cache.write_text(json.dumps(cache, indent=0, sort_keys=True) + "\n", encoding="utf-8")
+        save_cache()
         print(f"collected {len(state['contributors'])} contributors -> {args.out}")
         return 0
     if args.cmd == "render":
