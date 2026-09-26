@@ -46,9 +46,6 @@ bernstein.core.autoheal.idempotency: #4526 audit in flight
 bernstein.core.autoheal.kill_switch: #4526 audit in flight
 bernstein.core.autoheal.shadow_mode: #4526 audit in flight
 bernstein.core.autoheal.wire: #4526 audit in flight
-bernstein.core.checks.adapters: #4526 audit in flight
-bernstein.core.checks.contract: #4526 audit in flight
-bernstein.core.checks.registry: #4526 audit in flight
 bernstein.core.communication.direct: #4526 audit in flight
 bernstein.core.communication.rendezvous: #4526 audit in flight
 bernstein.core.communication.whiteboard: #4526 audit in flight

@@ -13,7 +13,6 @@ Tests verify:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,9 +22,6 @@ from bernstein.core.checks.adapters import (
 )
 from bernstein.core.checks.contract import Evidence, Finding, Verdict
 from bernstein.core.checks.registry import CheckRegistry
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class _DummyCheck:
@@ -178,6 +174,27 @@ def test_raising_check_is_reported_not_dropped(tmp_path: Path) -> None:
     assert healthy_result.check_id == "test:healthy"
     assert healthy_result.verdict == Verdict.PASS
     assert healthy_result.message == "Healthy check passed"
+
+
+def test_check_returning_non_finding_reported_as_not_measurable(tmp_path: Path) -> None:
+    """A check whose run() returns a dict or non-Finding object is reported as not_measurable."""
+    registry = CheckRegistry()
+
+    class _DictReturningCheck:
+        check_id = "test:bad_return"
+
+        def run(self, workdir: Path | None = None) -> object:
+            return {"status": "ok", "passed": True}
+
+    registry.register(_DictReturningCheck())  # type: ignore[arg-type]
+
+    findings = registry.run_all(tmp_path)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.check_id == "test:bad_return"
+    assert f.verdict == Verdict.NOT_MEASURABLE
+    assert f.reason == "TypeError"
+    assert "TypeError" in (f.what_would_make_it_measurable or "")
 
 
 # ---------------------------------------------------------------------------

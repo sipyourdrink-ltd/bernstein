@@ -11,13 +11,20 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from bernstein.core.checks.contract import Check, Finding, Verdict
+from bernstein.core.checks.contract import Finding, Verdict
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
     from pathlib import Path
 
+    from bernstein.core.checks.contract import Check
+
 logger = logging.getLogger(__name__)
+
+
+def _check_area(check: Check) -> str:
+    """Derive the area for a check from its explicit attribute or namespaced check_id."""
+    return getattr(check, "area", "") or (check.check_id.split(":", 1)[0] if ":" in check.check_id else "")
 
 
 class CheckRegistry:
@@ -33,11 +40,13 @@ class CheckRegistry:
             TypeError: If ``check`` does not conform to the :class:`Check` protocol.
             ValueError: If ``check.check_id`` is invalid, not namespaced, or already registered.
         """
-        if not hasattr(check, "check_id") or not (hasattr(check, "run") or callable(check)):
+        if isinstance(check, type):  # type: ignore[reportUnnecessaryIsInstance]
+            raise TypeError(f"Expected Check instance, got class '{check.__name__}'")
+        if not hasattr(check, "check_id") or not hasattr(check, "run"):
             raise TypeError(f"Expected Check instance, got {type(check).__name__}")
 
         check_id = check.check_id
-        if not check_id or not isinstance(check_id, str) or not check_id.strip():
+        if not check_id or not check_id.strip():
             raise ValueError("check_id must be a non-empty string")
 
         if ":" not in check_id or check_id.startswith(":") or check_id.endswith(":"):
@@ -62,21 +71,54 @@ class CheckRegistry:
         """Retrieve a registered check by ID."""
         return self._checks.get(check_id)
 
-    def iter_checks(self) -> Iterator[Check]:
-        """Iterate over registered checks in registration order."""
-        yield from self._checks.values()
+    def iter_checks(
+        self,
+        only_areas: Sequence[str] | None = None,
+        skip_ids: Sequence[str] | None = None,
+    ) -> Iterator[Check]:
+        """Iterate over registered checks in registration order with optional filtering."""
+        only_set = {a.lower() for a in only_areas} if only_areas else None
+        skip_set = {s.lower() for s in skip_ids} if skip_ids else None
 
-    def run_all(self, workdir: Path | None = None) -> list[Finding]:
-        """Execute all registered checks against *workdir*.
+        for check in self._checks.values():
+            check_id = check.check_id
+            if skip_set and check_id.lower() in skip_set:
+                continue
+
+            area = _check_area(check)
+            if only_set and area.lower() not in only_set:
+                continue
+
+            yield check
+
+    def list_checks(
+        self,
+        only_areas: Sequence[str] | None = None,
+        skip_ids: Sequence[str] | None = None,
+    ) -> list[Check]:
+        """Return a list of registered checks matching optional filters."""
+        return list(self.iter_checks(only_areas=only_areas, skip_ids=skip_ids))
+
+    def run_all(
+        self,
+        workdir: Path | None = None,
+        only_areas: Sequence[str] | None = None,
+        skip_ids: Sequence[str] | None = None,
+    ) -> list[Finding]:
+        """Execute registered checks against *workdir* with optional filtering.
 
         Catches exceptions raised by individual checks, recording them as
         ``not_measurable`` findings with the exception class name as reason,
         and proceeds to execute all remaining checks.
         """
         findings: list[Finding] = []
-        for check in self._checks.values():
+        for check in self.iter_checks(only_areas=only_areas, skip_ids=skip_ids):
             try:
                 finding = check.run(workdir)
+                if type(finding) is not Finding:
+                    raise TypeError(
+                        f"Check '{check.check_id}' run() returned {type(finding).__name__}, expected Finding"
+                    )
             except Exception as exc:
                 logger.warning(
                     "Check '%s' raised %s: %s; reporting as not_measurable",
@@ -99,34 +141,64 @@ class CheckRegistry:
 # Global default registry and module-level conveniences
 # ---------------------------------------------------------------------------
 
-_DEFAULT_REGISTRY = CheckRegistry()
+DEFAULT_REGISTRY = CheckRegistry()
+_DEFAULT_REGISTRY = DEFAULT_REGISTRY
+
+
+def populate_default_checks(registry: CheckRegistry | None = None) -> None:
+    """Populate built-in check adapters into the given or default registry."""
+    from bernstein.core.checks.adapters import (
+        ComplianceEncryptionAtRestAdapter,
+        DoctorComplianceAdapter,
+    )
+
+    reg = DEFAULT_REGISTRY if registry is None else registry
+    for adapter_cls in (DoctorComplianceAdapter, ComplianceEncryptionAtRestAdapter):
+        adapter = adapter_cls()
+        if reg.get_check(adapter.check_id) is None:
+            reg.register(adapter)
 
 
 def register(check: Check) -> None:
     """Register a check in the default registry."""
-    _DEFAULT_REGISTRY.register(check)
+    DEFAULT_REGISTRY.register(check)
 
 
 def unregister(check_id: str) -> None:
     """Unregister a check from the default registry."""
-    _DEFAULT_REGISTRY.unregister(check_id)
+    DEFAULT_REGISTRY.unregister(check_id)
 
 
 def clear() -> None:
     """Clear the default registry."""
-    _DEFAULT_REGISTRY.clear()
+    DEFAULT_REGISTRY.clear()
 
 
 def get_check(check_id: str) -> Check | None:
     """Retrieve a check from the default registry."""
-    return _DEFAULT_REGISTRY.get_check(check_id)
+    return DEFAULT_REGISTRY.get_check(check_id)
 
 
-def iter_checks() -> Iterator[Check]:
+def iter_checks(
+    only_areas: Sequence[str] | None = None,
+    skip_ids: Sequence[str] | None = None,
+) -> Iterator[Check]:
     """Iterate over checks in the default registry."""
-    return _DEFAULT_REGISTRY.iter_checks()
+    return DEFAULT_REGISTRY.iter_checks(only_areas=only_areas, skip_ids=skip_ids)
 
 
-def run_all(workdir: Path | None = None) -> list[Finding]:
-    """Execute all checks in the default registry."""
-    return _DEFAULT_REGISTRY.run_all(workdir)
+def list_checks(
+    only_areas: Sequence[str] | None = None,
+    skip_ids: Sequence[str] | None = None,
+) -> list[Check]:
+    """Return a list of checks in the default registry matching filters."""
+    return DEFAULT_REGISTRY.list_checks(only_areas=only_areas, skip_ids=skip_ids)
+
+
+def run_all(
+    workdir: Path | None = None,
+    only_areas: Sequence[str] | None = None,
+    skip_ids: Sequence[str] | None = None,
+) -> list[Finding]:
+    """Execute all checks in the default registry matching filters."""
+    return DEFAULT_REGISTRY.run_all(workdir=workdir, only_areas=only_areas, skip_ids=skip_ids)
