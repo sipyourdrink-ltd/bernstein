@@ -116,6 +116,17 @@ async def _post_task_to_server(
     if isinstance(context_files, list) and context_files:
         body["metadata"] = {"context_files": [str(p) for p in context_files]}
 
+    # Forward the declared completion signals (issue #5960). These are the
+    # witnesses a plan step names for "done"; `TaskCreate` accepts them, and the
+    # janitor evaluates them, but this body is built field by field, so without
+    # an explicit forward every task posted by `run --from-plan` arrived with an
+    # empty list and fell back to the default verification heuristics -- the
+    # declaration silently replaced by a guess.
+    if task.completion_signals:
+        body["completion_signals"] = [
+            {"type": signal.type, "value": signal.value} for signal in task.completion_signals
+        ]
+
     # Plan mode: tasks start as PLANNED instead of OPEN
     if plan_mode:
         body["status"] = "planned"
