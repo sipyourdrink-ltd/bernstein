@@ -46,6 +46,20 @@ agent identity plane.
    group at that time" becomes a verifiable fact rather than a live lookup
    nobody can reproduce.
 
+## Related work
+
+NIST's Center for AI Standards and Innovation (CAISI) launched the
+[AI Agent Standards Initiative](https://www.nist.gov/news-events/news/2026/02/announcing-ai-agent-standards-initiative-interoperable-and-secure)
+in February 2026. One of the initiative's pillars is research into AI agent
+security and identity, including agent authentication and identity
+infrastructure.
+
+This ADR addresses related properties through a deterministic per-install
+identity, short-lived delegated grants, and a verifiable audit trail. This is
+a relationship to the initiative's stated scope, not a conformance claim; no
+initiative profile establishing such a conformance target has been published
+yet. Revisit this section when a relevant profile or specification appears.
+
 ## Rejected alternative: make the registry its own authority
 
 A registry that is written by admission and only occasionally reconciled
