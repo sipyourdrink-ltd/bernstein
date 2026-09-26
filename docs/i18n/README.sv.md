@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### governance-lagret med öppen källkod för AI-agenter
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:014cda80f609" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,14 +41,14 @@
 Bernstein är governance-lagret med öppen källkod för AI-agenter. Det körs på policy as code: du skriver policyn - vem som får göra vad, vad som kräver godkännande, vad som måste loggas - och Bernstein tillämpar den och tar fram det verifierbara beviset. En deterministisk schemaläggare - ingen modell i koordinationsloopen - kör agenter parallellt, grindar det de producerar och loggar varje steg, så att en körning kan verifieras i efterhand, offline, enbart från artefakterna. CLI-kodagenter fungerar direkt (Claude Code, Codex, Gemini CLI och 52+ till), och samma lager governar vilken agentlast som helst: leveransen kan vara en diff, en forskningsrapport, ett dataset eller ett paket med revisionsbevis. Air-gap-installationsprofil ingår. Apache-2.0.
 
 ### i korthet
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:0ff4b3ea8a0c" -->
 
 Fyra saker skiljer den från mängden; resten är detaljer.
 
 - **Ingen LLM i koordineringsloopen.** Schemaläggningen sker i ren Python, vilket gör en körning reproducerbar från början till slut. Återuppspela gårdagens plan och få exakt samma uppgiftsgraf.
 - **Verifierbar i efterhand.** Replay-journalen registrerar varje körning, och den ständigt aktiva lineage-ryggraden loggar varje spårbarhetspunkt; den valfria HMAC-kedjade granskningsloggen (`BERNSTEIN_AUDIT=1`) lägger till kvitton (receipts) som du kan verifiera offline. Icke-determinism visar sig som en hash-avvikelse vid det exakta steget, inte som ett instabilt testfel vid omkörning. Leverabler som inte är kod behandlas på samma sätt: en uppgift kan deklarera ett artefaktkontrakt (rapport, dataset, åtgärdslogg, ops-resultat) och slutförs med ett signerat lineage-kvitto istället för en git-commit.
 - **Isolerad genom konstruktion.** Varje kodningsuppgift får ett eget git worktree bakom merge gates; uppgifter i artefaktläge får en arbetskatalog under `.sdd/workspaces/`. Agenter delar som standard ingen föränderlig arbetsyta; det enda delade tillståndet är uppgiftskön, som reserveras atomärt. Striktare filsystemsbegränsningar är valfria via [sandbox-backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Inaktivera worktrees så körs varje uppgift i den delade arbetskatalogen.
-- **Bred och lokal.** Över 52 CLI-agentadaptrar plus en generisk `--prompt`-wrapper, filbaserat tillstånd, inga SaaS-mellanled, inget externt dataplan.
+- **Bred och lokal.** Över 54 CLI-agentadaptrar plus en generisk `--prompt`-wrapper, filbaserat tillstånd, inga SaaS-mellanled, inget externt dataplan.
 
 Hela listan finns på [funktionssidan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [funktionsmatrisen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) är det fullständiga indexet.
 

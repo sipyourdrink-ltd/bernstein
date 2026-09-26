@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### il layer di governance open source per agenti IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:014cda80f609" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,14 +41,14 @@
 Bernstein è il layer di governance open source per agenti IA. Funziona a policy as code: tu scrivi la policy - chi può fare cosa, cosa richiede approvazione, cosa va registrato - e Bernstein la applica e produce il registro verificabile. Uno scheduler deterministico - nessun modello nel loop di coordinamento - esegue gli agenti in parallelo, filtra ciò che producono con dei gate e registra ogni passo, così un run si può verificare a posteriori, offline, dai soli artefatti. Gli agenti CLI di codice funzionano subito (Claude Code, Codex, Gemini CLI e altri 52+), e lo stesso layer governa qualsiasi carico agentico: il deliverable può essere un diff, un report di ricerca, un dataset o un pacchetto di evidenze di audit. Profilo di installazione air-gap incluso. Apache-2.0.
 
 ### in sintesi
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:0ff4b3ea8a0c" -->
 
 Quattro elementi lo contraddistinguono; tutto il resto sono dettagli.
 
 - **Nessun LLM nel ciclo di coordinamento.** La pianificazione è in puro Python, rendendo ogni esecuzione riproducibile da cima a fondo. Riproduci il piano di ieri e otterrai esattamente il grafo delle attività di ieri.
 - **Verificabile a posteriori.** Il giornale di replay registra ogni esecuzione, e la colonna vertebrale di lineage sempre attiva memorizza ogni passaggio dotato di tracciabilità; il log di audit opzionale concatenato con HMAC (`BERNSTEIN_AUDIT=1`) aggiunge ricevute verificabili offline. Il non determinismo emerge come discrepanza di hash nel passaggio esatto, non come riesecuzione intermittente. I deliverable non costituiti da codice ricevono lo stesso trattamento: un task può dichiarare un contratto di artefatto (report, dataset, log di azioni, risultati ops) e si conclude con una ricevuta di lineage firmata anziché un commit git.
 - **Isolato per progettazione.** Ogni task di codifica ottiene il proprio git worktree protetto da merge gate; i task in modalità artefatto ottengono una directory di lavoro in `.sdd/workspaces/`. Gli agenti non condividono alcuno spazio di lavoro modificabile per impostazione predefinita; l'unico stato condiviso è il backlog dei task, acquisito in modo atomico. Restrizioni più severe sul filesystem sono opzionali, fornite dai [backend sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Disattivando i worktree, ogni task viene eseguito nel checkout condiviso.
-- **Ampio e locale.** Oltre 52 adapter per agenti CLI più un wrapper generico `--prompt`, stato basato su file, nessun passaggio SaaS, nessun piano dati di terze parti.
+- **Ampio e locale.** Oltre 54 adapter per agenti CLI più un wrapper generico `--prompt`, stato basato su file, nessun passaggio SaaS, nessun piano dati di terze parti.
 
 L'elenco completo è disponibile nella [pagina delle funzionalità](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); la [matrice delle caratteristiche](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) costituisce l'indice esaustivo.
 

@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### tầng governance mã nguồn mở cho AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:014cda80f609" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,14 +41,14 @@
 Bernstein là tầng governance mã nguồn mở cho AI agent. Nó chạy trên policy as code: bạn viết chính sách - ai được làm gì, cái gì cần phê duyệt, cái gì phải được ghi lại - và Bernstein thực thi chính sách đó và tạo ra bản ghi có thể xác minh. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI và hơn 52 agent khác), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
 
 ### tổng quan nhanh
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:0ff4b3ea8a0c" -->
 
 Bốn đặc điểm tạo nên sự khác biệt; mọi thứ phía sau chỉ là chi tiết.
 
 - **Không có LLM trong vòng lặp điều phối.** Việc lập lịch hoàn toàn bằng Python thuần túy, giúp quá trình thực thi có thể tái lập từ đầu đến cuối. Chạy lại kế hoạch hôm qua và nhận được chính xác đồ thị nhiệm vụ của ngày hôm qua.
 - **Có thể kiểm tra lại sau khi thực thi.** Nhật ký phát lại (replay journal) ghi nhận mọi lượt chạy, và trục nguồn gốc (lineage spine) luôn hoạt động ghi lại từng bước mang nguồn gốc; nhật ký kiểm toán chuỗi HMAC tùy chọn (`BERNSTEIN_AUDIT=1`) bổ sung các biên lai (receipts) để bạn xác thực ngoại tuyến. Tính phi tất định biểu hiện dưới dạng sai lệch hàm băm (hash mismatch) tại chính xác bước xảy ra, thay vì lỗi ngẫu nhiên khi chạy lại. Các sản phẩm bàn giao không phải là mã nguồn cũng được xử lý tương tự: một nhiệm vụ có thể khai báo hợp đồng tạo tác (báo cáo, bộ dữ liệu, nhật ký hoạt động, kết quả ops) và hoàn thành bằng biên lai nguồn gốc có chữ ký thay vì một commit git.
 - **Cô lập theo thiết kế.** Mỗi nhiệm vụ viết mã nhận một git worktree riêng biệt phía sau cổng hợp nhất; các nhiệm vụ ở chế độ tạo tác nhận một thư mục làm việc trong `.sdd/workspaces/`. Các tác tử theo mặc định không chia sẻ không gian làm việc có thể ghi; trạng thái chia sẻ duy nhất là danh sách công việc tồn đọng (backlog), được nhận một cách nguyên tử. Việc thực thi bảo mật hệ thống tệp chặt chẽ hơn là tùy chọn thông qua [sandbox backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Vô hiệu hóa worktrees thì mỗi nhiệm vụ sẽ chạy trong không gian làm việc chung.
-- **Rộng rãi và cục bộ.** Hơn 52 bộ điều hợp tác tử CLI cùng lớp bọc `--prompt` tổng quát, lưu trữ trạng thái dựa trên tệp, không qua trung gian SaaS, không có mặt phẳng dữ liệu của bên thứ ba.
+- **Rộng rãi và cục bộ.** Hơn 54 bộ điều hợp tác tử CLI cùng lớp bọc `--prompt` tổng quát, lưu trữ trạng thái dựa trên tệp, không qua trung gian SaaS, không có mặt phẳng dữ liệu của bên thứ ba.
 
 Danh sách đầy đủ có tại [trang năng lực](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ma trận tính năng](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) là bảng mục lục toàn diện.
 

@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### avoimen lähdekoodin governance-kerros AI-agenteille
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:014cda80f609" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,14 +41,14 @@
 Bernstein on avoimen lähdekoodin governance-kerros AI-agenteille. Se toimii policy as code -periaatteella: sinä kirjoitat käytännön - kuka saa tehdä mitä, mikä vaatii hyväksynnän, mikä on kirjattava - ja Bernstein toteuttaa sen ja tuottaa todennettavan tallenteen. Deterministinen skeduloija - ei mallia koordinaatiosilmukassa - ajaa agentteja rinnakkain, portittaa niiden tuotokset ja kirjaa jokaisen askeleen, joten ajon voi verifioida jälkikäteen, offline, pelkistä artefakteista. CLI-koodiagentit toimivat suoraan (Claude Code, Codex, Gemini CLI ja 52+ muuta), ja sama kerros governoi mitä tahansa agenttikuormaa: tulos voi olla diff, tutkimusraportti, datasetti tai auditointievidenssipaketti. Air-gap-asennusprofiili mukana. Apache-2.0.
 
 ### lyhyesti
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:0ff4b3ea8a0c" -->
 
 Neljä ominaisuutta erottaa sen muista; kaikki muu on yksityiskohtia.
 
 - **Ei kielimallia koordinointisilmukassa.** Aikataulutus on puhdasta Pythonia, joten suoritus on täysin toistettavissa alusta loppuun. Toista eilinen suunnitelma ja saat saman tehtävägraafin.
 - **Tarkistettavissa jälkikäteen.** Toistoloki (replay journal) tallentaa jokaisen ajon, ja aina aktiivinen alkuperärunko (lineage spine) kirjaa jokaisen jäljitettävän vaiheen; valinnainen HMAC-ketjutettu audit-loki (`BERNSTEIN_AUDIT=1`) lisää kuitteja (receipts), jotka voidaan vahvistaa offline-tilassa. Epädeterministisyys näkyy tarkkana tiiviste-erona kyseisessä vaiheessa eikä satunnaisena epävakautena uudelleenajossa. Muut kuin koodituotokset käsitellään samalla tavalla: tehtävä voi määritellä artefaktisopimuksen (raportti, tietoaineisto, toimintaloki, operaatiotulos) ja se valmistuu allekirjoitetulla alkuperäkuitilla git-commitin sijaan.
 - **Eristetty rakenteellisesti.** Jokainen koodaustehtävä saa oman git worktreen merge-porttien taakse; artefaktitilan tehtävät saavat työhakemiston polkuun `.sdd/workspaces/`. Agentit eivät oletusarvoisesti jaa muokattavaa työtilaa; ainoa jaettu tila on tehtäväjono, joka varataan atomisesti. Tiukemmat tiedostojärjestelmärajoitukset ovat valinnaisia [sandbox-taustajärjestelmien](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) kautta. Jos poistat worktreen käytöstä, jokainen tehtävä suoritetaan jaetussa työtilassa.
-- **Kattava ja paikallinen.** Yli 52 CLI-agenttisovitinta sekä yleinen `--prompt`-kääre, tiedostopohjainen tila, ei SaaS-riippuvuuksia, ei ulkopuolista datatasoa.
+- **Kattava ja paikallinen.** Yli 54 CLI-agenttisovitinta sekä yleinen `--prompt`-kääre, tiedostopohjainen tila, ei SaaS-riippuvuuksia, ei ulkopuolista datatasoa.
 
 Täydellinen luettelo löytyy [kyvykkyyssivulta](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ominaisuusmatriisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) toimii kattavana hakemistona.
 

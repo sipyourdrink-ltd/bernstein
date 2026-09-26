@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI 에이전트를 위한 오픈소스 거버넌스 레이어
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:014cda80f609" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,14 +41,14 @@
 Bernstein은 AI 에이전트를 위한 오픈소스 거버넌스 레이어입니다. policy as code로 동작합니다. 누가 무엇을 해도 되는지, 무엇에 승인이 필요한지, 무엇을 기록해야 하는지를 정책으로 작성하면 Bernstein이 이를 적용하고 검증 가능한 기록을 만듭니다. 결정론적 스케줄러 - 조정 루프에 모델이 없음 - 가 에이전트를 병렬로 돌리고, 산출물을 게이트로 검사하고, 모든 단계를 기록합니다. 그래서 실행은 사후에, 오프라인으로, 아티팩트만으로 검증할 수 있습니다. CLI 코딩 에이전트는 바로 동작하고(Claude Code, Codex, Gemini CLI 외 52+), 같은 레이어가 모든 에이전트 워크로드를 거버닝합니다: 결과물은 diff일 수도, 리서치 보고서일 수도, 데이터셋일 수도, 감사 증적 패키지일 수도 있습니다. 에어갭 설치 프로파일 포함. Apache-2.0.
 
 ### 한눈에 보기
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:0ff4b3ea8a0c" -->
 
 다른 점은 네 가지다. 나머지는 모두 세부 사항이다.
 
 - **협조 루프에 LLM이 없다.** 스케줄링은 순수 Python이라 실행이 처음부터 끝까지 재현된다. 어제의 플랜을 리플레이하면 어제의 태스크 그래프가 나온다.
 - **사후에 검증할 수 있다.** 리플레이 저널이 모든 실행을 기록하고, 항상 켜져 있는 리니지 스파인이 리니지를 가진 각 단계를 기록한다. 선택적으로 켜는 HMAC 체인 감사 로그(`BERNSTEIN_AUDIT=1`)는 오프라인에서 검증되는 영수증을 더한다. 비결정성은 재실행 편차가 아니라 해당 단계에서의 해시 불일치로 드러난다. 코드가 아닌 산출물도 같은 대우를 받는다. 태스크는 아티팩트 계약(리포트, 데이터셋, 액션 로그, 운영 결과)을 선언할 수 있고, git 커밋이 아니라 서명된 리니지 영수증으로 완료된다.
 - **구조적으로 격리된다.** 코딩 태스크는 각각 머지 게이트 뒤에 자신의 git worktree를 갖는다. 아티팩트 모드 태스크는 `.sdd/workspaces/` 아래에 작업 디렉터리를 갖는다. 에이전트는 기본적으로 가변 워크스페이스를 공유하지 않는다. 공유되는 상태는 태스크 백로그뿐이며 원자적으로 점유된다. 더 엄격한 파일시스템 강제는 [샌드박스 백엔드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) 중에서 선택하는 옵션이다. worktree를 끄면 모든 태스크가 공유 체크아웃에서 실행된다.
-- **넓고, 그리고 로컬이다.** 52여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
+- **넓고, 그리고 로컬이다.** 54여 개의 CLI 에이전트 어댑터에 범용 `--prompt` 래퍼, 파일 기반 상태. SaaS를 거치지 않고 서드파티 데이터 플레인도 없다.
 
 전체 목록은 [기능 페이지](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)에, 전수 색인은 [기능 매트릭스](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)에 있다.
 

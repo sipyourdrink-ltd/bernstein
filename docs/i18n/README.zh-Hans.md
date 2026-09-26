@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 智能体的开源治理层
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:014cda80f609" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,14 +41,14 @@
 Bernstein 是面向 AI 智能体的开源治理层。它运行在 policy as code 之上:你编写策略——谁可以做什么、什么需要审批、什么必须被记录——Bernstein 据此执行并生成可验证的记录。确定性调度器 - 协调环路中没有模型 - 并行运行智能体,用门禁把关它们的产出,并记录每一步,因此一次运行可以在事后离线验证,仅凭工件本身。CLI 编码智能体开箱即用(Claude Code、Codex、Gemini CLI 及 52+ 款),同一治理层管辖任何智能体工作负载:交付物可以是 diff、研究报告、数据集,或一份审计证据包。附带 air-gap 安装配置。Apache-2.0。
 
 ### 一览
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:0ff4b3ea8a0c" -->
 
 有四件事让它与众不同；其余都是细节。
 
 - **协调循环中没有 LLM。** 调度是纯 Python，因此运行可以端到端复现。重放昨天的计划，得到昨天的任务图。
 - **事后可核查。** 回放日志记录每一次运行，常驻的血统脊柱记录每个产生血统的步骤；可选的 HMAC 链式审计日志（`BERNSTEIN_AUDIT=1`）增加了可离线验证的收据。不确定性会在精确步骤处以哈希失配的形式浮出水面，而不是一次偶发的重跑。非代码交付物也享受同样待遇：任务可以声明产物契约（报告、数据集、动作日志、运维结果），并以签署的血统收据而非 git 提交来宣告完成。
 - **构造上即隔离。** 每个编码任务在合并门禁之后获得自己的 git worktree；产物模式任务在 `.sdd/workspaces/` 下获得工作目录。智能体之间默认不共享可变的工作区；唯一共享的状态是任务积压，并以原子方式认领。更严格的文件系统强制是可选的，来自[沙箱后端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（禁用 worktree 会在共享检出中运行每个任务）。
-- **广泛且本地。** 52 多个 CLI 智能体适配器，外加通用的 `--prompt` 包装器、基于文件的状态、无 SaaS 跳转、无第三方数据平面。
+- **广泛且本地。** 54 多个 CLI 智能体适配器，外加通用的 `--prompt` 包装器、基于文件的状态、无 SaaS 跳转、无第三方数据平面。
 
 完整列表见[能力页面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩阵](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是详尽的索引。
 

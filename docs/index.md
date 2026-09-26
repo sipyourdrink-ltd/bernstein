@@ -4,7 +4,7 @@ description: >-
   The open-source governance layer for AI agents. No model in the coordination
   loop, so replaying a plan reproduces its task graph byte-identically.
   Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline,
-  without rerunning it. Run Claude Code, Codex, Gemini CLI, and 40+ more behind
+  without rerunning it. Run Claude Code, Codex, Gemini CLI, and 51 more behind
   one governance surface, for any deliverable, with zero vendor lock-in.
 tags:
   - orchestration
@@ -98,7 +98,7 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
     ---
 
-    40+ CLI adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
+    54 CLI adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
     Mix cheap local models with cloud models in the same run.
 
 - :material-source-branch:{ .lg .middle } **Git worktree isolation**
