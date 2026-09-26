@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import statistics
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 #: What one instance did.
 #:
@@ -232,6 +236,53 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
     )
 
 
+def _repair_torn_tail(path: Path) -> None:
+    """Make the file end on a line boundary before anything is appended to it.
+
+    Every complete write ends in ``\\n``, so a file whose last byte is anything
+    else was cut off mid-append. Appending straight after that fuses the
+    fragment and the new result into one invalid line. ``load`` then drops the
+    result the resumed run just paid for, and the append after that pushes the
+    bad line into the middle of the file, where ``load`` raises on every read.
+
+    Two cases, decided the way ``load`` decides them. A tail that parses is a
+    whole result that lost only its newline, and ``load`` already counts it, so
+    it gets the newline. A tail that does not parse is the fragment ``load``
+    already dropped, so it is cut back to the last newline. Either way the
+    bytes on disk now say what the reader was already reporting.
+    """
+    if not path.exists():
+        return
+    with path.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        if f.tell() == 0:
+            return
+        f.seek(-1, os.SEEK_END)
+        if f.read(1) == b"\n":
+            return
+        f.seek(0)
+        data = f.read()
+    keep = data.rfind(b"\n") + 1
+    tail = data[keep:]
+    try:
+        json.loads(tail)
+    except ValueError:
+        with path.open("r+b") as f:
+            f.truncate(keep)
+            f.flush()
+            os.fsync(f.fileno())
+        logger.warning(
+            "%s: removed a torn final line (%d bytes) before appending, left by an interrupted append.",
+            path,
+            len(tail),
+        )
+        return
+    with path.open("ab") as f:
+        f.write(b"\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
 class ResultStore:
     """Persist and load per-instance results as JSONL files."""
 
@@ -243,22 +294,78 @@ class ResultStore:
         return self.results_dir / f"{scenario_name}.jsonl"
 
     def append(self, result: InstanceResult) -> None:
-        """Append one result to the scenario's JSONL file."""
+        """Append one result to the scenario's JSONL file, durably.
+
+        ``fsync`` because this file IS the resume point. Without it a finished
+        instance can sit in the OS page cache when the process dies, and the
+        next run re-evaluates it - which on SWE-Bench is a real model call and
+        real money, paid again for work that was already done.
+        """
         path = self._path_for(result.scenario_name)
+        _repair_torn_tail(path)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(result.to_dict()) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def load(self, scenario_name: str) -> list[InstanceResult]:
-        """Load all results for a scenario."""
+        """Load all results for a scenario.
+
+        A torn FINAL line is dropped; a malformed line anywhere else raises.
+
+        The distinction is the whole point. Appending is not atomic, so a
+        process killed mid-write leaves a partial last line - and a bare
+        ``json.loads`` over every line made that one fragment poison the file:
+        ``already_evaluated`` raised, so a crashed benchmark run could not
+        resume, and every instance it HAD completed was re-evaluated. That is
+        the opposite of what this file is for.
+
+        Skipping every unparseable line would trade that for something worse -
+        silent data loss in the middle of a file, where corruption means
+        something went wrong that nobody will now hear about. Only the last
+        line can be torn by an interrupted append, so only the last line is
+        forgiven.
+
+        No tear can parse as an incomplete result: a proper prefix of a JSON
+        object is never valid JSON, so a final line that parses is complete.
+
+        ``load`` only reads. The torn bytes stay on disk until the next
+        ``append`` removes them, which is what keeps the first resumed result
+        from being written onto the end of the fragment.
+        """
         path = self._path_for(scenario_name)
         if not path.exists():
             return []
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            # Every line this store writes is ASCII (``json.dumps`` escapes the
+            # rest), so a tear cannot split a character. Bytes that do not
+            # decode are corruption, and get the same contract as any other.
+            raise ValueError(f"{path}: not valid UTF-8, so it is corrupt rather than torn.") from exc
+        lines = [line.strip() for line in text.splitlines()]
+        populated = [(index, line) for index, line in enumerate(lines) if line]
         results: list[InstanceResult] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
+        for position, (index, line) in enumerate(populated):
+            try:
                 data: dict[str, object] = json.loads(line)
-                results.append(InstanceResult.from_dict(data))
+            except ValueError as exc:
+                is_last = position == len(populated) - 1
+                if not is_last:
+                    raise ValueError(
+                        f"{path}: line {index + 1} is not valid JSON, and it is not the last line. "
+                        "A torn final line is a crash artefact; one in the middle is corruption, "
+                        "and dropping it would lose a completed result silently."
+                    ) from exc
+                logger.warning(
+                    "%s: dropping a torn final line (%d chars) - an append was interrupted. "
+                    "The %d complete result(s) before it are intact.",
+                    path,
+                    len(line),
+                    len(results),
+                )
+                break
+            results.append(InstanceResult.from_dict(data))
         return results
 
     def load_all(self) -> dict[str, list[InstanceResult]]:
