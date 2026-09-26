@@ -843,6 +843,13 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         event_channel=EventChannel.STREAM_JSON,
     ),
     "openhands": AdapterStrategy(),
+    # ``openclaw agent exec`` is one stateless embedded turn: no resume flag
+    # (session ids exist only on the Gateway-backed path), and it prints one
+    # result envelope rather than an event stream.
+    "openclaw": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
     # PaperQA2 is a deep-research agent over a local paper corpus: its unit of work is
     # the cited answer bound to the papers it cites by digest (deep_research_artifact),
     # not a commit. No native resume; runs unattended.
@@ -1262,6 +1269,7 @@ _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
         "gpt_researcher",
         "junie",
         "muse",
+        "openclaw",
         "opencode",
         "paper_qa",
         "python_runtime",

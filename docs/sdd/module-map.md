@@ -173,6 +173,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `openai_agents.py`              | OpenAI Agents SDK v2 adapter |
 | `openai_agents_builtins.py`     | Opt-in builtin tools for the OpenAI Agents runner |
 | `openai_agents_runner.py`       | Python entrypoint that runs an OpenAI Agents SDK session |
+| `openclaw.py`                   | OpenClaw CLI adapter |
 | `opencode.py`                   | OpenCode CLI adapter |
 | `openhands.py`                  | OpenHands CLI adapter |
 | `paper_qa.py`                   | PaperQA2 adapter for Bernstein |

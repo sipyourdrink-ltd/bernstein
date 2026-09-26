@@ -201,6 +201,7 @@ nav:
           - Agy: adapters/agy.md
           - Antigravity: adapters/antigravity.md
           - Deep-research agents: adapters/deep-research.md
+          - OpenClaw: adapters/openclaw.md
           - Deferred adapters: adapter-deferred.md
           - Adapter operations: operations/adapters.md
           - Adapter security floor: adapters/security-floor.md
