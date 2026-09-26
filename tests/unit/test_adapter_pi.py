@@ -32,7 +32,7 @@ class TestPiAdapterSpawn:
                 session_id="pi-s1",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "--model", "provider/model-name", "fix the bug"]
+        assert inner == ["pi", "-ne", "--model", "provider/model-name", "fix the bug"]
 
     def test_spawn_leaves_model_selection_to_pi_for_auto(self, tmp_path: Path) -> None:
         adapter = PiAdapter()
@@ -45,7 +45,29 @@ class TestPiAdapterSpawn:
                 session_id="pi-s2",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "fix the bug"]
+        assert inner == ["pi", "-ne", "fix the bug"]
+
+    def test_pi_spawn_includes_mcp_isolation_flags(self, tmp_path: Path) -> None:
+        """A spawned session must not inherit the operator's user-global MCP servers.
+
+        Without `-ne` every spawn launches a private instance of every server the
+        operator has installed -- dozens of background processes across concurrent
+        runs -- and fills the agent's context with tools the task never asked for
+        (#5965). It has to precede the positional prompt, which `pi` reads as the
+        first non-flag argument.
+        """
+        adapter = PiAdapter()
+        proc_mock = make_popen_mock(pid=802)
+        with patch("bernstein.adapters.pi.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="fix the bug",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="auto", effort="high"),
+                session_id="pi-s3",
+            )
+        inner = inner_cmd(popen.call_args.args[0])
+        assert "-ne" in inner
+        assert inner.index("-ne") < inner.index("fix the bug")
 
     def test_spawn_translates_missing_cli(self, tmp_path: Path) -> None:
         adapter = PiAdapter()
