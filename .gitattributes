@@ -37,3 +37,6 @@ tests/fixtures/agent-card-utf16-vector/*.sha256 -text
 tests/fixtures/evidence-envelope-vectors/*.json -text
 tests/fixtures/evidence-envelope-vectors/*.pem -text
 tests/fixtures/evidence-envelope-vectors/*.sha256 -text
+# RFC 3161 FreeTSA fixture: the token's messageImprint is sha256 of
+# freetsa_payload.txt. A CRLF checkout makes every verifier test fail.
+tests/fixtures/rfc3161/freetsa_payload.txt -text

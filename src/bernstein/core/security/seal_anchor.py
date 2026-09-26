@@ -13,11 +13,18 @@ identity. Neither pins two things a reviewer eventually asks for:
   the journal and re-seal it; the rewrite is internally consistent and nothing
   outside the install ever witnessed the original.
 
-An RFC 3161 timestamp token closes both. The TSA signs its ``genTime``
-together with the head digest, so the token is an independent witness that
-this exact head existed before that instant, and it stays checkable offline
-from the token plus an operator-pinned trust bundle - no call back to the TSA
-at verify time.
+An RFC 3161 timestamp token closes the "when" question. The TSA signs its
+``genTime`` together with the head digest, so the token is an independent
+witness that this exact head existed before that instant, and it stays
+checkable offline from the token plus an operator-pinned trust bundle - no
+call back to the TSA at verify time.
+
+A transparency-log inclusion proof closes the "anyone can check" question
+(#6208). The sealed head is registered as a leaf in an external RFC 6962
+append-only log; the stored audit path, signed tree head and log public key
+let a stranger recompute the root and verify the log's signature offline,
+with no call back to the log. A TSA that mis-issues leaves no public trace;
+a log that signs a tree head does.
 
 Design decisions
 ----------------
@@ -29,12 +36,21 @@ Design decisions
   (:mod:`bernstein.core.security.audit_multitenant`), so one TSA workflow
   covers both surfaces and the existing offline verifier
   (:mod:`bernstein.core.security.rfc3161_verifier`) is reused verbatim.
+* **The transparency-log leaf is the bare sealed-head digest.** The leaf is
+  ``SHA-256(0x00 || raw head bytes)`` using the same domain-separated hashing
+  as :mod:`bernstein.core.persistence.merkle`. No run id and no timestamp
+  enter the preimage, so two operators who re-derive the same sealed head
+  get the same leaf from the seal alone. A statement wrapping ``run_id``
+  would make the log entry self-describing, but it would also make the leaf
+  depend on metadata the seal does not carry.
 * **No local clock is recorded.** Storing "when we anchored" next to the token
   would put an untrusted timestamp beside a trusted one. The only time an
-  anchor carries is the TSA's, inside the token.
+  RFC 3161 anchor carries is the TSA's, inside the token. A transparency-log
+  anchor carries a tree size, not a wall clock.
 * **Nothing here reaches the network on its own.** :func:`request_timestamp_token`
   is the only function that opens a socket and it is reached only when an
-  operator names a TSA URL; the verify path never does.
+  operator names a TSA URL; the verify path never does. Transparency-log
+  registration (SCITT) is a later slice.
 """
 
 from __future__ import annotations
@@ -56,6 +72,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ANCHOR_FILENAME",
     "ANCHOR_KIND_RFC3161",
+    "ANCHOR_KIND_TRANSPARENCY_LOG",
     "ANCHOR_SCHEMA_VERSION",
     "AnchorStatus",
     "AnchorVerification",
@@ -63,8 +80,10 @@ __all__ = [
     "SealAnchorError",
     "build_rfc3161_anchor",
     "build_timestamp_request",
+    "build_transparency_log_anchor",
     "load_anchor",
     "request_timestamp_token",
+    "transparency_log_leaf",
     "verify_anchor",
     "write_anchor",
 ]
@@ -75,8 +94,14 @@ ANCHOR_FILENAME = "seal_anchor.json"
 #: Record format version. Bumped only for an incompatible field change.
 ANCHOR_SCHEMA_VERSION = "1.0.0"
 
-#: The only anchor kind this slice understands.
+#: RFC 3161 timestamping-authority token over the sealed head.
 ANCHOR_KIND_RFC3161 = "rfc3161"
+
+#: RFC 6962-style inclusion proof against an external append-only log.
+ANCHOR_KIND_TRANSPARENCY_LOG = "transparency-log"
+
+#: Anchor kinds this build can load and verify offline.
+_SUPPORTED_ANCHOR_KINDS = frozenset({ANCHOR_KIND_RFC3161, ANCHOR_KIND_TRANSPARENCY_LOG})
 
 #: A sealed head is a SHA-256 digest rendered as lowercase hex.
 _HEAD_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -97,11 +122,13 @@ class AnchorStatus(StrEnum):
     downgrade of one into another.
     """
 
-    #: The token is a valid TSA chain over exactly the head presented.
+    #: The token is a valid TSA chain over exactly the head presented,
+    #: or the inclusion proof recomputes the signed tree head.
     VERIFIED = "verified"
     #: The anchor witnesses a different head than the one presented.
     MISMATCHED = "mismatched"
-    #: The token failed to parse, chain, or imprint-match.
+    #: The token failed to parse, chain, or imprint-match, or the
+    #: inclusion proof / tree-head signature did not verify.
     INVALID = "invalid"
     #: No TSA trust anchors were supplied, so nothing was checked.
     UNVERIFIABLE = "unverifiable"
@@ -114,28 +141,57 @@ class SealAnchor:
     Attributes:
         run_id: Run whose journal head is anchored.
         head_sha256: The sealed Merkle head, lowercase hex.
-        anchor_kind: Always :data:`ANCHOR_KIND_RFC3161` in this slice.
+        anchor_kind: :data:`ANCHOR_KIND_RFC3161` or
+            :data:`ANCHOR_KIND_TRANSPARENCY_LOG`.
         token_b64: Base64 of the DER ``TimeStampResp`` / ``TimeStampToken``.
+            Empty on a transparency-log anchor.
         tsa_url: Where the token came from. Recorded for provenance only -
-            verification never contacts it.
+            verification never contacts it. Empty on a transparency-log
+            anchor.
+        leaf_hash: RFC 6962 leaf over the bare sealed-head digest. Set on a
+            transparency-log anchor.
+        tree_size: Log tree size at which the leaf was included.
+        audit_path: Inclusion path of ``{"hash", "left"}`` steps from leaf
+            to root. Same shape as the self-hosted transparency receipt.
+        signed_tree_head: Log tree head: ``tree_size``, ``root_hash``,
+            ``signature_b64``.
+        log_public_key: Ed25519 public key that signed the tree head,
+            lowercase hex of the raw 32-byte key.
     """
 
     run_id: str
     head_sha256: str
     anchor_kind: str
-    token_b64: str
-    tsa_url: str
+    token_b64: str = ""
+    tsa_url: str = ""
+    leaf_hash: str | None = None
+    tree_size: int | None = None
+    audit_path: list[dict[str, Any]] | None = None
+    signed_tree_head: dict[str, Any] | None = None
+    log_public_key: str | None = None
 
     def to_record(self) -> dict[str, Any]:
-        """Return the on-disk record for this anchor."""
-        return {
+        """Return the on-disk record for this anchor.
+
+        RFC 3161 records keep the v3.19.2 field set so existing files stay
+        byte-compatible. Transparency-log records omit the TSA fields.
+        """
+        record: dict[str, Any] = {
             "schema_version": ANCHOR_SCHEMA_VERSION,
             "run_id": self.run_id,
             "head_sha256": self.head_sha256,
             "anchor_kind": self.anchor_kind,
-            "rfc3161_token_b64": self.token_b64,
-            "rfc3161_tsa_url": self.tsa_url,
         }
+        if self.anchor_kind == ANCHOR_KIND_TRANSPARENCY_LOG:
+            record["leaf_hash"] = self.leaf_hash
+            record["tree_size"] = self.tree_size
+            record["audit_path"] = self.audit_path
+            record["signed_tree_head"] = self.signed_tree_head
+            record["log_public_key"] = self.log_public_key
+            return record
+        record["rfc3161_token_b64"] = self.token_b64
+        record["rfc3161_tsa_url"] = self.tsa_url
+        return record
 
     def token_der(self) -> bytes:
         """Decode the stored token.
@@ -162,15 +218,18 @@ class AnchorVerification:
         status: The verdict.
         errors: Human-readable reasons the verdict is not ``VERIFIED``.
         gen_time: The TSA's recorded time for the imprint, present only on a
-            ``VERIFIED`` verdict - an unchecked token's ``genTime`` is not
-            evidence of anything.
+            ``VERIFIED`` RFC 3161 verdict - an unchecked token's ``genTime``
+            is not evidence of anything.
         tsa_subject: Subject DN of the signing TSA certificate, on a pass.
+        tree_size: Log tree size, present only on a ``VERIFIED``
+            transparency-log verdict.
     """
 
     status: AnchorStatus
     errors: list[str] = field(default_factory=_empty_str_list)
     gen_time: datetime | None = None
     tsa_subject: str | None = None
+    tree_size: int | None = None
 
 
 def _require_head(head_sha256: str) -> str:
@@ -178,6 +237,30 @@ def _require_head(head_sha256: str) -> str:
         msg = f"sealed head must be 64 lowercase hex characters (SHA-256), got {head_sha256!r}"
         raise SealAnchorError(msg)
     return head_sha256
+
+
+def _require_hex64(value: str, *, label: str) -> str:
+    if not _HEAD_PATTERN.fullmatch(value):
+        msg = f"{label} must be 64 lowercase hex characters, got {value!r}"
+        raise SealAnchorError(msg)
+    return value
+
+
+def _canonical_sth_bytes(signed_tree_head: dict[str, Any]) -> bytes:
+    """Canonical bytes the log signed: the tree head without the signature."""
+    body = {key: value for key, value in signed_tree_head.items() if key != "signature_b64"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def transparency_log_leaf(head_sha256: str) -> str:
+    """RFC 6962 leaf over the bare sealed-head digest.
+
+    ``SHA-256(0x00 || raw head bytes)``. The run id and any clock stay out
+    of the preimage so the leaf is recomputable from the seal alone.
+    """
+    from bernstein.core.persistence.merkle import _leaf_digest
+
+    return _leaf_digest(bytes.fromhex(_require_head(head_sha256)))
 
 
 def build_rfc3161_anchor(*, run_id: str, head_sha256: str, token_der: bytes, tsa_url: str) -> SealAnchor:
@@ -208,6 +291,60 @@ def build_rfc3161_anchor(*, run_id: str, head_sha256: str, token_der: bytes, tsa
     )
 
 
+def build_transparency_log_anchor(
+    *,
+    run_id: str,
+    head_sha256: str,
+    leaf_hash: str,
+    tree_size: int,
+    audit_path: list[dict[str, Any]],
+    signed_tree_head: dict[str, Any],
+    log_public_key: str,
+) -> SealAnchor:
+    """Bind an RFC 6962 inclusion proof to the sealed head it witnesses.
+
+    Args:
+        run_id: Run the head belongs to.
+        head_sha256: The sealed Merkle head, lowercase hex.
+        leaf_hash: Domain-separated leaf over the bare head digest.
+        tree_size: Log tree size at inclusion.
+        audit_path: Sibling hashes from leaf to root.
+        signed_tree_head: Tree head plus ``signature_b64``.
+        log_public_key: Ed25519 public key, lowercase hex.
+
+    Returns:
+        The anchor, ready to :func:`write_anchor`.
+
+    Raises:
+        SealAnchorError: When a required field is missing or malformed.
+    """
+    head = _require_head(head_sha256)
+    expected_leaf = transparency_log_leaf(head)
+    leaf = _require_hex64(leaf_hash, label="leaf_hash")
+    if leaf != expected_leaf:
+        msg = f"leaf_hash {leaf} does not match the sealed head {head}"
+        raise SealAnchorError(msg)
+    if tree_size < 1:
+        msg = f"tree_size must be a positive integer, got {tree_size!r}"
+        raise SealAnchorError(msg)
+    if not isinstance(audit_path, list):
+        msg = "audit_path must be a list of inclusion steps"
+        raise SealAnchorError(msg)
+    if not isinstance(signed_tree_head, dict) or "signature_b64" not in signed_tree_head:
+        msg = "signed_tree_head must include signature_b64"
+        raise SealAnchorError(msg)
+    return SealAnchor(
+        run_id=run_id,
+        head_sha256=head,
+        anchor_kind=ANCHOR_KIND_TRANSPARENCY_LOG,
+        leaf_hash=leaf,
+        tree_size=tree_size,
+        audit_path=audit_path,
+        signed_tree_head=signed_tree_head,
+        log_public_key=_require_hex64(log_public_key, label="log_public_key"),
+    )
+
+
 def write_anchor(path: Path, anchor: SealAnchor) -> None:
     """Write *anchor* to *path* as a stable, sorted JSON record."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,30 +372,62 @@ def load_anchor(path: Path) -> SealAnchor:
     raw = cast("dict[str, Any]", parsed)
 
     kind = raw.get("anchor_kind")
-    if kind != ANCHOR_KIND_RFC3161:
-        msg = f"unsupported anchor_kind {kind!r} in {path} (this build verifies {ANCHOR_KIND_RFC3161!r} only)"
+    if kind not in _SUPPORTED_ANCHOR_KINDS:
+        supported = ", ".join(sorted(_SUPPORTED_ANCHOR_KINDS))
+        msg = f"unsupported anchor_kind {kind!r} in {path} (this build verifies {supported})"
         raise SealAnchorError(msg)
 
-    fields: dict[str, str] = {}
-    for name, key in (
-        ("run_id", "run_id"),
-        ("head_sha256", "head_sha256"),
-        ("token_b64", "rfc3161_token_b64"),
-        ("tsa_url", "rfc3161_tsa_url"),
-    ):
-        value = raw.get(key, "" if key == "rfc3161_tsa_url" else None)
-        if not isinstance(value, str):
-            msg = f"anchor record at {path} is missing a string {name!r}"
-            raise SealAnchorError(msg)
-        fields[name] = value
+    if kind == ANCHOR_KIND_TRANSPARENCY_LOG:
+        return _load_transparency_log_anchor(path, raw)
+    return _load_rfc3161_anchor(path, raw)
 
+
+def _require_string_field(raw: dict[str, Any], key: str, *, path: Path, default: str | None = None) -> str:
+    value = raw.get(key, default)
+    if not isinstance(value, str):
+        msg = f"anchor record at {path} is missing a string {key!r}"
+        raise SealAnchorError(msg)
+    return value
+
+
+def _load_rfc3161_anchor(path: Path, raw: dict[str, Any]) -> SealAnchor:
+    """Load a v3.19.2 RFC 3161 record. Log fields are ignored if present."""
     return SealAnchor(
-        run_id=fields["run_id"],
-        head_sha256=_require_head(fields["head_sha256"]),
+        run_id=_require_string_field(raw, "run_id", path=path),
+        head_sha256=_require_head(_require_string_field(raw, "head_sha256", path=path)),
         anchor_kind=ANCHOR_KIND_RFC3161,
-        token_b64=fields["token_b64"],
-        tsa_url=fields["tsa_url"],
+        token_b64=_require_string_field(raw, "rfc3161_token_b64", path=path),
+        tsa_url=_require_string_field(raw, "rfc3161_tsa_url", path=path, default=""),
     )
+
+
+def _load_transparency_log_anchor(path: Path, raw: dict[str, Any]) -> SealAnchor:
+    """Load a transparency-log record. TSA fields are not required."""
+    tree_size = raw.get("tree_size")
+    if not isinstance(tree_size, int) or isinstance(tree_size, bool):
+        msg = f"anchor record at {path} is missing an integer tree_size"
+        raise SealAnchorError(msg)
+    audit_path = raw.get("audit_path")
+    if not isinstance(audit_path, list):
+        msg = f"anchor record at {path} is missing an audit_path list"
+        raise SealAnchorError(msg)
+    signed_tree_head = raw.get("signed_tree_head")
+    if not isinstance(signed_tree_head, dict):
+        msg = f"anchor record at {path} is missing a signed_tree_head object"
+        raise SealAnchorError(msg)
+    try:
+        return build_transparency_log_anchor(
+            run_id=_require_string_field(raw, "run_id", path=path),
+            head_sha256=_require_string_field(raw, "head_sha256", path=path),
+            leaf_hash=_require_string_field(raw, "leaf_hash", path=path),
+            tree_size=tree_size,
+            audit_path=cast("list[dict[str, Any]]", audit_path),
+            signed_tree_head=cast("dict[str, Any]", signed_tree_head),
+            log_public_key=_require_string_field(raw, "log_public_key", path=path),
+        )
+    except SealAnchorError as exc:
+        msg = f"anchor record at {path}: {exc}"
+        raise SealAnchorError(msg) from exc
 
 
 def verify_anchor(
@@ -269,23 +438,30 @@ def verify_anchor(
 ) -> AnchorVerification:
     """Check *anchor* against the head a verifier recomputed, offline.
 
-    Three steps, in this order, because a later step's verdict would be
-    misleading once an earlier one has failed:
+    Binding is checked first for every kind: the stored head must equal
+    ``sealed_head``. After that the path splits on ``anchor_kind``.
 
-    1. **Binding.** The anchor's head must equal ``sealed_head``. A run that
-       was rewritten and re-sealed reaches a different head, and no token can
-       be re-obtained for the past - so a rewrite surfaces here as
-       ``MISMATCHED``.
-    2. **Trust anchors.** Without operator-pinned TSA roots there is nothing
+    RFC 3161 (unchanged):
+
+    1. **Trust anchors.** Without operator-pinned TSA roots there is nothing
        to chain to; the verdict is ``UNVERIFIABLE``, never a pass.
-    3. **Chain.** The token is parsed, chained to those roots, its CMS
+    2. **Chain.** The token is parsed, chained to those roots, its CMS
        signature checked, and its ``messageImprint`` compared with the head
        digest - all by :func:`~bernstein.core.security.rfc3161_verifier.verify_rfc3161_token`.
+
+    Transparency-log:
+
+    1. Recompute the leaf from the sealed head.
+    2. Walk the stored audit path to a root.
+    3. Check that root and tree size against the signed tree head.
+    4. Verify the tree-head signature with the stored log public key.
+       No network, and no TSA fallback.
 
     Args:
         anchor: The stored anchor.
         sealed_head: The head recomputed from the artifacts on disk.
-        trusted_tsa_certs: Operator-pinned TSA roots. Empty means no verdict.
+        trusted_tsa_certs: Operator-pinned TSA roots. Empty means no
+            RFC 3161 verdict. Ignored for a transparency-log anchor.
 
     Returns:
         The verdict and its diagnostics.
@@ -295,6 +471,8 @@ def verify_anchor(
             status=AnchorStatus.MISMATCHED,
             errors=[f"anchor witnesses head {anchor.head_sha256}, artifacts recompute to {sealed_head}"],
         )
+    if anchor.anchor_kind == ANCHOR_KIND_TRANSPARENCY_LOG:
+        return _verify_transparency_log_anchor(anchor)
     if not trusted_tsa_certs:
         return AnchorVerification(
             status=AnchorStatus.UNVERIFIABLE,
@@ -322,6 +500,63 @@ def verify_anchor(
         gen_time=result.gen_time,
         tsa_subject=result.tsa_subject,
     )
+
+
+def _verify_transparency_log_anchor(anchor: SealAnchor) -> AnchorVerification:
+    """Recompute the leaf, walk the inclusion proof, verify the tree head."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from bernstein.core.security.audit_receipt import _root_from_inclusion
+
+    errors: list[str] = []
+    if not anchor.leaf_hash or anchor.tree_size is None or anchor.audit_path is None:
+        return AnchorVerification(
+            status=AnchorStatus.INVALID,
+            errors=["transparency-log anchor is missing leaf_hash, tree_size or audit_path"],
+        )
+    if not anchor.signed_tree_head or not anchor.log_public_key:
+        return AnchorVerification(
+            status=AnchorStatus.INVALID,
+            errors=["transparency-log anchor is missing signed_tree_head or log_public_key"],
+        )
+
+    try:
+        recomputed_leaf = transparency_log_leaf(anchor.head_sha256)
+    except SealAnchorError as exc:
+        return AnchorVerification(status=AnchorStatus.INVALID, errors=[str(exc)])
+    if recomputed_leaf != anchor.leaf_hash:
+        errors.append(
+            f"leaf_hash {anchor.leaf_hash} does not recompute from sealed head {anchor.head_sha256}",
+        )
+
+    computed_root = _root_from_inclusion(recomputed_leaf, anchor.audit_path)
+    sth = anchor.signed_tree_head
+    sth_root = sth.get("root_hash")
+    sth_size = sth.get("tree_size")
+    signature_b64 = sth.get("signature_b64")
+    if not isinstance(sth_root, str) or not isinstance(signature_b64, str):
+        return AnchorVerification(
+            status=AnchorStatus.INVALID,
+            errors=["signed_tree_head is missing root_hash or signature_b64"],
+        )
+    if computed_root != sth_root:
+        errors.append(f"inclusion proof recomputes root {computed_root}, signed tree head has {sth_root}")
+    if sth_size != anchor.tree_size:
+        errors.append(
+            f"signed tree head tree_size {sth_size!r} does not match stored tree_size {anchor.tree_size}",
+        )
+
+    try:
+        signature = base64.b64decode(signature_b64, validate=True)
+        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(anchor.log_public_key))
+        public_key.verify(signature, _canonical_sth_bytes(sth))
+    except (InvalidSignature, ValueError, binascii.Error) as exc:
+        errors.append(f"tree-head signature: {exc}")
+
+    if errors:
+        return AnchorVerification(status=AnchorStatus.INVALID, errors=errors)
+    return AnchorVerification(status=AnchorStatus.VERIFIED, tree_size=anchor.tree_size)
 
 
 def build_timestamp_request(head_sha256: str, *, nonce: int) -> bytes:
