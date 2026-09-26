@@ -29,6 +29,34 @@ QUARANTINE_THRESHOLD = 3
 QUARANTINE_EXPIRY_DAYS = 7
 """Days after which a quarantine entry is automatically expired."""
 
+_TRANSIENT_HOST_FAILURE_MARKERS = (
+    "disk space critical",
+    "no space left on device",
+    "out of memory",
+    "cannot allocate memory",
+    "too many open files",
+)
+"""Host exhaustion strings a spawn exception can carry: the spawner's own
+refusal (``Disk space critical`` from ``spawner_core.py``'s pre-spawn floor
+check) plus the POSIX errno texts the same condition surfaces as. Scope:
+Windows mid-spawn exhaustion (``WinError 112``/``1455``, ``EDQUOT``) is not
+matched and still records, and ``out of memory`` also matches per-process
+limits (e.g. a V8 heap cap) that are not host-wide."""
+
+
+def is_transient_host_failure(spawn_error_text: str) -> bool:
+    """Return True when a spawn exception's text is host resource exhaustion.
+
+    Only the batch spawn loop in ``task_lifecycle.py`` calls this, on the
+    exception it caught: agents never author that text, so the classification
+    is trusted where ``task.result_summary`` never was. The stored summary an
+    agent can write through ``POST /tasks/{id}/fail`` never reaches this
+    predicate; the exemption crosses to the tick loop only as the store's
+    excused marker (see :meth:`QuarantineStore.excuse_failure`).
+    """
+    lowered = spawn_error_text.lower()
+    return any(marker in lowered for marker in _TRANSIENT_HOST_FAILURE_MARKERS)
+
 
 @dataclass
 class QuarantineEntry:
@@ -61,6 +89,7 @@ class QuarantineStore:
 
     def __init__(self, path: Path) -> None:
         self._path = path
+        self._excused_path = path.with_suffix(".excused.json")
 
     # ------------------------------------------------------------------
     # Read
@@ -141,6 +170,33 @@ class QuarantineStore:
             return False
         return entry.fail_count >= QUARANTINE_THRESHOLD
 
+    def is_excused(self, task_id: str) -> bool:
+        """Return True when *task_id* carries a current excused marker.
+
+        The spawn loop excuses the tasks it gave up spawning after the host
+        ran out of resources; a marker expires on the same boundary as an
+        entry (``_is_expired``), so the excuse always outlives the entry it
+        excuses and there is no day where a live entry records again with
+        its marker already gone. Keyed by task
+        id, not title: only the tasks the spawn loop actually failed are
+        excused, so a later task under the same title that fails for its own
+        reasons still counts toward quarantine.
+
+        Args:
+            task_id: Exact task id to check.
+
+        Returns:
+            True while a current marker exists for the task id.
+        """
+        record = self._load_excused().get(task_id)
+        if record is None:
+            return False
+        try:
+            recorded = date.fromisoformat(str(record.get("recorded_at") or ""))
+        except ValueError:
+            return False
+        return (date.today() - recorded) <= timedelta(days=QUARANTINE_EXPIRY_DAYS)
+
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
@@ -164,17 +220,83 @@ class QuarantineStore:
         """
         write_atomic_json(self._path, [asdict(e) for e in entries])
 
-    def record_failure(self, task_title: str, reason: str) -> None:
+    def excuse_failure(self, task_id: str, reason: str) -> None:
+        """Mark *task_id* excused from cross-run failure recording.
+
+        Written only by the spawn loop's give-up branch, after it classified
+        the exception it caught as transient host resource exhaustion
+        (:func:`is_transient_host_failure`). Agents can write
+        ``task.result_summary`` through ``POST /tasks/{id}/fail`` but cannot
+        write this marker, so the exemption cannot be forged from task text.
+        Keyed by task id and expiring after ``QUARANTINE_EXPIRY_DAYS``: only
+        the tasks the spawn loop failed are excused, never a later task that
+        shares the title.
+
+        Args:
+            task_id: Task id whose spawn gave up on host exhaustion.
+            reason: The orchestrator-observed exception text, for operators.
+        """
+        excused = self._load_excused()
+        excused[task_id] = {
+            "reason": reason,
+            "recorded_at": date.today().isoformat(),
+        }
+        write_atomic_json(self._excused_path, excused)
+        logger.warning(
+            "quarantine: task %s excused from cross-run recording after host resource exhaustion: %s",
+            task_id,
+            reason,
+        )
+
+    def _load_excused(self) -> dict[str, dict[str, str]]:
+        """Load excused markers, treating an absent or damaged file as empty."""
+        if not self._excused_path.exists():
+            return {}
+        try:
+            raw: dict[str, dict[str, object]] = json.loads(self._excused_path.read_text())
+            return {
+                str(title): {
+                    "reason": str(item.get("reason") or ""),
+                    "recorded_at": str(item.get("recorded_at") or ""),
+                }
+                for title, item in raw.items()
+                if isinstance(item, dict)
+            }
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.error(
+                "quarantine: %s is unreadable (%s); treating no task as excused until the file is repaired or removed",
+                self._excused_path,
+                exc,
+            )
+            return {}
+
+    def record_failure(self, task_title: str, reason: str, *, task_id: str = "") -> bool:
         """Record a failure for *task_title*, incrementing its fail count.
 
         Creates a new entry if one does not exist.  Always updates
         ``last_failure`` to today and ``reason`` to the most recent failure.
-        Persists immediately.
+        Persists immediately.  A task whose id carries a current excused
+        marker (the spawn loop gave up spawning it after host resource
+        exhaustion) is refused: a full disk is not a fact about that task.
+        A later task under the same title still records normally.
 
         Args:
             task_title: Title of the failed task.
             reason: Human-readable failure reason.
+            task_id: Id of the failed task; checked against the excused
+                markers the spawn loop wrote.
+
+        Returns:
+            True when the failure was recorded, False when it was excused.
         """
+        if task_id and self.is_excused(task_id):
+            logger.warning(
+                "quarantine: not recording task %s (%r) failure: its spawn was "
+                "excused after transient host resource exhaustion",
+                task_id,
+                task_title,
+            )
+            return False
         entries = self.load()
         today = date.today().isoformat()
 
@@ -189,7 +311,7 @@ class QuarantineStore:
                     task_title,
                     entry.fail_count,
                 )
-                return
+                return True
 
         # First time seeing this task
         entries.append(
@@ -203,6 +325,7 @@ class QuarantineStore:
         )
         self.save(entries)
         logger.debug("quarantine: started tracking failures for %r", task_title)
+        return True
 
     def clear(self, task_title: str | None = None) -> None:
         """Remove quarantine entries.

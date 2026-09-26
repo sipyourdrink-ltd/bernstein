@@ -2875,6 +2875,7 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
         console.print("[dim]No quarantined tasks.[/dim]")
         return
 
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(show_header=True, header_style="bold red")
@@ -2886,12 +2887,13 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
 
     for entry in entries:
         fail_style = "bold red" if entry.fail_count >= QUARANTINE_THRESHOLD else "yellow"
+        # Rich parses cells as markup; titles and reasons are free text.
         table.add_row(
-            entry.task_title,
+            escape(entry.task_title),
             f"[{fail_style}]{entry.fail_count}[/{fail_style}]",
             entry.last_failure,
             entry.action,
-            entry.reason,
+            escape(entry.reason),
         )
 
     console.print(table)

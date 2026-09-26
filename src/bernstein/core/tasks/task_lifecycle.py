@@ -55,6 +55,7 @@ from bernstein.core.replay.review_board import (
 )
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
+from bernstein.core.security.quarantine import is_transient_host_failure
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
 from bernstein.core.tasks.artifact_completion import is_artifact_mode, verify_task_completion
 from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard, meta_task_kind
@@ -634,12 +635,14 @@ def maybe_retry_task(
         # with an empty set, so the store is asked whether this title is
         # already at the quarantine threshold before it is incremented again.
         if not quarantine.is_quarantined(task.title):
-            quarantine.record_failure(task.title, "Max retries exhausted")
-            logger.warning(
-                "Task %r exhausted %d retries -- recorded cross-run failure in quarantine",
-                task.title,
-                effective_max,
-            )
+            failure_reason = task.result_summary or "Max retries exhausted"
+            recorded = quarantine.record_failure(task.title, failure_reason, task_id=task.id)
+            if recorded:
+                logger.warning(
+                    "Task %r exhausted %d retries -- recorded cross-run failure in quarantine",
+                    task.title,
+                    effective_max,
+                )
         return False
 
     next_retry = retry_count + 1
@@ -3106,6 +3109,13 @@ def claim_and_spawn_batches(
                 )
             should_retry, _ = spawn_analyzer.should_retry(batch_history, max_retries=orch._MAX_SPAWN_FAILURES)
             if new_count >= orch._MAX_SPAWN_FAILURES or not should_retry:
+                # Classify the caught exception, not agent-writable task.result_summary.
+                if is_transient_host_failure(str(exc)):
+                    try:
+                        for task in batch:
+                            orch._quarantine.excuse_failure(task.id, f"host resource exhaustion during spawn: {exc}")
+                    except Exception:
+                        logger.warning("Could not excuse tasks after host resource exhaustion", exc_info=True)
                 # The analyzer can call it quits before the budget is
                 # spent. Park explicitly so the two ways of giving up
                 # leave the same operator-visible state.
