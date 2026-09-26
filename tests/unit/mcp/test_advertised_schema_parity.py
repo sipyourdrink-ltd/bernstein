@@ -184,15 +184,27 @@ def _enum_fields(tool_name: str, schema: dict[str, Any], payload: dict[str, Any]
 
 def test_schema_files_and_registered_tools_are_the_same_set() -> None:
     """Every registered tool has a schema file and every schema file a tool."""
+    from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES
+
     advertised = set(_advertised_schemas())
     enforced = set(_enforced_schemas())
+    deprecated_aliases = set(DEPRECATED_TOOL_ALIASES.keys())
+
     assert advertised - enforced == set(), "registered tools with no schema file"
-    assert enforced - advertised == set(), "schema files with no registered tool"
+    # Enforced schemas that are not advertised must be deprecated aliases (intentionally unadvertised)
+    unadvertised_enforced = enforced - advertised
+    assert unadvertised_enforced.issubset(deprecated_aliases), (
+        f"schema files with no registered tool: {unadvertised_enforced - deprecated_aliases}"
+    )
 
 
 def test_seeds_cover_every_registered_tool() -> None:
     """A new tool must bring a seed payload, or the property tests skip it."""
-    assert set(_SEEDS) == set(_advertised_schemas())
+    from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES
+
+    # Seeds cover advertised tools plus deprecated aliases
+    expected = set(_advertised_schemas()) | set(DEPRECATED_TOOL_ALIASES.keys())
+    assert set(_SEEDS) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +212,7 @@ def test_seeds_cover_every_registered_tool() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("tool_name", sorted(_SEEDS))
+@pytest.mark.parametrize("tool_name", sorted(_advertised_schemas().keys()))
 def test_advertised_schema_is_the_enforced_schema(tool_name: str) -> None:
     """What a client is shown is what ``validate_tool_call`` applies."""
     advertised = _advertised_schemas()[tool_name]

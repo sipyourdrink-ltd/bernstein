@@ -87,20 +87,20 @@ async def _call_json(mcp: Any, name: str, args: dict[str, Any]) -> Any:
 
 async def _list_tools(mcp: Any) -> Any:
     """Invoke the low-level tools/list handler (what a client actually sees)."""
-    from mcp.server.lowlevel import ServerRequestContext
-    from mcp.server.lifespan import LifespanResultT
+    from mcp.server import ServerRequestContext
+    from mcp.server.lowlevel.server import LifespanResultT
     from mcp.types import PaginatedRequestParams
-    import contextvars
 
     handler = mcp._lowlevel_server._request_handlers["tools/list"].handler
     ctx = ServerRequestContext[LifespanResultT](
         request_id="test",
         session=None,
         lifespan_context=None,
-        context=contextvars.Context(),
+        protocol_version="2024-11-05",
+        method="tools/list",
     )
     response = await handler(ctx, PaginatedRequestParams(method="tools/list"))
-    return response.root.tools
+    return response.tools
 
 
 # ---------------------------------------------------------------------------

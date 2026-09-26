@@ -1,7 +1,7 @@
 """Structured tool results and declared output schemas (#3086).
 
 The three most-polled tools declare an ``outputSchema`` and return
-``structuredContent``: a client renders run state natively and validates a
+``structured_content``: a client renders run state natively and validates a
 result programmatically, instead of re-parsing a JSON string out of a text
 blob on every poll. The text content block is unchanged, including the
 ``_meter`` envelope, so no current consumer breaks; the declared schema
@@ -33,11 +33,21 @@ def _meter_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _wire_tools_async(mcp: Any) -> dict[str, Any]:
-    from mcp.types import ListToolsRequest
+    from mcp.server import ServerRequestContext
+    from mcp.server.lowlevel.server import LifespanResultT
+    from mcp.types import PaginatedRequestParams
 
-    handler = mcp._mcp_server.request_handlers[ListToolsRequest]
-    response = await handler(ListToolsRequest(method="tools/list"))
-    return {tool.name: tool for tool in response.root.tools}
+    handler_entry = mcp._lowlevel_server._request_handlers["tools/list"]
+    handler = handler_entry.handler
+    ctx = ServerRequestContext[LifespanResultT](
+        request_id="test",
+        session=None,
+        lifespan_context=None,
+        protocol_version="2024-11-05",
+        method="tools/list",
+    )
+    response = await handler(ctx, PaginatedRequestParams(method="tools/list"))
+    return {tool.name: tool for tool in response.tools}
 
 
 def _wire_tools(mcp: Any) -> dict[str, Any]:
@@ -108,10 +118,10 @@ async def test_live_poll_result_validates_against_its_declared_schema(
     mcp = create_mcp_server(server_url="http://localhost:8052")
     declared = (await _wire_tools_async(mcp))["bernstein_run_status"].output_schema
     result = await _poll(mcp)
-    assert result.structuredContent is not None
-    jsonschema.Draft7Validator(declared).validate(result.structuredContent)
+    assert result.structured_content is not None
+    jsonschema.Draft7Validator(declared).validate(result.structured_content)
     # The envelope is emitted because the meter is on, and the schema said so.
-    assert "_meter" in result.structuredContent
+    assert "_meter" in result.structured_content
 
 
 @pytest.mark.asyncio
@@ -123,13 +133,13 @@ async def test_live_poll_result_validates_with_the_meter_off(
     mcp = create_mcp_server(server_url="http://localhost:8052")
     declared = (await _wire_tools_async(mcp))["bernstein_run_status"].output_schema
     result = await _poll(mcp)
-    assert result.structuredContent is not None
-    jsonschema.Draft7Validator(declared).validate(result.structuredContent)
-    assert "_meter" not in result.structuredContent
+    assert result.structured_content is not None
+    jsonschema.Draft7Validator(declared).validate(result.structured_content)
+    assert "_meter" not in result.structured_content
 
 
 # ---------------------------------------------------------------------------
-# The text block is unchanged; structuredContent is its parse
+# The text block is unchanged; structured_content is its parse
 # ---------------------------------------------------------------------------
 
 
@@ -143,7 +153,7 @@ async def test_text_block_is_the_envelope_and_structured_is_its_parse(
     result = await _poll(mcp)
     text = result.content[0].text
     parsed = json.loads(text)
-    assert parsed == result.structuredContent
+    assert parsed == result.structured_content
     assert set(parsed) == {"result", "_meter"}
 
 
@@ -160,7 +170,7 @@ async def test_run_handle_fields_are_first_class(
     _seed_journal(tmp_path)
     mcp = create_mcp_server(server_url="http://localhost:8052")
     result = await _poll(mcp)
-    handle = result.structuredContent["result"]
+    handle = result.structured_content["result"]
     for field in ("taskId", "runId", "status", "journalHead", "chainHead", "receiptHash", "pollToken"):
         assert isinstance(handle[field], str), field
     assert handle["status"] == "completed"
@@ -198,6 +208,6 @@ async def test_two_projections_of_one_journal_are_byte_identical(
     mcp = create_mcp_server(server_url="http://localhost:8052")
     first = await _poll(mcp)
     second = await _poll(mcp)
-    first_bytes = json.dumps(first.structuredContent["result"], sort_keys=True).encode()
-    second_bytes = json.dumps(second.structuredContent["result"], sort_keys=True).encode()
+    first_bytes = json.dumps(first.structured_content["result"], sort_keys=True).encode()
+    second_bytes = json.dumps(second.structured_content["result"], sort_keys=True).encode()
     assert first_bytes == second_bytes
