@@ -150,9 +150,11 @@ signature minted just after.
 4. **Grace expiry.** The keystore stops including the archived key
    when `list_archived()` runs. The next JWKS fetch returns only the
    new key.
-5. **Garbage collection.** The keystore does not delete archived
-   directories; an operator may prune them out-of-band once they are
-   well beyond grace.
+5. **Garbage collection.** The keystore deletes archived
+   directories whose grace window has closed during `rotate()`.
+   `list_archived()` stops publishing them at the same cutoff, so nothing
+   still served is removed; the deletion is best-effort and reversible
+   (retired keys are simply kept if the prune fails).
 
 Source: the public surface `load_or_generate`, `rotate`,
 `list_archived` on `AgentCardKeystore` covers steps 1, 3, and 4.
