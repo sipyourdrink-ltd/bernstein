@@ -52,9 +52,10 @@ theme:
     - content.tabs.link
     - toc.follow
     - announce.dismiss
+  logo: assets/brand/bernstein-mark.svg
+  favicon: assets/brand/bernstein-mark.svg
   icon:
     repo: fontawesome/brands/github
-    logo: material/music-note-eighth
 
 extra:
   social:
@@ -532,6 +533,7 @@ nav:
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
           - Design tokens: design/tokens.md
+          - Brand and logo: design/brand.md
           - Adapter capability contract: adapters/capability_contract.md
           - Global config CLI: operations/global-config.md
           - Workflow manifests: operations/workflow-manifests.md

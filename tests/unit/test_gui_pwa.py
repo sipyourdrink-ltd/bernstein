@@ -210,13 +210,13 @@ def test_icon_rejects_negative_size() -> None:
 def test_icon_default_colours_render_dark_background() -> None:
     blob = render_icon_png(8)
     # decode the first pixel after the filter byte; it should equal the bg
-    # colour (top-left corner is outside the glyph for size 8).
+    # colour (top-left corner is outside the hexagon for size 8).
     idx = blob.index(b"IDAT")
     length = int.from_bytes(blob[idx - 4 : idx], "big")
     raw = zlib.decompress(blob[idx + 4 : idx + 4 + length])
     # row 0: filter byte at raw[0], pixel 0 at raw[1:4]
     r, g, b = raw[1], raw[2], raw[3]
-    assert (r, g, b) == (17, 17, 17)
+    assert (r, g, b) == (19, 19, 15)  # the dark ``bg`` design token, #13130F
 
 
 def test_icon_custom_background_colour_applied() -> None:

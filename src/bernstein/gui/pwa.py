@@ -543,19 +543,23 @@ def _png_chunk(tag: bytes, data: bytes) -> bytes:
 def render_icon_png(
     size: int,
     *,
-    bg: tuple[int, int, int] = (17, 17, 17),
-    fg: tuple[int, int, int] = (234, 234, 234),
+    bg: tuple[int, int, int] = (19, 19, 15),
+    fg: tuple[int, int, int] = (245, 165, 36),
 ) -> bytes:
     """Render a flat square PNG icon of ``size`` x ``size`` pixels.
 
-    The icon is a solid background square with a centered "B" mark drawn
-    as a simple geometric glyph (two stacked half-bowls). Output is a
-    valid uncompressed-friendly PNG using zlib deflate.
+    The icon is the Bernstein mark - a pointy-top hexagon with the terminal
+    prompt ``>_`` cut through it - on a solid background, the same geometry
+    as ``docs/assets/brand/bernstein-mark.svg`` (see ``docs/design/brand.md``).
+    It is rasterised here in pure Python so the GUI extra pulls in no image
+    library. The hexagon sits inside the maskable safe zone (the inner 80 %
+    circle), so a launcher may crop the square to a circle without clipping.
+    Output is a valid 8-bit RGB PNG using zlib deflate.
 
     Args:
         size: Side length in pixels. Must be a positive integer.
-        bg: Background RGB triple.
-        fg: Foreground (glyph) RGB triple.
+        bg: Background RGB triple (default: the dark ``bg`` design token).
+        fg: Mark RGB triple (default: brand amber).
 
     Returns:
         Raw PNG file bytes.
@@ -566,39 +570,46 @@ def render_icon_png(
     if size <= 0:
         raise ValueError("Icon size must be a positive integer")
 
-    # Pixel matrix: row-major, each row prefixed with a filter byte (0).
-    # We draw a simple B-mark composed of a vertical stem and two half-
-    # bowls. The geometry is approximated in pixel space so it scales
-    # cleanly to both 192 and 512.
-    stem_x0 = int(size * 0.32)
-    stem_x1 = int(size * 0.42)
-    bowl_x1 = int(size * 0.66)
-    top_y0 = int(size * 0.22)
-    mid_y = int(size * 0.50)
-    bot_y1 = int(size * 0.78)
-    bowl_thickness = max(1, int(size * 0.10))
+    # Geometry in unit space (0..1), matching the SVG source: hexagon of
+    # circumradius 0.30 centred at (0.5, 0.5); chevron and underscore as in
+    # the 800-px master scaled by 1/800.
+    cx = cy = 0.5
+    r = 0.30
+    # A point is inside a regular pointy-top hexagon when |x| <= r*sqrt(3)/2
+    # and |y| + |x|/sqrt(3) <= r  (two of the three edge-pair half-planes).
+    half_w = r * 0.8660254
+    inv_sqrt3 = 0.5773503
 
-    half_band = bowl_thickness // 2
-    mid_band_lo = mid_y - half_band
-    mid_band_hi = mid_y + half_band
-    top_band_hi = top_y0 + bowl_thickness
-    bot_band_lo = bot_y1 - bowl_thickness
+    def in_hexagon(x: float, y: float) -> bool:
+        dx, dy = abs(x - cx), abs(y - cy)
+        return dx <= half_w and dy + dx * inv_sqrt3 <= r
+
+    # Chevron: outer triangle (216,290)-(433,400)-(216,510) minus the inner
+    # triangle (216,350)-(315,400)-(216,450); underscore: rect 453..583 x 452..510.
+    def in_triangle(px: float, py: float, ax: float, ay: float, bx: float, by: float, qx: float, qy: float) -> bool:
+        d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by)
+        d2 = (px - qx) * (by - qy) - (bx - qx) * (py - qy)
+        d3 = (px - ax) * (qy - ay) - (qx - ax) * (py - ay)
+        return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
+
+    def in_prompt(x: float, y: float) -> bool:
+        px, py = x * 800, y * 800
+        chevron = in_triangle(px, py, 216, 290, 433, 400, 216, 510) and not in_triangle(
+            px, py, 216, 350, 315, 400, 216, 450
+        )
+        underscore = 453 <= px <= 583 and 452 <= py <= 510
+        return chevron or underscore
 
     rows: list[bytes] = []
     for y in range(size):
         row = bytearray()
         row.append(0)  # PNG filter byte: None
+        uy = (y + 0.5) / size
         for x in range(size):
-            in_stem = stem_x0 <= x < stem_x1 and top_y0 <= y < bot_y1
-            in_top_band = top_y0 <= y < top_band_hi or mid_band_lo <= y < mid_band_hi
-            top_outer = stem_x1 <= x < bowl_x1 and in_top_band
-            top_side = bowl_x1 - bowl_thickness <= x < bowl_x1 and top_y0 <= y < mid_band_hi
-            in_bot_band = mid_band_lo <= y < mid_band_hi or bot_band_lo <= y < bot_y1
-            bot_outer = stem_x1 <= x < bowl_x1 and in_bot_band
-            bot_side = bowl_x1 - bowl_thickness <= x < bowl_x1 and mid_band_lo <= y < bot_y1
-            on_glyph = in_stem or top_outer or top_side or bot_outer or bot_side
-            r, g, b = fg if on_glyph else bg
-            row.extend((r, g, b))
+            ux = (x + 0.5) / size
+            on_mark = in_hexagon(ux, uy) and not in_prompt(ux, uy)
+            r_, g_, b_ = fg if on_mark else bg
+            row.extend((r_, g_, b_))
         rows.append(bytes(row))
 
     raw = b"".join(rows)
