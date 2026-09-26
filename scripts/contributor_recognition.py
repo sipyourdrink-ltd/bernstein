@@ -59,6 +59,10 @@ EMAIL_SUBJECT = "BRNSTN-PR-LNKD"
 COHORT_DAYS = 90
 GATE_DAYS = 30
 DEFAULT_GATE_LINES = 1000
+#: GitHub stops being a reliable notifier well before a comment reaches a
+#: hundred @mentions, and a mass ping reads as a blast. Above this many, only
+#: the gate and the opt-ins are pinged.
+MENTION_CAP = 50
 ISRAEL_TZ = "Asia/Jerusalem"
 REPLY_BY_TIMEZONES = (
     ("Israel", "Asia/Jerusalem"),
@@ -321,6 +325,19 @@ def _pr_links(repo: str, prs: list[dict[str, Any]], limit: int = 6) -> str:
     return ", ".join(shown) + (f" and {more} more" if more > 0 else "")
 
 
+def mention_set(above: list[dict[str, Any]], below: list[dict[str, Any]], registry: Registry) -> set[str]:
+    """Who gets an @mention: above the gate, opted in, or merged in the gate window; capped at MENTION_CAP."""
+    core = {c["login"] for c in above} | {
+        c["login"] for c in below if (r := registry.get(c["login"])) and (r.opt_in or r.exception)
+    }
+    recent = {c["login"] for c in below if c.get("prs_30d", 0) > 0}
+    return core | recent if len(core | recent) <= MENTION_CAP else core
+
+
+def _name(login: str, pinged: set[str]) -> str:
+    return f"@{login}" if login in pinged else f"[{login}](https://github.com/{login})"
+
+
 def render_period_comment(state: dict[str, Any], registry: Registry, gate: int = DEFAULT_GATE_LINES) -> str:
     """The periodic GitHub comment: everyone who merged, alphabetical, facts only."""
     repo = state["repo"]
@@ -328,6 +345,7 @@ def render_period_comment(state: dict[str, Any], registry: Registry, gate: int =
     above, below = [], []
     for c in state["contributors"]:
         (above if c["added_30d"] >= gate else below).append(c)
+    pinged = mention_set(above, below, registry)
     out = [PERIOD_MARKER.format(end=end), f"### Contributor recognition, period ending {end}", ""]
     out.append(
         f"Window: pull requests merged into `main` between {state['cohort_since'][:10]} and {end} "
@@ -346,7 +364,7 @@ def render_period_comment(state: dict[str, Any], registry: Registry, gate: int =
             rec = registry.get(c["login"])
             status = "yes" if rec and rec.opt_in else ("no" if rec else "not yet")
             out.append(
-                f"| @{c['login']} | {status} | {c['prs_30d']} | {c['added_30d']:,} | "
+                f"| {_name(c['login'], pinged)} | {status} | {c['prs_30d']} | {c['added_30d']:,} | "
                 f"{len(c['merged_prs_90d'])}: {_pr_links(repo, c['merged_prs_90d'])} |"
             )
     else:
@@ -355,13 +373,19 @@ def render_period_comment(state: dict[str, Any], registry: Registry, gate: int =
     out.append(f"**Also merged in the last 90 days:** {len(below)}")
     out.append("")
     if below:
-        out.append(", ".join(f"@{c['login']} ({len(c['merged_prs_90d'])})" for c in below))
+        out.append(", ".join(f"{_name(c['login'], pinged)} ({len(c['merged_prs_90d'])})" for c in below))
         out.append("")
     exceptions = [c["login"] for c in below if (r := registry.get(c["login"])) and r.exception]
     if exceptions:
         names = ", ".join(f"@{x}" for x in sort_logins(exceptions))
         out.append("Included in the next post by the exception path: " + names)
         out.append("")
+    out.append(
+        "Pinged: everyone above the gate, everyone who has opted in, and everyone with a merge in the last "
+        f"{state['gate_days']} days. The rest are linked, not pinged, so an old one-off pull request does not "
+        "earn a notification."
+    )
+    out.append("")
     out.append(
         "The gate is a filter for one LinkedIn flow, not a measure of anyone's work; reviews, security, docs and "
         f"release work often land at forty lines. Meaningful work below the line: email {EMAIL_ADDRESS}, subject "

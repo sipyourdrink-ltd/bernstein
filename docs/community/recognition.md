@@ -50,6 +50,11 @@ the issue number. Cadence is a goal, not a promise the workflow makes.
   the registry has an `exception` flag for the maintainer's answer.
 - **Order:** alphabetical by login, case-insensitive, everywhere a list of
   people appears. Never by volume.
+- **Mentions:** the periodic comment @mentions everyone above the gate, everyone
+  who opted in, and everyone with a merge in the last 30 days; the rest are
+  linked without an @, so an old one-off pull request does not earn a
+  notification. Past 50 mentions only the gate and the opt-ins are pinged
+  (`MENTION_CAP`).
 - **Metric source:** the REST API only (`pulls`, `pulls/{n}/files`). A merged
   pull request's file list never changes, so `collect --cache` keeps the
   per-PR count between local runs. The workflow runs uncached; a weekly run

@@ -433,3 +433,38 @@ class TestPublish:
             runner=lambda args, payload=None: existing if payload is None else {"html_url": "u"},
         )
         assert "skipped" in res
+
+
+def _c(login: str, added: int, prs_30d: int) -> dict:
+    return {
+        "login": login,
+        "added_30d": added,
+        "added_30d_raw": added,
+        "prs_30d": prs_30d,
+        "merged_prs_90d": [{"number": 1, "title": "t", "merged_at": "2026-09-01T00:00:00Z"}],
+    }
+
+
+def test_mentions_ping_the_gate_the_opt_ins_and_recent_mergers_only() -> None:
+    reg = cr.Registry(opt_ins={"optedin": cr.OptIn(login="optedin", opt_in=True)})
+    above = [_c("big", 2000, 3)]
+    below = [_c("recent", 10, 1), _c("old", 10, 0), _c("optedin", 10, 0)]
+    assert cr.mention_set(above, below, reg) == {"big", "recent", "optedin"}
+    state = {
+        "repo": REPO,
+        "generated_at": "2026-09-26T00:00:00Z",
+        "cohort_since": "2026-06-28T00:00:00Z",
+        "gate_since": "2026-08-27T00:00:00Z",
+        "gate_days": 30,
+        "contributors": above + below,
+    }
+    body = cr.render_period_comment(state, reg)
+    assert "@big" in body and "@recent" in body and "@optedin" in body
+    assert "@old" not in body and "[old](https://github.com/old)" in body
+
+
+def test_mentions_fall_back_to_gate_and_opt_ins_above_the_cap() -> None:
+    reg = cr.Registry(opt_ins={"optedin": cr.OptIn(login="optedin", opt_in=True)})
+    above = [_c("big", 2000, 3)]
+    below = [_c(f"u{i:03d}", 10, 1) for i in range(cr.MENTION_CAP)] + [_c("optedin", 10, 0)]
+    assert cr.mention_set(above, below, reg) == {"big", "optedin"}
