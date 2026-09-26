@@ -26,14 +26,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mcp.server.fastmcp.resources.templates import ResourceTemplate
+from mcp.server.mcpserver.resources.templates import ResourceTemplate
 
 from bernstein.core.lineage.entry import canonicalise, entry_hash
 from bernstein.core.lineage.store import LineageStore
 from bernstein.mcp.input_validation import validate_or_error, validation_error_response
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 logger = logging.getLogger(__name__)
 

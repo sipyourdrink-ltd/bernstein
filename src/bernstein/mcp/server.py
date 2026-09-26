@@ -63,25 +63,22 @@ import logging
 import os
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver import MCPServer as FastMCP
 
 # Patch FastMCP FuncMetadata to support CreateTaskResult without validation error
-from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
+from mcp.server.mcpserver.utilities.func_metadata import FuncMetadata
 from mcp.types import (
     CallToolResult,
-    CancelTaskRequest,
     CancelTaskResult,
     CreateTaskResult,
-    GetTaskPayloadRequest,
-    GetTaskRequest,
     GetTaskResult,
     ListTasksRequest,
     ListTasksResult,
     Task,
-    TaskExecutionMode,
     TextContent,
     ToolExecution,
 )
@@ -108,6 +105,9 @@ from bernstein.mcp.input_validation import (
     validate_or_error,
     validation_error_response,
 )
+
+if TYPE_CHECKING:
+    from mcp.server.lowlevel.server import ServerRequestContext
 
 _orig_convert_result = FuncMetadata.convert_result
 
@@ -2145,7 +2145,7 @@ def _apply_tool_tier(mcp: FastMCP[None], active_tier: ToolTier) -> None:
 #: fallback: it always answers immediately and never returns a task handle,
 #: so it declares ``forbidden`` explicitly rather than leaving a caller to
 #: infer the default.
-_TOOL_TASK_SUPPORT: dict[str, TaskExecutionMode] = {
+_TOOL_TASK_SUPPORT: dict[str, str] = {
     "bernstein_run": "optional",
     "bernstein_run_status": "forbidden",
 }
@@ -2188,10 +2188,10 @@ def _shape_tools_list(mcp: FastMCP[None]) -> None:
                 tool.execution = ToolExecution(taskSupport=mode)
             output_schema = _output_schema_for(tool.name)
             if output_schema is not None:
-                tool.outputSchema = output_schema
+                tool.output_schema = output_schema
         return tools
 
-    mcp._mcp_server.list_tools()(shaped_list_tools)
+    mcp.list_tools = shaped_list_tools
 
 
 # MCP ``tasks/list`` is a paginated request whose only client-supplied knob is
@@ -2228,10 +2228,18 @@ def _decode_task_cursor(cursor: str | None) -> int:
 def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
     """Register custom experimental handlers for the MCP Tasks extension."""
     import httpx
+    from mcp.types import (
+        CancelTaskRequestParams,
+        CancelTaskResult,
+        GetTaskPayloadRequestParams,
+        GetTaskRequestParams,
+        GetTaskResult,
+        ListTasksResult,
+        PaginatedRequestParams,
+    )
 
-    @mcp._mcp_server.experimental.get_task()
-    async def get_task(req: GetTaskRequest) -> GetTaskResult:
-        parts = req.params.taskId.split(":", 1)
+    async def get_task_handler(ctx: ServerRequestContext[None], params: GetTaskRequestParams) -> GetTaskResult:
+        parts = params.taskId.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
@@ -2248,9 +2256,10 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             pollInterval=5000,
         )
 
-    @mcp._mcp_server.experimental.get_task_result()  # type: ignore[arg-type]
-    async def get_task_result(req: GetTaskPayloadRequest) -> CallToolResult:
-        parts = req.params.taskId.split(":", 1)
+    async def get_task_result_handler(
+        ctx: ServerRequestContext[None], params: GetTaskPayloadRequestParams
+    ) -> CallToolResult:
+        parts = params.taskId.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
@@ -2275,13 +2284,12 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             isError=is_error,
         )
 
-    @mcp._mcp_server.experimental.list_tasks()
-    async def list_tasks(req: ListTasksRequest) -> ListTasksResult:
+    async def list_tasks_handler(ctx: ServerRequestContext[None], params: ListTasksRequest | None) -> ListTasksResult:
         # Translate the opaque cursor into an offset and always send explicit
         # limit/offset, so the server returns the paginated envelope instead of
         # the legacy flat list hard-capped at 500 (which strands the tail for
         # any operator with more than 500 tasks).
-        offset = _decode_task_cursor(req.params.cursor if req.params else None)
+        offset = _decode_task_cursor(params.cursor if params and params.cursor else None)
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(
                 f"{server_url}/tasks",
@@ -2300,9 +2308,8 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
         next_cursor = _encode_task_cursor(next_offset) if next_offset < total else None
         return ListTasksResult(tasks=mcp_tasks, nextCursor=next_cursor)
 
-    @mcp._mcp_server.experimental.cancel_task()
-    async def cancel_task(req: CancelTaskRequest) -> CancelTaskResult:
-        parts = req.params.taskId.split(":", 1)
+    async def cancel_task_handler(ctx: ServerRequestContext[None], params: CancelTaskRequestParams) -> CancelTaskResult:
+        parts = params.taskId.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.post(f"{server_url}/tasks/{task_id}/cancel", headers=_auth_headers())
@@ -2318,6 +2325,12 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             ttl=_TASK_TTL_MS,
             pollInterval=5000,
         )
+
+    # Register handlers on the low-level server
+    mcp._lowlevel_server.add_request_handler("tasks/get", GetTaskRequestParams, get_task_handler)
+    mcp._lowlevel_server.add_request_handler("tasks/result", GetTaskPayloadRequestParams, get_task_result_handler)
+    mcp._lowlevel_server.add_request_handler("tasks/list", PaginatedRequestParams, list_tasks_handler)
+    mcp._lowlevel_server.add_request_handler("tasks/cancel", CancelTaskRequestParams, cancel_task_handler)
 
 
 def create_mcp_server(
@@ -2351,7 +2364,7 @@ def create_mcp_server(
 
     active_tier = resolve_active_tier(tier)
     mcp: FastMCP[None] = FastMCP(name, instructions=_SERVER_INSTRUCTIONS)
-    mcp._mcp_server.version = _package_version()
+    mcp._lowlevel_server.version = _package_version()
     register_capability_resource(mcp)
     register_prompt_resources(mcp)
     _register_query_tools(mcp, server_url)

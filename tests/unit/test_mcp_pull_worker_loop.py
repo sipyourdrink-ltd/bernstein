@@ -65,7 +65,7 @@ async def test_full_claim_update_complete_loop_verifies_offline(tmp_path: Path) 
     with patch("bernstein.mcp.server.httpx.AsyncClient", side_effect=_bridged_client):
         # 1. CLAIM -> signed claim receipt.
         claim_result = await mcp.call_tool("bernstein_claim", {"claimer_id": "worker-1", "role": "backend"})
-        claim_wire = _unwrap(claim_result[0][0].text)  # type: ignore[index]
+        claim_wire = _unwrap(claim_result.content[0].text)  # type: ignore[index]
         assert claim_wire["granted"] is True
         assert claim_wire["taskId"] == task_id
 
@@ -75,21 +75,21 @@ async def test_full_claim_update_complete_loop_verifies_offline(tmp_path: Path) 
                 "bernstein_post_message",
                 {"task_id": task_id, "body": note, "sender": "worker-1"},
             )
-            upd_wire = _unwrap(upd[0][0].text)  # type: ignore[index]
+            upd_wire = _unwrap(upd.content[0].text)  # type: ignore[index]
             assert upd_wire["entry_hash"].startswith("hmac-sha256:")
 
         # 3. COMPLETE -> the worker reports what it produced. The approval
         # verb is not a completion path: a task the worker is executing is
         # not in an approval state, so bernstein_approve refuses it.
         refused = await mcp.call_tool("bernstein_approve", {"task_id": task_id, "note": "looks good"})
-        refused_wire = _unwrap(refused[0][0].text)  # type: ignore[index]
+        refused_wire = _unwrap(refused.content[0].text)  # type: ignore[index]
         assert refused_wire["error"] == "task_not_awaiting_approval"
 
         done = await mcp.call_tool(
             "bernstein_complete",
             {"task_id": task_id, "result_summary": "shipped it"},
         )
-        done_wire = _unwrap(done[0][0].text)  # type: ignore[index]
+        done_wire = _unwrap(done.content[0].text)  # type: ignore[index]
         assert done_wire["task_id"] == task_id
         assert done_wire["status"] == "done"
 

@@ -78,27 +78,29 @@ def _mock_client(get_payload: Any = None, post_payload: Any = None) -> AsyncMock
 
 async def _call_json(mcp: Any, name: str, args: dict[str, Any]) -> Any:
     result = await mcp.call_tool(name, args)
-    if hasattr(result, "content"):
-        text = result.content[0].text
-    else:
-        text = result[0][0].text
+    text = result.content[0].text
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed and "result" in parsed:
         return parsed["result"]
     return parsed
 
 
-def _list_tools(mcp: Any) -> Any:
+async def _list_tools(mcp: Any) -> Any:
     """Invoke the low-level tools/list handler (what a client actually sees)."""
-    from mcp.types import ListToolsRequest
+    from mcp.server import ServerRequestContext
+    from mcp.server.lowlevel.server import LifespanResultT
+    from mcp.types import PaginatedRequestParams
 
-    handler = mcp._mcp_server.request_handlers[ListToolsRequest]
-
-    async def run() -> Any:
-        response = await handler(ListToolsRequest(method="tools/list"))
-        return response.root.tools
-
-    return asyncio.run(run())
+    handler = mcp._lowlevel_server._request_handlers["tools/list"].handler
+    ctx = ServerRequestContext[LifespanResultT](
+        request_id="test",
+        session=None,
+        lifespan_context=None,
+        protocol_version="2024-11-05",
+        method="tools/list",
+    )
+    response = await handler(ctx, PaginatedRequestParams(method="tools/list"))
+    return response.tools
 
 
 # ---------------------------------------------------------------------------
@@ -128,13 +130,13 @@ def test_alias_table_covers_every_removed_name() -> None:
 def test_no_deprecated_name_is_advertised_at_any_tier(tmp_path: Any) -> None:
     for tier in ("core", "standard", "all"):
         mcp = create_mcp_server(tier=tier, lineage_enabled=True, lineage_root=tmp_path)
-        wire_names = {t.name for t in _list_tools(mcp)}
+        wire_names = {t.name for t in asyncio.run(_list_tools(mcp))}
         assert not wire_names & set(DEPRECATED_TOOL_ALIASES), tier
 
 
 def test_wire_tools_list_hides_aliases_and_shows_the_consolidated_surface(tmp_path: Any) -> None:
     mcp = create_mcp_server(tier="all", lineage_enabled=True, lineage_root=tmp_path)
-    wire_names = {t.name for t in _list_tools(mcp)}
+    wire_names = {t.name for t in asyncio.run(_list_tools(mcp))}
     assert wire_names == set(tools_for_tier("all"))
     assert not wire_names & set(DEPRECATED_TOOL_ALIASES)
     assert {

@@ -99,11 +99,15 @@ def test_every_schema_declares_reviewed_host_effects_and_effective_tier() -> Non
 @pytest.mark.asyncio
 async def test_tools_list_uses_the_schema_host_effect_descriptions() -> None:
     """The audited JSON text, not an older Python docstring, reaches clients."""
+    from bernstein.core.protocols.mcp.tool_tiers import DEPRECATED_TOOL_ALIASES
+
     schemas = get_registry().schemas
     mcp = create_mcp_server(tier="all", lineage_enabled=True)
     advertised = {tool.name: tool.description for tool in await mcp.list_tools()}
 
-    assert set(advertised) == set(schemas)
+    # Advertised tools should match schemas minus deprecated aliases
+    expected_advertised = set(schemas) - set(DEPRECATED_TOOL_ALIASES.keys())
+    assert set(advertised) == expected_advertised
     assert advertised == {name: schemas[name]["description"] for name in advertised}
 
 

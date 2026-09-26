@@ -23,7 +23,7 @@ def _result_text(result: object) -> str:
     """
     if hasattr(result, "content"):
         return result.content[0].text  # type: ignore[union-attr]
-    return result[0][0].text  # type: ignore[index]
+    return result.content[0].text  # type: ignore[index]
 
 
 def _make_status_payload() -> dict:
