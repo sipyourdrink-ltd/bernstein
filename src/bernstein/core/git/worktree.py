@@ -278,6 +278,45 @@ def _copy_files(repo_root: Path, worktree_path: Path, files: Sequence[str]) -> N
             logger.warning("Failed to copy %r into worktree: %s", file_name, exc)
 
 
+def _exclude_copied_files(worktree_path: Path, files: Sequence[str]) -> None:
+    """Keep per-checkout inputs copied in here out of the agent's commits.
+
+    The files in ``copy_files`` are untracked inputs -- ``.env`` and friends --
+    that each worktree gets its own copy of. Nothing stopped them entering the
+    index: an agent running ``git add -A`` stages them, commits them to its
+    branch, and the merge back into the parent repository then fails with an
+    untracked-overwrite error, because the *same* files are sitting in the
+    destination working tree. The run ends on a git error that names a file
+    nobody asked the agent to touch (#5966).
+
+    Registered in ``info/exclude`` rather than ``.gitignore``, for the reason
+    :mod:`bernstein.core.git.local_exclude` gives: ``.gitignore`` is itself a
+    tracked file, so writing the exclusion into the work tree would swap one
+    leaked file for another.
+
+    Every configured name is registered, not only the ones this run copied. A
+    file already present at the target is skipped by ``_copy_files`` and is
+    just as stageable, so excluding only fresh copies would leave the case that
+    reported this unfixed.
+
+    Best-effort, like everything else in this setup path: ``register_run_excludes``
+    reports failure by returning nothing, and a worktree without the exclude is
+    still a usable worktree.
+    """
+    if not files:
+        return
+
+    from bernstein.core.git.local_exclude import register_run_excludes
+
+    # Anchored to the repository root, matching RUN_EXCLUDE_ENTRIES: an
+    # unanchored `.env` would also hide a `config/.env` the project tracks
+    # deliberately.
+    entries = tuple(f"/{file_name.lstrip('/')}" for file_name in files if file_name.strip())
+    added = register_run_excludes(worktree_path, entries)
+    if added:
+        logger.info("Excluded copied worktree inputs from git: %s", ", ".join(added))
+
+
 def setup_worktree_env(
     repo_root: Path,
     worktree_path: Path,
@@ -288,7 +327,8 @@ def setup_worktree_env(
     1. Symlinks large shared directories so the agent doesn't need to
        reinstall dependencies.
     2. Copies per-worktree files (e.g. ``.env``) so each agent has its
-       own editable copy.
+       own editable copy, and excludes them from git so a broad ``git add``
+       cannot commit them onto the agent's branch.
     3. Applies sparse checkout if configured.
     4. Optionally runs a setup command (e.g. ``npm install``) inside the
        worktree when symlinks are insufficient.
@@ -303,6 +343,7 @@ def setup_worktree_env(
     """
     _symlink_dirs(repo_root, worktree_path, config.symlink_dirs)
     _copy_files(repo_root, worktree_path, config.copy_files)
+    _exclude_copied_files(worktree_path, config.copy_files)
 
     # --- Apply sparse checkout ------------------------------------------------
     if config.sparse_paths:
