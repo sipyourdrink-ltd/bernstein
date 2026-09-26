@@ -80,6 +80,21 @@ See `bernstein integrations list` for the full enumerated set. This
 page lists categories rather than re-listing each entry so the index
 does not drift.
 
+### Evaluated, not wrapped
+
+Agents checked for an adapter and deliberately left without one:
+
+- **OpenWork** ([different-ai/openwork](https://github.com/different-ai/openwork)) -
+  a desktop app and server over the same `opencode serve` engine. Use the
+  `opencode` adapter: it already passes `OPENCODE_CONFIG` through, so a config
+  file declaring an `@ai-sdk/openai-compatible` provider (`options.baseURL`,
+  `options.apiKey`) routes the model through a gateway, with no second daemon.
+- **Rowboat** ([rowboatlabs/rowboat](https://github.com/rowboatlabs/rowboat)) -
+  now a desktop assistant with no one-shot command, only a server built from
+  source and driven over RPC and WebSocket. Its code edits are delegated to a
+  bundled Claude Code or Codex with their own credentials, bypassing any
+  configured model endpoint. Revisit if a headless CLI ships.
+
 ## Adding a new adapter
 
 Most CLI agents fit the declarative path: declare a capability profile
