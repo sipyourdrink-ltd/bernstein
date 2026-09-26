@@ -677,6 +677,7 @@ its merged branch, or the merge commit.
 
 | Command | Purpose | Source |
 |---|---|---|
+| `bernstein adopt` | Detect the running agent session to bring under governance (`--dry-run` only). | `cli/commands/adopt_cmd.py` |
 | `bernstein agents` | Agent catalog ops (group). | `cli/commands/agents_cmd.py:22` |
 | `bernstein test-adapter` | Spawn one adapter to verify its plumbing. | `cli/adapter_cmd.py:84` |
 | `bernstein worker` | Join a cluster as a remote worker node. | `cli/commands/worker_cmd.py` |
@@ -703,6 +704,21 @@ its merged branch, or the merge commit.
 | `--task TEXT` | required | Task for the adapter to execute. |
 | `--model NAME` | adapter default | Model to use for the smoke run. |
 | `--timeout SEC` | 120 | Wait up to N seconds for exit. |
+
+#### `bernstein adopt`
+
+Detects which coding agent the current session runs under and prints the workspace files adoption would write. Only `--dry-run` is implemented, and it writes nothing: writing the adoption, the signed receipt and the MCP tool are later slices of #5435.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--agent NAME` | `auto` | Agent to adopt: `auto`, `aider`, `claude`, `codex`, `cursor` or `opencode`. |
+| `--dir PATH` | `.` | Workspace directory the adoption plan is computed for. |
+| `--dry-run` | off | Print the detected agent, the evidence and the files adoption would write; write nothing. Required for now. |
+| `--json` | off | Emit the detection report as JSON. |
+
+Detection has two evidence tiers. A running ancestor process of an agent binary is session evidence; that agent's per-user configuration under the home directory is config evidence. With `--agent auto` the strongest tier that matched decides: one agent there is selected, several are refused as ambiguous, and a weaker tier never breaks the tie. The files reported are `bernstein init`'s own write plan.
+
+Exit codes: `0` detected (or named with `--agent`), `2` usage error, `3` run without `--dry-run`, `4` no agent detected, `5` ambiguous.
 
 #### `bernstein worker`
 
