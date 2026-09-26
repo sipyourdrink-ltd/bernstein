@@ -416,9 +416,14 @@ pkill -f bernstein   # kills everything including your own shell session
 ## Recognition
 
 All contributors are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
-Outstanding contributions are featured in our
-[monthly Community Spotlight](https://alexchernysh.com/blog)
-blog posts, which are shared on Twitter/X, LinkedIn, and dev.to.
+
+Roughly once every couple of weeks the project's LinkedIn page names, in one
+consolidated post, the contributors who asked to be named and says what they
+built. Opting in is one email; the how, the soft gate and the exception path
+are in the pinned recognition issue, and the operator side is
+[docs/community/recognition.md](docs/community/recognition.md). If you did the
+work, put it on your CV; the post exists so that there is a public record you
+did not write about yourself.
 
 ## Naming
 

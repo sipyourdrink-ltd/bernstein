@@ -1,0 +1,104 @@
+name: Contributor recognition
+
+# Renders the two drafts a recognition period needs (the periodic GitHub
+# comment and the LinkedIn draft) from public GitHub data, and publishes the
+# comment only when a person asks for it. The schedule never posts: the
+# maintainer reads the artifact, then re-runs with publish=true. Cadence is
+# whatever the maintainer manages, not what this file promises.
+
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Post the periodic comment on the recognition issue"
+        type: boolean
+        default: false
+      issue:
+        description: "Issue number of the pinned recognition issue (required with publish)"
+        type: string
+        default: ""
+      gate:
+        description: "Soft gate, added lines in the last 30 days"
+        type: string
+        default: "1000"
+
+concurrency:
+  group: contributor-recognition
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  render:
+    name: Collect and render the recognition drafts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Collect (fails closed on any API error)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 scripts/contributor_recognition.py --repo "${GITHUB_REPOSITORY}" collect \
+            --out out/state.json
+
+      - name: Render the periodic comment and the LinkedIn draft
+        env:
+          GATE: ${{ github.event.inputs.gate || '1000' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/contributor_recognition.py --repo "${GITHUB_REPOSITORY}" render \
+            --state out/state.json --gate "${GATE}" \
+            --out-comment out/period-comment.md --out-linkedin out/linkedin-draft.md
+          {
+            echo "### Contributor recognition drafts"
+            echo ""
+            echo "Artifacts: period-comment.md (GitHub), linkedin-draft.md (for the maintainer, never posted by automation)."
+            echo ""
+            cat out/period-comment.md
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish the periodic comment (only on request)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.inputs.issue }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ISSUE}" ]; then
+            echo "publish=true needs the issue number" >&2
+            exit 2
+          fi
+          python3 scripts/contributor_recognition.py --repo "${GITHUB_REPOSITORY}" publish-comment \
+            --issue "${ISSUE}" --file out/period-comment.md --yes
+
+      - name: Upload the drafts and the state
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: contributor-recognition
+          path: |
+            out/state.json
+            out/period-comment.md
+            out/linkedin-draft.md
+          retention-days: 30
