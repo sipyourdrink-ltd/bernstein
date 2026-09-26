@@ -82,7 +82,7 @@ async def test_bernstein_claim_posts_to_claim_receipt_route() -> None:
     assert body["claimer_id"] == "worker-1"
     assert body["role"] == "backend"
     assert body["completed_ids"] == ["t0"]
-    text = result[0][0].text  # type: ignore[index]
+    text = result.content[0].text  # type: ignore[index]
     assert "t1" in text
 
 
@@ -92,7 +92,7 @@ async def test_bernstein_claim_rejects_bad_task_id_pattern() -> None:
 
     mcp = create_mcp_server(server_url="http://localhost:8052")
     result = await mcp.call_tool("bernstein_claim", {"claimer_id": "bad id with spaces/../"})
-    text = result[0][0].text  # type: ignore[index]
+    text = result.content[0].text  # type: ignore[index]
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]
@@ -124,7 +124,7 @@ async def test_bernstein_post_message_posts_to_mailbox_route() -> None:
     assert body["sender"] == "worker-1"
     assert body["kind"] == "finding"
     assert body["body"] == "halfway done"
-    text = result[0][0].text  # type: ignore[index]
+    text = result.content[0].text  # type: ignore[index]
     assert "hmac-sha256" in text
 
 
@@ -137,7 +137,7 @@ async def test_bernstein_post_message_rejects_unknown_kind() -> None:
         "bernstein_post_message",
         {"task_id": "t1", "body": "x", "sender": "w", "kind": "chit_chat"},
     )
-    text = result[0][0].text  # type: ignore[index]
+    text = result.content[0].text  # type: ignore[index]
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed:
         parsed = parsed["result"]

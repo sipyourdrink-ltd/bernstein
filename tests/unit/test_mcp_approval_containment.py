@@ -39,7 +39,7 @@ _SERVER_URL = "http://localhost:8052"
 
 def _unwrap(result: object) -> dict[str, Any]:
     """Parse a tool result, stripping the MCP cost-meter envelope."""
-    text = result[0][0].text  # type: ignore[index]
+    text = result.content[0].text  # type: ignore[index]
     parsed = json.loads(text)
     if isinstance(parsed, dict) and "_meter" in parsed and "result" in parsed:
         parsed = parsed["result"]
