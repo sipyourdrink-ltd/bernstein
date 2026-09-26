@@ -56,6 +56,11 @@ from rich.table import Table
 
 from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
 from bernstein.cli.helpers import console
+from bernstein.core.checks import (
+    compute_audit_exit_code,
+    findings_to_json,
+    findings_to_sarif,
+)
 from bernstein.core.govern import collect_remediation as _collect_remediation
 from bernstein.core.govern import compute_plan as _compute_plan
 from bernstein.core.govern.audit_sweep import CheckVerdict
@@ -90,6 +95,7 @@ def govern_group() -> None:
       bernstein govern ingest --spans spans.json --source otel-collector-prod
       bernstein govern posture [--workdir w] [--json-output]
       bernstein govern inventory --render mermaid|dot --store PATH
+      bernstein govern audit [--format text|json|sarif] [--strict] [--quiet]
       bernstein govern audit-compliance [--workdir .] [--only CMP] [--skip ID] [--profile soc2]
       bernstein govern audit-keys
     """
@@ -892,7 +898,7 @@ def governance_ingest_cmd(
 )
 @click.option("--list", "list_only", is_flag=True, help="Print the registered check ids and exit.")
 @click.option("--json-output", "as_json", is_flag=True, help="Print the report as JSON and nothing else.")
-def govern_audit_cmd(
+def govern_audit_compliance_cmd(
     workdir: Path,
     only: tuple[str, ...],
     skip: tuple[str, ...],
@@ -1015,19 +1021,94 @@ def _run_verifier_key_staleness_check() -> None:
 
 
 @govern_group.command("audit")
-def governance_audit_cmd() -> None:
-    """[Deprecated] Use ``bernstein govern audit-keys`` instead.
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "sarif"], case_sensitive=False),
+    default="text",
+    show_default=True,
+    help="Output format: text, json (one object per finding), or sarif (SARIF 2.1.0).",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Exit 2 when any required check is not_measurable.",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Print nothing; exit code only.",
+)
+@click.option(
+    "--required",
+    "-r",
+    "required_ids",
+    multiple=True,
+    help="Check ID(s) required to pass (defaults to all executed checks).",
+)
+@click.option(
+    "--workdir",
+    "-w",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Project root directory to audit.",
+)
+@click.pass_context
+def govern_audit_cmd(
+    ctx: click.Context,
+    output_format: str,
+    strict: bool,
+    quiet: bool,
+    required_ids: tuple[str, ...],
+    workdir: Path | None,
+) -> None:
+    """Run registered audit checks over the install and report findings (#5076).
 
-    The compliance policy library moved to ``bernstein govern audit-compliance``
-    in #5075; this alias preserves the prior verifier-key staleness behaviour
-    for one release and prints a deprecation notice on every invocation.
+    Supports text, JSON (one object per finding with every contract field),
+    and SARIF 2.1.0 output.
+
+    Exit codes:
+    - 0: every required check is measured and passed
+    - 1: any required check is measured and failed
+    - 2: any required check is not_measurable and --strict is set
+    Declared findings never change the exit code.
     """
-    click.echo(
-        "WARNING: 'bernstein govern audit' is deprecated and will be removed in v3.0.0 (#5075): "
-        "use 'bernstein govern audit-keys' instead.",
-        err=True,
-    )
-    _run_verifier_key_staleness_check()
+    from bernstein.core.checks.registry import _DEFAULT_REGISTRY
+
+    registry = _DEFAULT_REGISTRY
+    if ctx.obj and isinstance(ctx.obj, dict) and "check_registry" in ctx.obj:
+        registry = ctx.obj["check_registry"]
+
+    findings = registry.run_all(workdir)
+
+    required_set: set[str] | None = None
+    if required_ids:
+        required_set = set()
+        for item in required_ids:
+            for piece in item.split(","):
+                if piece.strip():
+                    required_set.add(piece.strip())
+
+    exit_code = compute_audit_exit_code(findings, strict=strict, required=required_set)
+
+    if quiet:
+        raise SystemExit(exit_code)
+
+    if output_format.lower() == "json":
+        click.echo(findings_to_json(findings))
+    elif output_format.lower() == "sarif":
+        click.echo(json.dumps(findings_to_sarif(findings), indent=2))
+    else:
+        click.echo(f"govern audit -- {len(findings)} checks")
+        for f in findings:
+            state = "pass" if f.passed else ("fail" if f.passed is False else "")
+            verdict_str = f.verdict.value if not state else f"{f.verdict.value} {state}"
+            click.echo(f"  {f.id:<30} {verdict_str:<20} {f.summary or f.message}")
+
+    raise SystemExit(exit_code)
 
 
 @govern_group.command("audit-keys")
