@@ -1,7 +1,8 @@
 """Opt-in real CLI/LLM smoke test, including an authenticated remote callback.
 
 Run on an isolated host reachable from the sandbox. Requires a template with
-Python, Git, and Qwen Code, plus OPENAI_API_KEY/OPENAI_BASE_URL/model settings.
+Python, Git, and the CLI used by the test's adapter, plus
+OPENAI_API_KEY/OPENAI_BASE_URL/model settings.
 The callback is a test HTTP service, not a full Bernstein orchestrator run.
 """
 

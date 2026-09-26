@@ -143,7 +143,7 @@ restores, and repository/file injection. Fixtures delete every created sandbox
 and snapshot. A skipped suite is not live validation.
 
 
-A separate opt-in test exercises the real Qwen Code CLI and a model endpoint,
+A separate opt-in test exercises a real CLI agent and a model endpoint,
 agent-scoped token delivery, an authenticated callback, Git commit/bundle
 retrieval, and sandbox deletion. Run it on a dedicated test host, with the
 callback URL pointing back to that host at the configured port:
@@ -159,5 +159,6 @@ CI_SANDBOX0_AGENT_TEST=1 uv run python scripts/run_tests.py tests/integration/sa
 
 This test starts a temporary HTTP callback listener and makes billable model
 calls. It exercises the production spawner path, not the full scheduler/task
-server. The template must already contain Qwen Code; the test does not install
-tools into a production template. Ordinary conformance tests make no model calls.
+server. The template must already contain the CLI used by the test's adapter;
+the test does not install tools into a production template. Ordinary conformance
+tests make no model calls.
