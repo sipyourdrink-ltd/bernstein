@@ -75,11 +75,11 @@ class TestFormatHelpSuggestion:
         link = HelpLink(
             error_pattern=r"test",
             doc_section="troubleshooting#test",
-            url="https://bernstein.readthedocs.io/en/latest/troubleshooting#test",
+            url="https://docs.bernstein.run/en/latest/troubleshooting#test",
             summary="Test docs",
         )
         result = format_help_suggestion(link)
-        assert result == "See: https://bernstein.readthedocs.io/en/latest/troubleshooting#test"
+        assert result == "See: https://docs.bernstein.run/en/latest/troubleshooting#test"
 
     def test_format_starts_with_see(self) -> None:
         link = HELP_LINKS[0]
@@ -90,7 +90,7 @@ class TestFormatHelpSuggestion:
         link = HELP_LINKS[0]
         result = format_help_suggestion(link)
         url_part = result.removeprefix("See: ")
-        expected_host = "bernstein.readthedocs.io"
+        expected_host = "docs.bernstein.run"
         assert expected_host in url_part
 
 
@@ -132,7 +132,7 @@ class TestHelpLinksIntegrity:
 
     def test_all_urls_start_with_base(self) -> None:
         for link in HELP_LINKS:
-            assert link.url.startswith("https://bernstein.readthedocs.io/en/latest")
+            assert link.url.startswith("https://docs.bernstein.run/en/latest")
 
     def test_all_patterns_compile(self) -> None:
         import re

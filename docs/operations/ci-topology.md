@@ -35,6 +35,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/codeql.yml | CodeQL Security Analysis | push, schedule | {"cancel-in-progress": "false", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/contributor-recognition.yml | Contributor recognition | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "contributor-recognition"} | 1 |
 | .github/workflows/coverage-ratchet-weekly.yml | Coverage ratchet (weekly floor bump) | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "coverage-ratchet-weekly"} | 1 |
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | workflow_run | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
@@ -117,6 +118,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: cluster-tunnel-e2e (linux) |
 | .github/workflows/codeql.yml | analyze: CodeQL (${{ matrix.language }}) |
 | .github/workflows/contract-drift-autofix.yml | autofix: Detect and patch contract drift |
+| .github/workflows/contributor-recognition.yml | render: Collect and render the recognition drafts |
 | .github/workflows/coverage-ratchet-weekly.yml | bump: Bump diff-coverage floor and open review PR |
 | .github/workflows/coverage-ratchet.yml | ratchet: Total coverage ratchet |
 | .github/workflows/dependabot-auto-merge.yml | auto-merge |
@@ -199,6 +201,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cluster-tunnel-e2e.yml | workflow: {"contents": "read"} | CF_TUNNEL_HOSTNAME, CF_TUNNEL_TOKEN |
 | .github/workflows/codeql.yml | workflow: {"contents": "read"}<br>analyze: {"actions": "read", "contents": "read", "security-events": "write"} | - |
 | .github/workflows/contract-drift-autofix.yml | workflow: {"contents": "read"}<br>autofix: {"contents": "write", "issues": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
+| .github/workflows/contributor-recognition.yml | render: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/coverage-ratchet-weekly.yml | bump: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/coverage-ratchet.yml | ratchet: {"actions": "read", "contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
@@ -270,6 +273,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cifuzz-weekly.yml | cifuzz: upload cifuzz-artifacts-address |
 | .github/workflows/cluster-e2e.yml | cluster-e2e: upload cluster-e2e-logs |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: upload cluster-tunnel-e2e-logs |
+| .github/workflows/contributor-recognition.yml | render: upload contributor-recognition |
 | .github/workflows/coverage-ratchet.yml | ratchet: download coverage-report |
 | .github/workflows/docs-drift.yml | drift-check: upload docs-drift-report<br>drift-publish: download docs-drift-report |
 | .github/workflows/eval-weekly.yml | bench: upload eval-weekly-${{ github.run_id }}<br>smoke: upload eval-weekly-smoke |

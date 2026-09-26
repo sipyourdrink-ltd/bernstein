@@ -137,7 +137,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://bernstein.run"
-Documentation = "https://bernstein.readthedocs.io"
+Documentation = "https://docs.bernstein.run"
 Repository = "https://github.com/sipyourdrink-ltd/bernstein"
 Source = "https://github.com/sipyourdrink-ltd/bernstein"
 Issues = "https://github.com/sipyourdrink-ltd/bernstein/issues"
