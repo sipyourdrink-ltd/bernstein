@@ -280,6 +280,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `report.py`                 | Evolution observability - history table and static report generation |
 | `report_generator.py`       | Analysis result types, statistical helpers, and Goodhart's Law defenses |
 | `risk.py`                   | Strategic Risk Score (SRS) computation for evolution proposals |
+| `rollback_receipt.py`       | Durable rollback receipts for FileUpgradeExecutor (#2520) |
 | `sandbox.py`                | SandboxValidator - isolated testing of evolution proposals |
 | `types.py`                  | Shared types for the evolution system |
 | `upgrade_targets.py`        | Category-to-target-file mapping shared by the upgrade executor and task spawn |
