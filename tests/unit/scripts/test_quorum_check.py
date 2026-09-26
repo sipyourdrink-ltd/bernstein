@@ -4,6 +4,9 @@ Every rule is exercised against a constructed ``PullRequest`` through
 ``evaluate()``, which is the whole decision: the network calls sit in
 ``fetch_pull_request`` and are not part of what is being tested here, so a
 failure names the rule that regressed rather than a broken subprocess chain.
+The exception is the net diff: which approvals, contributors and pushes it
+carries is worked out from API answers, so those cases run
+``fetch_pull_request`` against a fake of the API and then ``evaluate()``.
 
 The cases that matter most are the ones where a pass would be wrong: an
 approval given before the last push, an approval from someone who pushed to
@@ -400,10 +403,10 @@ def test_a_stranger_cannot_block_the_maintainer(qc: ModuleType, roster) -> None:
 
 
 def _adopted(qc: ModuleType, **overrides):
-    """A large, sensitive contributor change the maintainer has pushed to and declared adopted."""
+    """An ordinary contributor change the maintainer has pushed to and declared adopted."""
     fields = dict(
-        changed_lines=600,
-        paths=["src/bernstein/core/security/dlp_scanner.py"],
+        changed_lines=100,
+        paths=["src/bernstein/cli/run.py"],
         contributors={"outsider", "owner"},
         reviews=[_review(qc, "owner", "COMMENTED", body=qc.ADOPTION_NOTICE)],
     )
@@ -420,7 +423,7 @@ def test_an_adopted_change_merges_without_approvals(qc: ModuleType, roster) -> N
 def test_the_notice_alone_does_not_adopt_a_change_the_maintainer_never_pushed_to(qc: ModuleType, roster) -> None:
     verdict = _evaluate(qc, roster, _adopted(qc, contributors={"outsider"}))
     assert not verdict.passed
-    assert "3 approvals" in verdict.requirements[0].text
+    assert "2 approvals" in verdict.requirements[0].text
 
 
 def test_a_push_alone_does_not_adopt_and_the_summary_says_what_would(qc: ModuleType, roster) -> None:
@@ -447,6 +450,45 @@ def test_adoption_ends_on_its_date(qc: ModuleType, roster) -> None:
     verdict = qc.evaluate(_adopted(qc), roster, OWNERS, after)
     assert not verdict.passed
     assert not any("dopted" in note for note in verdict.notes)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"changed_lines": 401},
+        # Sensitive, and outside every CODEOWNERS line of the fixture, so the
+        # tier alone refuses it.
+        {"paths": ["src/bernstein/plugins/sandbox_runner.py"]},
+    ],
+    ids=["large", "sensitive"],
+)
+def test_adoption_is_ignored_on_the_escalated_tier(qc: ModuleType, roster, overrides) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, **overrides))
+    assert not verdict.passed
+    assert "3 approvals" in verdict.requirements[0].text
+    assert not any("dopted" in note or qc.ADOPTION_NOTICE in note for note in verdict.notes)
+
+
+def test_adoption_is_ignored_on_a_codeowners_path(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, paths=["src/bernstein/core/tasks/claim.py"]))
+    assert not verdict.passed
+    assert not any("dopted" in note for note in verdict.notes)
+
+
+@pytest.mark.parametrize("path", [".github/workflows/ci.yml", "schemas/task.json", "proto/tasks.proto"])
+def test_adoption_is_ignored_under_the_paths_automation_cannot_land_alone(qc: ModuleType, roster, path: str) -> None:
+    # No CODEOWNERS line of its own here, so only the path class can refuse it.
+    unowned = [("*", ["core1", "core2"])]
+    verdict = qc.evaluate(_adopted(qc, paths=[path]), roster, unowned, NOW)
+    assert not verdict.passed
+    assert not any("dopted" in note for note in verdict.notes)
+
+
+def test_adoption_is_honoured_on_an_ordinary_unowned_change(qc: ModuleType, roster) -> None:
+    unowned = [("*", ["core1", "core2"])]
+    verdict = qc.evaluate(_adopted(qc, paths=["src/bernstein/cli/run.py", "docs/guide.md"]), roster, unowned, NOW)
+    assert verdict.passed
+    assert any("Adopted by the maintainer" in note for note in verdict.notes)
 
 
 # --- the objection window on governance files (charter section 10) ----------
@@ -581,3 +623,313 @@ def test_annotation_strips_backticks_and_handles_a_single_gap(qc: ModuleType) ->
         qc.Requirement("72 hours open for objections (touches `GOVERNANCE.md`)", False, "nobody")
     )
     assert qc.annotation(verdict) == "waiting for: 72 hours open for objections (touches GOVERNANCE.md) - nobody"
+
+
+# --- the net diff: approvals, contributors and the window follow it ---------
+#
+# These cases drive ``fetch_pull_request`` through a fake of the GitHub API, so
+# the fingerprint, the cache and the fail-closed fallbacks are exercised with
+# the decision they feed rather than in isolation.
+
+REPO = "o/r"
+MAIN_TIP = "f" * 40
+SHA_A = "a" * 40
+SHA_B = "b" * 40
+SHA_C = "c" * 40
+SHA_E = "e" * 40
+CHANGED_FILE = "src/bernstein/cli/run.py"
+
+
+def _when(hours_ago: float) -> str:
+    return (NOW - timedelta(hours=hours_ago)).isoformat().replace("+00:00", "Z")
+
+
+def _patch(start: int, added: str = "+    retries = 3") -> str:
+    """One hunk; ``start`` moves when the base branch shifts the file under it."""
+    return f"@@ -{start},2 +{start},3 @@ def run(task):\n     plan = load(task)\n{added}\n     return execute(plan)"
+
+
+def _raw_commit(
+    sha: str,
+    author: str,
+    *,
+    committer: str | None = None,
+    parents: tuple[str, ...] = (MAIN_TIP,),
+    hours_ago: float = 5.0,
+    message: str = "change",
+) -> dict:
+    return {
+        "sha": sha,
+        "parents": [{"sha": parent} for parent in parents],
+        "author": {"login": author},
+        "committer": {"login": committer or author},
+        "commit": {"message": message, "committer": {"date": _when(hours_ago)}},
+    }
+
+
+def _compare(commits: list[dict], patch: str | None = None, *, files: list[dict] | None = None) -> dict:
+    if files is None:
+        files = [{"filename": CHANGED_FILE, "status": "modified", "patch": patch or _patch(10)}]
+    return {"files": files, "commits": commits, "total_commits": len(commits)}
+
+
+def _raw_review(login: str, sha: str, state: str = "APPROVED", body: str = "") -> dict:
+    return {
+        "user": {"login": login},
+        "state": state,
+        "commit_id": sha,
+        "submitted_at": "2026-09-10T10:00:00Z",
+        "body": body,
+    }
+
+
+class FakeGitHub:
+    """Answers the calls ``fetch_pull_request`` makes, and records them.
+
+    A compare for a sha it was not given fails the way a missing commit does,
+    with a non-zero exit from ``gh``.
+    """
+
+    def __init__(
+        self,
+        *,
+        commits: list[dict],
+        compares: dict[str, object],
+        reviews: list[dict] | None = None,
+        force_pushes: list[tuple[float, str, str]] | None = None,
+        author: str = "outsider",
+        paths: list[str] | None = None,
+    ) -> None:
+        self.commits = commits
+        self.compares = compares
+        self.reviews = reviews or []
+        self.force_pushes = force_pushes or []
+        self.author = author
+        self.paths = paths or [CHANGED_FILE]
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str):
+        import subprocess
+
+        self.calls.append(args)
+        endpoint = args[1]
+        if endpoint == "graphql":
+            nodes = [
+                {"createdAt": _when(hours_ago), "beforeCommit": {"oid": before}, "afterCommit": {"oid": after}}
+                for hours_ago, before, after in self.force_pushes
+            ]
+            timeline = {"totalCount": len(nodes), "nodes": nodes}
+            return {"data": {"repository": {"pullRequest": {"timelineItems": timeline}}}}
+        if endpoint == f"repos/{REPO}/pulls/1":
+            return {
+                "user": {"login": self.author},
+                "draft": False,
+                "head": {"sha": self.commits[-1]["sha"]},
+                "base": {"ref": "main"},
+                "additions": 60,
+                "deletions": 40,
+            }
+        if endpoint == f"repos/{REPO}/pulls/1/files":
+            return [{"filename": path} for path in self.paths]
+        if endpoint == f"repos/{REPO}/pulls/1/reviews":
+            return self.reviews
+        if endpoint == f"repos/{REPO}/pulls/1/commits":
+            return self.commits
+        prefix = f"repos/{REPO}/compare/main..."
+        if endpoint.startswith(prefix):
+            answer = self.compares.get(endpoint[len(prefix) :])
+            if answer is None:
+                raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 404: Not Found")
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        raise AssertionError(f"unexpected call: {args}")
+
+    def compare_calls(self) -> list[str]:
+        return [args[1].rsplit("...", 1)[1] for args in self.calls if "/compare/" in args[1]]
+
+
+def _fetch(qc: ModuleType, fake: FakeGitHub):
+    return qc.fetch_pull_request(REPO, 1, api=fake)
+
+
+def _merged_main(*, merger: str = "owner", neutral: bool = True, reviews: list[dict] | None = None) -> FakeGitHub:
+    """The contributor's commit A, then ``merger`` merges ``main`` in as B."""
+    commit_a = _raw_commit(SHA_A, "outsider", hours_ago=80)
+    merge_b = _raw_commit(SHA_B, merger, parents=(SHA_A, SHA_E), hours_ago=1, message="Merge branch 'main'")
+    return FakeGitHub(
+        commits=[commit_a, merge_b],
+        compares={
+            SHA_A: _compare([commit_a], _patch(10)),
+            # main grew four lines above the change: same diff, new line numbers.
+            SHA_B: _compare([commit_a, merge_b], _patch(14) if neutral else _patch(14, "+    retries = 30")),
+        },
+        reviews=reviews,
+    )
+
+
+def test_the_fingerprint_ignores_line_numbers_and_nothing_else(qc: ModuleType) -> None:
+    moved = qc.net_diff_fingerprint(_compare([], _patch(14)))
+    assert moved is not None
+    assert moved == qc.net_diff_fingerprint(_compare([], _patch(10)))
+    assert moved != qc.net_diff_fingerprint(_compare([], _patch(10, "+    retries = 30")))
+    renamed = [{"filename": CHANGED_FILE, "previous_filename": "run.py", "status": "renamed", "patch": _patch(10)}]
+    assert moved != qc.net_diff_fingerprint(_compare([], files=renamed))
+    tail = qc.net_diff_fingerprint(_compare([], _patch(10).replace("def run(task):", "def plan(task):")))
+    assert moved != tail
+
+
+def test_an_approval_survives_a_merge_of_main_that_leaves_the_diff_alone(qc: ModuleType, roster) -> None:
+    fake = _merged_main(merger="outsider", reviews=[_raw_review("core1", SHA_A), _raw_review("comm1", SHA_A)])
+    pr = _fetch(qc, fake)
+    assert pr.head_sha == SHA_B
+    assert SHA_A in pr.same_diff
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert not any("before the last push" in note for note in verdict.notes)
+
+
+def test_an_approval_is_void_after_a_push_that_changes_the_diff(qc: ModuleType, roster) -> None:
+    fake = _merged_main(
+        merger="outsider", neutral=False, reviews=[_raw_review("core1", SHA_A), _raw_review("comm1", SHA_A)]
+    )
+    pr = _fetch(qc, fake)
+    assert SHA_A not in pr.same_diff
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert any("before the last push" in note for note in verdict.notes)
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        _compare(
+            [], files=[{"filename": f"f{i}.py", "status": "added", "patch": "@@ -0,0 +1 @@\n+x"} for i in range(300)]
+        ),
+        _compare([], files=[{"filename": "logo.png", "status": "modified"}]),
+        ValueError("gh returned something that is not JSON"),
+        None,  # the compare call itself fails
+    ],
+    ids=["truncated", "binary-or-too-large", "unreadable", "api-error"],
+)
+def test_an_uncomputable_fingerprint_falls_back_to_the_head_sha(qc: ModuleType, roster, broken) -> None:
+    fake = _merged_main(merger="outsider", reviews=[_raw_review("core1", SHA_A), _raw_review("comm1", SHA_A)])
+    if broken is None:
+        del fake.compares[SHA_A]
+    else:
+        fake.compares[SHA_A] = broken
+    pr = _fetch(qc, fake)
+    assert pr.same_diff == frozenset()
+    assert not _evaluate(qc, roster, pr).passed
+    # The same approvals on the head itself still count: sha binding is the floor.
+    fake.reviews = [_raw_review("core1", SHA_B), _raw_review("comm1", SHA_B)]
+    assert _evaluate(qc, roster, _fetch(qc, fake)).passed
+
+
+def test_each_sha_is_compared_at_most_once_per_run(qc: ModuleType) -> None:
+    reviews = [_raw_review("core1", SHA_A), _raw_review("comm1", SHA_A), _raw_review("owner", SHA_A)]
+    fake = _merged_main(reviews=reviews)
+    _fetch(qc, fake)
+    calls = fake.compare_calls()
+    assert sorted(calls) == sorted(set(calls))
+
+
+def test_a_maintainer_who_only_merged_main_can_still_approve(qc: ModuleType, roster) -> None:
+    fake = _merged_main(reviews=[_raw_review("owner", SHA_B), _raw_review("comm1", SHA_B)])
+    pr = _fetch(qc, fake)
+    assert "owner" in pr.contributors  # still counts as having pushed, for adoption
+    assert "owner" in pr.update_only
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_merge_of_main_that_changes_the_diff_keeps_the_maintainer_out(qc: ModuleType, roster) -> None:
+    fake = _merged_main(neutral=False, reviews=[_raw_review("owner", SHA_B), _raw_review("comm1", SHA_B)])
+    pr = _fetch(qc, fake)
+    assert "owner" not in pr.update_only
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def _rebased(*, before_committer: str = "outsider", neutral: bool = True, reviews=None) -> FakeGitHub:
+    """The contributor's A, rebased by the maintainer onto a newer main as B."""
+    commit_a = _raw_commit(SHA_A, "outsider", committer=before_committer, hours_ago=80)
+    commit_b = _raw_commit(SHA_B, "outsider", committer="owner", parents=(SHA_E,), hours_ago=1)
+    return FakeGitHub(
+        commits=[commit_b],
+        compares={
+            SHA_A: _compare([commit_a], _patch(10)),
+            SHA_B: _compare([commit_b], _patch(14) if neutral else _patch(14, "+    retries = 30")),
+        },
+        force_pushes=[(1, SHA_A, SHA_B)],
+        reviews=reviews,
+    )
+
+
+def test_a_maintainer_whose_rebase_left_the_diff_alone_can_still_approve(qc: ModuleType, roster) -> None:
+    pr = _fetch(qc, _rebased(reviews=[_raw_review("owner", SHA_B), _raw_review("comm1", SHA_B)]))
+    assert "owner" in pr.update_only
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_rebase_that_changed_the_diff_keeps_the_maintainer_out(qc: ModuleType, roster) -> None:
+    pr = _fetch(qc, _rebased(neutral=False, reviews=[_raw_review("owner", SHA_B), _raw_review("comm1", SHA_B)]))
+    assert "owner" not in pr.update_only
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_a_rebase_does_not_launder_content_the_rebaser_pushed_before_it(qc: ModuleType, roster) -> None:
+    # The maintainer committed A under someone else's name, then rebased it:
+    # the rewrite changed nothing, but what it rewrote was already theirs.
+    fake = _rebased(before_committer="owner", reviews=[_raw_review("owner", SHA_B), _raw_review("comm1", SHA_B)])
+    pr = _fetch(qc, fake)
+    assert "owner" not in pr.update_only
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_a_maintainer_content_commit_keeps_them_out(qc: ModuleType, roster) -> None:
+    commit_a = _raw_commit(SHA_A, "outsider", hours_ago=80)
+    commit_b = _raw_commit(SHA_B, "owner", parents=(SHA_A,), hours_ago=1)
+    fake = FakeGitHub(
+        commits=[commit_a, commit_b],
+        compares={SHA_B: _compare([commit_a, commit_b], _patch(10, "+    retries = 30"))},
+        reviews=[_raw_review("owner", SHA_B), _raw_review("comm1", SHA_B)],
+    )
+    pr = _fetch(qc, fake)
+    assert "owner" not in pr.update_only
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def _governance(fake: FakeGitHub) -> FakeGitHub:
+    fake.author = "owner"
+    fake.paths = ["GOVERNANCE.md"]
+    return fake
+
+
+def test_the_window_runs_from_the_last_push_that_changed_the_diff(qc: ModuleType, roster) -> None:
+    # Content at 80h, a diff-neutral merge of main at 1h: the window is closed.
+    pr = _fetch(qc, _governance(_merged_main()))
+    assert pr.last_push == NOW - timedelta(hours=1)
+    assert pr.diff_changed_at == NOW - timedelta(hours=80)
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_restarts_when_the_merge_changed_the_diff(qc: ModuleType, roster) -> None:
+    pr = _fetch(qc, _governance(_merged_main(neutral=False)))
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert "71h from now" in verdict.requirements[0].who
+
+
+def test_the_window_runs_back_through_a_rebase_that_left_the_diff_alone(qc: ModuleType, roster) -> None:
+    pr = _fetch(qc, _governance(_rebased()))
+    assert pr.diff_changed_at == NOW - timedelta(hours=80)
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_falls_back_to_the_last_push_when_the_diff_cannot_be_compared(qc: ModuleType, roster) -> None:
+    fake = _governance(_merged_main())
+    del fake.compares[SHA_A]
+    pr = _fetch(qc, fake)
+    assert pr.diff_changed_at is None
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert "71h from now" in verdict.requirements[0].who

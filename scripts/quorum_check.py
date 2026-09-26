@@ -30,9 +30,9 @@ The rules, in the order they are applied
 ----------------------------------------
 0. A draft is neutral: the queue does not take drafts, so there is nothing to
    decide yet.
-1. A change to a governance path is held open for 72 hours after its last
-   push, so committers can object (section 10). This applies to every author,
-   the maintainer included.
+1. A change to a governance path is held open for 72 hours after the last
+   push that changed its net diff, so committers can object (section 10).
+   This applies to every author, the maintainer included.
 2. Automation merges its own changes on green CI (section 1), except on the
    paths where a mistake is expensive - anything with `sandbox`, `security`,
    `audit` or `auth` in it, plus `.github/`, `schemas/` and `proto/` - where
@@ -42,7 +42,10 @@ The rules, in the order they are applied
 4. The maintainer's own pull requests merge without approvals, and any
    standing `changes requested` from a committer blocks them (section 6).
    Until 2026-10-05 a pull request the maintainer has pushed to and then
-   declared adopted in the thread is treated the same way (section 3).
+   declared adopted in the thread is treated the same way (section 3), if it
+   needs only the ordinary two approvals, touches no path a CODEOWNERS line
+   of its own covers, and touches nothing under `.github/`, `schemas/` or
+   `proto/`. Anywhere else the notice is ignored and rule 5 applies.
 5. Everyone else needs the quorum: two approvals, at least one from a core
    reviewer, none of them from anyone who wrote or pushed the change. Over
    400 changed lines, or on a path containing `sandbox`, `security` or
@@ -60,10 +63,31 @@ The rules, in the order they are applied
 
 
 Approvals count only when they were given on the current head commit: a push
-after an approval means nobody has read what is about to merge. A `changes
-requested` survives a push, and stays counted until its author withdraws it.
-A review whose state is `commented` does not replace an earlier verdict,
-which is how GitHub itself treats it.
+after an approval means nobody has read what is about to merge - unless the
+push left the pull request's net diff exactly as it was. The net diff of a
+commit is what GitHub's three-dot compare of the base branch with that commit
+shows, file by file; its fingerprint is a SHA-256 over each file's name,
+previous name, status and patch, with the line numbers taken out of the hunk
+headers so that a base branch moving underneath does not change it. An
+approval on an earlier commit whose fingerprint equals the head's counts:
+merging the base branch in, or rebasing onto it, does not void it.
+
+The same fingerprint decides who counts as having pushed. Everyone who wrote
+a commit or is named in a Co-authored-by trailer is a contributor, as is
+everyone who committed one - except someone whose every commit on the branch
+merged the base branch in without changing the fingerprint, or came out of a
+force push that left the fingerprint as it was on a history they had not
+contributed to. Keeping a branch current is not writing it. The objection
+window in rule 1 runs from the most recent push that changed the fingerprint.
+
+Whenever a fingerprint cannot be worked out - a compare GitHub truncates, a
+file with no patch (binary or too large), an API error - it matches nothing,
+and each rule falls back to what it did before: approvals bind to the head
+commit, the committer stays a contributor, the window runs from the last push.
+
+A `changes requested` survives a push, and stays counted until its author
+withdraws it. A review whose state is `commented` does not replace an earlier
+verdict, which is how GitHub itself treats it.
 
 Exit codes: 0 pass or neutral, 1 fail. The failure table is written to the
 job summary as well as stdout.
@@ -73,6 +97,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -81,7 +106,11 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Collection
 
 ROSTER_PATH = ".github/quorum-roster.toml"
 CODEOWNERS_PATH = ".github/CODEOWNERS"
@@ -94,7 +123,11 @@ MAINTAINER_OR_SPLIT_LINES = 1000
 # Section 3, adopted pull requests: until this date a change the maintainer
 # has pushed to merges as their own once they say so in the thread. The notice
 # is matched literally; it must be given on the current head commit, so a
-# later push needs a new one, exactly like an approval.
+# later push needs a new one - even a push that leaves the net diff alone,
+# which an approval survives. It is honoured only where the change would
+# otherwise need the ordinary two approvals and no owner's: not on a large or
+# sensitive change, not on a path a CODEOWNERS line of its own covers, and not
+# under ADOPTION_EXCLUDED_PREFIXES.
 ADOPTION_ENDS = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 ADOPTION_NOTICE = "Adopted by the maintainer: whole diff read, fixes pushed, CI green."
 
@@ -119,9 +152,40 @@ SENSITIVE_EXEMPT_PREFIXES = ("tests/", "docs/")
 AUTOMATION_STOP_WORDS = (*SENSITIVE_WORDS, "auth")
 AUTOMATION_STOP_PREFIXES = (".github/", "schemas/", "proto/")
 
+# The same three trees are closed to adoption: a workflow, a schema or the wire
+# protocol changed by a contributor needs its approvals, not the notice.
+ADOPTION_EXCLUDED_PREFIXES = AUTOMATION_STOP_PREFIXES
+
+# The net diff. GitHub's compare lists at most this many files and says
+# nothing when it stops, so a list this long is treated as cut short.
+COMPARE_FILE_LIMIT = 300
+# The pull request's commit list stops at this many; past it the history the
+# contributor rule reads is incomplete, and nobody is excused by it.
+PR_COMMIT_LIMIT = 250
+# Compare calls one run may make. Only the head, commits carrying an approval,
+# merge commits and their first parents, and force-push endpoints are ever
+# compared; past the budget a fingerprint is uncomputable, which fails closed.
+COMPARE_BUDGET = 40
+# How far back the window's anchor is followed through diff-neutral updates.
+ANCHOR_STEPS = 50
+FORCE_PUSHES_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      timelineItems(itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], last: 100) {
+        totalCount
+        nodes { ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid } afterCommit { oid } } }
+      }
+    }
+  }
+}
+"""
+
 # Section 10: an amendment stays open so committers can object. The charter
 # anchors the window on the approval; for a change that needs no approval the
-# equivalent anchor is the last push, which is what this check uses.
+# equivalent anchor is the last push that changed the net diff, which is what
+# this check uses. A push that only merged the base branch in or rebased onto
+# it leaves the change under objection as it was, so it does not restart it.
 GOVERNANCE_WINDOW = timedelta(hours=72)
 GOVERNANCE_PATHS = (
     "docs/governance/review-charter.md",
@@ -249,9 +313,41 @@ class PullRequest:
     paths: list[str]
     reviews: list[Review]
     # Everyone who wrote or pushed any commit on the branch, plus anyone named
-    # in a Co-authored-by trailer: none of them can approve it (section 3).
+    # in a Co-authored-by trailer: none of them can approve it (section 3),
+    # except the ones in `update_only`.
     contributors: set[str]
     last_push: datetime
+    # Earlier commits whose net diff is the head's: an approval given on one
+    # of them was given on what is about to merge.
+    same_diff: frozenset[str] = frozenset()
+    # Contributors whose every commit merged the base branch in, or came out
+    # of a rewrite, without changing the net diff: they kept the branch current
+    # and wrote none of it, so they may still approve.
+    update_only: frozenset[str] = frozenset()
+    # When the net diff last changed. None when that cannot be worked out, and
+    # the objection window then runs from `last_push`.
+    diff_changed_at: datetime | None = None
+
+    def is_current(self, sha: str) -> bool:
+        """Whether a review given on `sha` was given on what is about to merge."""
+        return sha == self.head_sha or sha in self.same_diff
+
+    @property
+    def writers(self) -> set[str]:
+        """The contributors who cannot approve it."""
+        return self.contributors - self.update_only
+
+
+_CO_AUTHOR = re.compile(r"Co-authored-by:[^<]*<([^>]+)>", re.IGNORECASE)
+
+
+def _co_authors(message: str) -> set[str]:
+    logins: set[str] = set()
+    for match in _CO_AUTHOR.finditer(message):
+        handle = match.group(1).split("@")[0]
+        # `12345+login@users.noreply.github.com` is the form GitHub writes.
+        logins.add(handle.split("+")[-1])
+    return logins
 
 
 def _logins_from_commit(raw: dict[str, Any]) -> set[str]:
@@ -260,19 +356,327 @@ def _logins_from_commit(raw: dict[str, Any]) -> set[str]:
         login = ((raw.get(role) or {}).get("login")) or ""
         if login:
             logins.add(login)
-    message = (raw.get("commit") or {}).get("message") or ""
-    for match in re.finditer(r"Co-authored-by:[^<]*<([^>]+)>", message, re.IGNORECASE):
-        handle = match.group(1).split("@")[0]
-        # `12345+login@users.noreply.github.com` is the form GitHub writes.
-        logins.add(handle.split("+")[-1])
-    return logins
+    return logins | _co_authors((raw.get("commit") or {}).get("message") or "")
 
 
-def fetch_pull_request(repo: str, number: int) -> PullRequest:
-    raw = gh_json("api", f"repos/{repo}/pulls/{number}")
-    files = gh_json("api", f"repos/{repo}/pulls/{number}/files", "--paginate")
-    raw_reviews = gh_json("api", f"repos/{repo}/pulls/{number}/reviews", "--paginate")
-    commits = gh_json("api", f"repos/{repo}/pulls/{number}/commits", "--paginate")
+def _parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class Commit:
+    """One commit on the branch, as the pull request and compare APIs list it."""
+
+    sha: str
+    parents: tuple[str, ...]
+    author: str
+    committer: str
+    co_authors: frozenset[str]
+    committed_at: datetime | None
+
+
+def _commit(raw: Any) -> Commit | None:
+    if not isinstance(raw, dict) or not isinstance(raw.get("sha"), str) or not raw["sha"]:
+        return None
+    body = raw.get("commit") or {}
+    return Commit(
+        sha=raw["sha"],
+        parents=tuple(str(parent.get("sha") or "") for parent in raw.get("parents") or [] if isinstance(parent, dict)),
+        author=((raw.get("author") or {}).get("login")) or "",
+        committer=((raw.get("committer") or {}).get("login")) or "",
+        co_authors=frozenset(_co_authors(body.get("message") or "")),
+        committed_at=_parse_time((body.get("committer") or {}).get("date")),
+    )
+
+
+def _history(raw_commits: Any) -> dict[str, Commit] | None:
+    """The branch's commits by sha, or None when any of them cannot be read."""
+    if not isinstance(raw_commits, list):
+        return None
+    history: dict[str, Commit] = {}
+    for raw in raw_commits:
+        commit = _commit(raw)
+        if commit is None:
+            return None
+        history[commit.sha] = commit
+    return history
+
+
+def _merges_base(commit: Commit, history: dict[str, Commit]) -> bool:
+    """A merge whose other parents are not on the branch, so came from the base.
+
+    `history` is the branch's complete commit list, which never includes a
+    commit the base branch already has.
+    """
+    return len(commit.parents) > 1 and all(parent not in history for parent in commit.parents[1:])
+
+
+def _latest_commit(sha: str, history: dict[str, Commit]) -> datetime | None:
+    """The newest committer date among `sha` and its ancestors on the branch."""
+    latest: datetime | None = None
+    seen: set[str] = set()
+    stack = [sha]
+    while stack:
+        current = stack.pop()
+        if current in seen or current not in history:
+            continue
+        seen.add(current)
+        commit = history[current]
+        if commit.committed_at is None:
+            return None
+        latest = commit.committed_at if latest is None else max(latest, commit.committed_at)
+        stack.extend(commit.parents)
+    return latest
+
+
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.MULTILINE)
+
+
+def net_diff_fingerprint(compare: Any) -> str | None:
+    """SHA-256 of a three-dot compare's file changes, or None if it cannot be trusted.
+
+    Each file contributes its name, previous name, status and patch, in
+    filename order, with `@@ -a,b +c,d @@ tail` reduced to `@@ tail`: a base
+    branch that moved lines above the change shifts those numbers and nothing
+    else. A list at GitHub's file limit may have been cut short, and a file
+    without a patch (binary, or too large to show) hides its change, so either
+    makes the fingerprint uncomputable.
+    """
+    files = compare.get("files") if isinstance(compare, dict) else None
+    if not isinstance(files, list) or len(files) >= COMPARE_FILE_LIMIT:
+        return None
+    entries: list[list[str]] = []
+    for item in files:
+        if not isinstance(item, dict) or not isinstance(item.get("patch"), str):
+            return None
+        entries.append(
+            [
+                str(item.get("filename") or ""),
+                str(item.get("previous_filename") or ""),
+                str(item.get("status") or ""),
+                _HUNK_HEADER.sub("@@", item["patch"]),
+            ]
+        )
+    entries.sort(key=lambda entry: entry[0])
+    encoded = json.dumps(entries, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """The pull request as it stood at one commit."""
+
+    fingerprint: str | None
+    # Its own commits (base...commit) by sha; None when the list is cut short.
+    commits: dict[str, Commit] | None
+
+
+UNREADABLE = Snapshot(None, None)
+
+
+@dataclass(frozen=True)
+class ForcePush:
+    at: datetime
+    before: str
+    after: str
+
+
+class NetDiff:
+    """What the API says about how one pull request's net diff evolved.
+
+    Each commit is compared with the base branch at most once per run and at
+    most COMPARE_BUDGET times in all. Every failure reads as "unknown", and
+    every rule treats "unknown" as "changed".
+    """
+
+    def __init__(self, repo: str, number: int, base: str, api: Callable[..., Any]) -> None:
+        self.repo = repo
+        self.number = number
+        self.base = base
+        self.api = api
+        self._snapshots: dict[str, Snapshot] = {}
+        self._force_pushes: list[ForcePush] | None = None
+        self._force_pushes_read = False
+        self._contributed: dict[tuple[str, int], bool] = {}
+
+    def snapshot(self, sha: str) -> Snapshot:
+        if sha not in self._snapshots:
+            self._snapshots[sha] = self._compare(sha)
+        return self._snapshots[sha]
+
+    def _compare(self, sha: str) -> Snapshot:
+        if not sha or not self.base or len(self._snapshots) >= COMPARE_BUDGET:
+            return UNREADABLE
+        try:
+            raw = self.api("api", f"repos/{self.repo}/compare/{quote(self.base, safe='/')}...{sha}")
+        except (subprocess.CalledProcessError, OSError, ValueError):
+            return UNREADABLE
+        if not isinstance(raw, dict):
+            return UNREADABLE
+        commits = raw.get("commits")
+        complete = isinstance(commits, list) and raw.get("total_commits") == len(commits)
+        return Snapshot(net_diff_fingerprint(raw), _history(commits) if complete else None)
+
+    def fingerprint(self, sha: str) -> str | None:
+        return self.snapshot(sha).fingerprint
+
+    def same(self, first: str, second: str) -> bool:
+        """Whether two commits carry the same net diff. Unknown is never the same."""
+        known = self.fingerprint(first)
+        return known is not None and known == self.fingerprint(second)
+
+    def force_pushes(self) -> list[ForcePush] | None:
+        """The branch's force pushes, oldest first; None when they cannot all be read."""
+        if not self._force_pushes_read:
+            self._force_pushes_read = True
+            self._force_pushes = self._read_force_pushes()
+        return self._force_pushes
+
+    def _read_force_pushes(self) -> list[ForcePush] | None:
+        owner, _, name = self.repo.partition("/")
+        try:
+            raw = self.api(
+                "api",
+                "graphql",
+                "-f",
+                f"query={FORCE_PUSHES_QUERY}",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"name={name}",
+                "-F",
+                f"number={self.number}",
+            )
+            timeline = raw["data"]["repository"]["pullRequest"]["timelineItems"]
+            nodes = timeline["nodes"]
+            if timeline["totalCount"] > len(nodes):
+                return None
+            pushes: list[ForcePush] = []
+            for node in nodes:
+                at = _parse_time(node.get("createdAt"))
+                if at is None:
+                    return None
+                before = (node.get("beforeCommit") or {}).get("oid") or ""
+                after = (node.get("afterCommit") or {}).get("oid") or ""
+                pushes.append(ForcePush(at, before, after))
+        except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
+            return None
+        return sorted(pushes, key=lambda push: push.at)
+
+    def merged_base_only(self, commit: Commit, history: dict[str, Commit]) -> bool:
+        """A merge that brought the base branch in and left the net diff as it was."""
+        return _merges_base(commit, history) and self.same(commit.parents[0], commit.sha)
+
+    def contributes(self, who: str, history: dict[str, Commit], upto: int | None = None) -> bool:
+        """Whether `who` wrote or pushed anything in `history` beyond keeping it current.
+
+        `history` is the branch's commits at some moment, and `upto` limits the
+        force pushes considered to the ones before that moment. Writing a
+        commit, or being named as its co-author, always counts. Committing one
+        written by someone else counts unless the commit is a merge of the base
+        branch or came out of a rewrite, and the net diff was left alone.
+        """
+        for commit in history.values():
+            if who in commit.co_authors:
+                return True
+            if who not in (commit.author, commit.committer) or self.merged_base_only(commit, history):
+                continue
+            if who == commit.author or not self.rewritten_for(who, commit, upto):
+                return True
+        return False
+
+    def rewritten_for(self, who: str, commit: Commit, upto: int | None) -> bool:
+        """Whether `commit` came out of a force push that left the net diff alone,
+        and rewrote a history `who` had not contributed to.
+
+        The rewrite is the latest force push whose result holds the commit and
+        whose starting point did not. Reading the starting point is what stops
+        a rewrite from excusing a commit its rewriter had already pushed under
+        someone else's name.
+        """
+        pushes = self.force_pushes()
+        if pushes is None:
+            return False
+        for index in reversed(range(len(pushes) if upto is None else upto)):
+            push = pushes[index]
+            after = self.snapshot(push.after).commits
+            before = self.snapshot(push.before).commits
+            if after is None or before is None:
+                return False
+            if commit.sha not in after or commit.sha in before:
+                continue
+            if not self.same(push.before, push.after):
+                return False
+            if (who, index) not in self._contributed:
+                self._contributed[who, index] = self.contributes(who, before, index)
+            return not self._contributed[who, index]
+        return False
+
+    def changed_at(self, head: str, history: dict[str, Commit]) -> datetime | None:
+        """When the net diff last changed, or None when that cannot be worked out.
+
+        Walks back from the head across the updates that left the fingerprint
+        as it was - a merge of the base branch, a force push that only rebased
+        - to the push that produced it: a force push's own time, or for an
+        ordinary push the newest committer date in what it delivered, which is
+        what the last push has always meant here.
+        """
+        pushes = self.force_pushes()
+        if pushes is None:
+            return None
+        sha, known, upto = head, history, len(pushes)
+        for _ in range(ANCHOR_STEPS):
+            index = next((i for i in reversed(range(upto)) if pushes[i].after == sha), None)
+            if index is not None:
+                push = pushes[index]
+                before, after = self.fingerprint(push.before), self.fingerprint(push.after)
+                if before is None or after is None:
+                    return None
+                if before != after:
+                    delivered = _latest_commit(sha, known)
+                    return push.at if delivered is None else max(push.at, delivered)
+                sha, upto = push.before, index
+                earlier = self.snapshot(sha).commits
+                if earlier is None:
+                    return None
+                known = earlier
+                continue
+            commit = known.get(sha)
+            if commit is None:
+                return None
+            if _merges_base(commit, known):
+                first, merged = self.fingerprint(commit.parents[0]), self.fingerprint(commit.sha)
+                if first is None or merged is None:
+                    return None
+                if first == merged:
+                    sha = commit.parents[0]
+                    continue
+            return _latest_commit(sha, known)
+        return None
+
+
+def fetch_pull_request(
+    repo: str,
+    number: int,
+    candidates: Collection[str] | None = None,
+    api: Callable[..., Any] | None = None,
+) -> PullRequest:
+    """The pull request as GitHub reports it, with its net diff worked out.
+
+    `candidates` are the people whose approval could count - the roster and
+    the code owners. The net diff is only compared for their reviews and their
+    commits, which keeps the compare calls few; None means everyone.
+    """
+    call = api or gh_json
+    raw = call("api", f"repos/{repo}/pulls/{number}")
+    files = call("api", f"repos/{repo}/pulls/{number}/files", "--paginate")
+    raw_reviews = call("api", f"repos/{repo}/pulls/{number}/reviews", "--paginate")
+    commits = call("api", f"repos/{repo}/pulls/{number}/commits", "--paginate")
 
     contributors: set[str] = set()
     pushed_at = None
@@ -283,25 +687,56 @@ def fetch_pull_request(repo: str, number: int) -> PullRequest:
             moment = datetime.fromisoformat(date.replace("Z", "+00:00"))
             pushed_at = moment if pushed_at is None or moment > pushed_at else pushed_at
 
+    author = (raw.get("user") or {}).get("login", "")
+    head_sha = (raw.get("head") or {}).get("sha", "")
+    paths = [f["filename"] for f in files]
+    reviews = [
+        Review(
+            login=(r.get("user") or {}).get("login", ""),
+            state=r.get("state", ""),
+            commit_id=r.get("commit_id") or "",
+            submitted_at=r.get("submitted_at") or "",
+            body=r.get("body") or "",
+        )
+        for r in raw_reviews
+    ]
+
+    def counts(login: str) -> bool:
+        return candidates is None or login in candidates
+
+    diffs = NetDiff(repo, number, (raw.get("base") or {}).get("ref", ""), call)
+    earlier = {
+        review.commit_id
+        for login, review in standing_reviews(reviews).items()
+        if review.state == "APPROVED" and review.commit_id and review.commit_id != head_sha and counts(login)
+    }
+    same_diff = frozenset(sha for sha in sorted(earlier) if diffs.same(sha, head_sha))
+
+    # The contributor rule and the window read the branch's whole history; a
+    # list GitHub cut short leaves both where they were.
+    history = _history(commits) if len(commits) < PR_COMMIT_LIMIT else None
+    update_only: frozenset[str] = frozenset()
+    diff_changed_at = None
+    if history is not None:
+        update_only = frozenset(
+            who for who in sorted(contributors - {author}) if counts(who) and not diffs.contributes(who, history)
+        )
+        if any(path in GOVERNANCE_PATHS for path in paths):
+            diff_changed_at = diffs.changed_at(head_sha, history)
+
     return PullRequest(
         number=number,
-        author=(raw.get("user") or {}).get("login", ""),
+        author=author,
         is_draft=bool(raw.get("draft")),
-        head_sha=(raw.get("head") or {}).get("sha", ""),
+        head_sha=head_sha,
         changed_lines=int(raw.get("additions") or 0) + int(raw.get("deletions") or 0),
-        paths=[f["filename"] for f in files],
-        reviews=[
-            Review(
-                login=(r.get("user") or {}).get("login", ""),
-                state=r.get("state", ""),
-                commit_id=r.get("commit_id") or "",
-                submitted_at=r.get("submitted_at") or "",
-                body=r.get("body") or "",
-            )
-            for r in raw_reviews
-        ],
+        paths=paths,
+        reviews=reviews,
         contributors=contributors,
         last_push=pushed_at or datetime.now(UTC),
+        same_diff=same_diff,
+        update_only=update_only,
+        diff_changed_at=diff_changed_at,
     )
 
 
@@ -362,16 +797,40 @@ def _names(logins: set[str] | frozenset[str]) -> str:
     return ", ".join(f"@{login}" for login in sorted(logins)) or "nobody on the roster"
 
 
+def _sensitive_paths(paths: list[str]) -> list[str]:
+    return sorted(
+        p for p in paths if not p.startswith(SENSITIVE_EXEMPT_PREFIXES) and any(word in p for word in SENSITIVE_WORDS)
+    )
+
+
+def adoptable(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
+    """Whether the adoption notice may stand in for approvals on this change.
+
+    Only where the ordinary quorum would apply: not the tier that asks for a
+    third approval (large or sensitive), no path a CODEOWNERS line of its own
+    covers, and nothing under ADOPTION_EXCLUDED_PREFIXES. Everywhere else the
+    notice is ignored and the change needs its approvals.
+    """
+    if pr.changed_lines > THIRD_APPROVAL_LINES or _sensitive_paths(pr.paths):
+        return False
+    return not any(owners_for(p, owners)[1] or p.startswith(ADOPTION_EXCLUDED_PREFIXES) for p in pr.paths)
+
+
 def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]], now: datetime) -> Verdict:
     if pr.is_draft:
         return Verdict(True, "draft, nothing to decide yet")
 
     standing = standing_reviews(pr.reviews)
     approvals = {
-        login for login, review in standing.items() if review.state == "APPROVED" and review.commit_id == pr.head_sha
+        login for login, review in standing.items() if review.state == "APPROVED" and pr.is_current(review.commit_id)
     }
     stale_approvals = {
-        login for login, review in standing.items() if review.state == "APPROVED" and review.commit_id != pr.head_sha
+        login
+        for login, review in standing.items()
+        if review.state == "APPROVED" and not pr.is_current(review.commit_id)
+    }
+    carried_approvals = {
+        login for login, review in standing.items() if review.state == "APPROVED" and review.commit_id in pr.same_diff
     }
     changes_requested = {login for login, review in standing.items() if review.state == "CHANGES_REQUESTED"}
 
@@ -389,7 +848,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
     # 1. The objection window on governance changes, for every author.
     governance = [p for p in pr.paths if p in GOVERNANCE_PATHS]
     if governance:
-        elapsed = now - pr.last_push
+        elapsed = now - (pr.diff_changed_at or pr.last_push)
         met = elapsed >= GOVERNANCE_WINDOW
         remaining = GOVERNANCE_WINDOW - elapsed
         hours = max(0, int(remaining.total_seconds() // 3600))
@@ -401,8 +860,9 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             )
         )
 
+    adoption_open = now < ADOPTION_ENDS and adoptable(pr, owners)
     adopted = (
-        now < ADOPTION_ENDS
+        adoption_open
         and roster.maintainer in pr.contributors
         and any(
             review.login == roster.maintainer and review.commit_id == pr.head_sha and ADOPTION_NOTICE in review.body
@@ -448,15 +908,11 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             "*changes requested* blocks it (charter, section 3)."
         )
     else:
-        eligible = roster.quorum_holders - {pr.author} - pr.contributors
+        eligible = roster.quorum_holders - {pr.author} - pr.writers
         approving = approvals & eligible
         approving_core = approving & roster.core
 
-        sensitive = sorted(
-            p
-            for p in pr.paths
-            if not p.startswith(SENSITIVE_EXEMPT_PREFIXES) and any(word in p for word in SENSITIVE_WORDS)
-        )
+        sensitive = _sensitive_paths(pr.paths)
         large = pr.changed_lines > THIRD_APPROVAL_LINES
         need_total, need_core = (3, 2) if (large or sensitive) else (2, 1)
         reason = (
@@ -497,7 +953,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
             if specific:
                 protected.setdefault(frozenset(path_owners), []).append(path)
         for owner_set, paths in sorted(protected.items(), key=lambda item: sorted(item[0])):
-            eligible_owners = owner_set - {pr.author} - pr.contributors
+            eligible_owners = owner_set - {pr.author} - pr.writers
             verdict.requirements.append(
                 Requirement(
                     f"approval from the owner of {', '.join(f'`{p}`' for p in paths[:3])}"
@@ -509,7 +965,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
 
     if (
         not adopted
-        and now < ADOPTION_ENDS
+        and adoption_open
         and pr.author not in roster.automation | {GITHUB_ACTIONS_BOT, roster.maintainer}
         and roster.maintainer in pr.contributors
     ):
@@ -521,7 +977,14 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
     if stale_approvals:
         verdict.notes.append(
             f"Approvals given before the last push do not count: {_names(stale_approvals)}. "
-            "A new push means nobody has read what is about to merge (charter, section 2)."
+            "The push changed the net diff, or the diff could not be compared, so nobody has read "
+            "what is about to merge (charter, section 2)."
+        )
+
+    if carried_approvals:
+        verdict.notes.append(
+            f"Approvals given on an earlier commit with the same net diff count: {_names(carried_approvals)}. "
+            "The pushes since only merged the base branch in or rebased onto it (charter, section 2)."
         )
 
     verdict.passed = all(req.met for req in verdict.requirements)
@@ -577,8 +1040,11 @@ def main(argv: list[str] | None = None) -> int:
         print("quorum: no pull request in this event; nothing to check")
         return 0
 
-    pr = fetch_pull_request(args.repo, number)
-    verdict = evaluate(pr, load_roster(args.root), load_codeowners(args.root), datetime.now(UTC))
+    roster = load_roster(args.root)
+    owners = load_codeowners(args.root)
+    candidates = roster.quorum_holders | {owner for _, line in owners for owner in line}
+    pr = fetch_pull_request(args.repo, number, candidates)
+    verdict = evaluate(pr, roster, owners, datetime.now(UTC))
 
     summary = verdict.summary()
     print(summary)
