@@ -13,12 +13,12 @@ import json
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -1456,3 +1456,96 @@ def export_json_schema(*, indent: int = 2) -> str:
         JSON string of the schema.
     """
     return json.dumps(BernsteinConfig.json_schema(), indent=indent)
+
+
+# ---------------------------------------------------------------------------
+# Section schemas & pre-merge partial layer validation (issue #5110)
+# ---------------------------------------------------------------------------
+
+SECTION_SCHEMAS: dict[str, type[BaseModel]] = {
+    "notify": NotifyConfigSchema,
+    "quality_gates": QualityGatesSchema,
+    "admission": AdmissionSchema,
+    "model_policy": ModelPolicySchema,
+    "worktree_setup": WorktreeSetupSchema,
+    "storage": StorageSchema,
+    "sovereign": SovereignProfileSchema,
+    "session": SessionSchema,
+    "github": GithubSchema,
+    "orchestration": OrchestrationSchema,
+    "cluster": ClusterSchema,
+    "remote": RemoteSchema,
+    "agency": AgencySchema,
+    "formal_verification": FormalVerificationSchema,
+    "batch": BatchSchema,
+    "cost_policy": CostPolicySchema,
+    "test_agent": TestAgentSchema,
+    "smtp": SmtpSchema,
+    "model_fallback": ModelFallbackSchema,
+    "provider_availability": ProviderAvailabilitySchema,
+    "arch_conformance": ArchConformanceSchema,
+}
+
+
+class LayerValidationError(ValueError):
+    """Raised when a configuration layer fails schema validation before merge (#5110)."""
+
+    def __init__(self, layer_name: str, path: str | None, errors: list[str]) -> None:
+        self.layer_name = layer_name
+        self.path = path
+        self.errors = errors
+        source = path or layer_name
+        super().__init__(
+            f"Config layer '{layer_name}' (source: {source}) failed validation with {len(errors)} error(s):\n"
+            + "\n".join(f"  - {e}" for e in errors)
+        )
+
+
+def validate_layer_partial(
+    data: Mapping[str, Any],
+    *,
+    layer_name: str,
+    path: str | Path | None = None,
+) -> None:
+    """Validate a partial configuration layer before it is merged into the effective config.
+
+    Validates any sections present against their dedicated Pydantic schemas,
+    and any recognized top-level fields against BernsteinConfig field types.
+
+    Args:
+        data: Partial dictionary from the configuration layer.
+        layer_name: Human-readable layer name (e.g. 'run-overlay', 'inline-override').
+        path: File path or source identifier if available.
+
+    Raises:
+        LayerValidationError: If any fields present in *data* fail schema validation.
+    """
+    errors: list[str] = []
+    str_path = str(path) if path is not None else None
+
+    for key, value in data.items():
+        if key in SECTION_SCHEMAS:
+            if isinstance(value, dict):
+                schema_cls = SECTION_SCHEMAS[key]
+                try:
+                    schema_cls.model_validate(value)
+                except ValidationError as exc:
+                    for issue in exc.errors():
+                        if issue["type"] == "missing":
+                            continue
+                        loc = ".".join(str(p) for p in issue["loc"])
+                        errors.append(f"{key}.{loc}: {issue['msg']}")
+            elif value is not None:
+                errors.append(f"{key}: expected a mapping/dictionary, got {type(value).__name__}")
+        elif key in BernsteinConfig.model_fields:
+            field_info = BernsteinConfig.model_fields[key]
+            try:
+                TypeAdapter(field_info.annotation).validate_python(value)
+            except ValidationError as exc:
+                for issue in exc.errors():
+                    loc = ".".join(str(p) for p in issue["loc"])
+                    loc_suffix = f".{loc}" if loc else ""
+                    errors.append(f"{key}{loc_suffix}: {issue['msg']}")
+
+    if errors:
+        raise LayerValidationError(layer_name=layer_name, path=str_path, errors=errors)

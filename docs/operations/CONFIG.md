@@ -171,6 +171,16 @@ BERNSTEIN_CONFIG_OVERLAY=/run/bernstein/overlay.yaml bernstein run
 With no overlay and neither variable set, the merge is the identity: a setup
 that edits `bernstein.yaml` directly behaves exactly as it always has.
 
+#### Pre-merge layer validation
+
+Before the merge, each overlay and inline layer is validated against the
+Pydantic schemas in `config_schema.py`. An invalid value — wrong type, out of
+range, unrecognised enum variant — raises `LayerValidationError` naming the
+offending layer and source path, so the operator sees *which* layer introduced
+the bad value rather than getting a generic post-merge error. Missing fields
+are allowed because partial overlays are expected to supply only the keys they
+override; the base config supplies the rest.
+
 Two consequences worth knowing:
 
 - The default overlay is inside `.git/`, so `git status` never reports it and
