@@ -38,9 +38,7 @@ BUNDLE_DIR = REPO_ROOT / "src" / "bernstein" / "gui" / "static"
 ASSET_DIR = REPO_ROOT / "docs" / "assets"
 BINDING = ASSET_DIR / "webui-renders.json"
 
-#: Renders of the SPA. ``web-dashboard.png`` is deliberately absent: it shows
-#: the server-rendered ``/dashboard`` page, which is a different surface with a
-#: different source of truth.
+#: Renders of the SPA, one per documented screen.
 RENDER_GLOB = "webui-*.png"
 
 

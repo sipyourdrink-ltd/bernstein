@@ -1,5 +1,5 @@
 site_name: Bernstein
-site_url: https://bernstein.readthedocs.io/
+site_url: https://docs.bernstein.run/
 site_author: Alex Chernysh
 site_description: >-
   The open-source governance layer for AI agents. No model in the coordination
@@ -17,21 +17,20 @@ theme:
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
-      accent: amber
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: deep purple
-      accent: amber
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to dark mode
-  font:
-    text: Inter
-    code: JetBrains Mono
+  # Fonts are loaded in docs/overrides/main.html (block fonts).
+  font: false
   features:
     - navigation.instant
     - navigation.instant.progress
@@ -52,9 +51,13 @@ theme:
     - content.tabs.link
     - toc.follow
     - announce.dismiss
+  logo: assets/brand/bernstein-mark.svg
+  favicon: assets/brand/bernstein-mark.svg
   icon:
     repo: fontawesome/brands/github
-    logo: material/music-note-eighth
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   social:
@@ -200,6 +203,7 @@ nav:
           - DeepSeek V4: adapters/deepseek.md
           - Agy: adapters/agy.md
           - Antigravity: adapters/antigravity.md
+          - Deep-research agents: adapters/deep-research.md
           - Deferred adapters: adapter-deferred.md
           - Adapter operations: operations/adapters.md
           - Adapter security floor: adapters/security-floor.md
@@ -503,6 +507,7 @@ nav:
           - A2A message receipts: operations/a2a-message-receipts.md
           - A2A JSON-RPC server surface: operations/a2a-server.md
           - Datasources & query receipts: operations/datasources.md
+          - Batch pass receipts: operations/batch-receipts.md
           - Verifiable audit receipts: security/audit-receipt.md
           - Evidence envelope: security/evidence-envelope.md
           - Gate adjudication records: operations/gate-adjudication.md
@@ -530,6 +535,7 @@ nav:
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
           - Design tokens: design/tokens.md
+          - Brand and logo: design/brand.md
           - Adapter capability contract: adapters/capability_contract.md
           - Global config CLI: operations/global-config.md
           - Workflow manifests: operations/workflow-manifests.md
@@ -711,6 +717,7 @@ nav:
   - Contribute:
       - contributing/index.md
       - Project pulse: project-pulse.md
+      - Contributor recognition: community/recognition.md
       - Code review: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md

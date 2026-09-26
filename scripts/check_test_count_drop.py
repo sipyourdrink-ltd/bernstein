@@ -25,8 +25,7 @@ Outcome words (never collapse these)::
 A module that fails to import collects zero; the message names
 ``import_error`` so it is not read as a silent false-positive count drop.
 
-Override (reviewable), in the PR body **or** in any commit message in the
-compared range::
+Override (reviewable)::
 
     test-count-drop: tests/unit/foo/test_bar.py -3
 
@@ -34,13 +33,22 @@ Allow that path's collected count to fall by **at most** 3. Overrides that
 name a module with no drop are stale and fail the check. There is no
 path-less global budget.
 
-Declare it in a commit message when the drop must survive the merge queue.
-A ``merge_group`` build carries no ``pull_request`` payload, so the PR body
-is empty in the one lane that gates the merge; a body-only override goes
-green on the PR lane and then fails the queue, taking every entry stacked
-behind it down with it. Commits are present in both lanes and cannot be
-edited after the merge, so the reason the cases went away stays on the
-record.
+The guard reads overrides from the PR body (``--pr-body`` / ``PR_BODY``) and
+from the commit messages of the compared range. Which text reaches the
+``merge_group`` build (which has no ``pull_request`` payload, so no
+``PR_BODY``) depends on how the merge queue lands entries:
+
+* squash, as this repository does (commit title = PR title, message = PR
+  body): the queue build compares one squash commit whose message *is* the
+  PR body. **Put the override in the PR body.** A trailer in a branch commit
+  message is discarded by the squash and never reaches the queue build.
+* merge commit: branch commits survive into the queue build, so a trailer
+  in a commit message is read there too.
+
+To keep both lanes in agreement, the ``pull_request`` lane runs with
+``--no-commit-messages`` and reads only the PR body, the same text the
+squash queue will read. It does not re-run on a body edit; push or re-run
+the job after adding the override.
 
 A deleted test module whose matching subject under ``src/`` was also deleted
 in the same diff is carved out.
@@ -52,6 +60,7 @@ Usage::
 
     python scripts/check_test_count_drop.py --base origin/main
     python scripts/check_test_count_drop.py --base "$BASE" --pr-body "$PR_BODY"
+    python scripts/check_test_count_drop.py --base "$BASE" --pr-body "$PR_BODY" --no-commit-messages
 """
 
 from __future__ import annotations
@@ -166,11 +175,10 @@ def changed_paths(repo: Path, base: str, head: str = "HEAD") -> tuple[set[str], 
 def commit_message_text(repo: Path, base: str, head: str = "HEAD") -> str:
     """Return the concatenated commit messages of ``base..head``.
 
-    Second override channel, and the only one that survives the merge queue:
-    a ``merge_group`` build has no ``pull_request`` payload, so ``PR_BODY``
-    is empty there. Reading the commits keeps one declaration readable in
-    both lanes without a token or an API call, and keeps it immutable — a PR
-    body edited after the merge erases the reason the cases went away.
+    The ``merge_group`` build's only override channel: it has no
+    ``pull_request`` payload, so ``PR_BODY`` is empty there. Under a squash
+    queue this range is one commit whose message is the PR title plus body;
+    under a merge-commit queue it holds the branch commits themselves.
     """
     try:
         return _git(repo, "log", "--format=%B", f"{base}..{head}")
@@ -309,15 +317,22 @@ def build_report(
     base: str | None,
     head: str = "HEAD",
     pr_body: str = "",
+    read_commit_messages: bool = True,
     python: str = sys.executable,
 ) -> DropReport:
-    """Compare collected counts for test modules touched between *base* and *head*."""
+    """Compare collected counts for test modules touched between *base* and *head*.
+
+    ``read_commit_messages=False`` is the ``pull_request`` lane of a squash
+    queue: branch commit messages do not survive the squash, so only the PR
+    body counts, matching what the ``merge_group`` build will read.
+    """
     report = DropReport()
     if not base:
         report.not_run = "no merge base (--base); guard did not compare"
         return report
 
-    overrides = parse_overrides(f"{pr_body}\n{commit_message_text(repo, base, head)}")
+    commits = commit_message_text(repo, base, head) if read_commit_messages else ""
+    overrides = parse_overrides(f"{pr_body}\n{commits}")
     modified, deleted, added = changed_paths(repo, base, head)
     touched = {p for p in (modified | deleted | added) if is_test_module(p)}
     report.checked = len(touched)
@@ -383,9 +398,11 @@ def format_report(report: DropReport) -> str:
         lines.append(
             "Restore the cases, consolidate via parametrize (collected count must stay "
             "stable), carve out a deleted subject, or declare an override: "
-            "`test-count-drop: <path> -<N>`. Put it in a commit message, not only in "
-            "the PR body: the merge-queue build has no PR body to read, so a body-only "
-            "override passes the PR lane and then fails here."
+            "`test-count-drop: <path> -<N>`. Put it in the PR body: the merge queue "
+            "squashes, and the squash commit message (PR title + body) is the only text "
+            "the merge-queue build reads. A trailer in a branch commit message is dropped "
+            "by the squash; it counts only under a merge-commit queue. After editing the "
+            "body, push or re-run this job."
         )
     if report.stale_overrides:
         lines.append("FAIL: stale test-count-drop overrides (no drop for that path):")
@@ -413,11 +430,24 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("PR_BODY", ""),
         help="PR body text (or set PR_BODY); used for test-count-drop overrides",
     )
+    parser.add_argument(
+        "--commit-messages",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Also read overrides from base..head commit messages (default). The pull_request "
+        "lane of a squash queue passes --no-commit-messages: branch messages do not survive the squash",
+    )
     parser.add_argument("--root", type=Path, default=REPO_ROOT, help="Repository root")
     args = parser.parse_args(argv)
 
     base = args.base.strip() or None
-    report = build_report(args.root, base=base, head=args.head, pr_body=args.pr_body)
+    report = build_report(
+        args.root,
+        base=base,
+        head=args.head,
+        pr_body=args.pr_body,
+        read_commit_messages=args.commit_messages,
+    )
     print(format_report(report))
     if report.not_run is not None:
         return 0

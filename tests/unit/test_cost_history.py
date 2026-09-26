@@ -27,12 +27,16 @@ def _sdd_dir(tmp_path: Path) -> Path:
 def test_append_and_load_history_round_trip(tmp_path: Path) -> None:
     """append_daily_snapshot persists snapshots that load_history returns oldest-first."""
     sdd_dir = _sdd_dir(tmp_path)
-    append_daily_snapshot(sdd_dir, spent_usd=3.5, budget_usd=10.0, snapshot_date=date(2026, 3, 29))
-    append_daily_snapshot(sdd_dir, spent_usd=4.5, budget_usd=10.0, snapshot_date=date(2026, 3, 30))
+    # Dates relative to today: load_history keeps a trailing window, so fixed
+    # calendar dates age out of it and the test starts failing on a day nobody
+    # touched this file (2026-09-26, 180 days after the dates it used to pin).
+    older, newer = date.today() - timedelta(days=2), date.today() - timedelta(days=1)
+    append_daily_snapshot(sdd_dir, spent_usd=3.5, budget_usd=10.0, snapshot_date=older)
+    append_daily_snapshot(sdd_dir, spent_usd=4.5, budget_usd=10.0, snapshot_date=newer)
 
     snapshots = load_history(sdd_dir)
 
-    assert [snapshot.date_str for snapshot in snapshots] == ["2026-03-29", "2026-03-30"]
+    assert [snapshot.date_str for snapshot in snapshots] == [older.isoformat(), newer.isoformat()]
     assert [snapshot.spent_usd for snapshot in snapshots] == [3.5, 4.5]
 
 

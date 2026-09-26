@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -134,7 +134,7 @@ flowchart LR
 প্রতিটি নোড সেই এজেন্ট নেয় যার রোল ফেজটি অনুমোদন করে; এজেন্ট টাস্কের ভেতরে যা-ই করুক, রোলের বেড়া আর অনুমোদনের গেট বহাল থাকে। কোড নোড নিজের git worktree-তে merge গেটের পেছনে সম্পূর্ণ হয়। উপরের নোডগুলো অন্যভাবে শেষ হয়: [আর্টিফ্যাক্ট চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ডেলিভারেবলের নাম দেয় (রিপোর্ট, ডেটাসেট, স্ক্যান, অ্যাকশন লগ), আর নোডটি কমিটের বদলে স্বাক্ষরিত lineage রসিদে বন্ধ হয়। একই শিডিউলার, একই জার্নাল, একই অফলাইন যাচাই - গ্রাফ কোড বহন করুক, রিসার্চ, ops পরিবর্তন বা তিনটির মিশ্রণ। সফটওয়্যার, রিসার্চ, ডকস, এন্টারপ্রাইজ ও কন্ট্রিবিউটর ওয়ার্কফ্লোর তৈরি গ্রাফ আছে [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)-এ।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm এবং Docker আছে [ইনস্টল গাইডে](https://bernstein.readthedocs.io/en/latest/getting-started/install/); এয়ার-গ্যাপড wheelhouse-এর জন্য আলাদা [এয়ার-গ্যাপ গাইড](https://bernstein.readthedocs.io/en/latest/installation/air-gap/) আছে।
+pipx, pip, brew, dnf, npm এবং Docker আছে [ইনস্টল গাইডে](https://docs.bernstein.run/en/latest/getting-started/install/); এয়ার-গ্যাপড wheelhouse-এর জন্য আলাদা [এয়ার-গ্যাপ গাইড](https://docs.bernstein.run/en/latest/installation/air-gap/) আছে।
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,9 +223,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 রিপোজিটরি হাইজিন গেট: `bernstein readme-l10n verify` এমন PR ব্যর্থ করে যার অনূদিত README ইংরেজি উৎস থেকে সরে গেছে (এবং বাসি সেকশনটির নাম বলে দেয়), `bernstein readme-l10n sync` ইংরেজিতে সম্পাদনার পরে সেগুলো আবার বেঁধে দেয়। দেখুন [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 
 ### সমর্থিত এজেন্ট
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen এবং আরও অনেক। [অ্যাডাপ্টার সূচি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) তাদের মধ্যে 30টির ইনস্টল কমান্ড রাখে। `bernstein integrations list` `src/bernstein/adapters/registry.py` থেকে জুড়ে দেওয়া 54টি ইন্টিগ্রেশনই তালিকাভুক্ত করে — কী রিজলভ হয় তার একমাত্র উৎস ওই ফাইলটিই। এর মধ্যে 52টি বেছে নেওয়ার মতো এজেন্ট অ্যাডাপ্টার; বাকি দুটি সারি হলো `mock` টেস্ট স্টাব আর `self-hosted-endpoints` এন্ডপয়েন্ট প্রোফাইল। `--prompt` ফ্ল্যাগ আছে এমন বাকি যেকোনো কিছু জেনেরিক র‍্যাপারের মধ্য দিয়ে চলে।
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen এবং আরও অনেক। [অ্যাডাপ্টার সূচি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) তাদের মধ্যে 30টির ইনস্টল কমান্ড রাখে। `bernstein integrations list` `src/bernstein/adapters/registry.py` থেকে জুড়ে দেওয়া 56টি ইন্টিগ্রেশনই তালিকাভুক্ত করে — কী রিজলভ হয় তার একমাত্র উৎস ওই ফাইলটিই। এর মধ্যে 54টি বেছে নেওয়ার মতো এজেন্ট অ্যাডাপ্টার; বাকি দুটি সারি হলো `mock` টেস্ট স্টাব আর `self-hosted-endpoints` এন্ডপয়েন্ট প্রোফাইল। `--prompt` ফ্ল্যাগ আছে এমন বাকি যেকোনো কিছু জেনেরিক র‍্যাপারের মধ্য দিয়ে চলে।
 
 একই রানে এজেন্ট মেশান: বয়লারপ্লেটের জন্য সস্তা লোকাল মডেল, আর্কিটেকচারের জন্য ভারী ক্লাউড মডেল। `bernstein integrations list --installed` দেখায় আপনার মেশিনে কী কী আছে।
 
@@ -242,9 +242,9 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse` ও `hub` কার্যকর সাব-কমান্ড।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://bernstein.readthedocs.io/):
+গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 
 | পাতা | কী আছে |
 |---|---|

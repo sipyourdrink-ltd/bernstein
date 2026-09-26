@@ -12,8 +12,8 @@ from bernstein.core.orchestration.sla_receipt import (
     keyid_for,
     receipt_from_dict,
     receipt_to_dict,
-    sign_receipt,
-    verify_receipt,
+    sign_sla_receipt,
+    verify_sla_receipt,
 )
 from bernstein.core.orchestration.supervisor_receipt import IdentityTokens
 from bernstein.core.planning.sla_store import build_contract
@@ -59,19 +59,19 @@ def _signed_receipt() -> tuple[Any, Ed25519PrivateKey]:
         prev_chain_digest="h2",
     )
     assert receipt is not None
-    return sign_receipt(receipt, signing_key=key), key
+    return sign_sla_receipt(receipt, signing_key=key), key
 
 
 def test_signed_receipt_verifies_offline() -> None:
     receipt, _ = _signed_receipt()
-    result = verify_receipt(receipt)
+    result = verify_sla_receipt(receipt)
     assert result.ok, result.errors
 
 
 def test_receipt_roundtrips_through_json() -> None:
     receipt, _ = _signed_receipt()
     rebuilt = receipt_from_dict(receipt_to_dict(receipt))
-    assert verify_receipt(rebuilt).ok
+    assert verify_sla_receipt(rebuilt).ok
 
 
 def test_green_contract_yields_no_receipt() -> None:
@@ -97,7 +97,7 @@ def test_green_contract_yields_no_receipt() -> None:
 def test_unsigned_receipt_fails_verification() -> None:
     receipt, _ = _signed_receipt()
     unsigned = receipt_from_dict({**receipt_to_dict(receipt), "signature_b64": ""})
-    result = verify_receipt(unsigned)
+    result = verify_sla_receipt(unsigned)
     assert not result.ok
     assert any("unsigned" in e for e in result.errors)
 
@@ -122,7 +122,7 @@ def test_flipping_any_field_fails_verification(mutate: Any) -> None:
     payload = receipt_to_dict(receipt)
     mutate(payload)
     tampered = receipt_from_dict(payload)
-    assert not verify_receipt(tampered).ok
+    assert not verify_sla_receipt(tampered).ok
 
 
 def test_swapping_the_signing_key_fails() -> None:
@@ -133,9 +133,9 @@ def test_swapping_the_signing_key_fails() -> None:
     other = Ed25519PrivateKey.generate()
     import base64
 
-    from bernstein.core.orchestration.sla_receipt import canonical_receipt_bytes
+    from bernstein.core.orchestration.sla_receipt import canonical_sla_receipt_bytes
 
-    forged = base64.b64encode(other.sign(canonical_receipt_bytes(receipt))).decode("ascii")
+    forged = base64.b64encode(other.sign(canonical_sla_receipt_bytes(receipt))).decode("ascii")
     payload["signature_b64"] = forged
     tampered = receipt_from_dict(payload)
-    assert not verify_receipt(tampered).ok
+    assert not verify_sla_receipt(tampered).ok
