@@ -48,6 +48,15 @@ def is_quiet() -> bool:
     return get_verbosity() <= QUIET
 
 
+#: Every ``bernstein.*`` module logger (``logging.getLogger(__name__)``) is a
+#: descendant of this one, so setting its level and handler is enough to
+#: cover the whole package without ever touching the *root* logger -- which
+#: every other logger in the process, including third-party libraries and
+#: (in a pytest worker) every later test's own loggers, also inherits from
+#: by default (#6184).
+_BERNSTEIN_LOGGER_NAME = "bernstein"
+
+
 def apply_verbosity(verbose: bool, quiet: bool) -> None:
     """Apply verbosity settings to the Click context and Python logging.
 
@@ -65,11 +74,39 @@ def apply_verbosity(verbose: bool, quiet: bool) -> None:
         else:
             ctx.obj[_VERBOSITY_KEY] = NORMAL
 
-    # Configure root logger
+    # Scope reconfiguration to bernstein's own logger tree, never the
+    # process root. `--verbose`/`--quiet` mean "change how much of this
+    # program's own output the user sees", not "change what every logger in
+    # the process does" -- the previous `logging.basicConfig(..., force=True)`
+    # reconfigured the *root* logger, which is process-wide and permanent:
+    # in a long-running process it silently lowers third-party loggers too,
+    # and in a pytest worker that runs a CLI command through the Click
+    # layer, it leaves every later test in that worker with a raised root
+    # level, so a `caplog` assertion on an unrelated logger reads "nothing
+    # was logged" instead of "the level was raised" (#6184).
     if verbose:
-        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s", force=True)
+        _configure_bernstein_logger(logging.DEBUG, "%(levelname)s %(name)s: %(message)s")
     elif quiet:
-        logging.basicConfig(level=logging.ERROR, format="%(message)s", force=True)
+        _configure_bernstein_logger(logging.ERROR, "%(message)s")
+
+
+def _configure_bernstein_logger(level: int, fmt: str) -> None:
+    """Set the bernstein logger's level and its own formatted handler.
+
+    ``propagate = False`` keeps the record from also reaching any handler a
+    caller (or `setup_json_logging`) has attached to root, which would
+    otherwise print every message twice under a different format.
+    Replacing rather than appending the handler list keeps a second
+    `--verbose`/`--quiet` invocation in the same process (Click re-invoking
+    a command under test, or successive CLI calls in one script) from
+    stacking duplicate handlers.
+    """
+    logger = logging.getLogger(_BERNSTEIN_LOGGER_NAME)
+    logger.setLevel(level)
+    logger.propagate = False
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(fmt))
+    logger.handlers = [handler]
 
 
 def verbose_option(fn: Any) -> Any:

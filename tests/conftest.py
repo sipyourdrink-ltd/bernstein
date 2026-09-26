@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import logging
 import os
 import platform
 import subprocess
@@ -342,6 +343,34 @@ def _restore_network_posture_env() -> Iterator[None]:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
+def _restore_bernstein_logger_state() -> Iterator[None]:
+    """Put the ``bernstein`` logger's level/handlers/propagate back after every test.
+
+    A CLI command run with ``--verbose``/``--quiet`` (directly, or through
+    ``CliRunner.invoke``) reconfigures the ``bernstein`` logger for the rest
+    of the process -- there is no counterpart call that undoes it, by design:
+    a real CLI invocation is its own process, so nothing needs to restore
+    state before it exits (#6184). A pytest worker is not a fresh process per
+    test, so without this, a test earlier in the same worker that ran a
+    ``--quiet`` command leaves every later test's ``caplog`` assertion on a
+    ``bernstein.*`` logger seeing an empty record list -- indistinguishable
+    from "the code did not log", which is how a real regression ships green.
+    Belt-and-braces alongside the production fix that scopes the
+    reconfiguration off the process-wide root logger in the first place.
+    """
+    logger = logging.getLogger("bernstein")
+    saved_level = logger.level
+    saved_handlers = list(logger.handlers)
+    saved_propagate = logger.propagate
+    try:
+        yield
+    finally:
+        logger.level = saved_level
+        logger.handlers = saved_handlers
+        logger.propagate = saved_propagate
 
 
 @pytest.fixture(autouse=True)
