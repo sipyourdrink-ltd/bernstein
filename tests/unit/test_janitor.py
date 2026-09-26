@@ -492,6 +492,43 @@ class TestTestPasses:
         assert "exit=1" in fail_records[0].message
         assert "boom" in fail_records[0].message
 
+    def test_timeout_is_configurable_and_reported_as_a_timeout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Issue #6119: ``test_passes`` used to hard-code timeout=120 with no
+        override, so a slow-but-legitimate command could never pass, and a
+        timeout was reported the same way as a failing test
+        ("non-zero exit"), sending operators looking for a broken test
+        instead of a killed process.
+
+        A command that sleeps 2s must time out against a 1s configured
+        timeout -- report as a timeout, not a generic failure -- and then
+        pass once the configured timeout is raised above the sleep, proving
+        the value genuinely reaches the subprocess call rather than being
+        read once at import time.
+        """
+        caplog.set_level("WARNING", logger="bernstein.core.quality.janitor")
+        signal = CompletionSignal(
+            type="test_passes",
+            value=f'{sys.executable} -c "import time; time.sleep(2)"',
+        )
+
+        monkeypatch.setenv("BERNSTEIN_TEST_TIMEOUT_S", "1")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is False
+        assert detail == "timed out after 1.0s"
+        timeout_records = [r for r in caplog.records if "test_passes TIMEOUT" in r.message]
+        assert timeout_records, f"expected a test_passes TIMEOUT log line, got: {[r.message for r in caplog.records]}"
+        assert "timed out after 1.0s" in timeout_records[0].message
+
+        monkeypatch.setenv("BERNSTEIN_TEST_TIMEOUT_S", "5")
+        passed, detail = evaluate_signal(signal, tmp_path)
+        assert passed is True
+        assert detail == "exit 0"
+
 
 # --- bug 12: branch-check acceptance signals vs actual pushed branch ---
 #

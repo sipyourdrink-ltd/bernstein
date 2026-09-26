@@ -258,6 +258,7 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_STALLED_RUN_TICKS` | Consecutive no-progress quiescent ticks required alongside the grace window before that run is stopped (see §4.3). **Default `10`.** Takes precedence over `tuning.orchestrator.stalled_run_ticks`. |
 | `BERNSTEIN_RUN_COMMAND_DEDUPE_WINDOW_S` | Dedupe window (seconds) for the `run_command` builtin: an identical command (same hash) still in flight or finished within this window reuses the original's result instead of re-executing. **Default `2.0`.** Set `0` to disable the dedupe guard entirely. |
 | `BERNSTEIN_OPENAI_AGENTS_TOOL_SOURCE` | Operator lever for the `openai_agents` runner's tool source. Set to `builtin` to make every spawn use the runner's workdir-sandboxed builtin tools (`read_file`/`write_file`/`list_dir`/`run_command`) even when the per-spawn `mcp_config` carries no `tool_source` key. An explicit `mcp_config["tool_source"]` value always wins over this env var. Unset by default. |
+| `BERNSTEIN_TEST_TIMEOUT_S` | Override the janitor's `test_passes` completion-signal command timeout (see §4.4 below). **Default `120`.** Takes precedence over `tuning.quality.test_timeout_s`. |
 
 ---
 
@@ -289,6 +290,7 @@ Key default groups:
 | `SpawnDefaults` | `spawn_backoff_base_s`, `spawn_backoff_max_s`, `max_spawn_failures` |
 | `TaskDefaults` | Retry limits, deadline windows |
 | `AgentDefaults` | Heartbeat intervals, max dead agents kept, `max_turns` |
+| `QualityDefaults` | `test_timeout_s` (janitor `test_passes` command timeout, see §4.4) |
 | `MemoryChainDefaults` | `default_scope` (`user`/`agent`/`run`/`app`), `retention_days` (reporting horizon only; the append-only chain is always retained in full) |
 | `SLODefaults` | `error_budget_min_failures` |
 
@@ -414,6 +416,33 @@ outcome - and **below** the CLI's default wait for run completion (`3600`)
 so a synchronous `bernstein run` observes a genuine terminal state instead of
 timing out against a still-idling orchestrator. Raising it past the CLI wait
 reintroduces the second symptom.
+
+### 4.4) Janitor `test_passes` timeout
+
+The janitor's `test_passes` completion signal (`core/quality/janitor.py`'s
+`_check_test_passes`) runs the declared verification command and requires it
+to exit `0` within `test_timeout_s` (default `120`). A project whose
+verification command legitimately takes longer than 120s used to have a
+signal that could never pass - the command was killed at exactly 120s, every
+run, with no way to raise the ceiling (issue #6119). Raise it via either:
+
+```yaml
+tuning:
+  quality:
+    test_timeout_s: 300.0
+```
+
+or the `BERNSTEIN_TEST_TIMEOUT_S` env var (checked first, so it overrides the
+yaml value for a single run without editing `bernstein.yaml`). Precedence:
+env var > yaml `tuning.quality.test_timeout_s` > the `120` default. An
+unparseable or non-positive value at a given tier is rejected with a warning
+and falls through to the next tier.
+
+A killed command is also reported distinctly from an ordinary test failure:
+the completion-signal detail and the janitor log line read `timed out after
+Ns` rather than the generic `non-zero exit`, so an operator is not sent
+looking for a broken test when the process was actually killed for running
+too long.
 
 ---
 
