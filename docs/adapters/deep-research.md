@@ -1,6 +1,6 @@
 # Deep-research adapters
 
-Two adapters run deep-research agents: agents that search, open and read a
+Three adapters run deep-research agents: agents that search, open and read a
 large number of sources and write a report. Their unit of work is that report,
 not a commit.
 
@@ -8,6 +8,7 @@ not a commit.
 |---|---|---|
 | `gpt_researcher` | gpt-researcher, `deep` report mode | the installed `gpt_researcher` package |
 | `tongyi_deepresearch` | Tongyi DeepResearch ReAct agent | an operator-provided checkout (`inference/`) |
+| `paper_qa` | PaperQA2 agent over a directory of papers | the installed `paperqa` package |
 
 ## The run artifact
 
@@ -40,7 +41,7 @@ own key, so its usage can be limited and revoked on its own:
 | `BERNSTEIN_<AGENT>_MODEL` | the model (required) |
 | `BERNSTEIN_<AGENT>_PYTHON` | the interpreter the agent is installed in (default `python3`) |
 
-`<AGENT>` is `GPT_RESEARCHER` or `TONGYI_DEEPRESEARCH`. A spawn with a
+`<AGENT>` is `GPT_RESEARCHER`, `TONGYI_DEEPRESEARCH` or `PAPER_QA`. A spawn with a
 missing variable fails before anything starts, and the error names the
 variables, never their values. One agent's key is never read for another.
 
@@ -57,10 +58,23 @@ model). Its own tool settings (`SERPER_KEY_ID`, `JINA_API_KEYS`,
 `SANDBOX_FUSION_ENDPOINT`, `MAX_LLM_CALL_PER_RUN`) are passed through
 unchanged.
 
+PaperQA2 answers from papers, not the web. `BERNSTEIN_PAPER_QA_PAPERS`
+(required) is the directory of papers it indexes and searches. Every model it
+calls - answer, summary, agent, parser enrichment and embedding - is sent to
+the endpoint through LiteLLM's OpenAI provider;
+`BERNSTEIN_PAPER_QA_EMBEDDING` names the embedding model (default
+`text-embedding-3-small`). Paper metadata lookup (Crossref, Semantic Scholar)
+is off, so the papers and the endpoint are the run's only inputs. `PQA_HOME`,
+where PaperQA2 keeps its indexes, is passed through. Its sources are the
+papers the answer cites, one entry each: the paper's URL or DOI link when
+PaperQA2 has one, else its citation. PaperQA2's `unsure` and `truncated`
+statuses record `inconclusive`; `fail` records `driver_failure`.
+
 ## How the agent runs
 
 The adapter launches a runner script shipped with bernstein
-(`gpt_researcher_runner.py`, `tongyi_deepresearch_runner.py`) under the
+(`gpt_researcher_runner.py`, `tongyi_deepresearch_runner.py`,
+`paper_qa_runner.py`) under the
 agent's own interpreter. The runner imports nothing from bernstein, so the
 agent's dependencies stay out of bernstein's environment and bernstein's
 stay out of the agent's.
@@ -84,7 +98,7 @@ nothing on the host.
 | Symptom | Cause |
 |---|---|
 | `set BERNSTEIN_<AGENT>_...` at spawn | a gateway variable or the checkout path is unset |
-| runner exit 2 | the agent is not installed in `BERNSTEIN_<AGENT>_PYTHON`, or the checkout has no `inference/react_agent.py` |
+| runner exit 2 | the agent is not installed in `BERNSTEIN_<AGENT>_PYTHON`, the Tongyi checkout has no `inference/react_agent.py`, or the PaperQA2 papers directory is missing |
 | state `driver_failure`, `detail` set | the agent raised; `detail` holds the exception |
 | state `inconclusive` | empty report, or Tongyi stopped without an answer (`detail` says why) |
 | state `tampered` | `report.md` or `sources.json` changed after the run |

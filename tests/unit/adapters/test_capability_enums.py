@@ -116,8 +116,9 @@ def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
     suite whose unit of work is the scan report; ``holmesgpt`` is a read-only
     investigation CLI whose unit of work is the conclusion artifact (#3123);
     ``skyvern`` drives a browser-automation server whose unit of work is the
-    run result, not a commit; ``gpt_researcher`` and ``tongyi_deepresearch`` are
-    deep-research agents whose unit of work is the report bound to its sources.
+    run result, not a commit; ``gpt_researcher``, ``paper_qa`` and
+    ``tongyi_deepresearch`` are deep-research agents whose unit of work is the
+    report bound to its sources.
     Every coding adapter keeps ``git-diff`` - growing
     this set is a deliberate act, not a default drift, and each member needs a
     comment at its declaration saying what its unit of work is instead.
@@ -128,6 +129,7 @@ def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
         "garak",
         "gpt_researcher",
         "holmesgpt",
+        "paper_qa",
         "skyvern",
         "tongyi_deepresearch",
     }
