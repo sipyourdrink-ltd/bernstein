@@ -33,7 +33,6 @@ from bernstein.evolution._shared import (
 from bernstein.evolution._shared import (
     ExperimentResult,
     infer_risk_level,
-    make_fast_track_sandbox_result,
 )
 from bernstein.evolution._shared import (
     log_deferred as _log_deferred_impl,
@@ -474,43 +473,33 @@ class EvolutionLoop:
             self._flush_governance_log()
             return result
 
-        # Step 7 - Sandbox validation.
-        # Fast-tracked proposals (composite_risk < 0.3) bypass the sandbox.
-        # High-risk proposals (composite_risk > 0.6) are always sandbox-verified.
-        if risk_route == "fast_track":
-            logger.info(
-                "Proposal %s fast-tracked (composite_risk=%.2f) - skipping sandbox",
-                proposal.id,
-                risk_score.composite_risk,
+        # Step 7 - Sandbox validation. Every proposal is validated regardless of risk route.
+        try:
+            sandbox_result = self._sandbox.validate(
+                proposal_id=proposal.id,
+                diff=proposal.proposed_change,
+                baseline_score=baseline_score,
             )
-            sandbox_result = self._make_fast_track_sandbox_result(proposal.id, baseline_score)
-        else:
-            try:
-                sandbox_result = self._sandbox.validate(
-                    proposal_id=proposal.id,
-                    diff=proposal.proposed_change,
-                    baseline_score=baseline_score,
-                )
-            except Exception as exc:
-                raise SandboxValidationError(str(exc)) from exc
+        except Exception as exc:
+            raise SandboxValidationError(str(exc)) from exc
 
-            if not sandbox_result.passed:
-                self._breaker.record_sandbox_failure(proposal.id)
-                result = ExperimentResult(
-                    proposal_id=proposal.id,
-                    title=proposal.title,
-                    risk_level=risk_level.value,
-                    baseline_score=baseline_score,
-                    candidate_score=sandbox_result.candidate_score,
-                    delta=sandbox_result.delta,
-                    accepted=False,
-                    reason=f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}",
-                    cost_usd=_COST_PER_PROPOSAL_USD,
-                    duration_seconds=time.time() - cycle_start,
-                )
-                self._log_experiment(result)
-                self._flush_governance_log()
-                return result
+        if not sandbox_result.passed:
+            self._breaker.record_sandbox_failure(proposal.id)
+            result = ExperimentResult(
+                proposal_id=proposal.id,
+                title=proposal.title,
+                risk_level=risk_level.value,
+                baseline_score=baseline_score,
+                candidate_score=sandbox_result.candidate_score,
+                delta=sandbox_result.delta,
+                accepted=False,
+                reason=f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}",
+                cost_usd=_COST_PER_PROPOSAL_USD,
+                duration_seconds=time.time() - cycle_start,
+            )
+            self._log_experiment(result)
+            self._flush_governance_log()
+            return result
 
         # Step 7b - Eval gate (eval-gated evolution #516).
         # After sandbox passes, run the eval harness and compare against baseline.
@@ -1178,19 +1167,17 @@ class EvolutionLoop:
         Thresholds:
           - composite_risk > 0.6 → ``sandbox_verify``  (forced sandbox)
           - composite_risk 0.3-0.6 → ``standard``       (normal flow)
-          - composite_risk < 0.3 → ``fast_track``       (skip sandbox)
+          - composite_risk < 0.3 → ``standard``         (low risk, still sandbox-verified)
 
         Args:
             composite_risk: Composite risk score in [0.0, 1.0].
 
         Returns:
-            One of ``"sandbox_verify"``, ``"standard"``, or ``"fast_track"``.
+            One of ``"sandbox_verify"`` or ``"standard"``.
         """
         if composite_risk > 0.6:
             return "sandbox_verify"
-        if composite_risk > 0.3:
-            return "standard"
-        return "fast_track"
+        return "standard"
 
     def _flush_governance_log(self) -> None:
         """Write accumulated per-cycle governance state to governance_log.jsonl."""
@@ -1207,14 +1194,6 @@ class EvolutionLoop:
                 outcome_metrics=self._cycle_outcome_metrics,
             )
         )
-
-    def _make_fast_track_sandbox_result(
-        self,
-        proposal_id: str,
-        baseline_score: float,
-    ) -> SandboxResult:
-        """Return a synthetic passed SandboxResult for fast-tracked proposals."""
-        return make_fast_track_sandbox_result(proposal_id, baseline_score)
 
     # ------------------------------------------------------------------
     # Cycle helpers
