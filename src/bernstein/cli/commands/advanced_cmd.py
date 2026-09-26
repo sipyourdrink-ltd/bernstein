@@ -563,6 +563,13 @@ def plugins_cmd(workdir: str, trust_details: bool) -> None:
     default=False,
     help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
 )
+@click.option(
+    "--unattended",
+    "unattended",
+    is_flag=True,
+    default=False,
+    help="Execute probes through the unattended spawner environment.",
+)
 @click.pass_context
 def doctor(
     ctx: click.Context,
@@ -576,6 +583,7 @@ def doctor(
     endpoint_timeout: float,
     roles: tuple[str, ...],
     failover_drill: bool,
+    unattended: bool = False,
 ) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
@@ -636,7 +644,7 @@ def doctor(
     # the trailing hint to keep the exit code unchanged.
     exit_code = 0
     try:
-        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix)
+        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix, unattended=unattended)
     except SystemExit as exc:  # NOSONAR python:S5754 - captured to add a hint, re-raised below
         exit_code = int(exc.code or 0)
 
