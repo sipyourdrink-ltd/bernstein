@@ -177,10 +177,28 @@ class Filter:
         if token.startswith("\\"):
             return cls(key=key, kind=FilterKind.EXACT, literal=token[1:])
         if token.startswith("~"):
+            expression = token[1:]
+            if not expression:
+                # An empty regex matches at every position, so `key ~` selects
+                # every node that has the attribute instead of narrowing to
+                # none of them. That is the dangerous direction for a selector:
+                # it is what an unset shell variable expands to
+                # (`region ~$REGION`), and the result is a reconcile lane or
+                # audit pass aimed at the whole inventory while reading as a
+                # filtered one. This is the second site of a known defect -
+                # security/redactor.py refuses to build a pattern for the same
+                # reason - and `{}` below is the same rule for sets. Only the
+                # empty expression is refused: it is the one spelling with no
+                # legitimate reading, while an explicit `~.*` still parses and
+                # means "any value".
+                raise SelectorSyntaxError(
+                    f"empty regex for key {key!r}: '~' matches every value, so it narrows "
+                    "nothing - write '~.*' if you meant any value, or omit the filter entirely"
+                )
             try:
-                pattern = re.compile(token[1:])
+                pattern = re.compile(expression)
             except re.error as exc:
-                raise SelectorSyntaxError(f"invalid regex for key {key!r}: {token[1:]!r} ({exc})") from exc
+                raise SelectorSyntaxError(f"invalid regex for key {key!r}: {expression!r} ({exc})") from exc
             return cls(key=key, kind=FilterKind.REGEX, pattern=pattern)
         if token.startswith("{") and token.endswith("}"):
             members = tuple(sorted({p.strip() for p in token[1:-1].split(",") if p.strip()}))
