@@ -252,27 +252,6 @@ def _canonical_sth_bytes(signed_tree_head: dict[str, Any]) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def _root_from_inclusion(leaf_hash: str, audit_path: list[dict[str, Any]]) -> str:
-    """Fold an inclusion proof from leaf up to root.
-
-    Same walk as the self-hosted transparency receipt
-    (:mod:`bernstein.core.security.audit_receipt`) and its standalone copy:
-    each step is ``{"hash": sibling, "left": bool}``. Hashing is the
-    domain-separated pair from :mod:`bernstein.core.persistence.merkle`,
-    not a third Merkle implementation.
-    """
-    from bernstein.core.persistence.merkle import _combine_internal
-
-    node = leaf_hash
-    for step in audit_path:
-        sibling = str(step.get("hash", ""))
-        # Same walk as bernstein_verify_receipt; keep the branch, not a ternary.
-        node = (
-            _combine_internal(sibling, node) if step.get("left") else _combine_internal(node, sibling)
-        )
-    return node
-
-
 def transparency_log_leaf(head_sha256: str) -> str:
     """RFC 6962 leaf over the bare sealed-head digest.
 
@@ -527,6 +506,8 @@ def _verify_transparency_log_anchor(anchor: SealAnchor) -> AnchorVerification:
     """Recompute the leaf, walk the inclusion proof, verify the tree head."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from bernstein.core.security.audit_receipt import _root_from_inclusion
 
     errors: list[str] = []
     if not anchor.leaf_hash or anchor.tree_size is None or anchor.audit_path is None:

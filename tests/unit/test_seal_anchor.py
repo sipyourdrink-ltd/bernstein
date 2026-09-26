@@ -320,35 +320,27 @@ def test_tree_head_signed_by_another_log_key_is_refused() -> None:
     assert any("signature" in err for err in result.errors)
 
 
-def test_existing_rfc3161_anchor_files_still_load(
-    freetsa_token: bytes,
-    sealed_head: str,
-    tmp_path: Path,
-) -> None:
-    """v3.19.2 records (RFC 3161 fields only) still load after the log fields landed."""
-    record = {
-        "schema_version": "1.0.0",
-        "run_id": "run-legacy",
-        "head_sha256": sealed_head,
-        "anchor_kind": "rfc3161",
-        "rfc3161_token_b64": base64.b64encode(freetsa_token).decode("ascii"),
-        "rfc3161_tsa_url": "https://freetsa.org/tsr",
-    }
-    assert "leaf_hash" not in record
-    assert "signed_tree_head" not in record
-    path = tmp_path / "legacy_seal_anchor.json"
-    path.write_text(json.dumps(record), encoding="utf-8")
+def test_existing_rfc3161_anchor_files_still_load() -> None:
+    """v3.19.2 records committed under tests/fixtures/rfc3161/ still load."""
+    paths = sorted(_FIXTURE_DIR.glob("*.json"))
+    assert paths, f"expected a committed RFC 3161 anchor under {_FIXTURE_DIR}"
 
-    loaded = load_anchor(path)
+    for path in paths:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        assert record["anchor_kind"] == "rfc3161"
+        assert "leaf_hash" not in record
+        assert "signed_tree_head" not in record
 
-    assert loaded.anchor_kind == ANCHOR_KIND_RFC3161
-    assert loaded.head_sha256 == sealed_head
-    assert loaded.token_b64 == record["rfc3161_token_b64"]
-    assert loaded.leaf_hash is None
-    assert loaded.tree_size is None
-    assert loaded.audit_path is None
-    assert loaded.signed_tree_head is None
-    assert loaded.log_public_key is None
+        loaded = load_anchor(path)
+
+        assert loaded.anchor_kind == ANCHOR_KIND_RFC3161
+        assert loaded.head_sha256 == record["head_sha256"]
+        assert loaded.token_b64 == record["rfc3161_token_b64"]
+        assert loaded.leaf_hash is None
+        assert loaded.tree_size is None
+        assert loaded.audit_path is None
+        assert loaded.signed_tree_head is None
+        assert loaded.log_public_key is None
 
 
 def test_transparency_log_anchor_round_trips_through_disk(tmp_path: Path) -> None:
