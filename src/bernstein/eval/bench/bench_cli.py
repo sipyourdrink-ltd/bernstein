@@ -37,12 +37,14 @@ if TYPE_CHECKING:
 def _get_suite(name: str):
     """Resolve a suite name or .json path to a BenchSuite."""
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
+    from bernstein.eval.bench.leakage_suite import build_leakage_suite_v1
     from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     _BUILTIN = {
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
+        "leakage-v1": build_leakage_suite_v1,
     }
 
     if name in _BUILTIN:
@@ -128,6 +130,10 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import LeakageReplayAdapter
+
+        adapter = LeakageReplayAdapter()
     else:
         adapter = MockReplayAdapter()
     runner = BenchRunner(
@@ -147,6 +153,20 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
 
     click.echo(f"\nScore       : {bundle.overall_score * 100:.1f}%")
     click.echo(f"Pass rate   : {bundle.pass_rate * 100:.1f}%")
+    if suite_obj.version == "leakage-v1":
+        # The pass rate alone cannot tell "scanned and dirty" from "never
+        # scanned", and both are inside it. Print what the run did not cover
+        # next to the number that would otherwise imply it did.
+        from bernstein.eval.bench.leakage_suite import score_from_bundle
+
+        leakage = score_from_bundle(bundle)
+        click.echo(f"Canaries    : {leakage.total_canaries_tested} across {leakage.total_scanned_surfaces} surface(s)")
+        if leakage.surfaces_not_exercised:
+            click.echo(f"Not scanned : {', '.join(leakage.surfaces_not_exercised)} (needs a governed run)")
+        if leakage.seed_points_not_exercised:
+            click.echo(f"Not seeded  : {', '.join(leakage.seed_points_not_exercised)} (needs a governed run)")
+        for collapsed in leakage.encodings_collapsed:
+            click.echo(f"Same bytes  : {collapsed}")
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
@@ -184,6 +204,10 @@ def bench_verify(bundle: str, suite: str) -> None:
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import LeakageReplayAdapter
+
+        adapter = LeakageReplayAdapter()
     else:
         adapter = MockReplayAdapter()
     verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
