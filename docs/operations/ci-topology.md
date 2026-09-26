@@ -84,6 +84,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trace-conformance.yml | trace-conformance | pull_request, push | {"cancel-in-progress": "true", "group": "trace-conformance-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/trufflehog.yml | trufflehog (secret scanning) | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' }}", "group": "trufflehog-${{ github.ref }}"} | 1 |
 | .github/workflows/trunk-health-slo.yml | Trunk Health SLO | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "trunk-health-slo"} | 1 |
+| .github/workflows/trusted-env-canary.yml | Trusted environment canary | workflow_dispatch | - | 1 |
 | .github/workflows/typecheck-ts.yml | TypeScript typecheck | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "typecheck-ts-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/volunteer-verify.yml | Volunteer receipt verification check run | pull_request_target | {"cancel-in-progress": "true", "group": "volunteer-verify-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/webui-render-recapture.yml | Web UI render recapture | pull_request, workflow_dispatch | {"cancel-in-progress": "true", "group": "webui-render-recapture-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
@@ -166,6 +167,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trace-conformance.yml | trace-tests: trace-tests verify |
 | .github/workflows/trufflehog.yml | trufflehog: trufflehog scan |
 | .github/workflows/trunk-health-slo.yml | compute: Compute trunk red-rate and toggle the andon marker |
+| .github/workflows/trusted-env-canary.yml | canary: Confirm the trusted environment gate is live |
 | .github/workflows/typecheck-ts.yml | typecheck: typecheck (${{ matrix.package }}) |
 | .github/workflows/volunteer-verify.yml | verify: Verify volunteer receipt |
 | .github/workflows/webui-render-recapture.yml | recapture: Recapture the web UI renders |
@@ -186,7 +188,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/bernstein-issues-decompose.yml | workflow: {"contents": "read"}<br>decompose: {"contents": "write", "issues": "write", "pull-requests": "write"}<br>plan: {"contents": "read"}<br>reject-untrusted-issue: {"issues": "write"}<br>scope_gate: {"issues": "write"} | ANTHROPIC_API_KEY, BERNSTEIN_AUTOSYNC_TOKEN, GOOGLE_API_KEY, OPENAI_API_KEY |
 | .github/workflows/bernstein-pr-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | ANTHROPIC_API_KEY |
 | .github/workflows/bisect-on-red.yml | bisect: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
-| .github/workflows/branch-protection-audit.yml | audit: {"contents": "read", "issues": "write"} | BRANCH_PROTECTION_AUDIT_TOKEN |
+| .github/workflows/branch-protection-audit.yml | audit: {"contents": "read", "id-token": "write", "issues": "write"} | - |
 | .github/workflows/ci-gate-stub.yml | workflow: {"contents": "read"}<br>ci-gate: {"contents": "read"}<br>classify: {"contents": "read", "pull-requests": "read"} | - |
 | .github/workflows/ci-macos-nightly.yml | workflow: {"contents": "read"}<br>open-failure-issue: {"contents": "read", "issues": "write"}<br>test-macos-nightly: {"contents": "read"} | GITHUB_TOKEN |
 | .github/workflows/ci-post-merge-cadence.yml | dispatch: {"actions": "write"} | - |
@@ -248,6 +250,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/trace-conformance.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/trufflehog.yml | workflow: {"contents": "read"}<br>trufflehog: {"contents": "read", "pull-requests": "read"} | - |
 | .github/workflows/trunk-health-slo.yml | compute: {"actions": "read", "issues": "write"} | - |
+| .github/workflows/trusted-env-canary.yml | - | - |
 | .github/workflows/typecheck-ts.yml | workflow: {"contents": "read"}<br>typecheck: {"contents": "read"} | - |
 | .github/workflows/volunteer-verify.yml | verify: {"checks": "write", "contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
 | .github/workflows/webui-render-recapture.yml | workflow: {"contents": "read"}<br>recapture: {"contents": "read"} | - |
