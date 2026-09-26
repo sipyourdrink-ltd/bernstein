@@ -87,7 +87,7 @@ addressed to exactly one task - no freeform threads, no undeclared fan-out.
 
 | Field | Constraint |
 | --- | --- |
-| `kind` | `finding`, `artefact_ref`, or `question` (closed vocabulary) |
+| `kind` | `finding`, `artefact_ref`, `question`, `rendezvous_open`, or `rendezvous_closed` (closed vocabulary) |
 | `body` | 4096 bytes max, DLP-redacted on the write path |
 | `sender` | Worker identifier recorded in the signed entry |
 | `sender_card_fingerprint` | Optional `sha256:` fingerprint of the sender's agent card |
@@ -104,15 +104,36 @@ scope as every other per-task write. The credential decides the reach:
 | --- | --- |
 | Operator bearer token, SSO user, cluster shared secret or cluster JWT | any task's mailbox |
 | Agent JWT with an empty `task_ids` claim (manager / orchestrator) | any task's mailbox |
-| Agent JWT scoped to specific tasks | only the mailboxes of the tasks in its own `task_ids` |
+| Agent JWT scoped to specific tasks | its own task mailboxes, plus the validated question/rendezvous exchange described below |
 
-A task-scoped agent posting to a task outside its scope receives `403` and
-the mailbox is not written. Fan-out between tasks is therefore an
-orchestrator-level operation: a worker cannot address a sibling task's
-mailbox with the session token it was spawned with. Route the handoff
-through the orchestrator, or mint a token scoped to both tasks. The MCP
-`bernstein_update` tool authenticates with `BERNSTEIN_AUTH_TOKEN`, so it is
-unaffected.
+A task-scoped agent still receives `403` for every unrelated cross-task
+message and endpoint. The narrow exception is a blocking ask: task A may
+append a `question` and `rendezvous_open` to B, and B may append the reply
+entry and `rendezvous_closed` to A. The request names `acting_task_id`; the
+server verifies that task against the signed JWT `task_ids` claim, replaces
+the supplied sender with the authenticated agent identity, and validates
+each open/close against the entries it references. A batch credential must
+therefore say which one of its authorized tasks is acting, without gaining
+authority over any other message kind or task route.
+
+The open/close pair is the durable record that A waited and how the wait
+ended. While the live request waits, A moves cooperatively from `CLAIMED` or
+`IN_PROGRESS` to `SUSPENDED`: its worker, session, process and sandbox remain
+allocated. A valid close restores the exact prior status and returns the
+bytes from the reply entry named by that close. The polling coroutine is only
+the wake-up mechanism; it is not the source of truth.
+
+The worker-facing path is `POST /tasks/<waiter-id>/ask`. It keeps that HTTP
+request open while the waiter is cooperatively suspended. The awaited worker
+answers with `POST /tasks/<awaited-id>/rendezvous/reply`, naming the open entry
+it received in its mailbox. Both routes derive the acting task from the
+task-scoped credential and route, while the lower-level mailbox endpoint keeps
+`acting_task_id` for clients that append the protocol records directly.
+
+Cooperative suspension is intentional here: keeping the live invocation lets
+`ask` return the recorded answer directly. Removing the task from scheduler
+rotation would require process teardown and reconstruction, which belongs to
+the separate replay/restart slice rather than this live rendezvous path.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8052/tasks/<task-id>/messages \

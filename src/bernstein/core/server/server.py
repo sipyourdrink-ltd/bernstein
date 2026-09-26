@@ -80,6 +80,8 @@ from bernstein.core.server.server_models import PartialMergeRequest as PartialMe
 from bernstein.core.server.server_models import PartialMergeResponse as PartialMergeResponse
 from bernstein.core.server.server_models import RoleCounts as RoleCounts
 from bernstein.core.server.server_models import StatusResponse as StatusResponse
+from bernstein.core.server.server_models import TaskAskRequest as TaskAskRequest
+from bernstein.core.server.server_models import TaskAskResponse as TaskAskResponse
 from bernstein.core.server.server_models import TaskBlockRequest as TaskBlockRequest
 from bernstein.core.server.server_models import TaskCancelRequest as TaskCancelRequest
 from bernstein.core.server.server_models import TaskCompleteRequest as TaskCompleteRequest
@@ -90,6 +92,8 @@ from bernstein.core.server.server_models import TaskMessagePost as TaskMessagePo
 from bernstein.core.server.server_models import TaskMessageResponse as TaskMessageResponse
 from bernstein.core.server.server_models import TaskPatchRequest as TaskPatchRequest
 from bernstein.core.server.server_models import TaskProgressRequest as TaskProgressRequest
+from bernstein.core.server.server_models import TaskRendezvousReplyRequest as TaskRendezvousReplyRequest
+from bernstein.core.server.server_models import TaskRendezvousReplyResponse as TaskRendezvousReplyResponse
 from bernstein.core.server.server_models import TaskResponse as TaskResponse
 from bernstein.core.server.server_models import TaskSelfCreate as TaskSelfCreate
 from bernstein.core.server.server_models import TaskStealAction as TaskStealAction

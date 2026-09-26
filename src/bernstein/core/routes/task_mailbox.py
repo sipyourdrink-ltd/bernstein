@@ -15,7 +15,9 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
+from bernstein.core.communication.rendezvous import RENDEZVOUS_CLOSED_KIND, RENDEZVOUS_OPEN_KIND
 from bernstein.core.communication.task_mailbox import (
+    MailboxAuthorizationError,
     MailboxError,
     MailboxFull,
     MailboxMessage,
@@ -29,7 +31,15 @@ from bernstein.core.routes.task_crud import (
 )
 from bernstein.core.security.audit_chain import AuditChainStore, record_task_mailbox_message
 from bernstein.core.security.sanitize import sanitize_log
-from bernstein.core.server import TaskMessagePost, TaskMessageResponse
+from bernstein.core.server import (
+    TaskAskRequest,
+    TaskAskResponse,
+    TaskMessagePost,
+    TaskMessageResponse,
+    TaskRendezvousReplyRequest,
+    TaskRendezvousReplyResponse,
+)
+from bernstein.core.tasks.suspension import RendezvousRefusedError, blocking_ask, post_rendezvous_reply
 
 logger = logging.getLogger(__name__)
 
@@ -71,37 +81,8 @@ def _message_to_response(message: MailboxMessage) -> TaskMessageResponse:
     )
 
 
-@router.post(
-    "/tasks/{task_id}/messages",
-    status_code=201,
-    responses=_MAILBOX_RESPONSES,
-)
-async def post_task_message(task_id: str, body: TaskMessagePost, request: Request) -> TaskMessageResponse:
-    """Append one typed message to the recipient task's mailbox.
-
-    The message is DLP-redacted, HMAC-chained onto the mailbox journal,
-    Ed25519-signed, and mirrored into the audit chain before the response
-    is returned - the response IS the signed journal entry.
-    """
-    task = _get_store(request).get_task(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
-    _require_task_access(task, request)
-
-    mailbox = _get_mailbox(request)
-    try:
-        message = mailbox.post(
-            task_id=task_id,
-            sender=body.sender,
-            kind=body.kind,
-            body=body.body,
-            sender_card_fingerprint=body.sender_card_fingerprint or "unregistered",
-        )
-    except MailboxFull as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from None
-    except MailboxError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-
+def _record_message_effects(request: Request, message: MailboxMessage) -> None:
+    """Mirror and publish an already-appended mailbox entry."""
     chain = _get_audit_chain(request)
     if chain is not None:
         try:
@@ -118,8 +99,76 @@ async def post_task_message(task_id: str, body: TaskMessagePost, request: Reques
             )
         except Exception as exc:  # intentional-broad-except: audit mirror is best-effort, never blocks the post
             logger.warning("task_mailbox: audit chain mirror failed: %s", type(exc).__name__)
+    _get_sse_bus(request).publish("task_message", json.dumps({"task_id": message.task_id, "seq": message.seq}))
 
-    _get_sse_bus(request).publish("task_message", json.dumps({"task_id": task_id, "seq": message.seq}))
+
+def _worker_mailbox_context(request: Request, task_id: str) -> tuple[str, list[str] | None]:
+    """Return trusted sender and task scope for a worker-facing mailbox call."""
+    identity = getattr(request.state, "agent_identity", None)
+    if identity is None:
+        return "operator", None
+    authorized_task_ids = list(identity.task_ids)
+    if authorized_task_ids and task_id not in authorized_task_ids:
+        raise HTTPException(status_code=403, detail="acting task is not in this agent's task scope")
+    return str(identity.id), authorized_task_ids
+
+
+@router.post(
+    "/tasks/{task_id}/messages",
+    status_code=201,
+    responses=_MAILBOX_RESPONSES,
+)
+async def post_task_message(task_id: str, body: TaskMessagePost, request: Request) -> TaskMessageResponse:
+    """Append one typed message to the recipient task's mailbox.
+
+    The message is DLP-redacted, HMAC-chained onto the mailbox journal,
+    Ed25519-signed, and mirrored into the audit chain before the response
+    is returned - the response IS the signed journal entry.
+    """
+    agent_identity = getattr(request.state, "agent_identity", None)
+    sender = body.sender
+    authorized_task_ids = None
+    if agent_identity is not None:
+        sender = str(agent_identity.id)
+        if body.sender != sender:
+            raise HTTPException(status_code=403, detail="mailbox sender must match the authenticated agent identity")
+        authorized_task_ids = list(agent_identity.task_ids)
+        if (
+            authorized_task_ids
+            and task_id not in authorized_task_ids
+            and body.kind
+            not in {
+                "question",
+                RENDEZVOUS_OPEN_KIND,
+                RENDEZVOUS_CLOSED_KIND,
+            }
+        ):
+            raise HTTPException(status_code=403, detail=f"cross-task message kind {body.kind!r} is not permitted")
+
+    task = _get_store(request).get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _require_task_access(task, request)
+
+    mailbox = _get_mailbox(request)
+    try:
+        message = mailbox.post(
+            task_id=task_id,
+            sender=sender,
+            kind=body.kind,
+            body=body.body,
+            sender_card_fingerprint=body.sender_card_fingerprint or "unregistered",
+            acting_task_id=body.acting_task_id,
+            authorized_task_ids=authorized_task_ids,
+        )
+    except MailboxAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
+    except MailboxFull as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from None
+    except MailboxError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    _record_message_effects(request, message)
     logger.info(
         "task.message posted: task_id=%s seq=%d kind=%s sender=%s redactions=%d",
         for_log(task_id),
@@ -129,6 +178,77 @@ async def post_task_message(task_id: str, body: TaskMessagePost, request: Reques
         message.redaction_count,
     )
     return _message_to_response(message)
+
+
+@router.post(
+    "/tasks/{task_id}/ask",
+    responses={403: {"description": "Task scope mismatch"}, 404: {"description": "Task not found"}},
+)
+async def ask_task(task_id: str, body: TaskAskRequest, request: Request) -> TaskAskResponse:
+    """Block ``task_id`` cooperatively until its mailbox rendezvous closes."""
+    store = _get_store(request)
+    waiter = store.get_task(task_id)
+    awaited = store.get_task(body.awaited_task_id)
+    if waiter is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    if awaited is None:
+        raise HTTPException(status_code=404, detail=f"Task '{body.awaited_task_id}' not found")
+    _require_task_access(waiter, request)
+    _require_task_access(awaited, request)
+    sender, authorized_task_ids = _worker_mailbox_context(request, task_id)
+    try:
+        answer = await blocking_ask(
+            task_store=store,
+            task_id=task_id,
+            awaited_task_id=body.awaited_task_id,
+            question=body.question.encode("utf-8"),
+            mailbox=_get_mailbox(request),
+            sender=sender,
+            authorized_task_ids=authorized_task_ids or [],
+            timeout_s=body.timeout_s,
+            on_post=lambda message: _record_message_effects(request, message),
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=408, detail=str(exc)) from None
+    except RendezvousRefusedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except (MailboxError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return TaskAskResponse(answer=answer.decode("utf-8"))
+
+
+@router.post(
+    "/tasks/{task_id}/rendezvous/reply",
+    status_code=201,
+    responses={403: {"description": "Task scope mismatch"}, 404: {"description": "Task not found"}},
+)
+async def reply_to_rendezvous(
+    task_id: str,
+    body: TaskRendezvousReplyRequest,
+    request: Request,
+) -> TaskRendezvousReplyResponse:
+    """Append the answer and close for a rendezvous awaited by ``task_id``."""
+    task = _get_store(request).get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _require_task_access(task, request)
+    sender, authorized_task_ids = _worker_mailbox_context(request, task_id)
+    try:
+        reply, close = post_rendezvous_reply(
+            mailbox=_get_mailbox(request),
+            open_entry_hash=body.open_entry_hash,
+            answer=body.answer.encode("utf-8"),
+            sender=sender,
+            acting_task_id=task_id,
+            authorized_task_ids=authorized_task_ids or [],
+        )
+    except MailboxAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
+    except (MailboxError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _record_message_effects(request, reply)
+    _record_message_effects(request, close)
+    return TaskRendezvousReplyResponse(reply=_message_to_response(reply), close=_message_to_response(close))
 
 
 @router.get(

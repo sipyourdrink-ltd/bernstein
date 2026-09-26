@@ -2816,6 +2816,118 @@
         }
       }
     },
+    "/tasks/{task_id}/ask": {
+      "post": {
+        "summary": "Ask Task",
+        "description": "Block ``task_id`` cooperatively until its mailbox rendezvous closes.",
+        "operationId": "ask_task_tasks__task_id__ask_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAskResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{task_id}/rendezvous/reply": {
+      "post": {
+        "summary": "Reply To Rendezvous",
+        "description": "Append the answer and close for a rendezvous awaited by ``task_id``.",
+        "operationId": "reply_to_rendezvous_tasks__task_id__rendezvous_reply_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskRendezvousReplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRendezvousReplyResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tasks/{task_id}/artifacts": {
       "post": {
         "summary": "Post Task Artifact",
@@ -11964,6 +12076,118 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/ask": {
+      "post": {
+        "summary": "Ask Task",
+        "description": "Block ``task_id`` cooperatively until its mailbox rendezvous closes.",
+        "operationId": "ask_task_api_v1_tasks__task_id__ask_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAskResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/rendezvous/reply": {
+      "post": {
+        "summary": "Reply To Rendezvous",
+        "description": "Append the answer and close for a rendezvous awaited by ``task_id``.",
+        "operationId": "reply_to_rendezvous_api_v1_tasks__task_id__rendezvous_reply_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskRendezvousReplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRendezvousReplyResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
           },
           "404": {
             "description": "Task not found"
@@ -21502,6 +21726,50 @@
         "title": "TaskArtifactPost",
         "description": "Body for POST /tasks/{task_id}/artifacts (#2553).\n\nAn agent-posted, journal-anchored artifact. ``artifact_type`` selects the\npayload shape: ``report`` uses ``body`` (markdown); ``table`` uses\n``columns`` and ``rows``; ``link`` uses ``url`` and ``link_kind``\n(``preview`` / ``dashboard`` / ``document``). ``poster`` is the claim\nidentity: a caller may only post against a task whose claim it holds.\n\nThere is deliberately no progress field. Progress is a chain-computed\nprojection of journaled work, never postable."
       },
+      "TaskAskRequest": {
+        "properties": {
+          "awaited_task_id": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Awaited Task Id"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "timeout_s": {
+            "type": "number",
+            "maximum": 3600.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout S",
+            "default": 300.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "awaited_task_id",
+          "question"
+        ],
+        "title": "TaskAskRequest",
+        "description": "One blocking question from the task named in the route."
+      },
+      "TaskAskResponse": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer"
+        ],
+        "title": "TaskAskResponse",
+        "description": "The exact stored UTF-8 answer selected by the rendezvous close."
+      },
       "TaskBlockRequest": {
         "properties": {
           "reason": {
@@ -22179,6 +22447,18 @@
             "minLength": 1,
             "title": "Sender"
           },
+          "acting_task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acting Task Id"
+          },
           "kind": {
             "type": "string",
             "maxLength": 64,
@@ -22211,7 +22491,7 @@
           "body"
         ],
         "title": "TaskMessagePost",
-        "description": "Body for POST /tasks/{task_id}/messages (#2357).\n\nTyped, size-capped worker mailbox payload. ``kind`` must be one of the\nclosed vocabulary (``finding`` / ``artefact_ref`` / ``question``).\nThe message body is capped by the mailbox chain to 4096 UTF-8 bytes\n(see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors\nthis limit so oversized bodies fail validation up front instead of\nbeing rejected downstream. The byte-strict cap remains authoritative\nin the mailbox for multibyte payloads."
+        "description": "Body for POST /tasks/{task_id}/messages (#2357).\n\nTyped, size-capped worker mailbox payload. ``kind`` must be one of the\nclosed vocabulary (``finding`` / ``artefact_ref`` / ``question`` /\n``rendezvous_open`` / ``rendezvous_closed``).\nThe message body is capped by the mailbox chain to 4096 UTF-8 bytes\n(see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors\nthis limit so oversized bodies fail validation up front instead of\nbeing rejected downstream. The byte-strict cap remains authoritative\nin the mailbox for multibyte payloads."
       },
       "TaskMessageResponse": {
         "properties": {
@@ -22483,6 +22763,46 @@
         "type": "object",
         "title": "TaskReleaseRequest",
         "description": "Body for POST /tasks/{task_id}/release."
+      },
+      "TaskRendezvousReplyRequest": {
+        "properties": {
+          "open_entry_hash": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Open Entry Hash"
+          },
+          "answer": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "open_entry_hash",
+          "answer"
+        ],
+        "title": "TaskRendezvousReplyRequest",
+        "description": "Answer one open rendezvous as the task named in the route."
+      },
+      "TaskRendezvousReplyResponse": {
+        "properties": {
+          "reply": {
+            "$ref": "#/components/schemas/TaskMessageResponse"
+          },
+          "close": {
+            "$ref": "#/components/schemas/TaskMessageResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reply",
+          "close"
+        ],
+        "title": "TaskRendezvousReplyResponse",
+        "description": "The reply entry and close entry appended in protocol order."
       },
       "TaskReopenRequest": {
         "properties": {

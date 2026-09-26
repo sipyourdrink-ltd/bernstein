@@ -1468,6 +1468,16 @@ def _check_agent_task_scope(
     Returns:
         Error message string if access should be denied, None otherwise.
     """
+    # Mailbox rendezvous is the one task-addressed write whose authority cannot
+    # be decided from the destination in the URL alone: a worker scoped to A
+    # must be able to ask B, and B must be able to reply to A.  Defer only this
+    # exact POST surface to ``routes.task_mailbox``, which has the message body,
+    # authenticated AgentIdentity, and referenced chain entries needed to make
+    # the narrower protocol-aware decision.  Every other task route continues
+    # through the generic destination allowlist below.
+    if method == "POST" and re.fullmatch(r"(?:/api/v\d+)?/tasks/[^/]+/messages", path):
+        return None
+
     task_id = _addressed_task_id(path, route_patterns, collection_patterns, method)
     if task_id is None:
         return None

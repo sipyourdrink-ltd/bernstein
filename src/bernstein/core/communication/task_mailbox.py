@@ -36,6 +36,12 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.communication.rendezvous import (
+    RENDEZVOUS_CLOSED_KIND,
+    RENDEZVOUS_OPEN_KIND,
+    RendezvousClose,
+    RendezvousOpen,
+)
 from bernstein.core.security.redactor import redact_text
 from bernstein.core.security.sanitize import sanitize_log
 
@@ -54,6 +60,7 @@ __all__ = [
     "MAX_PENDING_PER_TASK",
     "MESSAGE_KINDS",
     "STEER_MESSAGE_KINDS",
+    "MailboxAuthorizationError",
     "MailboxError",
     "MailboxFull",
     "MailboxMessage",
@@ -85,7 +92,14 @@ STEER_MESSAGE_KINDS: tuple[str, ...] = (
 #: payloads are data handed between workers, not conversation. The ``steer.*``
 #: kinds (#2508) are operator-outbound control messages; every other kind is
 #: worker-to-worker coordination.
-MESSAGE_KINDS: tuple[str, ...] = ("finding", "artefact_ref", "question", *STEER_MESSAGE_KINDS)
+MESSAGE_KINDS: tuple[str, ...] = (
+    "finding",
+    "artefact_ref",
+    "question",
+    RENDEZVOUS_OPEN_KIND,
+    RENDEZVOUS_CLOSED_KIND,
+    *STEER_MESSAGE_KINDS,
+)
 
 #: Strict cap on the message body, measured in UTF-8 bytes of the raw
 #: (pre-redaction) input so redaction can never widen what is accepted.
@@ -105,6 +119,10 @@ _IDENTITY_PUBLIC_NAME = "mailbox_signing.pub"
 
 class MailboxError(ValueError):
     """Base class for mailbox write rejections."""
+
+
+class MailboxAuthorizationError(MailboxError):
+    """The authenticated worker may not append the requested protocol step."""
 
 
 class UnknownMessageKind(MailboxError):
@@ -319,6 +337,10 @@ class TaskMailbox:
         """
         return [m for m in self._messages if m.task_id == task_id and m.seq > since_seq]
 
+    def message_by_hash(self, entry_hash: str) -> MailboxMessage | None:
+        """Return the chain entry with ``entry_hash``, if present."""
+        return next((message for message in self._messages if message.entry_hash == entry_hash), None)
+
     def get_consumed_cursor(self, task_id: str) -> int:
         """Return the highest consumed sequence number for ``task_id``, or -1 if none."""
         with self._lock:
@@ -352,6 +374,8 @@ class TaskMailbox:
         body: str,
         sender_card_fingerprint: str = "unregistered",
         timestamp: float | None = None,
+        acting_task_id: str | None = None,
+        authorized_task_ids: Sequence[str] | None = None,
     ) -> MailboxMessage:
         """Append one typed message to the chain and return the signed entry.
 
@@ -378,6 +402,14 @@ class TaskMailbox:
             raise MessageTooLarge(f"message body exceeds {MAX_MESSAGE_BODY_BYTES} bytes")
 
         with self._lock:
+            self._authorize_worker_post(
+                task_id=task_id,
+                sender=sender,
+                kind=kind,
+                body=body,
+                acting_task_id=acting_task_id,
+                authorized_task_ids=authorized_task_ids,
+            )
             consumed_cursor = self._consumed_seqs.get(task_id, -1)
             unconsumed_count = sum(1 for m in self._messages if m.task_id == task_id and m.seq > consumed_cursor)
             if unconsumed_count >= MAX_PENDING_PER_TASK:
@@ -425,6 +457,125 @@ class TaskMailbox:
             self._append(message)
             self._messages.append(message)
             return message
+
+    def _authorize_worker_post(
+        self,
+        *,
+        task_id: str,
+        sender: str,
+        kind: str,
+        body: str,
+        acting_task_id: str | None,
+        authorized_task_ids: Sequence[str] | None,
+    ) -> None:
+        """Enforce task authority for an authenticated worker append.
+
+        ``None`` bypasses worker scope checks for a trusted internal writer,
+        but rendezvous bodies and chain relationships are still validated.
+        HTTP worker requests always supply the signed JWT task scope. A
+        same-task append keeps the ordinary destination rule; crossing tasks
+        is limited to the question/rendezvous protocol and checked against its
+        chain references here, at the journal boundary.
+        """
+        trusted_internal = authorized_task_ids is None
+        allowed = set(authorized_task_ids or ())
+        acting = acting_task_id or task_id
+        if not trusted_internal and allowed and acting not in allowed:
+            raise MailboxAuthorizationError("acting task is not in this agent's task scope")
+        if (
+            not trusted_internal
+            and task_id == acting
+            and kind
+            not in {
+                RENDEZVOUS_OPEN_KIND,
+                RENDEZVOUS_CLOSED_KIND,
+            }
+        ):
+            return
+        if kind == "question":
+            # #3450: this is the narrow compatibility boundary for both the
+            # request and reply payload until the protocol names a dedicated
+            # reply kind. Rendezvous entries provide the durable distinction.
+            return
+        if kind == RENDEZVOUS_OPEN_KIND:
+            try:
+                opened = RendezvousOpen.from_message(
+                    MailboxMessage(
+                        seq=-1,
+                        task_id=task_id,
+                        sender=sender,
+                        sender_card_fingerprint="unregistered",
+                        kind=kind,
+                        body=body,
+                        body_hash="",
+                        redaction_count=0,
+                        timestamp=0.0,
+                        prev_entry_hash="",
+                    )
+                )
+            except ValueError as exc:
+                raise MailboxAuthorizationError(f"invalid rendezvous open: {exc}") from exc
+            authenticated_actor = opened.waiter_task_id if trusted_internal else acting
+            if opened.waiter_task_id != authenticated_actor or opened.awaited_task_id != task_id:
+                raise MailboxAuthorizationError("rendezvous open does not bind the acting and addressed tasks")
+            question = self.message_by_hash(opened.question_entry_hash)
+            if question is None or question.kind != "question":
+                raise MailboxAuthorizationError("rendezvous open references no question entry")
+            if question.task_id != task_id or question.sender != sender:
+                raise MailboxAuthorizationError("rendezvous open references another sender or destination")
+            return
+        if kind == RENDEZVOUS_CLOSED_KIND:
+            try:
+                closed = RendezvousClose.from_message(
+                    MailboxMessage(
+                        seq=-1,
+                        task_id=task_id,
+                        sender=sender,
+                        sender_card_fingerprint="unregistered",
+                        kind=kind,
+                        body=body,
+                        body_hash="",
+                        redaction_count=0,
+                        timestamp=0.0,
+                        prev_entry_hash="",
+                    )
+                )
+            except ValueError as exc:
+                raise MailboxAuthorizationError(f"invalid rendezvous close: {exc}") from exc
+            open_message = self.message_by_hash(closed.open_entry_hash)
+            if open_message is None or open_message.kind != RENDEZVOUS_OPEN_KIND:
+                raise MailboxAuthorizationError("rendezvous close references no open entry")
+            opened = RendezvousOpen.from_message(open_message)
+            if task_id != opened.waiter_task_id:
+                raise MailboxAuthorizationError("rendezvous close is not addressed to the waiter")
+            expected_actor = opened.waiter_task_id if closed.resolution == "timeout" else opened.awaited_task_id
+            authenticated_actor = expected_actor if trusted_internal else acting
+            if authenticated_actor != expected_actor:
+                raise MailboxAuthorizationError("acting task may not close this rendezvous")
+            prior_closes: list[RendezvousClose] = []
+            for message in self._messages:
+                if message.kind != RENDEZVOUS_CLOSED_KIND:
+                    continue
+                try:
+                    prior_closes.append(RendezvousClose.from_message(message))
+                except ValueError:
+                    continue
+            if any(prior.open_entry_hash == closed.open_entry_hash for prior in prior_closes):
+                raise MailboxAuthorizationError("rendezvous is already closed")
+            if closed.resolution == "answered":
+                reply = self.message_by_hash(closed.reply_entry_hash)
+                if reply is None or reply.kind != "question":
+                    raise MailboxAuthorizationError("answered rendezvous references no reply entry")
+                if reply.task_id != opened.waiter_task_id or reply.sender != sender:
+                    raise MailboxAuthorizationError("reply entry belongs to another sender or destination")
+                if reply.seq <= open_message.seq:
+                    raise MailboxAuthorizationError("reply entry does not follow the rendezvous open")
+            elif closed.reply_entry_hash:
+                raise MailboxAuthorizationError("non-answered rendezvous must not bind a reply")
+            return
+        if trusted_internal:
+            return
+        raise MailboxAuthorizationError(f"cross-task message kind {kind!r} is not permitted")
 
     def _append(self, message: MailboxMessage) -> None:
         """Durably append one journal row."""

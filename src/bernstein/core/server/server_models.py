@@ -528,7 +528,8 @@ class TaskMessagePost(BaseModel):
     """Body for POST /tasks/{task_id}/messages (#2357).
 
     Typed, size-capped worker mailbox payload. ``kind`` must be one of the
-    closed vocabulary (``finding`` / ``artefact_ref`` / ``question``).
+    closed vocabulary (``finding`` / ``artefact_ref`` / ``question`` /
+    ``rendezvous_open`` / ``rendezvous_closed``).
     The message body is capped by the mailbox chain to 4096 UTF-8 bytes
     (see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors
     this limit so oversized bodies fail validation up front instead of
@@ -537,6 +538,11 @@ class TaskMessagePost(BaseModel):
     """
 
     sender: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    # Required only when a task-scoped worker addresses another task.  A JWT
+    # may cover a batch, so the authenticated session alone cannot identify
+    # which task is speaking; the mailbox route checks this value against the
+    # signed task_ids claim before accepting the cross-task protocol step.
+    acting_task_id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
     kind: str = Field(min_length=1, max_length=64)
     body: str = Field(min_length=1, max_length=4096)
     sender_card_fingerprint: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
@@ -558,6 +564,34 @@ class TaskMessageResponse(BaseModel):
     entry_hash: str
     signature: str
     signer_public_key_pem: str
+
+
+class TaskAskRequest(BaseModel):
+    """One blocking question from the task named in the route."""
+
+    awaited_task_id: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    question: str = Field(min_length=1, max_length=4096)
+    timeout_s: float = Field(default=300.0, gt=0, le=3600)
+
+
+class TaskAskResponse(BaseModel):
+    """The exact stored UTF-8 answer selected by the rendezvous close."""
+
+    answer: str
+
+
+class TaskRendezvousReplyRequest(BaseModel):
+    """Answer one open rendezvous as the task named in the route."""
+
+    open_entry_hash: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    answer: str = Field(min_length=1, max_length=4096)
+
+
+class TaskRendezvousReplyResponse(BaseModel):
+    """The reply entry and close entry appended in protocol order."""
+
+    reply: TaskMessageResponse
+    close: TaskMessageResponse
 
 
 class TaskArtifactPost(BaseModel):

@@ -11,11 +11,13 @@ creation.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from bernstein.core.communication.rendezvous import RENDEZVOUS_OPEN_KIND
 from bernstein.core.communication.task_mailbox import TaskMailbox
 from bernstein.core.security.audit_chain import (
     EVENT_TASK_CLAIM_RECEIPT,
@@ -143,6 +145,46 @@ async def test_delivery_order_is_chain_append_order_and_stable(client: AsyncClie
     second = (await client.get(f"/tasks/{task_id}/messages")).json()
     assert [m["seq"] for m in first] == [0, 1, 2]
     assert first == second
+
+
+@pytest.mark.anyio
+async def test_worker_facing_ask_route_blocks_until_reply_and_returns_stored_answer(
+    client: AsyncClient,
+    app,
+) -> None:  # type: ignore[no-untyped-def]
+    waiter_id = await _create_task(client, "Waiter")
+    awaited_id = await _create_task(client, "Awaited")
+    assert (await client.post(f"/tasks/{waiter_id}/claim")).status_code == 200
+    assert (await client.post(f"/tasks/{awaited_id}/claim")).status_code == 200
+
+    ask = asyncio.create_task(
+        client.post(
+            f"/tasks/{waiter_id}/ask",
+            json={"awaited_task_id": awaited_id, "question": "Which schema?", "timeout_s": 2},
+        )
+    )
+    opened = None
+    for _ in range(100):
+        opened = next(
+            (message for message in app.state.task_mailbox.all_messages() if message.kind == RENDEZVOUS_OPEN_KIND),
+            None,
+        )
+        waiter = app.state.store.get_task(waiter_id)
+        if opened is not None and waiter is not None and waiter.status.value == "suspended":
+            break
+        await asyncio.sleep(0.001)
+
+    assert opened is not None
+    reply = await client.post(
+        f"/tasks/{awaited_id}/rendezvous/reply",
+        json={"open_entry_hash": opened.entry_hash, "answer": "Use schema v2."},
+    )
+    assert reply.status_code == 201, reply.text
+
+    response = await ask
+    assert response.status_code == 200, response.text
+    assert response.json() == {"answer": "Use schema v2."}
+    assert app.state.store.get_task(waiter_id).status.value == "claimed"
 
 
 @pytest.mark.anyio

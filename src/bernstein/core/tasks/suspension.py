@@ -60,6 +60,7 @@ shape and the receipt-before-effect rule.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -88,12 +89,221 @@ from bernstein.core.tasks.checkpoint_retry import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from bernstein.core.communication.task_mailbox import MailboxMessage, TaskMailbox
     from bernstein.core.persistence.agent_checkpoint import AgentCheckpoint
     from bernstein.core.persistence.work_ledger import LedgerEntry, WorkLedger
     from bernstein.core.security.audit_chain import AuditChainStore, AuditEvent
     from bernstein.core.security.permissions import AgentPermissions
+    from bernstein.core.tasks.task_store_core import TaskStore
 
 logger = logging.getLogger(__name__)
+
+
+class RendezvousRefusedError(RuntimeError):
+    """The addressed task durably refused a cooperative blocking ask."""
+
+
+async def blocking_ask(
+    *,
+    task_store: TaskStore,
+    task_id: str,
+    awaited_task_id: str,
+    question: bytes,
+    mailbox: TaskMailbox,
+    sender: str,
+    authorized_task_ids: list[str],
+    timeout_s: float,
+    poll_interval_s: float = 0.05,
+    on_post: Callable[[MailboxMessage], None] | None = None,
+) -> bytes:
+    """Ask another task and cooperatively wait for its chain-recorded close.
+
+    The live coroutine is only a waiting mechanism.  The mailbox question,
+    open, reply and close entries are the authoritative state: every poll
+    re-derives resolution from those entries, and the returned bytes come from
+    the exact reply entry named by the close.
+    """
+    from bernstein.core.communication.rendezvous import (
+        RENDEZVOUS_CLOSED_KIND,
+        RENDEZVOUS_OPEN_KIND,
+        RendezvousClose,
+        encode_close_body,
+        encode_open_body,
+    )
+    from bernstein.core.tasks.models import TaskStatus
+
+    task = task_store.get_task(task_id)
+    if task is None:
+        raise KeyError(task_id)
+    if task.status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+        raise ValueError(f"task {task_id!r} cannot ask while {task.status.value}")
+    try:
+        question_text = question.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("blocking ask question must be UTF-8") from exc
+
+    question_entry = mailbox.post(
+        task_id=awaited_task_id,
+        sender=sender,
+        kind="question",
+        body=question_text,
+        acting_task_id=task_id,
+        authorized_task_ids=authorized_task_ids,
+    )
+    if on_post is not None:
+        on_post(question_entry)
+    open_entry = mailbox.post(
+        task_id=awaited_task_id,
+        sender=sender,
+        kind=RENDEZVOUS_OPEN_KIND,
+        body=encode_open_body(
+            question_entry_hash=question_entry.entry_hash,
+            waiter_task_id=task_id,
+            awaited_task_id=awaited_task_id,
+        ),
+        acting_task_id=task_id,
+        authorized_task_ids=authorized_task_ids,
+    )
+    if on_post is not None:
+        on_post(open_entry)
+
+    suspension = asyncio.create_task(task_store.suspend_for_rendezvous(task_id, open_entry.entry_hash))
+    try:
+        resume_status = await asyncio.shield(suspension)
+    except asyncio.CancelledError:
+        # The store mutates and then durably appends under its lock.  If the
+        # request is cancelled in that await, let the append settle before
+        # restoring the live claim so no persisted SUSPENDED row is stranded.
+        resume_status = await suspension
+        await task_store.recover_rendezvous_wait(
+            task_id,
+            resume_status=resume_status,
+            open_entry_hash=open_entry.entry_hash,
+        )
+        raise
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    close_entry_hash = ""
+    recovered_without_close = False
+    try:
+        while True:
+            for message in mailbox.all_messages():
+                if message.kind != RENDEZVOUS_CLOSED_KIND:
+                    continue
+                closed = RendezvousClose.from_message(message)
+                if closed.open_entry_hash != open_entry.entry_hash:
+                    continue
+                close_entry_hash = message.entry_hash
+                if closed.resolution == "answered":
+                    reply = mailbox.message_by_hash(closed.reply_entry_hash)
+                    if reply is None:
+                        raise RuntimeError("answered rendezvous references a missing reply")
+                    return reply.body.encode("utf-8")
+                if closed.resolution == "refused":
+                    raise RendezvousRefusedError(f"task {awaited_task_id!r} refused the ask")
+                raise TimeoutError(f"blocking ask to task {awaited_task_id!r} timed out")
+            if loop.time() >= deadline:
+                timeout_close = mailbox.post(
+                    task_id=task_id,
+                    sender=sender,
+                    kind=RENDEZVOUS_CLOSED_KIND,
+                    body=encode_close_body(
+                        open_entry_hash=open_entry.entry_hash,
+                        reply_entry_hash="",
+                        resolution="timeout",
+                    ),
+                    acting_task_id=task_id,
+                    authorized_task_ids=authorized_task_ids,
+                )
+                close_entry_hash = timeout_close.entry_hash
+                if on_post is not None:
+                    on_post(timeout_close)
+                raise TimeoutError(f"blocking ask to task {awaited_task_id!r} timed out")
+            await asyncio.sleep(poll_interval_s)
+    except asyncio.CancelledError:
+        # Cancellation has been delivered and caught, so the recovery write
+        # can complete before the same cancellation is propagated outward.
+        await task_store.recover_rendezvous_wait(
+            task_id,
+            resume_status=resume_status,
+            open_entry_hash=open_entry.entry_hash,
+        )
+        recovered_without_close = True
+        raise
+    finally:
+        # A close produced by the timeout path is appended synchronously; a
+        # reply/refusal close was observed above.  The chain entry, rather
+        # than this coroutine's wake-up, is the durable resumption reason.
+        if close_entry_hash:
+            await task_store.resume_from_rendezvous(
+                task_id,
+                resume_status=resume_status,
+                close_entry_hash=close_entry_hash,
+            )
+        elif not recovered_without_close:
+            # Cancellation or a local failure (for example MailboxFull while
+            # appending the timeout close) is not a semantic resolution.  Do
+            # not fabricate a close: restore the live claim while leaving the
+            # durable open unresolved for later inspection/replay.
+            await task_store.recover_rendezvous_wait(
+                task_id,
+                resume_status=resume_status,
+                open_entry_hash=open_entry.entry_hash,
+            )
+
+
+def post_rendezvous_reply(
+    *,
+    mailbox: TaskMailbox,
+    open_entry_hash: str,
+    answer: bytes,
+    sender: str,
+    acting_task_id: str,
+    authorized_task_ids: list[str],
+) -> tuple[MailboxMessage, MailboxMessage]:
+    """Append an answer entry and the close that binds it.
+
+    The answer currently uses the existing ``question`` payload kind behind
+    this one helper.  That compatibility choice is intentionally localized
+    while #3450 settles whether the mailbox vocabulary should name replies.
+    """
+    from bernstein.core.communication.rendezvous import (
+        RENDEZVOUS_CLOSED_KIND,
+        RENDEZVOUS_OPEN_KIND,
+        RendezvousOpen,
+        encode_close_body,
+    )
+
+    open_message = mailbox.message_by_hash(open_entry_hash)
+    if open_message is None or open_message.kind != RENDEZVOUS_OPEN_KIND:
+        raise ValueError("reply references no rendezvous open entry")
+    opened = RendezvousOpen.from_message(open_message)
+    try:
+        answer_text = answer.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("rendezvous answer must be UTF-8") from exc
+    reply = mailbox.post(
+        task_id=opened.waiter_task_id,
+        sender=sender,
+        kind="question",
+        body=answer_text,
+        acting_task_id=acting_task_id,
+        authorized_task_ids=authorized_task_ids,
+    )
+    close = mailbox.post(
+        task_id=opened.waiter_task_id,
+        sender=sender,
+        kind=RENDEZVOUS_CLOSED_KIND,
+        body=encode_close_body(
+            open_entry_hash=open_entry_hash,
+            reply_entry_hash=reply.entry_hash,
+            resolution="answered",
+        ),
+        acting_task_id=acting_task_id,
+        authorized_task_ids=authorized_task_ids,
+    )
+    return reply, close
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1789,6 +1999,7 @@ __all__ = [
     "ParkResult",
     "ReleaseResult",
     "ReleaseWithoutReceiptError",
+    "RendezvousRefusedError",
     "ResourceHandles",
     "ResumeApprovalRequiredError",
     "ResumeResult",
@@ -1799,11 +2010,13 @@ __all__ = [
     "SuspensionAlreadySettledError",
     "UnsafeTaskIdError",
     "approval_decision_ref",
+    "blocking_ask",
     "decide_resume",
     "find_settlements",
     "find_suspension_receipt",
     "latest_suspension",
     "park_task",
+    "post_rendezvous_reply",
     "record_task_suspension_row",
     "release_resources",
     "resolve_task_role",

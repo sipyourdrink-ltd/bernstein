@@ -295,6 +295,104 @@ def _app_with_agent_identity_store(tmp_path: Any) -> tuple[TestClient, Any]:
     return TestClient(app, raise_server_exceptions=False), store
 
 
+def _mailbox_app_with_agent_identity_store(tmp_path: Any) -> tuple[TestClient, Any]:
+    """Build the real mailbox route behind agent-JWT middleware."""
+    from pathlib import Path
+
+    from bernstein.core.communication.task_mailbox import TaskMailbox
+    from bernstein.core.identity.agent_jwt import AgentIdentityStore
+    from bernstein.core.routes.task_mailbox import router as mailbox_router
+    from bernstein.core.server import SSEBus
+    from bernstein.core.tasks.models import Task, TaskStatus
+
+    root = Path(str(tmp_path))
+    identities = AgentIdentityStore(root / "auth")
+    tasks = {
+        task_id: Task(id=task_id, title=task_id, description=task_id, role="backend", status=TaskStatus.CLAIMED)
+        for task_id in ("task-a", "task-b", "task-c")
+    }
+    app = FastAPI()
+    app.include_router(mailbox_router)
+    app.state.store = SimpleNamespace(get_task=tasks.get)
+    app.state.sse_bus = SSEBus()
+    app.state.audit_chain = None
+    app.state.task_mailbox = TaskMailbox(
+        root / "mailbox.jsonl",
+        hmac_key=b"mailbox-auth-test-key",
+        identity_dir=root / "identity",
+    )
+    app.add_middleware(SSOAuthMiddleware, agent_identity_store=identities)
+    return TestClient(app, raise_server_exceptions=False), identities
+
+
+def test_credential_not_scoped_to_waiter_cannot_post_rendezvous_open(tmp_path: Any) -> None:
+    """The mailbox exception never lets a worker claim another task as waiter."""
+    from bernstein.core.communication.rendezvous import encode_open_body
+
+    client, identities = _mailbox_app_with_agent_identity_store(tmp_path)
+    _, token = identities.create_identity("session-c", "backend", task_ids=["task-c"])
+    headers = {"Authorization": f"Bearer {token}"}
+    question = client.post(
+        "/tasks/task-b/messages",
+        headers=headers,
+        json={"sender": "session-c", "acting_task_id": "task-c", "kind": "question", "body": "question"},
+    )
+    assert question.status_code == 201, question.text
+
+    opened = client.post(
+        "/tasks/task-b/messages",
+        headers=headers,
+        json={
+            "sender": "session-c",
+            "acting_task_id": "task-a",
+            "kind": "rendezvous_open",
+            "body": encode_open_body(
+                question_entry_hash=question.json()["entry_hash"],
+                waiter_task_id="task-a",
+                awaited_task_id="task-b",
+            ),
+        },
+    )
+
+    assert opened.status_code == 403
+    assert "acting task" in opened.json()["detail"]
+
+
+def test_mailbox_exception_does_not_allow_unrelated_cross_task_kind(tmp_path: Any) -> None:
+    """Only the ask/reply protocol crosses the destination task boundary."""
+    client, identities = _mailbox_app_with_agent_identity_store(tmp_path)
+    _, token = identities.create_identity("session-a", "backend", task_ids=["task-a"])
+
+    response = client.post(
+        "/tasks/task-b/messages",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "sender": "session-a",
+            "acting_task_id": "task-a",
+            "kind": "finding",
+            "body": "must remain forbidden",
+        },
+    )
+
+    assert response.status_code == 403
+    assert "not permitted" in response.json()["detail"]
+
+
+def test_mailbox_sender_cannot_spoof_the_authenticated_agent(tmp_path: Any) -> None:
+    """The signed identity, not caller JSON, supplies mailbox attribution."""
+    client, identities = _mailbox_app_with_agent_identity_store(tmp_path)
+    _, token = identities.create_identity("session-a", "backend", task_ids=["task-a"])
+
+    response = client.post(
+        "/tasks/task-a/messages",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"sender": "session-b", "kind": "question", "body": "spoofed"},
+    )
+
+    assert response.status_code == 403
+    assert "authenticated agent identity" in response.json()["detail"]
+
+
 def test_agent_jwt_with_task_scope_allows_own_task(tmp_path: Any) -> None:
     """An agent JWT scoped to task-A allows completing task-A."""
     client, store = _app_with_agent_identity_store(tmp_path)

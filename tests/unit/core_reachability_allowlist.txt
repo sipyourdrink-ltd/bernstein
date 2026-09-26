@@ -50,7 +50,6 @@ bernstein.core.checks.adapters: #4526 audit in flight
 bernstein.core.checks.contract: #4526 audit in flight
 bernstein.core.checks.registry: #4526 audit in flight
 bernstein.core.communication.direct: #4526 audit in flight
-bernstein.core.communication.rendezvous: #4526 audit in flight
 bernstein.core.communication.whiteboard: #4526 audit in flight
 bernstein.core.compat_redirect_ledger: #4526 audit in flight
 bernstein.core.config.prompt_versions: #4526 audit in flight
