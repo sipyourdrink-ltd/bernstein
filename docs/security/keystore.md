@@ -91,14 +91,24 @@ and the archived public key:
 GET /.well-known/agent.json/keys
 {
   "keys": [
-    { "kty": "OKP", "crv": "Ed25519", "kid": "agent-bernstein-orchestrator",                "x": "..." },
-    { "kty": "OKP", "crv": "Ed25519", "kid": "agent-bernstein-orchestrator-20260510T141200Z", "x": "..." }
+    { "kty": "OKP", "crv": "Ed25519", "kid": "agent-bernstein-orchestrator", "x": "<current>" },
+    { "kty": "OKP", "crv": "Ed25519", "kid": "<RFC 7638 thumbprint of current>", "x": "<current>" },
+    { "kty": "OKP", "crv": "Ed25519", "kid": "<RFC 7638 thumbprint of archived>", "x": "<archived>" }
   ]
 }
 ```
 
-The archived `kid` encodes the moment the key was rotated out, so a
-verifier seeing both keys in the JWKS routes by `kid` without ambiguity.
+Three entries, two keys. The current key appears twice: once under the
+historical fixed `kid`, so a verifier that cached
+`agent-bernstein-orchestrator` keeps resolving what it resolves today, and
+once under its RFC 7638 thumbprint. Archived keys are published under
+*their* thumbprints.
+
+A card is signed under the thumbprint of the key that signed it, so a
+verifier routing by `kid` reaches that key and not merely whichever key is
+current. A fixed per-tenant `kid` cannot do this: it names the tenant, so
+after a rotation it resolves to the new key while cards signed minutes
+earlier still carry it.
 
 The agent-card route serves
 `Cache-Control: public, max-age=3600`. A verifier that cached the
