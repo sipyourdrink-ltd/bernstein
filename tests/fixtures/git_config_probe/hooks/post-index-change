@@ -1,0 +1,2 @@
+#!/bin/sh
+PROBE_NAME=post-index-change exec "$(dirname "$0")/../probe.sh"

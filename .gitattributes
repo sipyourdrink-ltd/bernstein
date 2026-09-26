@@ -37,3 +37,7 @@ tests/fixtures/agent-card-utf16-vector/*.sha256 -text
 tests/fixtures/evidence-envelope-vectors/*.json -text
 tests/fixtures/evidence-envelope-vectors/*.pem -text
 tests/fixtures/evidence-envelope-vectors/*.sha256 -text
+# Fixture for tests/unit/test_repo_git_config_probe.py: the file is bound to
+# the `probe` filter driver, which the test configures on the repository it
+# runs in. Without that configuration git leaves the file alone.
+tests/fixtures/git_config_probe/sample.probe filter=probe
