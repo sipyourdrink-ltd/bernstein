@@ -353,6 +353,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
 | `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
 | `bernstein report postmortem` | Failed-task postmortem. | `cli/commands/postmortem_cmd.py:12` |
+| `bernstein insights` | Analytics and insights from task traces. Skeleton: no analysis is computed yet. | `cli/commands/insights_cmd.py:24` |
 
 #### `bernstein status`
 
@@ -477,6 +478,19 @@ set. (`cli/commands/advanced_cmd.py`, `core/observability/otel_projection.py`.)
 | `--watch` | off | Refresh every `--interval` seconds until interrupted. |
 | `--interval SEC` | 30 | Refresh interval in `--watch` mode. |
 | `--compact` | off | Compact output without sparkline. |
+
+#### `bernstein insights`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format {text\|json}` | `text` | Output format. |
+| `--since WINDOW` | `7d` | Time window for insights, e.g. `1d`, `7d`, `30d`. |
+
+Skeleton command: it accepts and echoes `--since`, but computes no analytics
+yet. Both formats print a placeholder ("Not yet implemented." in text mode, a
+`{"message": "Insights command skeleton", ...}` object in `--format json`)
+rather than raising, so the command is safe to script against while the
+underlying analysis lands.
 
 ---
 
