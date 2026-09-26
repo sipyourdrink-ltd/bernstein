@@ -120,21 +120,25 @@ class TestRoleTemplatesUseInclude:
 
 
 class TestSpawnPromptInstructions:
+    #: Any resolved server, so these assertions are about the contract rather
+    #: than about which port the run happened to get (#5964).
+    SERVER_URL = "http://127.0.0.1:8099"
+
     def test_single_task_instructions_carry_contract(self) -> None:
-        text = _render_completion_instructions([_task("T-42")])
+        text = _render_completion_instructions([_task("T-42")], self.SERVER_URL)
         assert "/tasks/T-42/complete" in text
         assert WORKER_CONTRACT_VERSION in text
         for kind in RefusalKind:
             assert kind.value in text
 
     def test_multi_task_instructions_list_all_ids(self) -> None:
-        text = _render_completion_instructions([_task("T-1"), _task("T-2")])
+        text = _render_completion_instructions([_task("T-1"), _task("T-2")], self.SERVER_URL)
         assert "T-1" in text
         assert "T-2" in text
         assert WORKER_CONTRACT_VERSION in text
 
     def test_instructions_keep_retry_guidance(self) -> None:
-        text = _render_completion_instructions([_task("T-1")])
+        text = _render_completion_instructions([_task("T-1")], self.SERVER_URL)
         assert "409" in text
 
     def test_bundled_include_is_packaged(self) -> None:
