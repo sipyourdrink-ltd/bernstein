@@ -110,6 +110,30 @@ The list the workflow commits is held to the generator's own
 manifest cannot fall out of the bump the same way. Note that `.mcp.json` is an
 *input* to that generator, not an output; it is read to project `mcp.json`.
 
+## Security supported-versions table
+
+`SECURITY.md`'s Supported Versions table names the current minor release line
+as the only supported one (no backport branch), so a **minor or major** bump
+changes it: `pyproject.toml` moves to the new `X.Y`, and the table must move
+with it. `scripts/bump_version.py` does not touch `SECURITY.md`, and
+`release-major-minor.yml`'s `add-paths` does not carry it either, so this is
+a manual edit on the bump PR, the same as writing the version's release-notes
+page is. A **patch** bump (`vX.Y.Z` with the same `X.Y`) needs no edit here.
+
+Update both rows to the new minor:
+
+```
+| X.Y.x | Yes |
+| < X.Y | No  |
+```
+
+`tests/unit/test_security_md.py` derives the expected line from
+`pyproject.toml`'s version at test time and fails on a stale table instead of
+letting it ship. It carries `pytest.mark.whole_tree_guard`, so
+`scripts/run_tests.py --affected` selects it on the bump PR itself -- not just
+on the next PR that happens to touch `SECURITY.md` -- which is what makes this
+a gate on the bump rather than a drift nobody notices until the next report.
+
 ## Release notes
 
 Release history lives in `docs/release-notes/`, one `vX.Y.Z.md` page per tagged
