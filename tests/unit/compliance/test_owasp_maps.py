@@ -234,3 +234,32 @@ def test_build_evidence_pack_is_deterministic(standard: str, tmp_path: Path) -> 
     b = build_evidence_pack(sdd_dir=sdd, standard=standard, output_path=tmp_path / "b.zip")
     assert a.sha256 == b.sha256
     assert (tmp_path / "a.zip").read_bytes() == (tmp_path / "b.zip").read_bytes()
+
+
+@pytest.mark.parametrize("module", [owasp_asi, owasp_skills])
+def test_control_titles_cover_every_id_and_are_short_names(module: object) -> None:
+    """``control_titles`` reads the short name back out of ``requirement``.
+
+    Every requirement opens with the control's short name followed by a colon.
+    Deriving the name from that string rather than restating it in a second
+    literal is what lets the compliance control registry cite an id without
+    also asserting what it means -- but it only holds while the convention
+    holds, so this is the check that it does.
+    """
+    titles = module.control_titles()  # type: ignore[attr-defined]
+    assert set(titles) == {c["control_id"] for c in module.CONTROLS}  # type: ignore[attr-defined]
+    for control_id, title in titles.items():
+        assert title, control_id
+        # A missing colon would make the whole requirement paragraph the title.
+        assert ":" not in title, control_id
+        assert len(title) <= 80, (control_id, len(title))
+        assert title == title.strip(), control_id
+
+
+@pytest.mark.parametrize("module", [owasp_asi, owasp_skills])
+def test_reference_label_refuses_an_id_the_map_does_not_define(module: object) -> None:
+    """A crosswalk citing a non-existent control fails instead of rendering it."""
+    known = next(iter(module.control_titles()))  # type: ignore[attr-defined]
+    assert module.reference_label(known).startswith(f"{known} - ")  # type: ignore[attr-defined]
+    with pytest.raises(KeyError):
+        module.reference_label("ASI99" if known.startswith("ASI") else "AST99")  # type: ignore[attr-defined]

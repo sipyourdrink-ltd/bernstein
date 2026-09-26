@@ -928,3 +928,50 @@ def pack_incident(
         operator_key_path=resolved_key,
     )
     click.echo(f"Incident pack written to: {out_path} ({len(gaps)} evidence gap(s))")
+
+
+# ---------------------------------------------------------------------------
+# `bernstein compliance controls` - Central control registry inspection
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("controls")
+@click.option(
+    "--framework",
+    default=None,
+    help="Filter by compliance framework (eu_ai_act, owasp_asi, owasp_skills, nist_ai_rmf, iso_42001, finos_aigf).",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "markdown"], case_sensitive=False),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+def controls_command(framework: str | None, output_format: str) -> None:
+    """List the registered compliance controls and their framework mappings."""
+    from bernstein.compliance.controls import get_default_registry
+
+    registry = get_default_registry()
+    controls = registry.list_controls(framework=framework)
+    if framework and not controls:
+        # A typo must not read as "no controls for this framework".
+        known = sorted({k for c in registry.list_controls() for k in c.references})
+        click.echo(f"No control references framework {framework!r}; known frameworks: {', '.join(known)}", err=True)
+
+    if output_format == "json":
+        click.echo(json.dumps([c.to_dict() for c in controls], indent=2))
+        return
+
+    if output_format == "markdown":
+        click.echo(registry.to_markdown_table(framework=framework))
+        return
+
+    # Text table format
+    click.echo(f"{'Control ID':<14} {'Category':<14} {'Frameworks':<28} Title")
+    click.echo("─" * 95)
+    for c in controls:
+        fw_list = ", ".join(c.references.keys())
+        click.echo(f"{c.control_id:<14} {c.category:<14} {fw_list:<28} {c.title}")
+    click.echo(f"\nTotal: {len(controls)} controls")
