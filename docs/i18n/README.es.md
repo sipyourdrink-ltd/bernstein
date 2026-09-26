@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la capa de gobernanza open source para agentes de IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -134,7 +134,7 @@ flowchart LR
 Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los gates de aprobación se mantienen haga lo que haga el agente dentro de la tarea. Un nodo de código termina tras merge gates en su propio git worktree. Los nodos de arriba terminan distinto: un [contrato de artefacto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nombra el entregable (informe, dataset, escaneo, registro de acciones) y el nodo se cierra con un recibo de lineage firmado en lugar de un commit. Mismo planificador, mismo journal, misma verificación offline - ya lleve el grafo código, investigación, un cambio de ops o una mezcla de los tres. Hay grafos listos para software, investigación, documentación, enterprise y flujos de contribución en [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 La [guía del donante](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cubre la ejecución de un worker y el presupuesto que fijas, la [guía del proyecto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cubre la declaración de un manifiesto, y el [modelo de amenazas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica qué protege y qué no cada frontera. El ejecutor de un solo comando aún no se ha publicado: hoy `verify`, `browse` y `hub` son los subcomandos que funcionan.
 
 ### más allá de la portada
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
 Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run/):
 

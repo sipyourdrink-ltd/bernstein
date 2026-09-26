@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -134,7 +134,7 @@ flowchart LR
 हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 [दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse` और `hub` काम करने वाले सब-कमांड हैं।
 
 ### पहले पन्ने से आगे
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
 गहराई की हर चीज़ [डॉक्स साइट](https://docs.bernstein.run/) पर रहती है:
 

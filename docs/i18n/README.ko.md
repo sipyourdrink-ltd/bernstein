@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI 에이전트를 위한 오픈소스 거버넌스 레이어
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -134,7 +134,7 @@ flowchart LR
 각 노드는 페이즈가 허용하는 역할의 에이전트가 가져갑니다. 역할 울타리와 승인 게이트는 에이전트가 태스크 안에서 무엇을 하든 유지됩니다. 코드 노드는 자기만의 git worktree에서 머지 게이트 뒤로 완료됩니다. 위의 노드들은 다르게 끝납니다: [아티팩트 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)이 결과물(보고서, 데이터셋, 스캔, 액션 로그)을 지정하고, 노드는 커밋 대신 서명된 lineage 영수증으로 닫힙니다. 같은 스케줄러, 같은 저널, 같은 오프라인 검증 - 그래프가 코드를 나르든, 리서치든, ops 변경이든, 셋의 혼합이든. 소프트웨어, 리서치, 문서, 엔터프라이즈, 컨트리뷰터 워크플로용 기성 그래프는 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)에 있습니다.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 [기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `hub` 입니다.
 
 ### 표지 너머
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
 깊이 들어가는 내용은 모두 [문서 사이트](https://docs.bernstein.run/)에 있다:
 

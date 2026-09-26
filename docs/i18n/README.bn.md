@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -134,7 +134,7 @@ flowchart LR
 প্রতিটি নোড সেই এজেন্ট নেয় যার রোল ফেজটি অনুমোদন করে; এজেন্ট টাস্কের ভেতরে যা-ই করুক, রোলের বেড়া আর অনুমোদনের গেট বহাল থাকে। কোড নোড নিজের git worktree-তে merge গেটের পেছনে সম্পূর্ণ হয়। উপরের নোডগুলো অন্যভাবে শেষ হয়: [আর্টিফ্যাক্ট চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ডেলিভারেবলের নাম দেয় (রিপোর্ট, ডেটাসেট, স্ক্যান, অ্যাকশন লগ), আর নোডটি কমিটের বদলে স্বাক্ষরিত lineage রসিদে বন্ধ হয়। একই শিডিউলার, একই জার্নাল, একই অফলাইন যাচাই - গ্রাফ কোড বহন করুক, রিসার্চ, ops পরিবর্তন বা তিনটির মিশ্রণ। সফটওয়্যার, রিসার্চ, ডকস, এন্টারপ্রাইজ ও কন্ট্রিবিউটর ওয়ার্কফ্লোর তৈরি গ্রাফ আছে [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)-এ।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse` ও `hub` কার্যকর সাব-কমান্ড।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 

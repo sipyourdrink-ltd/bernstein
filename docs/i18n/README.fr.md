@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la couche de gouvernance open source pour agents IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -134,7 +134,7 @@ flowchart LR
 Chaque nœud est pris par un agent dont le rôle est autorisé par la phase ; les clôtures de rôle et les gates d'approbation tiennent quoi que fasse l'agent dans la tâche. Un nœud de code se termine derrière des merge gates dans son propre git worktree. Les nœuds ci-dessus se terminent autrement : un [contrat d'artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomme le livrable (rapport, dataset, scan, journal d'actions), et le nœud se clôt sur un reçu de lineage signé plutôt qu'un commit. Même ordonnanceur, même journal, même vérification hors ligne - que le graphe livre du code, de la recherche, un changement d'ops ou un mélange des trois. Des graphes prêts à l'emploi pour le logiciel, la recherche, la doc, l'enterprise et les workflows de contribution vivent dans [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installation en 30 secondes
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -242,7 +242,7 @@ bernstein volunteer browse --budget 60
 Le [guide du donateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) couvre l'exécution d'un worker et le budget que vous fixez, le [guide du projet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) couvre la déclaration d'un manifeste, et le [modèle de menaces](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indique ce que chaque frontière protège et ne protège pas. Le lanceur en une seule commande n'est pas encore livré : aujourd'hui `verify`, `browse` et `hub` sont les sous-commandes qui fonctionnent.
 
 ### au-delà de la page d'accueil
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
 Toutes les ressources approfondies sont réunies sur le [site de documentation](https://docs.bernstein.run/) :
 
