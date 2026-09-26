@@ -109,9 +109,7 @@ class TaskAttemptMaskedFailureReport:
     is_masked: bool
 
 
-def count_masked_failures(
-    task_id: str, attempts: Sequence[AttemptLike]
-) -> TaskAttemptMaskedFailureReport:
+def count_masked_failures(task_id: str, attempts: Sequence[AttemptLike]) -> TaskAttemptMaskedFailureReport:
     """Return a :class:`TaskAttemptMaskedFailureReport` for *task_id* over *attempts*.
 
     Only records whose ``task_id`` equals *task_id* are considered; the rest
@@ -131,9 +129,7 @@ def count_masked_failures(
     Returns:
         A :class:`TaskAttemptMaskedFailureReport` for the task.
     """
-    task_attempts = [
-        a for a in attempts if a.task_id == task_id and a.kind in _TERMINAL_KINDS
-    ]
+    task_attempts = [a for a in attempts if a.task_id == task_id and a.kind in _TERMINAL_KINDS]
 
     if not task_attempts:
         return TaskAttemptMaskedFailureReport(
@@ -172,9 +168,7 @@ def count_masked_failures(
     )
 
 
-def scan_for_masked_failures(
-    attempts: Sequence[AttemptLike]
-) -> list[TaskAttemptMaskedFailureReport]:
+def scan_for_masked_failures(attempts: Sequence[AttemptLike]) -> list[TaskAttemptMaskedFailureReport]:
     """Return one :class:`TaskAttemptMaskedFailureReport` per distinct task id in *attempts*.
 
     Tasks are returned in the order their first attempt record appears.  Only
