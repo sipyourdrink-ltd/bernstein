@@ -108,7 +108,7 @@ def test_bench_verifier_matches_and_reports_risk_class_and_capability_hash() -> 
     runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config={"scheduler": "deterministic"})
     bundle = StubSigner().sign(runner.run())
 
-    verifier = BenchVerifier(suite=suite, adapter=adapter)
+    verifier = BenchVerifier(suite=suite, adapter=adapter, allow_stub_signature=True)
     result = verifier.verify(bundle)
 
     assert result.passed is True
@@ -146,7 +146,7 @@ def test_bench_verifier_catches_tampered_capability_receipt() -> None:
         scheduler_config=bundle.scheduler_config,
     )
 
-    verifier = BenchVerifier(suite=suite, adapter=adapter)
+    verifier = BenchVerifier(suite=suite, adapter=adapter, allow_stub_signature=True)
     result = verifier.verify(tampered_bundle)
 
     assert result.passed is False
