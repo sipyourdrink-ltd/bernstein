@@ -51,13 +51,36 @@ class StubSigner:
 
     _TEST_KEY = b"bernstein-bench-stub-signer-test-key-v1"
 
-    def sign(self, bundle: SubmissionBundle) -> SubmissionBundle:
+    @classmethod
+    def fingerprint(cls) -> str:
+        """The fingerprint every stub-signed bundle carries."""
+        return hashlib.sha256(cls._TEST_KEY).hexdigest()[:16] + "-stub"
+
+    @classmethod
+    def expected_signature(cls, bundle: SubmissionBundle) -> str:
+        """The signature the stub would produce for *bundle*'s current hash."""
         import hmac
 
-        bundle_hash = bundle.bundle_hash()
-        raw_sig = hmac.new(self._TEST_KEY, bundle_hash.encode(), hashlib.sha256).digest()
-        signature = base64.b64encode(raw_sig).decode()
-        fingerprint = hashlib.sha256(self._TEST_KEY).hexdigest()[:16] + "-stub"
+        raw_sig = hmac.new(cls._TEST_KEY, bundle.bundle_hash().encode(), hashlib.sha256).digest()
+        return base64.b64encode(raw_sig).decode()
+
+    @classmethod
+    def verify(cls, bundle: SubmissionBundle) -> bool:
+        """True when *bundle* carries the stub's fingerprint and a matching signature.
+
+        The stub key is public, so this proves only that the signature was
+        produced over *this* hash -- a bundle re-hashed after signing fails
+        it -- not that anyone in particular signed it.
+        """
+        import hmac
+
+        return bundle.signer_fingerprint == cls.fingerprint() and hmac.compare_digest(
+            bundle.signature, cls.expected_signature(bundle)
+        )
+
+    def sign(self, bundle: SubmissionBundle) -> SubmissionBundle:
+        signature = self.expected_signature(bundle)
+        fingerprint = self.fingerprint()
 
         import dataclasses
 

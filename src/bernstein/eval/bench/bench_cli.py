@@ -8,7 +8,9 @@ Registered in src/bernstein/cli/main.py alongside every other subcommand:
 
 This exposes:
     bernstein bench run <suite> [--out <path>] [--scheduler <name>] [--stub-signer]
-                        [--reliability K]
+                        [--reliability K] [--ci] [--sarif-out <path>]
+                        [--baseline <path>] [--regression-threshold <float>]
+                        [--repo <slug>] [--head-sha <sha>]
     bernstein bench verify <bundle> [--suite <name>]
     bernstein bench reliability-verify <receipt> [--suite <name>]
     bernstein bench reliability-check <receipt> [--suite <name>] [--task <id>] [--attempt N]
@@ -19,6 +21,7 @@ Also registered as a standalone script in pyproject.toml:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -56,6 +59,61 @@ def _get_suite(name: str):
         f"Unknown suite {name!r}. Built-in suites: {', '.join(_BUILTIN)}. Or pass a path to a .json suite file.",
         param_hint="suite",
     )
+
+
+#: The checkout this package lives in:
+#: ``<root>/src/bernstein/eval/bench/bench_cli.py`` -> ``<root>``.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _repo_relative(path: Path) -> str | None:
+    """*path* as a repository-relative posix path, or ``None`` if it is outside.
+
+    A SARIF location is read against the repository the report is attached
+    to, so an absolute path from the runner anchors nothing there -- and it
+    publishes the layout of the machine that produced it into an artefact
+    meant for a code-scanning UI. Outside the checkout there is no honest
+    answer, and no location is the honest one.
+    """
+    try:
+        return path.resolve().relative_to(_REPO_ROOT).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
+def _suite_source_uri(name: str) -> str | None:
+    """Repository-relative path the suite's tasks are defined in, for SARIF.
+
+    A .json suite is its own file; a built-in suite lives in the module that
+    builds it. Returns ``None`` when neither can be named *relative to this
+    checkout*, so the report carries no location rather than an invented or
+    machine-local one.
+    """
+    import inspect
+
+    from bernstein.eval.bench import golden_suite, tool_surface_suite
+
+    path = Path(name)
+    if path.suffix == ".json" and path.exists():
+        return _repo_relative(path)
+    module = {"golden-v1": golden_suite, "tool-surface-v1": tool_surface_suite}.get(name)
+    if module is None:
+        return None
+    source = inspect.getsourcefile(module)
+    if source is None:
+        return None
+    source_path = Path(source).resolve()
+    # Name the file relative to the checkout this package lives in, so a
+    # `bernstein` directory elsewhere in the path cannot mislead the slice.
+    relative = _repo_relative(source_path)
+    if relative is not None:
+        return relative
+    parts = source_path.parts
+    # .../src/bernstein/eval/bench/<module>.py -> src/bernstein/eval/bench/<module>.py
+    try:
+        return Path(*parts[parts.index("bernstein") - 1 :]).as_posix()
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +157,53 @@ def bench_group() -> None:
         "pass^k reliability receipt instead of a submission bundle."
     ),
 )
-def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliability_k: int | None) -> None:
+@click.option(
+    "--ci",
+    is_flag=True,
+    default=False,
+    help="Run in CI mode: output SARIF, evaluate scorecard against baseline, and check regression.",
+)
+@click.option(
+    "--sarif-out",
+    default=None,
+    help="Output file path for SARIF v2.1.0 diagnostic report.",
+)
+@click.option(
+    "--baseline",
+    default=None,
+    help="Path to baseline submission bundle .json for delta scorecard comparison.",
+)
+@click.option(
+    "--regression-threshold",
+    # A negative tolerance would invert the gate: a perfect run "regresses".
+    type=click.FloatRange(min=0.0),
+    default=0.0,
+    show_default=True,
+    help="Allowed pass rate drop before CI fails (e.g. 0.05 for 5% tolerance).",
+)
+@click.option(
+    "--repo",
+    default="",
+    help="GitHub repository slug (owner/repo) to publish check run to.",
+)
+@click.option(
+    "--head-sha",
+    default="",
+    help="Commit SHA to attach check run to.",
+)
+def bench_run(
+    suite: str,
+    out: str,
+    scheduler: str,
+    stub_signer: bool,
+    reliability_k: int | None,
+    ci: bool,
+    sarif_out: str | None,
+    baseline: str | None,
+    regression_threshold: float,
+    repo: str,
+    head_sha: str,
+) -> None:
     """Execute a suite and emit a signed submission bundle.
 
     SUITE is a built-in suite name (e.g. golden-v1) or a path to a .json
@@ -110,8 +214,41 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     reliability receipt reporting pass@1 (any attempt passed) and pass^k
     (all K attempts passed — the headline floor).
     """
+    from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter, ReplayAdapter
     from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
+
+    # Every CI output -- the SARIF report, the scorecard, the check run --
+    # is computed from a submission bundle, and --reliability emits a
+    # reliability receipt instead of one. Accepting the flags and returning
+    # before they do anything is the failure mode the budget gate was told
+    # not to have: a cap that is accepted and not applied.
+    if reliability_k is not None:
+        unavailable = [
+            flag
+            for flag, given in (
+                ("--ci", ci),
+                ("--sarif-out", bool(sarif_out)),
+                ("--baseline", bool(baseline)),
+                ("--repo", bool(repo)),
+                ("--head-sha", bool(head_sha)),
+            )
+            if given
+        ]
+        if unavailable:
+            raise click.ClickException(
+                f"{', '.join(unavailable)} cannot be combined with --reliability: that path emits a "
+                "reliability receipt, and the SARIF report, scorecard and check run are all computed "
+                "from a submission bundle. Run without --reliability to produce them."
+            )
+
+    if baseline and not Path(baseline).is_file():
+        raise click.ClickException(f"Baseline bundle not found: {baseline}")
+
+    # A baseline, a repo or a head SHA is a request for the comparison it
+    # feeds. Accepting one and producing nothing left an operator reading a
+    # zero exit as "no regression" when nothing had been compared.
+    ci_outputs = bool(ci or sarif_out or baseline or repo or head_sha)
 
     suite_obj = _get_suite(suite)
     click.echo(f"Suite       : {suite_obj.version}")
@@ -150,6 +287,70 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
+
+    if ci_outputs:
+        from bernstein.eval.bench.ci import evaluate_ci_scorecard, post_bench_check_run
+        from bernstein.eval.bench.sarif import bundle_to_sarif
+        from bernstein.eval.bench.verifier import BenchVerifier
+        from bernstein.github_app.check_runs import CheckRunClient
+
+        # The report is written for --ci or an explicit --sarif-out; a
+        # --baseline on its own asks for the comparison, not for a file.
+        if ci or sarif_out:
+            sarif_data = bundle_to_sarif(bundle, suite_obj, suite_uri=_suite_source_uri(suite))
+            sarif_target = Path(sarif_out) if sarif_out else out_path.with_suffix(".sarif")
+            sarif_target.parent.mkdir(parents=True, exist_ok=True)
+            sarif_target.write_text(json.dumps(sarif_data, indent=2), encoding="utf-8")
+            click.echo(f"SARIF report written to: {sarif_target}")
+
+        # A baseline that was asked for and is not there is a configuration
+        # error, not a neutral result. One that is there but does not load
+        # (hash mismatch, malformed) is what "unverifiable" means: neutral,
+        # with the reason on the scorecard.
+        baseline_bundle = None
+        baseline_problem: str | None = None
+        if baseline:
+            base_path = Path(baseline)
+            try:
+                baseline_bundle = SubmissionBundle.load(base_path)
+            except Exception as exc:
+                baseline_problem = (
+                    f"Baseline bundle {base_path.name} could not be loaded "
+                    f"({type(exc).__name__}: {exc}). Result is neutral."
+                )
+
+        verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
+        scorecard = evaluate_ci_scorecard(
+            bundle=bundle,
+            suite=suite_obj,
+            baseline_bundle=baseline_bundle,
+            verifier=verifier,
+            regression_threshold=regression_threshold,
+        )
+        if baseline_problem is not None:
+            scorecard.summary = baseline_problem
+        click.echo("\n" + scorecard.to_markdown())
+
+        # A check run that was asked for and did not get posted must be
+        # announced, not logged at debug: the operator passed --repo and
+        # --head-sha to get one, and silence here reads as success.
+        if repo and head_sha:
+            client = CheckRunClient(repo=repo)
+            posted = post_bench_check_run(scorecard=scorecard, client=client, head_sha=head_sha)
+            if posted is None:
+                click.echo(
+                    "Warning: the bench scorecard check run was not posted (GitHub client not "
+                    "configured, or the API call failed); the conclusion above reached no check run.",
+                    err=True,
+                )
+        elif repo or head_sha:
+            click.echo(
+                "Warning: --repo and --head-sha are both needed to post the check run; nothing was posted.",
+                err=True,
+            )
+
+        if ci and scorecard.conclusion == "failure":
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
