@@ -696,3 +696,97 @@ def test_sync_back_fetches_bundle_refs_into_host_repo(tmp_path: Path) -> None:
         check=True,
     ).stdout
     assert "refs/remotes/sandbox/S-42/agent-work" in refs
+
+
+def test_sandbox0_provision_failure_never_runs_on_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An attached remote backend must fail closed even without CLI env flags."""
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
+    backend = _ImageMissingBackend(tmp_path)
+    backend.name = "sandbox0"
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend, image="unused")
+    with pytest.raises(SandboxSelectionError, match="refusing to fall back"):
+        spawner._spawn_via_sandbox_session(
+            session_id="S-sandbox0-fail",
+            prompt="test",
+            spawn_cwd=tmp_path,
+            model_config=ModelConfig("sonnet", "high"),
+            mcp_config=None,
+            session=AgentSession(id="S-sandbox0-fail", role="backend"),
+            adapter=adapter,
+        )
+    assert not adapter.spawn_calls
+
+
+def test_prompt_failure_destroys_owned_sandbox(tmp_path: Path) -> None:
+    backend = _FakeBackend(tmp_path)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+    with patch("bernstein.core.agents.spawner_core.write_prompt_to_session", side_effect=OSError("write failed")):
+        with pytest.raises(OSError, match="write failed"):
+            spawner._spawn_via_sandbox_session(
+                session_id="S-write-fail",
+                prompt="test",
+                spawn_cwd=tmp_path,
+                model_config=ModelConfig("sonnet", "high"),
+                mcp_config=None,
+                session=AgentSession(id="S-write-fail", role="backend"),
+                adapter=adapter,
+            )
+    assert not spawner._sandbox_owned_sessions
+    assert not adapter.spawn_calls
+    assert len(backend.destroyed) == 1
+
+
+def test_sandbox0_crash_resume_refuses_host_execution(tmp_path: Path) -> None:
+    from bernstein.core.models import Task
+
+    backend = _FakeBackend(tmp_path)
+    backend.name = "sandbox0"
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+    with pytest.raises(SandboxSelectionError, match="explicit RootFS snapshot restore"):
+        spawner.spawn_for_resume(
+            [Task(id="T-remote", title="resume", description="resume", role="backend")],
+            worktree_path=tmp_path,
+            changed_files=[],
+        )
+    assert not adapter.spawn_calls
+
+
+def test_reachability_probe_uses_remote_task_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_SERVER_URL", "https://tasks.example.com:8443")
+    session = _FakeSession(backend_name="sandbox0", root=tmp_path)
+    spawner, _ = _build_spawner(tmp_path, session=session)
+    spawner._check_task_server_reachability(session)
+    assert "'tasks.example.com', 8443" in session.exec_calls[0][2]
+
+
+def test_remote_spawn_passes_only_model_credentials_and_external_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    session = _FakeSession(backend_name="sandbox0", root=tmp_path)
+    session.write = AsyncMock()
+    spawner, adapter = _build_spawner(tmp_path, session=session)
+    token_path = tmp_path / "agent.token"
+    token_path.write_bytes(b"task-secret")
+    spawner._agent_token_files["S-remote"] = token_path
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "SANDBOX0_API_KEY"):
+        monkeypatch.setenv(name, "test-" + name)
+    agent = AgentSession(id="S-remote", role="backend", timeout_s=123)
+    with patch("bernstein.core.agents.spawner_core.submit_session_exec") as submit:
+        spawner._spawn_via_sandbox_session(
+            session_id=agent.id,
+            prompt=f"Read token at {token_path}",
+            spawn_cwd=tmp_path,
+            model_config=ModelConfig("glm-4.7", "high"),
+            mcp_config=None,
+            session=agent,
+            adapter=adapter,
+        )
+    env = submit.call_args.kwargs["env"]
+    assert set(env) == {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"}
+    assert submit.call_args.kwargs["timeout"] == 123
+    token_call, prompt_call = session.write.call_args_list
+    assert token_call.args == ("/tmp/bernstein-agent-tokens/S-remote.token", b"task-secret")
+    assert token_call.kwargs["mode"] == 0o600
+    assert b"/tmp/bernstein-agent-tokens/S-remote.token" in prompt_call.args[1]

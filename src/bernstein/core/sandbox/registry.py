@@ -152,6 +152,7 @@ class _Registry:
         from bernstein.core.sandbox.backends.docker import DockerSandboxBackend
         from bernstein.core.sandbox.backends.microvm import MicroVMSandboxBackend
         from bernstein.core.sandbox.backends.runloop import RunloopSandboxBackend
+        from bernstein.core.sandbox.backends.sandbox0 import Sandbox0SandboxBackend
         from bernstein.core.sandbox.backends.vercel import VercelSandboxBackend
         from bernstein.core.sandbox.backends.worktree import WorktreeSandboxBackend
 
@@ -162,6 +163,7 @@ class _Registry:
             ("blaxel", BlaxelSandboxBackend),
             ("daytona", DaytonaSandboxBackend),
             ("runloop", RunloopSandboxBackend),
+            ("sandbox0", Sandbox0SandboxBackend),
             ("vercel", VercelSandboxBackend),
         )
         for name, cls in builtins:

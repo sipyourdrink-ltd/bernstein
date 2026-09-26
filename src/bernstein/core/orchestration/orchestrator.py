@@ -7114,7 +7114,7 @@ if __name__ == "__main__":
         sandbox_config = (
             seed.sandbox if seed is not None and seed.sandbox is not None and seed.sandbox.enabled else None
         )
-        if _sandbox_runtime:
+        if _sandbox_runtime and _sandbox_runtime != "sandbox0":
             from typing import cast
 
             from bernstein.core.sandbox import DockerSandbox
@@ -7148,7 +7148,11 @@ if __name__ == "__main__":
             image=_container_image,
             two_phase_sandbox=_two_phase,
         )
-        container_config = None if sandbox_config is not None else _build_container_config(_container_iso)
+        container_config = (
+            None
+            if sandbox_config is not None or _sandbox_runtime == "sandbox0"
+            else _build_container_config(_container_iso)
+        )
         if container_config is not None and _container_iso.auto_build_image:
             from bernstein.core.container import ensure_agent_image
 
@@ -7180,7 +7184,7 @@ if __name__ == "__main__":
         # explicit request fails closed, not to change how they execute.
         _docker_sandbox_backend = None
         _docker_manifest_factory = None
-        if _is_container_runtime(_sandbox_runtime):
+        if _is_container_runtime(_sandbox_runtime) or _sandbox_runtime == "sandbox0":
             import subprocess as _subprocess
 
             from bernstein.core.sandbox.explicit_attach import attach_container_backend
@@ -7206,11 +7210,22 @@ if __name__ == "__main__":
             # before any spawn. ``explicit=True`` turns an unavailable
             # runtime into a raised SandboxSelectionError instead of a
             # silent host fallback, for whichever runtime was named.
-            _docker_sandbox_backend = attach_container_backend(_sandbox_runtime, explicit=True)
+            if _sandbox_runtime == "sandbox0":
+                from bernstein.core.sandbox.backends.sandbox0 import Sandbox0SandboxBackend
+
+                _docker_sandbox_backend = Sandbox0SandboxBackend()
+                _docker_sandbox_backend.ensure_available()
+                # The remote provider owns the boundary; do not also enable
+                # the legacy local Docker execution path.
+                sandbox_config = None
+                container_config = None
+            else:
+                _docker_sandbox_backend = attach_container_backend(_sandbox_runtime, explicit=True)
             if _docker_sandbox_backend is not None:
                 _docker_manifest_factory = _make_docker_manifest
                 logger.info(
-                    "Docker sandbox backend attached; one session per agent spawn (branch=%s)",
+                    "Sandbox backend %s attached; one session per agent spawn (branch=%s)",
+                    _sandbox_runtime,
                     _current_branch,
                 )
             else:
@@ -7235,9 +7250,9 @@ if __name__ == "__main__":
                 return
             try:
                 _asyncio.run(_docker_sandbox_backend.destroy_all())
-                logger.info("Docker sandbox backend cleanup complete")
+                logger.info("Sandbox backend cleanup complete")
             except Exception:
-                logger.warning("Failed to clean up Docker sandbox sessions", exc_info=True)
+                logger.warning("Failed to clean up sandbox sessions", exc_info=True)
 
         runtime_bridge = None
         openclaw_cfg = seed.bridges.openclaw if seed is not None and seed.bridges is not None else None

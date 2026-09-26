@@ -5222,7 +5222,11 @@ class AgentSpawner:
                         # Apply OS-level resource limits to non-sandboxed spawns.
                         target_adapter.set_resource_limits(self._resource_limits)
                         spawn_start = time.perf_counter()
-                        if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+                        if (
+                            self._in_process is not None
+                            and self._backend == AgentBackend.IN_PROCESS
+                            and not self._sandbox_session_routing_active()
+                        ):
                             # In-process: run the adapter's subprocess via
                             # a thread inside the current Python process
                             fake_pid, actual_log_path = self._in_process.run(
@@ -5730,6 +5734,15 @@ class AgentSpawner:
         """
         if not tasks:
             raise ValueError("Cannot resume with empty task list")
+
+        if getattr(getattr(self, "_sandbox_backend", None), "name", None) == "sandbox0" or (
+            getattr(getattr(self, "_sandbox_session", None), "backend_name", None) == "sandbox0"
+        ):
+            raise SandboxSelectionError(
+                "Sandbox0 crash recovery requires an explicit RootFS snapshot restore; "
+                "refusing to resume in a host worktree",
+                attempted=("sandbox0",),
+            )
 
         # Sovereign posture drift gate (#2518): the resume path goes straight to
         # the adapter without ``_spawn_for_tasks_internal``, so it must apply the
@@ -6276,6 +6289,11 @@ class AgentSpawner:
                 sbx_session = self._provision_sandbox_session(session_id)
             except Exception as exc:
                 explicit_runtime = self._explicit_container_runtime()
+                if self._sandbox_backend is not None and self._sandbox_backend.name == "sandbox0":
+                    raise SandboxSelectionError(
+                        "Sandbox0 provisioning failed; refusing to fall back to host execution",
+                        attempted=("sandbox0",),
+                    ) from exc
                 if explicit_runtime is not None:
                     # Issue #2809 (second fallback): the operator explicitly
                     # requested container isolation with ``--sandbox
@@ -6332,118 +6350,138 @@ class AgentSpawner:
             owned = True
             self._sandbox_owned_sessions[session_id] = sbx_session
 
-        log_dir = spawn_cwd / ".sdd" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"{session_id}.log"
+        try:
+            log_dir = spawn_cwd / ".sdd" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / f"{session_id}.log"
 
-        # 1) Inject the prompt through the session's file primitive.
-        write_prompt_to_session(
-            session=sbx_session,
-            prompt=_prompt_with_addendum(prompt, system_addendum),
-            session_id=session_id,
-        )
+            # Session-scoped task credentials are host files, not part of the
+            # Git bundle. Copy only this agent's token and rewrite its path.
+            token_path = self._agent_token_files.get(session_id)
+            if token_path is not None:
+                remote_token = (
+                    f"/tmp/bernstein-agent-tokens/{session_id}.token"
+                    if sbx_session.backend_name == "sandbox0"
+                    else f"{sbx_session.workdir}/.sdd/runtime/agent_tokens/{session_id}.token"
+                )
+                asyncio.run(sbx_session.write(remote_token, token_path.read_bytes(), mode=0o600))
+                prompt = prompt.replace(str(token_path), remote_token)
+                system_addendum = system_addendum.replace(str(token_path), remote_token)
 
-        # 2) Build the command using the existing container-shaped
-        #    helper.  It reads the prompt from a relative path inside
-        #    the workspace, which is exactly what session.exec needs.
-        prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
-        cmd = self._adapter_cmd_for_container(
-            prompt_file=prompt_file,
-            model_config=model_config,
-            session_id=session_id,
-            mcp_config=mcp_config,
-            adapter=adapter,
-        )
+            # 1) Inject the prompt through the session's file primitive.
+            write_prompt_to_session(
+                session=sbx_session,
+                prompt=_prompt_with_addendum(prompt, system_addendum),
+                session_id=session_id,
+            )
 
-        # 2b) Forward API keys to the sandbox so adapters can authenticate.
-        #     IMPORTANT: do NOT use build_filtered_env() here -- it copies
-        #     PATH and other host-specific vars that OVERRIDE the container's
-        #     own env when passed to Docker exec_run(environment=...).
-        #     Only forward the specific API keys the adapter needs.
-        import os as _os
+            # 2) Build the command using the existing container-shaped
+            #    helper.  It reads the prompt from a relative path inside
+            #    the workspace, which is exactly what session.exec needs.
+            prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
+            cmd = self._adapter_cmd_for_container(
+                prompt_file=prompt_file,
+                model_config=model_config,
+                session_id=session_id,
+                mcp_config=mcp_config,
+                adapter=adapter,
+                sandbox_workdir=sbx_session.workdir,
+            )
 
-        adapter_name_lc = adapter.name().lower()
-        _env_keys: list[str] = []
-        if "claude" in adapter_name_lc:
-            _env_keys.append("ANTHROPIC_API_KEY")
-        elif "gemini" in adapter_name_lc:
-            _env_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
-        else:
-            # OpenAI-compatible adapters (codex, qwen, generic) only.
-            # Claude/Gemini sandboxes must not receive OpenAI credentials
-            # they never use (least-privilege, same per-adapter gating as
-            # the legacy container env allowlists).
-            _env_keys.extend(["OPENAI_API_KEY", "OPENAI_BASE_URL"])
-        sandbox_env = {k: v for k in _env_keys if (v := _os.environ.get(k)) is not None}
+            # 2b) Forward API keys to the sandbox so adapters can authenticate.
+            #     IMPORTANT: do NOT use build_filtered_env() here -- it copies
+            #     PATH and other host-specific vars that OVERRIDE the container's
+            #     own env when passed to Docker exec_run(environment=...).
+            #     Only forward the specific API keys the adapter needs.
+            import os as _os
 
-        # 2c) Audit the exec submission (issue #2162). The argv embeds
-        #     prompt paths and model names, so only its hash is chained.
-        import hashlib as _hashlib
+            adapter_name_lc = adapter.name().lower()
+            _env_keys: list[str] = []
+            if "claude" in adapter_name_lc:
+                _env_keys.extend(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"])
+            elif "gemini" in adapter_name_lc:
+                _env_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
+            else:
+                # OpenAI-compatible adapters (codex, qwen, generic) only.
+                # Claude/Gemini sandboxes must not receive OpenAI credentials
+                # they never use (least-privilege, same per-adapter gating as
+                # the legacy container env allowlists).
+                _env_keys.extend(["OPENAI_API_KEY", "OPENAI_BASE_URL"])
+            sandbox_env = {k: v for k in _env_keys if (v := _os.environ.get(k)) is not None}
 
-        from bernstein.core.security.audit import SANDBOX_EXEC_START
+            # 2c) Audit the exec submission (issue #2162). The argv embeds
+            #     prompt paths and model names, so only its hash is chained.
+            import hashlib as _hashlib
 
-        self._emit_sandbox_audit(
-            SANDBOX_EXEC_START,
-            resource_id=sbx_session.session_id,
-            details={
-                "session_id": sbx_session.session_id,
-                "adapter": adapter.name(),
-                "cmd_hash": _hashlib.sha256(" ".join(cmd).encode("utf-8")).hexdigest(),
-                "agent_session_id": session_id,
-            },
-        )
-
-        # 3) Submit the exec on a dedicated thread; the future drives
-        #    liveness checks via SandboxSession-aware paths.
-        handle = submit_session_exec(
-            session=sbx_session,
-            cmd=cmd,
-            session_id=session_id,
-            log_path=log_path,
-            env=sandbox_env,
-            workdir=self._workdir,
-        )
-        self._sandbox_exec_handles[session_id] = handle
-
-        # When the future resolves we increment the per-exit-code
-        # counter, chain the exec_end audit event, sync committed work
-        # back to the host, and (for per-spawn sessions) destroy the
-        # session so no container outlives its agent (issue #2162).
-        def _record_exit(_h: SandboxExecHandle = handle, _owned: bool = owned) -> None:
-            try:
-                if _h.future.cancelled():
-                    code = "cancelled"
-                elif _h.future.exception() is not None:
-                    code = "error"
-                else:
-                    code = str(_h.future.result().exit_code)
-            except Exception:  # pragma: no cover - defensive
-                code = "error"
-            sandbox_exec_count_total.labels(backend=_h.backend_name, exit_code=code).inc()
-            from bernstein.core.security.audit import SANDBOX_EXEC_END
+            from bernstein.core.security.audit import SANDBOX_EXEC_START
 
             self._emit_sandbox_audit(
-                SANDBOX_EXEC_END,
+                SANDBOX_EXEC_START,
                 resource_id=sbx_session.session_id,
                 details={
                     "session_id": sbx_session.session_id,
-                    "exit_code": code,
+                    "adapter": adapter.name(),
+                    "cmd_hash": _hashlib.sha256(" ".join(cmd).encode("utf-8")).hexdigest(),
                     "agent_session_id": session_id,
                 },
             )
-            # Retrieve committed work from the sandbox-local clone
-            # before the session goes away. Skipped for cancelled or
-            # crashed execs where the container state is undefined.
-            if code not in ("cancelled", "error"):
-                self._sync_back_sandbox_work(sbx_session, session_id)
-            if _owned:
+
+            # 3) Submit the exec on a dedicated thread; the future drives
+            #    liveness checks via SandboxSession-aware paths.
+            handle = submit_session_exec(
+                session=sbx_session,
+                cmd=cmd,
+                session_id=session_id,
+                log_path=log_path,
+                env=sandbox_env,
+                timeout=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                workdir=self._workdir,
+            )
+            self._sandbox_exec_handles[session_id] = handle
+
+            # When the future resolves we increment the per-exit-code
+            # counter, chain the exec_end audit event, sync committed work
+            # back to the host, and (for per-spawn sessions) destroy the
+            # session so no container outlives its agent (issue #2162).
+            def _record_exit(_h: SandboxExecHandle = handle, _owned: bool = owned) -> None:
+                try:
+                    if _h.future.cancelled():
+                        code = "cancelled"
+                    elif _h.future.exception() is not None:
+                        code = "error"
+                    else:
+                        code = str(_h.future.result().exit_code)
+                except Exception:  # pragma: no cover - defensive
+                    code = "error"
+                sandbox_exec_count_total.labels(backend=_h.backend_name, exit_code=code).inc()
+                from bernstein.core.security.audit import SANDBOX_EXEC_END
+
+                self._emit_sandbox_audit(
+                    SANDBOX_EXEC_END,
+                    resource_id=sbx_session.session_id,
+                    details={
+                        "session_id": sbx_session.session_id,
+                        "exit_code": code,
+                        "agent_session_id": session_id,
+                    },
+                )
+                # Retrieve committed work from the sandbox-local clone
+                # before the session goes away. Skipped for cancelled or
+                # crashed execs where the container state is undefined.
+                if code not in ("cancelled", "error"):
+                    self._sync_back_sandbox_work(sbx_session, session_id)
+                if _owned:
+                    self._destroy_sandbox_session(session_id)
+
+            handle.future.add_done_callback(lambda _f: _record_exit())
+
+            session.isolation = IsolationMode.CONTAINER.value
+            session.runtime_backend = handle.backend_name
+            return SpawnResult(pid=0, log_path=log_path)
+        except BaseException:
+            if owned:
                 self._destroy_sandbox_session(session_id)
-
-        handle.future.add_done_callback(lambda _f: _record_exit())
-
-        session.isolation = IsolationMode.CONTAINER.value
-        session.runtime_backend = handle.backend_name
-        return SpawnResult(pid=0, log_path=log_path)
+            raise
 
     @staticmethod
     def _explicit_container_runtime() -> str | None:
@@ -6651,11 +6689,19 @@ class AgentSpawner:
         Args:
             sbx_session: A freshly provisioned session to probe from.
         """
-        port = self._sandbox_server_port
-        if port is None or self._sandbox_reachability_checked:
+        import os
+        from urllib.parse import urlsplit
+
+        if self._sandbox_reachability_checked:
+            return
+        if self._sandbox_server_port is None and not os.environ.get("BERNSTEIN_SERVER_URL"):
             return
         self._sandbox_reachability_checked = True
-        probe = f'import socket; socket.create_connection(("127.0.0.1", {int(port)}), timeout=3).close()'
+        configured = os.environ.get("BERNSTEIN_SERVER_URL")
+        address = urlsplit(configured or f"http://127.0.0.1:{self._sandbox_server_port}")
+        host = address.hostname or "127.0.0.1"
+        port = address.port or (443 if address.scheme == "https" else 80)
+        probe = f"import socket; socket.create_connection(({host!r}, {port}), timeout=3).close()"
         try:
             result = asyncio.run(sbx_session.exec(["python3", "-c", probe], timeout=15))
         except Exception as exc:
@@ -6667,11 +6713,10 @@ class AgentSpawner:
             return
         if result.exit_code != 0:
             logger.warning(
-                "Sandbox session %s cannot reach the task server on 127.0.0.1:%d; "
-                "agents inside containers on this Docker daemon will not reach the "
-                "task server (some Docker Desktop configurations do not support "
-                "host networking). The run will rely on the legacy path behavior.",
+                "Sandbox session %s cannot reach the task server on %s:%d; "
+                "configure BERNSTEIN_SERVER_URL with an address reachable from the sandbox.",
                 sbx_session.session_id,
+                host,
                 port,
             )
 
@@ -6775,6 +6820,7 @@ class AgentSpawner:
         session_id: str,
         mcp_config: dict[str, Any] | None,
         adapter: CLIAdapter,
+        sandbox_workdir: str = "/workspace",
     ) -> list[str]:
         """Build the CLI command to run inside the container.
 
@@ -6796,7 +6842,7 @@ class AgentSpawner:
         _ = prompt_file  # Part of interface; container path is reconstructed from session_id
         _ = mcp_config  # Part of interface; not used in container command
         # Map container path: host workspace is mounted at /workspace
-        container_prompt = f"/workspace/.sdd/runtime/prompts/{session_id}.md"
+        container_prompt = f"{sandbox_workdir}/.sdd/runtime/prompts/{session_id}.md"
 
         # Build a generic shell command that reads the prompt and pipes it
         # to the adapter CLI. This works across all adapters.
@@ -6832,7 +6878,7 @@ class AgentSpawner:
                 f"--effort {q_effort} "
                 f"--max-turns 50 "
                 f"--dangerously-skip-permissions "
-                f"--output-format stream-json "
+                f"--output-format stream-json --verbose "
                 f'-p "$(cat {q_prompt})"',
             ]
         elif "qwen" in adapter_name:

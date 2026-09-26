@@ -544,3 +544,11 @@ tests auto-skip without a live daemon or provider credentials.
   posture is the provider's responsibility.
 - Snapshot IDs are opaque to callers but may contain sensitive
   state. Do not log them at INFO level without redaction.
+
+## Sandbox0 execution
+
+The optional [Sandbox0 backend](../sandbox/sandbox0.md) implements the session
+contract through the Sandbox0 Python SDK. The run-level `--sandbox sandbox0`
+flag attaches a backend and manifest factory to `AgentSpawner`, creating one
+remote sandbox per agent. Creation failure is fail-closed. RootFS snapshots
+survive session destruction and restore into independent new sandboxes.

@@ -41,7 +41,7 @@
 Bernstein é a camada de governança open source para agentes de IA. Funciona em cima de policy as code: você escreve a política - quem pode fazer o quê, o que precisa de aprovação, o que precisa ser registrado - e o Bernstein a aplica e produz o registro verificável. Um escalonador determinístico - sem modelo no loop de coordenação - executa agentes em paralelo, filtra o que produzem com gates e registra cada passo, de modo que uma execução pode ser verificada depois, offline, apenas com os artefatos. Agentes CLI de código funcionam de fábrica (Claude Code, Codex, Gemini CLI e mais 52+), e a mesma camada governa qualquer carga agêntica: a entrega pode ser um diff, um relatório de pesquisa, um dataset ou um pacote de evidências de auditoria. Perfil de instalação air-gap incluído. Apache-2.0.
 
 ### em resumo
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:87d0a73e3f4a" -->
 
 Quatro pontos o diferenciam; todo o resto são detalhes.
 

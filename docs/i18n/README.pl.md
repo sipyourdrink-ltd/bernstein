@@ -41,7 +41,7 @@
 Bernstein to otwartoźródłowa warstwa governance dla agentów AI. Działa na policy as code: ty piszesz politykę - kto co może robić, co wymaga zatwierdzenia, co musi zostać zapisane - a Bernstein ją egzekwuje i tworzy weryfikowalny zapis. Deterministyczny scheduler - bez modelu w pętli koordynacji - uruchamia agentów równolegle, filtruje ich wyniki bramkami i zapisuje każdy krok, więc przebieg można zweryfikować po fakcie, offline, wyłącznie z artefaktów. Agenci CLI do kodu działają od ręki (Claude Code, Codex, Gemini CLI i 52+ innych), a ta sama warstwa governuje dowolne obciążenie agentowe: rezultatem może być diff, raport badawczy, dataset albo pakiet dowodów audytowych. Profil instalacji air-gap w zestawie. Apache-2.0.
 
 ### w skrócie
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:87d0a73e3f4a" -->
 
 Cztery cechy wyróżniają ten projekt; reszta to szczegóły.
 

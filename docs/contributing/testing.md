@@ -26,6 +26,7 @@ locally without waiting for the cloud runner.
 | **Pyright strict zone**     | Untyped/implicit-Any leakage in `core/security/`, `core/protocols/cluster/` | PR                  |
 | **mypy strict zone**        | Same, from mypy's inference, in `core/{evidence,identity,lineage,persistence}/` | PR                  |
 | **Vulture**                 | Dead code (unused functions/classes/vars at confidence ≥80)       | PR                  |
+| **Unreachable controls**    | Security/identity symbols with no production caller or stale allowlist reasons | PR unit suite |
 | **diff-cover** (LEVEL 1)    | Changed lines below the committed diff-coverage floor             | PR (advisory)       |
 | **coverage ratchet** (LEVEL 2) | Total coverage dropped below the committed high-water mark      | push to main (advisory) |
 | **import-linter**           | Architecture-contract violations (cross-package imports)          | PR                  |
@@ -161,6 +162,16 @@ uv run python scripts/coverage_ratchet.py verify \
 ```
 
 ## When a tool fires on you
+
+### Unreachable controls
+Run `uv run python scripts/check_unreachable_controls.py` to compare the
+security/identity tree with `unreachable_controls_allowlist.txt`. The checker
+tracks calls through imported modules and aliases for top-level symbols;
+unrelated object methods with the same name do not count as callers. It still
+uses conservative name matching for unqualified references and methods. If a
+finding is truly uncalled, record a specific reason in the allowlist. If a
+production caller exists, extend the checker and its synthetic-tree tests to
+recognize that binding before updating the allowlist.
 
 ### Semgrep ERROR
 The rule is intentionally tight. If you genuinely need the pattern,
@@ -479,3 +490,15 @@ Alias resolution feeds the cached `imports` lists, so changing it means
 bumping `_ANALYZER_CACHE_VERSION` and `_COMPAT_CACHE_VERSION` in
 `src/bernstein/core/quality/test_impact.py`. File hashes alone will not
 invalidate a map whose edges were derived under the old rule.
+
+
+## Sandbox0 live integration
+
+Sandbox0's unit tests use an injected SDK client. The opt-in live suite runs
+the shared sandbox contract plus command cancellation, binary I/O, independent
+RootFS restores, and Git/file injection. A separate model-backed smoke test
+runs a real CLI agent through the spawner and checks an authenticated callback,
+committed Git bundle retrieval, and deletion. Both require isolated test
+resources; skips do not count as provider validation. See
+[Sandbox0 validation](../sandbox/sandbox0.md#validation) for credentials and
+explicit opt-in commands.

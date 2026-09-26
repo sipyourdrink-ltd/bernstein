@@ -217,6 +217,7 @@ nav:
           - Backend selector: concepts/sandbox-selector.md
           - Named sandbox pools: operations/sandbox-pools.md
           - MicroVM on libkrun: operations/microvm-libkrun.md
+          - Sandbox0: sandbox/sandbox0.md
           - Daytona: sandbox/daytona.md
           - Blaxel: sandbox/blaxel.md
           - Runloop: sandbox/runloop.md
