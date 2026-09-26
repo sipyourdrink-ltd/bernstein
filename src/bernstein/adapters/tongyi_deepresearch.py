@@ -19,6 +19,10 @@ Operator settings:
   requirements installed (default ``python3``);
 * ``BERNSTEIN_TONGYI_DEEPRESEARCH_SUMMARY_MODEL`` - the page-summary model
   (default: the planning model);
+* ``BERNSTEIN_TONGYI_DEEPRESEARCH_SERPER_BASE_URL`` /
+  ``_JINA_BASE_URL`` - where the search/scholar and visit tools send what
+  they would send to ``google.serper.dev`` and ``r.jina.ai`` (default: those
+  hosts); the endpoint must speak the same protocol;
 * the tool settings the agent reads itself (``SERPER_KEY_ID``,
   ``JINA_API_KEYS``, ``SANDBOX_FUSION_ENDPOINT``, ``MAX_LLM_CALL_PER_RUN``,
   ...) are let through unchanged.
@@ -61,6 +65,10 @@ class TongyiDeepResearchAdapter(DeepResearchAdapter):
         env["OPENAI_API_KEY"] = env["API_KEY"] = gw.api_key
         summary = (environ.get(env_prefix(self.slug) + "SUMMARY_MODEL") or "").strip()
         env["SUMMARY_MODEL_NAME"] = summary or gw.model
+        for tool in ("SERPER", "JINA"):
+            base = (environ.get(env_prefix(self.slug) + tool + "_BASE_URL") or "").strip()
+            if base:
+                env[tool + "_BASE_URL"] = base
         return env
 
     def build_command(self, prompt_file: Path, run_dir: Path, environ: Mapping[str, str]) -> list[str]:
