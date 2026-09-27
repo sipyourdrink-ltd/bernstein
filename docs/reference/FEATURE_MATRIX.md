@@ -277,7 +277,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein review/approve/reject/pending`](cli/task-lifecycle.md) | Full | 3 | Review workflow |
 | [`bernstein sync`](../operations/backlog-sync.md) | Full | 3 | Sync backlog with server |
 | [`bernstein manifest`](../operations/run-manifest.md) | Full | 3 | Run manifest inspection |
-| [`bernstein gateway`](../operations/mcp-gateway.md) | Full | 3 | MCP gateway proxy |
+| [`bernstein gateway`](../operations/mcp-gateway.md) | Full | 3 | MCP gateway proxy; native path writes `toolcall.effect` after connector return |
 | [`bernstein workflow`](../operations/workflow-manifests.md) | Full | 3 | Workflow DSL |
 | [`bernstein watch`](../operations/watch.md) | Full | 3 | Directory file watcher |
 | [`bernstein listen`](../operations/voice-control.md) | Full | 2 | **Preview.** Voice commands are experimental. A base install exits with the `pip install 'bernstein[voice]'` hint; a usable first run also requires microphone/audio support and downloads the selected Whisper model on first use. |
