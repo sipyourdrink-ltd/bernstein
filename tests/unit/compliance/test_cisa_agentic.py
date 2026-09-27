@@ -17,7 +17,6 @@ from bernstein.compliance.evidence_pack import (
     get_standard_map,
 )
 
-
 _CISA_IDS = tuple(f"CISA-{n:02d}" for n in range(1, 24))
 
 
