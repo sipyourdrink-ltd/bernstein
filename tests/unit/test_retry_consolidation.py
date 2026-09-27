@@ -22,7 +22,7 @@ import httpx
 import pytest
 from bernstein.core.task_lifecycle import maybe_retry_task, retry_or_fail_task
 
-from bernstein.core.tasks.models import Complexity, Scope, Task, TaskStatus, TaskType
+from bernstein.core.tasks.models import CompletionSignal, Complexity, Scope, Task, TaskStatus, TaskType
 
 _RETRY_PREFIX_RE = re.compile(r"\[RETRY\s+\d+\]|\[retry:\d+\]")
 
@@ -217,6 +217,58 @@ def test_maybe_retry_ignores_legacy_title_prefix_when_typed_field_disagrees():
     # retry_count derived from the typed field (0) -> next attempt = 1,
     # NOT 3 as the legacy prefix would suggest.
     assert posted[0]["retry_count"] == 1
+
+
+def test_maybe_retry_preserves_completion_signals_owned_files_and_depends_on(tmp_path):
+    """#6145: the tick-loop retry path must carry the same three fields
+    forward as retry_or_fail_task's reap path does, so a task's verification
+    signal and file/dependency lineage aren't dropped by whichever retry
+    path happens to fire.
+    """
+    task = _build_task(retry_count=0)
+    task.completion_signals = [CompletionSignal(type="test_passes", value="pytest tests/test_widget.py")]
+    task.owned_files = ["src/widget.py"]
+    task.depends_on = ["T-PARENT"]
+    client, posted = _capture_client()
+
+    created = maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=client,
+        server_url="http://server",
+        quarantine=MagicMock(),
+        workdir=tmp_path,
+        session_id=None,
+    )
+
+    assert created is True
+    body = posted[0]
+    assert body["completion_signals"] == [{"type": "test_passes", "value": "pytest tests/test_widget.py"}]
+    assert body["owned_files"] == ["src/widget.py"]
+    assert body["depends_on"] == ["T-PARENT"]
+
+
+def test_maybe_retry_omits_completion_signals_when_task_has_none(tmp_path):
+    """Mirrors retry_or_fail_task: an empty list is dropped, not posted."""
+    task = _build_task(retry_count=0)
+    assert task.completion_signals == []
+    client, posted = _capture_client()
+
+    maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=client,
+        server_url="http://server",
+        quarantine=MagicMock(),
+        workdir=tmp_path,
+        session_id=None,
+    )
+
+    assert "completion_signals" not in posted[0]
+    assert posted[0]["owned_files"] == []
+    assert posted[0]["depends_on"] == []
 
 
 # ---------------------------------------------------------------------------
