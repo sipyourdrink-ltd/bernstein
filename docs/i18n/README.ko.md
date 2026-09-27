@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI 에이전트를 위한 오픈소스 거버넌스 레이어
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -134,7 +134,7 @@ flowchart LR
 각 노드는 페이즈가 허용하는 역할의 에이전트가 가져갑니다. 역할 울타리와 승인 게이트는 에이전트가 태스크 안에서 무엇을 하든 유지됩니다. 코드 노드는 자기만의 git worktree에서 머지 게이트 뒤로 완료됩니다. 위의 노드들은 다르게 끝납니다: [아티팩트 계약](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)이 결과물(보고서, 데이터셋, 스캔, 액션 로그)을 지정하고, 노드는 커밋 대신 서명된 lineage 영수증으로 닫힙니다. 같은 스케줄러, 같은 저널, 같은 오프라인 검증 - 그래프가 코드를 나르든, 리서치든, ops 변경이든, 셋의 혼합이든. 소프트웨어, 리서치, 문서, 엔터프라이즈, 컨트리뷰터 워크플로용 기성 그래프는 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)에 있습니다.
 
 ### 30초 설치
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm, Docker는 [설치 가이드](https://bernstein.readthedocs.io/en/latest/getting-started/install/)를 보라. 에어갭 환경용 wheelhouse는 별도의 [에어갭 가이드](https://bernstein.readthedocs.io/en/latest/installation/air-gap/)가 있다.
+pipx, pip, brew, dnf, npm, Docker는 [설치 가이드](https://docs.bernstein.run/en/latest/getting-started/install/)를 보라. 에어갭 환경용 wheelhouse는 별도의 [에어갭 가이드](https://docs.bernstein.run/en/latest/installation/air-gap/)가 있다.
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,9 +223,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 리포지터리 위생 게이트: `bernstein readme-l10n verify`는 번역된 README가 영어 원문에서 벗어난 PR을 오래된 섹션 이름과 함께 실패시킨다. `bernstein readme-l10n sync`는 영어를 편집한 뒤 다시 묶는다. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)을 보라.
 
 ### 지원하는 에이전트
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 54건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 52건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen 외 다수. [어댑터 색인](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)에는 그중 30개의 설치 명령이 있다. `bernstein integrations list`는 `src/bernstein/adapters/registry.py`에서 배선된 통합 56건 전부를 나열한다. 이 파일이 무엇이 해결되는지에 대한 유일한 출처다. 그중 54건은 선택 가능한 에이전트 어댑터이고, 나머지 두 줄은 `mock` 테스트 스텁과 `self-hosted-endpoints` 엔드포인트 프로파일이다. `--prompt` 플래그를 가진 그 밖의 것들은 범용 래퍼로 동작한다.
 
 한 실행 안에서 에이전트를 섞을 수 있다. 정형 작업에는 값싼 로컬 모델을, 설계에는 무거운 클라우드 모델을. `bernstein integrations list --installed`는 자기 머신에서 쓸 수 있는 것을 보여준다.
 
@@ -242,9 +242,9 @@ bernstein volunteer browse --budget 60
 [기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `hub` 입니다.
 
 ### 표지 너머
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-깊이 들어가는 내용은 모두 [문서 사이트](https://bernstein.readthedocs.io/)에 있다:
+깊이 들어가는 내용은 모두 [문서 사이트](https://docs.bernstein.run/)에 있다:
 
 | 페이지 | 다루는 내용 |
 |---|---|
