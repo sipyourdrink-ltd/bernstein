@@ -127,6 +127,7 @@ class VaultTokenRoleStore(ExternalSecretStore):
 
     def __init__(self, *, transport: VaultTransport) -> None:
         self._transport = transport
+        self._role_name: str | None = None  # The actual role name from Vault, set by resolve()
 
     def resolve(self, path: str) -> SecretDescriptor:
         try:
@@ -139,9 +140,12 @@ class VaultTokenRoleStore(ExternalSecretStore):
             raise ExternalStoreError(f"vault token role {path!r} not found")
         data = role.get("data", {})
         max_ttl = int(data.get("token_explicit_max_ttl") or data.get("explicit_max_ttl") or 0)
+        role_name = str(data.get("name", path))
+        # Store the actual role name from Vault for use in report_revocation()
+        self._role_name = role_name
         return SecretDescriptor(
             store_id=self.store_id,
-            upstream_id=str(data.get("name", path)),
+            upstream_id=role_name,
             revoked=False,
             expires_at=0.0 if max_ttl == 0 else time.time() + max_ttl,
         )
@@ -172,10 +176,14 @@ class VaultTokenRoleStore(ExternalSecretStore):
         if not upstream_id:
             return True
         # The broker passes what resolve() returned. For this store that is
-        # the role name, not an accessor, so "is the role still usable" is
-        # the correct question. An accessor (from a minted credential) gets
-        # the lookup-accessor path instead.
-        if upstream_id == path:
+        # the role name from Vault (which may differ from the path), not an
+        # accessor. An accessor (from a minted credential) gets the
+        # lookup-accessor path instead.
+        # If resolve() was called, _role_name is set and we compare against it.
+        # If resolve() was not called (direct call or test), fall back to
+        # comparing with path for backward compatibility.
+        role_name = self._role_name if self._role_name is not None else path
+        if upstream_id == role_name:
             return self._role_revoked(path)
         return self._accessor_revoked(upstream_id)
 
