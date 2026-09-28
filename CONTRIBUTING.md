@@ -223,7 +223,7 @@ Two markers are recognised:
 
 - `intentional-broad-except`: legitimate best-effort path (telemetry,
   optional analytics, lineage append, etc.). The body should route any
-  sensitive message through `bernstein.core.sanitize.sanitize_log`.
+  sensitive message through `bernstein.core.security.sanitize.sanitize_log`.
 - `bot-ack: <short-tag>`: previously reviewed broad clause; the tag
   identifies the rationale (e.g. `bot-ack: pre-existing-1723`,
   `bot-ack: legacy-shim`).
@@ -239,6 +239,36 @@ Run locally before committing:
 ```bash
 uv run python scripts/check_routes_broad_except.py
 ```
+
+### Production reachability (security and identity controls)
+
+`src/bernstein/core/security/**.py` and `src/bernstein/core/identity/**.py`
+are policed by a CI lint (`scripts/check_unreachable_controls.py`) that fails
+the build when a public symbol has no caller inside the shipped package. A
+control whose only importers are its own tests, an `__init__` re-export, or
+the lazy module map in `src/bernstein/core/__init__.py` passes every other
+check while never running.
+
+Only `Name` loads and attribute accesses count as callers. Imports and string
+literals do not, which is what makes a re-export and the lazy module map
+invisible to the check. Reachability is a fixpoint, so a symbol called only by
+another unreached symbol is still unreached.
+
+Known cases live in `unreachable_controls_allowlist.txt`, one line per symbol
+with a mandatory written reason. Removing an entry is the goal: an entry whose
+symbol becomes reachable fails the gate, so the list cannot rot.
+
+Run locally before committing:
+
+```bash
+uv run python scripts/check_unreachable_controls.py
+# after adding or deleting a symbol, refresh the entry list (reasons survive):
+uv run python scripts/check_unreachable_controls.py --update
+```
+
+Replace every `REASON REQUIRED` marker `--update` writes before committing --
+the gate rejects it.
+
 
 See [AGENTS.md](AGENTS.md) for the full doctrine, including change classification, conflict protocol, and zero-tolerance failures.
 
@@ -386,9 +416,14 @@ pkill -f bernstein   # kills everything including your own shell session
 ## Recognition
 
 All contributors are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
-Outstanding contributions are featured in our
-[monthly Community Spotlight](https://alexchernysh.com/blog)
-blog posts, which are shared on Twitter/X, LinkedIn, and dev.to.
+
+Roughly once every couple of weeks the project's LinkedIn page names, in one
+consolidated post, the contributors who asked to be named and says what they
+built. Opting in is one email; the how, the soft gate and the exception path
+are in the pinned recognition issue, and the operator side is
+[docs/community/recognition.md](docs/community/recognition.md). If you did the
+work, put it on your CV; the post exists so that there is a public record you
+did not write about yourself.
 
 ## Naming
 

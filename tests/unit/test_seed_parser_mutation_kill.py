@@ -422,6 +422,12 @@ def test_rate_limit_bucket_dict_requests_one_accepted() -> None:
     assert bucket.requests == 1
 
 
+def test_rate_limit_bucket_dict_window_one_accepted() -> None:
+    """window_seconds=1 is the smallest positive value and is accepted."""
+    bucket = _parse_rate_limit_bucket("x", {"requests_per_minute": 5, "window_seconds": 1, "paths": ["/p"]})
+    assert bucket.window_seconds == 1
+
+
 @pytest.mark.parametrize(
     ("raw", "match"),
     [

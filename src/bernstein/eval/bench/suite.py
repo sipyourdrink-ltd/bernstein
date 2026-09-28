@@ -11,11 +11,80 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Protocol and Score
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Score:
+    """
+    Score from a benchmark task run.
+
+    value: +1 for resolved/pass, 0 for abstained, -lambda for wrong answer.
+    passed: True if the task was completed successfully.
+    details: Suite-specific scoring metadata (optional).
+    """
+
+    value: float
+    passed: bool
+    details: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
+
+
+@runtime_checkable
+class BenchmarkSuite(Protocol):
+    """
+    Protocol for pluggable benchmark suites.
+
+    A suite implementation provides:
+    - load(sample, seed): deterministic task sampling
+    - sandbox(task): execution environment context manager
+    - score(task, result): task-specific scoring logic
+    - metadata(): suite identification (name, version, dataset hash)
+    """
+
+    def load(self, sample: int, seed: int) -> list[BenchTask]:
+        """Load a deterministic sample of tasks from the suite."""
+        ...
+
+    @contextmanager
+    def sandbox(self, task: BenchTask) -> Generator[None]:
+        """
+        Context manager providing the execution environment for a task.
+
+        Yields control to the caller while the sandbox is active.
+        Cleanup happens on context exit.
+        """
+        ...
+
+    def score(self, task: BenchTask, result: dict[str, Any]) -> Score:
+        """
+        Score a completed task.
+
+        task: The task that was run.
+        result: Adapter output (verdict, artifacts, etc.).
+
+        Returns a Score with value, passed flag, and optional details.
+        """
+        ...
+
+    def metadata(self) -> dict[str, Any]:
+        """
+        Return suite identification metadata.
+
+        Must include: suite_name, version, dataset_hash.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Task spec (mirrors yaml_runner task shape, kept dependency-free here)

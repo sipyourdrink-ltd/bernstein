@@ -26,6 +26,35 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class TaskCost:
+    """Tokens, money and wall time for one task.
+
+    Recorded per task rather than per suite so two bundles can be compared on
+    cost the way they are compared on score: a suite total answers "did this
+    get more expensive", and only the per-task rows answer "where".
+    """
+
+    tokens: int = 0
+    cost_usd: float = 0.0
+    wall_time_s: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tokens": self.tokens,
+            "cost_usd": self.cost_usd,
+            "wall_time_s": self.wall_time_s,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> TaskCost:
+        return cls(
+            tokens=int(raw.get("tokens", 0)),
+            cost_usd=float(raw.get("cost_usd", 0.0)),
+            wall_time_s=float(raw.get("wall_time_s", 0.0)),
+        )
+
+
 @dataclass
 class TaskResult:
     """
@@ -50,6 +79,14 @@ class TaskResult:
     score: float  # [0.0, 1.0]
     # Raw harness output for debugging.
     harness_output: dict[str, Any] = field(default_factory=dict)
+    #: What this verdict COST, or ``None`` when the run did not measure it.
+    #:
+    #: ``None`` rather than zeros, and the distinction is load-bearing twice
+    #: over. A zero would read as a free task and drag a suite total towards
+    #: nothing; and it is what keeps an existing bundle loadable, because an
+    #: unmeasured cost is omitted from ``to_dict`` entirely and so does not
+    #: enter ``bundle_hash`` (#5464).
+    cost: TaskCost | None = None
     # SHA-256 of the receipt bytes at emit time.  Populated by the runner at
     # construction time and restored verbatim from the JSON at load time.
     # The verifier recomputes this from the live receipt and compares.
@@ -71,7 +108,7 @@ class TaskResult:
         return self.stored_receipt_hash
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "task_id": self.task_id,
             "task_hash": self.task_hash,
             "receipt": self.receipt,
@@ -82,6 +119,16 @@ class TaskResult:
             "score": self.score,
             "harness_output": self.harness_output,
         }
+        # OMITTED when unmeasured, the same way `holdout_hash` is on the bundle
+        # below, and for a sharper reason: this dict is a member of the
+        # `bundle_hash` payload. A `"cost": null` emitted unconditionally would
+        # change the canonical bytes of every bundle ever written, so `load`
+        # would recompute a different hash and refuse them all with "the bundle
+        # file may have been tampered with" - a valid bundle accused of forgery
+        # by an additive change.
+        if self.cost is not None:
+            d["cost"] = self.cost.to_dict()
+        return d
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +191,8 @@ class SubmissionBundle:
     # stored value so a tampered one survives load for compare to catch,
     # and a pre-#5568 bundle derives it on load instead of failing.
     harness_fingerprint: str = ""
+    # Lambda value for scoring trade-off (if applicable, otherwise default).
+    lambda_value: float = 0.5
 
     def __post_init__(self) -> None:
         # If caller didn't supply a fingerprint, derive it now — same
@@ -169,6 +218,41 @@ class SubmissionBundle:
         if not self.task_results:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
+
+    @property
+    def resolve_rate(self) -> float:
+        """Proportion of tasks that passed among those that were attempted (not abstained)."""
+        if not self.task_results:
+            return 0.0
+        # In the context of SubmissionBundle, we consider a task "passed" if it succeeded
+        # For now, we'll use the passed field as equivalent to resolved
+        # Attempted = total tasks (since we don't have explicit abstention tracking in TaskResult yet)
+        # This is a placeholder implementation - in a real system, TaskResult would need to track abstention
+        passed_count = sum(1 for r in self.task_results if r.passed)
+        total_count = len(self.task_results)
+        return passed_count / total_count if total_count > 0 else 0.0
+
+    @property
+    def abstain_rate(self) -> float:
+        """Proportion of tasks that were abstained (declined to answer)."""
+        if not self.task_results:
+            return 0.0
+        # Placeholder - in a real system, we'd need to track abstentions in TaskResult
+        # For now, return 0.0 as we don't have abstention data
+        return 0.0
+
+    @property
+    def confident_error_rate(self) -> float:
+        """Proportion of tasks that were confidently wrong among those attempted."""
+        if not self.task_results:
+            return 0.0
+        # Placeholder - in a real system, we'd need to distinguish between different failure types
+        # For now, we'll treat all non-passed tasks as confident errors (simplification)
+        passed_count = sum(1 for r in self.task_results if r.passed)
+        total_count = len(self.task_results)
+        if total_count == 0:
+            return 0.0
+        return (total_count - passed_count) / total_count
 
     # ------------------------------------------------------------------
     # Content hash (covers everything *except* the signature field)
@@ -200,6 +284,45 @@ class SubmissionBundle:
     # Serialisation
     # ------------------------------------------------------------------
 
+    @property
+    def total_cost(self) -> TaskCost | None:
+        """Suite totals, or ``None`` when no task in the run measured its cost.
+
+        ``None`` rather than zeros for the same reason a task's is: a run that
+        did not measure cost and a run that was free are different facts, and
+        a suite total of `$0.00` reads as the second.
+
+        Tasks that DID measure are summed even when some did not, so a partial
+        run reports what it knows. `measured_tasks` says how many that was, so
+        the total is never mistaken for the whole suite.
+        """
+        measured = [r.cost for r in self.task_results if r.cost is not None]
+        if not measured:
+            return None
+        return TaskCost(
+            tokens=sum(c.tokens for c in measured),
+            cost_usd=sum(c.cost_usd for c in measured),
+            wall_time_s=sum(c.wall_time_s for c in measured),
+        )
+
+    @property
+    def measured_tasks(self) -> int:
+        """How many task results carry a cost, so a total can be read in context."""
+        return sum(1 for r in self.task_results if r.cost is not None)
+
+    @property
+    def cost_per_verdict(self) -> float | None:
+        """Money per task that produced a verdict. ``None`` when unmeasured.
+
+        Divided by the tasks that were MEASURED, not by every task in the
+        suite: mixing the two denominators is how a partially-instrumented run
+        reports a cost per verdict lower than any verdict actually cost.
+        """
+        total = self.total_cost
+        if total is None or self.measured_tasks == 0:
+            return None
+        return total.cost_usd / self.measured_tasks
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "bundle_hash": self.bundle_hash(),
@@ -210,12 +333,24 @@ class SubmissionBundle:
             "harness_fingerprint": self.harness_fingerprint,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
+            "lambda_value": self.lambda_value,
+            "resolve_rate": self.resolve_rate,
+            "abstain_rate": self.abstain_rate,
+            "confident_error_rate": self.confident_error_rate,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
         }
         if self.holdout_hash:
             d["holdout_hash"] = self.holdout_hash
+        # Derived, and serialised the way `overall_score` and `pass_rate`
+        # already are: read off `task_results`, so it is NOT part of
+        # `_compute_hash` and cannot make a bundle disagree with itself.
+        total = self.total_cost
+        if total is not None:
+            d["total_cost"] = total.to_dict()
+            d["measured_tasks"] = self.measured_tasks
+            d["cost_per_verdict"] = self.cost_per_verdict
         return d
 
     def save(self, path: Path) -> None:
@@ -245,6 +380,10 @@ class SubmissionBundle:
                 passed=r["passed"],
                 score=r["score"],
                 harness_output=r.get("harness_output", {}),
+                # Absent on a bundle written before costs were recorded, and
+                # `None` is the honest value for that: the run did not measure
+                # it. Zeros would read as a free task.
+                cost=TaskCost.from_dict(r["cost"]) if "cost" in r else None,
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],
@@ -261,6 +400,7 @@ class SubmissionBundle:
             signer_fingerprint=raw.get("signer_fingerprint", ""),
             holdout_hash=raw.get("holdout_hash", ""),
             harness_fingerprint=raw.get("harness_fingerprint", ""),
+            lambda_value=raw.get("lambda_value", 0.5),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:

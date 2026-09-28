@@ -16,7 +16,9 @@ Covers the :mod:`bernstein.core.security.lineage_kms` module:
 from __future__ import annotations
 
 import base64
+import gc
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -388,6 +390,19 @@ class TestHsmStubFailFastDispatch:
     therefore booted cleanly and only crashed at the first audit-emit /
     lineage-sign call, far away from the config-load context.
     """
+
+    @pytest.fixture(autouse=True)
+    def _collect_stale_subclasses(self) -> Iterator[None]:
+        """Drop subclasses an earlier case defined before dispatch looks.
+
+        The dispatcher reads ``HSMKMSAdapter.__subclasses__()``. A subclass
+        defined inside a test stays reachable through that test's own
+        reference cycles until a full collection runs, so a later case can
+        see it and take the integration path instead of the fail-fast one.
+        """
+        gc.collect()
+        yield
+        gc.collect()
 
     def test_default_hsm_dispatch_raises_with_docstring_pointer(
         self,

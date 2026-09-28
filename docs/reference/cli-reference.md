@@ -212,6 +212,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan validate PLAN.yaml` | Validate a plan file's schema (`bernstein validate` is a deprecated alias, removed in 4.0.0). | `cli/plan_validate_cmd.py:142` |
 | `bernstein validate PLAN.yaml` | Deprecated alias of `bernstein plan validate`; removed in v4.0.0. | `cli/plan_validate_cmd.py` |
 | `bernstein task` | Durable task lifecycle: complete, park, and resume a task. | `cli/commands/task_cmd.py:837` |
+| `bernstein scenario` | Manage Bernstein scenarios. | `cli/commands/scenario_cmd.py` |
 
 #### `bernstein plan`
 
@@ -906,6 +907,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
+| `bernstein model` | Model admission registry and impact analysis (group): `registry` reconstructs the permitted model set at any past instant from the audit chain; `impact` lists artefacts produced by a model. | `cli/commands/model_cmd.py` |
 | `bernstein identity` | Install-identity ops (group): fingerprint helpers, `keydir`, `export-verifier`, plus `agents` (the agent-principal registry projected from the chain). | `cli/commands/identity_cmd.py:identity_group` |
 | `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
@@ -1071,9 +1073,13 @@ Every context compaction (proactive threshold or reactive overflow recovery)
 is recorded as a `compaction.receipt` event in the HMAC-chained audit log and
 as a step in the worker's replay journal. `log` prints those receipts
 (trigger, token delta, validator verdicts, retry count, pre/post SHA-256).
+JSON receipt objects also include `policy_version`; legacy and unversioned
+records use the empty string.
 `--verify` re-runs the receipt verification: the HMAC chain must verify and
 every journaled compaction step must have a chain receipt with matching
-hashes; the command exits non-zero otherwise.
+hashes and policy version; the command exits non-zero otherwise. A missing
+policy-version key on both sides of a legacy receipt/journal pair is treated
+as the empty string for backward-compatible verification.
 
 (`cli/commands/compaction_cmd.py:32+`.)
 

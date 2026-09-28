@@ -108,8 +108,15 @@ def _activity_id(entry_hash_str: str) -> str:
     return f"urn:bernstein:activity:{entry_hash_str}"
 
 
-def _agent_id(agent_id: str) -> str:
-    return f"urn:bernstein:agent:{agent_id}"
+def _agent_id(agent_id: str, agent_card_kid: str) -> str:
+    """Return the ``prov:Agent`` URI for one lineage agent identity.
+
+    Lineage binds identity to the ``(agent_id, agent_card_kid)`` pair, not to
+    ``agent_id`` alone (see the lineage gate and issue #1837), so the key id
+    is part of the URI: two entries produced by the same agent under two
+    different keys are two distinct agents and must not collapse to one node.
+    """
+    return f"urn:bernstein:agent:{agent_id}:{agent_card_kid}"
 
 
 def _model_agent_id(provider: str, model_requested: str) -> str:
@@ -236,7 +243,7 @@ def project_prov_ancestry(entries: Sequence[LineageEntry], *, root_entry_hash: s
 
     * artefact (``content_hash``, ``artefact_path``) -> ``prov:Entity``
     * producing turn (``tool_call_id``, ``span_id``) -> ``prov:Activity``
-    * ``agent_id`` / ``agent_card_kid`` -> ``prov:Agent``,
+    * ``agent_id`` + ``agent_card_kid`` -> ``prov:Agent``,
       ``prov:wasAssociatedWith``
     * ``parent_hashes`` -> ``prov:wasDerivedFrom``
     * ``attachment_digests`` -> ``prov:used``
@@ -298,7 +305,7 @@ def project_prov_ancestry(entries: Sequence[LineageEntry], *, root_entry_hash: s
         )
         relations.append(ProvRelation(kind="wasGeneratedBy", subject=eid, obj=aid))
 
-        agid = _agent_id(entry.agent_id)
+        agid = _agent_id(entry.agent_id, entry.agent_card_kid)
         agents.setdefault(agid, ProvAgent(id=agid, kind="operator", label=entry.agent_id))
         relations.append(ProvRelation(kind="wasAssociatedWith", subject=aid, obj=agid, role="operator"))
 

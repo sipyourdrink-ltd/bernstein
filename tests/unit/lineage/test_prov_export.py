@@ -1,9 +1,9 @@
 """Tests for the PROV-O export projection (issue #5039).
 
 Each test is named for the property it protects, per the issue's
-acceptance list. Tests 5 (ontology validation), 6 (round trip) and 7
-(export signature) belong to later slices of #5039 and are not covered
-here; see the PR body.
+acceptance list. Test 5 (ontology validation) and test 7 (export
+signature) belong to later slices of #5039 and are not covered here;
+see the PR body.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ def _mk_entry(
     content_hash: str,
     parent_hashes: list[str] | None = None,
     agent_id: str = "agent:a",
+    agent_card_kid: str = "k1",
     ts_ns: int = 1_700_000_000_000_000_000,
     attachment_digests: list[str] | None = None,
     model_ref: ModelRef | None = None,
@@ -45,7 +46,7 @@ def _mk_entry(
         content_hash=content_hash,
         parent_hashes=parent_hashes or [],
         agent_id=agent_id,
-        agent_card_kid="k1",
+        agent_card_kid=agent_card_kid,
         tool_call_id="tc-1",
         span_id="span-1",
         ts_ns=ts_ns,
@@ -195,3 +196,100 @@ def test_turtle_is_byte_identical_across_repeated_runs() -> None:
     doc_b = project_prov_ancestry(list(reversed([root, child])), root_entry_hash=entry_hash(child))
 
     assert to_turtle(doc_a) == to_turtle(doc_b)
+
+
+# ── 6. round trip ────────────────────────────────────────────────────────────
+
+
+def _parse_prov_json(payload: dict[str, object]) -> tuple[set[str], set[tuple[str, str, str]]]:
+    """Recover the PROV node and edge set from a PROV-JSON document alone.
+
+    Nodes are every key under ``entity``/``activity``/``agent``; edges are
+    every relation in the four PROV relation maps, normalised to
+    ``(kind, subject, object)``. This is the "back" half of the round trip and
+    shares no code with :func:`project_prov_ancestry`, so it cannot be fooled
+    by a lossy mapping that emits the same omission on both sides.
+    """
+    nodes = set(payload["entity"]) | set(payload["activity"]) | set(payload["agent"])
+    edges: set[tuple[str, str, str]] = set()
+    relation_roles = {
+        "wasGeneratedBy": ("prov:entity", "prov:activity"),
+        "used": ("prov:activity", "prov:entity"),
+        "wasAssociatedWith": ("prov:activity", "prov:agent"),
+        "wasDerivedFrom": ("prov:generatedEntity", "prov:usedEntity"),
+    }
+    for kind, (subject_key, object_key) in relation_roles.items():
+        for relation in payload.get(kind, {}).values():
+            edges.add((kind, relation[subject_key], relation[object_key]))
+    return nodes, edges
+
+
+def _expected_nodes_and_edges(
+    entries: list[LineageEntry], root_entry_hash: str
+) -> tuple[set[str], set[tuple[str, str, str]]]:
+    """Derive the source node and edge set directly from the entries.
+
+    This is the mapping from issue #5039 written out independently of the
+    projection: artefacts and attachments become content-hash-derived entity
+    URIs, turns become entry-hash-derived activities, and each lineage agent
+    identity ``(agent_id, agent_card_kid)`` becomes its own agent node.
+    """
+    by_hash = {entry_hash(e): e for e in entries}
+    closure: set[str] = set()
+    frontier = [root_entry_hash]
+    while frontier:
+        h = frontier.pop()
+        if h in closure:
+            continue
+        closure.add(h)
+        entry = by_hash.get(h)
+        if entry is not None:
+            frontier.extend(entry.parent_hashes)
+
+    nodes: set[str] = set()
+    edges: set[tuple[str, str, str]] = set()
+    for h in sorted(closure):
+        entry = by_hash[h]
+        entity_id = f"urn:bernstein:entity:{entry.content_hash}"
+        activity_id = f"urn:bernstein:activity:{h}"
+        operator_id = f"urn:bernstein:agent:{entry.agent_id}:{entry.agent_card_kid}"
+        nodes.add(entity_id)
+        nodes.add(activity_id)
+        nodes.add(operator_id)
+        edges.add(("wasGeneratedBy", entity_id, activity_id))
+        edges.add(("wasAssociatedWith", activity_id, operator_id))
+        if entry.model_ref is not None:
+            model_id = f"urn:bernstein:agent:model:{entry.model_ref.provider}:{entry.model_ref.model_requested}"
+            nodes.add(model_id)
+            edges.add(("wasAssociatedWith", activity_id, model_id))
+        for parent_hash in entry.parent_hashes:
+            parent = by_hash.get(parent_hash)
+            if parent is None:
+                continue
+            edges.add(("wasDerivedFrom", entity_id, f"urn:bernstein:entity:{parent.content_hash}"))
+        for digest in entry.attachment_digests or ():
+            attachment_id = f"urn:bernstein:entity:sha256:{digest}"
+            nodes.add(attachment_id)
+            edges.add(("used", activity_id, attachment_id))
+    return nodes, edges
+
+
+def test_round_trip_preserves_the_node_and_edge_set() -> None:
+    root = _mk_entry(content_hash=_h("1"), agent_id="agent:a", agent_card_kid="k1")
+    child = _mk_entry(
+        content_hash=_h("2"),
+        parent_hashes=[entry_hash(root)],
+        agent_id="agent:a",
+        agent_card_kid="k2",
+        attachment_digests=["ab" * 32],
+        model_ref=ModelRef(provider="openai", model_requested="gpt-4"),
+    )
+    entries = [root, child]
+
+    doc = project_prov_ancestry(entries, root_entry_hash=entry_hash(child))
+    payload = to_prov_json(doc)
+    recovered_nodes, recovered_edges = _parse_prov_json(payload)
+    expected_nodes, expected_edges = _expected_nodes_and_edges(entries, entry_hash(child))
+
+    assert recovered_nodes == expected_nodes
+    assert recovered_edges == expected_edges

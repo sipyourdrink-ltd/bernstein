@@ -247,6 +247,22 @@ def _isolate_audit_key(
 
 
 @pytest.fixture(autouse=True)
+def _isolate_catalog_caches(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Point the MCP and skill catalog caches at a per-test tmpdir.
+
+    Both caches default to one user-level file shared across runs. Without
+    this, a test would read or write ``~/.cache/bernstein/`` and see state
+    from the developer's machine or from an earlier test.
+    """
+    cache_dir = tmp_path_factory.mktemp("catalog-cache")
+    monkeypatch.setenv("BERNSTEIN_MCP_CATALOG_CACHE_PATH", str(cache_dir / "mcp-catalog.json"))
+    monkeypatch.setenv("BERNSTEIN_SKILLS_CATALOG_CACHE_PATH", str(cache_dir / "skills-catalog.json"))
+
+
+@pytest.fixture(autouse=True)
 def _disable_auth_for_tests(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Disable Bernstein auth by default in the test suite.
 
@@ -364,7 +380,6 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     # Clear report sections (captured stdout/stderr per test)
     if hasattr(item, "_report_sections"):
         item._report_sections.clear()
-    gc.collect()
 
 
 @pytest.fixture

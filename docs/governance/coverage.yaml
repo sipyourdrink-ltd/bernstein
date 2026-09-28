@@ -1,0 +1,158 @@
+# Which failure class each governance control prevents, and the test that proves it.
+#
+# Issue #5569. Controls are documented one at a time, so an operator evaluating
+# the layer for a workload has to reconstruct which failure each one prevents --
+# and nothing anywhere states which failure classes have no control at all. That
+# second half is the point: a table that only listed what exists would be a
+# feature list, and the rows below that say `partial` or `none` are the ones
+# worth reading first.
+#
+# RULES FOR EDITING THIS FILE
+#
+# * `test` cites the test that FAILS WHEN THE CONTROL IS REMOVED -- not a test
+#   that merely touches the module. A test of the control's happy path proves
+#   the code runs, which is not the same claim.
+# * A row may not say `covered` without a `test`. `scripts/gen_governance_coverage.py
+#   --check` and tests/unit/test_governance_coverage_table.py both refuse it.
+# * `residual` states what the control does NOT cover, in plain language. It is
+#   not a caveat to soften the row; it is the part an operator has to carry.
+# * A `none` or `partial` row links the issue that closes the gap rather than
+#   explaining itself in prose. Prose rots and issues move.
+#
+# Regenerate `coverage.md` with:
+#   uv run python scripts/gen_governance_coverage.py --update
+
+rows:
+  - failure_class: Goal hijack through injected content
+    control: >-
+      Prompt-injection scanner over untrusted text, and a typed tool-result
+      boundary so gate output reaches the model as structured results rather
+      than as prose it can be told to reinterpret.
+    module: src/bernstein/core/tokens/prompt_injection.py
+    test: tests/unit/test_prompt_injection.py::TestIgnorePrevious::test_basic_ignore_previous
+    residual: >-
+      Pattern-based, so it recognises phrasings it has seen. It raises the cost
+      of the obvious attack and is not a decision procedure for the general one.
+    status: partial
+    issue: null
+
+  - failure_class: Tool misuse and over-broad permissions
+    control: >-
+      Scoped command allowlist: every shell command is checked against the scope
+      the run was granted, and a command outside it is refused rather than
+      logged.
+    module: src/bernstein/core/security/command_allowlist.py
+    test: tests/unit/test_command_allowlist.py::TestCheckCommand::test_small_scope_denies_rm_rf
+    residual: >-
+      Governs commands, not the arguments a permitted command is given. A
+      permitted tool pointed at the wrong target is a different class, covered
+      by path scoping.
+    status: covered
+    issue: null
+
+  - failure_class: Identity and privilege abuse across delegation
+    control: >-
+      Delegation scope is recomputable per hop: a child scope that widens any
+      axis its parent imposed fails verification, and the failure names the
+      axis.
+    module: src/bernstein/core/identity/delegation_scope.py
+    test: >-
+      tests/unit/identity/test_delegation_narrowing.py::TestWideningIsRejected::test_widening_survives_a_rewritten_and_resealed_chain
+    residual: >-
+      Proves the chain narrows. It does not judge whether the root grant was
+      appropriate to issue in the first place.
+    status: covered
+    issue: null
+
+  - failure_class: Compromised skills, tools or dependencies
+    control: >-
+      Plugin trust assessment before load: signature fingerprint, declared
+      metadata and provenance decide a trust tier, and an unsigned plugin is
+      reported as unknown rather than trusted by default.
+    module: src/bernstein/plugins/plugin_trust.py
+    test: tests/unit/test_plugin_trust.py::TestCheckPluginTrust::test_minimal_plugin_returns_unknown
+    residual: >-
+      A signature proves who published a plugin, not that what they published is
+      safe. Nothing here inspects a dependency's transitive tree.
+    status: partial
+    issue: null
+
+  - failure_class: Unexpected code execution
+    control: >-
+      Sandbox scope enforcement: a relaxation of file-permission scope is
+      admitted only for a scoped mount, so a whole-repo mount keeps enforcement
+      rather than inheriting the relaxation.
+    module: src/bernstein/core/security/guardrails.py
+    test: tests/unit/test_guardrails_sandbox_scope.py::test_docker_whole_repo_mount_keeps_scope_enforcement
+    residual: >-
+      Bounds what executed code can reach. It does not prevent execution of code
+      an agent was legitimately allowed to run.
+    status: covered
+    issue: null
+
+  - failure_class: Memory or context poisoning
+    control: >-
+      Hash-chained memory log: every entry carries its own hash and its
+      predecessor's, so edited, inserted, deleted and reordered entries are all
+      detected on verify.
+    module: src/bernstein/core/knowledge/memory_integrity.py
+    test: tests/unit/test_memory_integrity.py::TestVerifyChain::test_detects_tampered_content
+    residual: >-
+      Detects a chain that was altered after it was written. It does not judge
+      whether a correctly recorded entry was true when recorded.
+    status: covered
+    issue: null
+
+  - failure_class: Cascading failures across agents
+    control: >-
+      Parallel admission from the code graph: two tasks run concurrently only
+      when both attributions are provable and their symbol neighbourhoods do not
+      intersect. An unprovable attribution serialises rather than proceeding.
+    module: src/bernstein/core/parallel_admission.py
+    test: tests/unit/test_parallel_admission.py::test_truncated_index_makes_every_attribution_unproven
+    residual: >-
+      Prevents concurrent tasks from colliding in the same code. It is not a
+      fan-out ceiling and not a circuit breaker: a run that spawns without bound
+      is a separate gap.
+    status: partial
+    issue: 5439
+
+  - failure_class: Exploitation of human trust in agent output
+    control: >-
+      Absence-coverage classification: a claim that something is absent is
+      UNVERIFIED unless a coverage record shows the ground was actually looked
+      at, so "checked and clean" and "never checked" stop reading alike.
+    module: src/bernstein/core/quality/absence_coverage.py
+    test: tests/unit/test_completion_absence_coverage.py::test_glob_exists_absence_without_coverage_reads_unverified
+    residual: >-
+      Covers absence claims. A confidently worded positive claim carries no
+      equivalent coverage record.
+    status: partial
+    issue: 5477
+
+  - failure_class: Insufficient traceability of decisions
+    control: >-
+      Hash-chained audit log with a canonical byte form, verified independently
+      of the writer, so a single flipped byte or a drifted canonicalisation is
+      detected rather than re-serialised into a chain that still verifies.
+    module: src/bernstein/core/security/audit_chain.py
+    test: tests/unit/test_audit_chain_byteflip_regression.py::test_canonical_form_drift_is_detected
+    residual: >-
+      Proves the record was not altered after the fact. It cannot prove a
+      decision was recorded at all, which is what governance coverage measures
+      separately.
+    status: covered
+    issue: null
+
+  - failure_class: Unbounded or runaway behaviour
+    control: >-
+      Spend ledger with a hard cap: once the hard budget is reached the ledger
+      stops admitting calls, independently of the soft warning threshold.
+    module: src/bernstein/core/cost/spend_ledger.py
+    test: tests/unit/test_spend_ledger.py::TestHardCap::test_hard_halt_blocks_admission
+    residual: >-
+      Bounds spend, which bounds a runaway loop that costs money. A loop that
+      spends nothing -- retrying a local command forever -- is bounded by the
+      stall clock instead, which is a separate control on a separate signal.
+    status: covered
+    issue: null

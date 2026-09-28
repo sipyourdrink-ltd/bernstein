@@ -51,8 +51,10 @@ def roster(qc: ModuleType):
 OWNERS = [("*", ["core1", "core2"]), ("/.github/", ["owner"]), ("/src/bernstein/core/", ["owner"])]
 
 
-def _review(qc: ModuleType, login: str, state: str, *, sha: str = HEAD, at: str = "2026-09-10T10:00:00Z"):
-    return qc.Review(login=login, state=state, commit_id=sha, submitted_at=at)
+def _review(
+    qc: ModuleType, login: str, state: str, *, sha: str = HEAD, at: str = "2026-09-10T10:00:00Z", body: str = ""
+):
+    return qc.Review(login=login, state=state, commit_id=sha, submitted_at=at, body=body)
 
 
 def _pr(
@@ -169,6 +171,35 @@ def test_a_later_approval_replaces_an_earlier_request_for_changes(qc: ModuleType
     assert _evaluate(qc, roster, pr).passed
 
 
+def test_a_dismissed_approval_does_not_revive_an_earlier_request_for_changes(qc: ModuleType, roster) -> None:
+    # GitHub dismisses an approval as stale on the next push. The reviewer had
+    # already withdrawn their request by approving; the dismissal must not
+    # bring the request back.
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "CHANGES_REQUESTED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "core2", "APPROVED"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_dismissed_request_for_changes_does_not_revive_an_earlier_approval(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "APPROVED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+
+
 # --- size and sensitivity (charter section 3) -------------------------------
 
 
@@ -245,6 +276,73 @@ def test_the_catch_all_owner_rule_is_not_treated_as_a_protected_path(qc: ModuleT
     assert verdict.passed
 
 
+# --- a CODEOWNERS line naming several people (charter section 4) ------------
+
+# The adapters line is shared between the maintainer and one core reviewer;
+# the core line above it still names the maintainer alone.
+SHARED_OWNERS = [*OWNERS, ("/src/bernstein/adapters/", ["owner", "core1"])]
+
+
+def _owner_rows(verdict) -> list:
+    return [req for req in verdict.requirements if req.text.startswith("approval from the owner of")]
+
+
+def test_one_approval_from_any_owner_of_a_shared_line_satisfies_it(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED"), _review(qc, "comm1", "APPROVED")])
+    verdict = qc.evaluate(pr, roster, SHARED_OWNERS, NOW)
+    (row,) = _owner_rows(verdict)
+    assert row.met
+    assert verdict.passed
+
+
+def test_a_shared_line_without_an_approval_names_everyone_who_could_give_one(qc: ModuleType, roster) -> None:
+    (row,) = _owner_rows(qc.evaluate(_pr(qc), roster, SHARED_OWNERS, NOW))
+    assert not row.met
+    assert row.who == "@core1, @owner"
+
+
+def test_a_single_owner_line_reads_exactly_as_before(qc: ModuleType, roster) -> None:
+    # The regression guarantee for the grouping: a line naming one person
+    # produces the same row, word for word, as it did when every owner was
+    # a requirement of their own.
+    paths = [f"src/bernstein/core/{name}.py" for name in ("a", "b", "c", "d")]
+    expected_text = "approval from the owner of `src/bernstein/core/a.py`"
+    (row,) = _owner_rows(_evaluate(qc, roster, _pr(qc, paths=paths[:1])))
+    assert (row.text, row.met, row.who) == (expected_text, False, "@owner")
+    approved = _pr(qc, paths=paths[:1], reviews=[_review(qc, "owner", "APPROVED")])
+    (row,) = _owner_rows(_evaluate(qc, roster, approved))
+    assert (row.text, row.met, row.who) == (expected_text, True, "@owner")
+    (row,) = _owner_rows(_evaluate(qc, roster, _pr(qc, paths=paths)))
+    assert row.text == (
+        "approval from the owner of `src/bernstein/core/a.py`, `src/bernstein/core/b.py`, "
+        "`src/bernstein/core/c.py` and others"
+    )
+
+
+def test_an_owner_who_wrote_or_pushed_the_change_cannot_satisfy_its_line(qc: ModuleType, roster) -> None:
+    # As the author.
+    pr = _pr(qc, author="core1", reviews=[_review(qc, "core1", "APPROVED")])
+    (row,) = _owner_rows(qc.evaluate(pr, roster, SHARED_OWNERS, NOW))
+    assert not row.met and row.who == "@owner"
+    # As someone who pushed to the branch.
+    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED")], contributors={"outsider", "core1"})
+    (row,) = _owner_rows(qc.evaluate(pr, roster, SHARED_OWNERS, NOW))
+    assert not row.met and row.who == "@owner"
+    # When nobody named on the line is left, the table says so.
+    pr = _pr(qc, author="core1", contributors={"core1", "owner"})
+    (row,) = _owner_rows(qc.evaluate(pr, roster, SHARED_OWNERS, NOW))
+    assert not row.met and row.who == "nobody: every owner wrote or pushed this change"
+
+
+def test_paths_are_grouped_by_the_owner_set_of_their_line(qc: ModuleType, roster) -> None:
+    paths = ["src/bernstein/adapters/a.py", "src/bernstein/adapters/b.py", "src/bernstein/core/c.py"]
+    rows = _owner_rows(qc.evaluate(_pr(qc, paths=paths), roster, SHARED_OWNERS, NOW))
+    assert [(row.text, row.who) for row in rows] == [
+        ("approval from the owner of `src/bernstein/adapters/a.py`, `src/bernstein/adapters/b.py`", "@core1, @owner"),
+        ("approval from the owner of `src/bernstein/core/c.py`", "@owner"),
+    ]
+
+
 # --- automation, the workflow account and the maintainer --------------------
 
 
@@ -298,6 +396,59 @@ def test_a_stranger_cannot_block_the_maintainer(qc: ModuleType, roster) -> None:
     assert _evaluate(qc, roster, pr).passed
 
 
+# --- adopted pull requests (charter section 3, until 2026-10-05) -------------
+
+
+def _adopted(qc: ModuleType, **overrides):
+    """A large, sensitive contributor change the maintainer has pushed to and declared adopted."""
+    fields = dict(
+        changed_lines=600,
+        paths=["src/bernstein/core/security/dlp_scanner.py"],
+        contributors={"outsider", "owner"},
+        reviews=[_review(qc, "owner", "COMMENTED", body=qc.ADOPTION_NOTICE)],
+    )
+    fields.update(overrides)
+    return _pr(qc, **fields)
+
+
+def test_an_adopted_change_merges_without_approvals(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc))
+    assert verdict.passed
+    assert any("Adopted by the maintainer" in note for note in verdict.notes)
+
+
+def test_the_notice_alone_does_not_adopt_a_change_the_maintainer_never_pushed_to(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, contributors={"outsider"}))
+    assert not verdict.passed
+    assert "3 approvals" in verdict.requirements[0].text
+
+
+def test_a_push_alone_does_not_adopt_and_the_summary_says_what_would(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, reviews=[]))
+    assert not verdict.passed
+    assert any(qc.ADOPTION_NOTICE in note for note in verdict.notes)
+
+
+def test_a_notice_given_before_the_last_push_does_not_adopt(qc: ModuleType, roster) -> None:
+    stale = [_review(qc, "owner", "COMMENTED", sha="e" * 40, body=qc.ADOPTION_NOTICE)]
+    assert not _evaluate(qc, roster, _adopted(qc, reviews=stale)).passed
+
+
+def test_a_committer_can_block_an_adopted_change(qc: ModuleType, roster) -> None:
+    reviews = [
+        _review(qc, "owner", "COMMENTED", body=qc.ADOPTION_NOTICE),
+        _review(qc, "comm1", "CHANGES_REQUESTED"),
+    ]
+    assert not _evaluate(qc, roster, _adopted(qc, reviews=reviews)).passed
+
+
+def test_adoption_ends_on_its_date(qc: ModuleType, roster) -> None:
+    after = qc.ADOPTION_ENDS + timedelta(seconds=1)
+    verdict = qc.evaluate(_adopted(qc), roster, OWNERS, after)
+    assert not verdict.passed
+    assert not any("dopted" in note for note in verdict.notes)
+
+
 # --- the objection window on governance files (charter section 10) ----------
 
 
@@ -317,6 +468,41 @@ def test_the_window_applies_to_the_roster_and_to_this_script(qc: ModuleType, ros
     for path in (".github/quorum-roster.toml", "scripts/quorum_check.py"):
         pr = _pr(qc, author="owner", contributors={"owner"}, paths=[path], pushed_hours_ago=2)
         assert not _evaluate(qc, roster, pr).passed, path
+
+
+# --- the backlog window (charter section 3, until 2026-10-05) ---------------
+
+
+def test_the_maintainers_approval_alone_passes_an_ordinary_change_in_the_window(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert "2026-10-05" in verdict.requirements[0].text
+
+
+def test_an_unapproved_change_in_the_window_names_the_maintainer_as_a_way_out(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert "or @owner alone" in verdict.requirements[0].who
+
+
+def test_the_window_does_not_lift_the_third_approval_on_a_large_change(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, changed_lines=401, reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_does_not_lift_the_third_approval_on_a_sensitive_path(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, paths=["src/bernstein/core/security/auth.py"], reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_closes_on_its_date(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
+    after = qc.BACKLOG_WINDOW_ENDS + timedelta(minutes=1)
+    verdict = qc.evaluate(pr, roster, OWNERS, after)
+    assert not verdict.passed
+    assert "2026-10-05" not in verdict.requirements[0].text
 
 
 # --- drafts and plumbing ----------------------------------------------------
@@ -364,9 +550,18 @@ def test_the_roster_and_codeowners_on_this_branch_load(qc: ModuleType) -> None:
     loaded = qc.load_roster(str(REPO_ROOT))
     assert loaded.maintainer
     assert loaded.core_reviewers and loaded.committers
+    assert not loaded.core_reviewers & loaded.committers  # a person is in exactly one list
     owners = qc.load_codeowners(str(REPO_ROOT))
-    assert owners and owners[0][0] == "*"
+    assert owners and all(pattern != "*" for pattern, _ in owners)  # no catch-all, on purpose
     assert qc.owners_for(".github/workflows/ci.yml", owners) == ([loaded.maintainer], True)
+    assert qc.owners_for("README.md", owners) == ([], False)
+    # core/ and adapters/ are shared with every core reviewer, and the four
+    # sensitive subpackages under core/ stay with the maintainer alone.
+    for path in ("src/bernstein/core/tasks/claim.py", "src/bernstein/adapters/aider.py"):
+        shared, specific = qc.owners_for(path, owners)
+        assert specific and set(shared) == set(loaded.core), path
+    for sub in ("security", "identity", "sandbox", "tokens"):
+        assert qc.owners_for(f"src/bernstein/core/{sub}/x.py", owners) == ([loaded.maintainer], True), sub
 
 
 def test_annotation_names_the_first_unmet_requirement(qc: ModuleType) -> None:

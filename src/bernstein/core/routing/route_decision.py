@@ -5,14 +5,121 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.lineage.entry import ModelRef
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+from bernstein.core.routing.model_registry import (
+    format_timestamp,
+    is_admitted,
+    load_registry_events,
+    model_key,
+    project_registry,
+)
+from bernstein.core.security.audit_chain import record_model_refusal
+
 logger = logging.getLogger(__name__)
+
+#: Policy flag for registry enforcement. Off unless the operator sets it to a
+#: truthy value (``1``, ``true``, ``yes``, ``on``); the default path preserves
+#: the pre-registry routing behaviour.
+MODEL_REGISTRY_ENFORCEMENT_ENV = "BERNSTEIN_MODEL_REGISTRY_ENFORCEMENT"
+
+_DISABLED_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+class ModelNotAdmittedError(RuntimeError):
+    """A model reference was refused because no live admission covers it."""
+
+
+def is_model_registry_enforcement_enabled() -> bool:
+    """Return whether model-registry enforcement is enabled.
+
+    Reads :data:`MODEL_REGISTRY_ENFORCEMENT_ENV` fresh on every call so tests
+    and operator processes can toggle it without restarting. The flag is off
+    by default.
+    """
+    raw = os.environ.get(MODEL_REGISTRY_ENFORCEMENT_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() not in _DISABLED_VALUES
+
+
+def _refusal_reason(ref: ModelRef, task_class: str, at: str) -> str:
+    reported = f" (reported {ref.model_reported})" if ref.model_reported else ""
+    return (
+        f"model registry has no live admission for {ref.provider}/{ref.model_requested}{reported} "
+        f"at {at} for task class {task_class!r}"
+    )
+
+
+def enforce_model_registry(
+    *,
+    chain: AuditChainStore | None,
+    ref: ModelRef,
+    task_class: str,
+    at: str | None = None,
+    run_id: str = "",
+    task_id: str = "",
+    routing_path: str = "route_decision",
+) -> None:
+    """Refuse *ref* when it has no live admission in the chain-projected registry.
+
+    The registry is replayed from *chain* at *at* (now when not supplied) and
+    checked fail-closed: an unknown reference is never defaulted to admitted.
+    A refusal is appended to *chain* before raising, so the negative decision
+    is as auditable as the model it refused to use.
+
+    When :func:`is_model_registry_enforcement_enabled` is false this is a
+    no-op, matching the off-by-default policy flag.
+
+    Args:
+        chain: The audit chain whose admit/withdraw events define the registry.
+        ref: The model reference to admit or refuse.
+        task_class: Task class the model would be used for.
+        at: Projection instant in the audit-log timestamp format.
+        run_id: Optional run identifier recorded on a refusal.
+        task_id: Optional task identifier recorded on a refusal.
+        routing_path: Which routing surface is consulting the registry.
+
+    Raises:
+        ModelNotAdmittedError: If enforcement is on and *ref* is not admitted.
+    """
+    if not is_model_registry_enforcement_enabled():
+        return
+    if chain is None:
+        raise ModelNotAdmittedError("model registry enforcement is enabled but no audit chain was supplied; refusing")
+
+    when = at or format_timestamp(datetime.now(tz=UTC))
+    state = project_registry(load_registry_events(chain), at=when)
+    if is_admitted(state, ref, task_class=task_class):
+        return
+
+    reason = _refusal_reason(ref, task_class, when)
+    record_model_refusal(
+        chain,
+        model_key=model_key(ref.provider, ref.model_requested, ref.version),
+        provider=ref.provider,
+        model_requested=ref.model_requested,
+        model_reported=ref.model_reported,
+        version=ref.version,
+        task_class=task_class,
+        at=when,
+        routing_path=routing_path,
+        reason=reason,
+        run_id=run_id,
+        task_id=task_id,
+        actor=routing_path,
+    )
+    raise ModelNotAdmittedError(reason)
 
 
 def _canonical_bytes(data: dict[str, object]) -> bytes:

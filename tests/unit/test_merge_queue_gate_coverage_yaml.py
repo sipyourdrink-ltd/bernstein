@@ -66,9 +66,9 @@ QUEUE_REPORTING_WEB_LANES = {
         "Answers whether a pull request has the review the charter asks for. It runs on "
         "every pull request whatever it touches, `web/**` included, and on merge_group, so "
         "the answer is re-checked against the queued state rather than only against the "
-        "branch. It is required through an organization ruleset that pins this workflow "
-        "rather than through a required-context name, which is what stops a branch from "
-        "substituting its own copy; the name it publishes is `quorum`."
+        "branch. It is required through an organization ruleset, by the context name it "
+        "publishes, `quorum`, so the verdict can be answered again after the objection "
+        "window closes without waiting for a new pull-request event."
     ),
     "typecheck-ts.yml": (
         "`tsc --noEmit` over the TypeScript packages, `web/` among them. #4010's shape one "
@@ -946,7 +946,7 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
     """
     gate = ci_jobs[GATE_JOB_KEY]
     tolerated: set[str] = set()
-    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "PUSH_ONLY"):
+    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "POST_MERGE_PUSH_SKIPPABLE"):
         bucket = rollup_constants.get(name)
         assert bucket, f"the roll-up no longer declares {name}"
         tolerated |= set(bucket)
@@ -964,7 +964,8 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
     assert not undeclared, (
         "these jobs are required by `CI gate` and gate themselves on the event shape, but no tolerance bucket in "
         f"the roll-up names them: {undeclared}. On a merge_group ref they may skip; an undeclared skip is flagged "
-        "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or PUSH_ONLY with "
+        "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or "
+        "POST_MERGE_PUSH_SKIPPABLE with "
         "the reason its skip is safe, or drop the event condition."
     )
 

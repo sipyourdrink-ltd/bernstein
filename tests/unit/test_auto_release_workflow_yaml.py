@@ -52,3 +52,35 @@ def test_release_gate_requires_triggering_commit_version_change(workflow: dict[s
     assert 'select(.filename == "pyproject.toml"' in run
     assert 'test("(?m)^[+-]version = ")' in run
     assert "triggering commit did not change pyproject.toml version" in run
+
+
+def test_release_gate_skips_queue_ref_not_ancestor_of_main(
+    workflow: dict[str, Any],
+) -> None:
+    """A queue-ref release is skipped unless the SHA is an ancestor of main."""
+    run = _step_run(workflow, "gate", "Check for meaningful changes")
+    assert "HEAD_BRANCH" in run
+    assert "gh-readonly-queue/main/" in run
+    assert "repos/${REPO}/compare/main...${HEAD_SHA}" in run
+    assert "should_release=false" in run
+    assert "not an ancestor of main" in run
+    assert "::error::could not fetch main...${HEAD_SHA} ancestry" in run
+
+
+def test_queue_ref_ancestry_check_waits_for_main_to_catch_up(workflow: dict[str, Any]) -> None:
+    """The queue-ref compare polls; a single call would skip a landing release.
+
+    ``workflow_run`` fires when the ``merge_group`` run completes, which is
+    before the queue fast-forwards ``main`` onto that SHA. One compare inside
+    that window reports ``diverged`` for a commit that is about to land, and
+    the gate then skips the tag -- the silent no-tag this check exists to
+    prevent.
+    """
+    run = _step_run(workflow, "gate", "Check for meaningful changes")
+    assert "gh-readonly-queue/main/*" in run
+    assert 'for _ in $(seq 1 "${ANCESTRY_ATTEMPTS:-10}")' in run
+    assert 'sleep "${ANCESTRY_INTERVAL:-15}"' in run
+    # The loop leaves through a plain `break`. A trailing `[[ ... ]] && break`
+    # would abort the whole step whenever the test is false, because Actions
+    # runs `run:` blocks under `bash -e`.
+    assert "&& break" not in run

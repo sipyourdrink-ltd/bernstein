@@ -29,7 +29,7 @@ cloud sandbox that runs the project's devcontainer.
    trivial goal:
 
    ```bash
-   bernstein run -g "list files in the repo and summarise the layout"
+   bernstein -g "list files in the repo and summarise the layout"
    ```
 
 ## How the project recognises Codespaces

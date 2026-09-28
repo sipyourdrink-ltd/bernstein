@@ -1,0 +1,72 @@
+# Who has said yes to being named in the consolidated LinkedIn post.
+#
+# One [[contributor]] block per person, edited by the maintainer from the
+# BRNSTN-PR-LNKD queue (scripts/contributor_recognition.py parse-reply prints a
+# block to paste). A login listed twice is an error. `source` says where the
+# consent came from; the first six are the explicit replies in discussion
+# #5524 and were not asked again.
+#
+#   opt_in                 named in the LinkedIn post (false = taken out again)
+#   recommendation         asked for a LinkedIn recommendation from the maintainer
+#   review_before_publish  send the final wording before it goes out
+#   exception              included although below the soft gate (maintainer decision, note why)
+
+[exclusions]
+# Accounts that open pull requests but are automation or agent lanes; never
+# credited. The built-in list is in the script; add new ones here.
+agent_logins = []
+
+[[contributor]]
+login = "Phoenix1504e"
+opt_in = true
+recommendation = false
+review_before_publish = false
+exception = false
+source = "https://github.com/sipyourdrink-ltd/bernstein/discussions/5524#discussioncomment-18302247"
+since = "2026-09-05"
+
+[[contributor]]
+login = "PARZIVAL7498"
+opt_in = true
+recommendation = false
+review_before_publish = false
+exception = false
+source = "https://github.com/sipyourdrink-ltd/bernstein/discussions/5524#discussioncomment-18302295"
+since = "2026-09-05"
+
+[[contributor]]
+login = "thegoodengineer"
+opt_in = true
+recommendation = false
+review_before_publish = false
+exception = false
+source = "https://github.com/sipyourdrink-ltd/bernstein/discussions/5524#discussioncomment-18302506"
+since = "2026-09-05"
+
+[[contributor]]
+login = "Maqbool61"
+opt_in = true
+recommendation = false
+review_before_publish = false
+exception = false
+source = "https://github.com/sipyourdrink-ltd/bernstein/discussions/5524#discussioncomment-18302513"
+since = "2026-09-05"
+
+[[contributor]]
+login = "atirna"
+opt_in = true
+recommendation = false
+review_before_publish = false
+exception = false
+source = "https://github.com/sipyourdrink-ltd/bernstein/discussions/5524#discussioncomment-18302522"
+since = "2026-09-05"
+
+[[contributor]]
+login = "Silentpartnercoding"
+opt_in = true
+recommendation = false
+review_before_publish = true
+exception = false
+source = "https://github.com/sipyourdrink-ltd/bernstein/discussions/5524#discussioncomment-18302859"
+since = "2026-09-05"
+note = "asked to see the draft wording before publication, to verify attribution and technical details"

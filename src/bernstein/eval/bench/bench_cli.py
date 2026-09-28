@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import click
 
 if TYPE_CHECKING:
+    from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.suite import BenchSuite
 
 # ---------------------------------------------------------------------------
@@ -207,9 +208,13 @@ def bench_verify(bundle: str, suite: str) -> None:
     help="Rank even when the two bundles' harness fingerprints differ.",
 )
 def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
-    """Compare two submission bundles, ranking by score.
+    """Compare two submission bundles, ranking by expected value.
 
     A and B are paths to submission bundle .json files.
+
+    The expected value is computed as (resolved - lambda * wrong) / attempted,
+    where resolved is the number of passed tasks, wrong is the number of failed
+    tasks, attempted is the total tasks, and lambda defaults to 1.0.
 
     The harness fingerprint is recomputed from each bundle's raw
     scheduler_config before it is trusted.  Bundles from different
@@ -262,13 +267,76 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool) -> None:
     else:
         click.echo(f"Harness fingerprint: {fp_a} (match)")
 
-    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -p[1].overall_score)
+    def expected_value(bundle: SubmissionBundle) -> float:
+        """Compute expected value: (resolved - lambda * wrong) / attempted."""
+        lam = bundle.scheduler_config.get("lambda", 1.0)
+        try:
+            lam = float(lam)
+        except (ValueError, TypeError):
+            lam = 1.0
+        n = len(bundle.task_results)
+        if n == 0:
+            return 0.0
+        resolved = bundle.pass_rate * n
+        wrong = (1.0 - bundle.pass_rate) * n
+        return (resolved - lam * wrong) / n
+
+    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -expected_value(p[1]))
     click.echo("")
     for rank, (path, bundle) in enumerate(ordered, start=1):
+        ev = expected_value(bundle)
         click.echo(
             f"{rank}. {path.name}: score {bundle.overall_score * 100:.1f}%, "
-            f"pass rate {bundle.pass_rate * 100:.1f}%, {len(bundle.task_results)} tasks"
+            f"resolve rate {bundle.pass_rate * 100:.1f}%, "
+            f"expected value {ev:.3f}"
         )
+    _echo_cost_delta(path_a, bundle_a, path_b, bundle_b)
+
+
+def _echo_cost_delta(
+    path_a: Path,
+    bundle_a: SubmissionBundle,
+    path_b: Path,
+    bundle_b: SubmissionBundle,
+) -> None:
+    """Print cost beside the score delta, or say why it cannot be compared.
+
+    Silence would be the wrong answer for an unmeasured bundle: the reader is
+    comparing two runs on cost, and nothing printed reads as "no difference"
+    rather than "not recorded" (#5464).
+
+    Deltas are always b-relative-to-a, matching the argument order rather than
+    the ranked order above - a sign that flips depending on which bundle won is
+    a number nobody can act on.
+    """
+    cost_a, cost_b = bundle_a.total_cost, bundle_b.total_cost
+    if cost_a is None or cost_b is None:
+        unmeasured = [p.name for p, c in ((path_a, cost_a), (path_b, cost_b)) if c is None]
+        click.echo("")
+        click.echo(f"Cost: not recorded in {', '.join(unmeasured)} — no cost comparison available.")
+        return
+
+    click.echo("")
+    click.echo(
+        f"Cost: {path_a.name} ${cost_a.cost_usd:.4f} over {bundle_a.measured_tasks} measured tasks, "
+        f"{path_b.name} ${cost_b.cost_usd:.4f} over {bundle_b.measured_tasks}."
+    )
+    for label, a_value, b_value, fmt in (
+        ("cost", cost_a.cost_usd, cost_b.cost_usd, "$.4f"),
+        ("tokens", float(cost_a.tokens), float(cost_b.tokens), ".0f"),
+        ("wall time", cost_a.wall_time_s, cost_b.wall_time_s, ".1fs"),
+    ):
+        delta = b_value - a_value
+        sign = "+" if delta >= 0 else "-"
+        magnitude = abs(delta)
+        rendered = (
+            f"${magnitude:.4f}" if fmt == "$.4f" else (f"{magnitude:.0f}" if fmt == ".0f" else f"{magnitude:.1f}s")
+        )
+        click.echo(f"  {label} delta ({path_b.name} vs {path_a.name}): {sign}{rendered}")
+
+    per_a, per_b = bundle_a.cost_per_verdict, bundle_b.cost_per_verdict
+    if per_a is not None and per_b is not None:
+        click.echo(f"  cost per verdict: ${per_a:.4f} vs ${per_b:.4f}")
 
 
 # ---------------------------------------------------------------------------
