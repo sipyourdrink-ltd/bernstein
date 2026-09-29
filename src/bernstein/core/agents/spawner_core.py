@@ -1238,6 +1238,12 @@ def _render_prompt_with_receipt(
         "AVAILABLE_ROLES": available_roles,
         "INSTRUCTIONS": instructions,
         "SPECIALISTS": specialist_block,
+        # The task server this run started, for the role templates that show
+        # curl calls against it. The manager's system prompt wrote 8052, so a
+        # run on a dynamically allocated port handed the manager task-creation
+        # commands aimed at a port nothing listened on, or at another run's
+        # server (#5964).
+        "SERVER_URL": _resolve_task_server_url(workdir),
     }
 
     # Use catalog system prompt when available (Agency specialist prompt),
