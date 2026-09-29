@@ -319,6 +319,7 @@ class CodexAdapter(CLIAdapter):
     # matches a provider literally named "codex", "openai", or "gpt" --
     # it can no longer swallow "openai_agents".
     provides = ("codex", "openai", "gpt")
+    model_vendor = "openai"
     # Default model when no operator-pinned model reaches this adapter. Read by
     # the spawner to substitute Claude tier names for non-Claude adapters.
     default_model = _DEFAULT_CODEX_MODEL

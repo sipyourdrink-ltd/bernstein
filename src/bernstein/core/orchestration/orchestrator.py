@@ -213,7 +213,7 @@ if TYPE_CHECKING:
     from bernstein.core.container import ContainerConfig
     from bernstein.core.permission_mode import PermissionMode
     from bernstein.core.protocols.cluster.mesh_coordinator import MeshCoordinator
-    from bernstein.core.quality_gates import QualityGatesConfig
+    from bernstein.core.quality.quality_gates import QualityGatesConfig
     from bernstein.core.security.sandbox import SandboxRuntime
     from bernstein.core.spawner import AgentSpawner
     from bernstein.evolution.loop import EvolutionLoop
@@ -347,6 +347,29 @@ _complete_task = complete_task
 _parse_backlog_file = parse_backlog_file
 
 
+def _model_identity(
+    model: str | None,
+    provider: str | None,
+) -> tuple[str | None, str | None]:
+    """Return the ``(model_id, model_provider)`` pair for a spawned session.
+
+    A resolved *provider* always wins. When it is absent and *model* carries
+    a ``namespace/rest`` identifier, the namespace the operator configured is
+    journaled as the provider and the identifier is kept whole as the model id.
+    A bare identifier or an empty namespace on either side is not a provider:
+    neither fact is journaled and export keeps refusing rather than inventing
+    a vendor name.
+    """
+    if provider is not None:
+        return model, provider
+    if model is None:
+        return None, None
+    namespace, sep, rest = model.partition("/")
+    if sep and namespace and rest:
+        return model, namespace
+    return None, None
+
+
 class ShutdownInProgress(RuntimeError):
     """Raised when a spawn is attempted after shutdown has started."""
 
@@ -388,6 +411,7 @@ class Orchestrator:
         notifier: NotificationManager | None = None,
         quality_gate_config: QualityGatesConfig | None = None,
         formal_verification_config: Any | None = None,
+        data_class: str | None = None,
     ) -> None:
         self._config = config
         self._spawner = spawner
@@ -404,6 +428,7 @@ class Orchestrator:
         self._cluster_config = cluster_config
         self._quality_gate_config: QualityGatesConfig | None = quality_gate_config
         self._gate_coalescer: QualityGateCoalescer = QualityGateCoalescer()
+        self._data_class: str | None = data_class
         # Formal verification gate is invoked by task_lifecycle._run_verification_gates
         # only when OrchestratorConfig.formal_verification_enabled is True. Default
         # remains False so deployments without Z3/Lean4 installed are unaffected.
@@ -1123,6 +1148,12 @@ class Orchestrator:
         # to keep memory bounded under long-lived runs.
         self._llm_watcher_signals: collections.deque[Any] = collections.deque(maxlen=64)
 
+        # Clear deliberate-stop marker from any previous run (issue #6089 slice 1).
+        _marker_path = self._workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+        if _marker_path.exists():
+            with contextlib.suppress(OSError):
+                _marker_path.unlink()
+
     # -- Hot-reload source detection -----------------------------------------
 
     # Key source files whose modification triggers an orchestrator restart.
@@ -1421,6 +1452,7 @@ class Orchestrator:
             run_id=self._run_id,
             day_key=day_key,
             knob_matrix=knob_matrix,
+            default_adapter=str(getattr(self._spawner, "default_adapter_name", None) or ""),
         )
         entries = SpendLedger.load_entries(self._spend_ledger.path)
         outcome = evaluate_run_dispatch(
@@ -2593,6 +2625,10 @@ class Orchestrator:
                                 settled_agents,
                             )
                             self._regenerate_final_retrospective(trigger_path="tick-quiescence-self-stop")
+                            # Write deliberate-stop marker for watchdog (issue #6089 slice 1).
+                            _marker_path = self._workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+                            with contextlib.suppress(OSError):
+                                _marker_path.write_text("quiescence")
                             self._running = False
                     else:
                         logger.info(
@@ -3141,6 +3177,36 @@ class Orchestrator:
         """
         time.sleep(seconds)
 
+    def _record_run_started(self) -> None:
+        """Journal the ``run_started`` event that opens a run.
+
+        Extracted from :meth:`run` so the load-bearing trace-export test can
+        drive the genuine write site against a real recorder (issue #6045).
+        """
+        _run_started_extra: dict[str, object] = {}
+        if self._workflow_executor is not None:
+            _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
+            _run_started_extra["workflow_hash"] = self._workflow_executor.definition_hash
+        if self._data_class is not None:
+            _run_started_extra["data_class"] = self._data_class
+        self._recorder.record(
+            "run_started",
+            run_id=self._run_id,
+            max_agents=self._config.max_agents,
+            budget_usd=self._config.budget_usd,
+            git_sha=self._replay_metadata.git_sha,
+            git_branch=self._replay_metadata.git_branch,
+            config_hash=self._replay_metadata.config_hash,
+            # Issue #6045: the trust-record emitter requires a ``gate_config``
+            # on some event and hashes it with RFC 8785. Journal the resolved
+            # configuration once at run start as a plain JSON-able dict. When
+            # no gate configuration was resolved, the fact stays absent and
+            # export keeps refusing honestly rather than defaulting a policy
+            # that never ran.
+            gate_config=self._quality_gate_config.to_dict() if self._quality_gate_config is not None else None,
+            **_run_started_extra,
+        )
+
     def run(self) -> None:
         """Run the orchestrator loop until stopped.
 
@@ -3165,20 +3231,7 @@ class Orchestrator:
         # longer exist.  Must happen after the server is confirmed reachable but
         # before the first tick.
         self._reconcile_claimed_tasks()
-        _run_started_extra: dict[str, object] = {}
-        if self._workflow_executor is not None:
-            _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
-            _run_started_extra["workflow_hash"] = self._workflow_executor.definition_hash
-        self._recorder.record(
-            "run_started",
-            run_id=self._run_id,
-            max_agents=self._config.max_agents,
-            budget_usd=self._config.budget_usd,
-            git_sha=self._replay_metadata.git_sha,
-            git_branch=self._replay_metadata.git_branch,
-            config_hash=self._replay_metadata.config_hash,
-            **_run_started_extra,
-        )
+        self._record_run_started()
         # Record the skill and plugin set this install actually resolved,
         # once per run and before the first agent spawns. `bernstein skills`
         # and `bernstein plugins` report the declaration; a path override, a
@@ -6054,12 +6107,37 @@ class Orchestrator:
             if session is None:
                 continue
             self._record_mutation_capability_once(session)
+            model = session.model_config.model if session.model_config else None
+            # Issue #6064: ``model_provider`` must name the model's vendor,
+            # not the CLI adapter that carried the spawn. A declared vendor
+            # wins; without one, the #6063 namespace fallback applies only to
+            # sessions that resolved no provider at all. A CLI/adapter or
+            # router provider name is a routing fact, not a vendor, so it is
+            # never journaled as ``model_provider`` - export refuses that hop
+            # by agent id rather than inventing a vendor name.
+            if session.model_vendor:
+                model_id: str | None = model
+                model_provider: str | None = session.model_vendor
+            elif session.provider is None:
+                model_id, model_provider = _model_identity(model, None)
+            else:
+                model_id, model_provider = None, None
+            model_facts: dict[str, str] = {}
+            if model_id is not None:
+                model_facts["model_id"] = model_id
+            if model_provider is not None:
+                model_facts["model_provider"] = model_provider
             self._recorder.record(
                 "agent_spawned",
                 agent_id=session.id,
                 role=session.role,
-                model=session.model_config.model if session.model_config else None,
+                model=model,
                 provider=session.provider,
+                # Issue #6045: the trust-record emitter reads model_id /
+                # model_provider, not model / provider. Journal the resolved
+                # facts under the emitter's names additively; the existing keys
+                # stay for the other run-journal readers that depend on them.
+                **model_facts,
                 task_ids=session.task_ids,
                 agent_source=session.agent_source,
                 # Issue #4908: record the resolved endpoint identity
@@ -7427,6 +7505,7 @@ if __name__ == "__main__":
                 notifier=notifier,
                 quality_gate_config=seed.quality_gates if seed else None,
                 formal_verification_config=seed.formal_verification if seed else None,
+                data_class=seed.data_class if seed else None,
             )
 
             def _signal_handler(signum: int, _frame: object) -> None:

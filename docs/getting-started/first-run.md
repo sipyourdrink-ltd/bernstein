@@ -132,12 +132,15 @@ bernstein recap
 ```
 
 ```
-Run summary - 1 task completed in 1m 47s
-
-  ✓ backend-abc12345  Add hello() to greeting.py     $0.03  1m 47s
-
-Total: $0.03 · 1 merged · 0 failed
+  Metric        Value
+  Total tasks   1
+  Completed     1
+  Failed        0
+  Success rate  100.0%
 ```
+
+`bernstein recap` prints that recap table, then a git diff summary, quality
+scores, and a per-model cost breakdown. The exact numbers depend on the run.
 
 The summary card also reports a **Model routing savings** number when the
 cascade router downgraded any task off Opus - see

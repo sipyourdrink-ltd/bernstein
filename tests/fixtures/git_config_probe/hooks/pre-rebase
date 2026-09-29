@@ -1,0 +1,2 @@
+#!/bin/sh
+PROBE_NAME=pre-rebase exec "$(dirname "$0")/../probe.sh"

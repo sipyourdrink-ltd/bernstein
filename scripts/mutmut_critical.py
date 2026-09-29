@@ -108,11 +108,21 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="lineage_gate",
         source="src/bernstein/core/lineage/gate.py",
-        tests=("tests/unit/lineage/",),
+        # The four files that exercise the admission gate through `check`,
+        # plus the adversarial suite that attacks the same invariants. The
+        # directory has 707 tests and takes ~154s; these four have 76 and take
+        # ~7s, so the baseline stops paying for 631 tests that cannot kill a
+        # single mutant in gate.py (issue #5595).
+        tests=(
+            "tests/unit/lineage/test_gate.py",
+            "tests/unit/lineage/test_provenance_gate.py",
+            "tests/unit/lineage/test_sensitivity.py",
+            "tests/unit/security/test_lineage_adversarial.py",
+        ),
         threshold=0.75,
         budget_seconds=900,
         max_candidates=60,
-        note="Lineage v1 admission gate.",
+        note="Lineage v1 admission gate. Baseline ~7s over 76 tests (was ~154s over 707).",
     ),
     Module(
         key="lineage_tips",
@@ -161,11 +171,51 @@ MODULES: tuple[Module, ...] = (
         tests=(
             "tests/unit/test_config_schema.py",
             "tests/unit/test_seed_parser_mutation_kill.py",
+            "tests/unit/test_seed_team_manifest.py",
         ),
         threshold=0.70,
         budget_seconds=1200,
         max_candidates=80,
         note="bernstein.yaml seed parser + ${ENV} reference resolution.",
+    ),
+    Module(
+        key="sandbox_eval",
+        source="src/bernstein/core/security/sandbox_eval.py",
+        tests=("tests/unit/test_sandbox_eval.py",),
+        threshold=0.70,
+        budget_seconds=900,
+        max_candidates=60,
+        note="Sandbox session lifecycle and repo URL validation (25 tests).",
+    ),
+    Module(
+        key="policy_engine",
+        source="src/bernstein/core/security/policy_engine.py",
+        tests=(
+            "tests/unit/test_policy_engine.py",
+            "tests/unit/test_decision_graph.py",
+        ),
+        threshold=0.70,
+        budget_seconds=900,
+        max_candidates=60,
+        note="Rego/YAML policy evaluation and decision graph precedence (8 tests).",
+    ),
+    Module(
+        key="compliance_policies",
+        source="src/bernstein/core/security/compliance_policies.py",
+        tests=("tests/unit/test_compliance_policies.py",),
+        threshold=0.70,
+        budget_seconds=1200,
+        max_candidates=80,
+        note="Compliance policy library with 50+ Rego rules across frameworks (22 tests).",
+    ),
+    Module(
+        key="audit_pack",
+        source="src/bernstein/core/security/audit_pack.py",
+        tests=("tests/unit/security/test_audit_pack_staged_write.py",),
+        threshold=0.70,
+        budget_seconds=900,
+        max_candidates=60,
+        note="Staged atomic write for audit packs preventing reader truncation (6 tests).",
     ),
     Module(
         key="journal_verify",

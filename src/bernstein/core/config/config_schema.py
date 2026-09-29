@@ -928,6 +928,10 @@ class BernsteinConfig(BaseModel):
     model: str | None = Field(default=None, description="Model override.")
     team: Literal["auto"] | list[str] = Field(default="auto", description="Role team selection.")
     budget: str | int | float | None = Field(default=None, description='Spending cap ("$20", 20, or 20.0).')
+    data_class: Literal["restricted", "internal", "confidential", "public"] | None = Field(
+        default=None,
+        description="Operator-declared data sensitivity for trust records. Defaults to confidential when undeclared.",
+    )
 
     # --- Behavioral flags ---
     evolution_enabled: bool = Field(default=True, description="Enable self-evolution loop.")

@@ -7,6 +7,7 @@ import json
 import logging
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,7 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.agents import spawner_core
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
@@ -3199,8 +3201,22 @@ class TestDeadAgentFileOwnershipEdgeCases:
         assert "src/main.py" not in orch._file_ownership
         assert "src/utils.py" not in orch._file_ownership
 
-    def test_file_overlap_cleared_after_dead_agent_allows_respawn(self, tmp_path: Path) -> None:
-        """Spawn is blocked while an agent owns a file; after it dies the next tick spawns."""
+    def test_file_overlap_cleared_after_dead_agent_allows_respawn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Spawn is blocked while an agent owns a file; after it dies the next tick spawns.
+
+        The dead agent's crash now correctly records a per-adapter failure
+        timestamp (#5875), which would otherwise put every subsequent spawn
+        on the same adapter into a 5-minute cooldown. That cooldown is
+        orthogonal to what this test exercises (file-ownership release), so
+        it is disabled here to isolate the behavior under test.
+        """
+        monkeypatch.setattr(
+            spawner_core,
+            "SPAWN",
+            replace(spawner_core.SPAWN, spawn_failure_cooldown_s=0.0),
+        )
         task1 = _make_task(id="T-owner", role="backend")
         task1.owned_files = ["src/shared.py"]
         task2 = _make_task(id="T-waiter", role="qa")
@@ -6439,7 +6455,10 @@ def test_record_live_costs_enforces_max_cost_per_agent(tmp_path: Path) -> None:
     orch._release_task_to_session = MagicMock()
     orch._record_provider_health = MagicMock()
 
-    with patch("bernstein.core.orchestrator.retry_or_fail_task") as mock_retry:
+    with (
+        patch("bernstein.core.orchestrator.retry_or_fail_task") as mock_retry,
+        patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop"),
+    ):
         orch._record_live_costs()
 
     assert session.id in orch._cost_cap_killed_agents
@@ -6573,7 +6592,8 @@ def test_record_live_costs_accumulates_from_tokens_sidecar(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    orch._record_live_costs()
+    with patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop"):
+        orch._record_live_costs()
     expected = estimate_cost("sonnet", 3000, 2000)
     assert expected > 0
     status = orch._cost_tracker.status()
@@ -6581,13 +6601,15 @@ def test_record_live_costs_accumulates_from_tokens_sidecar(tmp_path: Path) -> No
     assert status.spent_usd == pytest.approx(expected)
 
     # Delta-safe: a second tick over the same sidecar adds nothing.
-    orch._record_live_costs()
+    with patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop"):
+        orch._record_live_costs()
     assert orch._cost_tracker.status().spent_usd == pytest.approx(expected)
 
     # New sidecar rows increment by exactly the newly-priced delta.
     with sidecar.open("a", encoding="utf-8") as fh:
         fh.write('{"ts": 3.0, "in": 500, "out": 250}\n')
-    orch._record_live_costs()
+    with patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop"):
+        orch._record_live_costs()
     expected_total = estimate_cost("sonnet", 3500, 2250)
     assert orch._cost_tracker.status().spent_usd == pytest.approx(expected_total)
 
@@ -6607,7 +6629,8 @@ def test_record_live_costs_falls_back_to_session_tokens(tmp_path: Path) -> None:
     session.tokens_used = 4000
     orch._agents[session.id] = session
 
-    orch._record_live_costs()
+    with patch("bernstein.core.agents.heartbeat._reap_session_heartbeat_loop"):
+        orch._record_live_costs()
     assert orch._cost_tracker.status().spent_usd == pytest.approx(estimate_cost("sonnet", 4000, 0))
 
 

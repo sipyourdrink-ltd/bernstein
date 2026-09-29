@@ -76,6 +76,12 @@ JOURNAL_FILENAME = "journal.jsonl"
 #: Unset or non-positive means keep everything.
 RETENTION_ENV_VAR = "BERNSTEIN_REPLAY_RETENTION"
 
+#: Legacy hash profile: Python json.dumps with ensure_ascii=True, default=str.
+HASH_PROFILE_LEGACY: str = "py-json-v1"
+
+#: RFC 8785 (JCS) hash profile: canonicalize_jcs, no default=str, floats per ES6 Number.toString.
+HASH_PROFILE_JCS_V2: str = "jcs-v2"
+
 #: Envelope fields that vary across runs even when execution is identical.
 #: Excluded from ``payload_hash`` so two byte-identical runs chain to the
 #: same head regardless of timing (mirrors the legacy recorder policy,
@@ -186,35 +192,70 @@ def contained_run_journal(runs_root: Path, entry_name: str, filename: str = JOUR
         return None
 
 
-def _payload_hash(event_type: str, payload: dict[str, Any]) -> str:
+def _payload_hash(event_type: str, payload: dict[str, Any], hash_profile: str = HASH_PROFILE_LEGACY) -> str:
     """Return the SHA-256 of the canonical, timing-excluded payload.
 
     The ``event`` type and the decision-relevant payload keys are hashed;
     the wall-clock envelope and the derived chain fields are dropped so a
     faithful replay - which differs only in timing - hashes identically.
+
+    Args:
+        event_type: The event type string.
+        payload: The event payload dict.
+        hash_profile: Canonicalization profile. ``"py-json-v1"`` (default)
+            uses ``json.dumps`` with ``ensure_ascii=True`` and ``default=str``.
+            ``"jcs-v2"`` uses RFC 8785 via ``canonicalize_jcs`` with no
+            ``default=str`` fallback.
     """
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
     projected = {k: v for k, v in payload.items() if k not in _NON_DETERMINISTIC_FIELDS}
     projected["event"] = event_type
-    canonical = json.dumps(projected, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    if hash_profile == HASH_PROFILE_JCS_V2:
+        canonical = canonicalize_jcs(projected)
+    else:
+        canonical = json.dumps(projected, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 
 
-def compute_event_hash(*, prev_hash: str, event_type: str, payload_hash: str, index: int) -> str:
+def compute_event_hash(
+    *,
+    prev_hash: str,
+    event_type: str,
+    payload_hash: str,
+    index: int,
+    hash_profile: str = HASH_PROFILE_LEGACY,
+) -> str:
     """Return ``event_hash = H(prev_hash, event_type, payload_hash, index)``.
 
     The pre-image is canonical JSON of the ordered field tuple, so the
     digest is stable across processes and platforms.
+
+    Args:
+        prev_hash: Previous event hash.
+        event_type: Event type string.
+        payload_hash: Payload hash.
+        index: Monotonic index.
+        hash_profile: Canonicalization profile. ``"py-json-v1"`` (default)
+            uses ``json.dumps`` with ``sort_keys=True``. ``"jcs-v2"`` uses
+            RFC 8785 via ``canonicalize_jcs``.
     """
-    preimage = json.dumps(
-        {
-            "prev_hash": prev_hash,
-            "event_type": event_type,
-            "payload_hash": payload_hash,
-            "index": index,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+    preimage_obj = {
+        "prev_hash": prev_hash,
+        "event_type": event_type,
+        "payload_hash": payload_hash,
+        "index": index,
+    }
+    if hash_profile == HASH_PROFILE_JCS_V2:
+        preimage = canonicalize_jcs(preimage_obj)
+    else:
+        preimage = json.dumps(
+            preimage_obj,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
     return hashlib.sha256(preimage).hexdigest()
 
 
@@ -359,8 +400,18 @@ class EventJournal:
         sdd_dir: Path to the ``.sdd`` directory.
     """
 
-    def __init__(self, run_id: str, sdd_dir: Path) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        sdd_dir: Path,
+        *,
+        hash_profile: str = HASH_PROFILE_LEGACY,
+    ) -> None:
+        if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+            raise ValueError(f"unknown hash_profile {hash_profile!r}")
+
         self._run_id = run_id
+        self._hash_profile = hash_profile
         self._runs_root = sdd_dir / "runs"
         # Path-injection barrier (py/path-injection). A run_id names one journal
         # directory and must be a single safe path segment. The writer shares
@@ -417,7 +468,14 @@ class EventJournal:
         Raises:
             ValueError: The existing chain fails verification.
         """
-        journal = cls(run_id, sdd_dir)
+        # Detect hash_profile from the first event, if present
+        loaded = load_events(run_journal_path(sdd_dir, run_id))
+        hash_profile = HASH_PROFILE_LEGACY
+        if loaded.events:
+            first_event = loaded.events[0]
+            if "hash_profile" in first_event:
+                hash_profile = str(first_event["hash_profile"])
+        journal = cls(run_id, sdd_dir, hash_profile=hash_profile)
         loaded = load_events(journal.path)
         events = loaded.events
         if loaded.discarded_line_indices:
@@ -520,12 +578,13 @@ class EventJournal:
                     prior = 0
             index = self._index
             prev_hash = self._head
-            p_hash = _payload_hash(event, data)
+            p_hash = _payload_hash(event, data, self._hash_profile)
             e_hash = compute_event_hash(
                 prev_hash=prev_hash,
                 event_type=event,
                 payload_hash=p_hash,
                 index=index,
+                hash_profile=self._hash_profile,
             )
             entry: dict[str, Any] = {
                 "ts": time.time(),
@@ -536,6 +595,8 @@ class EventJournal:
                 "payload_hash": p_hash,
                 "event_hash": e_hash,
             }
+            if self._hash_profile != HASH_PROFILE_LEGACY:
+                entry["hash_profile"] = self._hash_profile
             entry.update(data)
             line = json.dumps(entry, default=str)
             try:
@@ -1150,16 +1211,33 @@ def verify_events(events: list[dict[str, Any]]) -> JournalVerifyResult:
             unauthenticated_fields=tuple(sorted(_NON_DETERMINISTIC_FIELDS)),
         )
 
+    # Detect hash_profile from the first event
+    hash_profile = HASH_PROFILE_LEGACY
+    if events:
+        first_event = events[0]
+        if "hash_profile" in first_event:
+            hash_profile = str(first_event["hash_profile"])
+            if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+                return JournalVerifyResult(
+                    chain_consistent=False,
+                    coverage=JournalCoverageStatus.COMPLETE,
+                    identity=JournalIdentityStatus.UNVERIFIABLE,
+                    count=len(events),
+                    errors=[f"unknown hash_profile {hash_profile!r}"],
+                    unauthenticated_fields=tuple(sorted(_NON_DETERMINISTIC_FIELDS)),
+                )
+
     prev_hash = _GENESIS_HASH
     for i, row in enumerate(events):
         event_type = str(row.get("event", ""))
         payload = {k: v for k, v in row.items() if k not in _NON_DETERMINISTIC_FIELDS}
-        expected_payload_hash = _payload_hash(event_type, payload)
+        expected_payload_hash = _payload_hash(event_type, payload, hash_profile)
         expected_hash = compute_event_hash(
             prev_hash=prev_hash,
             event_type=event_type,
             payload_hash=expected_payload_hash,
             index=i,
+            hash_profile=hash_profile,
         )
         stored_hash = str(row.get("event_hash", ""))
         stored_prev = str(row.get("prev_hash", ""))
@@ -1354,17 +1432,25 @@ def rebuild_state(path: Path, *, from_step: int) -> dict[str, Any]:
     upper = max(0, min(from_step, len(events)))
     prefix = events[:upper]
 
+    # Detect hash_profile from the first event
+    hash_profile = HASH_PROFILE_LEGACY
+    if events:
+        first_event = events[0]
+        if "hash_profile" in first_event:
+            hash_profile = str(first_event["hash_profile"])
+
     prev_hash = _GENESIS_HASH
     events_seen: list[str] = []
     for i, row in enumerate(prefix):
         event_type = str(row.get("event", ""))
         payload = {k: v for k, v in row.items() if k not in _NON_DETERMINISTIC_FIELDS}
-        p_hash = _payload_hash(event_type, payload)
+        p_hash = _payload_hash(event_type, payload, hash_profile)
         prev_hash = compute_event_hash(
             prev_hash=prev_hash,
             event_type=event_type,
             payload_hash=p_hash,
             index=i,
+            hash_profile=hash_profile,
         )
         events_seen.append(event_type)
 

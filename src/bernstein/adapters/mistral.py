@@ -26,6 +26,8 @@ class MistralAdapter(CLIAdapter):
     prompt via the ``--prompt`` flag.
     """
 
+    model_vendor = "mistral"
+
     def plugin_info(self) -> AdapterPluginInfo:
         """Declare the sampling surface MistralAdapter genuinely wires.
 

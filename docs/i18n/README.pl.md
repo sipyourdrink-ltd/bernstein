@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### otwartoźródłowa warstwa governance dla agentów AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -38,17 +38,17 @@
 
 > **Status: beta.** Projekt rozwijany i utrzymywany przez jedną osobę. Numer wersji oznacza kolejne wydania, a nie dojrzałość — wersje minor mogą zmieniać interfejsy. Przypnij wersję dla istotnych zależności; regresje są naprawiane na bieżąco, [zgłoś problem](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein to otwartoźródłowa warstwa governance dla agentów AI. Działa na policy as code: ty piszesz politykę - kto co może robić, co wymaga zatwierdzenia, co musi zostać zapisane - a Bernstein ją egzekwuje i tworzy weryfikowalny zapis. Deterministyczny scheduler - bez modelu w pętli koordynacji - uruchamia agentów równolegle, filtruje ich wyniki bramkami i zapisuje każdy krok, więc przebieg można zweryfikować po fakcie, offline, wyłącznie z artefaktów. Agenci CLI do kodu działają od ręki (Claude Code, Codex, Gemini CLI i 40+ innych), a ta sama warstwa governuje dowolne obciążenie agentowe: rezultatem może być diff, raport badawczy, dataset albo pakiet dowodów audytowych. Profil instalacji air-gap w zestawie. Apache-2.0.
+Bernstein to otwartoźródłowa warstwa governance dla agentów AI. Działa na policy as code: ty piszesz politykę - kto co może robić, co wymaga zatwierdzenia, co musi zostać zapisane - a Bernstein ją egzekwuje i tworzy weryfikowalny zapis. Deterministyczny scheduler - bez modelu w pętli koordynacji - uruchamia agentów równolegle, filtruje ich wyniki bramkami i zapisuje każdy krok, więc przebieg można zweryfikować po fakcie, offline, wyłącznie z artefaktów. Agenci CLI do kodu działają od ręki (Claude Code, Codex, Gemini CLI i 52+ innych), a ta sama warstwa governuje dowolne obciążenie agentowe: rezultatem może być diff, raport badawczy, dataset albo pakiet dowodów audytowych. Profil instalacji air-gap w zestawie. Apache-2.0.
 
 ### w skrócie
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
 
 Cztery cechy wyróżniają ten projekt; reszta to szczegóły.
 
 - **Brak LLM w pętli koordynacyjnej.** Harmonogramowanie jest napisane w czystym Pythonie, dzięki czemu każdy przebieg jest w pełni powtarzalny. Odtwórz wczorajszy plan i uzyskaj identyczny graf zadań.
 - **Weryfikowalność po fakcie.** Dziennik powtórzeń (replay journal) rejestruje każdy przebieg, a stale aktywny kręgosłup pochodzenia (lineage spine) zapisuje każdy krok tworzący historię pochodzenia; opcjonalny dziennik audytu powiązany łańcuchem HMAC (`BERNSTEIN_AUDIT=1`) dodaje pokwitowania (receipts), które można zweryfikować w trybie offline. Niedeterminizm ujawnia się jako niezgodność skrótu w konkretnym kroku, a nie jako losowy błąd ponownego uruchomienia. Rezultaty inne niż kod podlegają tym samym regułom: zadanie może zadeklarować kontrakt artefaktu (raport, zbiór danych, dziennik działań, wynik operacyjny) i kończy się podpisanym pokwitowaniem pochodzenia zamiast commita git.
 - **Izolacja na poziomie architektury.** Każde zadanie programistyczne otrzymuje własny git worktree za bramkami scalania (merge gates); zadania w trybie artefaktów otrzymują katalog roboczy w `.sdd/workspaces/`. Domyślnie agenci nie współdzielą modyfikowalnej przestrzeni roboczej; jedynym współdzielonym stanem jest rejestr zadań (backlog), rezerwowany atomowo. Bardziej rygorystyczna ochrona systemu plików jest opcjonalna dzięki [backendom sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Po wyłączeniu worktrees każde zadanie wykonuje się we wspólnym katalogu roboczym.
-- **Szeroki wachlarz i lokalne działanie.** Ponad 40 adapterów agentów CLI oraz ogólny wrapper `--prompt`, stan oparty na plikach, brak zależności od chmury SaaS, brak zewnętrznych platform przetwarzania danych.
+- **Szeroki wachlarz i lokalne działanie.** Ponad 52 adapterów agentów CLI oraz ogólny wrapper `--prompt`, stan oparty na plikach, brak zależności od chmury SaaS, brak zewnętrznych platform przetwarzania danych.
 
 Pełna lista znajduje się na [stronie możliwości](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [macierz funkcji](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) stanowi wyczerpujący spis.
 
@@ -134,7 +134,7 @@ flowchart LR
 Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i bramki zatwierdzeń trzymają niezależnie od tego, co agent robi w zadaniu. Węzeł kodowy kończy się za merge gates we własnym git worktree. Węzły powyżej kończą się inaczej: [kontrakt artefaktu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nazywa rezultat (raport, dataset, skan, log działań), a węzeł zamyka podpisany kwit lineage zamiast commita. Ten sam scheduler, ten sam journal, ta sama weryfikacja offline - niezależnie czy graf niesie kod, badania, zmianę ops czy miks wszystkich trzech. Gotowe grafy dla softu, badań, dokumentacji, enterprise i procesów kontrybutorskich leżą w [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm oraz Docker zostały opisane w [przewodniku instalacji](https://bernstein.readthedocs.io/en/latest/getting-started/install/); izolowany pakiet instalacyjny posiada dedykowany [przewodnik air-gap](https://bernstein.readthedocs.io/en/latest/installation/air-gap/).
+pipx, pip, brew, dnf, npm oraz Docker zostały opisane w [przewodniku instalacji](https://docs.bernstein.run/en/latest/getting-started/install/); izolowany pakiet instalacyjny posiada dedykowany [przewodnik air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,9 +223,9 @@ Punkty kontrolne stanu przebiegu trafiają do `.sdd/runs/<run_id>/` przy każdym
 Bramki jakości repozytorium: `bernstein readme-l10n verify` odrzuca PR, w którym przetłumaczone pliki README odbiegają od wersji angielskiej (wskazując zdezaktualizowaną sekcję), natomiast `bernstein readme-l10n sync` aktualizuje powiązania po zmianach w tekście źródłowym. Zobacz [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### obsługiwani agenci
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen i inni. [Indeks adapterów](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) zawiera instrukcje instalacji dla 30 z nich. Polecenie `bernstein integrations list` wyświetla wszystkie 54 wbudowanych integracji z pliku `src/bernstein/adapters/registry.py`, będącego jedynym źródłem prawdy. 52 z nich to adaptery agentów; pozostałe dwie pozycje to moduł testowy `mock` oraz profil punktów końcowych `self-hosted-endpoints`. Wszystkie inne narzędzia obsługujące flagę `--prompt` działają poprzez uniwersalny wrapper.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen i inni. [Indeks adapterów](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) zawiera instrukcje instalacji dla 30 z nich. Polecenie `bernstein integrations list` wyświetla wszystkie 56 wbudowanych integracji z pliku `src/bernstein/adapters/registry.py`, będącego jedynym źródłem prawdy. 54 z nich to adaptery agentów; pozostałe dwie pozycje to moduł testowy `mock` oraz profil punktów końcowych `self-hosted-endpoints`. Wszystkie inne narzędzia obsługujące flagę `--prompt` działają poprzez uniwersalny wrapper.
 
 Możesz łączyć różnych agentów w ramach jednego przebiegu: tańsze modele lokalne do kodu powtarzalnego, bardziej zaawansowane modele chmurowe do architektury. Polecenie `bernstein integrations list --installed` wyświetla narzędzia dostępne w systemie.
 
@@ -242,9 +242,9 @@ bernstein volunteer browse --budget 60
 [Przewodnik darczyńcy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) opisuje uruchamianie workera i budżet, który ustawiasz, [przewodnik projektu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) - deklarowanie manifestu, a [model zagrożeń](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) mówi, przed czym każda granica chroni, a przed czym nie. Uruchamianie jedną komendą nie zostało jeszcze wydane: dziś działają podkomendy `verify`, `browse` i `hub`.
 
 ### poza stroną główną
-<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://bernstein.readthedocs.io/):
+Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.bernstein.run/):
 
 | strona | zakres tematyczny |
 |---|---|

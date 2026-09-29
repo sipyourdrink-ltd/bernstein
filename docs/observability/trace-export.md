@@ -5,13 +5,21 @@ JWT-style JSON blob (Ed25519) that proves a run's journal chain is intact
 and binds the run to the install identity. It is generated entirely
 offline from local state; no OTLP endpoint or network is required.
 
+TRACE is an open specification hosted at the Linux Foundation. Bernstein
+implements it as an independent Apache-2.0 project; its author contributes
+to the specification as an outside contributor, and Bernstein is not
+affiliated with or endorsed by the specification's maintainers or the
+Foundation.
+
 ```
-bernstein trace export <RUN_ID> [--out PATH] [--json] [--last] [--sdd-dir PATH]
+bernstein trace export <RUN_ID> [--out PATH] [--out-dir DIR] [--json] [--last] [--sdd-dir PATH]
 ```
 
 - `--last` picks the most recently finished run in `.sdd/runs/`
   (a directory with a non-empty `journal.jsonl`), sorted by mtime.
 - `--out` writes the canonical JSON string to a file instead of stdout.
+- `--out-dir` writes one record per worker hop (`<exec_id>.json`) plus the
+  run-level `aggregate.json` into a directory.
 - `--json` emits the canonical JSON form (identical to the default output).
 - `--sdd-dir` overrides the `.sdd/` path; defaults to `./.sdd/` or `./.`.
 
@@ -19,6 +27,40 @@ Exit codes: `0` = exported, `1` = run not found / chain broken / emit
 error, `2` = missing `RUN_ID` argument.
 
 The trace extra (`bernstein[trace]`) is required.
+
+## Multi-worker runs
+
+A run that spawned more than one worker (more than one `agent_spawned`
+event in the journal) exports one Trust Record per worker hop plus a
+run-level aggregate:
+
+- `exec_id` of a hop record is that spawn event's `agent_id`; hops appear
+  in spawn order.
+- each hop's `model` comes from its own `agent_spawned` event, never
+  borrowed from a sibling; a hop whose spawn carries no
+  `model_provider`/`model_id` is refused and the agent id is named.
+- `policy.bundle_hash` is the run-level `gate_config`, identical across
+  hops.
+- `tool_transcript` is present only when the journal holds `tool_call`
+  events for that hop; an unobserved transcript is omitted. The aggregate
+  carries `tool_transcript` only when every member record carries one.
+- the aggregate's `references[]` list content-binds each hop record.
+
+With `--out-dir DIR` the CLI writes `DIR/<exec_id>.json` per hop and
+`DIR/aggregate.json`. Without `--out-dir`, a multi-worker run writes only
+the aggregate to `--out`/stdout and prints a note on stderr that the
+per-hop records require `--out-dir`.
+
+Each file (hop record or aggregate) verifies the same way as a
+single-record export:
+
+```
+trace-tests verify --record DIR/<exec_id>.json --level 0
+```
+
+A run with no `agent_spawned` event (legacy journal) keeps the
+single-record behaviour: one record, `exec_id` equal to the run id, and
+`tool_transcript` always present.
 
 ## What is in a trust record
 
@@ -35,6 +77,7 @@ see its docstring for the canonical shape.
 | `runtime` | `{"platform": "software-only", "measurement": "sha256:0000…"}` — software evidence only; never a real hardware measurement. The all-zero digest is the honest way to say "no hardware measurement exists". |
 | `policy` | `{"bundle_hash": <sha256>, "enforcement_mode": "enforce"}`. |
 | `data_class` | Operator-declared data sensitivity; defaults to `confidential` when undeclared. |
+| `data_class` | Operator-declared data sensitivity. Allowed values: `restricted`, `internal`, `confidential`, `public`. Defaults to `confidential` when undeclared. Set in `bernstein.yaml` via `data_class: <value>`. |
 | `tool_transcript` | `{"hash": <sha256>, "call_count": <int>}` — hash over tool-call entries in the journal. |
 | `build_provenance` | `{"slsa_level": 0, "digest": <sha256>, "provenance_uri": <release page URL>}`. |
 | `appraisal` | `{"status": "none", "verifier": "https://bernstein.run/trace/verifier", "timestamp": <int>}`. |
@@ -47,6 +90,40 @@ The signed body is the JCS canonical JSON form of all fields except
 `signature` — optional members (`delegation`, `references`) are omitted
 entirely when absent, never emitted as `null`. RFC 8785 canonicalisation
 treats "key present" and "key absent" as different bytes.
+
+### Where each field is read from
+
+The emitter reads a run journal written by the orchestrator. The mapping
+from record member to the journal event and key it is sourced from:
+
+| Record member | Journal event | Journal key |
+|---|---|---|
+| `model.provider` | `agent_spawned` | `model_provider`, else the namespace prefix of `model_id` |
+| `model.model_id` | `agent_spawned` | `model_id` |
+| `model.version` | `agent_spawned` | `model_version` (optional) |
+| `policy.bundle_hash` | `run_started` | `gate_config` |
+| `data_class` | any event | `data_class` (optional) |
+| `tool_transcript` | `tool_call` | payload |
+| `iat` / `appraisal.timestamp` | last event | `ts` |
+
+When a session resolves no provider, a namespaced model identifier such as
+`omnilab/fleet-hard` journals `model_provider` as its namespace (`omnilab`)
+and keeps `model_id` whole. A bare identifier or an empty namespace is not a
+provider, so export still refuses rather than inventing a vendor name.
+
+`model_provider` is the model vendor the adapter declares (for example
+`anthropic` for a Claude Code worker), not the CLI adapter identifier that
+carried the spawn. An adapter that fronts several vendors, a gateway, or
+nothing it can name declares no vendor; its hop journals no
+`model_provider` key and export refuses it with the agent id, the same way
+it refuses an endpoint-routed worker.
+
+`model_id` is the identifier the operator configured, recorded as written. A
+role policy that asks for a tier - `sonnet`, `opus`, `haiku` - records that
+word, because that is what was asked for; the concrete dated identifier the
+adapter launched is not journaled. Pin a model in the role policy when the
+record has to name the exact model that ran, as it does for a record that
+leaves this install.
 
 ## What is deliberately NOT in a trust record
 
@@ -132,6 +209,27 @@ uv run --with agentrust-trace-tests==0.5.1 trace-tests verify \
 (`--max-age` is set far above the default 24 h window because the
 fixture vectors use a frozen 2023-11-14 clock, not wall-clock time —
 an unmodified default would reject every vector as stale.)
+
+## Identifier URIs {#trace-identifiers}
+
+Two fixed URIs appear in every trust record this producer emits. Both
+resolve to this section.
+
+### `https://bernstein.run/trace/verifier` {#trace-verifier}
+
+The `appraisal.verifier` value. It names the appraisal method, not the
+workload: this producer always self-declares `status: "none"`, so the
+record carries no third-party appraisal. A verifier that needs a real
+appraisal must perform one itself.
+
+### `https://bernstein.run/trace/records` {#trace-records}
+
+The resolver named on an aggregate record's
+`references[rel=member-execution]` entries. It identifies the party
+obliged to resolve a member's `id` back to the record it names, which is
+always this producer. The entry's `digest` binds
+that id to specific bytes, so a verifier checks the member record it was
+given against the digest rather than fetching it from this URL.
 
 ## Relationship to other trace commands
 

@@ -24,9 +24,14 @@ name: quorum
 # instead of passing it. The rules a pull request is measured against are
 # therefore always the current ones, whenever it was opened.
 #
-# This workflow is pinned by an organization ruleset as a required workflow,
-# which is what makes it non-forgeable: a branch cannot swap in its own
-# version of it.
+# An organization ruleset requires the context this workflow publishes,
+# `quorum`, on the default branch. The context is required by name rather
+# than the workflow by path, because a verdict that turns on elapsed time -
+# the 72-hour objection window - has to be answerable again after the clock
+# moves, by a re-run or by a re-publish of the same context, without the
+# gate insisting on which run produced it. The job below is the only
+# in-tree emitter of the name; `scripts/publish_required_check.py` is the
+# supported way to re-publish it from a privileged workflow.
 
 on:
   pull_request:
@@ -64,6 +69,9 @@ permissions:
 
 jobs:
   quorum:
+    # The check-run this job publishes is the required context, so its name
+    # is written out rather than inherited from the job key.
+    name: quorum
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

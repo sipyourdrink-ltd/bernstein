@@ -15,6 +15,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `diff_paths.py`             | Which repository-relative paths a unified diff touches |
 | `finding_verify.py`         | FindingVerifyReceipt - lineage-attested receipts for finding verify results |
 | `instrumentation.py`        | Wave-3 per-agent instrumentation: LLM calls, tool calls, and conversation history |
+| `log_safe.py`               | Bound and de-fang an arbitrary value before it becomes part of a log record |
 | `parallel_admission.py`     | Parallel-execution admission from a code graph (#3237, scope step 3) |
 | `path_scope.py`             | Which repository-relative paths fall outside a set of globs |
 | `registry_guard.py`         | Shared duplicate-registration guard for the registry classes under ``bernstein`` |
@@ -94,108 +95,114 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 
 ### `src/bernstein/adapters/` - CLI agent adapters
 
-| File                        | Purpose |
-|-----------------------------|---------|
-| `_contract.py`              | Adapter contract loader and capability checker |
-| `acp_channel.py`            | Adapter-side binding for the ACP event channel (#2522) |
-| `admission.py`              | Receipt-gated adapter admission with signed refusal receipts (#2610) |
-| `advisories.py`             | Adapter minimum-safe-version advisories (supply-chain posture) |
-| `agy.py`                    | Antigravity CLI (``agy``) adapter |
-| `aichat.py`                 | AIChat CLI adapter |
-| `aider.py`                  | Aider CLI adapter |
-| `amp.py`                    | Amp CLI adapter |
-| `auggie.py`                 | Auggie (Augment Code) CLI adapter |
-| `autohand.py`               | Autohand Code CLI adapter |
-| `base.py`                   | Base adapter for CLI coding agents |
-| `caching_adapter.py`        | Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse |
-| `canary.py`                 | Adapter conformance canary matrix (issue #2368) |
-| `capability_profile.py`     | Declarative adapter capability profiles and the profile factory |
-| `charm.py`                  | Charm Crush CLI adapter |
-| `claude.py`                 | Claude Code CLI adapter |
-| `claude_agents.py`          | Build per-task Claude Code subagent definitions for the --agents flag |
-| `claude_cache_control.py`   | Anthropic API cache-control block builder for the Claude Code adapter |
-| `claude_exit_codes.py`      | Map Claude Code exit codes to Bernstein AbortReason/TransitionReason |
-| `claude_mcp_loader.py`      | MCP config loading and merging for the Claude Code adapter |
-| `claude_routine.py`         | Claude Code Routine adapter - offloads tasks to Anthropic cloud via /fire API |
-| `claude_stream_parser.py`   | Parse Claude Code --output-format stream-json events |
-| `claude_wrapper_script.py`  | Inline wrapper script source + assembly for the Claude Code adapter |
-| `cline.py`                  | Cline CLI adapter |
-| `clm.py`                    | CLM sovereign LLM adapter - drives a customer-side CLM gateway |
-| `clm_tls_launcher.py`       | mTLS launcher for the CLM adapter |
-| `codebuff.py`               | Codebuff CLI adapter |
-| `codex.py`                  | OpenAI Codex CLI adapter |
-| `codex_cloudflare.py`       | Codex adapter driving Cloudflare's first-party sandbox bridge (issue #2969) |
-| `cody.py`                   | Sourcegraph Cody CLI adapter |
-| `composio.py`               | Composio Agent Orchestrator (``ao``) CLI adapter |
-| `computer_use.py`           | Browser / computer-use adapter family (#2606) |
-| `conformance.py`            | Adapter tool contract conformance suite harness |
-| `continue_dev.py`           | Continue.dev CLI adapter |
-| `copilot.py`                | GitHub Copilot CLI adapter |
-| `council_runner.py`         | Task-level "council of agents" runner |
-| `cursor.py`                 | Cursor Agent CLI adapter |
-| `devin_terminal.py`         | Devin for Terminal (Cognition) CLI adapter |
-| `draft.py`                  | Drafting helper for adapter capability profiles |
-| `droid.py`                  | Droid (Factory AI) CLI adapter |
-| `env_isolation.py`          | Environment variable isolation for spawned agents |
-| `floor_refresh.py`          | Adapter security-floor refresh pipeline with signed update receipts (#2515) |
-| `forge.py`                  | Forge CLI adapter |
-| `garak.py`                  | Garak adversarial probe adapter |
-| `gemini.py`                 | Google Gemini / Antigravity CLI adapter |
-| `generic.py`                | Generic CLI adapter for arbitrary coding agent CLIs |
-| `gitleaks.py`               | Deterministic Gitleaks scanner adapter and SARIF normalization |
-| `goose.py`                  | Goose CLI adapter for Bernstein |
-| `goose_stream_parser.py`    | Parse Goose ``--output-format stream-json`` events |
-| `gptme.py`                  | gptme CLI adapter |
-| `hermes.py`                 | Hermes Agent (Nous Research) CLI adapter |
-| `holmesgpt.py`              | HolmesGPT adapter for Bernstein |
-| `hook_gate_render.py`       | Render in-process verification-gate hooks for capable adapters (issue #2360) |
-| `http_429_classifier.py`    | Data-driven classifier for HTTP 429 responses |
-| `iac.py`                    | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
-| `junie.py`                  | JetBrains Junie CLI adapter |
-| `kilo.py`                   | Kilo CLI adapter (Stackblitz) |
-| `kimchi.py`                 | Kimchi CLI adapter (#3100) |
-| `kimi.py`                   | Kimi CLI adapter |
-| `kiro.py`                   | Kiro CLI adapter |
-| `letta_code.py`             | Letta Code CLI adapter |
-| `manager.py`                | Manager adapter - spawns the internal Python ManagerAgent orchestrator |
-| `mistral.py`                | Mistral Vibe CLI adapter |
-| `mock.py`                   | Mock CLI adapter for zero-API-key demos and testing |
-| `muse.py`                   | Muse Code CLI adapter for Bernstein |
-| `nmap.py`                   | Transcript-anchored Nmap scanner adapter and XML normalization |
-| `ollama.py`                 | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
-| `onboarding.py`             | Probe CLI evidence, record a supervised golden transcript, and replay held-out invocations |
-| `open_interpreter.py`       | Open Interpreter CLI adapter |
-| `openai_agents.py`          | OpenAI Agents SDK v2 adapter |
-| `openai_agents_builtins.py` | Opt-in builtin tools for the OpenAI Agents runner |
-| `openai_agents_runner.py`   | Python entrypoint that runs an OpenAI Agents SDK session |
-| `opencode.py`               | OpenCode CLI adapter |
-| `openhands.py`              | OpenHands CLI adapter |
-| `pi.py`                     | Pi (pi-coding-agent) CLI adapter |
-| `plandex.py`                | Plandex CLI adapter |
-| `plugin_sdk.py`             | Adapter plugin SDK for third-party agent integration |
-| `python_runtime.py`         | Generic Python-invoked agent-runtime adapter (#2959) |
-| `python_runtime_runner.py`  | Runner script for the generic Python-invoked agent-runtime adapter (#2959) |
-| `q_dev.py`                  | AWS Q Developer CLI adapter (binary: ``q``) |
-| `qwen.py`                   | Qwen CLI adapter for OpenAI compatible models |
-| `ralphex.py`                | Ralphex (umputun/ralphex) CLI adapter |
-| `registry.py`               | Adapter registry - look up CLI adapters by name |
-| `report.py`                 | Adapter conformance + capability report |
-| `rovo.py`                   | Atlassian Rovo Dev CLI adapter |
-| `scanner.py`                | Scanner adapter contract (issue #3617, slice 2 of #2953) |
-| `scanner_conformance.py`    | Scanner adapter conformance suite harness |
-| `scanner_finding.py`        | Scanner Finding dataclass |
-| `scanner_registry.py`       | Scanner registry - look up scanner adapters by name |
-| `security_floor.py`         | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
-| `semgrep.py`                | Deterministic Semgrep scanner adapter and SARIF normalization |
-| `session_id.py`             | Deterministic session-id binding for adapter replay isolation |
-| `skills_injector.py`        | Inject per-task Claude Code skills into the worktree before spawn |
-| `skyvern.py`                | Skyvern adapter: drives an existing Skyvern server over HTTP |
-| `strict_schema.py`          | Strict structured-output validation and user-owned-field protection |
-| `trivy.py`                  | Feed-pinned Trivy scanner adapter and SARIF normalization |
-| `use_cases.py`              | Per-adapter metadata for the ``bernstein integrations list`` command |
-| `ci/`                       | CI system adapters for log parsing and failure extraction |
-| `digest/`                   | Tool output digesters registry and ruleset models |
-| `directory/`                | Directory provisioning adapters |
+| File                            | Purpose |
+|---------------------------------|---------|
+| `_contract.py`                  | Adapter contract loader and capability checker |
+| `acp_channel.py`                | Adapter-side binding for the ACP event channel (#2522) |
+| `admission.py`                  | Receipt-gated adapter admission with signed refusal receipts (#2610) |
+| `advisories.py`                 | Adapter minimum-safe-version advisories (supply-chain posture) |
+| `agy.py`                        | Antigravity CLI (``agy``) adapter |
+| `aichat.py`                     | AIChat CLI adapter |
+| `aider.py`                      | Aider CLI adapter |
+| `amp.py`                        | Amp CLI adapter |
+| `auggie.py`                     | Auggie (Augment Code) CLI adapter |
+| `autohand.py`                   | Autohand Code CLI adapter |
+| `base.py`                       | Base adapter for CLI coding agents |
+| `caching_adapter.py`            | Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse |
+| `canary.py`                     | Adapter conformance canary matrix (issue #2368) |
+| `capability_profile.py`         | Declarative adapter capability profiles and the profile factory |
+| `charm.py`                      | Charm Crush CLI adapter |
+| `claude.py`                     | Claude Code CLI adapter |
+| `claude_agents.py`              | Build per-task Claude Code subagent definitions for the --agents flag |
+| `claude_cache_control.py`       | Anthropic API cache-control block builder for the Claude Code adapter |
+| `claude_exit_codes.py`          | Map Claude Code exit codes to Bernstein AbortReason/TransitionReason |
+| `claude_mcp_loader.py`          | MCP config loading and merging for the Claude Code adapter |
+| `claude_routine.py`             | Claude Code Routine adapter - offloads tasks to Anthropic cloud via /fire API |
+| `claude_stream_parser.py`       | Parse Claude Code --output-format stream-json events |
+| `claude_wrapper_script.py`      | Inline wrapper script source + assembly for the Claude Code adapter |
+| `cline.py`                      | Cline CLI adapter |
+| `clm.py`                        | CLM sovereign LLM adapter - drives a customer-side CLM gateway |
+| `clm_tls_launcher.py`           | mTLS launcher for the CLM adapter |
+| `codebuff.py`                   | Codebuff CLI adapter |
+| `codex.py`                      | OpenAI Codex CLI adapter |
+| `codex_cloudflare.py`           | Codex adapter driving Cloudflare's first-party sandbox bridge (issue #2969) |
+| `cody.py`                       | Sourcegraph Cody CLI adapter |
+| `composio.py`                   | Composio Agent Orchestrator (``ao``) CLI adapter |
+| `computer_use.py`               | Browser / computer-use adapter family (#2606) |
+| `conformance.py`                | Adapter tool contract conformance suite harness |
+| `continue_dev.py`               | Continue.dev CLI adapter |
+| `copilot.py`                    | GitHub Copilot CLI adapter |
+| `council_runner.py`             | Task-level "council of agents" runner |
+| `cursor.py`                     | Cursor Agent CLI adapter |
+| `deep_research.py`              | Shared machinery for the deep-research adapters |
+| `deep_research_artifact.py`     | On-disk layout of one deep-research run |
+| `devin_terminal.py`             | Devin for Terminal (Cognition) CLI adapter |
+| `draft.py`                      | Drafting helper for adapter capability profiles |
+| `droid.py`                      | Droid (Factory AI) CLI adapter |
+| `env_isolation.py`              | Environment variable isolation for spawned agents |
+| `floor_refresh.py`              | Adapter security-floor refresh pipeline with signed update receipts (#2515) |
+| `forge.py`                      | Forge CLI adapter |
+| `garak.py`                      | Garak adversarial probe adapter |
+| `gemini.py`                     | Google Gemini / Antigravity CLI adapter |
+| `generic.py`                    | Generic CLI adapter for arbitrary coding agent CLIs |
+| `gitleaks.py`                   | Deterministic Gitleaks scanner adapter and SARIF normalization |
+| `goose.py`                      | Goose CLI adapter for Bernstein |
+| `goose_stream_parser.py`        | Parse Goose ``--output-format stream-json`` events |
+| `gpt_researcher.py`             | gpt-researcher adapter for Bernstein |
+| `gpt_researcher_runner.py`      | Standalone runner for gpt-researcher, launched by path |
+| `gptme.py`                      | gptme CLI adapter |
+| `hermes.py`                     | Hermes Agent (Nous Research) CLI adapter |
+| `holmesgpt.py`                  | HolmesGPT adapter for Bernstein |
+| `hook_gate_render.py`           | Render in-process verification-gate hooks for capable adapters (issue #2360) |
+| `http_429_classifier.py`        | Data-driven classifier for HTTP 429 responses |
+| `iac.py`                        | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
+| `junie.py`                      | JetBrains Junie CLI adapter |
+| `kilo.py`                       | Kilo CLI adapter (Stackblitz) |
+| `kimchi.py`                     | Kimchi CLI adapter (#3100) |
+| `kimi.py`                       | Kimi CLI adapter |
+| `kiro.py`                       | Kiro CLI adapter |
+| `letta_code.py`                 | Letta Code CLI adapter |
+| `manager.py`                    | Manager adapter - spawns the internal Python ManagerAgent orchestrator |
+| `mistral.py`                    | Mistral Vibe CLI adapter |
+| `mock.py`                       | Mock CLI adapter for zero-API-key demos and testing |
+| `muse.py`                       | Muse Code CLI adapter for Bernstein |
+| `nmap.py`                       | Transcript-anchored Nmap scanner adapter and XML normalization |
+| `ollama.py`                     | Ollama / OpenAI-compatible local LLM adapter - run coding agents without cloud API keys |
+| `onboarding.py`                 | Probe CLI evidence, record a supervised golden transcript, and replay held-out invocations |
+| `open_interpreter.py`           | Open Interpreter CLI adapter |
+| `openai_agents.py`              | OpenAI Agents SDK v2 adapter |
+| `openai_agents_builtins.py`     | Opt-in builtin tools for the OpenAI Agents runner |
+| `openai_agents_runner.py`       | Python entrypoint that runs an OpenAI Agents SDK session |
+| `opencode.py`                   | OpenCode CLI adapter |
+| `openhands.py`                  | OpenHands CLI adapter |
+| `pi.py`                         | Pi (pi-coding-agent) CLI adapter |
+| `plandex.py`                    | Plandex CLI adapter |
+| `plugin_sdk.py`                 | Adapter plugin SDK for third-party agent integration |
+| `python_runtime.py`             | Generic Python-invoked agent-runtime adapter (#2959) |
+| `python_runtime_runner.py`      | Runner script for the generic Python-invoked agent-runtime adapter (#2959) |
+| `q_dev.py`                      | AWS Q Developer CLI adapter (binary: ``q``) |
+| `qwen.py`                       | Qwen CLI adapter for OpenAI compatible models |
+| `ralphex.py`                    | Ralphex (umputun/ralphex) CLI adapter |
+| `registry.py`                   | Adapter registry - look up CLI adapters by name |
+| `report.py`                     | Adapter conformance + capability report |
+| `rovo.py`                       | Atlassian Rovo Dev CLI adapter |
+| `scanner.py`                    | Scanner adapter contract (issue #3617, slice 2 of #2953) |
+| `scanner_conformance.py`        | Scanner adapter conformance suite harness |
+| `scanner_finding.py`            | Scanner Finding dataclass |
+| `scanner_registry.py`           | Scanner registry - look up scanner adapters by name |
+| `security_floor.py`             | Adapter security-floor spawn preflight with signed refusal receipts (#2515) |
+| `semgrep.py`                    | Deterministic Semgrep scanner adapter and SARIF normalization |
+| `session_id.py`                 | Deterministic session-id binding for adapter replay isolation |
+| `skills_injector.py`            | Inject per-task Claude Code skills into the worktree before spawn |
+| `skyvern.py`                    | Skyvern adapter: drives an existing Skyvern server over HTTP |
+| `strict_schema.py`              | Strict structured-output validation and user-owned-field protection |
+| `tongyi_deepresearch.py`        | Tongyi DeepResearch adapter for Bernstein |
+| `tongyi_deepresearch_runner.py` | Standalone runner for Tongyi DeepResearch, launched by path |
+| `trivy.py`                      | Feed-pinned Trivy scanner adapter and SARIF normalization |
+| `use_cases.py`                  | Per-adapter metadata for the ``bernstein integrations list`` command |
+| `ci/`                           | CI system adapters for log parsing and failure extraction |
+| `digest/`                       | Tool output digesters registry and ruleset models |
+| `directory/`                    | Directory provisioning adapters |
 
 ### `src/bernstein/agents/` - agent catalog & discovery
 

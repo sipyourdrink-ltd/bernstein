@@ -277,6 +277,7 @@ class ClaudeCodeAdapter(CLIAdapter):
     # ``_infer_adapter_name_for_provider`` (via the registry's
     # provider-alias table). Unchanged from the old substring branch.
     provides = ("claude", "anthropic")
+    model_vendor = "anthropic"
 
     external_endpoints = (("api.anthropic.com", 443),)
     # Surface the upstream provider on the ``bernstein status``

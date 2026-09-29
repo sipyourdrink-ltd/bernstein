@@ -37,7 +37,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -66,6 +66,14 @@ class LayerKind(StrEnum):
 
 #: The fixed order, derived from the enum so the two cannot drift apart.
 COMPOSITION_ORDER: tuple[LayerKind, ...] = tuple(LayerKind)
+
+
+#: Keys a serialized layer may carry. Declared once so ``from_dict`` can tell a
+#: key the schema does not know from one it merely left unset.
+_LAYER_KEYS = frozenset({"kind", "name", "clauses", "applies_to"})
+
+#: Keys a serialized policy set may carry, for the same reason.
+_POLICY_SET_KEYS = frozenset({"layers"})
 
 
 class PolicyCompositionError(ValueError):
@@ -115,6 +123,42 @@ class PolicyLayer:
         if self.applies_to:
             result["applies_to"] = list(self.applies_to)
         return result
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> PolicyLayer:
+        """Rebuild a layer from a serialized dict.
+
+        Strict about unknown keys, for the reason the playbook models are: a
+        dropped key in a posture document is a rule that silently does not
+        apply, and this document decides what wins.
+
+        Raises:
+            PolicyCompositionError: *raw* carries an unknown key, names a layer
+                kind outside the four, or fails the layer's own construction
+                rules.
+        """
+        from bernstein.core.govern.playbook_models import PlaybookClause
+
+        unknown = set(raw) - _LAYER_KEYS
+        if unknown:
+            raise PolicyCompositionError(
+                f"unknown layer field(s) {sorted(unknown)} for layer {raw.get('name')!r}: "
+                f"known fields are {sorted(_LAYER_KEYS)}"
+            )
+        kind_value = str(raw.get("kind", ""))
+        try:
+            kind = LayerKind(kind_value)
+        except ValueError as exc:
+            raise PolicyCompositionError(
+                f"unknown layer kind {kind_value!r}: must be one of {[layer.value for layer in COMPOSITION_ORDER]}"
+            ) from exc
+        clauses = tuple(PlaybookClause.from_dict(clause) for clause in raw.get("clauses", []))
+        return cls(
+            kind=kind,
+            name=str(raw.get("name", "")),
+            clauses=clauses,
+            applies_to=tuple(str(value) for value in raw.get("applies_to", ())),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +282,33 @@ class PolicySet:
     """
 
     layers: tuple[PolicyLayer, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the canonical serialization, layers in DECLARED order.
+
+        Not sorted, unlike a playbook's clauses: order is meaning here, and a
+        round trip that canonicalized it away would erase the precedence this
+        module exists to make explicit.
+        """
+        return {"layers": [layer.to_dict() for layer in self.layers]}
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> PolicySet:
+        """Rebuild a policy set from a serialized dict, preserving layer order.
+
+        Raises:
+            PolicyCompositionError: *raw* or a nested layer carries an unknown
+                key, or a layer fails its own construction rules.
+        """
+        unknown = set(raw) - _POLICY_SET_KEYS
+        if unknown:
+            raise PolicyCompositionError(
+                f"unknown policy-set field(s) {sorted(unknown)}: known fields are {sorted(_POLICY_SET_KEYS)}"
+            )
+        layers = raw.get("layers", [])
+        if not isinstance(layers, list):
+            raise PolicyCompositionError(f"`layers` must be a list, got {type(layers).__name__}")
+        return cls(layers=tuple(PolicyLayer.from_dict(layer) for layer in cast("list[Any]", layers)))
 
     def of_kind(self, kind: LayerKind) -> tuple[PolicyLayer, ...]:
         """The declared layers of one kind, in declaration order."""
