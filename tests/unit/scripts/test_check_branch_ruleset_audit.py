@@ -30,7 +30,7 @@ from check_branch_ruleset_audit import (
 # Mirrors the canary's BRANCH_PROTECTION_CONTEXTS_JSON, which is what the
 # audit actually reads; `test_required_contexts_come_from_the_canary` holds
 # the two together.
-REQUIRED_CONTEXTS = ["CI gate", "shipped bundle matches the lockfile"]
+REQUIRED_CONTEXTS = ["CI gate", "shipped bundle matches the lockfile", "quorum"]
 
 # `gh api repos/sipyourdrink-ltd/bernstein/rules/branches/main`, captured
 # 2026-08-25 and trimmed to the fields the audit reads. One ruleset backs
@@ -69,11 +69,26 @@ LIVE_RULES_2026_08_25: list[dict[str, Any]] = [
     },
     {"type": "non_fast_forward", "ruleset_id": 16719298},
     {"type": "deletion", "ruleset_id": 16719298},
+    # The review gate lives in an organization ruleset, so it arrives in the
+    # same effective set with a different `ruleset_id`; the audit reads the
+    # union of every required_status_checks rule that applies to the branch.
+    {
+        "type": "required_status_checks",
+        "parameters": {
+            "strict_required_status_checks_policy": False,
+            "do_not_enforce_on_create": False,
+            "required_status_checks": [
+                {"context": "quorum", "integration_id": 15368},
+            ],
+        },
+        "ruleset_id": 22668426,
+    },
 ]
 
 # `gh api repos/sipyourdrink-ltd/bernstein/rulesets`, same capture.
 LIVE_RULESETS_2026_08_16: list[dict[str, Any]] = [
     {"id": 16719298, "name": "main-merge-queue", "target": "branch", "enforcement": "active"},
+    {"id": 22668426, "name": "bernstein-quorum", "target": "branch", "enforcement": "active"},
 ]
 
 # `gh api repos/sipyourdrink-ltd/bernstein/rulesets/16719298`, same
@@ -85,9 +100,21 @@ LIVE_RULESET_DETAIL_2026_08_16: dict[str, Any] = {
     "bypass_actors": [],
 }
 
+# `gh api repos/sipyourdrink-ltd/bernstein/rulesets/22668426`, the
+# organization ruleset that requires the review gate's context.
+LIVE_QUORUM_RULESET_DETAIL: dict[str, Any] = {
+    "id": 22668426,
+    "name": "bernstein-quorum",
+    "enforcement": "active",
+    "bypass_actors": [],
+}
+
 
 def _details() -> dict[int, dict[str, Any]]:
-    return {16719298: json.loads(json.dumps(LIVE_RULESET_DETAIL_2026_08_16))}
+    return {
+        16719298: json.loads(json.dumps(LIVE_RULESET_DETAIL_2026_08_16)),
+        22668426: json.loads(json.dumps(LIVE_QUORUM_RULESET_DETAIL)),
+    }
 
 
 def _rules() -> list[dict[str, Any]]:
@@ -208,7 +235,8 @@ def test_audit_catches_a_ruleset_missing_from_the_listing() -> None:
 def test_audit_catches_a_ruleset_detail_that_was_never_read() -> None:
     violations = evaluate(_rules(), _rulesets(), {}, REQUIRED_CONTEXTS)
     assert violations == [
-        Violation("ruleset_detail", "ruleset 16719298 detail was not read; cannot verify bypass actors")
+        Violation("ruleset_detail", "ruleset 16719298 detail was not read; cannot verify bypass actors"),
+        Violation("ruleset_detail", "ruleset 22668426 detail was not read; cannot verify bypass actors"),
     ]
 
 
@@ -247,7 +275,10 @@ def fixture_files(tmp_path: Path) -> dict[str, Path]:
     details_path = tmp_path / "details.json"
     rules_path.write_text(json.dumps(_rules()), encoding="utf-8")
     rulesets_path.write_text(json.dumps(_rulesets()), encoding="utf-8")
-    details_path.write_text(json.dumps({"16719298": LIVE_RULESET_DETAIL_2026_08_16}), encoding="utf-8")
+    details_path.write_text(
+        json.dumps({"16719298": LIVE_RULESET_DETAIL_2026_08_16, "22668426": LIVE_QUORUM_RULESET_DETAIL}),
+        encoding="utf-8",
+    )
     return {"rules": rules_path, "rulesets": rulesets_path, "details": details_path}
 
 

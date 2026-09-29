@@ -222,4 +222,4 @@ the current machine, or export your install key and pass it via
 - [`docs/adapters/clm.md`](../adapters/clm.md) — CLM adapter configuration and mTLS guide
 - [`docs/reference/local-endpoints.md`](../reference/local-endpoints.md) — local endpoint profiles
 - [`docs/security/audit-log.md`](../security/audit-log.md) — HMAC audit chain
-- [`examples/local-fleet/`](../../examples/local-fleet/) — multi-model local fleet example
+- [`examples/local-fleet/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/examples/local-fleet) — multi-model local fleet example

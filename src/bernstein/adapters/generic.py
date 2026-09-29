@@ -106,3 +106,31 @@ class GenericAdapter(CLIAdapter):
 
     def name(self) -> str:
         return self._display_name
+
+    def invoke(
+        self,
+        *,
+        model: str,
+        input_text: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> str:
+        """Invoke the model directly with a prompt and return the response.
+
+        This method is for direct model invocation without spawning a full
+        agent process. Used for lightweight tasks like classification,
+        summarization, or single-turn prompts.
+
+        Args:
+            model: The model identifier to invoke.
+            input_text: The prompt/input text to send to the model.
+            parameters: Optional model parameters (temperature, max_tokens, etc.).
+
+        Returns:
+            The model's text response.
+        """
+        # GenericAdapter cannot perform direct model invocation as it wraps
+        # external CLI tools that require full agent processes
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support direct model invocation. "
+            "Use spawn() for full agent processes instead."
+        )

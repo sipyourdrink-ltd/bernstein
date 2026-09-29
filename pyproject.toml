@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.19.2"
+version = "3.20.0"
 description = "The open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs Claude Code, Codex, Gemini CLI, and 40+ CLI agents; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -137,7 +137,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://bernstein.run"
-Documentation = "https://bernstein.readthedocs.io"
+Documentation = "https://docs.bernstein.run"
 Repository = "https://github.com/sipyourdrink-ltd/bernstein"
 Source = "https://github.com/sipyourdrink-ltd/bernstein"
 Issues = "https://github.com/sipyourdrink-ltd/bernstein/issues"
@@ -459,6 +459,8 @@ artifacts = [
     # firewall loads them at startup to validate every incoming MCP tool
     # call. Loader: bernstein.mcp.input_validation.load_registry.
     "src/bernstein/mcp/tool_schemas/*.json",
+    # OSCAL v1.1.0 assessment-results schema for compliance exports.
+    "src/bernstein/compliance/oscal_schema/*.json",
     # Doctor doc-suggestion seed list. Curated list of common documentation
     # gaps surfaced by `bernstein doctor --suggest-docs`. Operator refreshes
     # it on each release. Loader:
@@ -935,6 +937,17 @@ dev = [
     "boto3-stubs>=1.43.56",  # boto3 (s3 / r2 extras), published by the mypy_boto3 project
     "botocore-stubs>=1.43.14",  # botocore, same publisher
     "playwright>=1.62.0",
+]
+
+# Documentation toolchain (mkdocs.yml): MkDocs Material, the `social` card
+# plugin's imaging extra, and the `redirects` / `minify` plugins declared in
+# mkdocs.yml. Floors mirror docs/requirements.in so `uv run --group docs
+# mkdocs build --strict` resolves the same toolchain the docs pin file does.
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.7,<10",
+    "mkdocs-redirects>=1.2,<1.2.4",
+    "mkdocs-minify-plugin>=0.8,<1",
 ]
 
 [tool.uv]

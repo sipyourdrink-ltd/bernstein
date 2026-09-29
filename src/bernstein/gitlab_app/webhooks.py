@@ -121,15 +121,16 @@ def parse_webhook(headers: dict[str, str], body: bytes) -> GitLabWebhookEvent:
     user: dict[str, Any] = raw_user if isinstance(raw_user, dict) else {}  # type: ignore[assignment]
     sender = str(user.get("username", "") or user.get("name", "") or "unknown")
 
+    from bernstein.core.log_safe import for_log
     from bernstein.core.security.sanitize import sanitize_log
 
     logger.info(
         "Parsed GitLab webhook: event=%s kind=%s action=%s project=%s sender=%s",
         sanitize_log(event_type),
-        sanitize_log(object_kind),
-        sanitize_log(action),
-        sanitize_log(project_path),
-        sanitize_log(sender),
+        for_log(object_kind),
+        for_log(action),
+        for_log(project_path),
+        for_log(sender),
     )
 
     return GitLabWebhookEvent(

@@ -77,6 +77,9 @@ from typing import TYPE_CHECKING, Any, Final
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bernstein.core.security.key_custody import KMSAdapter
+
+if TYPE_CHECKING:
     from bernstein.core.identity.principals import PrincipalChainResult
 
 __all__ = [
@@ -276,10 +279,21 @@ class GrantSigner:
     signer. The public key is embedded in every record so verification is
     self-describing; the HMAC chain anchored on the install audit key is what
     prevents an attacker from swapping the key and re-chaining.
+
+    The signer accepts either a raw private key PEM (legacy direct-load path)
+    or a :class:`~bernstein.core.security.key_custody.KMSAdapter` (custody
+    boundary path). New code should route through the boundary so the operator
+    can move the key to an HSM without touching signing surfaces.
     """
 
-    def __init__(self, private_key_pem: bytes, public_key_pem: bytes, *, issuer: str) -> None:
-        self._private_pem = private_key_pem
+    def __init__(
+        self,
+        private_key_pem: bytes | KMSAdapter,
+        public_key_pem: bytes,
+        *,
+        issuer: str,
+    ) -> None:
+        self._signer = private_key_pem
         self._public_pem = public_key_pem
         self._issuer = issuer
 
@@ -305,17 +319,21 @@ class GrantSigner:
         Used when a SPIFFE identity mode relabels the issuer to the workload's
         SPIFFE ID while the manager key that proves authorship is unchanged.
         """
-        return GrantSigner(self._private_pem, self._public_pem, issuer=issuer)
+        return GrantSigner(self._signer, self._public_pem, issuer=issuer)
 
     def sign(self, body: dict[str, Any]) -> str:
         """Return the hex Ed25519 signature over the canonical ``body``."""
+        payload = _canonical(body).encode()
+
+        # Route through the custody boundary when given a KMSAdapter.
+        if hasattr(self._signer, "sign"):
+            return self._signer.sign(payload).hex()
+
+        # Legacy direct-load path for backward compatibility.
         from cryptography.hazmat.primitives import serialization
 
-        return (
-            serialization.load_pem_private_key(self._private_pem, password=None)
-            .sign(_canonical(body).encode())  # type: ignore[union-attr, call-arg]
-            .hex()
-        )
+        private_key = serialization.load_pem_private_key(self._signer, password=None)
+        return private_key.sign(payload).hex()  # type: ignore[union-attr, call-arg]
 
 
 def verify_grant_signature(public_key_pem: bytes | str, body: dict[str, Any], signature_hex: str) -> bool:

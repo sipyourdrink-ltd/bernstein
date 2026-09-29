@@ -38,8 +38,10 @@ def test_uv_run_with_no_sync_does_not_create_or_sync_project_venv(tmp_path: Path
     )
 
     # Without --no-sync or UV_NO_SYNC, uv run attempts to sync and fails resolving nonexistent package
+    # UV_OFFLINE=1 forces deterministic failure without DNS timeout
     env_sync = {k: v for k, v in os.environ.items() if k != "UV_NO_SYNC"}
     env_sync["UV_PROJECT"] = str(proj)
+    env_sync["UV_OFFLINE"] = "1"
     proc_sync = subprocess.run(
         ["uv", "run", "--python", sys.executable, "python", "-c", "print('should-not-run')"],
         cwd=proj,

@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,6 +78,9 @@ from bernstein.core.volunteer.task_board import (
     TaskPublishError,
     is_hub_native,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +197,7 @@ def build_hub_app(
     config: dict | None = None,
     authenticator: VolunteerAuthenticator | None = None,
     task_board: TaskBoard | None = None,
+    allowed_origins: Sequence[str] | None = None,
 ) -> FastAPI:
     """Build the FastAPI application backing the volunteer hub.
 
@@ -208,22 +213,33 @@ def build_hub_app(
             When omitted the hub mirrors a git forge only: the board endpoints
             report 404 and nothing in the reserved hub-native id namespace can
             be leased, because nothing could have issued such an id.
+        allowed_origins: Browser origins permitted to call this hub
+            cross-origin, e.g. ``["https://volunteers.example"]``. Omitted or
+            empty installs no CORS middleware at all, so a browser refuses a
+            cross-origin call and only same-origin callers and non-browser
+            clients reach the API. There is deliberately no wildcard: the hub
+            binds wherever ``--host`` says, and ``authenticator`` is optional
+            (see above), so ``allow_origins=["*"]`` would let any page a
+            volunteer happens to open drive an unauthenticated hub from their
+            browser.
 
     Returns:
         Configured :class:`FastAPI` app.
     """
     app = FastAPI(title="Bernstein volunteer hub", version="1.0")
 
-    # CORS middleware — allows the volunteer web UI (served from a different
-    # origin) to call the hub API.  Mirrors the pattern established by
-    # bernstein.core.fleet.web so the same configuration surface is used.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Accept"],
-    )
+    # CORS is off unless the operator names the origins their volunteer web UI
+    # is served from. Naming them is the whole guard: the browser refuses any
+    # other origin, so a page the volunteer did not expect cannot reach the API
+    # even when the hub is bound to a routable address with no authenticator.
+    if allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(allowed_origins),
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "Accept"],
+        )
 
     app.state.lease_store = lease_store
     app.state.task_board = task_board

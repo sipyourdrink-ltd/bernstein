@@ -68,8 +68,8 @@ def governance_coverage(request: Request) -> Response:
     return Response(content=payload, media_type=_JSON_MEDIA_TYPE)
 
 
-@router.post("/governance/verify-receipt")
-async def verify_receipt(request: Request) -> Response:
+@router.post("/governance/verify-receipt", name="verify_receipt_endpoint")
+async def verify_receipt_endpoint(request: Request) -> Response:
     """Verify the posted receipt file and return the verdict document.
 
     The request body is the receipt verbatim -- whatever the operator dropped,

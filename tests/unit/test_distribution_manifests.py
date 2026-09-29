@@ -69,6 +69,26 @@ def test_server_json_description_fits_the_registry_limit() -> None:
     )
 
 
+def test_server_json_claims_no_remote_endpoint() -> None:
+    """The listing describes the installable package, not a hosted service.
+
+    The registry keys a remote URL to exactly one server name and answers a
+    second claim with HTTP 400, which fails the whole submission. The hosted
+    endpoint at ``mcp.bernstein.run`` is published by its own listing, so a
+    ``remotes`` entry here makes every release of this listing unpublishable:
+    v3.20.0 was refused with "remote URL ... is already used by server
+    io.github.sipyourdrink-ltd/bernstein-mcp". This listing offers the PyPI
+    and OCI packages only; the hosted endpoint is documented in
+    ``docs/mcp/server.md``.
+    """
+    data = json.loads((_REPO / "server.json").read_text(encoding="utf-8"))
+    assert "remotes" not in data, (
+        "server.json must not declare remotes: a remote URL belongs to one registry "
+        "listing, and the hosted endpoint is already claimed by the bernstein-mcp listing"
+    )
+    assert {package["registryType"] for package in data["packages"]} == {"pypi", "oci"}
+
+
 def test_plugin_manifest_version_and_paths() -> None:
     manifest = json.loads((_REPO / ".plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert manifest["version"] == _pyproject_version()

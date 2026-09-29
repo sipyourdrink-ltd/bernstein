@@ -22,9 +22,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.atomic_write import write_atomic_json
 from bernstein.core.persistence.file_locks import _cross_process_lock
-from bernstein.core.security.sanitize import sanitize_log
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping
@@ -356,7 +356,7 @@ def claim_next_entry(
                 logger.debug(
                     "claim_next: %s -> %s (backlog=%s)",
                     entry.id,
-                    sanitize_log(claimer_id),
+                    for_log(claimer_id),
                     backlog_path,
                 )
                 return entry

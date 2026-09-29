@@ -1,0 +1,52 @@
+name: Security control reachability
+
+# A security or identity control whose only importers are its own tests, an
+# __init__ re-export, or the lazy module map in src/bernstein/core/__init__.py
+# passes every existing check while never running. scripts/check_unreachable_controls.py
+# scans core/security/ and core/identity/ and fails on a public symbol with no
+# caller in the shipped package; known cases carry one written reason each in
+# unreachable_controls_allowlist.txt.
+#
+# Kept separate from ci.yml (protected path) as an additive gate. The check is
+# stdlib-only and does not need the bootstrap action.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/bernstein/core/security/**"
+      - "src/bernstein/core/identity/**"
+      - "scripts/check_unreachable_controls.py"
+      - "unreachable_controls_allowlist.txt"
+      - ".github/workflows/security-control-reachability.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/bernstein/core/security/**"
+      - "src/bernstein/core/identity/**"
+      - "scripts/check_unreachable_controls.py"
+      - "unreachable_controls_allowlist.txt"
+      - ".github/workflows/security-control-reachability.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-control-reachability-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Unreached security controls (#5053)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Fail on a security or identity control with no production caller
+        run: python3 scripts/check_unreachable_controls.py

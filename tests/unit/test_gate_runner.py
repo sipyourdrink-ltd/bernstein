@@ -462,3 +462,101 @@ def test_dead_code_gate_runs_to_completion_instead_of_crashing(tmp_path: Path) -
     assert report.gates_run == ["dead_code"]
     (result,) = report.results
     assert result.status in ("pass", "fail", "warn")
+
+
+def _dead_code_report(tmp_path: Path, *, output: str, exit_code: int, required: bool = False):
+    """Run the dead-code gate with one scripted command result."""
+    src = tmp_path / "src"
+    src.mkdir(exist_ok=True)
+    (src / "module.py").write_text("def f() -> int:\n    return 1\n", encoding="utf-8")
+
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="dead_code", required=required, condition="python_changed")],
+        cache_enabled=False,
+    )
+    runner = GateRunner(config, tmp_path)
+    task = _make_task(owned_files=["src/module.py"])
+
+    def fake_run(_command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str, int]:
+        return exit_code == 0, output, exit_code
+
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
+        return asyncio.run(runner.run_all(task, tmp_path))
+
+
+def test_dead_code_gate_reports_a_missing_tool_as_command_not_found(tmp_path: Path) -> None:
+    """Regression for #5869: an absent vulture is not a finding about the code.
+
+    The gate handed the command's ``(ok, output)`` straight to ``_build_dead_code_result``, so a
+    missing tool produced ``status="fail"`` -- the same verdict as "dead code found". vulture is
+    not a project dependency, so that is the state of a fresh checkout rather than an edge case,
+    and anything counting gate failures as findings counted an uninstalled tool as a catch.
+    """
+    report = _dead_code_report(
+        tmp_path,
+        output="python.exe: No module named vulture",
+        # `python -m <missing>` exits 1, NOT 127 -- which is why the exit-code rule the lint,
+        # import-cycle and complexity gates already use never matched here.
+        exit_code=1,
+    )
+
+    (result,) = report.results
+    assert result.status == "command_not_found"
+    assert result.status != "fail"
+
+
+def test_the_missing_tool_verdict_names_the_tool(tmp_path: Path) -> None:
+    """An operator reading this has to be sent to `pip install`, not to their own code."""
+    report = _dead_code_report(
+        tmp_path,
+        output="python.exe: No module named vulture",
+        exit_code=1,
+    )
+
+    (result,) = report.results
+    assert "vulture" in result.details
+
+
+def test_a_shell_reporting_127_is_recognised_too(tmp_path: Path) -> None:
+    """The other shape: a bare executable the shell cannot find."""
+    report = _dead_code_report(tmp_path, output="vulture: command not found", exit_code=127)
+
+    assert report.results[0].status == "command_not_found"
+
+
+def test_a_required_dead_code_gate_that_could_not_run_still_blocks(tmp_path: Path) -> None:
+    """The status changes; the safety does not.
+
+    A gate that never ran has cleared nothing, so a required one must still block. What #5869 is
+    about is the REASON an operator is shown, not whether the task proceeds.
+    """
+    report = _dead_code_report(
+        tmp_path,
+        output="python.exe: No module named vulture",
+        exit_code=1,
+        required=True,
+    )
+
+    (result,) = report.results
+    assert result.status == "command_not_found"
+    assert result.blocked is True
+
+
+def test_a_real_vulture_finding_is_still_a_failure(tmp_path: Path) -> None:
+    """The guard that keeps the fix from swallowing the gate.
+
+    An exemption keyed on the message must not fire on output that merely mentions a module.
+    """
+    report = _dead_code_report(
+        tmp_path,
+        output="src/module.py:1: unused function 'f' (60% confidence)",
+        exit_code=1,
+    )
+
+    assert report.results[0].status != "command_not_found"
+
+
+def test_a_clean_run_is_still_a_pass(tmp_path: Path) -> None:
+    report = _dead_code_report(tmp_path, output="(no output)", exit_code=0)
+
+    assert report.results[0].status in ("pass", "warn")

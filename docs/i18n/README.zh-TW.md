@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 代理的開源治理層
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -38,17 +38,17 @@
 
 > **狀態：beta。** 由單人維護，正在積極開發中。版本號計的是發布次數，而非成熟度——次版本（minor）可能變更介面。凡有依賴請鎖定版本；回歸問題會被儘快修復，[歡迎回報](https://github.com/sipyourdrink-ltd/bernstein/issues)。
 
-Bernstein 是面向 AI 代理的開源治理層。它運作在 policy as code 之上:你撰寫政策——誰可以做什麼、什麼需要核准、什麼必須被記錄——Bernstein 據此執行並產生可驗證的紀錄。確定性排程器 - 協調迴圈中沒有模型 - 平行執行代理,以閘門把關它們的產出,並記錄每一步,因此一次執行可以事後離線驗證,僅憑工件本身。CLI 編碼代理開箱即用(Claude Code、Codex、Gemini CLI 及 40+ 款),同一治理層治理任何代理工作負載:交付物可以是 diff、研究報告、資料集,或一份稽核證據包。附帶 air-gap 安裝設定。Apache-2.0。
+Bernstein 是面向 AI 代理的開源治理層。它運作在 policy as code 之上:你撰寫政策——誰可以做什麼、什麼需要核准、什麼必須被記錄——Bernstein 據此執行並產生可驗證的紀錄。確定性排程器 - 協調迴圈中沒有模型 - 平行執行代理,以閘門把關它們的產出,並記錄每一步,因此一次執行可以事後離線驗證,僅憑工件本身。CLI 編碼代理開箱即用(Claude Code、Codex、Gemini CLI 及 52+ 款),同一治理層治理任何代理工作負載:交付物可以是 diff、研究報告、資料集,或一份稽核證據包。附帶 air-gap 安裝設定。Apache-2.0。
 
 ### 一覽
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
 
 有四件事讓它與眾不同；其餘都是細節。
 
 - **協調迴圈中沒有 LLM。** 排程是純 Python，因此執行可以端到端重現。重播昨天的計畫，得到昨天的任務圖。
 - **事後可核查。** 重播日誌記錄每一次執行，常駐的血統脊柱記錄每個產生血統的步驟；選用的 HMAC 鏈式稽核日誌（`BERNSTEIN_AUDIT=1`）增加了可離線驗證的收據。不確定性會在精確步驟處以雜湊失配的形式浮出水面，而不是一次偶發的重跑。非程式碼交付物也享有同樣待遇：任務可以宣告產物契約（報告、資料集、動作日誌、維運結果），並以簽署的血統收據而非 git 提交來宣告完成。
 - **構造上即隔離。** 每個編碼任務在合併門禁之後獲得自己的 git worktree；產物模式任務在 `.sdd/workspaces/` 下獲得工作目錄。代理之間預設不共享可變的工作區；唯一共享的狀態是任務積壓，並以原子方式認領。更嚴格的檔案系統強制是選用的，來自[沙箱後端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（停用 worktree 會在共享檢出中執行每個任務）。
-- **廣泛且本地。** 40 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
+- **廣泛且本地。** 52 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
 
 完整清單見[能力頁面](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md)；[功能矩陣](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md)是詳盡的索引。
 
@@ -134,7 +134,7 @@ flowchart LR
 每個節點由角色獲該階段允許的代理認領;無論代理在任務內做什麼,角色圍欄與核准閘門始終有效。程式碼節點在自己的 git worktree 裡、合併閘門之後完成。上面這些節點的完成方式不同:[工件契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(報告、資料集、掃描、操作日誌),節點以簽章的 lineage 收據而非提交收尾。同一個排程器、同一份日誌、同樣的離線驗證 - 無論圖裡裝的是程式碼、研究、維運變更,還是三者混合。面向軟體、研究、文件、企業與貢獻者工作流的現成圖都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx、pip、brew、dnf、npm 和 Docker 都涵蓋在[安裝指南](https://bernstein.readthedocs.io/en/latest/getting-started/install/)中；離線 wheelhouse 有單獨的 [air-gap 指南](https://bernstein.readthedocs.io/en/latest/installation/air-gap/)。
+pipx、pip、brew、dnf、npm 和 Docker 都涵蓋在[安裝指南](https://docs.bernstein.run/en/latest/getting-started/install/)中；離線 wheelhouse 有單獨的 [air-gap 指南](https://docs.bernstein.run/en/latest/installation/air-gap/)。
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,9 +223,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 儲存庫衛生門禁：`bernstein readme-l10n verify` 會讓翻譯版 README 偏離英文來源的 PR 失敗（並指出過期的章節），`bernstein readme-l10n sync` 在英文修改後重新綁定它們。見 [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)。
 
 ### 支援的代理
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 54 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 52 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
+Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goose、Muse Code、OpenAI Agents SDK、Amp、Cody、Continue、Devin Terminal、Junie、Kilo、Kiro、AWS Q Developer、Ollama、OpenCode、OpenHands、Open Interpreter、gptme、Plandex、AIChat、Letta Code、Qwen 等等。[介面卡索引](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md)為其中 30 個提供安裝命令。`bernstein integrations list` 從 `src/bernstein/adapters/registry.py` 中的登錄檔列舉全部 56 個已接線整合，該檔案是「什麼能解析」的唯一事實來源。其中 54 個是可選擇的代理介面卡，另外兩列是 `mock` 測試樁和 `self-hosted-endpoints` 端點設定檔。任何帶 `--prompt` 旗標的其他工具都可以透過通用包裝器運作。
 
 在同一執行中混用代理：用便宜的本地模型處理樣板，用更重的雲端模型處理架構。`bernstein integrations list --installed` 顯示你的機器上可用的內容。
 
@@ -242,9 +242,9 @@ bernstein volunteer browse --budget 60
 [捐助者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 講執行 worker 以及你設定的預算，[專案指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 講宣告清單，[威脅模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 說明每一層邊界防護什麼、不防護什麼。單一指令的執行器尚未發布：目前可用的子指令是 `verify`、`browse` 和 `hub`。
 
 ### 首頁之外
-<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-所有深入內容都在[文件網站](https://bernstein.readthedocs.io/)上：
+所有深入內容都在[文件網站](https://docs.bernstein.run/)上：
 
 | 頁面 | 內容 |
 |---|---|

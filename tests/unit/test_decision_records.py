@@ -12,6 +12,7 @@ These checks pin the structure the directory already relies on, the same way
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -29,6 +30,7 @@ _INDEX_LINK = re.compile(r"\]\((\d{3}-[a-z0-9-]+\.md)\)")
 _ISSUE_CITATION = re.compile(r"(?<![\w/])#(\d+)\b")
 _GITHUB_URL = re.compile(r"https://github\.com/([^/\s)\]`]+/[^/\s)\]`]+)")
 
+_KNOWN_ISSUES_MANIFEST = _DECISIONS / "known-issues.json"
 _REPOSITORY = "sipyourdrink-ltd/bernstein"
 
 
@@ -159,3 +161,33 @@ def test_issue_citations_are_well_formed_and_point_at_this_repository() -> None:
                 if repo != _REPOSITORY:
                     bad.append(f"{path.name}:{lineno}: links {repo}, not {_REPOSITORY}")
     assert bad == [], "issue citations in decision records must resolve:\n" + "\n".join(bad)
+
+
+def _cited_issue_numbers() -> set[int]:
+    """Issue numbers cited across every record and the index."""
+    cited: set[int] = set()
+    for path in [*sorted(_records().values()), _INDEX]:
+        text = path.read_text(encoding="utf-8")
+        for raw in _ISSUE_CITATION.findall(text):
+            cited.add(int(raw))
+    return cited
+
+
+def test_issue_citations_exist_in_the_known_issues_manifest() -> None:
+    """An ADR cites threads that exist, not numbers nobody can reach.
+
+    Citation well-formedness is checked separately; this pins the stronger
+    property that a cited number resolves. Checking existence against the live
+    tracker needs a network call, which does not belong in a hermetic unit
+    test, so the manifest at ``docs/decisions/known-issues.json`` is the
+    frozen source of truth and is refreshed by hand when an ADR is written or
+    an issue is deleted.
+    """
+    manifest = _KNOWN_ISSUES_MANIFEST.read_text(encoding="utf-8")
+    known = set(json.loads(manifest)["issues"])
+    missing = sorted(_cited_issue_numbers() - known)
+    assert missing == [], (
+        "decision records cite issue numbers absent from "
+        f"{_KNOWN_ISSUES_MANIFEST.name}: {', '.join(f'#{n}' for n in missing)}; "
+        "add the issue to the manifest (or fix a transcription typo)"
+    )
