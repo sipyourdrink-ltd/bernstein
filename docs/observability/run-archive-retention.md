@@ -21,8 +21,8 @@ and every one of them is collected unless you name a subset:
 | `traces` | `.sdd/traces/*.json` |
 | `config` | `.sdd/config/*`, `bernstein.yaml` |
 
-Each file is stored under its POSIX-style path relative to the project root
-(`/`-separated on every host, so the same tree produces the same archive), and a
+Each file is stored under its path relative to the project root, with `/`
+separators on every host so the same tree produces the same archive, and a
 `manifest.json` is written at the archive root.
 
 ## The manifest is the contract

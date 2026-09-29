@@ -21,7 +21,7 @@ nothing was checked, and "nothing failed" is not "everything matched". An
 archive with no readable manifest is refused outright rather than treated as an
 empty one, which would have verified clean having checked nothing.
 
-Member names and manifest keys are POSIX-style on every host, so the same tree
+Member names and manifest keys use `/` separators on every host, so the same tree
 produces the same archive whether it was written on Linux, macOS or Windows.
 
 The hashes detect modification; they do not attest authorship, since the
