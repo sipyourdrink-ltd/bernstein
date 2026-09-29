@@ -47,31 +47,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def normalize_finding_path(path: str, target_root: Path | None) -> str:
-    """Relativize *path* against *target_root* using POSIX semantics.
-
-    SARIF URIs are always POSIX-style (forward slashes). Using OS-native
-    ``Path`` (which is ``WindowsPath`` on Windows) causes ``is_absolute()``
-    to fail for rootless paths and ``relative_to()`` to raise on drive
-    mismatches. ``PurePosixPath`` gives deterministic cross-platform behavior.
-
-    Callers must pass an already-resolved *target_root*; this function does
-    not call ``.resolve()`` to preserve lexical purity and avoid filesystem
-    access during parsing.
-    """
-    candidate = PurePosixPath(path.replace("\\", "/"))
-    if target_root is not None:
-        root_posix = PurePosixPath(str(target_root).replace("\\", "/"))
-        # Gate on the root being anchored (leading '/' or a drive letter).
-        # Note: This heuristic treats POSIX directories literally named 'c:data'
-        # as anchored, which is an acceptable tradeoff for cross-platform drive-letter support.
-        anchored = root_posix.is_absolute() or (root_posix.parts and ":" in root_posix.parts[0])
-        if anchored:
-            with suppress(ValueError):
-                candidate = candidate.relative_to(root_posix)
-    return str(candidate)
-
-
 class OutputFormat(StrEnum):
     """The parseable output format the scanner emits."""
 
@@ -153,6 +128,12 @@ def normalize_report_path(path: str, target_root: Path | None) -> str:
         with suppress(ValueError):
             return candidate.relative_to(root).as_posix()
     return candidate.as_posix()
+
+
+#: The name #5791 landed for the same fix. Kept as an alias rather than a
+#: second implementation: two helpers answering "is this path under the scan
+#: root" is how the three adapter copies drifted apart in the first place.
+normalize_finding_path = normalize_report_path
 
 
 def _is_rooted(text: str) -> bool:
