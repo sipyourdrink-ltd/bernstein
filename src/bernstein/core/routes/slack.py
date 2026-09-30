@@ -34,7 +34,7 @@ def _verify_slack_request(request: Request, body: bytes, verify_fn: Any) -> JSON
         "SLACK_SIGNING_SECRET", ""
     )
     if not signing_secret:
-        from bernstein.core.sanitize import sanitize_log
+        from bernstein.core.security.sanitize import sanitize_log
 
         logger.error(
             "Rejecting POST %s: SLACK_SIGNING_SECRET is not configured. "
@@ -120,7 +120,7 @@ async def slack_slash_command(request: Request) -> JSONResponse:
             content={"detail": "Bad slash command payload"},
         )
 
-    from bernstein.core.sanitize import sanitize_log
+    from bernstein.core.security.sanitize import sanitize_log
 
     logger.info(
         "Slack slash command received: command=%r user=%r channel=%r text=%r",
@@ -278,7 +278,7 @@ async def slack_events(request: Request) -> JSONResponse:
             tenant_id=request_tenant_id(request),
         )
         task = await store.create(task_create)
-        from bernstein.core.sanitize import sanitize_log as _sl
+        from bernstein.core.security.sanitize import sanitize_log as _sl
 
         logger.info(
             "Created task %s from Slack message event: channel=%r user=%r text=%r",

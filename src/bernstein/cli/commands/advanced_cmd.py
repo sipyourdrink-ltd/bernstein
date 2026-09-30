@@ -1467,12 +1467,20 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     default=None,
     help="Path to .sdd/ directory.",
 )
+@click.option(
+    "--out-dir",
+    "out_dir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Write one record per worker hop (<exec_id>.json) and the run-level aggregate.json into DIR.",
+)
 def trace_export_cmd(
     run_id: str | None,
     output: str | None,
     as_json: bool,
     latest: bool,
     sdd_dir: str | None,
+    out_dir: str | None,
 ) -> None:
     """Export ``RUN_ID``'s execution evidence as a TRACE 0.2 Trust Record.
 
@@ -1487,8 +1495,14 @@ def trace_export_cmd(
     --last: find the newest finished run in .sdd/runs/ (a directory with
             a non-empty journal.jsonl), sorted by modification time.
     --out: write the canonical JSON string to a file. Default is stdout.
+    --out-dir: write one file per worker hop (<exec_id>.json) plus the
+            run-level aggregate.json into DIR.
     --json: emit the canonical JSON form (identical to the default).
     --sdd-dir: explicit .sdd/ path; defaults to ./.sdd/ or ./.
+
+    A multi-worker run (more than one agent_spawned event) without --out-dir
+    writes only the run-level aggregate to --out/stdout; the per-hop member
+    records require --out-dir.
 
     Exit codes: 0 = exported, 1 = run not found / chain broken / emit error.
     """
@@ -1559,26 +1573,43 @@ def trace_export_cmd(
         console.print(f"[red]Journal chain does not verify:[/red] {target_run_id}")
         raise SystemExit(1)
 
-    # Emit the trust record
+    # Emit the trust record(s)
     from bernstein.core.observability.trust_record import TrustRecordEmitter
 
     emitter = TrustRecordEmitter()
     try:
-        trust_record_json = emitter.emit_trust_record(
-            journal_path=journal_path,
-            run_id=target_run_id,
-            exec_id=target_run_id,
-        )
+        hop_result = emitter.emit_hop_records(journal_path, target_run_id)
     except Exception as e:
         console.print(f"[red]Failed to emit trust record:[/red] {e}")
         raise SystemExit(1) from e
 
+    multi_hop = len(hop_result.records) > 1
+
     # Output
-    if output:
-        Path(output).write_text(trust_record_json, encoding="utf-8")
-        console.print(f"[green]Exported trace to:[/green] {output}")
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        for hop in hop_result.records:
+            (out_path / f"{hop.exec_id}.json").write_text(hop.record, encoding="utf-8")
+        (out_path / "aggregate.json").write_text(hop_result.aggregate, encoding="utf-8")
+        console.print(f"[green]Exported {len(hop_result.records)} hop record(s) to:[/green] {out_path}")
+    elif multi_hop:
+        # One decision: write the aggregate only; member records need --out-dir.
+        if output:
+            Path(output).write_text(hop_result.aggregate, encoding="utf-8")
+            console.print(f"[green]Exported aggregate to:[/green] {output}")
+        else:
+            click.echo(hop_result.aggregate)
+        sys.stderr.write(
+            "Multi-worker run: per-hop records need --out-dir DIR.\n",
+        )
     else:
-        click.echo(trust_record_json)
+        trust_record_json = hop_result.records[0].record
+        if output:
+            Path(output).write_text(trust_record_json, encoding="utf-8")
+            console.print(f"[green]Exported trace to:[/green] {output}")
+        else:
+            click.echo(trust_record_json)
 
 
 @trace_cmd.command("verify-projection")
@@ -1824,8 +1855,8 @@ def _wait_for_replay_completion(
     poll_interval_s: float = 1.0,
 ) -> dict[str, Any] | None:
     """Poll the task server until a replayed task reaches a terminal state."""
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         task = server_get(f"/tasks/{task_id}")
         if task is None:
             return None

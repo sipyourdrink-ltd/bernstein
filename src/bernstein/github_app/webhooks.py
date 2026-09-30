@@ -88,7 +88,7 @@ def parse_webhook(headers: dict[str, str], body: bytes) -> WebhookEvent:
     # Extract sender
     sender = payload.get("sender", {}).get("login", "unknown")
 
-    from bernstein.core.sanitize import sanitize_log
+    from bernstein.core.security.sanitize import sanitize_log
 
     logger.info(
         "Parsed webhook: event=%s action=%s repo=%s sender=%s",

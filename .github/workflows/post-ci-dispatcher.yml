@@ -21,7 +21,10 @@ name: Post-CI dispatcher
 # selects it.
 #
 # Routing summary:
-#   - auto-release       -> fires on the main branch only.
+#   - auto-release       -> fires on a successful main-branch run, or on a
+#                            successful gh-readonly-queue/main/... run whose
+#                            SHA the queue has merged onto main (a version
+#                            bump lands with no push CI run, #4930).
 #   - auto-heal          -> fires on failure on main, gated on canonical repo
 #                            and recursion guards.
 #   - bisect-on-red      -> fires on failure on main.
@@ -38,7 +41,13 @@ on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main]
+    # `main` alone misses a version bump that lands through the merge
+    # queue: the queue fast-forwards main onto the SHA its merge_group run
+    # already built, so that commit has no push CI run and the only
+    # completed CI run for it reports the queue ref (#4930).
+    branches:
+      - main
+      - "gh-readonly-queue/main/**"
 
 concurrency:
   group: post-ci-dispatcher-${{ github.event.workflow_run.head_sha }}
@@ -76,11 +85,11 @@ jobs:
     # exactly `failure`. So `cancelled` and `skipped` route nothing: today
     # they boot this job, resolve metadata, and every child then skips.
     #
-    # That is not a rare case. ci.yml keys push-to-main runs per SHA and
-    # never cancels them, so a merge wave leaves a long tail of main CI runs
-    # that an operator mass-cancels to reclaim the pool; `workflow_run` fires
-    # on `completed`, which includes `cancelled`, and each one paid a runner
-    # slot here for no routing decision.
+    # That is not a rare case. Ordinary push-to-main CI is branch-scoped and
+    # cancellable, so a newer landed commit can supersede an older run.
+    # `workflow_run` still fires on `completed` for that cancelled run (and for
+    # operator cancellations), so filtering `cancelled` / `skipped` here avoids
+    # booting a dispatcher runner when no child route can act on the result.
     #
     # `success` is admitted unconditionally, so the release path is
     # untouched. tests/unit/test_post_ci_dispatcher_workflow_yaml.py pins
@@ -139,7 +148,20 @@ jobs:
   auto-release:
     name: Auto-release
     needs: meta
-    if: needs.meta.outputs.head_branch == 'main'
+    # A version bump merged through the queue has no push CI run: the
+    # queue fast-forwards main onto the SHA it already built, so the only
+    # CI run for that commit reports head_branch =
+    # gh-readonly-queue/main/pr-<n>-<base_sha>. `branches: [main]` on the
+    # workflow_run trigger above filters those out, so this job must also
+    # admit a queue ref whose base is main (#4930). The queue-ref path is
+    # gated on success: a failed merge_group entry never lands on main, so
+    # routing it would only fire auto-release.yml's stale-release alert on
+    # a commit that never shipped. The main-branch path stays ungated here
+    # so auto-release.yml's own conclusion checks keep applying.
+    if: >-
+      needs.meta.outputs.head_branch == 'main' ||
+      (startsWith(needs.meta.outputs.head_branch, 'gh-readonly-queue/main/') &&
+       needs.meta.outputs.conclusion == 'success')
     # Union of permissions the called workflow's jobs request: it tags
     # the release commit (contents:write), opens / closes the
     # auto-release-skipped issue (issues:write), and dispatches the
@@ -162,13 +184,20 @@ jobs:
   auto-heal:
     name: Auto-heal v2
     needs: meta
+    # GITHUB_TOKEN-backed workflow_dispatch runs are authored by
+    # github-actions[bot]. The post-merge cadence uses exactly that path to
+    # launch the canonical full suite on main, so those failures must retain
+    # the same auto-heal route as human-authored main failures. Bot-authored
+    # push runs remain excluded, and the display-title guards below continue
+    # to stop heal-generated recursion.
     if: >-
       needs.meta.outputs.conclusion == 'failure' &&
       needs.meta.outputs.head_branch == 'main' &&
       needs.meta.outputs.head_repo == github.repository &&
       !startsWith(needs.meta.outputs.display_title, 'fix(ci-heal-v2):') &&
       !startsWith(needs.meta.outputs.display_title, 'fix(ci-heal):') &&
-      needs.meta.outputs.actor_login != 'github-actions[bot]'
+      (needs.meta.outputs.actor_login != 'github-actions[bot]' ||
+       needs.meta.outputs.event == 'workflow_dispatch')
     # Union of permissions the called workflow's jobs request: it pushes
     # heal branches and opens heal PRs (contents:write,
     # pull-requests:write), attests provenance on the heal commit

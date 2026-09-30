@@ -102,11 +102,18 @@ def _entry(*, task_id: str = "t1", run_id: str = "r1", model: str = "opus", cost
 
 @dataclass
 class _Task:
-    """Minimal Task-like object for build_dispatch_candidates."""
+    """Minimal Task-like object for build_dispatch_candidates.
+
+    Mirrors the real ``bernstein.core.tasks.models.Task`` shape: the adapter
+    override lives on ``cli`` (there is no ``adapter`` attribute), so a
+    fixture that instead exposed ``adapter`` would mask a
+    ``getattr(lead, "adapter", ...)`` regression in the production code that
+    always falls back to the default. See issue #5878.
+    """
 
     id: str
     model: str = "opus"
-    adapter: str = "claude"
+    cli: str = "claude"
     effort: str = ""
     is_batch: bool = False
     cache_strategy: str = ""
@@ -409,7 +416,7 @@ def test_forced_knob_change_diverges_at_exact_step(tmp_path: Path) -> None:
 
 
 def test_build_candidates_applies_lane_multiplier() -> None:
-    batches = [[_Task(id="t1", model="opus", adapter="claude", is_batch=True)]]
+    batches = [[_Task(id="t1", model="opus", cli="claude", is_batch=True)]]
     candidates = build_dispatch_candidates(
         batches,
         cost_estimates={"t1": 2.0},
@@ -426,6 +433,109 @@ def test_build_candidates_applies_lane_multiplier() -> None:
     assert cand.projected_cost_usd == pytest.approx(2.0 * cand.knob_selection.rate_multiplier)
 
 
+def test_build_candidates_reads_adapter_from_cli_field_not_adapter_attribute() -> None:
+    # Regression for #5878: build_dispatch_candidates used to read the
+    # adapter name off a nonexistent ``adapter`` attribute instead of the
+    # real Task field ``cli``, so DispatchCandidate.adapter was always "" and
+    # the batch lane could never be selected for any adapter. A Task-like
+    # object exposing only ``cli`` (matching the real production model, which
+    # has no ``adapter`` attribute at all) must still resolve to the batch
+    # lane when it is batch-eligible and the matrix grants batch economics.
+    class _RealShapedTask:
+        """No ``adapter`` attribute at all -- only ``cli``, like the real Task."""
+
+        def __init__(self, task_id: str, cli: str, is_batch: bool) -> None:
+            self.id = task_id
+            self.model = "opus"
+            self.cli = cli
+            self.is_batch = is_batch
+
+    batches = [[_RealShapedTask("t1", cli="claude", is_batch=True)]]
+    candidates = build_dispatch_candidates(
+        batches,
+        cost_estimates={"t1": 2.0},
+        run_id="r1",
+        day_key=_day_key(1_762_000_000.0),
+        knob_matrix=DEFAULT_KNOB_MATRIX,
+    )
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.adapter == "claude"
+    assert cand.knob_selection is not None
+    assert cand.knob_selection.lane == LANE_BATCH
+
+
+def test_build_candidates_falls_back_to_default_adapter_when_cli_is_none() -> None:
+    # Task.cli is a per-step *override* and is None for the common case of a
+    # task running on the run's default adapter (see Chirag6722's review on
+    # #5883). Without a fallback, such a task would present adapter="" to the
+    # knob matrix and miss batch/cache economics even on a capable adapter.
+    class _DefaultAdapterTask:
+        def __init__(self, task_id: str, is_batch: bool) -> None:
+            self.id = task_id
+            self.model = "opus"
+            self.cli = None
+            self.is_batch = is_batch
+
+    batches = [[_DefaultAdapterTask("t1", is_batch=True)]]
+    candidates = build_dispatch_candidates(
+        batches,
+        cost_estimates={"t1": 2.0},
+        run_id="r1",
+        day_key=_day_key(1_762_000_000.0),
+        knob_matrix=DEFAULT_KNOB_MATRIX,
+        default_adapter="claude",
+    )
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.adapter == "claude"
+    assert cand.knob_selection is not None
+    assert cand.knob_selection.lane == LANE_BATCH
+
+
+def test_build_candidates_resolves_cache_warm_up_through_cli_field() -> None:
+    # Closes the cache-side coverage gap flagged in review: the #5878 bug also
+    # dead-ended CACHE_WARM_UP resolution (both gate on the same adapter
+    # name), but the original regression test only pinned the batch lane.
+    batches = [[_Task(id="t1", model="opus", cli="claude", cache_strategy=CACHE_WARM_UP)]]
+    candidates = build_dispatch_candidates(
+        batches,
+        cost_estimates={"t1": 2.0},
+        run_id="r1",
+        day_key=_day_key(1_762_000_000.0),
+        knob_matrix=DEFAULT_KNOB_MATRIX,
+    )
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.adapter == "claude"
+    assert cand.knob_selection is not None
+    assert cand.knob_selection.cache_strategy == CACHE_WARM_UP
+
+
+def test_build_candidates_warns_when_batch_eligible_with_empty_adapter(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The empty-adapter + batch-eligible combination is impossible-by-design
+    # once batch lane is actually engaged for a real adapter, and is exactly
+    # the signature #5878 would leave behind if the field name drifts again.
+    class _NoAdapterTask:
+        def __init__(self, task_id: str) -> None:
+            self.id = task_id
+            self.model = "opus"
+            self.cli = None
+            self.is_batch = True
+
+    with caplog.at_level("WARNING", logger="bernstein.core.cost.scheduling.dispatch_gate"):
+        candidates = build_dispatch_candidates(
+            [[_NoAdapterTask("t1")]],
+            cost_estimates={"t1": 2.0},
+            run_id="r1",
+            day_key=_day_key(1_762_000_000.0),
+        )
+    assert candidates[0].adapter == ""
+    assert any("batch-eligible" in record.message for record in caplog.records)
+
+
 def test_build_candidates_without_matrix_is_unchanged() -> None:
     batches = [[_Task(id="t1", model="opus")]]
     candidates = build_dispatch_candidates(
@@ -440,7 +550,7 @@ def test_lane_choice_names_the_knob_in_halt_receipt(tmp_path: Path) -> None:
     # batch lane keeps it under: the resolved selection is sealed into the
     # decision so a verifier can attribute the outcome to the lane knob.
     day = _day_key(1_762_000_000.0)
-    batches = [[_Task(id="t1", model="opus", adapter="claude", is_batch=True)]]
+    batches = [[_Task(id="t1", model="opus", cli="claude", is_batch=True)]]
     candidates = build_dispatch_candidates(
         batches, cost_estimates={"t1": 2.0}, run_id="r1", day_key=day, knob_matrix=DEFAULT_KNOB_MATRIX
     )

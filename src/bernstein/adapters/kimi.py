@@ -24,6 +24,8 @@ class KimiAdapter(CLIAdapter):
     for installation and usage details.
     """
 
+    model_vendor = "moonshot"
+
     def spawn(
         self,
         *,

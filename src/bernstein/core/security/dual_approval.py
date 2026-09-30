@@ -1,7 +1,7 @@
 """Two-factor approval for destructive operations.
 
-Requires two independent approvals (via different channels) before any
-destructive operation is allowed to proceed.  Channels include CLI
+Requires two independent approvals - from two different approvers - before
+any destructive operation is allowed to proceed.  Channels include CLI
 confirmation, Slack, webhook callbacks, and email.
 
 Approval requests carry a TTL (default 300 s) after which they expire
@@ -146,28 +146,53 @@ def evaluate_approval(
 ) -> ApprovalStatus:
     """Evaluate whether *request* has been approved, denied, or expired.
 
+    Only responses whose ``request_id`` matches *request* are considered. The
+    field exists to bind a response to the operation it approves; a response
+    carrying a different id is evidence about a different decision.
+
     Rules:
-    * **Denied** - any single response with ``approved=False`` vetoes the
-      entire request.
+    * **Denied** - any single matching response with ``approved=False`` vetoes
+      the entire request.
     * **Expired** - ``expires_at`` is in the past (UTC).
-    * **Approved** - at least ``required_approvals`` responses with
-      ``approved=True`` and neither denied nor expired.
+    * **Approved** - approvals arrive from at least ``required_approvals``
+      *distinct approvers*, and the request is neither denied nor expired.
+
+    Approvals are counted per approver rather than per response or per
+    channel. The point of this module is that a destructive operation needs
+    more than one independent sign-off, and independence is a property of
+    people: repeated responses are one party's say-so however many rows or
+    channels they produce, while two genuine approvers who both happen to
+    reply in Slack are still two.
 
     Args:
         request: The original approval request.
-        responses: Collected approval/denial responses so far.
+        responses: Collected approval/denial responses. Responses for other
+            requests are ignored rather than rejected, so a caller may pass a
+            whole inbox.
 
     Returns:
-        An :class:`ApprovalStatus` snapshot.
+        An :class:`ApprovalStatus` snapshot. ``responses`` on the result is
+        the full input list, unfiltered, so a caller can still see what was
+        submitted.
     """
     now = datetime.now(tz=UTC)
     expires_at = datetime.fromisoformat(request.expires_at)
     is_expired = now >= expires_at
 
-    is_denied = any(not r.approved for r in responses)
+    # Only responses issued against *this* request count. ``request_id`` is on
+    # ApprovalResponse to bind the two together; ignoring it let approvals
+    # collected for one operation satisfy the gate on a different one.
+    own = [r for r in responses if r.request_id == request.request_id]
 
-    approved_count = sum(1 for r in responses if r.approved)
-    is_approved = approved_count >= request.required_approvals and not is_denied and not is_expired
+    is_denied = any(not r.approved for r in own)
+
+    # Counted per approver. Independence is a property of *people*, and
+    # neither of the other two candidates measures it: counting rows lets one
+    # approver click twice, and counting channels lets the same approver use
+    # two of them - the very scenario this gate exists to stop - while
+    # refusing two genuine approvers who happen to share a channel.
+    approvers = {r.approver for r in own if r.approved}
+    is_approved = len(approvers) >= request.required_approvals and not is_denied and not is_expired
 
     return ApprovalStatus(
         request=request,

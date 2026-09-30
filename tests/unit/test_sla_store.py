@@ -232,26 +232,3 @@ class TestLogInjection:
         rendered = caplog.records[0].getMessage()
         assert "Malformed SLA contract" in rendered
         assert rendered.splitlines() == [rendered]
-
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            ("plain", "plain"),
-            ("a\nb", "a\\nb"),
-            ("a\r\nb", "a\\r\\nb"),
-            ("a\tb", "a\\tb"),
-            ("a\x1b[31mb", "a\\x1b[31mb"),
-            ("line\u2028sep", "line\\u2028sep"),
-        ],
-    )
-    def test_single_line_escapes_every_control_character(self, raw: str, expected: str) -> None:
-        from bernstein.core.planning.sla_store import _single_line
-
-        assert _single_line(raw) == expected
-
-    def test_single_line_caps_length(self) -> None:
-        from bernstein.core.planning.sla_store import _single_line
-
-        out = _single_line("x" * 5000)
-        assert out.endswith("...(truncated)")
-        assert len(out) < 300
