@@ -83,7 +83,9 @@ npm install -g @anthropic-ai/claude-code
 - `--permission-mode bypassPermissions` for autonomous execution
 - `--agents` flag for per-task subagent definitions
 - `--append-system-prompt` for orchestration context injection
-- MCP config injection from `~/.claude/mcp.json` + project overrides
+- MCP config injection from `~/.claude/mcp.json` + project overrides, passed with
+  `--strict-mcp-config` so Claude Code does not add the servers it discovers itself
+  (`claude mcp add` scopes, a repo's `.mcp.json`, plugins, connectors)
 - Stream-JSON output format for real-time parsing
 
 **Model mapping:**

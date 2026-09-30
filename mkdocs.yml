@@ -411,6 +411,7 @@ nav:
           - Error telemetry & SBOM: operations/error-telemetry.md
           - Telemetry disclosure: telemetry.md
           - Side-channel telemetry: observability/side-channel.md
+          - Run archive retention: observability/run-archive-retention.md
           - LLM watcher: observability/llm-watcher.md
           - Ticket bundle: observability/ticket-bundle.md
           - Trace store: observability/trace-store.md
@@ -477,6 +478,7 @@ nav:
           - JCS canonicalization: security/jcs-canonicalization.md
           - MCP signing: security/mcp-signing.md
           - OWASP ASI detectors: security/owasp-asi.md
+          - NIST AI 100-2 crosswalk: security/nist-ai-100-2-crosswalk.md
           - Promptware: security/promptware.md
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
@@ -496,6 +498,7 @@ nav:
           - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
           - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
           - ISO/IEC 42001 mapping: compliance/iso42001-mapping.md
+          - CoSAI mapping: compliance/cosai-mapping.md
           - Regulator-class lineage: compliance/regulatory-lineage.md
           - Lineage export: compliance/lineage-export.md
           - Lineage v1 (user reference): lineage.md
