@@ -232,3 +232,34 @@ def test_entry_satisfied_when_both_declared_and_observed_are_none() -> None:
     )
     assert not applier_called
     assert attempt.outcome == "skipped"
+
+
+def test_apply_remove_twice_second_pass_is_all_skips() -> None:
+    """A successful REMOVE leaves state as None so the second pass skips (#5086)."""
+    entries = (
+        _make_entry("adapter-1", declared=None, observed="enabled", action=DiffAction.REMOVE),
+        _make_entry("adapter-2", declared=None, observed="v1", action=DiffAction.REMOVE),
+    )
+    diff = ReconcileDiff(
+        run_id="reconcile-run-remove",
+        entries=entries,
+        inputs_hash="hash-rm",
+        timestamp=1700000000,
+    )
+    state: dict[str, str | None] = {"adapter-1": "enabled", "adapter-2": "v1"}
+    calls: list[str] = []
+
+    def tracking_applier(e: ReconcileEntry) -> tuple[str, str | None]:
+        calls.append(e.entity_id)
+        return ("", None)
+
+    attempts_1 = apply_reconcile_diff(diff, state, applier_fn=tracking_applier)
+    assert all(a.outcome == "success" for a in attempts_1)
+    assert calls == ["adapter-1", "adapter-2"]
+    assert all(v is None for v in state.values())
+
+    calls.clear()
+    attempts_2 = apply_reconcile_diff(diff, state, applier_fn=tracking_applier)
+    assert len(attempts_2) == 2
+    assert all(a.outcome == "skipped" for a in attempts_2)
+    assert calls == []

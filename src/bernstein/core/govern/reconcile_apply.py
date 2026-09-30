@@ -175,7 +175,11 @@ def apply_reconcile_diff(
         )
         results.append(attempt)
         if attempt.outcome == "success":
-            current_state[entry.entity_id] = attempt.written_value
+            if entry.action is DiffAction.REMOVE:
+                # A removed entity is absent, not "": keeps observed == declared (None) on re-run.
+                current_state[entry.entity_id] = None
+            else:
+                current_state[entry.entity_id] = attempt.written_value
 
     return tuple(results)
 
