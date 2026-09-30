@@ -713,4 +713,11 @@ def test_merkle_copy_and_runtime_agree_on_a_root():
         },
         "log_public_key": key.public_key().public_bytes_raw().hex(),
     }
-    assert _verify_manifest_anchor(record) == []
+    pinned = [record["log_public_key"]]
+    assert _verify_manifest_anchor(record, trusted_log_keys=pinned) == []
+    other = Ed25519PrivateKey.from_private_bytes(bytes.fromhex("22" * 32))
+    forged_errors = _verify_manifest_anchor(
+        record,
+        trusted_log_keys=[other.public_key().public_bytes_raw().hex()],
+    )
+    assert any("pin set" in err for err in forged_errors)

@@ -248,6 +248,10 @@ def _public_hex(key: Ed25519PrivateKey) -> str:
     return key.public_key().public_bytes_raw().hex()
 
 
+def _pinned(key: Ed25519PrivateKey | None = None) -> list[str]:
+    return [_public_hex(key or _log_key())]
+
+
 def _five_leaf_transparency_anchor(
     *,
     head: str | None = None,
@@ -286,7 +290,12 @@ def test_inclusion_proof_recomputes_the_signed_tree_head() -> None:
     """A 5-leaf tree whose leaf 3 is the sealed head verifies offline at tree_size=5."""
     sealed_head, anchor = _five_leaf_transparency_anchor()
 
-    result = verify_anchor(anchor, sealed_head=sealed_head, trusted_tsa_certs=[])
+    result = verify_anchor(
+        anchor,
+        sealed_head=sealed_head,
+        trusted_tsa_certs=[],
+        trusted_log_keys=_pinned(),
+    )
 
     assert result.status is AnchorStatus.VERIFIED, result.errors
     assert result.errors == []
@@ -300,7 +309,12 @@ def test_tampered_sealed_head_fails_inclusion() -> None:
     other_head = hashlib.sha256(b"different-sealed-head").hexdigest()
     tampered = replace(anchor, head_sha256=other_head)
 
-    result = verify_anchor(tampered, sealed_head=other_head, trusted_tsa_certs=[])
+    result = verify_anchor(
+        tampered,
+        sealed_head=other_head,
+        trusted_tsa_certs=[],
+        trusted_log_keys=_pinned(),
+    )
 
     assert result.status is AnchorStatus.INVALID
     assert result.tree_size is None
@@ -314,10 +328,43 @@ def test_tree_head_signed_by_another_log_key_is_refused() -> None:
     other_key = Ed25519PrivateKey.from_private_bytes(_OTHER_LOG_SEED)
     tampered = replace(anchor, log_public_key=_public_hex(other_key))
 
-    result = verify_anchor(tampered, sealed_head=sealed_head, trusted_tsa_certs=[])
+    result = verify_anchor(
+        tampered,
+        sealed_head=sealed_head,
+        trusted_tsa_certs=[],
+        trusted_log_keys=_pinned(),
+    )
 
     assert result.status is AnchorStatus.INVALID
-    assert any("signature" in err for err in result.errors)
+    assert any("signature" in err or "pin set" in err for err in result.errors)
+
+
+def test_forged_anchor_with_its_own_key_is_refused() -> None:
+    """A self-signed artefact cannot vouch for the log key it carries."""
+    sealed_head, forged = _five_leaf_transparency_anchor()
+    operator_pin = _pinned(Ed25519PrivateKey.from_private_bytes(_OTHER_LOG_SEED))
+
+    result = verify_anchor(
+        forged,
+        sealed_head=sealed_head,
+        trusted_tsa_certs=[],
+        trusted_log_keys=operator_pin,
+    )
+
+    assert result.status is AnchorStatus.INVALID
+    assert result.tree_size is None
+    assert any("pin set" in err for err in result.errors)
+
+
+def test_transparency_log_without_pinned_key_is_unverifiable_never_verified() -> None:
+    """No operator pin means no verdict, even if the artefact's own key would verify."""
+    sealed_head, anchor = _five_leaf_transparency_anchor()
+
+    result = verify_anchor(anchor, sealed_head=sealed_head, trusted_tsa_certs=[], trusted_log_keys=[])
+
+    assert result.status is AnchorStatus.UNVERIFIABLE
+    assert result.tree_size is None
+    assert result.gen_time is None
 
 
 def test_existing_rfc3161_anchor_files_still_load() -> None:

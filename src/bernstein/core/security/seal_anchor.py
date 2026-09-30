@@ -21,10 +21,11 @@ call back to the TSA at verify time.
 
 A transparency-log inclusion proof closes the "anyone can check" question
 (#6208). The sealed head is registered as a leaf in an external RFC 6962
-append-only log; the stored audit path, signed tree head and log public key
-let a stranger recompute the root and verify the log's signature offline,
-with no call back to the log. A TSA that mis-issues leaves no public trace;
-a log that signs a tree head does.
+append-only log; the stored audit path and signed tree head let a stranger
+recompute the root offline. The log public key used to check the tree-head
+signature is operator-pinned (CLI flag or an equivalent keyring) — the key
+carried in the artefact is only a hint to select among those pins. A TSA
+that mis-issues leaves no public trace; a log that signs a tree head does.
 
 Design decisions
 ----------------
@@ -64,6 +65,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -130,7 +132,8 @@ class AnchorStatus(StrEnum):
     #: The token failed to parse, chain, or imprint-match, or the
     #: inclusion proof / tree-head signature did not verify.
     INVALID = "invalid"
-    #: No TSA trust anchors were supplied, so nothing was checked.
+    #: No TSA trust anchors (RFC 3161) or no pinned log keys
+    #: (transparency-log) were supplied, so nothing was checked.
     UNVERIFIABLE = "unverifiable"
 
 
@@ -155,8 +158,9 @@ class SealAnchor:
             to root. Same shape as the self-hosted transparency receipt.
         signed_tree_head: Log tree head: ``tree_size``, ``root_hash``,
             ``signature_b64``.
-        log_public_key: Ed25519 public key that signed the tree head,
-            lowercase hex of the raw 32-byte key.
+        log_public_key: Hint of the Ed25519 public key that signed the tree
+            head, lowercase hex of the raw 32-byte key. Verification never
+            trusts this field on its own; the operator must pin the key.
     """
 
     run_id: str
@@ -250,6 +254,27 @@ def _canonical_sth_bytes(signed_tree_head: dict[str, Any]) -> bytes:
     """Canonical bytes the log signed: the tree head without the signature."""
     body = {key: value for key, value in signed_tree_head.items() if key != "signature_b64"}
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _normalize_log_key(value: str) -> str:
+    return value.strip().lower()
+
+
+def _select_pinned_log_key(hint: str | None, pinned: Sequence[str]) -> str | None:
+    """Pick the operator-pinned key that will verify the tree-head signature.
+
+    The artefact's ``log_public_key`` is a hint: it may select among pins, but
+    it is never itself a trust source. A hint that is not in the pin set is
+    refused. With no hint, a single pin is used; several pins without a hint
+    are ambiguous and refused.
+    """
+    unique = list(dict.fromkeys(_normalize_log_key(key) for key in pinned if key.strip()))
+    if not unique:
+        return None
+    if hint and hint.strip():
+        normalized = _normalize_log_key(hint)
+        return normalized if normalized in unique else None
+    return unique[0] if len(unique) == 1 else None
 
 
 def transparency_log_leaf(head_sha256: str) -> str:
@@ -435,6 +460,7 @@ def verify_anchor(
     *,
     sealed_head: str,
     trusted_tsa_certs: list[x509.Certificate],
+    trusted_log_keys: Sequence[str] = (),
 ) -> AnchorVerification:
     """Check *anchor* against the head a verifier recomputed, offline.
 
@@ -451,10 +477,14 @@ def verify_anchor(
 
     Transparency-log:
 
-    1. Recompute the leaf from the sealed head.
-    2. Walk the stored audit path to a root.
-    3. Check that root and tree size against the signed tree head.
-    4. Verify the tree-head signature with the stored log public key.
+    1. Require at least one operator-pinned log public key. Without one the
+       verdict is ``UNVERIFIABLE``; the key inside the artefact is not trust.
+    2. Select among those pins using the artefact's ``log_public_key`` as a
+       hint. A hint that is not in the pin set is refused.
+    3. Recompute the leaf from the sealed head.
+    4. Walk the stored audit path to a root.
+    5. Check that root and tree size against the signed tree head.
+    6. Verify the tree-head signature with the selected pinned key.
        No network, and no TSA fallback.
 
     Args:
@@ -462,6 +492,8 @@ def verify_anchor(
         sealed_head: The head recomputed from the artifacts on disk.
         trusted_tsa_certs: Operator-pinned TSA roots. Empty means no
             RFC 3161 verdict. Ignored for a transparency-log anchor.
+        trusted_log_keys: Operator-pinned Ed25519 log public keys, lowercase
+            hex. Empty means no transparency-log verdict.
 
     Returns:
         The verdict and its diagnostics.
@@ -472,7 +504,7 @@ def verify_anchor(
             errors=[f"anchor witnesses head {anchor.head_sha256}, artifacts recompute to {sealed_head}"],
         )
     if anchor.anchor_kind == ANCHOR_KIND_TRANSPARENCY_LOG:
-        return _verify_transparency_log_anchor(anchor)
+        return _verify_transparency_log_anchor(anchor, trusted_log_keys=trusted_log_keys)
     if not trusted_tsa_certs:
         return AnchorVerification(
             status=AnchorStatus.UNVERIFIABLE,
@@ -502,12 +534,23 @@ def verify_anchor(
     )
 
 
-def _verify_transparency_log_anchor(anchor: SealAnchor) -> AnchorVerification:
+def _verify_transparency_log_anchor(
+    anchor: SealAnchor,
+    *,
+    trusted_log_keys: Sequence[str],
+) -> AnchorVerification:
     """Recompute the leaf, walk the inclusion proof, verify the tree head."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     from bernstein.core.security.audit_receipt import _root_from_inclusion
+
+    pins = [key for key in trusted_log_keys if key.strip()]
+    if not pins:
+        return AnchorVerification(
+            status=AnchorStatus.UNVERIFIABLE,
+            errors=["no trusted log public keys supplied - the tree-head signature was not checked"],
+        )
 
     errors: list[str] = []
     if not anchor.leaf_hash or anchor.tree_size is None or anchor.audit_path is None:
@@ -515,10 +558,17 @@ def _verify_transparency_log_anchor(anchor: SealAnchor) -> AnchorVerification:
             status=AnchorStatus.INVALID,
             errors=["transparency-log anchor is missing leaf_hash, tree_size or audit_path"],
         )
-    if not anchor.signed_tree_head or not anchor.log_public_key:
+    if not anchor.signed_tree_head:
         return AnchorVerification(
             status=AnchorStatus.INVALID,
-            errors=["transparency-log anchor is missing signed_tree_head or log_public_key"],
+            errors=["transparency-log anchor is missing signed_tree_head"],
+        )
+
+    selected = _select_pinned_log_key(anchor.log_public_key, pins)
+    if selected is None:
+        return AnchorVerification(
+            status=AnchorStatus.INVALID,
+            errors=["embedded log public key is not in the operator pin set"],
         )
 
     try:
@@ -549,7 +599,7 @@ def _verify_transparency_log_anchor(anchor: SealAnchor) -> AnchorVerification:
 
     try:
         signature = base64.b64decode(signature_b64, validate=True)
-        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(anchor.log_public_key))
+        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(selected))
         public_key.verify(signature, _canonical_sth_bytes(sth))
     except (InvalidSignature, ValueError, binascii.Error) as exc:
         errors.append(f"tree-head signature: {exc}")

@@ -217,13 +217,30 @@ def seal_publish(
     type=click.Path(dir_okay=False),
     help="PEM/DER bundle of TSA roots you accept. Without it nothing is checked.",
 )
+@click.option(
+    "--log-public-key",
+    "log_public_keys",
+    multiple=True,
+    default=(),
+    help=(
+        "Ed25519 log public key you accept, lowercase hex of the raw 32-byte "
+        "key. Repeatable. The key inside the anchor is only a hint to pick "
+        "among these; without a pin a transparency-log anchor is unverifiable."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit the verdict as JSON.")
-def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bool) -> None:
+def seal_verify(
+    run_id: str,
+    sdd_dir: str,
+    trust_bundle: str | None,
+    log_public_keys: tuple[str, ...],
+    as_json: bool,
+) -> None:
     """Check RUN_ID's stored anchor against the artifacts on disk, offline.
 
     Exits zero only on a verified anchor. A head that moved since the anchor
-    was issued reports ``mismatched``; a missing trust bundle reports
-    ``unverifiable`` rather than a pass.
+    was issued reports ``mismatched``; a missing TSA bundle or missing log
+    public key pin reports ``unverifiable`` rather than a pass.
     """
     from bernstein.core.security.rfc3161_verifier import load_trusted_tsa_certs
 
@@ -250,7 +267,12 @@ def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bo
             console.print(f"[red]{exc}[/red]")
             raise SystemExit(_FAILURE_EXIT) from exc
 
-    result = verify_anchor(anchor, sealed_head=head, trusted_tsa_certs=trusted)
+    result = verify_anchor(
+        anchor,
+        sealed_head=head,
+        trusted_tsa_certs=trusted,
+        trusted_log_keys=log_public_keys,
+    )
 
     if as_json:
         console.print_json(

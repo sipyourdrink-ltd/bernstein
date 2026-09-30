@@ -143,6 +143,17 @@ def _canonical_sth_bytes(signed_tree_head: dict[str, Any]) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _select_pinned_log_key(hint: object, pinned: tuple[str, ...] | list[str]) -> str | None:
+    """Pick an operator-pinned key; the artefact key is only a hint."""
+    unique = list(dict.fromkeys(key.strip().lower() for key in pinned if key.strip()))
+    if not unique:
+        return None
+    if isinstance(hint, str) and hint.strip():
+        normalized = hint.strip().lower()
+        return normalized if normalized in unique else None
+    return unique[0] if len(unique) == 1 else None
+
+
 def _transparency_log_leaf(head_sha256: str) -> str:
     """RFC 6962 leaf over the bare sealed-head digest (raw 32 bytes)."""
     return _leaf_digest(bytes.fromhex(head_sha256))
@@ -605,12 +616,20 @@ def _verify_transparency_log_anchor(
     record: dict[str, Any],
     *,
     sealed_head: str | None = None,
+    trusted_log_keys: tuple[str, ...] | list[str] = (),
 ) -> list[str]:
     """Offline-check a ``transparency-log`` seal-anchor record.
 
     Recomputes the leaf from the sealed head, walks the audit path, and
-    verifies the tree-head signature. No network.
+    verifies the tree-head signature against an operator-pinned log key.
+    The key inside the artefact is only a hint. No network.
     """
+    pins = [key for key in trusted_log_keys if key.strip()]
+    if not pins:
+        return [
+            "transparency-log: no trusted log public keys supplied - "
+            "the tree-head signature was not checked"
+        ]
     errors: list[str] = []
     head = sealed_head if sealed_head is not None else record.get("head_sha256")
     leaf_hash = record.get("leaf_hash")
@@ -626,8 +645,12 @@ def _verify_transparency_log_anchor(
         return ["transparency-log: missing leaf_hash or tree_size"]
     if not isinstance(audit_path, list) or not isinstance(sth, dict):
         return ["transparency-log: missing audit_path or signed_tree_head"]
-    if not isinstance(log_public_key, str):
-        return ["transparency-log: missing log_public_key"]
+
+    selected = _select_pinned_log_key(
+        log_public_key if isinstance(log_public_key, str) else None, pins
+    )
+    if selected is None:
+        return ["transparency-log: embedded log public key is not in the operator pin set"]
 
     try:
         recomputed_leaf = _transparency_log_leaf(head)
@@ -657,21 +680,25 @@ def _verify_transparency_log_anchor(
 
     try:
         signature = base64.b64decode(signature_b64, validate=True)
-        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(log_public_key))
+        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(selected))
         public_key.verify(signature, _canonical_sth_bytes(sth))
     except (InvalidSignature, ValueError) as exc:
         errors.append(f"transparency-log: tree-head signature: {exc}")
     return errors
 
 
-def _verify_manifest_anchor(manifest: dict[str, Any]) -> list[str]:
+def _verify_manifest_anchor(
+    manifest: dict[str, Any],
+    *,
+    trusted_log_keys: tuple[str, ...] | list[str] = (),
+) -> list[str]:
     """Confirm ``output_hash`` self-anchors the canonical manifest body.
 
     A ``transparency-log`` seal-anchor record is verified as an inclusion
     proof instead: the pack-manifest ``output_hash`` contract does not apply.
     """
     if manifest.get("anchor_kind") == "transparency-log":
-        return _verify_transparency_log_anchor(manifest)
+        return _verify_transparency_log_anchor(manifest, trusted_log_keys=trusted_log_keys)
     output_hash = manifest.get("output_hash")
     if not isinstance(output_hash, str):
         return [f"{_MANIFEST_NAME}: missing output_hash"]
