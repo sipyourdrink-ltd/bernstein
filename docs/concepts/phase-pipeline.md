@@ -67,9 +67,11 @@ phase default when present.
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `phase_pipeline.enabled` | `true` | Honour `phases:` in plans. |
-| `phase_pipeline.artefact_path` | `.sdd/runtime/phase_artifacts/` | Distilled handoff store. |
-| `phase_pipeline.gc_on_close` | `true` | Drop artefacts when the parent task closes. |
+| `tuning.phase_pipeline.enabled` | `false` | Route `phases:` steps through the phased runner. |
+| `tuning.phase_pipeline.artifact_root` | `.sdd/runtime/phase_artifacts` | Distilled handoff store. |
+| `tuning.phase_pipeline.gc_on_task_close` | `true` | Drop artefacts when the parent task closes. |
+| `tuning.phase_pipeline.gate_enabled` | `true` | Mechanical exit-criteria gate at each phase boundary. |
+| `tuning.phase_pipeline.gate_max_retries` | `1` | Re-fires of a failing phase before the task fails. |
 
 ## Limitations
 

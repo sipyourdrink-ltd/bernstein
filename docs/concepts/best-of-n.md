@@ -2,7 +2,7 @@
 
 For tasks tagged "complex" or "ambiguous", Bernstein can spawn K
 parallel candidate agents in isolated worktrees, score each candidate
-with automated signals (tests pass, lint clean, diff size) plus an
+with automated signals (tests pass, lint clean, runtime) plus an
 LLM-as-judge rubric, and merge only the winner. Losing candidates'
 worktrees are cleaned up automatically.
 
@@ -36,7 +36,9 @@ Or programmatically:
 ```python
 task = Task(
     id="...",
-    goal="Migrate the auth module from Flask to FastAPI",
+    title="Migrate the auth module",
+    description="Migrate the auth module from Flask to FastAPI",
+    role="backend",
     best_of_n=3,
 )
 ```
@@ -46,7 +48,7 @@ When the orchestrator picks up a task with `best_of_n=K`, it:
 1. Spawns K agents into K isolated worktrees.
 2. Awaits all K to finish (or hit the per-candidate timeout).
 3. Computes `score_candidate(result)` for each - weighted sum of
-   tests-passing, lint-score, diff size, runtime.
+   tests-passing, lint-score, runtime and (when available) the judge score.
 4. Asks a cheap-tier LLM judge to rank candidates against a rubric.
 5. Merges the highest combined score; deletes the other worktrees.
 
@@ -63,6 +65,7 @@ verify.
 | `defaults.BEST_OF_N.max_candidates` | `5` | Hard cap, regardless of what a plan asks for. |
 | `defaults.BEST_OF_N.judge_model` | `haiku` | Cheap-tier model the LLM judge runs on. |
 
+These are the `best_of_n` section of the `tuning:` block in `bernstein.yaml`.
 The judge rubric is an in-module default (`_DEFAULT_RUBRIC`); override
 it per run by passing `rubric=` to `BestOfNRunner`.
 

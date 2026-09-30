@@ -5,7 +5,7 @@ layer above it and gives Bernstein **deterministic replay without
 paying the LLM bill**. Every action - prompt, model output, tool
 call, tool result - is content-addressed by `(model_id,
 normalized_prompt, tool_name, tool_args)` and stored under
-`.sdd/runtime/action_cache/<sha256>.json`. On replay, cache hits
+`.sdd/runtime/action_cache/<aa>/<rest>.bin` (the SHA-256 hex digest split after its first byte). On replay, cache hits
 return the recorded result; misses fall through to the live model and
 append.
 
@@ -24,17 +24,14 @@ to catch silent agent-output drift between model versions.
 
 ## How to use it
 
-Pick a mode and run:
+Pick a mode, then use the `cache action` subcommands:
 
 ```bash
-# Record (default in normal runs once enabled)
-bernstein run plan.yaml --cache record
-
-# Replay-only - fail-loud on cache miss instead of calling the model
-bernstein run plan.yaml --cache replay
-
-# Hybrid - replay on hit, fall through to live model on miss, append result
-bernstein run plan.yaml --cache hybrid
+# Mode is set in bernstein.yaml under `tuning:` (see Configuration):
+#   record - always live, append every call to the cache
+#   replay - cache-only, fail-loud on cache miss instead of calling the model
+#   hybrid - replay on hit, fall through to live model on miss, append result
+#   off    - no lookups or writes
 
 # Re-execute a past run against its cache; emit a diff report on drift
 bernstein cache action replay <run_id>
@@ -51,9 +48,9 @@ recorded and live output. Useful for catching model-version drift.
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `cache.action_cache.enabled` | `true` | Master switch. |
-| `cache.action_cache.mode` | `record` | `record` / `replay` / `hybrid`. |
-| `cache.action_cache.size_mb` | `500` | LRU eviction cap. |
+| `tuning.action_cache.enabled` | `true` | Master switch. |
+| `tuning.action_cache.mode` | `hybrid` | `record` / `replay` / `hybrid` / `off`. |
+| `tuning.action_cache.size_mb` | `500` | LRU eviction cap. |
 
 Metrics:
 
