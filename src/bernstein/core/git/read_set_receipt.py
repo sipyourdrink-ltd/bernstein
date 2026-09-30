@@ -104,7 +104,11 @@ class ReadSetRefusalReceipt:
         ``timestamp`` and the signature are intentionally excluded so the
         canonical bytes -- and thus ``receipt_hash`` -- are a pure function of
         the refusal's content. Two operators refusing the same read-set against
-        the same baseline derive the same receipt hash.
+        the same baseline derive the same receipt hash. ``changed_paths`` is
+        emitted sorted by ``(path, old_commit, new_commit)`` because
+        ``sort_keys`` orders dict keys but not list items, so input order
+        (e.g. set iteration under differing ``PYTHONHASHSEED``) must not leak
+        into the bytes.
         """
         return {
             "v": self.v,
@@ -117,7 +121,7 @@ class ReadSetRefusalReceipt:
                     "old_commit": p.old_commit,
                     "new_commit": p.new_commit,
                 }
-                for p in self.changed_paths
+                for p in sorted(self.changed_paths, key=lambda c: (c.path, c.old_commit, c.new_commit))
             ],
         }
 

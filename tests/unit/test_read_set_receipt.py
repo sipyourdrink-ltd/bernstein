@@ -439,3 +439,40 @@ def test_verify_receipt_offline_accepts_a_genuinely_anchored_receipt(keys: dict,
 
     record = json.dumps(receipt.to_dict()).encode("utf-8")
     assert verify_receipt_offline(record, str(runtime_dir / "chain.db")) is True
+
+
+def _refusal(paths):
+    from bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
+
+    return ReadSetRefusalReceipt(v=1, task_id="t1", base_commit="abc", target_branch="main", changed_paths=paths)
+
+
+def test_receipt_hash_independent_of_changed_paths_order(sample_changed_paths):
+    fwd = _refusal(list(sample_changed_paths))
+    rev = _refusal(list(reversed(sample_changed_paths)))
+    assert fwd.canonical_bytes() == rev.canonical_bytes()
+    assert fwd.receipt_hash() == rev.receipt_hash()
+
+
+def test_receipt_hash_stable_across_pythonhashseed():
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "from bernstein.core.git.read_set_receipt import ChangedPath, ReadSetRefusalReceipt\n"
+        "ps={ChangedPath(f'f{i}.py', f'o{i}', f'n{i}') for i in range(20)}\n"
+        "r=ReadSetRefusalReceipt(v=1, task_id='t', base_commit='b', target_branch='m', changed_paths=list(ps))\n"
+        "print(r.receipt_hash())"
+    )
+    out = {
+        subprocess.run(
+            [sys.executable, "-c", code],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for seed in ("1", "2", "3")
+    }
+    assert len(out) == 1
