@@ -1504,3 +1504,10 @@ cli.add_command(ab_test_cmd, "ab-test")
 cli.add_command(receipt_group, "receipt")
 cli.add_command(model_group, "model")
 cli.add_command(volunteer_group, "volunteer")
+
+# Same defect as #3139 above: shipped complete and documented in
+# src/bernstein/cli/AGENTS.md, but no ``add_command`` call ever made it
+# reachable (#5880).
+from bernstein.cli.commands.insights_cmd import insights  # noqa: E402
+
+cli.add_command(insights, "insights")
