@@ -325,3 +325,9 @@ def test_adopt_is_registered_on_the_top_level_cli() -> None:
     from bernstein.cli.main import cli
 
     assert cli.commands["adopt"] is adopt.adopt_cmd
+
+
+def test_non_interpreter_argv_does_not_match_agent(tmp_path: Path) -> None:
+    assert _detect(tmp_path, adopt.ProcessInfo("vim", ("vim", "claude"))).candidates == ()
+    assert adopt.process_tokens(adopt.ProcessInfo("vim", ("vim", "claude"))) == frozenset({"vim"})
+    assert "claude" in adopt.process_tokens(adopt.ProcessInfo("node", ("node", "/x/claude")))

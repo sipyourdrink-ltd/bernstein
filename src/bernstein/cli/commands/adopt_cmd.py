@@ -79,6 +79,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -233,9 +234,14 @@ def _normalise(token: str) -> str:
     return base
 
 
+_INTERPRETER_RE = re.compile(r"^(python(\d+(\.\d+)*)?|node|bun|deno|ruby|uv|npx)$")
+
+
 def process_tokens(process: ProcessInfo) -> frozenset[str]:
-    """The names a process can be matched on: its executable and first two argv entries."""
-    tokens = {_normalise(process.name), *(_normalise(arg) for arg in process.argv[:2])}
+    """The names a process can be matched on: its executable, plus the script when launched by an interpreter."""
+    head = _normalise(process.argv[0]) if process.argv else ""
+    names = process.argv[:2] if _INTERPRETER_RE.match(head) else process.argv[:1]
+    tokens = {_normalise(process.name), *(_normalise(arg) for arg in names)}
     tokens.discard("")
     return frozenset(tokens)
 
