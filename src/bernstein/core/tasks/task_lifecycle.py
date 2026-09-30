@@ -602,6 +602,11 @@ def _write_retry_checkpoint(orch: Any, session: AgentSession, *, detector: str) 
         )
         ws_hash = checkpoint_retry.workspace_hash(Path(worktree_path))
         for task_id in task_ids:
+            # A pause checkpoint with a real session_id is resumable; the
+            # empty-session death row would shadow it as the latest row.
+            existing = checkpoint_retry.latest_checkpoint(workdir / ".sdd", task_id)
+            if existing is not None and existing.session_id:
+                continue
             checkpoint_retry.record_task_checkpoint(
                 sdd_dir=workdir / ".sdd",
                 task_id=task_id,
@@ -814,7 +819,12 @@ def maybe_retry_task(
         # Carry forward the explicit max_turns override (if any) so a retry
         # spawn doesn't silently fall back to complexity-based auto-computation.
         "max_turns": task.max_turns,
+        "depends_on": task.depends_on,
+        "owned_files": task.owned_files,
     }
+    # Preserve completion signals on retry (mirrors retry_or_fail_task below).
+    if task.completion_signals:
+        payload["completion_signals"] = [{"type": s.type, "value": s.value} for s in task.completion_signals]
     logger.info(
         "maybe_retry_task: carrying max_turns=%r forward from task %s to retry %d",
         task.max_turns,

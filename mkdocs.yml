@@ -478,6 +478,7 @@ nav:
           - JCS canonicalization: security/jcs-canonicalization.md
           - MCP signing: security/mcp-signing.md
           - OWASP ASI detectors: security/owasp-asi.md
+          - NIST AI 100-2 crosswalk: security/nist-ai-100-2-crosswalk.md
           - Promptware: security/promptware.md
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md

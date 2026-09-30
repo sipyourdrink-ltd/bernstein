@@ -25,8 +25,8 @@
       "id": "approvals",
       "label": "approvals",
       "consequence": "The approval gate is off by default, so a consequential action can proceed with no human sign-off.",
-      "issue": 5051,
-      "resolved": true
+      "issue": null,
+      "resolved": false
     },
     {
       "id": "sensitivity",
