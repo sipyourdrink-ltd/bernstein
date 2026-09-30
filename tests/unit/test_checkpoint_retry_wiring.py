@@ -535,3 +535,38 @@ def test_write_retry_checkpoint_swallows_exception_and_logs(tmp_path: Path, capl
     metadata = _posted_metadata(mock_client)
     assert metadata["retry_mode"] == "cold"
     assert metadata["retry_downgrade_reason"] == "no_checkpoint"
+
+
+def test_write_retry_checkpoint_keeps_pause_checkpoint_with_session_id(tmp_path: Path) -> None:
+    """A pause checkpoint with a real session_id is not shadowed by the crash row."""
+    from bernstein.core.tasks.checkpoint_retry import latest_checkpoint
+
+    tree = _make_worktree(tmp_path)
+    record_task_checkpoint(
+        sdd_dir=tmp_path / ".sdd",
+        task_id="task-10",
+        adapter="claude",
+        session_id="native-sess",
+        workspace_hash=workspace_hash(tree),
+        worktree_path=str(tree),
+    )
+    orch = _make_orch(tmp_path, tree)
+
+    _write_retry_checkpoint(orch, _make_session(["task-10"]), detector="crash")
+
+    checkpoint = latest_checkpoint(tmp_path / ".sdd", "task-10")
+    assert checkpoint is not None
+    assert checkpoint.session_id == "native-sess"
+
+    mock_client = MagicMock(spec=httpx.Client)
+    retry_or_fail_task(
+        task_id="task-10",
+        reason="agent crashed",
+        client=mock_client,
+        server_url="http://test",
+        max_task_retries=3,
+        retried_task_ids=set(),
+        tasks_snapshot={"active": [_Task("task-10")]},
+        workdir=tmp_path,
+    )
+    assert _posted_metadata(mock_client)["retry_mode"] == "warm"

@@ -602,6 +602,11 @@ def _write_retry_checkpoint(orch: Any, session: AgentSession, *, detector: str) 
         )
         ws_hash = checkpoint_retry.workspace_hash(Path(worktree_path))
         for task_id in task_ids:
+            # A pause checkpoint with a real session_id is resumable; the
+            # empty-session death row would shadow it as the latest row.
+            existing = checkpoint_retry.latest_checkpoint(workdir / ".sdd", task_id)
+            if existing is not None and existing.session_id:
+                continue
             checkpoint_retry.record_task_checkpoint(
                 sdd_dir=workdir / ".sdd",
                 task_id=task_id,
