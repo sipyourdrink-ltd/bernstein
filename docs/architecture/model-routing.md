@@ -267,13 +267,13 @@ model_policy:
   prefer: anthropic
 ```
 
-### CLI flags (`src/bernstein/cli/main.py`)
+### CLI flags (`bernstein run`; `src/bernstein/cli/main.py`, `src/bernstein/cli/run_bootstrap.py`)
 
 | Flag | Effect |
 |------|--------|
-| `--routing {default,bandit}` | Pick the bandit or the static-cost router. |
+| `--routing {static,bandit,bandit-shadow}` | Static cascade heuristics (default), the contextual bandit, or bandit decisions logged without changing live routing. |
 | `--model <name>` | Override the initial model for this run. |
-| `--budget <usd>` | Cap per-run spend; cascade refuses to escalate past it. |
+| `--budget <usd>` | Cap per-run spend; stop spawning agents when reached (0 = unlimited). |
 
 ---
 
@@ -363,7 +363,7 @@ availability**.
 
 | Concern | File | Symbol / line |
 |---------|------|---------------|
-| Cascade router selection | `src/bernstein/core/routing/cascade_router.py` | `CascadeRouter.select:330` |
+| Cascade router selection | `src/bernstein/core/routing/cascade_router.py` | `CascadeRouter.select` |
 | Initial model picker | `src/bernstein/core/routing/cascade_router.py` | `_select_initial_model` |
 | Escalation decision | `src/bernstein/core/routing/cascade_router.py` | `record_and_escalate`, `_should_escalate` |
 | Low-confidence regex | `src/bernstein/core/routing/cascade_router.py` | `_LOW_CONFIDENCE_PATTERN`, `detect_low_confidence` |
