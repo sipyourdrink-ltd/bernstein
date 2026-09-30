@@ -1399,6 +1399,7 @@ async def create_fix_tasks(
         "estimated_minutes": task.estimated_minutes,
         "depends_on": [],
         "owned_files": task.owned_files,
+        "completion_signals": task.completion_signals,
     }
 
     try:
