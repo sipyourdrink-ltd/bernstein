@@ -21,10 +21,10 @@ locally without waiting for the cloud runner.
 | **Semgrep** (custom rules)  | eval/exec/pickle in production, env-leak in `_spawn_*`            | PR (ERROR fails)    |
 | **Bandit**                  | Generic Python security smells (shell=True, weak hash, tarfile)   | PR (HIGH only)      |
 | **pip-audit**               | Known PyPI CVEs in production deps                                | PR (strict)         |
-| **Beartype** (claw)         | Runtime type-contract violations on public security/cluster APIs  | PR                  |
+| **Beartype** (claw)         | Runtime type-contract violations in the allow-listed strict zone (`tests/_beartype_claw.py`; today `core.persistence.lineage_signer`) | PR                  |
 | **syrupy** (snapshot)       | JSONL/audit/lineage wire-format drift                             | PR                  |
-| **Pyright strict zone**     | Untyped/implicit-Any leakage in `core/security/`, `core/protocols/cluster/` | PR                  |
-| **mypy strict zone**        | Same, from mypy's inference, in `core/{evidence,identity,lineage,persistence}/` | PR                  |
+| **Pyright strict zone**     | Untyped/implicit-Any leakage in the allow-list in `pyrightconfig.strict.json` (lineage, lineage signer, WAL, lineage v2 store) | PR                  |
+| **mypy strict zone**        | Same, from mypy's inference, in `core/{evidence,identity,lineage,persistence}/` and `cli/commands/pr_cmd.py` | PR                  |
 | **Vulture**                 | Dead code (unused functions/classes/vars at confidence ≥80)       | PR                  |
 | **diff-cover** (LEVEL 1)    | Changed lines below the committed diff-coverage floor             | PR (advisory)       |
 | **coverage ratchet** (LEVEL 2) | Total coverage dropped below the committed high-water mark      | push to main (advisory) |
@@ -117,16 +117,14 @@ uv run bandit -r src/ -ll --severity-level high -b .bandit-baseline.json
 # pip-audit
 uv run pip-audit --strict
 
-# Beartype claw - runs the focused unit tests under runtime type
-# enforcement on core.security + core.agents + core.protocols.cluster
+# Beartype claw - runs the lineage-signer unit tests under runtime type
+# enforcement (allow-list: tests/_beartype_claw.py)
 BEARTYPE_USE_CLAW=enable \
   uv run pytest tests/unit/ -q --no-cov \
-  -k 'security or agent or cluster or audit or lineage'
+  -k 'lineage_signer or lineage_record or lineage_export'
 
 # Pyright strict zone
-uv run pyright --typecheckingmode strict \
-  src/bernstein/core/security/ \
-  src/bernstein/core/protocols/cluster/
+uv run pyright --project pyrightconfig.strict.json
 
 # mypy strict zone (gated). Widen it by removing entries from `exclude`
 # in mypy.gate.ini as each module reaches strict cleanliness.
@@ -205,17 +203,20 @@ in a comment-only path), document why in `mutmut_config.py`.
 ### mutmut fixed-paths gate
 `mutation-fixed.yml` runs `scripts/mutmut_critical.py` against a
 fixed list of high-risk modules (atomic claim, HMAC audit chain,
-audit integrity verifier, lineage v1 trio, seed parser) and gates
+audit integrity verifier, lineage gate/tips/merge, seed parser, journal verify,
+sandbox eval, policy engine, compliance policies, audit pack) and gates
 on a per-module kill rate. The module list, per-module thresholds,
 and wall-clock budgets live in `scripts/mutmut_critical.py:MODULES`.
 
 The gate enforces per module: `continue-on-error` in the workflow's
 matrix `include` is `false` for every module that holds its threshold
 with real margin, so a regression there fails the weekly audit run.
-`audit_log` is the one pinned exception - its kill rate is well below threshold and needs test
-backfill on `src/bernstein/core/security/audit.py` before it can gate
-for real (`tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES`
-is the source of truth for which modules are still advisory). Each
+`audit_log`, `sandbox_eval`, `policy_engine`, `compliance_policies` and
+`audit_pack` are the pinned exceptions that stay advisory (`audit_log`'s
+kill rate is well below threshold and needs test backfill on
+`src/bernstein/core/security/audit.py` before it can gate for real;
+`tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES` is the
+source of truth). Each
 module uploads its result JSON - score and survivor list - as a
 workflow artifact either way.
 
@@ -331,6 +332,8 @@ that runs the same fixture through N adapters in parallel and reports
 the per-adapter and aggregate consensus precision/recall split:
 
 ```python
+from pathlib import Path
+
 from bernstein.eval.pentest_runner import (
     load_scenario_config,
     mock_adapter,
