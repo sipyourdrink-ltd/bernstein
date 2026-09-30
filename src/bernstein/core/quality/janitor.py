@@ -1663,6 +1663,7 @@ async def _create_judge_fix_task(
         "estimated_minutes": task.estimated_minutes,
         "depends_on": [],
         "owned_files": task.owned_files,
+        "completion_signals": task.completion_signals,
     }
 
     try:
