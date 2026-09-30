@@ -60,10 +60,10 @@ Compatibility details can vary by adapter version and local toolchain.
 
 ### MCP
 
-- Bernstein includes an MCP server (`src/bernstein/core/protocols/mcp_server.py`) exposed via `bernstein mcp`.
+- Bernstein includes an MCP server (`src/bernstein/core/protocols/mcp/mcp_server.py`) exposed via `bernstein mcp`.
 - MCP tool registry with auto-discovery and per-task configuration.
 - MCP gateway proxy (`bernstein gateway`) for routing MCP traffic.
-- MCP health monitoring, lazy discovery, sandbox, marketplace, and metrics modules in `src/bernstein/core/protocols/`.
+- MCP health monitoring, lazy discovery, sandbox, marketplace, and metrics modules in `src/bernstein/core/protocols/mcp/`.
 - MCP auth lifecycle management and version compatibility checking.
 - MCP composition and skill bridge for combining tools across servers.
 - Practical compatibility depends on client/runtime transport expectations.
@@ -71,7 +71,7 @@ Compatibility details can vary by adapter version and local toolchain.
 ### A2A
 
 - A2A task/artifact routes implemented in task routes.
-- A2A federation support (`a2a_federation.py`) for cross-instance agent coordination.
+- A2A federation support (`protocols/a2a/a2a_federation.py`) for cross-instance agent coordination.
 - A2A available as part of the server API surface.
 
 ### ACP

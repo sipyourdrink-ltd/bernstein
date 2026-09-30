@@ -51,7 +51,7 @@ context windows and first-party Google tooling.
 subprocess that constructs `agents.Agent(...)` + `Runner.run_sync(...)`
 and emits structured events.  The SDK brings sandboxed execution,
 first-class tool-use, and pluggable sandbox providers (unix_local,
-docker, E2B, Modal, Daytona, Cloudflare, Vercel, Runloop, Blaxel).
+docker, E2B, Modal).
 
 ---
 
@@ -138,10 +138,10 @@ model: gpt-5.4-mini
 # After
 cli: openai_agents
 model: gpt-5-mini
-sandbox_provider: unix_local
 ```
 
-The `sandbox_provider` field is optional and defaults to `unix_local`.
+The sandbox provider defaults to `unix_local`; override it with the
+`sandbox_provider` key of the per-spawn `mcp_config`.
 Model names roughly map: `gpt-5.4` → `gpt-5`, `gpt-5.4-mini` →
 `gpt-5-mini`, `o4-mini` stays as-is (both adapters accept it).
 
