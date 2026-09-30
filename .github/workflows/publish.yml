@@ -361,15 +361,17 @@ jobs:
   publish-npm:
     name: Publish npm wrapper
     runs-on: ubuntu-latest
-    # Approval stays only on the `publish` job below: the npm wrapper still
-    # publishes with a long-lived NPM_TOKEN rather than OIDC trusted
-    # publishing (see the comment on that step), so this job has no
-    # environment-scoped credential that the approval was protecting.
+    # The npm wrapper publishes through OIDC trusted publishing: the registry
+    # accepts the job's identity token for the publisher configured on the
+    # package (this repository, this workflow file, this environment), so no
+    # long-lived NPM_TOKEN is stored anywhere. `id-token: write` is what mints
+    # that token; the environment keeps the publisher binding narrow.
     environment: release-channels
     needs: build
     timeout-minutes: 15
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -391,20 +393,15 @@ jobs:
           cd packaging/npm
           npm version "$VERSION" --no-git-tag-version --allow-same-version
       - name: Publish to npm
-        env:
-          # packaging/npm/.npmrc uses ${NPM_TOKEN} for interpolation, so
-          # both variables must be set. NODE_AUTH_TOKEN is kept for
-          # compatibility with actions/setup-node's default config.
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # Trusted publishing for the npm wrapper needs a registry-side
-        # publisher configuration; token auth stays until that exists.
-        run: | # zizmor: ignore[use-trusted-publishing]
+        # Trusted publishing: npm >= 11.5 exchanges the job's OIDC token for a
+        # short-lived publish credential and attaches provenance on its own, so
+        # no token is passed in. Until the publisher is configured on the
+        # registry side this step fails with an authentication error, which is
+        # the correct signal (a green job with no artefact is the failure mode
+        # #3322 documents).
+        run: |
           set -uo pipefail
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN is not configured; the npm wrapper cannot be published"
-            exit 1
-          fi
+          npm --version
           cd packaging/npm
           # This step used to demote every publish failure to a ::warning, so an
           # unauthorised token produced a green job while the registry kept
