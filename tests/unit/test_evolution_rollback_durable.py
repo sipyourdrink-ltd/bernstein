@@ -14,6 +14,7 @@ that exists to undo a bad change.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,7 @@ from bernstein.core.models import RiskAssessment, RollbackPlan
 
 from bernstein.evolution.applicator import FileUpgradeExecutor
 from bernstein.evolution.detector import UpgradeCategory
-from bernstein.evolution.proposals import UpgradeProposal
+from bernstein.evolution.proposals import UpgradeProposal, UpgradeStatus
 from bernstein.evolution.types import RollbackError
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ def _applied_change(state_dir: Path, proposal: UpgradeProposal, filename: str = 
     """
     executor = FileUpgradeExecutor(state_dir)
     (executor.config_dir / filename).write_text(ORIGINAL, encoding="utf-8")
-    executor._backup_file(filename, proposal.id)
+    executor._backup_file(filename, proposal)
     (executor.config_dir / filename).write_text(CHANGED, encoding="utf-8")
     executor._record_history(proposal, "applied")
 
@@ -125,7 +126,7 @@ def test_a_backup_recorded_but_missing_from_disk_fails_loudly(tmp_path: Path) ->
     """A manifest naming a file that is gone is not something to shrug at."""
     proposal = _proposal()
     _applied_change(tmp_path, proposal)
-    (tmp_path / "upgrades" / "backups" / proposal.id / "policies.yaml").unlink()
+    (tmp_path / "upgrades" / "backups" / proposal.storage_key / "policies.yaml").unlink()
 
     with pytest.raises(RollbackError, match="recorded a backup"):
         FileUpgradeExecutor(tmp_path).rollback_upgrade(proposal)
@@ -143,7 +144,9 @@ def test_rolling_back_a_proposal_that_never_applied_is_not_an_error(tmp_path: Pa
     executor._record_history(proposal, "skipped_no_sink")
 
     assert executor.rollback_upgrade(proposal) is True
-    receipt = json.loads((tmp_path / "upgrades" / "rollbacks" / f"{proposal.id}.json").read_text(encoding="utf-8"))
+    receipt = json.loads(
+        (tmp_path / "upgrades" / "rollbacks" / f"{proposal.storage_key}.json").read_text(encoding="utf-8")
+    )
     assert receipt["restored_files"] == []
     assert receipt["note"] == "nothing was applied"
 
@@ -161,7 +164,7 @@ def test_a_rollback_leaves_a_receipt_that_verifies_offline(tmp_path: Path) -> No
     _applied_change(tmp_path, proposal)
     FileUpgradeExecutor(tmp_path).rollback_upgrade(proposal)
 
-    path = tmp_path / "upgrades" / "rollbacks" / f"{proposal.id}.json"
+    path = tmp_path / "upgrades" / "rollbacks" / f"{proposal.storage_key}.json"
     receipt = json.loads(path.read_text(encoding="utf-8"))
     assert receipt["proposal_id"] == proposal.id
     assert receipt["restored_files"] == ["policies.yaml"]
@@ -211,14 +214,14 @@ def test_a_proposal_that_never_applied_is_not_a_rollback(tmp_path: Path) -> None
     proposal = _proposal()
     executor = FileUpgradeExecutor(tmp_path)
     assert executor.execute_upgrade(proposal) is False, "no category has a sink today"
-    assert executor.was_applied(proposal.id) is False
+    assert executor.was_applied(proposal) is False
 
 
 def test_a_proposal_that_applied_is_reported_as_applied(tmp_path: Path) -> None:
     proposal = _proposal()
     _applied_change(tmp_path, proposal)
     # A fresh executor, because the loop may not be the process that applied.
-    assert FileUpgradeExecutor(tmp_path).was_applied(proposal.id) is True
+    assert FileUpgradeExecutor(tmp_path).was_applied(proposal) is True
 
 
 def test_a_rolled_back_proposal_is_no_longer_reported_as_applied(tmp_path: Path) -> None:
@@ -227,4 +230,53 @@ def test_a_rolled_back_proposal_is_no_longer_reported_as_applied(tmp_path: Path)
     _applied_change(tmp_path, proposal)
     executor = FileUpgradeExecutor(tmp_path)
     executor.rollback_upgrade(proposal)
-    assert executor.was_applied(proposal.id) is False
+    assert executor.was_applied(proposal) is False
+
+
+# --- two runs' UPG-0001 are two proposals on disk (#6186) --------------------
+#
+# `ProposalGenerator` restarts its counter in every process, so the first
+# proposal of every run is `UPG-0001`. The id is a label; the backup directory,
+# the manifest, the history lookup and the rollback receipt are keyed on
+# `storage_key`, which is derived from the proposal itself.
+
+
+def _run_proposal(title: str, created_at: float) -> UpgradeProposal:
+    return dataclasses.replace(_proposal("UPG-0001"), title=title, created_at=created_at)
+
+
+def test_two_runs_upg_0001_do_not_overwrite_each_others_receipt(tmp_path: Path) -> None:
+    first = _run_proposal("Rewrite the admission policy", created_at=1_000.0)
+    second = _run_proposal("Disable the retry budget entirely", created_at=2_000.0)
+    executor = FileUpgradeExecutor(tmp_path)
+
+    executor.rollback_upgrade(first)
+    FileUpgradeExecutor(tmp_path).rollback_upgrade(second)
+
+    receipts = sorted((tmp_path / "upgrades" / "rollbacks").glob("*.json"))
+    titles = sorted(json.loads(r.read_text(encoding="utf-8"))["title"] for r in receipts)
+    assert titles == ["Disable the retry budget entirely", "Rewrite the admission policy"]
+
+
+def test_a_never_applied_upg_0001_does_not_restore_another_runs_backup(tmp_path: Path) -> None:
+    applied = _run_proposal("Disable the retry budget entirely", created_at=1_000.0)
+    _applied_change(tmp_path, applied)
+    unrelated = _run_proposal("Rewrite the admission policy", created_at=2_000.0)
+
+    restarted = FileUpgradeExecutor(tmp_path)
+    assert restarted.was_applied(unrelated) is False, "another run's `applied` row is not this proposal's"
+    assert restarted.rollback_upgrade(unrelated) is True
+
+    assert (restarted.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED, (
+        "rolling back a proposal that never applied must not revert a different proposal's change"
+    )
+
+
+def test_the_storage_key_is_stable_for_one_proposal_and_distinct_across_runs() -> None:
+    proposal = _run_proposal("Raise max_retries", created_at=1_000.0)
+    later_in_its_life = dataclasses.replace(proposal, status=UpgradeStatus.APPLIED, applied_at=5.0)
+    next_run = _run_proposal("Raise max_retries", created_at=2_000.0)
+
+    assert later_in_its_life.storage_key == proposal.storage_key
+    assert next_run.storage_key != proposal.storage_key
+    assert proposal.storage_key.startswith("UPG-0001-"), "the label stays readable in paths"
