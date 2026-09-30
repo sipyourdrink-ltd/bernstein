@@ -118,6 +118,7 @@ bernstein.core.observability.eval_store: #4526 audit in flight
 bernstein.core.observability.progress_watch: #4526 audit in flight
 bernstein.core.observability.repository_flow: #4526 audit in flight
 bernstein.core.observability.repository_flow_series: #4526 audit in flight
+bernstein.core.observability.schema_registry: planned import by metric_collector for schema_version stamping (issue #5442 slice 2)
 bernstein.core.observability.stagnation: #4526 audit in flight
 bernstein.core.orchestration.adaptive_tick: #4526 audit in flight
 bernstein.core.orchestration.adaptive_timeout: #4526 audit in flight
@@ -153,7 +154,6 @@ bernstein.core.parallel_admission: #4526 audit in flight
 bernstein.core.payments.adapters.base: #4526 audit in flight
 bernstein.core.payments.adapters.jws_passthrough: #4526 audit in flight
 bernstein.core.payments.adapters.native: #4526 audit in flight
-bernstein.core.persistence.batch_ledger: #4526 audit in flight
 bernstein.core.persistence.cache_dedup: #4526 audit in flight
 bernstein.core.persistence.cache_served_from: #4526 audit in flight
 bernstein.core.persistence.insights: #4526 audit in flight
@@ -233,9 +233,7 @@ bernstein.core.routing.cascade_router: #4526 audit in flight
 bernstein.core.routing.fast_mode: #4526 audit in flight
 bernstein.core.routing.hijacker: #4526 audit in flight
 bernstein.core.routing.model_recommender: #4526 audit in flight
-bernstein.core.routing.model_registry: #4526 audit in flight
 bernstein.core.routing.model_routing: #4526 audit in flight
-bernstein.core.routing.route_decision: #4526 audit in flight
 bernstein.core.sandbox.backends.e2b: #4526 audit in flight
 bernstein.core.sandbox.backends.modal: #4526 audit in flight
 bernstein.core.sandbox.conformance: #4526 audit in flight

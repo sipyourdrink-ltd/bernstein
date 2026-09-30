@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.identity.agent_card import (
     AgentIdentityCard,
+    _path_segments,
     check_capability,
     issue_identity_card,
     load_identity_card,
@@ -96,3 +99,98 @@ class TestInScope:
         card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api/"])
         assert card.in_scope("/src/api/users.py")
         assert not card.in_scope("/src/auth/")
+
+    def test_a_sibling_that_shares_a_prefix_is_not_in_scope(self) -> None:
+        """``"/src/api-internal".startswith("/src/api")`` is True and wrong.
+
+        This is the same defect ``guardrail_pipeline`` fixed for the
+        modified-file manifest; ``in_scope`` was the remaining prefix test.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api"])
+
+        assert not card.in_scope("/src/api-internal/keys.pem")
+        assert not card.in_scope("/src/apikeys")
+        assert card.in_scope("/src/api/users.py")
+        assert card.in_scope(r"/src/api\users.py")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/src/api/../../etc/passwd",
+            "/src/api/../secrets.env",
+            r"/src/api\..\..\etc\passwd",
+        ],
+    )
+    def test_a_traversal_out_of_scope_is_refused(self, path: str) -> None:
+        """Prefix-true, but the path resolves outside the scope entirely.
+
+        The backslash case is refused on POSIX too: a scope is written on one
+        host and read on another.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api"])
+
+        assert not card.in_scope(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/src/api/../../etc/passwd",
+            r"/src/api\..\..\etc\passwd",
+        ],
+    )
+    def test_a_traversal_is_refused_by_the_dotdot_guard_not_by_a_mangled_segment(self, path: str) -> None:
+        r"""Refused *because* of ``..``, not because the tail failed to match.
+
+        The distinction is not academic. With the separator class written as
+        ``[\/]`` - an escaped forward slash, matching only ``/`` - a
+        backslash path split into a single segment
+        ``api\..\..\etc\passwd``, which is out of scope because it is not
+        equal to ``api``. The assertion held and the ``..`` guard was never
+        reached, so the test would have kept passing with Windows separators
+        unhandled.
+
+        Asserting on ``_path_segments`` directly pins the reason rather than
+        the outcome: ``None`` is only returned by the traversal guard.
+        """
+        assert _path_segments(path) is None
+
+    def test_a_backslash_path_splits_into_segments(self) -> None:
+        r"""The claim the separator class exists to make, stated on its own.
+
+        ``[\/]`` inside a character class is an escaped ``/``; only
+        ``[\/]`` matches a backslash. Nothing else in this file fails when
+        that is wrong, which is how it got in.
+        """
+        separator = chr(92)  # a literal backslash, spelled without escaping games
+        assert _path_segments(f"src{separator}api{separator}users.py") == ("src", "api", "users.py")
+
+    def test_a_scope_entry_naming_no_segment_contains_nothing(self) -> None:
+        """Otherwise one stray "/" silently unrestricts the card.
+
+        An entry that splits to no segments would be a zero-length prefix,
+        and a zero-length prefix matches every path.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/"])
+
+        assert not card.in_scope("/etc/passwd")
+
+    def test_a_scope_of_only_unusable_entries_admits_nothing(self) -> None:
+        """Fail closed, matching the choice ``guardrail_pipeline`` made.
+
+        A non-empty scope means the operator asked for a restriction; it must
+        not collapse into "unrestricted" the way an empty scope does.
+        """
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/", ""])
+
+        assert not card.in_scope("/anything")
+
+    def test_redundant_separators_and_dots_still_match(self) -> None:
+        """Normalisation must not turn an ordinary spelling into a refusal."""
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src//./api/"])
+
+        assert card.in_scope("src/api/users.py")
+
+    def test_a_scope_entry_matches_the_directory_itself(self) -> None:
+        card = issue_identity_card("a", "backend", "claude", "sonnet", scope=["/src/api"])
+
+        assert card.in_scope("/src/api")

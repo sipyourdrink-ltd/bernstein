@@ -151,3 +151,13 @@ A maintainer rebuilds the profile from the manifest at the submitted commit and 
 - `src/bernstein/core/volunteer/issue_sanitize.py` - Input sanitization channels
 - `src/bernstein/core/volunteer/claim.py` - Coordinator-free claim etiquette
 - `docs/sandbox/*` - Individual sandbox backend limitations
+
+## Provider Observability
+
+When volunteer tasks run using provider-backed adapters (API-based or OAuth-authenticated), providers observe API calls from the donor's machine. The coordination layer's network topology does not change what a provider observes — the call is made locally by the donor regardless of whether discovery is centralized or peer-to-peer.
+
+For detailed analysis of what providers observe per adapter class, see:
+
+- `docs/volunteer/provider-observability.md` — Per-adapter observability breakdown and local-first default posture
+
+**Key takeaway:** Provider-opacity is an adapter/client concern, not a networking concern. The recommended default is local/self-hosted execution (via certified local endpoints in `bernstein.core.endpoints`) to eliminate third-party observability entirely.

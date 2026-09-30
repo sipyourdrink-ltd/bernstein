@@ -137,7 +137,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://bernstein.run"
-Documentation = "https://bernstein.readthedocs.io"
+Documentation = "https://docs.bernstein.run"
 Repository = "https://github.com/sipyourdrink-ltd/bernstein"
 Source = "https://github.com/sipyourdrink-ltd/bernstein"
 Issues = "https://github.com/sipyourdrink-ltd/bernstein/issues"
@@ -939,6 +939,17 @@ dev = [
     "playwright>=1.62.0",
 ]
 
+# Documentation toolchain (mkdocs.yml): MkDocs Material, the `social` card
+# plugin's imaging extra, and the `redirects` / `minify` plugins declared in
+# mkdocs.yml. Floors mirror docs/requirements.in so `uv run --group docs
+# mkdocs build --strict` resolves the same toolchain the docs pin file does.
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.7,<10",
+    "mkdocs-redirects>=1.2,<1.2.4",
+    "mkdocs-minify-plugin>=0.8,<1",
+]
+
 [tool.uv]
 # The checked-in gRPC gencode under src/bernstein/core/grpc_gen/ carries
 # `Protobuf Python Version: 7.35.1` and calls ValidateProtobufRuntimeVersion()
@@ -957,6 +968,11 @@ dev = [
 # dependency-update run rather than just the two extras that actually clash
 # (#4088).
 conflicts = [[{ extra = "grpc" }, { extra = "modal" }], [{ extra = "otel" }, { extra = "modal" }]]
+# spiffe 0.3.1 caps pyjwt below 2.14, but pyjwt 2.13 carries ten published
+# advisories fixed in 2.14.0 and nothing in the spiffe extra depends on the
+# behaviour that cap guards. The override lets the universal lock resolve
+# pyjwt to a patched release; drop it once spiffe lifts its cap.
+override-dependencies = ["pyjwt>=2.14"]
 
 [tool.mutmut]
 # Lineage v1 mutation testing - see scripts/mutmut_lineage.py for the

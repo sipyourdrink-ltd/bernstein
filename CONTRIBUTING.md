@@ -48,8 +48,12 @@ Beyond that, three labelled queues cover the rest:
 Every issue in those queues states what "done" looks like before you
 start. If one does not, that is a defect in the issue — say so on it.
 
-Comment to claim an issue. If it is assigned but has been quiet for a
-couple of weeks, ask anyway; stalled is not the same as taken.
+Comment to claim an issue, and wait for the assignment: a maintainer
+assigns it, and the assignee field is the record. A comment alone does not
+reserve an issue, and one person holds at most three open assignments at a
+time -- finish or release one before asking for the next. If an issue is
+assigned but has been quiet for a couple of weeks, ask anyway; stalled is
+not the same as taken.
 
 Before proposing something large, read [Scope](docs/scope.md). It lists
 the boundaries that are already decided and the reason for each, with
@@ -223,7 +227,7 @@ Two markers are recognised:
 
 - `intentional-broad-except`: legitimate best-effort path (telemetry,
   optional analytics, lineage append, etc.). The body should route any
-  sensitive message through `bernstein.core.sanitize.sanitize_log`.
+  sensitive message through `bernstein.core.security.sanitize.sanitize_log`.
 - `bot-ack: <short-tag>`: previously reviewed broad clause; the tag
   identifies the rationale (e.g. `bot-ack: pre-existing-1723`,
   `bot-ack: legacy-shim`).
@@ -416,9 +420,14 @@ pkill -f bernstein   # kills everything including your own shell session
 ## Recognition
 
 All contributors are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
-Outstanding contributions are featured in our
-[monthly Community Spotlight](https://alexchernysh.com/blog)
-blog posts, which are shared on Twitter/X, LinkedIn, and dev.to.
+
+Roughly once every couple of weeks the project's LinkedIn page names, in one
+consolidated post, the contributors who asked to be named and says what they
+built. Opting in is one email; the how, the soft gate and the exception path
+are in the pinned recognition issue, and the operator side is
+[docs/community/recognition.md](docs/community/recognition.md). If you did the
+work, put it on your CV; the post exists so that there is a public record you
+did not write about yourself.
 
 ## Naming
 

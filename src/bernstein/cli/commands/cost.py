@@ -1794,6 +1794,93 @@ estimate_alias_cmd = click.Command(
 cost_cmd.add_command(cost_envelopes_group, "envelopes")
 
 
+@click.group("model-call")
+def model_call_group() -> None:
+    """Model call ledger operations: invoke with reuse, replay records."""
+
+
+@model_call_group.command("invoke", hidden=True)
+@click.option("--sdd-dir", "sdd_dir", type=str, required=True, help="Path to .sdd directory.")
+@click.option("--capability-id", type=str, required=True, help="Capability making the call.")
+@click.option("--adapter-id", type=str, required=True, help="Adapter the call goes to.")
+@click.option("--model", type=str, required=True, help="Model identifier.")
+@click.option("--model-version", type=str, default="", help="Provider version string for model.")
+@click.option("--parameters", type=str, default="{}", help="JSON object of resolved parameters.")
+@click.option("--parameter-schema-version", type=str, default="", help="Adapter parameter schema version.")
+@click.option("--input", "input_text", type=str, required=True, help="Input text being sent.")
+@click.option("--journal-entry-id", type=str, default="", help="Work ledger entry this call belongs to.")
+@click.option("--reuse-identical", is_flag=True, default=False, help="Short-circuit on matching content hash.")
+def model_call_invoke(
+    sdd_dir: str,
+    capability_id: str,
+    adapter_id: str,
+    model: str,
+    model_version: str,
+    parameters: str,
+    parameter_schema_version: str,
+    input_text: str,
+    journal_entry_id: str,
+    reuse_identical: bool,
+) -> None:
+    """Test scaffolding: invoke adapter and write ledger record.
+
+    This command is test scaffolding only. Real adapter invocation requires
+    a running agent session via the orchestrator. Use the ModelCallLedger
+    library API directly for testing with mock adapters.
+    """
+    # Fail closed: no real adapter session available in standalone CLI context
+    console.print(
+        "[red]Error: Real adapter invocation requires a running agent session.[/red]\n"
+        "[yellow]This command is test scaffolding only. Real adapter calls must go through[/yellow]\n"
+        "[yellow]the orchestrator, which manages adapter lifecycle and session state.[/yellow]\n\n"
+        "[blue]For testing with mock adapters, use the ModelCallLedger library API directly:[/blue]\n"
+        "  from bernstein.core.cost.model_call_ledger import ModelCallLedger\n"
+        "  ledger = ModelCallLedger(Path(sdd_dir))\n"
+        "  record = ledger.invoke(capability_id=..., call=lambda: 'mock output', ...)"
+    )
+    raise click.Abort
+
+
+@model_call_group.command("replay", hidden=True)
+@click.option("--sdd-dir", "sdd_dir", type=str, required=True, help="Path to .sdd directory.")
+@click.option("--record-id", type=str, required=True, help="ID of the record to replay.")
+def model_call_replay(sdd_dir: str, record_id: str) -> None:
+    """Test scaffolding: re-execute a stored call and write a new linked record.
+
+    This command is test scaffolding only. Real adapter invocation requires
+    a running agent session via the orchestrator. Use the ModelCallLedger
+    library API directly for testing with mock adapters.
+    """
+    # Fail closed: no real adapter session available in standalone CLI context
+    console.print(
+        "[red]Error: Real adapter invocation requires a running agent session.[/red]\n"
+        "[yellow]This command is test scaffolding only. Real adapter calls must go through[/yellow]\n"
+        "[yellow]the orchestrator, which manages adapter lifecycle and session state.[/yellow]\n\n"
+        "[blue]For testing with mock adapters, use the ModelCallLedger library API directly:[/blue]\n"
+        "  from bernstein.core.cost.model_call_ledger import ModelCallLedger\n"
+        "  ledger = ModelCallLedger(Path(sdd_dir))\n"
+        "  record = ledger.replay(record_id, call=lambda: 'mock output')"
+    )
+    raise click.Abort
+
+
+cost_cmd.add_command(model_call_group, "model-call")
+
+
+#: The alias reuses the canonical command's Parameter objects rather than
+#: re-declaring them, so `bernstein estimate` cannot come to parse, default or
+#: reject an invocation differently from `bernstein cost estimate`. Re-declared
+#: options drift silently: a changed Choice set or default reads as identical
+#: under a name-by-name comparison.
+estimate_alias_cmd = click.Command(
+    "estimate",
+    params=list(estimate_cmd.params),
+    callback=_estimate_alias_callback,
+    help="[Deprecated] Predict task cost before running (use 'bernstein cost estimate').",
+    short_help="[Deprecated] Predict task cost before running.",
+)
+
+
 @click.group("cost-envelopes")
 @click.pass_context
 def cost_envelopes_alias_cmd(ctx: click.Context) -> None:
@@ -1824,4 +1911,5 @@ __all__ = [
     "cost_profile_report_cmd",
     "estimate_alias_cmd",
     "estimate_cmd",
+    "model_call_group",
 ]

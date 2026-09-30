@@ -37,7 +37,6 @@ src/bernstein/core/identity/principal.py::CredentialRef.is_valid_at             
 src/bernstein/core/identity/principal.py::principal_from_agent_identity                        # exercised by tests only; no production caller
 src/bernstein/core/identity/principal.py::principal_from_identity_card                         # exercised by tests only; no production caller
 src/bernstein/core/identity/principals.py::PrincipalReceipt.to_entry                           # exercised by tests only; no production caller
-src/bernstein/core/identity/principals.py::default_principal_ledger                            # no production caller and no test reference; baseline entry from the first scan
 src/bernstein/core/identity/spiffe/binding.py::BindingError                                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/spiffe/binding.py::bind_svid_to_card                               # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/spiffe/grant_identity.py::spiffe_grant_issuer                      # exported in the module's __all__ and exercised by tests; no production caller
@@ -312,7 +311,6 @@ src/bernstein/core/security/promptware_ingest.py::build_lifecycle_payload       
 src/bernstein/core/security/promptware_ingest.py::get_default_detector                         # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/promptware_ingest.py::quarantine_untrusted_payload                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/promptware_ingest.py::scan_tool_output                             # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/quarantined_parser.py::FieldSpec                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/quarantined_parser.py::QuarantinedExtract                          # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/quarantined_parser.py::extract_structured                          # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/rbac.py::RBACEnforcer                                              # no production caller and no test reference; baseline entry from the first scan

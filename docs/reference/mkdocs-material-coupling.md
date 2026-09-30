@@ -51,13 +51,17 @@ This uses standard Jinja theme-extension patterns (`extends "base.html"` + `extr
 
 ---
 
-## 4. Social Cards & Toolchain Dependencies
+## 4. Social Cards (removed)
 
-In `docs/requirements.in`:
-```ini
-mkdocs-material[imaging]>=9.7.7,<10
-```
-The `imaging` extra pulls `cairosvg` and `pillow` for Material's `social` card plugin. System packages (`libcairo2`, etc.) are installed in `.readthedocs.yaml`.
+The `social` plugin and its `mkdocs-material[imaging]` extra were removed:
+generating a card fetches the configured `theme.font` family
+(Inter/JetBrains Mono) from `fonts.google.com` on every uncached build,
+which is exactly the kind of build-time network dependency that broke the
+Read the Docs build (it stopped building on 2026-07-19 and stayed broken
+until this was found). `docs/requirements.in` now pins plain
+`mkdocs-material`, and the `libcairo2-dev`/`libfreetype6-dev`/etc.
+`apt_packages` in `.readthedocs.yaml` (needed only by `cairosvg`/`pillow`
+for card rendering) are gone with it.
 
 ---
 

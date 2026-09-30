@@ -159,11 +159,18 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="lineage_merge",
         source="src/bernstein/core/lineage/merge.py",
-        tests=("tests/unit/lineage/",),
+        tests=(
+            "tests/unit/lineage/test_merge.py",
+            "tests/unit/lineage/test_merge_provenance.py",
+        ),
         threshold=0.75,
-        budget_seconds=600,
+        budget_seconds=900,
         max_candidates=60,
-        note="Lineage v1 merge resolution.",
+        note=(
+            "Lineage v1 merge resolution. Tests narrowed to merge-specific "
+            "files so the baseline does not run the full lineage suite "
+            "(issue #5595)."
+        ),
     ),
     Module(
         key="config_seed_parser",
@@ -177,6 +184,45 @@ MODULES: tuple[Module, ...] = (
         budget_seconds=1200,
         max_candidates=80,
         note="bernstein.yaml seed parser + ${ENV} reference resolution.",
+    ),
+    Module(
+        key="sandbox_eval",
+        source="src/bernstein/core/security/sandbox_eval.py",
+        tests=("tests/unit/test_sandbox_eval.py",),
+        threshold=0.70,
+        budget_seconds=900,
+        max_candidates=60,
+        note="Sandbox session lifecycle and repo URL validation (25 tests).",
+    ),
+    Module(
+        key="policy_engine",
+        source="src/bernstein/core/security/policy_engine.py",
+        tests=(
+            "tests/unit/test_policy_engine.py",
+            "tests/unit/test_decision_graph.py",
+        ),
+        threshold=0.70,
+        budget_seconds=900,
+        max_candidates=60,
+        note="Rego/YAML policy evaluation and decision graph precedence (8 tests).",
+    ),
+    Module(
+        key="compliance_policies",
+        source="src/bernstein/core/security/compliance_policies.py",
+        tests=("tests/unit/test_compliance_policies.py",),
+        threshold=0.70,
+        budget_seconds=1200,
+        max_candidates=80,
+        note="Compliance policy library with 50+ Rego rules across frameworks (22 tests).",
+    ),
+    Module(
+        key="audit_pack",
+        source="src/bernstein/core/security/audit_pack.py",
+        tests=("tests/unit/security/test_audit_pack_staged_write.py",),
+        threshold=0.70,
+        budget_seconds=900,
+        max_candidates=60,
+        note="Staged atomic write for audit packs preventing reader truncation (6 tests).",
     ),
     Module(
         key="journal_verify",

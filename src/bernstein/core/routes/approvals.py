@@ -34,11 +34,11 @@ from bernstein.core.approval.models import (
 )
 from bernstein.core.approval.models import PendingApproval as QueuedApproval
 from bernstein.core.approval.queue import get_default_queue, promote_to_always_allow
-from bernstein.core.sanitize import sanitize_log
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_path,
 )
+from bernstein.core.security.sanitize import sanitize_log
 
 logger = logging.getLogger(__name__)
 

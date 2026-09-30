@@ -516,3 +516,77 @@ class TestBOMEmitFromLineage:
 
         assert result.exit_code == 1
         assert "invalid run id" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 5. ``bom verify --from-lineage`` -- offline re-derivation
+# ---------------------------------------------------------------------------
+
+
+class TestBOMVerifyFromLineage:
+    def test_verify_from_lineage_fails_closed_when_component_hash_does_not_resolve(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+        _seed_spine(tmp_path, "20260101-run-v")
+        out = tmp_path / "bom.json"
+
+        emit = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "20260101-run-v", "--from-lineage", "--workdir", str(tmp_path), "--out", str(out)],
+        )
+        assert emit.exit_code == 0, emit.output
+
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        doc["models"][0]["sha256"] = _sha("unrelated-component")
+        out.write_text(json.dumps(doc), encoding="utf-8")
+
+        verify = CliRunner().invoke(
+            bom_group,
+            ["verify", str(out), "--from-lineage", "--run", "20260101-run-v", "--workdir", str(tmp_path)],
+        )
+        assert verify.exit_code == 1
+        assert "claude-sonnet" in verify.output
+
+    def test_verify_from_lineage_passes_for_faithful_projection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+        _seed_spine(tmp_path, "20260101-run-w")
+        out = tmp_path / "bom.json"
+
+        emit = CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "20260101-run-w", "--from-lineage", "--workdir", str(tmp_path), "--out", str(out)],
+        )
+        assert emit.exit_code == 0, emit.output
+
+        verify = CliRunner().invoke(
+            bom_group,
+            ["verify", str(out), "--from-lineage", "--run", "20260101-run-w", "--workdir", str(tmp_path)],
+        )
+        assert verify.exit_code == 0, verify.output
+        assert "PASS" in verify.output
+
+    def test_verify_from_lineage_requires_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_audit_key(tmp_path, monkeypatch)
+        _seed_spine(tmp_path, "20260101-run-x")
+        out = tmp_path / "bom.json"
+        CliRunner().invoke(
+            bom_group,
+            ["emit", "--run", "20260101-run-x", "--from-lineage", "--workdir", str(tmp_path), "--out", str(out)],
+        )
+
+        verify = CliRunner().invoke(
+            bom_group,
+            ["verify", str(out), "--from-lineage", "--workdir", str(tmp_path)],
+        )
+        assert verify.exit_code == 2

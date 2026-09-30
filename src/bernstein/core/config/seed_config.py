@@ -494,6 +494,7 @@ class SeedConfig:
     # blocking; ``"strict"`` raises and the manager skips the affected
     # server; ``"off"`` disables verification entirely.
     mcp_signing_mode: Literal["warn", "strict", "off"] = "warn"
+    data_class: Literal["restricted", "internal", "confidential", "public"] | None = None
 
     def __post_init__(self) -> None:
         """Emit preflight warnings for provider/env mismatches (once/process)."""
