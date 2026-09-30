@@ -185,7 +185,8 @@ The combination matters:
   blocks any unintended outbound dial.
 - `kms_adapter: hsm` is only viable when a customer-provided
   `HSMKMSAdapter` subclass (PKCS#11 / Cloud-KMS) is on the classpath.
-  Without one, the orchestrator aborts at config-load time. For
+  Without one (and a `kms_adapter_token_uri`), the orchestrator aborts at
+  config-load time. For
   non-production smoke tests, set `BERNSTEIN_ALLOW_HSM_STUB=1` to opt
   in to the documentation stub explicitly. See
   [regulatory-lineage.md](regulatory-lineage.md) for the integration
@@ -196,8 +197,13 @@ The combination matters:
 Before processing any production traffic, run the air-gap doctor:
 
 ```bash
-$ bernstein --profile airgap doctor airgap
+$ BERNSTEIN_PROFILE_MODE=airgap bernstein doctor airgap
 ```
+
+(`bernstein run --profile airgap` exports `BERNSTEIN_PROFILE_MODE=airgap` for
+the run; the doctor reads that variable, so set it in the shell you check
+from. On a fresh workspace the audit-chain and runtime-hostname rows report
+WARN until `.sdd/audit` and `.sdd/runtime` exist.)
 
 Expected output (every row PASS):
 
@@ -227,7 +233,7 @@ the spawn refuses:
 
 ```bash
 $ OLLAMA_API_BASE=https://api.deepseek.com bernstein run \
-    --adapter ollama --model deepseek-v4-flash --task probe-residency
+    --cli ollama --model deepseek-v4-flash --goal "probe residency"
 RuntimeError: RESIDENCY_VIOLATION: model 'deepseek-v4-flash' requires a
 self-hosted endpoint under the eu-residency profile, got
 'https://api.deepseek.com'. Set OLLAMA_API_BASE / OLLAMA_HOST to a
@@ -240,22 +246,18 @@ for the auditor.
 
 ## Expected log lines
 
-A well-configured EU-residency run emits (one per line) the following
-in `.sdd/audit/<YYYY-MM-DD>.jsonl` (the log is daily-rotated):
+Under `--profile sovereign` the HMAC audit chain in
+`.sdd/audit/<YYYY-MM-DD>.jsonl` (the log is daily-rotated) carries the
+posture records:
 
 ```
-event=adapter.spawn adapter=ollama model=deepseek-v4-flash base_url=http://10.0.0.5:11434
-event=residency.gate.passed model=deepseek-v4-flash host=10.0.0.5 verdict=self_hosted
-event=lineage.signed regulatory_class=production_detection_rule kms=env
-event=network.policy.allow host=10.0.0.5 port=11434 source=adapter:ollama
+event_type=sovereign.posture_attestation   # written once at run start
+event_type=sovereign.posture_drift         # written only when a spawn is blocked by drift
 ```
 
-A misconfigured run (or an attacker-flipped base URL) emits:
-
-```
-event=residency.gate.violation model=deepseek-v4-flash base_url=https://api.deepseek.com
-event=adapter.spawn.aborted reason=RESIDENCY_VIOLATION
-```
+A residency-guard refusal (a public or unrecognised base URL under the
+guard) is not a chain event: the spawn raises
+`RuntimeError: RESIDENCY_VIOLATION ...` (see step 4) and the run fails.
 
 The audit chain HMAC covers every line so a tampered log is
 detectable via `bernstein audit verify` and
@@ -270,7 +272,7 @@ Three artefacts settle the Article-12 evidence story:
 2. **`MANIFEST.customer.json`** in the deployed wheelhouse -- the
    customer countersignature plus the org cosign signature, proving
    the running code was both vendor-signed AND customer-signed.
-3. **`bernstein doctor airgap --json`** snapshot taken at audit
+3. **`bernstein doctor airgap`** report captured at audit
    start AND audit end -- proves the network policy and runtime
    socket guard stayed deny-all throughout.
 
