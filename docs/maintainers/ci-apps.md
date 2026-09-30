@@ -86,20 +86,13 @@ Risk: first-time setup requires an existing PyPI account that owns the
 
 ---
 
-## 6. Enable GitHub merge queue
+## 6. GitHub merge queue - done
 
-Free for org-owned public repos in 2026.
-
-Steps: **Repo → Settings → Branches** → edit `main` branch protection rule →
-enable **Merge queue**.
-
-Caveats:
-- Pair with `required_status_checks.strict: false` - merge queue is
-  incompatible with "require branches to be up to date".
-- Required workflows must trigger on `merge_group`:
-  `on: merge_group: types: [checks_requested]`.
-- Verify after [#1277](https://github.com/sipyourdrink-ltd/bernstein/pull/1277)
-  lands - that PR adds the `merge_group` trigger to required workflows.
+The queue is active on `main` through the repository ruleset
+`main-merge-queue`, not branch protection. The required workflows trigger
+on `merge_group`. The queue's required contexts are `CI gate` and
+`shipped bundle matches the lockfile`. Configuration and tunables:
+[docs/operations/merge-queue.md](../operations/merge-queue.md).
 
 ---
 
@@ -183,7 +176,9 @@ gh api repos/chernistry/homebrew-tap/contents/Formula/bernstein.rb \
 - PAT scope is repo-narrow and Contents-only - minimum needed for `git push`
   to `homebrew-tap`. Don't broaden it.
 - 90-day rotation reminder: add to the operator's calendar; an expired PAT
-  makes the next release's homebrew run fail at the preflight step.
+  still passes the preflight (which only checks that the secret is defined)
+  and makes the next release's homebrew run fail at the "Push to
+  homebrew-tap repo" step with "homebrew-tap repo not reachable".
 
 ---
 

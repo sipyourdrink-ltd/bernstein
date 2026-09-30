@@ -2,7 +2,7 @@
 
 Bernstein uses **bridges** to abstract where agents execute. The Cloudflare integration provides four bridges: the Workers runtime bridge, the Workflow bridge, the browser rendering bridge, and the R2 workspace sync.
 
-All bridges except browser rendering and R2 sync implement the `RuntimeBridge` interface from `bernstein.bridges.base`, making them drop-in replacements for local execution.
+The Workers and Workflow bridges implement the `RuntimeBridge` interface from `bernstein.bridges.base`. The orchestrator does not wire them from `bernstein.yaml` (its only configurable runtime bridge is OpenClaw), so you construct and drive them from your own code.
 
 ---
 

@@ -26,9 +26,13 @@ It is also the tool we reach for when:
 
 ## How to use it
 
-Lineage records are emitted automatically at the in-process write
-boundary (`record_artifact_write`). There is nothing to enable for the
-write side. To read the chain back, use the `lineage` CLI:
+Per-artifact spine entries are emitted at the in-process write
+boundary (`record_artifact_write`) into `.sdd/lineage/<run_id>/spine.jsonl`;
+`bernstein lineage verify` and `lineage replay` read them. The file walk
+(`bernstein lineage <file>[:line]`), `lineage export` and `LineageReader`
+read `LineageRecord` rows from the run WAL, which only the deprecated
+`LineageWriter.emit` writes and no shipped path calls, so on a current
+run they return no records. The `lineage` CLI:
 
 ```bash
 # Walk the chain for one file (or one line within it)
@@ -47,9 +51,9 @@ bernstein lineage export r-2026-05-05 --format jsonld --output /tmp/audit.jsonld
 bernstein lineage verify r-2026-05-05
 ```
 
-The chain walks output → producing prompt → input artefact → upstream
-producer recursively. CLI text output prints the most recent producer
-first; `--limit` caps how many records are shown.
+The walk lists the records whose output artefact matches the path (and
+line); it does not recurse into input artefacts. Output is chronological
+with the newest record last; `--limit` (default 20) keeps the most recent N.
 
 ### Coverage and the `SEAL_ONLY` verify status
 
@@ -107,6 +111,12 @@ Each `LineageRecord` carries:
   [Regulator-class lineage](../compliance/regulatory-lineage.md))
 
 ## Configuration
+
+The `tuning.lineage.*` fields below are accepted in `bernstein.yaml` and
+stored on `defaults.LINEAGE`, but no shipped code path reads them today; a
+regulatory class or customer signature is applied only when a caller
+constructs `LineageWriter(signer=..., default_regulatory_class=...)`
+directly.
 
 | Knob | Default | Controls |
 |---|--:|---|

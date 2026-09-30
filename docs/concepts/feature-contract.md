@@ -1,10 +1,14 @@
 # Feature contract
 
-A plan step can carry an immutable list of features. Each feature has
-an id, a description, an acceptance check, and a `passes` flag. Agents
-may flip `passes: true` only when the declared acceptance check
-actually exits zero. The list is hash-anchored in the audit chain so
-agents cannot quietly add, remove, or weaken entries.
+A feature contract is an immutable list of features stored at
+`.sdd/contract/features.json`. Each feature has an id, a description, an
+acceptance check, and a `passes` flag. Agents may flip `passes: true`
+only when the declared acceptance check actually exits zero. The list's
+canonical sha256 is kept in the file's `anchor` field so
+`FeatureContract.load` detects in-place edits. `features_from_plan_step()`
+can build the list from a plan step's `features:` key and
+`record_anchor()` can write the anchor into the audit log, but neither is
+called automatically by the plan loader or orchestrator.
 
 ## Why it exists
 
@@ -87,8 +91,10 @@ to `.sdd/contract/features.json` and `verify_contract` takes
 - Contracts live with the plan; there is no cross-project feature
   library.
 - No CLI or visual board UI; read `features.json` directly.
-- Acceptance checks run as shell commands; supply them with care
-  (the existing command allowlist still applies).
+- Acceptance checks run as an argv (`shlex.split`, no shell) via
+  `subprocess.run` in the repo root, only when `allow_subprocess=True`,
+  with a 30 s timeout; no command allowlist is applied, so supply them
+  with care.
 
 ## Related
 

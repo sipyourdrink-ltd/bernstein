@@ -2,9 +2,10 @@
 
 The reviewer role frequently inspects files larger than its read budget.
 Line-based windowing cuts in the middle of functions, drops imports, and
-hands the model partial context. **AST-aware chunking** uses the existing
-Python symbol graph to split files at function and class boundaries, so
-every chunk the reviewer sees is a complete syntactic unit.
+hands the model partial context. **AST-aware chunking** parses the file
+with the standard-library `ast` module and splits at top-level statement
+boundaries (functions, classes, statement runs), so every chunk the
+reviewer sees is a complete syntactic unit.
 
 ## Why it exists
 
@@ -36,10 +37,11 @@ for chunk in chunks:
     print(chunk.text)  # full Python source, never split mid-body
 ```
 
-Each `ReviewChunk` carries the symbol header (function or class names
-included), the byte range, and the full source text. The reviewer
-prompt assembles them with the header as a one-line summary so the
-model sees structure before code.
+Each `ReviewChunk` carries `path`, `start_line` / `end_line` (1-indexed,
+inclusive), the top-level `symbols`, the source `text`, a one-line
+`header` (`# <path> L<start>-<end> - symbols: ...`) and `language`
+(`python` or `text` for the fallback). No shipped reviewer prompt
+consumes the chunks yet; callers render them.
 
 ## Configuration
 
@@ -61,6 +63,5 @@ otherwise self-contained - no user-facing knobs.
 ## Related
 
 - Source: `src/bernstein/core/quality/review_pipeline/ast_chunker.py`
-- Symbol graph: `src/bernstein/core/knowledge/ast_symbol_graph.py`
 - Quality pipeline: [Quality Pipeline](../architecture/quality-pipeline.md)
 - PR #993

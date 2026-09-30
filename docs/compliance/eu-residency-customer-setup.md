@@ -154,7 +154,15 @@ endpoint that aider/litellm route through.
 
 ### 2. Generate the EU-residency profile
 
-Drop a `eu_residency_profile.yaml` next to `bernstein.yaml`:
+!!! warning "Planned surface"
+    No code loads `eu_residency_profile.yaml` today. The supported
+    single-file path is the `sovereign:` block in `bernstein.yaml` with
+    `--profile sovereign` (see above). The Ollama adapter's `base_url` and
+    `eu_residency` flag are constructor arguments
+    (`OllamaAdapter(base_url=..., eu_residency=True)`) with no
+    `bernstein.yaml` key today.
+
+The planned profile file sits next to `bernstein.yaml`:
 
 ```yaml
 # eu_residency_profile.yaml
@@ -200,10 +208,12 @@ Before processing any production traffic, run the air-gap doctor:
 $ BERNSTEIN_PROFILE_MODE=airgap bernstein doctor airgap
 ```
 
-(`bernstein run --profile airgap` exports `BERNSTEIN_PROFILE_MODE=airgap` for
-the run; the doctor reads that variable, so set it in the shell you check
-from. On a fresh workspace the audit-chain and runtime-hostname rows report
-WARN until `.sdd/audit` and `.sdd/runtime` exist.)
+(`bernstein doctor airgap` also works on its own. When
+`BERNSTEIN_PROFILE_MODE` is unset it simulates `--profile airgap
+--allow-network none` for the checks and prints a notice. Setting the
+variable only suppresses that notice. On a fresh workspace the audit-chain
+and runtime-hostname rows report WARN until `.sdd/audit` and `.sdd/runtime`
+exist.)
 
 Expected output (every row PASS):
 
@@ -227,18 +237,39 @@ wiring it into a deploy-time CI gate is one line.
 
 ### 4. Spot-check the residency guard with a deliberate failure
 
-Compliance teams should occasionally probe the guard. Set the base
-URL to a public hosted API (`https://api.deepseek.com`) and confirm
-the spawn refuses:
+Compliance teams should occasionally probe the guard. The guard checks
+the adapter's configured `base_url`; the `OLLAMA_API_BASE` environment
+variable does not change it (the adapter is built with no arguments and
+defaults to `http://localhost:11434`). Construct the adapter with a public
+hosted API as its base URL (`https://api.deepseek.com`) and confirm the
+spawn refuses:
 
-```bash
-$ OLLAMA_API_BASE=https://api.deepseek.com bernstein run \
-    --cli ollama --model deepseek-v4-flash --goal "probe residency"
+```python
+from pathlib import Path
+
+from bernstein.adapters.ollama import OllamaAdapter
+from bernstein.core.models import ModelConfig
+
+adapter = OllamaAdapter(base_url="https://api.deepseek.com")
+adapter.spawn(
+    prompt="probe residency",
+    workdir=Path("."),
+    model_config=ModelConfig(model="deepseek-v4-flash", effort="high"),
+    session_id="residency-probe",
+)
+```
+
+```
 RuntimeError: RESIDENCY_VIOLATION: model 'deepseek-v4-flash' requires a
 self-hosted endpoint under the eu-residency profile, got
 'https://api.deepseek.com'. Set OLLAMA_API_BASE / OLLAMA_HOST to a
 self-hosted (e.g. vLLM, Ollama on a private/EU node) endpoint and retry.
 ```
+
+Run it in a shell without `BERNSTEIN_NETWORK_POLICY` or the airgap profile
+set. Under a deny-all policy the network-policy check runs first and raises
+`NetworkPolicyDenied: network egress denied by policy: api.deepseek.com:11434`
+instead.
 
 The exit code is non-zero. Wire this scenario into your weekly
 compliance smoke pipeline -- a passing guard is observable evidence

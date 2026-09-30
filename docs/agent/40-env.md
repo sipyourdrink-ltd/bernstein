@@ -7,7 +7,7 @@ Keys only. Values are never read or emitted by agent-docs.
 | `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | yes | 1 | — | `src/bernstein/core/security/sigstore_attestation.py:232` |
 | `ACTIONS_ID_TOKEN_REQUEST_URL` | yes | 2 | — | `src/bernstein/core/security/sigstore_attestation.py:225` |
 | `ALLOWED_SCOPE` |  | 1 | — | `.github/workflows/bernstein-issues-decompose.yml:281` |
-| `ANTHROPIC_API_KEY` | yes | 4 | `.env.example:15` | `src/bernstein/adapters/claude.py:978` |
+| `ANTHROPIC_API_KEY` | yes | 4 | `.env.example:15` | `src/bernstein/adapters/claude.py:1129` |
 | `APPDATA` |  | 1 | — | `src/bernstein/core/substrate/host_registry.py:76` |
 | `AWS_ACCESS_KEY_ID` |  | 3 | — | `src/bernstein/core/storage/sinks/r2.py:68` |
 | `AWS_ENDPOINT_URL` |  | 3 | — | `src/bernstein/core/storage/sinks/s3.py:120` |
@@ -18,12 +18,12 @@ Keys only. Values are never read or emitted by agent-docs.
 | `AZURE_STORAGE_ACCOUNT_NAME` |  | 1 | — | `tests/integration/storage/test_azure_blob_sink.py:52` |
 | `AZURE_STORAGE_CONNECTION_STRING` | yes | 1 | — | `tests/integration/storage/test_azure_blob_sink.py:51` |
 | `BACKLOG_PATH` |  | 1 | — | `tests/integration/test_claim_next_concurrency.py:183` |
-| `BAGGAGE` |  | 1 | — | `src/bernstein/adapters/base.py:1388` |
+| `BAGGAGE` |  | 1 | — | `src/bernstein/adapters/base.py:1497` |
 | `BEARTYPE_USE_CLAW` |  | 1 | — | `tests/_beartype_claw.py:30` |
 | `BERNSTEIN_AB_TEST` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:7452` |
 | `BERNSTEIN_ACCESSIBILITY` |  | 1 | — | `src/bernstein/tui/accessibility.py:90` |
 | `BERNSTEIN_ACTIVITY_LOG` |  | 1 | — | `src/bernstein/cli/dashboard_app.py:297` |
-| `BERNSTEIN_ADAPTER` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:2141` |
+| `BERNSTEIN_ADAPTER` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:2706` |
 | `BERNSTEIN_ADAPTER_ADMISSION_POLICY` |  | 2 | — | `tests/conftest.py:607` |
 | `BERNSTEIN_AGENT_CARD_KEY_DIR` |  | 2 | — | `src/bernstein/core/routes/well_known.py:191` |
 | `BERNSTEIN_AGENT_IMAGE` |  | 1 | — | `src/bernstein/core/orchestration/operator.py:605` |
@@ -34,26 +34,26 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_AUDIT_MQTT_ENABLED` |  | 1 | — | `examples/plugins/custom-audit-sink/src/custom_audit_sink/_sink.py:58` |
 | `BERNSTEIN_AUDIT_MQTT_TOPIC` |  | 1 | — | `examples/plugins/custom-audit-sink/src/custom_audit_sink/_sink.py:57` |
 | `BERNSTEIN_AUDIT_MQTT_URL` |  | 1 | — | `examples/plugins/custom-audit-sink/src/custom_audit_sink/_sink.py:56` |
-| `BERNSTEIN_AUDIT_RECEIPT_VERIFIER` |  | 1 | — | `src/bernstein/cli/commands/audit_cmd.py:3995` |
+| `BERNSTEIN_AUDIT_RECEIPT_VERIFIER` |  | 1 | — | `src/bernstein/cli/commands/audit_cmd.py:4001` |
 | `BERNSTEIN_AUTH_DISABLED` |  | 4 | — | `src/bernstein/core/server/server_launch.py:660` |
 | `BERNSTEIN_AUTH_JWT_SECRET` | yes | 1 | — | `src/bernstein/core/identity/agent_jwt.py:611` |
 | `BERNSTEIN_AUTH_SECRET` | yes | 1 | — | `src/bernstein/core/orchestration/operator.py:606` |
 | `BERNSTEIN_AUTH_TOKEN` | yes | 4 | `.env.example:27` | `src/bernstein/cli/commands/auth_cmd.py:316` |
-| `BERNSTEIN_AUTO_PR` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:5828` |
+| `BERNSTEIN_AUTO_PR` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:5829` |
 | `BERNSTEIN_AZURE_CONTAINER` |  | 1 | — | `src/bernstein/core/storage/sinks/azure_blob.py:91` |
 | `BERNSTEIN_BIN` |  | 1 | — | `src/bernstein/core/fleet/bulk.py:148` |
-| `BERNSTEIN_BIND_HOST` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:3056` |
+| `BERNSTEIN_BIND_HOST` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:3090` |
 | `BERNSTEIN_BROKER_KEY` | yes | 1 | — | `src/bernstein/core/security/secrets_broker.py:451` |
 | `BERNSTEIN_CLI` |  | 2 | — | `tests/conftest.py:604` |
 | `BERNSTEIN_CLUSTER_AUTH_SECRET` | yes | 1 | — | `src/bernstein/core/server/server_app.py:1632` |
 | `BERNSTEIN_CLUSTER_ENABLED` |  | 2 | — | `src/bernstein/core/orchestration/orchestrator.py:7426` |
 | `BERNSTEIN_COMPLIANCE` |  | 3 | — | `src/bernstein/core/orchestration/bootstrap.py:364` |
-| `BERNSTEIN_CONTAINER` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:417` |
+| `BERNSTEIN_CONTAINER` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:456` |
 | `BERNSTEIN_CONTAINER_IMAGE` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:7130` |
 | `BERNSTEIN_COST_USAGE_BUFFER` |  | 1 | — | `src/bernstein/core/cost/cost_tracker.py:171` |
 | `BERNSTEIN_DAILY_BUDGET_USD` |  | 1 | — | `examples/plugins/custom_router_plugin.py:93` |
 | `BERNSTEIN_DASHBOARD_PASSWORD` | yes | 2 | — | `src/bernstein/core/server/dashboard_auth.py:234` |
-| `BERNSTEIN_DATABASE_URL` | yes | 3 | — | `src/bernstein/cli/commands/status_cmd.py:548` |
+| `BERNSTEIN_DATABASE_URL` | yes | 3 | — | `src/bernstein/cli/commands/status_cmd.py:551` |
 | `BERNSTEIN_DEBUG` |  | 1 | — | `src/bernstein/core/server/server_middleware.py:225` |
 | `BERNSTEIN_DEBUG_SPLASH` |  | 1 | — | `src/bernstein/cli/display/splash_screen.py:712` |
 | `BERNSTEIN_DEFAULT_CLI` |  | 1 | — | `src/bernstein/cli/commands/chat_cmd.py:611` |
@@ -71,7 +71,7 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_FLEET_ROOT` |  | 1 | — | `src/bernstein/core/fleet/directory_registry.py:96` |
 | `BERNSTEIN_FORCE_OPUS` |  | 1 | — | `tests/integration/test_criterion_profile_routing.py:262` |
 | `BERNSTEIN_FRAME_ANCESTORS` |  | 1 | — | `src/bernstein/core/server/frame_headers.py:31` |
-| `BERNSTEIN_GATE_REPAIR` |  | 1 | — | `src/bernstein/core/tasks/task_lifecycle.py:3185` |
+| `BERNSTEIN_GATE_REPAIR` |  | 1 | — | `src/bernstein/core/tasks/task_lifecycle.py:3208` |
 | `BERNSTEIN_GCS_BUCKET` |  | 1 | — | `src/bernstein/core/storage/sinks/gcs.py:85` |
 | `BERNSTEIN_GCS_TEST_BUCKET` |  | 2 | — | `tests/integration/storage/test_gcs_sink.py:47` |
 | `BERNSTEIN_GITHUB_PAGE_LIMIT` |  | 1 | — | `src/bernstein/core/git/github.py:97` |
@@ -79,7 +79,7 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_HARD_BUDGET_USD` |  | 2 | — | `src/bernstein/cli/run_bootstrap.py:437` |
 | `BERNSTEIN_HEARTBEAT_TIMEOUT` |  | 2 | — | `tests/conftest.py:606` |
 | `BERNSTEIN_JANITOR_FUZZY_PATHS` |  | 1 | — | `src/bernstein/core/quality/janitor.py:1874` |
-| `BERNSTEIN_JANITOR_REOPEN_MAX` |  | 1 | — | `src/bernstein/core/tasks/task_lifecycle.py:5146` |
+| `BERNSTEIN_JANITOR_REOPEN_MAX` |  | 1 | — | `src/bernstein/core/tasks/task_lifecycle.py:5147` |
 | `BERNSTEIN_LINEAGE_OP_SECRET` | yes | 2 | — | `src/bernstein/cli/commands/audit_cmd.py:3380` |
 | `BERNSTEIN_LOG_JSON` |  | 1 | — | `src/bernstein/core/server/json_logging.py:104` |
 | `BERNSTEIN_MAX_BLAST_RADIUS` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:444` |
@@ -94,7 +94,7 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_METRICS_DIR` |  | 2 | — | `docs/integrations/plugin-sdk.md:531` |
 | `BERNSTEIN_MICROVM_INTEGRATION` |  | 1 | — | `tests/integration/sandbox/test_microvm_firecracker.py:46` |
 | `BERNSTEIN_MOCK_IDLE` |  | 2 | — | `src/bernstein/adapters/mock.py:345` |
-| `BERNSTEIN_MODEL` |  | 2 | — | `src/bernstein/core/orchestration/orchestrator.py:6758` |
+| `BERNSTEIN_MODEL` |  | 2 | — | `src/bernstein/core/orchestration/orchestrator.py:6763` |
 | `BERNSTEIN_NERD_FONT` |  | 1 | — | `src/bernstein/core/observability/icons.py:163` |
 | `BERNSTEIN_NO_TUI` |  | 1 | — | `src/bernstein/cli/display/terminal_caps.py:180` |
 | `BERNSTEIN_OPERATOR_ID` |  | 1 | — | `src/bernstein/core/orchestration/consensus_relay.py:422` |
@@ -109,22 +109,22 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_PROMPT_MAX_PATCHES_PER_SESSION` |  | 1 | — | `src/bernstein/evolution/oscillation_guard.py:129` |
 | `BERNSTEIN_PROMPT_MIN_DELTA` |  | 1 | — | `src/bernstein/evolution/predicted_delta.py:215` |
 | `BERNSTEIN_PROVIDER_KEYS_SECRET` | yes | 1 | — | `src/bernstein/core/orchestration/operator.py:607` |
-| `BERNSTEIN_PUBLIC_BASE_URL` |  | 1 | — | `src/bernstein/core/routes/well_known.py:557` |
+| `BERNSTEIN_PUBLIC_BASE_URL` |  | 1 | — | `src/bernstein/core/routes/well_known.py:561` |
 | `BERNSTEIN_QUIESCENCE_SETTLE_S` |  | 2 | — | `src/bernstein/core/orchestration/orchestrator.py:2591` |
-| `BERNSTEIN_QUIET` |  | 2 | — | `src/bernstein/core/orchestration/orchestrator.py:6085` |
+| `BERNSTEIN_QUIET` |  | 2 | — | `src/bernstein/core/orchestration/orchestrator.py:6122` |
 | `BERNSTEIN_R2_BUCKET` |  | 1 | — | `src/bernstein/core/storage/sinks/r2.py:66` |
 | `BERNSTEIN_R2_TEST_BUCKET` |  | 2 | — | `tests/integration/storage/test_r2_sink.py:41` |
 | `BERNSTEIN_READONLY` |  | 1 | — | `src/bernstein/core/server/server_app.py:1647` |
-| `BERNSTEIN_REDIS_URL` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:588` |
-| `BERNSTEIN_REFRESH_CACHE` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:2351` |
+| `BERNSTEIN_REDIS_URL` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:591` |
+| `BERNSTEIN_REFRESH_CACHE` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:2626` |
 | `BERNSTEIN_RELAY_KEY` | yes | 1 | — | `src/bernstein/core/orchestration/consensus_relay.py:443` |
-| `BERNSTEIN_REMOTE_QUICKSTART` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:1259` |
+| `BERNSTEIN_REMOTE_QUICKSTART` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:1293` |
 | `BERNSTEIN_REPLAY_RUN_ID` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:6831` |
 | `BERNSTEIN_REQUEST_LOG_LEVEL` |  | 1 | — | `src/bernstein/core/server/request_logging.py:47` |
-| `BERNSTEIN_RETRY_BUDGET_SPEC` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:2288` |
+| `BERNSTEIN_RETRY_BUDGET_SPEC` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:2620` |
 | `BERNSTEIN_REVIEW_AUTH_TOKEN` | yes | 1 | — | `src/bernstein/core/volunteer/review_task.py:75` |
 | `BERNSTEIN_REVIEW_SERVER_URL` |  | 1 | — | `src/bernstein/core/volunteer/review_task.py:50` |
-| `BERNSTEIN_ROUTING` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:655` |
+| `BERNSTEIN_ROUTING` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:660` |
 | `BERNSTEIN_RUN_ATTACHMENTS` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:2597` |
 | `BERNSTEIN_RUN_CLUSTER_E2E` |  | 1 | — | `tests/integration/cluster/conftest.py:648` |
 | `BERNSTEIN_RUN_CRITERION_PROFILE` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:2568` |
@@ -134,27 +134,27 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_SANDBOX` |  | 4 | — | `src/bernstein/core/security/guardrails.py:65` |
 | `BERNSTEIN_SANDBOX_ALLOW_PAID` |  | 2 | — | `tests/unit/test_cli_run_sandbox.py:159` |
 | `BERNSTEIN_SANDBOX_RUNTIME` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:457` |
-| `BERNSTEIN_SBOM_ON_COMPLETE` |  | 1 | — | `src/bernstein/core/routes/task_crud.py:825` |
+| `BERNSTEIN_SBOM_ON_COMPLETE` |  | 1 | — | `src/bernstein/core/routes/task_crud.py:834` |
 | `BERNSTEIN_SDD_DIR` |  | 3 | — | `scripts/auto_heal_v2_run.py:55` |
 | `BERNSTEIN_SECURITY_CMD` |  | 2 | — | `docs/integrations/plugin-sdk.md:631` |
 | `BERNSTEIN_SEED_PATH` |  | 4 | — | `src/bernstein/core/config/seed.py:435` |
-| `BERNSTEIN_SERVER_URL` |  | 4 | — | `src/bernstein/adapters/claude.py:780` |
+| `BERNSTEIN_SERVER_URL` |  | 4 | — | `src/bernstein/adapters/claude.py:787` |
 | `BERNSTEIN_SKILLS_CATALOG_AUDIT_DIR` |  | 1 | — | `src/bernstein/cli/commands/skills_catalog_cmd.py:51` |
 | `BERNSTEIN_SKILLS_CATALOG_CACHE_PATH` |  | 1 | — | `src/bernstein/core/skills/catalog/fetcher.py:62` |
 | `BERNSTEIN_SKIP_AZURE_TESTS` |  | 1 | — | `tests/integration/storage/test_azure_blob_sink.py:48` |
 | `BERNSTEIN_SKIP_DOCKER_TESTS` |  | 1 | — | `tests/integration/sandbox/test_docker_backend.py:33` |
-| `BERNSTEIN_SKIP_GATES` |  | 2 | — | `src/bernstein/cli/run_preflight.py:914` |
-| `BERNSTEIN_SKIP_GATE_REASON` |  | 2 | — | `src/bernstein/cli/run_preflight.py:915` |
+| `BERNSTEIN_SKIP_GATES` |  | 2 | — | `src/bernstein/cli/run_preflight.py:939` |
+| `BERNSTEIN_SKIP_GATE_REASON` |  | 2 | — | `src/bernstein/cli/run_preflight.py:941` |
 | `BERNSTEIN_SKIP_GCS_TESTS` |  | 1 | — | `tests/integration/storage/test_gcs_sink.py:42` |
 | `BERNSTEIN_SKIP_R2_TESTS` |  | 1 | — | `tests/integration/storage/test_r2_sink.py:35` |
 | `BERNSTEIN_SKIP_S3_TESTS` |  | 1 | — | `tests/integration/storage/test_s3_sink.py:42` |
 | `BERNSTEIN_SLACK_APP_TOKEN` | yes | 1 | — | `src/bernstein/cli/commands/mission_cmd.py:397` |
 | `BERNSTEIN_STATE_KEY_PASSPHRASE` |  | 1 | — | `src/bernstein/core/security/state_encryption.py:402` |
 | `BERNSTEIN_STATE_KEY_PATH` |  | 1 | — | `src/bernstein/core/security/state_encryption.py:370` |
-| `BERNSTEIN_STORAGE_BACKEND` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:528` |
+| `BERNSTEIN_STORAGE_BACKEND` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:531` |
 | `BERNSTEIN_TASK_FILTER` |  | 4 | — | `src/bernstein/core/git/github.py:1066` |
 | `BERNSTEIN_TASK_ID` |  | 1 | — | `src/bernstein/cli/commands/memory_cmd.py:48` |
-| `BERNSTEIN_TELEMETRY_DSN` | yes | 1 | — | `src/bernstein/cli/main.py:360` |
+| `BERNSTEIN_TELEMETRY_DSN` | yes | 1 | — | `src/bernstein/cli/main.py:378` |
 | `BERNSTEIN_TEST_API_KEY` | yes | 1 | — | `tests/integration/test_stack_integrations.py:30` |
 | `BERNSTEIN_THEME` |  | 1 | — | `src/bernstein/tui/themes.py:145` |
 | `BERNSTEIN_TRACES_DIR` |  | 1 | — | `src/bernstein/cli/commands/compare_cmd.py:39` |
@@ -178,9 +178,9 @@ Keys only. Values are never read or emitted by agent-docs.
 | `CI_VERCEL_TEST` |  | 1 | — | `tests/integration/sandbox/test_vercel_backend.py:20` |
 | `CLAIMER_ID` |  | 1 | — | `tests/integration/test_claim_next_concurrency.py:184` |
 | `CLAIM_ROLE` |  | 1 | — | `tests/integration/test_claim_next_concurrency.py:185` |
-| `CLOUDFLARE_ACCOUNT_ID` |  | 2 | — | `docs/cloudflare/cloudflare-browser-rendering.md:50` |
-| `CLOUDFLARE_API_TOKEN` | yes | 2 | — | `docs/cloudflare/cloudflare-browser-rendering.md:51` |
-| `CODESPACES` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:1257` |
+| `CLOUDFLARE_ACCOUNT_ID` |  | 2 | — | `docs/cloudflare/cloudflare-browser-rendering.md:51` |
+| `CLOUDFLARE_API_TOKEN` | yes | 2 | — | `docs/cloudflare/cloudflare-browser-rendering.md:52` |
+| `CODESPACES` |  | 2 | — | `src/bernstein/cli/commands/status_cmd.py:1291` |
 | `COLORFGBG` |  | 1 | — | `src/bernstein/tui/themes.py:154` |
 | `COLORTERM` |  | 2 | — | `src/bernstein/cli/display/terminal_caps.py:106` |
 | `COMSPEC` |  | 1 | — | `src/bernstein/core/orchestration/worker.py:117` |
@@ -202,7 +202,7 @@ Keys only. Values are never read or emitted by agent-docs.
 | `DISCORD_PUBLIC_KEY` | yes | 1 | — | `src/bernstein/core/routes/discord.py:62` |
 | `DISCORD_WEBHOOK_URL` |  | 2 | — | `docs/integrations/plugin-sdk.md:416` |
 | `E2B_API_KEY` | yes | 1 | — | `tests/integration/sandbox/test_e2b_backend.py:26` |
-| `EVENT_NAME` |  | 1 | — | `.github/workflows/ci.yml:201` |
+| `EVENT_NAME` |  | 1 | — | `.github/workflows/ci.yml:2481` |
 | `GEMINI_API_KEY` | yes | 2 | — | `src/bernstein/adapters/gemini.py:244` |
 
 > Showing 200 of 350; the rest is in `.machine/facts.json`.

@@ -64,8 +64,8 @@ fire in sequence:
 
 | Threshold | Default | Action |
 |---|--:|---|
-| Warn | 80% | Soft warning surfaced in operator views and Prometheus. |
-| Critical | 95% | Hard warning; non-essential work is queued for shutdown. |
+| Warn | 80% | One-time `Budget warning` log line from the cost tracker; `should_warn` is exposed in the costs/status API. The orchestrator's default `BudgetPolicy` also returns PAUSE from 80%, holding new spawns (running agents continue). |
+| Critical | 95% | One-time `BUDGET CRITICAL` log line; no action of its own. (From 90% the default `BudgetPolicy` returns DOWNGRADE_MODEL: ready tasks are rewritten to a cheaper model tier and spawning resumes on that tier.) |
 | Stop | 100% | `should_stop` flips; the orchestrator drains live agents and aborts. |
 
 The cap source resolves with the following precedence:

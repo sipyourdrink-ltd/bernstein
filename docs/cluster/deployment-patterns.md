@@ -452,7 +452,7 @@ Getting the values:
 
 ```bash
 # On each peer - the id it will declare, and the key that proves it.
-bernstein cluster claims head          # any receipt's node_id is the peer's id
+bernstein cluster claims log           # the `node` column (node_id with --json-output) on this node's own receipts is its id
 cat .sdd/cluster/identity/claim_signing.pub
 ```
 

@@ -131,10 +131,12 @@ JSON with:
 - ``script_content`` - the requested script's raw text.
 - ``error`` - populated when the skill / file could not be loaded.
 
-Every named-skill load passes a ``skill_loaded`` event to a WAL sink
-callback (default: an ``INFO`` log line) with
+Every load of an existing named skill passes a ``skill_loaded`` event to
+a WAL sink callback (default: an ``INFO`` log line) with
 ``name``, ``reference``, ``script``, ``source``, ``duration_s``, and
-``error`` fields.
+``error`` fields (including loads whose reference or script read failed,
+which set ``error``); a name that is not found returns an error result
+without emitting the event.
 
 ## Sources
 

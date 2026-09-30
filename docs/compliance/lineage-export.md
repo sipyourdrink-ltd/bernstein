@@ -308,9 +308,9 @@ janitor's retention policy:
 
 | Knob                         | Default | Source                                                       |
 | ---------------------------- | ------: | ------------------------------------------------------------ |
-| `janitor.run_retention_count` |     20  | `JanitorDefaults` in `core/defaults.py`. Last 20 runs kept; older are pruned. |
-| `janitor.wal_retention_count` |     50  | `JanitorDefaults` in `core/defaults.py`. Last 50 WAL files per run kept.      |
-| (no knob)                     |  always | Janitor gzips rotated WAL files in place (`compact_lineage_logs`).            |
+| `tuning.janitor.run_retention_count` |     20  | `JanitorDefaults` in `core/defaults.py`. Last 20 runs kept; older are pruned. |
+| `tuning.janitor.wal_retention_count` |     50  | `JanitorDefaults` in `core/defaults.py`. Last 50 WAL files per run kept.      |
+| (no knob)                     | not scheduled | `compact_lineage_logs` gzips rotated `<run_id>.wal.jsonl.<N>` segments when invoked; the janitor cycle does not call it yet. |
 
 Two operational rules:
 
@@ -318,8 +318,8 @@ Two operational rules:
    while writes are still happening - a live verifier never races the
    compactor.
 2. Rotated `<run_id>.wal.jsonl.<N>` segments are gzipped to `<...>.gz`
-   on the next janitor cycle. The reader handles both forms
-   transparently.
+   when `compact_lineage_logs` is invoked (the janitor cycle does not
+   call it yet). The reader handles both forms transparently.
 
 For an auditor handover, snapshot `.sdd/runtime/wal/` for the run
 *before* the next janitor cycle and ship the snapshot alongside the

@@ -16,7 +16,7 @@ locally without waiting for the cloud runner.
 | **Schemathesis**            | 5xx leaks against fuzzed REST inputs                              | PR (allow-list), nightly (full)  |
 | **CrossHair**               | Logic errors in pure helpers (concolic execution, assert checks)  | nightly only         |
 | **mutmut diff-only**        | Test-effectiveness gaps on PR-changed lines                       | PR (advisory)       |
-| **mutmut fixed paths**      | Per-module kill-rate gate on a fixed critical-path module list    | PR (path-filtered) + weekly cron  |
+| **mutmut fixed paths**      | Per-module kill-rate gate on a fixed critical-path module list    | weekly cron + manual dispatch  |
 | **mutmut full**             | Test-effectiveness gaps across the whole repo                     | nightly (advisory)  |
 | **Semgrep** (custom rules)  | eval/exec/pickle in production, env-leak in `_spawn_*`            | PR (ERROR fails)    |
 | **Bandit**                  | Generic Python security smells (shell=True, weak hash, tarfile)   | PR (HIGH only)      |
@@ -33,7 +33,7 @@ locally without waiting for the cloud runner.
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
-| **Web Node tests**          | Pre-hydration theme resolution and browser-bootstrap safety         | PR (focused)        |
+| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes | local only (`cd web && npm test`; not run in CI) |
 
 ## Web UI tests
 
@@ -106,8 +106,9 @@ BERNSTEIN_AUTH_DISABLED=1 SCHEMATHESIS_PROFILE=smoke \
 
 # Semgrep (project rules; ERROR severity is the PR gate).
 # Install once via `uv tool install semgrep` - semgrep's transitive
-# pins (click<8.2, opentelemetry-sdk<1.26) conflict with our project
-# floors, so it lives in its own venv outside `uv sync`.
+# pins (click<8.2, opentelemetry-sdk<1.38) conflict with our project
+# floors (click>=8.3.3, opentelemetry-sdk>=1.41.1), so it lives in its
+# own venv outside `uv sync`.
 uv tool install semgrep
 uv tool run semgrep --config .semgrep.yml --severity ERROR --error src/
 
@@ -136,7 +137,7 @@ uv run mypy --config-file mypy.gate.ini
 uv run mypy src
 
 # Vulture
-vulture src/ vulture_whitelist.py --min-confidence 80 --exclude tests,docs
+vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
 # Diff-cover (after a coverage run). The floor is the committed
 # diff_coverage_floor_percent in .coverage-baseline.json (LEVEL 1 of the
@@ -223,7 +224,7 @@ workflow artifact either way.
 Reproduce locally:
 
 ```bash
-# All modules (slow - budgets sum to about an hour).
+# All modules (slow - budgets sum to about three and a half hours).
 uv run python scripts/mutmut_critical.py
 
 # One module:
@@ -232,9 +233,11 @@ uv run python scripts/mutmut_critical.py --list   # show keys
 ```
 
 Adding a module to the gate: extend `MODULES` in
-`scripts/mutmut_critical.py`, mirror the matrix in
-`.github/workflows/mutation-fixed.yml`, and add the source/test
-paths to the `paths:` filter on the same workflow.
+`scripts/mutmut_critical.py`, add the key to
+`jobs.mutate.strategy.matrix.module` in
+`.github/workflows/mutation-fixed.yml` with a matching `include` entry
+(`advisory: false` unless it is added to `ADVISORY_MODULES` in
+`tests/unit/test_mutation_fixed_workflow_yaml.py`).
 
 ## Hermetic unit tests (no network)
 
@@ -371,9 +374,10 @@ output exactly - existing scripts keep working unchanged.
 
 PR-time CI must stay under 2× the pre-2026 baseline. Heavy work
 (full mutmut, deep Hypothesis, full Schemathesis, full CrossHair)
-runs only in `nightly-deep-tests.yml` (cron `0 3 * * *`) and is
-explicitly `continue-on-error` so an overnight regression doesn't
-block tomorrow's PRs.
+runs only in `nightly-deep-tests.yml` (cron `0 3 * * *`). That
+workflow has no `pull_request` trigger and is not a required check, so
+a red night blocks no PR. Its jobs are not `continue-on-error`;
+genuinely advisory tools tolerate failure with a step-level `|| true`.
 
 The added PR-time jobs target ≤8 min wall-clock each and run in
 parallel after the lint job clears (so a typo PR fails fast in <2
@@ -439,13 +443,18 @@ uv run python scripts/run_tests.py --shard 1/4 --record-durations
 In CI the `ubuntu`/`windows` `Test` cells fan out across a `shard`
 matrix dimension; the rolled-up `needs.test.result` the `CI gate`
 aggregator reads is `failure` if *any* shard cell fails, so every shard
-is still required. Coverage / JUnit / Codecov upload runs on shard 1
-only (its own file loop still covers every file, so the pin
-deduplicates without narrowing coverage). The `macos` cell keeps a
-single literal job name (branch-protection required-context); it runs a
-deterministic `--shard 1/4` subset on push and the affected slice on
-PRs, with `ci-macos-nightly.yml` running the full macOS matrix daily as
-the safety net.
+is still required. Each ubuntu Python 3.13 shard uploads its own
+`.coverage.<shard>` artifact on pushes to main (and on manual dispatches
+on main). The `coverage-report` job, which runs on main only for a
+manual dispatch or a release commit (`chore(release)` / `release:`),
+combines the four shards and uploads to Codecov. No JUnit report is
+produced. The only shard-1 pin is the capability-matrix spawn-refusal
+integration test, so it runs once per cell. The `test-macos` job shards
+the file list across four cells (templated name; no test cell is a
+required context). It runs only when the diff is macOS-sensitive or the
+PR carries `macos-needed`, never in the merge queue, and
+`ci-macos-nightly.yml` runs the full macOS suite daily as the safety
+net.
 
 ### Legacy import aliases and `--affected`
 

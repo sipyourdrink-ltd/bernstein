@@ -273,7 +273,7 @@ model_policy:
 |------|--------|
 | `--routing {static,bandit,bandit-shadow}` | Static cascade heuristics (default), the contextual bandit, or bandit decisions logged without changing live routing. |
 | `--model <name>` | Override the initial model for this run. |
-| `--budget <usd>` | Cap per-run spend; stop spawning agents when reached (0 = unlimited). |
+| `--budget SPEC` | Run spend cap in USD (`5usd`, `$5` or `5.0`); alias of `--max-cost-usd`, which wins when both are given. With the default budget policy, new spawns are held from 80% of the cap, resume on a cheaper model from 90%, and stop at 100%, when live agents are also shut down. `0` sets no CLI cap, so a `budget` in `bernstein.yaml` still applies. |
 
 ---
 

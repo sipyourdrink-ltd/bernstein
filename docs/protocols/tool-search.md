@@ -36,7 +36,11 @@ before. The behaviour is automatic; the agent does not need to know.
 
 ## How to use it
 
-Default-on, no config required. To tune:
+The lazy-loading prompt builder (`mcp_manager.build_tools_prompt_section`)
+is not yet called from the spawn path. `tuning.mcp_tool_search.*` is
+accepted by the config loader but has no effect today: the builder reads
+the import-time `MCP_TOOL_SEARCH_ENABLED` / `MCP_TOOL_SEARCH_THRESHOLD_TOKENS`
+constants and a fixed 1500-token directory budget. The accepted keys:
 
 ```yaml
 # bernstein.yaml

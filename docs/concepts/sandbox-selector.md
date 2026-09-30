@@ -28,8 +28,9 @@ The selector replaces that with three rules:
    the operator opted into paid execution.
 3. **Capability-gated filtering.** Backends that cannot satisfy
    the manifest's required capability set are dropped before
-   precedence runs. The selector's log lines explain why a given
-   backend was skipped.
+   precedence runs. The selector does not log skipped backends; when
+   nothing is eligible, `SandboxSelectionError` names the failure and
+   its `attempted` attribute lists the backends considered.
 
 ## Default precedence
 

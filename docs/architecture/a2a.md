@@ -144,9 +144,9 @@ This blocks an SSO token minted for some other audience from being
 replayed against Bernstein. Source: `_resource_indicator_check` in
 `src/bernstein/core/security/auth_middleware.py`.
 
-The configured indicator comes from `BERNSTEIN_AUTH_EXPECTED_RESOURCE`
-(comma-separated allowlist) or the `auth.expected_resource` key in
-`bernstein.yaml`.
+The configured indicator comes from the `BERNSTEIN_AUTH_EXPECTED_RESOURCE`
+environment variable (comma-separated allowlist), or `.env`; there is no
+`bernstein.yaml` key for it.
 
 ---
 

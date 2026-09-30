@@ -157,7 +157,7 @@ treated as an implicit `allow`.
 | Decision | Effect |
 |----------|--------|
 | `{"decision": "allow"}` | Default. Continue the chain. |
-| `{"decision": "deny", "reason": "<text>"}` | For `preToolUse`, blocks the tool call and surfaces a structured audit-chain event. |
+| `{"decision": "deny", "reason": "<text>"}` | For `preToolUse`, raises `HookDenied` with the reason; no audit-chain event is recorded yet. |
 | `{"decision": "mutate", "data": {...}}` | Replaces `LifecycleContext.data` for the rest of the chain. |
 | `{"decision": "annotate", "data": {...}}` | Merges keys into `LifecycleContext.data` without replacing it. |
 
@@ -203,7 +203,7 @@ Smoke-test:
 
 ```bash
 bernstein hooks dry-run preToolUse
-# DENIED: preToolUse blocked by script:.bernstein/hooks/preToolUse.sh: shell.run blocked by site policy
+# DENIED: preToolUse blocked by script: shell.run blocked by site policy
 ```
 
 ---
@@ -282,17 +282,11 @@ prefer `dry-run` for new workflows since it ships sample payloads.
 
 ## Audit-chain integration
 
-Every `deny` decision in the `preToolUse` chain produces a structured
-audit event (issue #1316 surface). The event payload includes:
-
-- The event value (`preToolUse`).
-- The denying hook's label (e.g. `script:.bernstein/hooks/preToolUse.sh`).
-- The reason string returned by the hook.
-- The original `LifecycleContext.data` (with `tool`, `args`, etc.).
-
-These events are forwarded through the standard `on_audit_event`
-pluggy hook so any SIEM sink (Splunk, Datadog, Elastic, MQTT) sees
-denials automatically.
+A `deny` raises `HookDenied` (label `script` for script hooks, with the
+returned reason). No code path records a deny as an audit event or
+forwards it through `on_audit_event` yet, and the orchestrator does not
+dispatch `preToolUse`. Today a deny is observable through
+`bernstein hooks dry-run` (exit 2).
 
 ---
 

@@ -35,7 +35,7 @@ The janitor evaluates each `CompletionSignal` declared on the task
 | `path_exists`    | File or directory exists at the given relative path.                    |
 | `glob_exists`    | At least one file matches the glob.                                     |
 | `test_passes`    | The named shell command exits 0 (e.g. `pytest tests/foo.py`).            |
-| `file_contains`  | A regex matches the file's content.                                     |
+| `file_contains`  | The file exists and contains the given substring (value `path :: needle`). |
 | `llm_review`     | Synchronous LLM review against a written rubric.                        |
 | `llm_judge`      | Async LLM judge (`judge_task()` in `janitor.py`); used for ambiguous tasks. |
 | `absence_verified` | The claim is an *absence* ("no occurrences found"). `value` is the `tool_call_id` that reported it; the signal passes only when that call's recorded coverage payload hash-matches a `coverage` lineage entry anchored to the same `tool_call_id` and describes a complete, exit-checked walk. Every missing or mismatched piece fails closed as `unverified`. |
@@ -130,7 +130,13 @@ Default required gates (only those whose `quality_gates.<flag>: true`):
 | `behavior_probe`         | `behavior_probe`            | `python_changed`   | optional            |
 | `migration_reversibility` | `migration_reversibility_check` | `any_changed`  | required            |
 | `benchmark`              | `benchmark.enabled`         | `always`           | required            |
-| `incident_evals`         | `incident_evals`            | `always`           | required            |
+| `incident_evals`         | (no flag; not available)    | `always`           | required            |
+
+`incident_evals` is not available: `_DEFAULT_GATE_SPECS` lists it, but
+`QualityGatesConfig` has no `incident_evals` flag, so the default pipeline
+never includes it, and `GateRunner` has no handler for it, so naming it in
+an explicit `quality_gates.pipeline` fails with
+`ValueError: Unsupported gate name: 'incident_evals'`.
 
 A failing **required** gate hard-blocks merge. A failing **optional** gate
 is reported but does not block.

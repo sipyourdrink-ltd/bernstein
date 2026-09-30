@@ -104,8 +104,9 @@ bernstein doctor airgap
 The verify step is non-zero on any sha256 mismatch or signature
 failure and names the offending wheel in the error message.
 
-`bernstein doctor airgap` runs a battery of self-checks against the
-current shell, exits 0 only when every row passes, and is the
+`bernstein doctor airgap` runs a battery of self-checks (simulating
+`--profile airgap` + `--allow-network none` when the shell has not set
+them), exits 0 when no row reports FAIL, and is the
 intended pre-flight before any first run. The checks are:
 
 | Check | What it asserts |
@@ -121,7 +122,7 @@ intended pre-flight before any first run. The checks are:
 
 ```bash
 bernstein doctor airgap          # human-readable
-bernstein doctor airgap --json   # machine-readable for compliance evidence
+bernstein doctor --json airgap   # machine-readable for compliance evidence
 ```
 
 `WARN` rows do not fail the run (e.g. legitimately operator-overridden

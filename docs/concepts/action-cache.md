@@ -24,7 +24,12 @@ to catch silent agent-output drift between model versions.
 
 ## How to use it
 
-Pick a mode, then use the `cache action` subcommands:
+`tuning.action_cache.mode` sets the default mode for `open_cache()`
+callers that do not pass one (today only the MCP gateway's read-only
+lookup). The `cache action` subcommands ignore it: `stats` opens the
+cache in `off` mode and `replay` in `replay` mode. No shipped run path
+records actions into the cache yet; callers that want record/replay wrap
+their own calls with `ActionCache.get_or_call`.
 
 ```bash
 # Mode is set in bernstein.yaml under `tuning:` (see Configuration):
@@ -33,16 +38,16 @@ Pick a mode, then use the `cache action` subcommands:
 #   hybrid - replay on hit, fall through to live model on miss, append result
 #   off    - no lookups or writes
 
-# Re-execute a past run against its cache; emit a diff report on drift
-bernstein cache action replay <run_id>
+# List a past run's recorded actions from the cache ($0, no live calls)
+bernstein cache action replay <run_id>   # add --as-json for machine output
 
 # Inspect on-disk size and entry count
 bernstein cache action stats
 ```
 
-The `cache action replay` subcommand walks the run's recorded actions,
-executes each against the cache, and reports any divergence between
-recorded and live output. Useful for catching model-version drift.
+The `cache action replay` subcommand lists every cached action tagged
+with the run id (model, tool, tokens, cost, output head). It does not
+re-execute anything or compare against live output.
 
 ## Configuration
 
@@ -54,8 +59,8 @@ recorded and live output. Useful for catching model-version drift.
 
 Metrics:
 
-- `action_cache_hits_total{model}`
-- `action_cache_savings_usd_total{model}` - estimated token-cost saved
+- `bernstein_action_cache_hits_total{model}`
+- `bernstein_action_cache_savings_usd_total{model}` - estimated token-cost saved
   by replay hits.
 
 ## Limitations

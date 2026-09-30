@@ -191,7 +191,7 @@ bernstein plan generate "Bump dependencies" -o plans/deps.yaml
 What the command does (`cli/commands/plan_generate_cmd.py`):
 
 1. **Gather repo context** - directory tree, `README.md`, top-level
-   files, build config (capped at ~8 KB).
+   files, build config (capped at ~4 KB).
 2. **Build prompt** - concatenates description + repo context + a system
    prompt asking for `name / description / stages / steps` YAML.
 3. **Call LLM** - Haiku 4.5 by default (cheap; you usually iterate on the
@@ -208,10 +208,11 @@ roles/scopes, and run `bernstein plan validate` before `bernstein run
 --from-plan`.
 
 There is also a higher-tier API in
-`core/planning/plan_execute.py` (`build_plan`, `save_plan`) which the
-manager agent uses internally - it picks the most capable available
-planning model (Opus / o3) and produces `GeneratedPlan` objects with
-per-task `recommended_model` selections (`plan_execute.py`).
+`core/planning/plan_execute.py` (`build_plan`, `save_plan`), a library
+API not currently called by the manager or the CLI - it picks the most
+capable available planning model (Opus / o3) and produces
+`GeneratedPlan` objects with per-task `recommended_model` selections
+(`plan_execute.py`).
 
 ---
 

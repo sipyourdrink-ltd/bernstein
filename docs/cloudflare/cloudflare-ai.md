@@ -3,9 +3,10 @@
 !!! warning "Not implemented in the current source tree"
     There is no `bernstein.core.routing.cloudflare_ai` module, no
     `WorkersAIProvider` class, and `cloudflare_ai` is not a recognised
-    `internal_llm_provider` value (the default is `none`; `openrouter_free`
-    is an example of a supported provider). The sections below describe the
-    intended design and cannot be run as written.
+    `internal_llm_provider` value (recognised providers are listed in
+    `core/routing/llm.py`, e.g. `openrouter_free`; set `none` to disable
+    internal LLM calls). The sections below describe the intended design and
+    cannot be run as written.
 
 **Planned module:** `bernstein.core.routing.cloudflare_ai`
 **Planned class:** `WorkersAIProvider`

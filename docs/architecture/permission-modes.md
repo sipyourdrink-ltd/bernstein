@@ -223,7 +223,7 @@ rule 1 still denies, rule 2 relaxes to `allow`, rule 3 relaxes to
 | `src/bernstein/core/security/permission_rules.py`       | `PermissionRuleEngine` - matches rules, applies mode relaxation |
 | `src/bernstein/core/security/permission_matrix.py`      | `PermissionResolutionMatrix` - combines rule outcome with hook outcome |
 | `src/bernstein/core/security/approval.py`               | Approval gate - honours `bypass_enabled` when mode is `bypass` |
-| `tests/unit/test_permission_mode.py`                    | 37 tests covering every cell of the matrix |
+| `tests/unit/test_permission_mode.py`                    | 62 tests (37 test functions, several parametrized) covering every cell of the matrix |
 
 ---
 

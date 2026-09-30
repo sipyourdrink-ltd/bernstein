@@ -113,19 +113,22 @@ are operator-provided.
 
 #### `kms_adapter: hsm` requires a real integration
 
-Setting `lineage.kms_adapter: hsm` in `bernstein.yaml`
+The HSM selector is a Python API argument, with no `bernstein.yaml` key
+yet: `kms_adapter="hsm"` (with `kms_token_uri=`) on
+`lineage_signer.signer_from_config`, or `kind="hsm"` (with `token_uri=`)
+on `key_custody.kms_adapter_from_config`. It
 does **not** ship a working PKCS#11 / Cloud-KMS client. The base
 `HSMKMSAdapter` in `bernstein.core.security.key_custody` is a
 documentation stub: every `sign()` call raises `NotImplementedError`.
 To use the `hsm` selector in production, ship a subclass that
 overrides both `sign()` and `public_key_jwk()`, import it before the
-orchestrator loads its config, and the dispatcher picks it up
-automatically.
+signer is built, and the dispatcher picks it up automatically.
 
-If a subclass is not on the classpath, `kms_adapter_from_config` raises
-`LineageSignerError` at config-load time -- so a misconfigured
-`bernstein.yaml` surfaces immediately rather than crashing on the first
-audit-emit / lineage-sign call. For non-production smoke tests where
+Building the signer raises `LineageSignerError` if `token_uri` is
+missing. It also raises when no `HSMKMSAdapter` subclass is imported,
+unless `BERNSTEIN_ALLOW_HSM_STUB=1` is set, so a misconfiguration
+surfaces when the signer is built rather than on the first
+lineage-sign call. For non-production smoke tests where
 the silent-stub behaviour is acceptable, set
 `BERNSTEIN_ALLOW_HSM_STUB=1` to opt in to the stub explicitly.
 
@@ -169,8 +172,9 @@ verifier with a JSON-LD library can graph-walk the chain.
 
 ## Tamper-loud detection
 
-The janitor's lineage compaction step runs a chain verification
-pass on every cycle. If verification fails the janitor:
+`verify_lineage_chains` (`core/quality/janitor.py`) runs a chain
+verification pass over every run's lineage. It is a library entry
+point, not yet wired into the janitor cycle. If verification fails it:
 
 1. Emits an audit-chain entry of type `lineage_tamper_detected`.
 2. Increments `bernstein_lineage_tamper_total{run_id}`.
@@ -182,6 +186,10 @@ the SIEM. Webhooks retry with exponential back-off on 5xx and fail
 closed on a broken sink (the janitor never blocks on a bad webhook).
 
 ### Configuring the SIEM webhook
+
+`lineage_alert.sink_from_config` builds the webhook sink, but it is not
+yet wired into the janitor cycle either: the `tuning.lineage.tamper_alert_*`
+keys below are accepted and have no effect until that wiring lands.
 
 ```yaml
 tuning:

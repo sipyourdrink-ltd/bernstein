@@ -107,7 +107,7 @@ npm install -g @openai/codex
 ```
 
 **Unique features:**
-- Full-auto mode (`--full-auto`)
+- Unattended mode via `--sandbox workspace-write` (or `--dangerously-bypass-approvals-and-sandbox` when the dangerous-mode strategy is declared `always-on` or host isolation is declared as `container` or `vm`)
 - JSON output with `--json`
 - Output written to a `.last-message.txt` file
 - Tier detection from API key format (`sk-proj` = Pro, `sk-` = Plus, other = Free)
@@ -312,7 +312,7 @@ pip install aider-chat
 | `deepseek-v4-pro` | `deepseek-v4-pro` (vLLM tensor-parallel) |
 | `phi4` | `phi4` |
 
-**Env vars:** None required. `OLLAMA_API_BASE` / `OLLAMA_HOST` (optional; the adapter's `base_url` constructor argument defaults to `http://localhost:11434`). For `deepseek-v4-pro`, point either env var at the vLLM `/v1` endpoint - aider/litellm treats Ollama and vLLM interchangeably over the OpenAI-compatible wire format.
+**Env vars:** None required. The adapter sets `OLLAMA_API_BASE` and `OLLAMA_HOST` for the aider child from its `base_url` constructor argument (default `http://localhost:11434`), overwriting any value in the parent environment. To reach a remote Ollama or a vLLM `/v1` endpoint (for example for `deepseek-v4-pro`), register an `OllamaAdapter(base_url=...)` instance with `register_adapter`; setting the env vars alone has no effect. aider/litellm treats Ollama and vLLM interchangeably over the OpenAI-compatible wire format.
 
 **Prerequisites:** `ollama` running locally + `aider-chat` installed + model pulled (`ollama pull qwen2.5-coder:7b`).
 
@@ -337,7 +337,7 @@ npm install -g @sourcegraph/cody
 
 ### cursor
 
-**Install:** Download from [cursor.com](https://cursor.com). The `cursor` CLI is bundled with the desktop app.
+**Install:** `curl https://cursor.com/install -fsS | bash` (macOS/Linux/WSL). The binary on PATH is `cursor-agent`.
 
 **Unique features:**
 - Print mode driven by `cursor-agent -p` with `--trust` and `--approve-mcps`
@@ -727,7 +727,7 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 **Env vars:** `LETTA_API_KEY`, `LETTA_BASE_URL`, plus `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` for the underlying model.
 
-**Invocation:** `letta --output-format stream-json [--permission-mode unrestricted] -p '<prompt>' --new-agent --conversation <id>`. The `-p` flag is the documented one-off prompt mode; `--permission-mode unrestricted` is added only when the dangerous-mode strategy is enabled.
+**Invocation:** `letta --output-format stream-json --permission-mode unrestricted -p '<prompt>' --new-agent --conversation <id>`. The `-p` flag is the documented one-off prompt mode; `--permission-mode unrestricted` is passed on every spawn because the adapter declares its dangerous-mode strategy as `cli-flag`.
 
 **Caveats:** Letta Code's signature feature is cross-task memory via Letta Cloud. **Bernstein wraps Letta as a leaf-node one-shot agent** - Bernstein does not coordinate Letta's memory across tasks. Cross-task memory still works in Letta's own backend; it's just opaque to Bernstein's accounting and routing.
 
@@ -841,7 +841,7 @@ JSON-RPC lifecycle events over the client transport with no text parser at all.
 "my_agent": AdapterStrategy(event_channel=EventChannel.ACP),
 ```
 
-`kilo` and `kimchi`, whose upstream CLIs expose ACP, ship on this channel.
+`kilo` and `kimchi` declare this channel in `STRATEGY_MATRIX`. `kimchi` is spawned through `run_acp_channel` (`--mode acp`); `kilo`'s spawn path still runs `kilo run --prompt ... --yes` without the ACP transport.
 
 **What the channel does.** The upstream CLI is spawned as an ACP subprocess
 speaking line-delimited JSON-RPC. Every inbound frame is validated at the

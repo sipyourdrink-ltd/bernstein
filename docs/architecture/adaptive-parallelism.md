@@ -115,8 +115,11 @@ immediately so high-priority signals can't be cancelled by lower ones:
    cap. Prevents the system from crawling at one or two agents when
    five slots are available (`adaptive_parallelism.py`).
 
-Each rule that changes the ceiling (except cpu recovery) writes a one-line
-`INFO`/`WARNING` log so the trail is easy to read after a run.
+The CPU overload, high-error-rate and low-error-rate adjustments each
+write a one-line `WARNING`/`INFO` log, and `set_slo_constraint` logs when
+the SLO cap is set (`WARNING`) or cleared (`INFO`). The per-tick SLO
+`min()` clamp, the minimum-floor raise and cpu recovery change the
+ceiling without a log line.
 
 ---
 

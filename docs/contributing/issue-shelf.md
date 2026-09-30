@@ -38,9 +38,9 @@ before it checks anything else:
 | `roadmap` | A tracking issue, not a unit of work. |
 
 `no-bait` is the human veto: an issue carrying it is never advertised by the script. The
-script also records a veto itself when someone other than the script removes a bait label
-by hand, and respects it from then on. The veto only blocks adding labels: the signals
-above still remove them.
+veto only blocks adding labels: the signals above still remove them. The script does not
+detect a bait label removed by hand, so add `no-bait` yourself to keep an issue off the
+shelf.
 
 ## When an issue goes onto the shelf
 
@@ -85,7 +85,8 @@ uv run python scripts/issue_shelf.py --apply
 CI runs the report-only form every six hours and on issue events, and writes the result
 to the workflow summary. Applying is a manual dispatch with `apply: true`.
 
-Both forms refuse to start if the repo does not define every label that holds an issue
-back. A label the repo has never created cannot be on an issue, so the branch that reads
-it never runs — the guard is present in the source and inert in the run, and the shelf
-would advertise exactly the work those labels protect.
+If the repo does not define every label that holds an issue back, the report-only form
+prints a warning and still reports, and `--apply` refuses to write (exit 2). A label the
+repo has never created cannot be on an issue, so the branch that reads it never runs —
+the guard is present in the source and inert in the run, and the shelf would advertise
+exactly the work those labels protect.

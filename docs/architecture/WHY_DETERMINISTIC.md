@@ -144,12 +144,13 @@ in the file?" - rather than trusting the agent's claim. An agent that says
 
 ### LLMs appear only at explicit leaf nodes
 
-Three places in Bernstein call an LLM, all optional and named:
+The main places Bernstein calls an LLM:
 
 | Module | Purpose | When called |
 |--------|---------|-------------|
 | `core/orchestration/manager.py` | Decompose a high-level goal into tasks | Once per goal, if no plan file is provided |
-| `core/quality/review_pipeline/` | Review completed code for quality | After janitor verification, when an LLM review step is configured (for example an `llm_review` completion signal) |
+| `core/quality/review_pipeline/` | Review completed code for quality | After janitor verification, when an LLM review step is configured |
+| `core/quality/janitor.py` | `llm_review` (runs `claude -p --model sonnet`) and `llm_judge` (`judge_task()` via `call_llm`) completion checks | When a task declares those completion signals |
 | `core/quality/cross_model_verifier.py` | Independent diff verification | For high-stakes tasks, if configured |
 
 *(Resolved via `core.__init__` redirect map - legacy imports `core/manager.py` and `core/cross_model_verifier.py` still work via `_CoreRedirectFinder`.)*

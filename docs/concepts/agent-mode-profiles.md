@@ -24,7 +24,7 @@ default mapping is:
 | Model family | Profile | Why |
 |---|---|---|
 | Claude (Code, Opus, Sonnet) | `smart` | rapid feedback, full tool surface |
-| GPT-5.x, o-series | `deep` | longer turns, narrower tools, lower temp |
+| GPT-5.x, o-series | `deep` | longer turns (120), narrower tools (Read/Grep/Glob/Bash), temperature 0.3 |
 | Small / fast (Qwen, Haiku) | `fast` | one tool subset, short turn budget |
 
 Override per task via `metadata["mode"]` (a profile name known to the registry):

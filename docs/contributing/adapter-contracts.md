@@ -61,7 +61,7 @@ required_flags:
 required_subcommands: []
 
 # Optional. When the adapter passes flags only visible via
-# ``<binary> <sub> --help`` (codex, opencode, plandex, goose, q_dev, droid, kimi, muse, pydantic_ai),
+# ``<binary> <sub> --help`` (codex, opencode, plandex, goose, q_dev),
 # override the help command here.
 help_command: ["claude", "--help"]
 

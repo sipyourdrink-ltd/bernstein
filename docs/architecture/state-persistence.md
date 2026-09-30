@@ -78,10 +78,11 @@ Source: `src/bernstein/core/persistence/wal.py`.
 Three invariants make the WAL load-bearing for recovery:
 
 1. **Append-only.** `WALWriter.append()` only ever calls `f.write(...)
-   + f.flush() + os.fsync(...)` (`wal.py`). No mutation, no
-   truncation. A torn write that leaves a partial trailing line is
-   tolerated by the reader (`wal.py`) and by the tail-reader
-   (`wal.py`).
+   + f.flush() + os.fsync(...)` (`wal.py`). Existing entries are never
+   rewritten; the only truncation is a rollback of a partially written
+   entry when an append fails. A torn write that leaves a partial
+   trailing line is tolerated by the reader (`wal.py`) and by the
+   tail-reader (`wal.py`).
 2. **fsync per entry.** Every successful `append()` returns only after
    the line is on stable storage (`wal.py`). A process crash
    immediately after `append()` returns cannot lose the entry.
@@ -143,11 +144,16 @@ When `bernstein run` starts in a workdir that already contains `.sdd/`,
 the recovery sequence is:
 
 ```text
-1. Load durable backlog
-   read .sdd/backlog/{open,claimed,closed}/*.yaml
-   reconstruct in-memory task store
+1. Task server lifespan (not the orchestrator)
+   store.replay_jsonl()
+     rebuild the in-memory task store from .sdd/runtime/tasks.jsonl
+   store.recover_stale_claimed_tasks()
+     reset every CLAIMED and IN_PROGRESS task to OPEN
+   (core/server/server_app.py, core/tasks/task_store_core.py)
+   Backlog YAML is not replayed; the orchestrator ingests new files
+   from .sdd/backlog/open/ and issues/ during its ticks.
 
-2. WALReplayEngine.scan_and_replay()
+2. WALReplayEngine.scan_and_replay()  (orchestrator _recover_from_wal())
    a. WALRecovery.scan_all_uncommitted(sdd_dir, exclude_run_id=current)
       → list[(run_id, WALEntry)] where committed=False
    b. For each entry:
@@ -155,14 +161,13 @@ the recovery sequence is:
         if (now - entry.timestamp) > MAX_REPLAY_AGE_S (1 h) → mark stale
         if IdempotencyStore.is_executed(entry) → skip
         else                                   → replay_handler(entry)
+      The handler fails only task_claimed orphans the server still
+      reports as claimed (reason "claimed but never spawned").
    c. Append "wal_replay_completed" entry to current run's WAL
+   _recover_from_wal() then force-claims remaining orphaned claims
+   back to open and preserves prior worktrees with uncommitted work.
 
-3. recover_stale_claimed_tasks()
-   any task left in CLAIMED state by the dead orchestrator is reset to
-   OPEN so a new agent can pick it up
-   (core/tasks/task_store_core.py)
-
-4. Begin tick loop
+3. Begin tick loop
 ```
 
 Source files: `src/bernstein/core/persistence/wal_replay.py`,
@@ -212,7 +217,8 @@ hit an existing blob (`dedup_saves`).
 ### Merkle seals over audit logs
 
 `merkle.py` builds a binary Merkle tree over daily HMAC-chained audit
-log files. Each file's last-line HMAC becomes a leaf; the root hash is
+log files. Each file's full content is hashed into a domain-separated
+leaf (seal scheme v2); the root hash is
 written to `.sdd/audit/merkle/seal-<ISO-timestamp>.json` and proves no
 file was deleted, inserted, reordered, or tampered with between seals
 (`src/bernstein/core/persistence/merkle.py`).

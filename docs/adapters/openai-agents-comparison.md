@@ -40,7 +40,7 @@ feature-complete adapter: agent definitions, subagent spawning,
 CLAUDE.md injection, cache-control blocks, hooks, session persistence,
 stream-JSON parsing.  Best general-purpose executor.
 
-**`codex`** wraps the OpenAI Codex CLI (`codex exec --full-auto`).
+**`codex`** wraps the OpenAI Codex CLI (`codex exec --sandbox workspace-write --json`).
 Thin spawner: passes a prompt, reads JSON from a last-message file,
 reports cost.  Cheap, predictable, no sandbox abstraction.
 
@@ -64,7 +64,7 @@ docker, E2B, Modal).
 | **Extra install** | `npm install -g @anthropic-ai/claude-code` | `npm install -g @openai/codex` | `npm install -g @google/gemini-cli` | `pip install 'bernstein[openai]'` |
 | **Structured output** | JSON schema enforced | `--json` | `--output-format json` | JSONL event stream |
 | **MCP support** | First-class | No | No | Via runner manifest (Bernstein-managed servers) |
-| **Sandboxing** | CLI permission model | Full-auto only | CLI permission model | Pluggable: unix_local / docker / e2b / modal |
+| **Sandboxing** | CLI permission model | Vendor sandbox (`--sandbox workspace-write`) | CLI permission model | Pluggable: unix_local / docker / e2b / modal |
 | **Rate-limit detection** | Yes (probe + cached cooldown) | Yes (fast-exit probe) | Yes | Yes (SDK exception classes + fast-exit) |
 | **Cache tiers** | Cache read / write | No | Implicit context caching | No explicit cache API |
 | **Streaming** | Stream-JSON | Line-by-line | Line-by-line | JSONL events |

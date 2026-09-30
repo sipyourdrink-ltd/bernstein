@@ -199,7 +199,7 @@ Another Bernstein session is still running, or the port is taken:
 
 ```bash
 bernstein stop --force                   # kill stuck session
-bernstein -g "..." --port 8053         # use a different port
+bernstein run --goal "..." --port 8053   # use a different port
 ```
 
 ### `bernstein init fails - not a git repository`

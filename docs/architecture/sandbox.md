@@ -38,7 +38,7 @@ from bernstein.core.sandbox import (
 
 A `runtime_checkable` `Protocol`. Every backend exposes:
 
-- `name: str` - canonical identifier referenced from `plan.yaml`.
+- `name: str` - canonical identifier used by `bernstein run --sandbox <name>` and the backend registry.
 - `capabilities: frozenset[SandboxCapability]` - feature flags.
 - `async def create(manifest, options=None) -> SandboxSession` -
   provision a fresh sandbox.
@@ -83,7 +83,9 @@ class WorkspaceManifest:
     artifact_mounts: tuple[ArtifactMount, ...] = ()
 ```
 
-`GitRepoEntry`, `FileEntry` and `ArtifactMount` are companion frozen dataclasses.
+`GitRepoEntry` and `FileEntry` are companion frozen dataclasses.
+`ArtifactMount` is a union alias of the frozen `S3Mount`, `GCSMount`,
+`AzureBlobMount` and `R2Mount` dataclasses.
 Object-store mount entries (`S3Mount`, `GCSMount`, `AzureBlobMount`,
 `R2Mount`) live in `src/bernstein/core/sandbox/manifest.py`.
 
@@ -505,7 +507,9 @@ Third-party backends must:
 
 ## Observability
 
-Each backend create/destroy cycle emits Prometheus metrics:
+Sandbox sessions have these Prometheus metrics. `created_total` and
+`exec_count_total` are emitted today; `destroyed_total` and
+`duration_seconds` are defined but not yet recorded:
 
 - `bernstein_sandbox_session_created_total{backend=...}`
 - `bernstein_sandbox_session_destroyed_total{backend=...}`

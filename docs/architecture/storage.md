@@ -90,8 +90,9 @@ WAL.append() ──▶ LocalFsSink.write(durable=True)   ← synchronous fsync
    bounded so a slow remote applies back-pressure rather than growing
    unbounded.
 3. **Graceful shutdown.** `close()` blocks until every pending mirror
-   has ACKed or failed. The orchestrator calls this on normal exit so
-   nothing is lost.
+   write drains (ACKed or failed); callers that construct a buffered
+   sink must call it on exit (the orchestrator does not use the storage
+   sinks today).
 
 Reads prefer the remote sink - that's the crash-recovery path where
 the ephemeral local disk may be empty. They fall back to local when

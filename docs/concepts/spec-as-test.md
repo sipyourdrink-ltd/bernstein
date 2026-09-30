@@ -68,7 +68,7 @@ The step grammar parsed out of `acceptance_steps`:
 
 | Step syntax | Kind | Predicate |
 |---|---|---|
-| `exists <path>` (or `file exists <path>`) | `file_exists` | path resolves to a regular file |
+| `exists <path>` (or `file exists <path>`) | `file_exists` | path, resolved relative to the repo root, exists (file or directory) |
 | `import <module>` | `import_resolves` | dotted import succeeds in the project venv |
 | `contains <path> /<regex>/` | `regex_in_file` | regex matches at least once in the file's bytes |
 | (the feature's `acceptance_check`) | `test_passes` | the command / pytest selector exits 0 |

@@ -43,8 +43,10 @@ Determinism rules applied to the zip:
   `.json` entry; `events.jsonl` is one sorted-key JSON object per line.
 
 Same input bundle bytes hash to the same SHA-256 every run. The auditor
-re-runs the build a year later and compares against the published
-the archive SHA-256 printed by the export (`bundle.sha256`).
+re-runs the build a year later and compares the archive's SHA-256
+(`sha256sum article12_<bundle_id>.zip`, or `bundle.sha256` from the Python
+API) against the published value. The CLI summary shows only the first 16
+hex characters.
 
 ## Retention pin
 

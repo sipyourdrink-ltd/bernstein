@@ -59,9 +59,9 @@ Example output:
 
 ```
 Check             Status  Detail        Fix
-Adapter: claude   ✗       not in PATH   Install the adapter's CLI (see vendor docs)
-Adapter: codex    ✗       not in PATH   Install the adapter's CLI (see vendor docs)
-Adapter: gemini   ✗       not in PATH   Install the adapter's CLI (see vendor docs)
+Adapter: claude   ✗       not in PATH   Install claude CLI - see docs
+Adapter: codex    ✗       not in PATH   Install codex CLI - see docs
+Adapter: gemini   ✗       not in PATH   Install gemini CLI - see docs
 ```
 
 You need at least one adapter row to turn ✓ (`doctor` also checks auth, ports,
@@ -345,15 +345,9 @@ The agent tried to modify a file outside its role's allowed paths. Check which f
 bernstein trace <task-id>   # Shows which permission rule fired
 ```
 
-To allow it, add the path to the role's allowed paths in `bernstein.yaml`:
-
-```yaml
-roles:
-  backend:
-    allowed_paths:
-      - "src/**"
-      - "config/**"   # Add this
-```
+Per-role path permissions are built-in defaults (`DEFAULT_ROLE_PERMISSIONS`
+in `core/security/permissions.py`); `bernstein.yaml` has no override for them
+today.
 
 ### "Agent stalled / no heartbeat"
 

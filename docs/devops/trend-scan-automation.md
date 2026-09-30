@@ -1,7 +1,8 @@
 # Trend scan automation
 
-A scheduled job that ingests upstream dependency-relevant signals into the
-orchestrator backlog directory as a markdown rollup. No tickets are filed
+An on-demand CLI job (no scheduled workflow ships) that ingests upstream
+dependency-relevant signals into a markdown rollup under `.sdd/trend-scan/`,
+gap-checked against the orchestrator backlog directory. No tickets are filed
 automatically; the operator reviews the rollup and adds a ticket file under
 `.sdd/backlog/open/` for the rows that warrant one.
 

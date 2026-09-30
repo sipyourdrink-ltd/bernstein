@@ -122,8 +122,9 @@ uv run pyright src/
 Every change lands through the merge queue with the approvals the
 [review charter](docs/governance/review-charter.md) requires: two, from
 committers who are not the author, at least one of them a core reviewer
-(three for a change over 400 lines or one touching a `sandbox`, `security`
-or `audit` path; the roster is `.github/quorum-roster.toml`). Ownership is separate: any
+(three, two of them core, for a change over 400 lines or one touching a
+`sandbox`, `security` or `audit` path outside `tests/` and `docs/`; the
+roster is `.github/quorum-roster.toml`). Ownership is separate: any
 path with a named owner in [CODEOWNERS](.github/CODEOWNERS) needs that
 owner's approval as well, rather than the core approval standing in for
 it. Protected paths also need the maintainer. Reviewer checklist:

@@ -59,9 +59,9 @@ is constructed against `.sdd/cas/` and exposed for:
 3. **Attachments and attestations.** `core/agents/attachment_dispatch.py`
    and the micro-VM sandbox backend (`core/sandbox/backends/microvm.py`)
    write their bytes into a `CASStore` under `.sdd/cas/`.
-4. **GC roots.** `bernstein gc cas` treats WAL entries, session
-   snapshots, audit Merkle seals, lineage spines, and backlog tasks as
-   durable roots that keep a digest alive (see below).
+4. **GC roots.** `bernstein gc cas` treats WAL entries, audit Merkle
+   seals, lineage spines, and backlog tasks as durable roots that keep a
+   digest alive (see below). Session snapshots are not scanned as roots.
 
 `bernstein.core.persistence.cas_store` is the only module that touches
 the on-disk layout - every other consumer goes through `put()` /
@@ -170,10 +170,12 @@ operations:
   mark-and-sweep over the CAS store, deleting unreferenced blobs
   older than a configured retention window (default 30 days,
   `cas_retention_days` in `core/defaults.py`). Uses
-  reachability analysis over durable roots (WAL, session snapshots, audit
-  seals, lineage spines, backlog tasks) and preserves referenced or young
-  entries. The operation writes a prune receipt to the CAS store for
-  verification. Refuses to delete anything when a root could not be
+  reachability analysis over durable roots (WAL, audit seals, lineage
+  spines, backlog tasks) and preserves referenced or young entries. Only
+  a sweep that deletes at least one entry writes a prune receipt to the
+  CAS store for verification; a `--dry-run`, a run with nothing to
+  delete, or a run refused because a root could not be read writes no
+  receipt. Refuses to delete anything when a root could not be
   read. Recommended for regular CAS maintenance.
 - **Manual deletion.** Anything that knows a digest is no longer
   referenced (for example an expired audit seal) can call
@@ -201,10 +203,9 @@ The command provides several safety guarantees:
 2. **Reachability analysis** – The command scans durable roots to
    determine what is still referenced:
    - WAL entries (`.sdd/runtime/wal/*.wal.jsonl`)
-   - Session snapshots (`.sdd/snapshots/*`)
    - Audit Merkle seals (`.sdd/audit/merkle/seal-*.json`)
    - Lineage spines (`.sdd/lineage/*/spine.jsonl`)
-   - Backlog tasks (`.sdd/backlog/*/{*.yaml,*.yml}`)
+   - Backlog tasks (`.sdd/backlog/{open,done}/{*.yaml,*.yml}`)
 
    Only blobs whose digests are NOT in this referenced set are
    candidates for deletion.
@@ -212,10 +213,11 @@ The command provides several safety guarantees:
 3. **Preserve young entries** – Blobs created within the retention
    window are preserved even if unreferenced.
 
-4. **Prune receipts** – Each successful `gc cas` operation writes a
-   prune receipt to the CAS store itself. This receipt documents what
-   was deleted and serves as verification that the operation
-   completed as expected.
+4. **Prune receipts** – A `gc cas` sweep that deletes at least one
+   entry writes a prune receipt to the CAS store itself (a `--dry-run`,
+   a run with nothing to delete, or a refused run writes none). This
+   receipt documents what was deleted and serves as verification that
+   the operation completed as expected.
 
 ### Command usage
 
@@ -244,7 +246,7 @@ bernstein gc cas --days 0
 
 1. **Mark phase** – Collect all referenced digests from durable roots
 2. **Sweep phase** – Delete unreferenced blobs older than retention window
-3. **Receipt** – Write prune receipt documenting the operation
+3. **Receipt** – Write a prune receipt documenting the operation, only when the sweep deleted at least one entry
 
 ### Common scenarios
 
@@ -266,7 +268,7 @@ maintenance.
 
 Because `delete()` is explicit and per-digest, GC is essentially "find
 the orphans and call delete on each one". The reference scan over WAL,
-snapshots, audit seals, lineage spines, and backlog tasks produces the live
+audit seals, lineage spines, and backlog tasks produces the live
 set; everything in `store.list_entries()` not in the live set (and older
 than the retention window) is orphaned.
 

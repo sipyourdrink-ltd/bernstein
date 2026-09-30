@@ -119,9 +119,9 @@ git-diff output mode, stateless session state).
 Every shipped adapter must declare its strategy on each axis. The
 conformance harness calls `assert_strategies_declared()`, which raises
 `StrategyDeclarationError` listing any registry adapter missing a row in
-`STRATEGY_MATRIX`. `bernstein adapters check` surfaces the per-adapter
-strategy table (`strategy_conformance_table` in `conformance.py`) so operators can compare
-adapters at a glance.
+`STRATEGY_MATRIX`. `bernstein adapters check --format json` carries each
+adapter's declared strategy in its `strategy` field; `strategy_conformance_table()`
+in `conformance.py` builds the per-adapter strategy table for the live registry.
 
 ## Shipped adapter declarations
 
