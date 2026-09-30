@@ -189,11 +189,60 @@ jobs:
       # release ships. install-smoke-rpm-nightly.yml re-runs the same
       # check daily regardless of this flag.
       rpm_relevant_changed: ${{ steps.classify.outputs.rpm_relevant_changed }}
+      # queue_base: the commit a merge-queue group was built on, resolved
+      # ONCE here and handed to every shard of the `test` matrix. Empty on
+      # every other event, and empty when it cannot be resolved, which the
+      # consumer treats as "run the full list".
+      #
+      # It has to be resolved once because it cannot be resolved twice to the
+      # same answer. The queue lands the exact commit it tested, so an entry
+      # ahead becomes an ancestor of `main` the moment it merges, and a
+      # merge-base taken after that returns THAT entry's commit rather than
+      # the batch root. Two shards on either side of a landing would then
+      # select from two different lists and `--shard i/N` would partition
+      # neither of them completely - the #5421 hole, reopened one level up.
+      queue_base: ${{ steps.queue-base.outputs.queue_base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 0
+      - id: queue-base
+        name: Resolve the merge-queue batch root
+        # Once per group, for every shard of `test` to share (#5793).
+        #
+        # This job checks out at fetch-depth 0 and runs before `test` needs
+        # it, which is what makes it the right place: the merge-base is taken
+        # while the group is still building, before any entry ahead has landed
+        # on `main` and become an ancestor of the queue head. A shard that
+        # resolved this for itself later would get that entry's commit
+        # instead - the per-entry base this change exists to avoid.
+        #
+        # NOT `github.event.merge_group.base_sha`: for entry k of a stacked
+        # group that field is entry k-1's merge commit, not the root the batch
+        # was built on.
+        #
+        # The residual window is one commit wide: if an entry ahead lands
+        # between the group being created and this step running, the root
+        # resolves one entry forward. Every shard still shares that one answer,
+        # so the partition stays whole; only the selection narrows, and the
+        # failure mode of a narrow selection is a slower full list, never a
+        # silently unrun slice.
+        if: github.event_name == 'merge_group'
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" || true
+          if root=$(git merge-base "refs/remotes/origin/${DEFAULT_BRANCH}" HEAD 2>/dev/null); then
+            echo "queue_base=${root}" >> "$GITHUB_OUTPUT"
+            echo "queue batch root: ${root}"
+          else
+            # Empty, not absent: the consumer reads it and runs the full list.
+            echo "queue_base=" >> "$GITHUB_OUTPUT"
+            echo "::warning::could not resolve the queue batch root; shards will run the full list"
+          fi
       - id: classify
         name: Classify changed paths
         env:
@@ -1963,9 +2012,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Fetch base commit for impacted-test selection
-        if: github.event_name == 'pull_request' && runner.os != 'Windows'
+        if: >-
+          (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+          && runner.os != 'Windows'
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE: ${{ needs.determine-changes.outputs.queue_base }}
         run: |
           # Fetch the base by sha, never by branch name. `github.base_ref`
           # resolves when the step runs, and the shards of one run do not run
@@ -1977,8 +2030,41 @@ jobs:
           # success (#5421). The payload sha is fixed for the run, so every
           # shard - at any start time, in any re-run attempt - selects from
           # one list and the slices are a partition of it again.
-          git fetch --no-tags --depth=1 origin \
-            "${BASE_SHA}:refs/remotes/origin/pr-base"
+          if [ "${EVENT_NAME}" = "merge_group" ]; then
+            # The batch root, resolved once by `determine-changes` and handed
+            # to every shard - not computed here. A shard cannot compute it
+            # for itself: the queue lands the exact commit it tested, so once
+            # an entry ahead merges it is an ancestor of `main`, and a
+            # merge-base taken from a shard that started (or was re-run) after
+            # that landing returns THAT entry's commit rather than the root.
+            # Shards either side of a landing would select from two different
+            # lists, and `--shard i/N` would partition neither completely,
+            # which is #5421 one level up.
+            #
+            # NOT `merge_group.base_sha` either: for entry k of a stacked
+            # group that field is entry k-1's merge commit, so selecting
+            # against it would run only entry k's impacted tests against
+            # main+1..k and never test entry j's tests against k's change -
+            # a weaker gate than the full-suite run it replaces (#5793).
+            base="${QUEUE_BASE}"
+            if [ -z "${base}" ]; then
+              # The selector falls back to the full list when the ref is
+              # unwritten. Slower, not wrong - the one thing this must never
+              # do is select against a base it only half resolved.
+              echo "::warning::no queue batch root from determine-changes;" \
+                "running the full list"
+            fi
+          else
+            base="${BASE_SHA}"
+          fi
+          # One fetch, one ref, whichever lane supplied the sha - and a sha in
+          # both lanes, never a branch name, which is what
+          # test_base_is_not_fetched_from_a_branch_head guards.
+          if [ -n "${base}" ]; then
+            git fetch --no-tags --depth=1 origin \
+              "${base}:refs/remotes/origin/pr-base"
+            echo "impacted-test base: ${base}"
+          fi
       - name: Fetch PR head commit for orphan-ratchet inspection
         # actions/checkout's default pull_request checkout resolves the
         # synthetic merge commit, not the head commit that produced it.
@@ -2017,7 +2103,16 @@ jobs:
              [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
             coverage_args=(--coverage)
           fi
-          if [ "${EVENT_NAME}" = "pull_request" ] && \
+          # merge_group selects too, against the batch root determine-changes
+          # resolved once for the whole group. Every entry in the group is inside that diff, so the
+          # selected list covers each entry's change against every other
+          # entry's - the combination today's full-suite queue run covers,
+          # and the one a per-entry base would have dropped.
+          #
+          # Still guarded on the ref existing: if the fetch above did not run,
+          # or no merge-base was reachable, this falls back to the full list
+          # rather than selecting against a ref nothing wrote.
+          if { [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "merge_group" ]; } && \
              git rev-parse --verify refs/remotes/origin/pr-base >/dev/null 2>&1; then
             uv run python scripts/run_tests.py --parallel 6 \
               "${coverage_args[@]}" \
