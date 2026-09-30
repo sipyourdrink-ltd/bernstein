@@ -26,4 +26,4 @@ mkdocs-minify-plugin>=0.8,<1
 # Cap below 1.2.3: that release added a runtime dependency on 
 # (a third-party fork of mkdocs 1.x). We build against upstream 
 # only, so pin to the newest 1.2.x that depends solely on mkdocs (1.2.2).
-mkdocs-redirects>=1.2,<1.2.4
+mkdocs-redirects>=1.2,<1.2.3
