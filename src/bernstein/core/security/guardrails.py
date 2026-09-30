@@ -25,7 +25,7 @@ from bernstein.core.security.always_allow import (
 )
 from bernstein.core.security.license_scanner import check_license_obligations
 from bernstein.core.security.permissions import AgentPermissions, check_file_permissions
-from bernstein.core.security.policy_engine import DecisionGraph, DecisionType, PermissionDecision
+from bernstein.core.security.policy_engine import DecisionType, PermissionDecision
 
 if TYPE_CHECKING:
     from bernstein.core.security.permission_rules import PermissionRuleEngine
@@ -929,15 +929,15 @@ def run_guardrails(
     Returns:
         List of GuardrailResult, one per enabled check.
     """
-    graph = DecisionGraph(bypass_enabled=bypass_enabled)
     decisions = _gather_guardrail_decisions(diff, task, config, workdir, always_allow_engine)
 
-    # Populate graph and build results
+    # One result per decision, each judged on its own. There is no cross-decision
+    # precedence here: a `DecisionGraph` used to be built and fed every decision,
+    # then discarded unread, which made this look like the graph decided (#6183).
+    # Wire `DecisionGraph.evaluate()` in when a caller consumes its answer.
     results: list[GuardrailResult] = []
     for check_name, check_decisions in decisions.items():
         for d in check_decisions:
-            graph.add_decision(d)
-            # Convert decision to legacy GuardrailResult for compatibility
             results.append(_decision_to_result(task.id, check_name, d, bypass_enabled))
             _record_result(task.id, results[-1], workdir)
 
@@ -945,7 +945,7 @@ def run_guardrails(
 
 
 def _decision_to_result(task_id: str, check_name: str, d: PermissionDecision, bypass_enabled: bool) -> GuardrailResult:
-    """Translate a PermissionDecision to a legacy GuardrailResult."""
+    """Translate one PermissionDecision into the GuardrailResult callers consume."""
     passed = d.type == DecisionType.ALLOW
     # These types are considered "blocked" if not allowed
     blocked = d.type in (DecisionType.DENY, DecisionType.IMMUNE, DecisionType.SAFETY)
