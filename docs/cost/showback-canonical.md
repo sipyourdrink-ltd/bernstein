@@ -4,8 +4,7 @@ Tenant showback statements (#2554) are recomputed independently by two
 parties and compared byte for byte, so every value that enters a statement
 needs exactly one encoding. `bernstein.core.cost.showback_canonical` fixes
 the three ground rules; everything downstream (line-item receipts, rollup
-projections, `bernstein tenant showback` / `verify-statement`) builds on
-them.
+projections, statement verification) builds on them.
 
 ## Money: fixed-scale integers
 
