@@ -89,3 +89,8 @@ class TestQuiescenceSelfStopRecognizesClosedTasks:
         by_status = fetch_all_tasks(_client([_raw("T-open", "open")]), "http://server")
 
         assert has_terminal_task(by_status) is False
+
+    def test_a_narrower_status_dict_does_not_raise(self) -> None:
+        """`fetch_all_tasks(statuses=...)` may omit done/failed/closed."""
+        assert has_terminal_task({"open": []}) is False
+        assert has_terminal_task({"closed": []}) is False

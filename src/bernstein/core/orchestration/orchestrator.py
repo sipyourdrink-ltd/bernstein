@@ -363,11 +363,11 @@ def has_terminal_task(tasks_by_status: Mapping[str, list[Task]]) -> bool:
     reached, and neither ``run_completed`` nor ``run_quiescence`` was ever
     journalled. A finished run with no ending.
 
-    ``.get`` for ``closed`` so a caller passing a narrower status list -- the
+    ``.get`` for every key so a caller passing a narrower status list -- the
     parameter ``fetch_all_tasks`` still honours -- gets a false rather than a
     KeyError.
     """
-    return bool(tasks_by_status["done"] or tasks_by_status["failed"] or tasks_by_status.get("closed"))
+    return bool(tasks_by_status.get("done") or tasks_by_status.get("failed") or tasks_by_status.get("closed"))
 
 
 def _model_identity(
@@ -2789,7 +2789,7 @@ class Orchestrator:
 
         Called from the tick's step-8b quiescence handling, on the branch
         where ``open_tasks == active_agents == 0`` **and** no task reached
-        ``done`` or ``failed``. That branch previously only logged: the
+        ``done``, ``failed`` or ``closed``. That branch previously only logged: the
         self-stop next to it is gated on a terminal task existing, so this
         exact shape - the one where nothing ever finished, which is the one
         an operator most needs terminated and reported - was the single case
