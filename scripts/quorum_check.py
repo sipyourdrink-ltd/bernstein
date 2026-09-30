@@ -80,7 +80,7 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 ROSTER_PATH = ".github/quorum-roster.toml"
@@ -150,32 +150,111 @@ def gh_json(*args: str) -> Any:
     return json.loads(result.stdout)
 
 
+# Review charter, "Roles and terms": an area reviewer's approval counts as a
+# core one only when every changed path sits inside their area. The keys are
+# the stewardship areas GOVERNANCE.md names.
+AREA_PATHS: dict[str, tuple[str, ...]] = {
+    "adapters": ("src/bernstein/adapters/", "tests/unit/adapters/", "docs/adapters/"),
+    "web": ("web/",),
+    "tui": ("src/bernstein/tui/",),
+    "docs": ("docs/",),
+    "packaging": ("packaging/", "sdk/"),
+}
+
+# A roster entry that carries `granted` but no `expires` lapses this many
+# months after the grant. Entries with neither never lapse, which is what
+# keeps the original plain-string roster loading unchanged.
+DEFAULT_TERM_MONTHS = 6
+
+
 @dataclass(frozen=True)
 class Roster:
     maintainer: str
     core_reviewers: frozenset[str]
     committers: frozenset[str]
     automation: frozenset[str]
+    triagers: frozenset[str] = frozenset()
+    area_reviewers: dict[str, frozenset[str]] = field(default_factory=dict)
+
+    @property
+    def area_holders(self) -> frozenset[str]:
+        """Everyone named as an area reviewer, in any area."""
+        return frozenset().union(*self.area_reviewers.values()) if self.area_reviewers else frozenset()
 
     @property
     def quorum_holders(self) -> frozenset[str]:
-        """Everyone whose approval counts toward a human quorum."""
-        return self.core_reviewers | self.committers | {self.maintainer}
+        """Everyone whose approval counts toward a human quorum.
+
+        Triagers are deliberately absent: they carry no approval weight.
+        """
+        return self.core_reviewers | self.committers | self.area_holders | {self.maintainer}
 
     @property
     def core(self) -> frozenset[str]:
-        """Everyone who can supply the core reviewer's approval."""
+        """Everyone who can supply the core reviewer's approval anywhere."""
         return self.core_reviewers | {self.maintainer}
 
+    def core_for(self, paths: list[str]) -> frozenset[str]:
+        """Core reviewers for a change touching ``paths``.
 
-def load_roster(root: str = ".") -> Roster:
+        An area reviewer is core only when every path is inside their area;
+        anywhere else they are a plain committer.
+        """
+        extra: set[str] = set()
+        if paths:
+            for area, logins in self.area_reviewers.items():
+                prefixes = AREA_PATHS.get(area, ())
+                if prefixes and all(p.startswith(prefixes) for p in paths):
+                    extra |= logins
+        return self.core | extra
+
+
+def add_months(day: date, months: int) -> date:
+    index = day.month - 1 + months
+    year, month = day.year + index // 12, index % 12 + 1
+    last = (date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)).day
+    return date(year, month, min(day.day, last))
+
+
+def parse_entries(raw: Any) -> list[tuple[str, date | None]]:
+    """Roster entries as (login, expiry-or-None).
+
+    An entry is a plain login string (never lapses) or a table
+    ``{ login = "x", expires = "YYYY-MM-DD" }``; a table with ``granted``
+    and no ``expires`` lapses DEFAULT_TERM_MONTHS after the grant.
+    """
+    entries: list[tuple[str, date | None]] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            entries.append((item, None))
+            continue
+        expires = item.get("expires")
+        if expires is not None:
+            expiry: date | None = date.fromisoformat(str(expires))
+        elif item.get("granted") is not None:
+            expiry = add_months(date.fromisoformat(str(item["granted"])), DEFAULT_TERM_MONTHS)
+        else:
+            expiry = None
+        entries.append((item["login"], expiry))
+    return entries
+
+
+def live_logins(raw: Any, today: date) -> frozenset[str]:
+    """Logins whose term has not ended; an entry lapses on its expiry day."""
+    return frozenset(login for login, expiry in parse_entries(raw) if expiry is None or today < expiry)
+
+
+def load_roster(root: str = ".", today: date | None = None) -> Roster:
+    today = today or datetime.now(UTC).date()
     with open(os.path.join(root, ROSTER_PATH), "rb") as handle:
         raw = tomllib.load(handle)
     return Roster(
         maintainer=raw["maintainer"],
-        core_reviewers=frozenset(raw.get("core_reviewers", [])),
-        committers=frozenset(raw.get("committers", [])),
+        core_reviewers=live_logins(raw.get("core_reviewers"), today),
+        committers=live_logins(raw.get("committers"), today),
         automation=frozenset(raw.get("automation", [])),
+        triagers=live_logins(raw.get("triagers"), today),
+        area_reviewers={area: live_logins(v, today) for area, v in raw.get("area_reviewers", {}).items()},
     )
 
 
@@ -450,7 +529,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
     else:
         eligible = roster.quorum_holders - {pr.author} - pr.contributors
         approving = approvals & eligible
-        approving_core = approving & roster.core
+        approving_core = approving & roster.core_for(pr.paths)
 
         sensitive = sorted(
             p

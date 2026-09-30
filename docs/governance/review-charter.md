@@ -81,6 +81,28 @@ If the maintainer has been unreachable for 30 days, core reviewers may jointly p
 
 **Roster floor.** With fewer than four active committers the quorum stays two and the maintainer covers the gap; the rule is never lowered silently.
 
+## Roles and terms
+
+The ladder below the maintainer. The roster is `.github/quorum-roster.toml`; the human mirror is the table in MAINTAINERS.md.
+
+| Tier | May | Approval weight |
+|---|---|---|
+| Maintainer | everything in section 1 | sole owner; own changes merge without approvals |
+| Core reviewer | as section 1 | counts as core everywhere |
+| Committer | as section 1 | counts toward the quorum, never as core |
+| Area reviewer | as a committer | counts as core only on a pull request wholly inside their area (adapters, web, tui, docs, packaging); a plain committer everywhere else |
+| Triager | label, assign, set milestones, close duplicates | none: never counts toward a quorum, never blocks one |
+
+Area paths are the ones named in `AREA_PATHS` in `scripts/quorum_check.py`. A pull request that also touches a path outside the area has no area core approval; it needs a core reviewer as usual. Triage carries no write access.
+
+**Granting.** By a roster pull request the maintainer opens or confirms, after the election (GOVERNANCE.md) or on the maintainer's own nomination. The pull request adds the login and, for a table entry, a term. Merging the roster is the grant; nothing is granted in a thread.
+
+**Terms.** Committer, core reviewer, triager and area reviewer entries may carry a term: `{ login = "x", expires = "YYYY-MM-DD" }`, or `{ login = "x", granted = "YYYY-MM-DD" }`, which lapses six months later. An entry whose term has ended counts as absent from that day; the check reads the roster on the base branch, so a lapse takes effect without a pull request. A bare login has no term and follows the lapse rule in section 7. Renewal is a roster pull request extending the date. `scripts/roster_terms.py` prints entries ending within 30 days; it is advisory and always exits 0.
+
+**Who edits what.** Only the maintainer edits the roster (section 4 already reserves it). The maintainer alone holds organization ownership, repository rulesets, secrets and the publisher identities; no tier above reaches them. Secrets move to an external store first, before any tier gains access to the release workflows.
+
+**Lapse and removal.** A term ending, section 7's inactivity rule, resignation, and section 8 sanctions all remove a role; none of them touches repository access, which is changed separately in the collaborator settings.
+
 ## 8. Integrity
 
 The maintainer reviews review patterns monthly against public criteria: share of approvals without any comment, approvals given within seconds of opening, mutual approval concentration between pairs of people, reverts traced to an approval. The numbers are shared with the person they concern before anything else happens.
