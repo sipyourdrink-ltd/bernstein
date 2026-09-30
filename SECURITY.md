@@ -83,7 +83,7 @@ an open issue rather than a vulnerability, and the issue is the better place to 
 | `github.com/sipyourdrink-ltd/bernstein` - Python package | `src/bernstein/` |
 | Task server API (`localhost:8052` when self-hosted) | All HTTP endpoints |
 | Agent spawner / orchestrator | Privilege escalation, task injection |
-| Docker images (`bernstein:latest`, `bernstein:sandbox`) | Container escapes |
+| Docker images (`ghcr.io/sipyourdrink-ltd/bernstein`, the repository `Dockerfile`) | Container escapes |
 | CLI entry points (`bernstein run`, `bernstein serve`, etc.) | Argument injection |
 | Authentication tokens (agent tokens, `BERNSTEIN_AUTH_TOKEN`) | Token forgery, replay |
 
@@ -149,7 +149,7 @@ See [`docs/security/bug-bounty.md`](docs/security/bug-bounty.md) for the full sa
 
 | Version | Supported |
 |---------|-----------|
-| 3.19.x  | Yes       |
-| < 3.19  | No        |
+| 3.20.x  | Yes       |
+| < 3.20  | No        |
 
 Fixes ship on the current release line. There is no backport branch.
