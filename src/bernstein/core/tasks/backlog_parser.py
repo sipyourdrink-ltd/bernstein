@@ -102,6 +102,12 @@ class ParsedBacklogTask:
             metadata["ticket_type"] = self.ticket_type
         if metadata:
             payload["metadata"] = metadata
+        if self.janitor_signals:
+            # Parsed from the ticket; dropping them here means the task is
+            # never gated on the signals it declared (#6300).
+            from bernstein.core.tasks.task_body import signals_payload
+
+            payload["completion_signals"] = signals_payload(self.janitor_signals)
         return payload
 
 
