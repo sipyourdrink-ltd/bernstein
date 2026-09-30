@@ -150,7 +150,7 @@ listing pins the release version, so a pull can never resolve to a different
 
 ```bash
 bernstein skills package image-verify                 # defaults to the installed version
-bernstein skills package image-verify --version 3.4.1 --json
+bernstein skills package image-verify --version 3.20.0 --json
 bernstein skills package image-verify --online        # also run `gh attestation verify`
 ```
 

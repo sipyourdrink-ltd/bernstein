@@ -660,8 +660,7 @@ filter logic is `audit_log.py:40-74`.
 
 For SOC 2 evidence collection, pair `GET /audit` with `GET
 /identities/{id}/audit` for per-identity views, and verify the HMAC chain
-out-of-band before exporting. See [Audit and SOC 2 evidence](
-../security/AUDIT.md) for the compliance narrative.
+out-of-band before exporting. See [Audit and SOC 2 evidence](../security/AUDIT.md) for the compliance narrative.
 
 ## Drain and export
 
