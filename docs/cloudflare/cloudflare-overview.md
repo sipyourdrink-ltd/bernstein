@@ -3,8 +3,8 @@
 > **Preview:** The Cloud / Cloudflare surfaces are under active hardening. The hosted API (api.bernstein.run) does not resolve in DNS, so bernstein cloud commands report the service unreachable and exit non-zero. Rows graduate out of Preview individually as smoke coverage lands.
 
 !!! warning "Experimental; hosted API not yet available"
-    Cloud execution is experimental. Workers, R2, D1, and Workers AI run
-    against **your own** Cloudflare account. The hosted Bernstein Cloud API at
+    Cloud execution is experimental. Workers, Workflows, R2, and Browser
+    Rendering run against **your own** Cloudflare account. The hosted Bernstein Cloud API at
     `api.bernstein.run` does not resolve in DNS, so `bernstein cloud login`,
     `run`, `status`, `runs`, and `cost` report that the service is unreachable
     and exit non-zero.
@@ -66,10 +66,10 @@ graph TD
 | Workflow Bridge | `bernstein.bridges.cloudflare_workflow` | Durable multi-step workflows with auto-retry and approval gates |
 | Browser Rendering | `bernstein.bridges.browser_rendering` | Headless browsing, screenshots, scraping, PDF generation |
 | R2 Workspace Sync | `bernstein.bridges.r2_sync` | Content-addressed file sync between local and R2 |
-| Workers AI Provider | `bernstein.core.routing.cloudflare_ai` | Free-tier LLM completions for planning and decomposition |
+| Workers AI Provider | (not implemented) | No `bernstein.core.routing.cloudflare_ai` module exists in the source tree; see [Workers AI](cloudflare-ai.md) |
 | Codex-on-Cloudflare Adapter | `bernstein.adapters.codex_cloudflare` | Runs Codex in a sandbox container via an operator-deployed `@cloudflare/sandbox` bridge Worker; needs a Workers Paid plan |
 | MCP Remote Transport | `bernstein.mcp.remote_transport` | Streamable HTTP transport for remote MCP server access |
-| Cloud CLI | `bernstein.cli.commands.cloud_cmd` | `bernstein cloud` subcommands (init, deploy are local; login/run/status/cost target the experimental, currently-unavailable `api.bernstein.run`) |
+| Cloud CLI | `bernstein.cli.commands.cloud_cmd` | `bernstein cloud` subcommands (init is local; login/run/status/runs/cost target the experimental, currently-unavailable `api.bernstein.run`) |
 
 ---
 
@@ -84,7 +84,7 @@ At minimum:
 For the full stack, you also need:
 
 - An R2 bucket for workspace sync
-- A D1 database for analytics
+- A D1 database for analytics (not yet used by any shipped Bernstein module)
 
 See [Setup](cloudflare-setup.md) for step-by-step provisioning instructions.
 
@@ -96,6 +96,6 @@ See [Setup](cloudflare-setup.md) for step-by-step provisioning instructions.
 - **[Bridges](cloudflare-bridges.md)** -- runtime and workflow bridges
 - **[Adapters](cloudflare-adapters.md)** -- Codex-on-Cloudflare
 - **[Workers AI](cloudflare-ai.md)** -- free LLM provider for planning
-- **[Analytics & Billing](cloudflare-analytics.md)** -- D1 usage metering and billing tiers
+- **[Analytics & Billing](cloudflare-analytics.md)** -- planned D1 usage metering and billing tiers (not implemented)
 - **[Cloud CLI](cloudflare-cli.md)** -- `bernstein cloud` commands
 - **[MCP Remote](cloudflare-mcp.md)** -- remote MCP transport
