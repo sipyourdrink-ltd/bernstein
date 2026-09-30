@@ -1,6 +1,11 @@
 """bernstein-bench: runnable, reproducibility-gated evaluation harness."""
 
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult, harness_fingerprint
+from bernstein.eval.bench.compare import (
+    CompareResult,
+    TaskComparison,
+    compare_bundles,
+)
 from bernstein.eval.bench.contamination import (
     ContaminationVerdict,
     admit_task,
@@ -56,6 +61,7 @@ __all__ = [
     "BenchTask",
     "BenchVerifier",
     "BundleVerificationResult",
+    "CompareResult",
     "ContaminationVerdict",
     "HoldoutBenchRunner",
     "HoldoutIsolationError",
@@ -74,6 +80,7 @@ __all__ = [
     "StochasticMockReplayAdapter",
     "StubReliabilitySigner",
     "SubmissionBundle",
+    "TaskComparison",
     "TaskReliabilityResult",
     "TaskReliabilityVerification",
     "TaskResult",
@@ -85,6 +92,7 @@ __all__ = [
     "build_tool_surface_suite",
     "check_solution_contamination",
     "check_suite_saturation",
+    "compare_bundles",
     "coordination_hash",
     "coordination_projection",
     "extract_ngrams",
