@@ -1233,6 +1233,7 @@ def _render_prompt_with_receipt(
     # Build template context for renderer
     context = {
         "GOAL": tasks[0].title,
+        "SERVER_URL": _resolve_task_server_url(workdir),
         "TASK_DESCRIPTION": task_block,
         "PROJECT_STATE": project_context,
         "AVAILABLE_ROLES": available_roles,

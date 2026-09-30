@@ -792,7 +792,7 @@ def _legacy_completion_instructions(tasks: list[Task]) -> str:
     )
 
 
-def _render_completion_instructions(tasks: list[Task]) -> str:
+def _render_completion_instructions(tasks: list[Task], workdir: Path | None = None) -> str:
     """Build the terminal-outcome instruction block for the worker prompt.
 
     Renders the shared ``templates/roles/_includes/completion_contract.md``
@@ -810,6 +810,9 @@ def _render_completion_instructions(tasks: list[Task]) -> str:
         logger.warning("Completion contract include missing at %s; using legacy instructions", include_path)
         return _legacy_completion_instructions(tasks)
 
+    from bernstein.core.agents.spawner_core import _resolve_task_server_url
+
+    template = template.replace("{{SERVER_URL}}", _resolve_task_server_url(workdir))
     ids = [t.id for t in tasks]
     if len(ids) == 1:
         header = "Complete this task. When done, report a terminal outcome for it:\n\n"
@@ -949,7 +952,7 @@ def _render_prompt(
 
     # Completion-contract instructions shared with templates/roles via the
     # single _includes/completion_contract.md partial (#2244).
-    instructions = _render_completion_instructions(tasks)
+    instructions = _render_completion_instructions(tasks, workdir)
 
     # Available roles from templates directory
     available_roles = ""
@@ -978,9 +981,12 @@ def _render_prompt(
         except Exception as exc:
             logger.warning("TaskContextBuilder failed, skipping rich context: %s", exc)
 
+    from bernstein.core.agents.spawner_core import _resolve_task_server_url
+
     # Build template context for renderer
     context: dict[str, Any] = {
         "GOAL": tasks[0].title,
+        "SERVER_URL": _resolve_task_server_url(workdir),
         "TASK_DESCRIPTION": task_block,
         "PROJECT_STATE": project_context,
         "AVAILABLE_ROLES": available_roles,
