@@ -1121,9 +1121,9 @@ class TestCreateFixTasks:
         original_signals = [
             CompletionSignal(type="path_exists", value="required_file.txt"),
             CompletionSignal(type="test_passes", value="pytest tests/"),
-            CompletionSignal(type="file_contains", value="required_file.txt :: important_content")
+            CompletionSignal(type="file_contains", value="required_file.txt :: important_content"),
         ]
-        
+
         task = _make_task(
             id="T-ORIGINAL",
             title="Original Task",
@@ -1161,9 +1161,9 @@ class TestCreateFixTasks:
         original_signals = [
             CompletionSignal(type="path_exists", value="required_file.txt"),
             CompletionSignal(type="test_passes", value="pytest tests/"),
-            CompletionSignal(type="llm_judge", value="Check implementation quality")
+            CompletionSignal(type="llm_judge", value="Check implementation quality"),
         ]
-        
+
         task = _make_task(
             id="T-JUDGE-ORIGINAL",
             title="Original Judge Task",
