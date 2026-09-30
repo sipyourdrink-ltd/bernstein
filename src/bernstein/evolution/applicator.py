@@ -227,33 +227,41 @@ class FileUpgradeExecutor:
         return sorted(recorded)
 
     def was_applied(self, proposal_id: str) -> bool:
-        """Did any history row for this proposal record an APPLIED change?
+        """Did this proposal change the tree, and has that not been rolled back?
 
         Read rather than remembered, so this answers the same way in a process
-        that did not perform the apply.
+        that did not perform the apply. Two records count as evidence: an
+        ``applied`` history row, or a backup manifest. The manifest is written
+        by ``_backup_file`` BEFORE a file is mutated, so it is the only record
+        a partial apply (one that raised midway and never reached an ``applied``
+        row) leaves behind (#6317).
         """
         history_file = self.upgrades_dir / "history.jsonl"
-        if not history_file.exists():
-            return False
         applied = False
-        for line in history_file.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                # A torn final line is not evidence either way, and refusing to
-                # read the whole file because of one would turn a truncated
-                # journal into an un-rollbackable tree.
-                continue
-            if row.get("proposal_id") != proposal_id:
-                continue
-            status = row.get("status")
-            if status == "applied":
-                applied = True
-            elif status == "rolled_back":
-                applied = False
-        return applied
+        rolled_back = False
+        if history_file.exists():
+            for line in history_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    # A torn final line is not evidence either way, and refusing to
+                    # read the whole file because of one would turn a truncated
+                    # journal into an un-rollbackable tree.
+                    continue
+                if row.get("proposal_id") != proposal_id:
+                    continue
+                status = row.get("status")
+                if status == "applied":
+                    applied = True
+                    rolled_back = False
+                elif status == "rolled_back":
+                    applied = False
+                    rolled_back = True
+        if applied:
+            return True
+        return not rolled_back and self._backup_manifest_path(proposal_id).exists()
 
     def _write_rollback_receipt(self, proposal: UpgradeProposal, *, restored: list[str], note: str) -> Path:
         """Persist a hash-anchored record of what this rollback did.
