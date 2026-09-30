@@ -685,3 +685,40 @@ def test_expired_area_reviewer_counts_as_absent(qc: ModuleType, tmp_path: Path) 
     loaded = qc.load_roster(root, today=TODAY)
     assert "areaman" not in loaded.quorum_holders
     assert loaded.area_reviewers == {"adapters": frozenset()}
+
+
+def test_a_rename_out_of_the_area_is_seen_through_its_previous_name(qc: ModuleType) -> None:
+    roster = qc.Roster(
+        maintainer="owner",
+        core_reviewers=frozenset({"core1"}),
+        committers=frozenset(),
+        automation=frozenset(),
+        area_reviewers={"docs": frozenset({"d1", "d2"})},
+    )
+    reviews = [_review(qc, "d1", "APPROVED"), _review(qc, "d2", "APPROVED")]
+    # the files API lists a move as the new name plus previous_filename
+    files = [{"filename": "docs/x.py", "previous_filename": "src/bernstein/cli/x.py", "status": "renamed"}]
+    paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
+    assert not _evaluate(qc, roster, _pr(qc, paths=paths, reviews=reviews)).passed
+    assert _evaluate(qc, roster, _pr(qc, paths=["docs/x.py"], reviews=reviews)).passed
+
+
+def test_fetch_pull_request_includes_previous_filenames(qc: ModuleType) -> None:
+    import inspect
+
+    assert "previous_filename" in inspect.getsource(qc.fetch_pull_request)
+
+
+def test_unknown_roster_entry_key_fails_closed(qc: ModuleType, tmp_path: Path) -> None:
+    root = _write_roster(
+        tmp_path,
+        'maintainer = "owner"\ncommitters = [{ login = "x", expiry = "2020-01-01" }]\n',
+    )
+    with pytest.raises(ValueError):
+        qc.load_roster(root, today=TODAY)
+
+
+def test_unknown_area_fails_closed(qc: ModuleType, tmp_path: Path) -> None:
+    root = _write_roster(tmp_path, 'maintainer = "owner"\narea_reviewers = { adapter = ["x"] }\n')
+    with pytest.raises(ValueError):
+        qc.load_roster(root, today=TODAY)

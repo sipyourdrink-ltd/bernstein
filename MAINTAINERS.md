@@ -31,6 +31,6 @@ disagree the TOML wins. How the count works is in
 | Automation | `bernstein-the-conductor[bot]`, `renovate[bot]`, `dependabot[bot]` | Own changes merge on green CI, except on sensitive paths, where the maintainer approves |
 
 A change to the roster is a pull request against the TOML file, following
-[GOVERNANCE.md](GOVERNANCE.md); this table is updated in the same pull request. Entries may carry a term; see [Roles and terms](docs/governance/review-charter.md#roles-and-terms).
+[GOVERNANCE.md](GOVERNANCE.md); this table is updated in the same pull request. Entries may carry a term; see [Roles and terms](docs/governance/review-charter.md#11-roles-and-terms).
 
 Security reports do not go here. Use the channels in [SECURITY.md](SECURITY.md).

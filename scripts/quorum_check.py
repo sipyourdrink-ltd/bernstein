@@ -209,6 +209,9 @@ class Roster:
         return self.core | extra
 
 
+ENTRY_KEYS = frozenset({"login", "expires", "granted"})
+
+
 def add_months(day: date, months: int) -> date:
     index = day.month - 1 + months
     year, month = day.year + index // 12, index % 12 + 1
@@ -228,6 +231,9 @@ def parse_entries(raw: Any) -> list[tuple[str, date | None]]:
         if isinstance(item, str):
             entries.append((item, None))
             continue
+        unknown = set(item) - ENTRY_KEYS
+        if unknown:
+            raise ValueError(f"unknown roster entry key(s) {sorted(unknown)} in {item!r}")
         expires = item.get("expires")
         if expires is not None:
             expiry: date | None = date.fromisoformat(str(expires))
@@ -248,6 +254,9 @@ def load_roster(root: str = ".", today: date | None = None) -> Roster:
     today = today or datetime.now(UTC).date()
     with open(os.path.join(root, ROSTER_PATH), "rb") as handle:
         raw = tomllib.load(handle)
+    unknown_areas = set(raw.get("area_reviewers", {})) - set(AREA_PATHS)
+    if unknown_areas:
+        raise ValueError(f"unknown area_reviewers key(s) {sorted(unknown_areas)}; known: {sorted(AREA_PATHS)}")
     return Roster(
         maintainer=raw["maintainer"],
         core_reviewers=live_logins(raw.get("core_reviewers"), today),
@@ -368,7 +377,7 @@ def fetch_pull_request(repo: str, number: int) -> PullRequest:
         is_draft=bool(raw.get("draft")),
         head_sha=(raw.get("head") or {}).get("sha", ""),
         changed_lines=int(raw.get("additions") or 0) + int(raw.get("deletions") or 0),
-        paths=[f["filename"] for f in files],
+        paths=[name for f in files for name in (f["filename"], f.get("previous_filename")) if name],
         reviews=[
             Review(
                 login=(r.get("user") or {}).get("login", ""),

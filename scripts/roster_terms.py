@@ -3,7 +3,8 @@
 
 Reads ``.github/quorum-roster.toml`` and prints every entry whose term ends
 within ``--days`` days (default 30), plus those already expired. A workflow
-can adopt it later; today it only informs the maintainer, who renews or lets
+can adopt it later; an unreadable or malformed roster prints a warning and
+still exits 0 (quorum_check is what fails closed on it); today it only informs the maintainer, who renews or lets
 an entry lapse by editing the roster (charter, "Roles and terms").
 """
 
@@ -40,9 +41,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--days", type=int, default=30, help="warning window in days")
     args = parser.parse_args(argv)
     today = datetime.now(UTC).date()
-    with open(os.path.join(args.root, ROSTER_PATH), "rb") as handle:
-        raw = tomllib.load(handle)
-    rows = expiring(raw, today, args.days)
+    try:
+        with open(os.path.join(args.root, ROSTER_PATH), "rb") as handle:
+            raw = tomllib.load(handle)
+        rows = expiring(raw, today, args.days)
+    except (OSError, tomllib.TOMLDecodeError, KeyError, ValueError, AttributeError) as exc:
+        print(f"warning: could not read the roster terms: {exc!r}", file=sys.stderr)
+        return 0
     if not rows:
         print(f"No roster entry expires within {args.days} days.")
     for tier, login, expiry in rows:

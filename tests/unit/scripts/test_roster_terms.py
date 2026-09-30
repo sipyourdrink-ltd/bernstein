@@ -31,3 +31,19 @@ def test_main_exits_zero_even_with_expired_entries(tmp_path: Path, capsys) -> No
     )
     assert rt.main(["--root", str(tmp_path)]) == 0
     assert "x (committers)" in capsys.readouterr().out
+
+
+def test_a_malformed_roster_warns_and_exits_zero(tmp_path, capsys) -> None:
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "roster_terms_x", Path(__file__).parents[3] / "scripts" / "roster_terms.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "quorum-roster.toml").write_text('committers = [{ expires = "2027-01-01" }]\n')
+    assert mod.main(["--root", str(tmp_path)]) == 0
+    assert "warning" in capsys.readouterr().err
+    assert mod.main(["--root", str(tmp_path / "missing")]) == 0
