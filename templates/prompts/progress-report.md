@@ -6,7 +6,7 @@ can detect if you are stuck and intervene before token waste accumulates.
 ## Command
 
 ```bash
-curl -s -X POST http://127.0.0.1:8052/tasks/{TASK_ID}/progress \
+curl -s -X POST {{SERVER_URL}}/tasks/{TASK_ID}/progress \
   -H "Content-Type: application/json" \
   -d '{
     "files_changed": <number of files you have modified>,
@@ -41,12 +41,12 @@ Simply opening a new file does not count as progress.
 
 ```bash
 # After making your first edits
-curl -s -X POST http://127.0.0.1:8052/tasks/abc123/progress \
+curl -s -X POST {{SERVER_URL}}/tasks/abc123/progress \
   -H "Content-Type: application/json" \
   -d '{"files_changed": 2, "tests_passing": -1, "errors": 3}'
 
 # After running tests
-curl -s -X POST http://127.0.0.1:8052/tasks/abc123/progress \
+curl -s -X POST {{SERVER_URL}}/tasks/abc123/progress \
   -H "Content-Type: application/json" \
   -d '{"files_changed": 4, "tests_passing": 14, "errors": 0}'
 ```

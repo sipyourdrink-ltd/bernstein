@@ -12,15 +12,15 @@ Other agents are working in parallel on this codebase. Recent activity:
 ### Bulletin board API
 ```bash
 # Post a finding (new module, API, gotcha)
-curl -s -X POST http://127.0.0.1:8052/bulletin \
+curl -s -X POST {{SERVER_URL}}/bulletin \
   -H "Content-Type: application/json" \
   -d '{"agent_id": "{{AGENT_ID}}", "type": "finding", "content": "Created src/foo/bar.py with FooClass"}'
 
 # Post a blocker
-curl -s -X POST http://127.0.0.1:8052/bulletin \
+curl -s -X POST {{SERVER_URL}}/bulletin \
   -H "Content-Type: application/json" \
   -d '{"agent_id": "{{AGENT_ID}}", "type": "blocker", "content": "Need changes in config.py owned by agent-xyz"}'
 
 # Read recent bulletins
-curl -s http://127.0.0.1:8052/bulletin?since=<unix_timestamp>
+curl -s {{SERVER_URL}}/bulletin?since=<unix_timestamp>
 ```
