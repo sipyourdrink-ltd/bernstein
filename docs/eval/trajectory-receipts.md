@@ -45,7 +45,9 @@ bernstein audit verify
 ### `bernstein benchmark receipt emit <run_id>`
 
 Seals the completed benchmark run into a signed trajectory receipt and writes
-it under `.sdd/eval/bench/sha256:<hash>.json`.
+it under `.sdd/eval/bench/<digest>.json` (bare hex digest; `:` is invalid in
+Windows filenames). On POSIX, receipts written under the legacy
+`sha256:<digest>.json` name are still read as a fallback.
 
 The receipt commits to:
 

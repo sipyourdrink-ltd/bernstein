@@ -503,7 +503,10 @@ def test_trajectory_receipt_path_refuses_hash_that_resolves_outside_bench_dir(tm
     bench_dir.mkdir(parents=True)
     outside = tmp_path / "host-secret.json"
     outside.write_text("not a receipt", encoding="utf-8")
-    (bench_dir / receipt_filename).symlink_to(outside)
+    try:
+        (bench_dir / receipt_filename).symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
 
     with pytest.raises(ValueError, match="escapes bench directory"):
         trajectory_receipt_path(workdir, receipt_hash)
