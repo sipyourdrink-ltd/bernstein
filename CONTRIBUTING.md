@@ -48,8 +48,12 @@ Beyond that, three labelled queues cover the rest:
 Every issue in those queues states what "done" looks like before you
 start. If one does not, that is a defect in the issue — say so on it.
 
-Comment to claim an issue. If it is assigned but has been quiet for a
-couple of weeks, ask anyway; stalled is not the same as taken.
+Comment to claim an issue, and wait for the assignment: a maintainer
+assigns it, and the assignee field is the record. A comment alone does not
+reserve an issue, and one person holds at most three open assignments at a
+time -- finish or release one before asking for the next. If an issue is
+assigned but has been quiet for a couple of weeks, ask anyway; stalled is
+not the same as taken.
 
 Before proposing something large, read [Scope](docs/scope.md). It lists
 the boundaries that are already decided and the reason for each, with
