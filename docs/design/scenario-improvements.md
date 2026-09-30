@@ -13,7 +13,7 @@ Currently, Bernstein scenarios cannot be run end-to-end from the CLI, and scenar
 ### Detailed Changes
 
 #### 1. CLI Command Structure
-Add a new scenario command group in `src/bernstein/cli/main.py`:
+Add a new scenario command group (defined in `src/bernstein/cli/commands/scenario_cmd.py` and registered in `src/bernstein/cli/main.py`):
 ```
 bernstein scenario list    # List all available scenarios with source indicators
 bernstein scenario run <id> # Run a scenario end-to-end, emitting tasks
