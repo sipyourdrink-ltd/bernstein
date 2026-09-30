@@ -21,8 +21,8 @@ Executes agents on Cloudflare Workers with Durable Objects. Each agent becomes a
 | `api_key` | `config.api_key` | Yes | -- | Cloudflare API token |
 | `account_id` | `config.extra["account_id"]` | Yes | -- | Cloudflare account ID |
 | `worker_name` | `config.extra["worker_name"]` | No | `"bernstein-agent"` | Name of the deployed Worker script |
-| `timeout_seconds` | `config.timeout_seconds` | No | (from BridgeConfig) | HTTP request timeout |
-| `max_log_bytes` | `config.max_log_bytes` | No | (from BridgeConfig) | Max log bytes to fetch |
+| `timeout_seconds` | `config.timeout_seconds` | No | `30` | HTTP request timeout |
+| `max_log_bytes` | `config.max_log_bytes` | No | `1048576` | Max log bytes to fetch |
 
 ### Usage
 
@@ -44,6 +44,8 @@ bridge = CloudflareBridge(config)
 status = await bridge.spawn(
     SpawnRequest(
         agent_id="agent-001",
+        image="bernstein-agent",
+        command=["bernstein-agent"],
         prompt="Add input validation to all API endpoints",
         model="sonnet",
         role="backend",
@@ -128,6 +130,7 @@ from bernstein.bridges.cloudflare_workflow import CloudflareWorkflowBridge
 
 config = BridgeConfig(
     bridge_type="cloudflare-workflow",
+    endpoint="https://api.cloudflare.com",
     api_key="cf_token_...",
     extra={
         "account_id": "abc123",
@@ -141,6 +144,8 @@ bridge = CloudflareWorkflowBridge(config)
 status = await bridge.spawn(
     SpawnRequest(
         agent_id="task-42",
+        image="bernstein-agent",
+        command=["bernstein-agent"],
         prompt="Refactor the auth module",
         model="opus",
         role="architect",

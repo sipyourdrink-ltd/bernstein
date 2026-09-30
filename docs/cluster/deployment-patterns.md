@@ -197,7 +197,7 @@ A complete copy-paste-runnable example lives at
 [`examples/cluster/cloudflared/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/examples/cluster/cloudflared):
 
 - `config.yml` - `cloudflared` ingress config
-- `Dockerfile` - sidecar image (pinned `cloudflare/cloudflared:latest`)
+- `Dockerfile` - sidecar image (pinned to `cloudflare/cloudflared:2025.1.0` by tag and digest)
 - `docker-compose.yml` - central + sidecar wired together
 
 ### Bring it up
@@ -211,7 +211,7 @@ docker compose up -d
 
 # Verify the tunnel is healthy
 curl -fsS https://central.bernstein.example.com/health
-# {"status":"ok"}
+# {"status":"ok", ...}
 ```
 
 ### Worker config

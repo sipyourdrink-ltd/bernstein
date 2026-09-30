@@ -23,7 +23,7 @@ wrangler login
 
 ## 1. Get your account ID
 
-Your account ID appears in the Cloudflare dashboard URL and is required by every module.
+Your account ID appears in the Cloudflare dashboard URL and is required by every bridge config.
 
 ```bash
 wrangler whoami
@@ -48,9 +48,9 @@ For full Bernstein integration, the token needs these permissions:
 
 | Permission | Scope | Used by |
 |-----------|-------|---------|
-| Workers Scripts: Edit | Account | RuntimeBridge, WorkflowBridge, Agents adapter |
-| Workers AI: Run | Account | Workers AI provider |
-| D1: Edit | Account | D1 Analytics |
+| Workers Scripts: Edit | Account | RuntimeBridge, WorkflowBridge |
+| Workers AI: Run | Account | Workers AI (no Bernstein provider ships yet) |
+| D1: Edit | Account | D1 analytics (not yet used by Bernstein) |
 | R2: Edit | Account | R2 Workspace Sync |
 | Browser Rendering: Run | Account | Browser Rendering bridge |
 
@@ -155,11 +155,11 @@ Credentials are stored in `~/.config/bernstein/cloud-token.json` (mode 0600).
 
 | Variable | Required by | Description |
 |----------|-------------|-------------|
-| `CLOUDFLARE_ACCOUNT_ID` / `CF_ACCOUNT_ID` | All modules | Cloudflare account identifier |
-| `CLOUDFLARE_API_TOKEN` / `CF_API_TOKEN` | All modules | API token with appropriate permissions |
-| `CLOUDFLARE_API_KEY` | Agents adapter (legacy) | Global API key (prefer token) |
-| `CLOUDFLARE_EMAIL` | Agents adapter (legacy) | Account email (only with global key) |
-| `WRANGLER_SEND_METRICS` | Agents adapter | Control wrangler telemetry |
+| `CLOUDFLARE_ACCOUNT_ID` / `CF_ACCOUNT_ID` | wrangler; your own code | Cloudflare account identifier (no Bernstein module reads it; pass it into the bridge configs) |
+| `CLOUDFLARE_API_TOKEN` / `CF_API_TOKEN` | wrangler; your own code | API token with appropriate permissions (no Bernstein module reads it; pass it into the bridge configs) |
+| `CLOUDFLARE_API_KEY` | wrangler (legacy) | Global API key (prefer token) |
+| `CLOUDFLARE_EMAIL` | wrangler (legacy) | Account email (only with global key) |
+| `WRANGLER_SEND_METRICS` | wrangler | Control wrangler telemetry |
 | `BERNSTEIN_CLOUD_API_KEY` | Cloud CLI | API key for bernstein.run hosted service |
 
 ---
