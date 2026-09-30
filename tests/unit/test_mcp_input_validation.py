@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -71,15 +73,19 @@ def _reset_validator_cache() -> Iterator[None]:
 
 
 @pytest.fixture
-def set_mode(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+def set_mode() -> Callable[[str], None]:
     """Set the validator mode for the duration of one test.
 
-    ``monkeypatch`` undoes the write itself, so a test that needs a mode never
-    depends on the autouse fixture's teardown to contain it.
+    The write goes straight to ``os.environ``: `_isolated_validator_mode`, run
+    by the autouse fixture, is the one thing that restores this key. Routing it
+    through ``monkeypatch`` gave the key a second owner, and because the shared
+    ``monkeypatch`` finalizes after this module's autouse fixture, its undo
+    (recorded after the key had been popped) deleted a value the context
+    manager had just put back.
     """
 
     def _set(value: str) -> None:
-        monkeypatch.setenv(iv._MODE_ENV, value)
+        os.environ[iv._MODE_ENV] = value
 
     return _set
 
@@ -471,6 +477,66 @@ def test_isolation_restores_the_mode_that_was_already_set() -> None:
         assert os.environ[iv._MODE_ENV] == "strict"
     finally:
         os.environ.pop(iv._MODE_ENV, None)
+
+
+_MODE_SETTING_TESTS = (
+    "test_permissive_mode_demotes_schema_failure",
+    "test_permissive_mode_demotes_unknown_tool",
+    "test_permissive_explicit_override_beats_env",
+    "test_permissive_mode_with_non_dict_payload_returns_empty_payload",
+)
+
+_ENV_PROBE = """
+import os
+
+
+def pytest_sessionfinish(session):
+    value = os.environ.get("{key}")
+    with open(os.environ["MODE_PROBE_OUT"], "w", encoding="utf-8") as fh:
+        fh.write("<unset>" if value is None else value)
+"""
+
+
+@pytest.mark.parametrize("outer", [None, "strict-OUTER"], ids=["unset", "set"])
+def test_the_file_leaves_the_environment_as_it_found_it(tmp_path: Path, outer: str | None) -> None:
+    """Run the mode-setting tests through the real fixture stack, both ways.
+
+    The helper tests above call `_isolated_validator_mode` directly, so they
+    cannot see a defect that only exists when fixtures compose -- which is
+    where both the original leak and its mirror image lived. This runs the
+    four tests that set a mode in a separate pytest session and reads the
+    variable after the session ends: unset stays unset, and a value set
+    before pytest started comes back (#5952).
+    """
+    (tmp_path / "mode_probe.py").write_text(_ENV_PROBE.replace("{key}", iv._MODE_ENV), encoding="utf-8")
+    out = tmp_path / "mode.txt"
+    env = {k: v for k, v in os.environ.items() if k != iv._MODE_ENV}
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(tmp_path), env.get("PYTHONPATH")]))
+    env["MODE_PROBE_OUT"] = str(out)
+    if outer is not None:
+        env[iv._MODE_ENV] = outer
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            *(f"{__file__}::{name}" for name in _MODE_SETTING_TESTS),
+            "-q",
+            "-p",
+            "mode_probe",
+            "-p",
+            "no:cacheprovider",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"{len(_MODE_SETTING_TESTS)} passed" in proc.stdout
+    assert out.read_text(encoding="utf-8") == ("<unset>" if outer is None else outer)
 
 
 # ---------------------------------------------------------------------------
