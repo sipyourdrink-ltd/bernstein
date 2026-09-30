@@ -1396,15 +1396,16 @@ def _require_adapter_configured(cli: str | None, workdir: Path) -> None:
     watchdog restarts it, so the FATAL repeated every tick under a live TUI.
     Nothing a later tick does can change the answer, so fail at startup.
     Mirrors the orchestrator's resolution: ``--cli``, ``BERNSTEIN_ADAPTER``,
-    then the seed file's ``cli`` (which defaults to ``auto``). A first run
-    (no ``.sdd/``, no seed) is exempt: the bootstrap writes a ``cli: auto``
-    seed for it.
+    then the seed file's ``cli`` (which defaults to ``auto``). There is no
+    first-run exemption: the goal bootstrap takes the PID lock, which creates
+    ``.sdd/``, before it decides whether to write a default seed, so a fresh
+    directory never gets one and the orchestrator would hit the FATAL.
     """
     if (cli or "").strip() not in ("", "auto") or os.environ.get("BERNSTEIN_ADAPTER", "").strip():
         return
     from bernstein.core.config.seed import resolve_seed_path
 
-    if resolve_seed_path(workdir).exists() or not (workdir / ".sdd").exists():
+    if resolve_seed_path(workdir).exists():
         return
     from bernstein.core.orchestration.orchestrator import NO_ADAPTER_CONFIGURED
 
