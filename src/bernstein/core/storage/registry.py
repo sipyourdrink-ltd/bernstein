@@ -82,6 +82,7 @@ class _Registry:
 
     def unregister(self, name: str) -> None:
         """Remove *name* from the registry if present (tests only)."""
+        name = name.strip()
         with self._lock:
             self._sinks.pop(name, None)
             self._factories.pop(name, None)

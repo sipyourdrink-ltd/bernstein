@@ -240,3 +240,90 @@ class TestStorageRegistryDuplicateGuard:
         registry.register("test-sink", dummy_sink)
         registry.unregister("test-sink")
         registry.register("test-sink", dummy_sink)  # must not raise
+
+
+# --- Review follow-ups: name normalisation, builtin and entrypoint guards ---
+
+
+class _FakeEntryPoint:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.value = "fake.module:Thing"
+        self.loaded = False
+
+    def load(self) -> Any:
+        self.loaded = True
+        return object()
+
+
+class TestUnregisterNormalisesName:
+    def test_sandbox_unregister_normalises_name_like_register(self) -> None:
+        from bernstein.core.sandbox.registry import _Registry
+
+        registry = _Registry()
+        backend = object()
+        registry.register("  Test-Sandbox ", backend)  # stored as "Test-Sandbox"
+        registry.unregister("  Test-Sandbox ")
+        registry.register("Test-Sandbox", backend)  # stale guard entry must not block
+        assert registry.get("Test-Sandbox") is backend
+
+    def test_storage_unregister_normalises_name_like_register(self) -> None:
+        from bernstein.core.storage.registry import _Registry
+
+        registry = _Registry()
+        sink = object()
+        registry.register("  Test-Sink ", sink)
+        registry.unregister("  Test-Sink ")
+        registry.register("Test-Sink", sink)
+        assert registry.get("Test-Sink") is sink
+
+
+class TestBuiltinAndEntrypointGuards:
+    def test_sandbox_builtin_refuses_overwrite(self) -> None:
+        from bernstein.core.sandbox.registry import _Registry
+
+        registry = _Registry()
+        registry._load_builtins()
+        with pytest.raises(DuplicateRegistrationError, match="worktree"):
+            registry.register("worktree", object())
+
+    def test_storage_builtin_refuses_overwrite(self) -> None:
+        from bernstein.core.storage.registry import _Registry
+
+        registry = _Registry()
+        registry._load_builtins()
+        with pytest.raises(DuplicateRegistrationError, match="local_fs"):
+            registry.register("local_fs", object())
+
+    def test_sandbox_entrypoint_skipped_when_already_registered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.sandbox import registry as mod
+
+        registry = mod._Registry()
+        original = object()
+        registry.register("ext", original)
+        ep = _FakeEntryPoint("ext")
+        monkeypatch.setattr(mod, "entry_points", lambda group: [ep])
+        registry._load_entrypoints()  # must not raise
+        assert ep.loaded is False
+        assert registry.get("ext") is original
+
+    def test_storage_entrypoint_skipped_when_already_registered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from bernstein.core.storage import registry as mod
+
+        registry = mod._Registry()
+        original = object()
+        registry.register("ext", original)
+        ep = _FakeEntryPoint("ext")
+        monkeypatch.setattr(mod, "entry_points", lambda group: [ep])
+        registry._load_entrypoints()  # must not raise
+        assert ep.loaded is False
+        assert registry.get("ext") is original
+
+
+def test_tracker_duplicate_error_keeps_overwrite_hint() -> None:
+    from bernstein.core.trackers.registry import DuplicateTrackerError, TrackerRegistry
+
+    registry = TrackerRegistry()
+    registry.register("hint-tracker", _dummy_tracker_factory)
+    with pytest.raises(DuplicateTrackerError, match=r"overwrite=True"):
+        registry.register("hint-tracker", _dummy_tracker_factory)

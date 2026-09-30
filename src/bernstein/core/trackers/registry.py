@@ -145,7 +145,10 @@ class TrackerRegistry:
         module_name = provenance or caller_module_name()
         if module_name == __name__:
             module_name = caller_module_name(depth=2)
-        self._guard.register(name, module_name, error_type=DuplicateTrackerError)
+        try:
+            self._guard.register(name, module_name, error_type=DuplicateTrackerError)
+        except DuplicateTrackerError as exc:
+            raise DuplicateTrackerError(f"{exc}. Pass overwrite=True to replace it.") from None
         entry = TrackerRegistration(
             name=name,
             factory=factory,

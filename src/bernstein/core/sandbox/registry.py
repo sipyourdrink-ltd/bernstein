@@ -83,6 +83,7 @@ class _Registry:
 
         Primarily useful for tests.
         """
+        name = name.strip()
         with self._lock:
             self._backends.pop(name, None)
             self._factories.pop(name, None)
