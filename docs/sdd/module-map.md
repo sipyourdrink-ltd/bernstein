@@ -24,7 +24,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `verify_dispatch.py`        | Kind-detecting dispatcher for a single ``bernstein verify <artefact>`` entry point (#5103) |
 | `verify_result.py`          | The one shape an offline verification answers in |
 | `admission/`                | Named resource pools with lease-backed admission (#2544) |
-| `agents/`                   | agents sub-package |
+| `agents/`                   | Agent discovery and bounded registered detector execution (``detector_runtime.py``) |
 | `approval/`                 | Interactive tool-call approval (op-002) |
 | `autofix/`                  | Bernstein autofix daemon - auto-repair CI failures on Bernstein PRs |
 | `autoheal/`                 | Auto-heal v2 subpackage |
@@ -44,7 +44,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `evidence/`                 | Verification evidence bundles (issue #2362) |
 | `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
 | `git/`                      | git sub-package |
-| `govern/`                   | Govern plan models for posture diff artifacts |
+| `govern/`                   | Governance planning and declared probe execution (``probe_runtime.py``) |
 | `grpc_gen/`                 | Generated gRPC stubs - run ``scripts/generate_proto.sh`` to populate |
 | `handoff/`                  | Session handoff between terminal and chat/dashboard surfaces (op-005) |
 | `identity/`                 | Install-rev identity module - passive, operator-decodable install fingerprint |

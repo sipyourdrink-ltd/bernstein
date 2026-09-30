@@ -15,6 +15,7 @@ damage would show up as a probe that quietly stopped doing something.
 from __future__ import annotations
 
 import json
+import threading
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -76,6 +77,39 @@ def test_a_round_trip_is_stable_across_two_passes() -> None:
     assert once == twice == raw
 
 
+def test_fallback_and_retry_fields_round_trip_without_changing_older_records() -> None:
+    old = _declaration()
+    assert Probe.from_dict(old).to_dict() == old
+
+    raw = _declaration(fallback_methods=["api", "file"], max_retries=2, future_field="kept")
+    probe = Probe.from_dict(raw)
+
+    assert probe.fallback_methods == (CollectionMethod.API, CollectionMethod.FILE)
+    assert probe.max_retries == 2
+    assert probe.unknown == {"future_field": "kept"}
+    assert probe.to_dict() == raw
+
+
+def test_new_fields_do_not_shift_existing_positional_constructor_arguments() -> None:
+    probe = Probe(
+        "version",
+        "adapter.version",
+        CollectionMethod.COMMAND,
+        2.0,
+        30.0,
+        CostClass.FREE,
+        ("host-derived",),
+        {"future_field": "kept"},
+    )
+
+    assert probe.refresh_interval_s == 30.0
+    assert probe.cost_class is CostClass.FREE
+    assert probe.taint_tags == ("host-derived",)
+    assert probe.unknown == {"future_field": "kept"}
+    assert probe.fallback_methods is None
+    assert probe.max_retries is None
+
+
 def test_known_keys_serialize_in_a_fixed_order() -> None:
     """Two writers of one probe produce the same bytes."""
     first = json.dumps(Probe.from_dict(_declaration(z_extra=1, a_extra=2)).to_dict())
@@ -112,6 +146,21 @@ def test_a_non_positive_timeout_is_refused(bad: object) -> None:
     """Zero is not a ceiling, and a bool is not a number."""
     with pytest.raises(ProbeError, match="timeout_s"):
         Probe.from_dict(_declaration(timeout_s=bad))
+
+
+def test_non_finite_and_platform_unsafe_timing_declarations_are_refused() -> None:
+    raw = json.loads(
+        '{"id":"huge","attribute":"adapter.huge","collection_method":"command",'
+        '"refresh_interval_s":0,"timeout_s":1e999,"cost_class":"cheap","taint_tags":[]}'
+    )
+    with pytest.raises(ProbeError, match="timeout_s"):
+        Probe.from_dict(raw)
+
+    with pytest.raises(ProbeError, match="timeout_s"):
+        Probe.from_dict(_declaration(timeout_s=threading.TIMEOUT_MAX * 2.0))
+
+    with pytest.raises(ProbeError, match="refresh_interval_s"):
+        Probe.from_dict(_declaration(refresh_interval_s=float("inf")))
 
 
 def test_an_unknown_collection_method_names_what_is_allowed() -> None:

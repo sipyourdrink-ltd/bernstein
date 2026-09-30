@@ -190,6 +190,57 @@ is by misreading the same library result.
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
 
+## Declared discovery probes
+
+Governance collectors can load probe declarations from a directory through
+`src/bernstein/core/govern/probe.py`. A declaration names the fact rather than
+embedding collection policy in a dispatch branch:
+
+```json
+{
+  "id": "adapter-version",
+  "attribute": "adapter.version",
+  "collection_method": "command",
+  "fallback_methods": ["api"],
+  "max_retries": 1,
+  "refresh_interval_s": 900,
+  "timeout_s": 5,
+  "cost_class": "cheap",
+  "taint_tags": ["host-derived"]
+}
+```
+
+`collection_method` is always attempted first. `fallback_methods` are optional
+and run in declaration order; `max_retries` is the number of additional tries
+allowed for each available source. Fields an older build does not understand
+are preserved when a declaration is loaded and serialized again.
+
+An answered fact may be held in the in-memory `ProbeFactCache` until its
+`refresh_interval_s` expires; a value of `0` means collect on every run. This
+cache is deliberately not durable, so a process restart collects again. An
+uncached target/probe start receives bounded full jitter, and `timeout_s` is a
+deadline for the entire invocation including retries and fallbacks. Exceptions,
+missing collectors, and no-answer attempts are recorded as failure evidence
+while declared retries and fallbacks continue within that deadline. The final
+result is explicit `unknown` only when the overall deadline expires or every
+declared source is exhausted without an answer; remaining probes and targets
+still continue. The deadline stops the coordinator waiting; it does not cancel
+the daemon worker, which may retain resources until the collector finishes, and
+any result arriving after the timeout is ignored.
+
+Each completed probe-set run carries one canonical journal record containing the
+probe-set version, attempted targets in input order, targets that returned at
+least one value, and normalized per-attempt failures. `record_probe_run()`
+anchors that record with one `LineageSpine.record()` call for the whole run, not
+one call per target. Failure records contain only the source, attempt, failure
+kind, and a bounded reason category; collector output and tracebacks are not
+journaled.
+
+The current `bernstein govern discover` inventory command still uses its
+existing inventory collector. Wiring declared probe values into observation
+envelopes is a separate collector concern, so this runtime does not claim that
+the CLI executed a probe set when it did not.
+
 ## Reconciling the governed surface
 
 `bernstein govern reconcile --propose` answers a different question from
