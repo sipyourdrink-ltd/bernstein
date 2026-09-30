@@ -2,7 +2,7 @@
 
 The selector is a pure function that picks one sandbox backend
 (`worktree`, `docker`, `e2b`, `modal`, `daytona`, `blaxel`,
-`runloop`, `vercel`) given a workspace manifest, an operator policy,
+`runloop`, `vercel`, `microvm`) given a workspace manifest, an operator policy,
 and the credentials currently visible to the orchestrator. Same
 inputs, same backend pick, every time. No I/O, no registry side
 effects.
@@ -35,8 +35,11 @@ The selector replaces that with three rules:
 
 ```text
 worktree -> docker -> e2b -> modal -> daytona -> blaxel
-         -> runloop -> vercel
+         -> runloop -> vercel -> microvm
 ```
+
+`microvm` is opt-in: it is not a free backend, so the heuristic path
+only reaches it through an explicit override.
 
 Backends not present in `DEFAULT_PRECEDENCE` are appended in
 sorted-name order so plug-in backends still get a stable position.

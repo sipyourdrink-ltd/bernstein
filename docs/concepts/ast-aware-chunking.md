@@ -16,11 +16,11 @@ gives the reviewer denser context per token and prevents the
 
 ## How to use it
 
-The chunker is invoked automatically by the review pipeline whenever
-the reviewer would otherwise window-read a Python file larger than its
-budget. There is no flag to set per-run - it is on by default.
+The chunker is exported from the review pipeline package and is
+called directly by tooling that needs to feed a Python file to the
+reviewer within a token budget. There is no flag to set per-run.
 
-If you are calling the chunker directly from custom tooling:
+To call the chunker from custom tooling:
 
 ```python
 from bernstein.core.quality.review_pipeline.ast_chunker import (
@@ -43,9 +43,9 @@ model sees structure before code.
 
 ## Configuration
 
-The chunker reads `defaults.REVIEW_BUDGET_TOKENS` (the same budget the
-line-based fallback uses) and is otherwise self-contained - no
-user-facing knobs.
+The chunker takes its budget from the `budget_tokens` argument
+(default `4000`; the line-based fallback uses the same value) and is
+otherwise self-contained - no user-facing knobs.
 
 ## Limitations
 

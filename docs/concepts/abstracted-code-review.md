@@ -20,30 +20,28 @@ read.
 ## How to use it
 
 It is on by default. PRs opened via `bernstein` carry the Intent
-section automatically. Disable per run:
-
-```bash
-# bernstein.yaml
-review:
-  abstract_diff: false
-```
-
-Or per repo:
+section automatically. The switch is the module constant
+`bernstein.core.defaults.ABSTRACT_DIFF_ENABLED`; there is no
+`bernstein.yaml` key for it. Custom tooling can also pass
+`enabled=False` to `summarize_diff`:
 
 ```python
-# defaults override
-ABSTRACT_DIFF_ENABLED = False
+from bernstein.core import defaults
+
+defaults.ABSTRACT_DIFF_ENABLED = False
 ```
 
 Programmatic API for custom tooling:
 
 ```python
 from bernstein.core.quality.review_pipeline.abstract_diff import (
+    TaskContext,
     summarize_diff,
     pseudo_for_function,
 )
 
 # summarize_diff is async and returns one IntentSummary per file
+task_context = TaskContext(title="Fix retry loop")
 summaries = await summarize_diff(diff_text, task_context)
 for summary in summaries:
     print(summary.path)

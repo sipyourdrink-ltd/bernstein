@@ -102,7 +102,7 @@ so adding the parameter did not invalidate existing stores.
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `defaults.MEMO_MAX_MB` | `200` | Max disk used by the store before LRU eviction kicks in. |
+| `defaults.JANITOR.memo_max_mb` | `200` | Max disk used by the store before LRU eviction kicks in. |
 | Memo store path | `.sdd/runtime/memo/` | Pinned to `.sdd/` so air-gap runs do not write to `~/.cache/`. |
 
 Metrics exposed on `/metrics`:
