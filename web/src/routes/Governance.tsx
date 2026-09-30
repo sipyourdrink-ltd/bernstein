@@ -26,9 +26,9 @@
 // checking GitHub issue state live - the panel has no backend and no network
 // call, so "self-maintaining" here means the whole maintenance action is
 // flipping one boolean in the data file when the linked issue closes, not
-// writing a live status check. Two of the six checked-in gaps (#5047, #5051)
-// are already closed as of this list's writing, so ``resolved: true`` on
-// those two is this property demonstrated with real data, not a hypothetical.
+// writing a live status check. One of the six checked-in gaps (#5047)
+// is already closed as of this list's writing, so ``resolved: true`` on
+// it is this property demonstrated with real data, not a hypothetical.
 
 import { Pill, SectionLabel } from '@/lib/states';
 import fixture from './governance-coverage.fixture.json';

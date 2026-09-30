@@ -235,7 +235,8 @@ test('a resolved gap renders differently and no longer links to the issue as an 
 
   const row = gapRowFor(html, 'delegation');
   assert.ok(row.includes('data-gap-state="resolved"'), 'a resolved gap is not marked resolved');
-  assert.ok(row.includes('resolved'), 'a resolved gap does not say so');
+  assert.ok(row.includes('>resolved<'), 'a resolved gap does not show the resolved pill');
+  assert.ok(row.includes('line-through'), 'a resolved gap is not struck through');
   assert.ok(!row.includes('href='), 'a resolved gap still links out as if it were open');
 });
 
@@ -279,11 +280,14 @@ test('adding a gap is one data entry: the fixture list renders one row per entry
 // 13
 test('the checked-in gap list carries at least one open and one resolved entry', async (t) => {
   // Pins the property #5069's own acceptance criteria demonstrate with real
-  // data: two of the six checked-in gaps (#5047, #5051) closed after this
+  // data: one of the six checked-in gaps (#5047) closed after this
   // list was written, and stay in the list, rendered as resolved rather than
   // removed. A list where every entry is the same state would not exercise
   // "renders differently" at all.
   const { notCoveredFixtureGaps } = await loadPanel(t);
   assert.ok(notCoveredFixtureGaps.some((gap) => gap.resolved), 'no resolved gap in the checked-in list');
   assert.ok(notCoveredFixtureGaps.some((gap) => !gap.resolved), 'no open gap in the checked-in list');
+  const ids = (resolved) => notCoveredFixtureGaps.filter((gap) => gap.resolved === resolved).map((gap) => gap.id);
+  assert.ok(ids(true).includes('delegation'), 'delegation (#5047) is not resolved');
+  assert.ok(ids(false).includes('approvals'), 'approvals gate default is not an open gap');
 });
