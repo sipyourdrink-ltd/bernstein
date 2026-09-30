@@ -84,3 +84,20 @@ def test_tail_digest_on_a_directory_without_logs_says_so(tmp_path: Path) -> None
     assert ref == ""
     assert mtime == 0.0
     assert details == {"reason": "no audit log files present"}
+
+
+def test_tail_digest_coerces_a_non_string_hmac(tmp_path: Path) -> None:
+    """A dict entry whose ``hmac`` is not a string is accepted and stringified.
+
+    This is a decision, not an accident (#5950 asked for it to be written
+    down): `str(entry["hmac"])` coerces, so ``{"hmac": 42}`` is quoted as
+    ``sha256:42``. Tightening that into a type check should turn this red and
+    be made on purpose, not arrive as a silent change in an evidence path.
+    """
+    audit_dir = tmp_path / "audit"
+    _write_log(audit_dir, "audit-2026-09-17.jsonl", ['{"event": "stop", "hmac": 42}'])
+
+    ref, _, details = audit_pack._hmac_chain_tail_digest(audit_dir)
+
+    assert ref == "sha256:42"
+    assert details["lines"] == 1
