@@ -340,7 +340,7 @@ def test_npm_missing_token_fails_the_job(workflow: dict[str, Any]) -> None:
 
     assert "::warning::NPM_TOKEN is not configured" not in run
     assert "::error::npm wrapper publish failed" in run
-    assert "exit """ in run
+    assert "exit " in run
 
 
 def test_github_release_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
