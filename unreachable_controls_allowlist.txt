@@ -293,6 +293,7 @@ src/bernstein/core/security/policy.py::PolicyEngine.enable_policy               
 src/bernstein/core/security/policy.py::PolicyEngine.list_policies                              # exercised by tests only; no production caller
 src/bernstein/core/security/policy.py::PolicyEngine.remove_policy                              # exercised by tests only; no production caller
 src/bernstein/core/security/policy.py::create_context                                          # exercised by tests only; no production caller
+src/bernstein/core/security/policy_engine.py::DecisionGraph                                    # exercised by tests only; no production caller. run_guardrails built it and never evaluated it; #6183 removed that and keeps DecisionGraph for a future consumer of evaluate()
 src/bernstein/core/security/policy_engine.py::PolicyCheckResult                                # no production caller and no test reference; baseline entry from the first scan
 src/bernstein/core/security/policy_engine.py::evaluate_lethal_trifecta                         # exercised by tests only; no production caller
 src/bernstein/core/security/policy_engine.py::run_policy_engine                                # exercised by tests only; no production caller
