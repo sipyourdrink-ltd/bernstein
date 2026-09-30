@@ -214,6 +214,8 @@ class FinishedRun:
             when it never closed).
         elapsed_seconds: ``ended_at - started_at``.
         host: Host that executed the run, as recorded on its entries.
+        capability_id: Capability that performed the run, when recorded.
+        adapter_id: Adapter that performed the run, when recorded.
         parent_run_id: Run that spawned this one, when it recorded one.
         steps: Per-step timings, ordered by start instant.
     """
@@ -228,6 +230,8 @@ class FinishedRun:
     ended_at: float = 0.0
     elapsed_seconds: float = 0.0
     host: str = ""
+    capability_id: str = ""
+    adapter_id: str = ""
     parent_run_id: str = ""
     steps: tuple[RunStepTiming, ...] = ()
 
@@ -395,6 +399,8 @@ def classify_ledger_dir(ledger_dir: Path, *, run_id: str) -> FinishedRun | None:
         ended_at=ended_at,
         elapsed_seconds=ended_at - started_at,
         host=_run_field(entries, "host"),
+        capability_id=_run_field(entries, "capability_id"),
+        adapter_id=_run_field(entries, "adapter_id"),
         parent_run_id=_run_field(entries, "parent_run_id"),
         steps=_step_timings(entries),
     )
@@ -750,15 +756,13 @@ class MaskedFailureReport:
 def _run_owner(run: FinishedRun) -> str:
     """Attribution for one run.
 
-    The HOST, because it is the attribution runs actually carry today. Grouping
-    by the owning capability or adapter is what the issue ultimately wants, and
-    it needs runs to record that first (#5107); this reports the real number
-    against the real key rather than inventing a bucket.
-
-    A run whose entries never recorded a host groups under ``unattributed``,
-    named rather than dropped: a run with no host is still a run that retried,
-    and silently omitting it would understate the very number being reported.
+    Group by capability ID if present, otherwise adapter ID, then host.
+    Fall back to unattributed if none are available.
     """
+    if run.capability_id:
+        return run.capability_id
+    if run.adapter_id:
+        return run.adapter_id
     return run.host if run.host else "unattributed"
 
 

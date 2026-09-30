@@ -1075,7 +1075,7 @@ instead of passing trivially. (`cli/commands/lineage_cmd.py`,
 
 | Subcommand | Purpose |
 |---|---|
-| `emit ARTIFACT --run-id RUN_ID` | Project the artifact's lineage-spine subtree into a signed C2PA 2.2 manifest and write `<artifact>.c2pa.json`. `--workdir DIR`, `--json`. Exit 0 = written, 1 = no lineage / bad input. |
+| `emit ARTIFACT --run-id RUN_ID` | Project the artifact's lineage-spine subtree into a signed C2PA 2.4 manifest and write `<artifact>.c2pa.json`. `--workdir DIR`, `--json`. Exit 0 = written, 1 = no lineage / bad input. |
 | `verify ARTIFACT` | Confirm the manifest's hard-binding hash matches the artifact bytes and the signature chains to the install identity. `--workdir DIR`, `--manifest PATH`. Exit 0 = OK, 1 = bad input, 2 = verification failed. |
 
 The manifest is a deterministic projection of the artifact's lineage

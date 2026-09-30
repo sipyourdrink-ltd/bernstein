@@ -59,14 +59,14 @@ Runtime state (`.sdd/runtime/`) is ephemeral - PIDs, logs, signals. Never commit
 
 ## Package structure
 
-Since v1.6, `core/` is organized into sub-packages (63 at time of writing) rather than flat files. The old flat module paths (`bernstein.core.server`, `bernstein.core.orchestrator`, `bernstein.core.spawner`, ...) no longer exist as files. They keep importing anyway: `core/__init__.py` registers a custom module finder on `sys.meta_path` whose `_REDIRECT_MAP` maps each old module name to its new sub-package location and imports the real module on demand. Import paths stay stable, and each subsystem can grow independently.
+Since v1.6, `core/` is organized into sub-packages (68 at time of writing) rather than flat files. The old flat module paths (`bernstein.core.server`, `bernstein.core.orchestrator`, `bernstein.core.spawner`, ...) no longer exist as files. They keep importing anyway: `core/__init__.py` registers a custom module finder on `sys.meta_path` whose `_REDIRECT_MAP` maps each old module name to its new sub-package location and imports the real module on demand. Import paths stay stable, and each subsystem can grow independently.
 
 The table below is a selection of the most load-bearing sub-packages, not the full list:
 
 | Sub-package | Responsibility |
 |-------------|----------------|
 | `core/agents/` | Spawner, agent lifecycle, heartbeat, signals, discovery, turn state |
-| `core/communication/` | Bulletin board, notifications, desktop notify, scratchpad |
+| `core/communication/` | Bulletin board, notifications, signals, task mailbox, voting, whiteboard |
 | `core/config/` | Seed parsing, config validation, hot reload, migration |
 | `core/cost/` | Cost tracking, anomaly detection, budgets, forecasting |
 | `core/evidence/` | Content-addressed evidence bundles, completion gate, output diff |
@@ -324,13 +324,12 @@ Two first-party surfaces sit on top of the REST API. The Textual TUI (`src/berns
 
 Bernstein can execute agents on Cloudflare's edge infrastructure in addition to local processes. The integration provides:
 
-- **RuntimeBridge** (`bridges/cloudflare.py`) - spawn agents on Workers + Durable Objects
-- **WorkflowBridge** (`bridges/cloudflare_workflow.py`) - durable multi-step workflows with auto-retry and approval gates
+- **CloudflareBridge** (`bridges/cloudflare.py`) - spawn agents on Workers + Durable Objects
+- **CloudflareWorkflowBridge** (`bridges/cloudflare_workflow.py`) - durable multi-step workflows with auto-retry and approval gates
 - **BrowserRenderingBridge** (`bridges/browser_rendering.py`) - headless web browsing for agents
 - **R2WorkspaceSync** (`bridges/r2_sync.py`) - content-addressed workspace file sync via R2
-- **WorkersAIProvider** (`core/routing/cloudflare_ai.py`) - free-tier LLM models for planning
 
-The cloud bridges implement the same `RuntimeBridge` interface as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](../cloudflare/cloudflare-overview.md) for architecture diagrams and setup instructions.
+The cloud bridges implement the same `RuntimeBridge` interface (`bridges/base.py`) as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](../cloudflare/cloudflare-overview.md) for architecture diagrams and setup instructions.
 
 ---
 

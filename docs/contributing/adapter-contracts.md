@@ -18,7 +18,7 @@ Refs: [#1291](https://github.com/sipyourdrink-ltd/bernstein/issues/1291).
 ## File layout
 
 ```
-tests/contract/contracts/<adapter>.yaml   # one per shipped adapter
+tests/contract/contracts/<adapter>.yaml   # one per contracted adapter
 src/bernstein/adapters/_contract.py       # loader + checker
 src/bernstein/cli/commands/adapters_contract_cmd.py
                                           # `bernstein adapters contract-check`
@@ -32,7 +32,8 @@ tests/unit/test_adapter_contract_check.py # checker unit tests
 adapter: claude              # registry key
 binary:  claude              # name of the executable on $PATH
 install:
-  method: npm                # npm | pipx | curl | cargo
+  method: npm                # npm | pipx | curl | cargo (CI auto-installs only npm and pipx;
+                             # contracts also use pip, uv, brew, shell, manual, none, ...)
   spec:   "@anthropic-ai/claude-code@latest"
 auth:
   # ``<binary> --help`` is expected to work without auth. Set
@@ -47,6 +48,7 @@ auth:
 
   # The env var the CI workflow may inject so the model check runs.
   # When the variable is unset, model coverage degrades to help-only.
+  # May be a single name or an ordered list (highest precedence first).
   secret_env: "ANTHROPIC_API_KEY"
 
 # Tokens that MUST appear in the help output. Case-insensitive.
@@ -100,7 +102,9 @@ expected_models:
    bernstein adapters contract-check <name> --json
    ```
 
-   Exit code `0` means the contract holds. Exit code `2` means the
+   Exit code `0` means the contract holds (or the CLI is not installed
+   locally). Exit code `3` means the upstream CLI's `--help` failed at
+   runtime, so the contract was not evaluated. Exit code `2` means the
    local CLI is missing a required token; re-check step 1 (the
    contract may be over-strict) or step 2 (the upstream CLI may have
    genuinely drifted, in which case the adapter needs updating first).
@@ -118,7 +122,7 @@ coverage when it is absent.
 
 | Secret                             | Used by                |
 |------------------------------------|------------------------|
-| `ADAPTER_CONTRACT_ANTHROPIC_API_KEY` | claude, crush, goose |
+| `ADAPTER_CONTRACT_ANTHROPIC_API_KEY` | crush, goose |
 | `ADAPTER_CONTRACT_OPENAI_API_KEY`    | codex, aichat, aider, gptme |
 | `ADAPTER_CONTRACT_GEMINI_API_KEY`    | gemini               |
 
