@@ -100,3 +100,28 @@ def test_the_fatal_still_offers_the_two_remedies_that_are_not_flags() -> None:
     """The env var and the config key work and are the fallbacks when no flag fits."""
     assert "BERNSTEIN_ADAPTER" in NO_ADAPTER_CONFIGURED
     assert "bernstein.yaml" in NO_ADAPTER_CONFIGURED
+
+
+def test_goal_bootstrap_refuses_to_start_without_an_adapter(tmp_path, monkeypatch) -> None:
+    """No adapter anywhere must fail before any process is spawned (#6126).
+
+    The orchestrator subprocess exits 1 on this misconfiguration, but the
+    watchdog restarts it, so the FATAL repeated forever with a live TUI.
+    """
+    from unittest.mock import patch
+
+    from bernstein.core.orchestration import bootstrap
+
+    monkeypatch.delenv("BERNSTEIN_ADAPTER", raising=False)
+    (tmp_path / ".sdd").mkdir()  # not a first run, so no cli: auto seed gets written
+    with (
+        patch.object(bootstrap, "_start_spawner") as start_spawner,
+        patch.object(bootstrap, "_start_watchdog") as start_watchdog,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        bootstrap.bootstrap_from_goal(goal="anything", workdir=tmp_path, cli="auto")
+
+    assert excinfo.value.code == 1
+    start_spawner.assert_not_called()
+    start_watchdog.assert_not_called()
+    assert not (tmp_path / "bernstein.yaml").exists()

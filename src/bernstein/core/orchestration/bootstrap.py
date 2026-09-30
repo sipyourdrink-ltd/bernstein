@@ -1389,6 +1389,30 @@ def _post_plan_tasks(tasks: list[Task], server_url: str, icons: Any, auth_token:
     console.print(f"[green]{icons.arrow_right}[/green] Posted {len(tasks)} tasks from plan file")
 
 
+def _require_adapter_configured(cli: str | None, workdir: Path) -> None:
+    """Exit before spawning anything when no adapter can resolve (#6126).
+
+    The orchestrator subprocess exits 1 on this misconfiguration, but the
+    watchdog restarts it, so the FATAL repeated every tick under a live TUI.
+    Nothing a later tick does can change the answer, so fail at startup.
+    Mirrors the orchestrator's resolution: ``--cli``, ``BERNSTEIN_ADAPTER``,
+    then the seed file's ``cli`` (which defaults to ``auto``). A first run
+    (no ``.sdd/``, no seed) is exempt: the bootstrap writes a ``cli: auto``
+    seed for it.
+    """
+    if (cli or "").strip() not in ("", "auto") or os.environ.get("BERNSTEIN_ADAPTER", "").strip():
+        return
+    from bernstein.core.config.seed import resolve_seed_path
+
+    if resolve_seed_path(workdir).exists() or not (workdir / ".sdd").exists():
+        return
+    from bernstein.core.orchestration.orchestrator import NO_ADAPTER_CONFIGURED
+
+    logger.error("%s", NO_ADAPTER_CONFIGURED)
+    console.print(f"[red]{NO_ADAPTER_CONFIGURED}[/red]")
+    raise SystemExit(1)
+
+
 def _bootstrap_from_goal_impl(
     *,
     goal: str,
@@ -1420,6 +1444,8 @@ def _bootstrap_from_goal_impl(
     Returns:
         BootstrapResult with PIDs and task ID.
     """
+    _require_adapter_configured(cli, workdir)
+
     # Singleton guard: prevent two instances on the same workdir
     _acquire_pid_lock(workdir)
 
