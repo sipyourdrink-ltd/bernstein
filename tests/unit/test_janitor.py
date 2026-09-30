@@ -1113,6 +1113,107 @@ class TestCreateFixTasks:
         assert results[0].passed is True
         assert results[0].fix_tasks_created == []
 
+    @pytest.mark.asyncio
+    async def test_janitor_created_fix_task_inherits_completion_signals(self, tmp_path: Path) -> None:
+        """Test that janitor-created fix tasks inherit completion_signals from the original task."""
+        import httpx
+
+        original_signals = [
+            CompletionSignal(type="path_exists", value="required_file.txt"),
+            CompletionSignal(type="test_passes", value="pytest tests/"),
+            CompletionSignal(type="file_contains", value="required_file.txt :: important_content")
+        ]
+        
+        task = _make_task(
+            id="T-ORIGINAL",
+            title="Original Task",
+            description="Original task description",
+            role="backend",
+            completion_signals=original_signals,
+        )
+
+        async def mock_post(self: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:  # type: ignore[type-arg]
+            await asyncio.sleep(0)  # Async interface requirement
+            # Verify that completion_signals are included in the fix task
+            assert "completion_signals" in json
+            assert len(json["completion_signals"]) == len(original_signals)
+            for i, signal in enumerate(original_signals):
+                assert json["completion_signals"][i]["type"] == signal.type
+                assert json["completion_signals"][i]["value"] == signal.value
+            return httpx.Response(
+                status_code=201,
+                json={"id": "fix-task-001"},
+                request=httpx.Request("POST", url),
+            )
+
+        with patch.object(httpx.AsyncClient, "post", mock_post):
+            results = await run_janitor([task], tmp_path, server_url="http://localhost:8052")
+
+        assert len(results) == 1
+        assert results[0].passed is False  # Original task should fail
+        assert results[0].fix_tasks_created == ["fix-task-001"]
+
+    @pytest.mark.asyncio
+    async def test_judge_created_fix_task_inherits_completion_signals(self, tmp_path: Path) -> None:
+        """Test that judge-created fix tasks (retry) inherit completion_signals from the original task."""
+        import httpx
+
+        original_signals = [
+            CompletionSignal(type="path_exists", value="required_file.txt"),
+            CompletionSignal(type="test_passes", value="pytest tests/"),
+            CompletionSignal(type="llm_judge", value="Check implementation quality")
+        ]
+        
+        task = _make_task(
+            id="T-JUDGE-ORIGINAL",
+            title="Original Judge Task",
+            description="Original judge task description",
+            role="backend",
+            completion_signals=original_signals,
+        )
+
+        mock_diff = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
+        )
+
+        async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
+            await asyncio.sleep(0)  # Async interface requirement
+            return '{"verdict": "retry", "confidence": 0.8, "feedback": "Missing error handling."}'
+
+        async def mock_post(self: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:  # type: ignore[type-arg]
+            await asyncio.sleep(0)  # Async interface requirement
+            # Verify that completion_signals are included in the judge fix task
+            assert "completion_signals" in json
+            assert len(json["completion_signals"]) == len(original_signals)
+            for i, signal in enumerate(original_signals):
+                assert json["completion_signals"][i]["type"] == signal.type
+                assert json["completion_signals"][i]["value"] == signal.value
+            return httpx.Response(
+                status_code=201,
+                json={"id": "fix-judge-001"},
+                request=httpx.Request("POST", url),
+            )
+
+        with (
+            patch("bernstein.core.quality.janitor.subprocess.run", return_value=mock_diff),
+            patch("bernstein.core.quality.janitor.call_llm", side_effect=mock_call_llm),
+            patch.object(httpx.AsyncClient, "post", mock_post),
+        ):
+            results = await run_janitor(
+                [task],
+                tmp_path,
+                server_url="http://localhost:8052",
+            )
+
+        assert len(results) == 1
+        assert results[0].passed is False  # Original task should fail
+        assert results[0].fix_tasks_created == ["fix-judge-001"]
+        assert results[0].judge_verdict is not None
+        assert results[0].judge_verdict.verdict == "retry"
+
 
 # --- _parse_judge_response ---
 
