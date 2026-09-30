@@ -287,8 +287,10 @@ def cache_counters(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
         labelnames=["model"],
         registry=private,
     )
-    monkeypatch.setattr(_p, "action_cache_hits_total", hits, raising=False)
-    monkeypatch.setattr(_p, "action_cache_savings_usd_total", savings, raising=False)
+    # No ``raising=False``: `_emit_hit_metric` silently no-ops on a missing
+    # name, so this setattr is the suite's check that both names still exist.
+    monkeypatch.setattr(_p, "action_cache_hits_total", hits)
+    monkeypatch.setattr(_p, "action_cache_savings_usd_total", savings)
     return hits, savings
 
 
@@ -323,16 +325,23 @@ class TestMetrics:
         cache.record(model_id="opus", prompt="p", output_text="o", cost_usd=0.02)
         cache.lookup(model_id="opus", prompt="a different prompt")
 
-        assert _sample_counter(hits, model="opus") == pytest.approx(0.0)
-        assert _sample_counter(savings, model="opus") == pytest.approx(0.0)
+        assert _sample_counter(hits, strict=True, model="opus") == pytest.approx(0.0)
+        assert _sample_counter(savings, strict=True, model="opus") == pytest.approx(0.0)
 
 
-def _sample_counter(counter: Any, **labels: str) -> float:
-    """Return current value of a labelled Prometheus counter (or 0.0)."""
+def _sample_counter(counter: Any, *, strict: bool = False, **labels: str) -> float:
+    """Return current value of a labelled Prometheus counter (or 0.0).
+
+    ``strict=True`` re-raises instead of reading 0.0, for an assertion whose
+    whole claim is that the value is zero: there an unreadable counter must not
+    pass as an untouched one.
+    """
     try:
         labelled = counter.labels(**labels)
         # prometheus_client exposes ._value.get() on Counter children
         value = labelled._value.get()
         return float(value)
     except Exception:
+        if strict:
+            raise
         return 0.0
