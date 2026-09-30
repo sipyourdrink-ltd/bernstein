@@ -1,6 +1,6 @@
 # bernstein — agent entrypoint
 
-Generated from commit `1567ca0397b6`. Every row below is anchored to `path:line`; an anchor that no longer matches means the row is stale.
+Generated from commit `f5400d757fb0`. Every row below is anchored to `path:line`; an anchor that no longer matches means the row is stale.
 
 | Doc | Answers |
 |---|---|
@@ -15,9 +15,9 @@ Generated from commit `1567ca0397b6`. Every row below is anchored to `path:line`
 
 | Command | Kind | Anchor |
 |---|---|---|
-| `ruff check .` | inferred | `pyproject.toml:552` |
-| `pytest` | inferred | `pyproject.toml:796` |
-| `mypy .` | inferred | `pyproject.toml:672` |
+| `ruff check .` | inferred | `pyproject.toml:554` |
+| `pytest` | inferred | `pyproject.toml:798` |
+| `mypy .` | inferred | `pyproject.toml:674` |
 
 ## Rules for agents editing this repo
 
