@@ -111,22 +111,19 @@ class ToolCallIntent:
 def canonical_effect_digest(payload: Any) -> str:
     """Return the ``sha256:`` digest of one observed tool-call effect.
 
-    Canonical form (#6270 slice 1): mappings and sequences use the same
-    ``json.dumps(..., sort_keys=True, separators=(",", ":"),
-    ensure_ascii=False)`` as :meth:`ToolCallIntent.from_request` argument
-    digests.  Text and bytes use SHA-256 of the UTF-8 / raw bytes -- the same
-    preimage as ``ResultBundle.patch_sha256``.  Volatile fields (timestamps,
-    echoed request ids) are not stripped: the digest is of the observed
-    effect.  Key order is the only normalisation, so two serializers of the
-    same mapping agree.
+    Raw connector form (#6270 slice 1): mappings dump with compact separators
+    and ``ensure_ascii=False``, without ``sort_keys`` and without stripping
+    timestamps or echoed ids. A connector that echoes a timestamp therefore
+    produces a different digest. Text and bytes use SHA-256 of the UTF-8 /
+    raw bytes -- the same preimage as ``ResultBundle.patch_sha256``.
     """
     if isinstance(payload, bytes):
         digest = hashlib.sha256(payload).hexdigest()
     elif isinstance(payload, str):
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     else:
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        digest = hashlib.sha256(canonical).hexdigest()
+        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        digest = hashlib.sha256(raw).hexdigest()
     return "sha256:" + digest
 
 
@@ -136,7 +133,7 @@ def effect_digest_for_connector_response(response: Mapping[str, Any] | None) -> 
     ``None`` (timeout / no body) hashes JSON ``null``.  A string-only
     ``result`` with no JSON-RPC error is hashed as text so a file-changing
     tool's diff matches :attr:`ResultBundle.patch_sha256`.  Every other body
-    hashes the ``{error, result}`` mapping.
+    is the raw JSON-RPC object, timestamps included.
     """
     if response is None:
         return canonical_effect_digest(None)
@@ -144,7 +141,7 @@ def effect_digest_for_connector_response(response: Mapping[str, Any] | None) -> 
     error = response.get("error")
     if error is None and isinstance(result, str):
         return canonical_effect_digest(result)
-    return canonical_effect_digest({"error": error, "result": result})
+    return canonical_effect_digest(response)
 
 
 def toolcall_effect_outcome(response: Mapping[str, Any] | None) -> str:

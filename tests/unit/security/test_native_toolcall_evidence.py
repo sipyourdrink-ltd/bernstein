@@ -151,14 +151,15 @@ async def test_effect_record_binds_to_the_intent_digest(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_prepare_dispatch_does_not_write_effect(tmp_path: Any) -> None:
+async def test_missing_effect_record_reads_unobserved_not_success(tmp_path: Any) -> None:
+    """Attestation plus dispatch without an effect is unobserved, never ok."""
     chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
     await NativeToolCallEvidenceProvider(chain).prepare_dispatch(_intent())
     events = chain.query(resource_id="scope:run-1:agent-1")
-    assert [event.event_type for event in events] == [
-        "toolcall.attestation",
-        "toolcall.enforced_dispatch",
-    ]
+    types = [event.event_type for event in events]
+    assert types == ["toolcall.attestation", "toolcall.enforced_dispatch"]
+    assert "toolcall.effect" not in types
+    assert not any(event.details.get("outcome") == "ok" for event in events)
 
 
 @pytest.mark.asyncio
@@ -210,11 +211,15 @@ async def test_timeout_effect_stays_bound_to_the_intent(tmp_path: Any) -> None:
     assert events[-1].details["effect_digest"] == effect_digest_for_connector_response(None)
 
 
-def test_canonical_json_effect_digest_is_key_order_stable() -> None:
-    left = canonical_effect_digest({"error": None, "result": {"b": 1, "a": 2}})
-    right = canonical_effect_digest({"result": {"a": 2, "b": 1}, "error": None})
-    assert left == right
-    assert left.startswith("sha256:")
+def test_timestamp_echo_changes_the_raw_effect_digest() -> None:
+    base: dict[str, Any] = {"jsonrpc": "2.0", "id": 7, "result": {"ok": True}}
+    echoed: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {"ok": True, "echoed_at": "2026-09-27T10:00:00Z"},
+    }
+    assert effect_digest_for_connector_response(base) != effect_digest_for_connector_response(echoed)
+    assert effect_digest_for_connector_response(base).startswith("sha256:")
 
 
 def test_patch_effect_digest_matches_result_bundle() -> None:

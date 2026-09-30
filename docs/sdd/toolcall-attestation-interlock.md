@@ -78,12 +78,13 @@ outcome). Fields are `effect_digest`, `outcome` (`ok` / `error` / `timeout` /
 "dispatched, effect unobserved", never success. Completeness still comes
 from the pre-dispatch pair only; slice 2 adds the verifier triple.
 
-Canonical form of `effect_digest`: JSON bodies use the same
-`json.dumps(..., sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
-as `ToolCallIntent` argument digests. Key order is the only normalisation.
-Timestamps and echoed request ids are not stripped — the digest is of the
-observed effect. A string-only `result` (and an explicit patch) uses SHA-256
-of the UTF-8 bytes, the same preimage as `ResultBundle.patch_sha256`.
+Canonical form of `effect_digest`: the raw connector return, compacted
+JSON with insertion order preserved (`json.dumps(..., separators=(",",
+":"), ensure_ascii=False)`, no `sort_keys`). Timestamps and echoed
+request ids are not stripped — a connector that echoes a timestamp
+produces a different digest. A string-only `result` (and an explicit
+patch) uses SHA-256 of the UTF-8 bytes, the same preimage as
+`ResultBundle.patch_sha256`.
 
 With a run identity, lineage signer, and journal-head reader configured, the
 native provider additionally creates a versioned, JCS-canonicalized Ed25519
