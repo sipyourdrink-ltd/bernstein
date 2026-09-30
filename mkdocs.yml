@@ -1,5 +1,5 @@
 site_name: Bernstein
-site_url: https://bernstein.readthedocs.io/
+site_url: https://docs.bernstein.run/
 site_author: Alex Chernysh
 site_description: >-
   The open-source governance layer for AI agents. No model in the coordination
@@ -17,21 +17,20 @@ theme:
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
-      accent: amber
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: deep purple
-      accent: amber
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to dark mode
-  font:
-    text: Inter
-    code: JetBrains Mono
+  # Fonts are loaded in docs/overrides/main.html (block fonts).
+  font: false
   features:
     - navigation.instant
     - navigation.instant.progress
@@ -52,9 +51,13 @@ theme:
     - content.tabs.link
     - toc.follow
     - announce.dismiss
+  logo: assets/brand/bernstein-mark.svg
+  favicon: assets/brand/bernstein-mark.svg
   icon:
     repo: fontawesome/brands/github
-    logo: material/music-note-eighth
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   social:
@@ -97,6 +100,17 @@ plugins:
   - search:
       separator: '[\s\-\.]+'
   - social:
+      # Card image generation makes a live, unauthenticated request to
+      # fonts.google.com per build (material.plugins.social._fetch_font_from_google_fonts)
+      # to resolve the "Inter" theme font, and Read the Docs starts every
+      # build from a fresh container, so the plugin's on-disk cache never
+      # gets a chance to warm up: every single build re-hits Google Fonts.
+      # That endpoint began rejecting the shared RTD/CI build IPs, which is
+      # what took bernstein.readthedocs.io down. Disable card image
+      # generation so the build has no runtime network dependency; the
+      # plugin still emits the per-page meta description tags. Re-enable
+      # once the fonts are vendored into a committed cache_dir instead.
+      cards: false
       cards_layout_options:
         background_color: "#4a148c"
         color: "#ffffff"
@@ -189,6 +203,7 @@ nav:
           - DeepSeek V4: adapters/deepseek.md
           - Agy: adapters/agy.md
           - Antigravity: adapters/antigravity.md
+          - Deep-research agents: adapters/deep-research.md
           - Deferred adapters: adapter-deferred.md
           - Adapter operations: operations/adapters.md
           - Adapter security floor: adapters/security-floor.md
@@ -396,6 +411,7 @@ nav:
           - Error telemetry & SBOM: operations/error-telemetry.md
           - Telemetry disclosure: telemetry.md
           - Side-channel telemetry: observability/side-channel.md
+          - Run archive retention: observability/run-archive-retention.md
           - LLM watcher: observability/llm-watcher.md
           - Ticket bundle: observability/ticket-bundle.md
           - Trace store: observability/trace-store.md
@@ -481,6 +497,7 @@ nav:
           - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
           - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
           - ISO/IEC 42001 mapping: compliance/iso42001-mapping.md
+          - CoSAI mapping: compliance/cosai-mapping.md
           - Regulator-class lineage: compliance/regulatory-lineage.md
           - Lineage export: compliance/lineage-export.md
           - Lineage v1 (user reference): lineage.md
@@ -492,6 +509,7 @@ nav:
           - A2A message receipts: operations/a2a-message-receipts.md
           - A2A JSON-RPC server surface: operations/a2a-server.md
           - Datasources & query receipts: operations/datasources.md
+          - Batch pass receipts: operations/batch-receipts.md
           - Verifiable audit receipts: security/audit-receipt.md
           - Evidence envelope: security/evidence-envelope.md
           - Gate adjudication records: operations/gate-adjudication.md
@@ -519,6 +537,7 @@ nav:
           - Model policy: operations/MODEL_POLICY.md
           - Ticket schema: sdd/ticket_schema.md
           - Design tokens: design/tokens.md
+          - Brand and logo: design/brand.md
           - Adapter capability contract: adapters/capability_contract.md
           - Global config CLI: operations/global-config.md
           - Workflow manifests: operations/workflow-manifests.md
@@ -542,6 +561,7 @@ nav:
           - Volunteer task runner: reference/volunteer-runner.md
           - Volunteer lease store: reference/volunteer-lease-store.md
           - MCP catalog: reference/mcp-catalog.md
+          - Published identifiers: reference/published-identifiers.md
           - MCP tool tiers: mcp/tool_tiers.md
       - Compatibility & limits:
           - Capabilities: reference/capabilities.md
@@ -553,6 +573,7 @@ nav:
       - Release notes:
           - Changelog: CHANGELOG.md
           - Unreleased: release-notes/unreleased.md
+          - v3.20.0: release-notes/v3.20.0.md
           - v3.19.2: release-notes/v3.19.2.md
           - v3.19.1: release-notes/v3.19.1.md
           - v3.19.0: release-notes/v3.19.0.md
@@ -689,9 +710,16 @@ nav:
           - Lineage v1: decisions/009-lineage-v1.md
           - Audit-chain default cost: decisions/010-audit-chain-default-cost.md
           - A model drafts, a human signs: decisions/011-model-drafts-human-signs.md
+          - Govern versus observe: decisions/012-govern-versus-observe.md
+          - Typed ingest contract: decisions/013-typed-ingest-contract.md
+          - Agent identity plane: decisions/014-agent-identity-plane.md
+          - Artifact contract completion: decisions/015-artifact-contract-completion.md
+          - TRACE conformance level: decisions/016-trace-conformance-level.md
+          - Receipt coverage gap: decisions/017-receipt-states-its-gap.md
   - Contribute:
       - contributing/index.md
       - Project pulse: project-pulse.md
+      - Contributor recognition: community/recognition.md
       - Code review: CODE_REVIEW.md
       - Testing & CI hardening: contributing/testing.md
       - Lifecycle hooks contract: contributing/hooks.md

@@ -126,7 +126,12 @@ when cumulative routed spend crosses the threshold. Precedence is
 
 **Non-interactive output (pipes, CI).** When stdout is not a terminal the
 CLI detaches after bootstrap instead of opening the dashboard. Before
-exiting it waits up to ~10 seconds for the first spawn outcome:
+exiting it waits up to ~10 seconds for the first spawn outcome. While
+waiting, it prints one line per observed task state transition
+(`task <id> <state> adapter=<name> model=<route> title="..."`), plus a
+`planned` line the first time a task is seen in a non-terminal state.
+On a goal-driven run the window typically covers the planner's decompose
+task and the first spawned task, not a full per-task execution log.
 
 - If the first spawn attempt was refused or errored before any work
   started, the failure reason is printed and the command exits `1`.
@@ -212,6 +217,7 @@ End a session with a summary, retrospective, and learning capture. Hides under n
 | `bernstein plan validate PLAN.yaml` | Validate a plan file's schema (`bernstein validate` is a deprecated alias, removed in 4.0.0). | `cli/plan_validate_cmd.py:142` |
 | `bernstein validate PLAN.yaml` | Deprecated alias of `bernstein plan validate`; removed in v4.0.0. | `cli/plan_validate_cmd.py` |
 | `bernstein task` | Durable task lifecycle: complete, park, and resume a task. | `cli/commands/task_cmd.py:837` |
+| `bernstein scenario` | Manage Bernstein scenarios. | `cli/commands/scenario_cmd.py` |
 
 #### `bernstein plan`
 
@@ -356,6 +362,11 @@ hand-assembled as a request with a bearer header.
 #### `bernstein status`
 
 Compact one-screen project view.
+
+The interactive task table renders `Adapter` and `Model` columns. When
+stdout is not a terminal the table is replaced by the plain summary; use
+`--json` to inspect per-task adapter and model fields in CI. Unrecorded
+routing is shown as `unknown`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -676,6 +687,7 @@ its merged branch, or the merge commit.
 
 | Command | Purpose | Source |
 |---|---|---|
+| `bernstein adopt` | Detect the running agent session to bring under governance (`--dry-run` only). | `cli/commands/adopt_cmd.py` |
 | `bernstein agents` | Agent catalog ops (group). | `cli/commands/agents_cmd.py:22` |
 | `bernstein test-adapter` | Spawn one adapter to verify its plumbing. | `cli/adapter_cmd.py:84` |
 | `bernstein worker` | Join a cluster as a remote worker node. | `cli/commands/worker_cmd.py` |
@@ -702,6 +714,21 @@ its merged branch, or the merge commit.
 | `--task TEXT` | required | Task for the adapter to execute. |
 | `--model NAME` | adapter default | Model to use for the smoke run. |
 | `--timeout SEC` | 120 | Wait up to N seconds for exit. |
+
+#### `bernstein adopt`
+
+Detects which coding agent the current session runs under and prints the workspace files adoption would write. Only `--dry-run` is implemented, and it writes nothing: writing the adoption, the signed receipt and the MCP tool are later slices of #5435.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--agent NAME` | `auto` | Agent to adopt: `auto`, `aider`, `claude`, `codex`, `cursor` or `opencode`. |
+| `--dir PATH` | `.` | Workspace directory the adoption plan is computed for. |
+| `--dry-run` | off | Print the detected agent, the evidence and the files adoption would write; write nothing. Required for now. |
+| `--json` | off | Emit the detection report as JSON. |
+
+Detection has two evidence tiers. A running ancestor process of an agent binary is session evidence; that agent's per-user configuration under the home directory is config evidence. With `--agent auto` the strongest tier that matched decides: one agent there is selected, several are refused as ambiguous, and a weaker tier never breaks the tie. The files reported are `bernstein init`'s own write plan.
+
+Exit codes: `0` detected (or named with `--agent`), `2` usage error, `3` run without `--dry-run`, `4` no agent detected, `5` ambiguous.
 
 #### `bernstein worker`
 
@@ -906,6 +933,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein policy` | Policy mgmt (group). | `cli/commands/policy_cmd.py:12` |
 | `bernstein compliance` | Compliance reports (group). | `cli/commands/compliance_cmd.py:26` |
 | `bernstein audit` | Audit-log ops (group). | `cli/commands/audit_cmd.py:25` |
+| `bernstein model` | Model admission registry and impact analysis (group): `registry` reconstructs the permitted model set at any past instant from the audit chain; `impact` lists artefacts produced by a model. | `cli/commands/model_cmd.py` |
 | `bernstein identity` | Install-identity ops (group): fingerprint helpers, `keydir`, `export-verifier`, plus `agents` (the agent-principal registry projected from the chain). | `cli/commands/identity_cmd.py:identity_group` |
 | `bernstein delegation` | Delegation-receipt verification (group). | `cli/commands/delegation_cmd.py:delegation_group` |
 | `bernstein lineage` | Artifact-provenance lineage-spine ops (group). | `cli/commands/lineage_cmd.py` |
@@ -1071,9 +1099,13 @@ Every context compaction (proactive threshold or reactive overflow recovery)
 is recorded as a `compaction.receipt` event in the HMAC-chained audit log and
 as a step in the worker's replay journal. `log` prints those receipts
 (trigger, token delta, validator verdicts, retry count, pre/post SHA-256).
+JSON receipt objects also include `policy_version`; legacy and unversioned
+records use the empty string.
 `--verify` re-runs the receipt verification: the HMAC chain must verify and
 every journaled compaction step must have a chain receipt with matching
-hashes; the command exits non-zero otherwise.
+hashes and policy version; the command exits non-zero otherwise. A missing
+policy-version key on both sides of a legacy receipt/journal pair is treated
+as the empty string for backward-compatible verification.
 
 (`cli/commands/compaction_cmd.py:32+`.)
 
@@ -1294,6 +1326,7 @@ regardless of its age. Exits non-zero if the sweep fails.
 | `--fix` | off | Attempt to auto-fix issues. |
 | `--suggest-docs` | off | Print the top curated documentation gaps and exit. |
 | `--failover-drill` | off | Exercise every declared provider fallback chain; exit non-zero on any broken chain. |
+| `--unattended` | off | Run probes through the spawner's environment (unattended parity). |
 | `--endpoint URL` | none | Certify an OpenAI-compatible endpoint; see [Endpoint certification](#endpoint-certification-bernstein-doctor-endpoint). |
 | `--endpoint-model NAME` | first `/models` entry | Model id to certify. |
 | `--endpoint-engine NAME` | none | Runtime label recorded in the receipt (e.g. `ollama`, `lmstudio`, `mlx`). |

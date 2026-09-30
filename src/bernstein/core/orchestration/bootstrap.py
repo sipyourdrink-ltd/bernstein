@@ -958,6 +958,7 @@ def _watchdog_check_process(
     restart_fn: Any,
     post_restart_fn: Any | None = None,
     liveness: Liveness | None = None,
+    workdir: Path | None = None,
 ) -> tuple[float | None, int, bool]:
     """Check a single watchdog-monitored process and restart if it is not up.
 
@@ -1004,6 +1005,17 @@ def _watchdog_check_process(
         return alive_since, restarts, give_up_logged
 
     # Not positively alive: dead, or a pid we cannot attribute to our pidfile.
+    # Check for deliberate-stop marker (issue #6089 slice 1).
+    if workdir is not None and name == "Orchestrator":
+        marker_path = workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+        if marker_path.exists():
+            logger.info(
+                "%s stopped deliberately (marker present: %s) - not restarting",
+                name,
+                marker_path.read_text().strip()[:50],
+            )
+            return None, restarts, give_up_logged
+
     if restarts >= max_restarts:
         if not give_up_logged:
             logger.error(
@@ -1414,7 +1426,31 @@ def _bootstrap_from_goal_impl(
     # 0. Pre-startup git hygiene - clean stale worktrees/branches/skip-worktree files from prior runs (#4394)
     _run_git_hygiene(workdir)
 
-    seed = SeedConfig(goal=goal, cli=cli, model=model)  # type: ignore[arg-type]
+    # Issue #6081: inline goals should resolve quality_gates from bernstein.yaml
+    # if present, so run_started journals the same gate_config whether the goal
+    # came from the seed file or from -g. Read the existing config and extract
+    # gate-related fields to merge into the minimal seed.
+    from bernstein.core.config.seed import resolve_seed_path
+    from bernstein.core.config.seed_parser import parse_seed
+
+    _existing_gates = None
+    _existing_formal_verification = None
+    _seed_path = resolve_seed_path(workdir)
+    if _seed_path.exists():
+        try:
+            _existing = parse_seed(_seed_path)
+            _existing_gates = _existing.quality_gates
+            _existing_formal_verification = _existing.formal_verification
+        except Exception as exc:
+            logger.debug("Could not read quality_gates from %s: %s", _seed_path, exc)
+
+    seed = SeedConfig(
+        goal=goal,
+        cli=cli,
+        model=model,
+        quality_gates=_existing_gates,
+        formal_verification=_existing_formal_verification,
+    )  # type: ignore[call-arg]
 
     # Detect first run: no .sdd/ and no bernstein.yaml yet
     first_run = not (workdir / ".sdd").exists() and not (workdir / "bernstein.yaml").exists()

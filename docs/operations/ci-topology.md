@@ -25,6 +25,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/branch-protection-audit.yml | Branch protection audit | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "branch-protection-audit-${{ github.ref }}"} | 1 |
 | .github/workflows/ci-gate-stub.yml | CI gate stub | pull_request | {"cancel-in-progress": "true", "group": "ci-gate-stub-${{ github.event.pull_request.number \|\| github.ref }}"} | 2 |
 | .github/workflows/ci-macos-nightly.yml | CI (macOS nightly) | push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "ci-macos-nightly-${{ github.event_name }}-${{ github.ref }}"} | 2 |
+| .github/workflows/ci-post-merge-cadence.yml | CI post-merge cadence | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "ci-post-merge-cadence"} | 1 |
 | .github/workflows/ci-topology-heal.yml | CI topology heal | push, workflow_dispatch | {"cancel-in-progress": "true", "group": "ci-topology-heal"} | 1 |
 | .github/workflows/ci-weekly-digest.yml | CI Weekly Digest | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "ci-weekly-digest"} | 1 |
 | .github/workflows/ci.yml | CI | merge_group, pull_request, push, workflow_dispatch | {"cancel-in-progress": "${{ github.event_name == 'pull_request' \|\| (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && !startsWith(github.event.head_commit.message, 'release:')) }}", "group": "ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \|\| (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release)') && !startsWith(github.event.head_commit.message, 'release:')) && format('branch-{0}', github.ref) \|\| format('branch-{0}-{1}', github.ref, github.sha) }}"} | 33 |
@@ -34,11 +35,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e | schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "cluster-tunnel-e2e-${{ github.ref }}"} | 1 |
 | .github/workflows/codeql.yml | CodeQL Security Analysis | push, schedule | {"cancel-in-progress": "false", "group": "codeql-${{ github.ref }}"} | 1 |
 | .github/workflows/contract-drift-autofix.yml | Contract Drift Autofix | pull_request | {"cancel-in-progress": "true", "group": "contract-drift-${{ github.event.pull_request.number }}"} | 1 |
+| .github/workflows/contributor-recognition.yml | Contributor recognition | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "contributor-recognition"} | 1 |
 | .github/workflows/coverage-ratchet-weekly.yml | Coverage ratchet (weekly floor bump) | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "coverage-ratchet-weekly"} | 1 |
 | .github/workflows/coverage-ratchet.yml | Coverage ratchet (total) | workflow_run | {"cancel-in-progress": "false", "group": "coverage-ratchet"} | 1 |
 | .github/workflows/dependabot-auto-merge.yml | Dependabot Auto-merge | pull_request | {"cancel-in-progress": "true", "group": "dependabot-merge-${{ github.event.pull_request.number }}"} | 1 |
 | .github/workflows/dependency-review.yml | Dependency Review | pull_request | {"cancel-in-progress": "true", "group": "dependency-review-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/detached-workflow-canary.yml | Detached workflow canary | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "detached-workflow-canary-${{ github.ref }}"} | 1 |
+| .github/workflows/docs-build.yml | docs-build | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-build-${{ github.ref }}"} | 1 |
 | .github/workflows/docs-drift.yml | docs-drift | pull_request, push, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "docs-drift-${{ github.ref }}"} | 2 |
 | .github/workflows/docs-observability-snapshot.yml | Observability snapshot | workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-observability-snapshot"} | 1 |
 | .github/workflows/docs-requirements-staleness-weekly.yml | docs-requirements-staleness-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "docs-requirements-staleness-${{ github.ref }}"} | 1 |
@@ -73,6 +76,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/runner-canary.yml | Runner canary | schedule, workflow_dispatch | - | 1 |
 | .github/workflows/sbom.yml | SBOM | release, workflow_dispatch | {"cancel-in-progress": "false", "group": "sbom-${{ github.ref }}"} | 1 |
 | .github/workflows/scorecard.yml | OSSF Scorecard | branch_protection_rule, schedule, workflow_dispatch | {"cancel-in-progress": "true", "group": "scorecard-${{ github.ref }}"} | 2 |
+| .github/workflows/security-control-reachability.yml | Security control reachability | pull_request, push | {"cancel-in-progress": "true", "group": "security-control-reachability-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/soc2-evidence-weekly.yml | soc2-evidence-weekly | schedule, workflow_dispatch | {"cancel-in-progress": "false", "group": "soc2-evidence-${{ github.ref }}"} | 2 |
 | .github/workflows/spa-bundle-freshness.yml | SPA bundle freshness | merge_group, pull_request, push | {"cancel-in-progress": "true", "group": "spa-bundle-freshness-${{ github.event.pull_request.number \|\| github.ref }}"} | 1 |
 | .github/workflows/spiffe-extra-e2e.yml | SPIFFE Extra E2E | pull_request, push, workflow_dispatch | {"cancel-in-progress": "true", "group": "spiffe-extra-e2e-${{ github.ref }}"} | 1 |
@@ -104,6 +108,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/branch-protection-audit.yml | audit: Branch protection audit |
 | .github/workflows/ci-gate-stub.yml | ci-gate: ${{ needs.classify.outputs.all_ignored == 'true' && 'CI gate' \|\| 'CI gate stub (not applicable)' }}<br>classify: Classify diff against ci.yml paths-ignore |
 | .github/workflows/ci-macos-nightly.yml | open-failure-issue: Open / update macOS nightly failure issue<br>test-macos-nightly: Test (macOS, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }}) |
+| .github/workflows/ci-post-merge-cadence.yml | dispatch: Dispatch full main CI if needed |
 | .github/workflows/ci-topology-heal.yml | heal: Regenerate topology report |
 | .github/workflows/ci-weekly-digest.yml | digest: Build and publish weekly digest |
 | .github/workflows/ci.yml | actionlint: Workflow lint<br>adapter-conformance-windows: Adapter conformance + e2e (windows)<br>adapter-integration: Adapter integration (fake-CLI)<br>adapter-integration-macos: Adapter integration (fake-CLI, macOS)<br>bandit: Bandit (security)<br>beartype: Beartype (type contracts)<br>ci-gate: CI gate<br>close-ci-issues: Close resolved CI issues<br>coverage-report: Coverage report<br>dead-code: Dead code (Vulture)<br>determine-changes: Determine changes<br>diff-coverage: Diff coverage report<br>dist-size: Package size check<br>install-smoke-pipx: Install smoke - pipx (${{ matrix.os }}, Python ${{ matrix.python-version }})<br>install-smoke-rpm: Install smoke - RPM (${{ matrix.image }})<br>install-smoke-uv: Install smoke - uv tool (${{ matrix.os }})<br>integration-tests: Integration tests<br>lineage-gate: Lineage Gate<br>lint: Lint<br>mutmut-diff: Mutation report (diff-only)<br>mypy-strict-zone: mypy strict (lineage substrate)<br>pip-audit: pip-audit (deps)<br>property-tests: Property tests (Hypothesis smoke)<br>proto-drift: Proto codegen drift<br>pyright-strict-zone: Pyright strict (security + cluster)<br>repo-hygiene: Repo hygiene<br>schemathesis-smoke: Schemathesis smoke<br>semgrep: Semgrep (custom rules)<br>snapshot-tests: Snapshot tests (syrupy)<br>spelling: Spelling (typos)<br>test: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})<br>test-macos: Test (macos-latest, Python 3.13, shard ${{ matrix.shard }})<br>typecheck: Type check report |
@@ -113,11 +118,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: cluster-tunnel-e2e (linux) |
 | .github/workflows/codeql.yml | analyze: CodeQL (${{ matrix.language }}) |
 | .github/workflows/contract-drift-autofix.yml | autofix: Detect and patch contract drift |
+| .github/workflows/contributor-recognition.yml | render: Collect and render the recognition drafts |
 | .github/workflows/coverage-ratchet-weekly.yml | bump: Bump diff-coverage floor and open review PR |
 | .github/workflows/coverage-ratchet.yml | ratchet: Total coverage ratchet |
 | .github/workflows/dependabot-auto-merge.yml | auto-merge |
 | .github/workflows/dependency-review.yml | review: Dependency review |
 | .github/workflows/detached-workflow-canary.yml | canary: Detached workflow canary |
+| .github/workflows/docs-build.yml | build: mkdocs build --strict |
 | .github/workflows/docs-drift.yml | drift-check: Run drift check<br>drift-publish: Publish drift surfaces |
 | .github/workflows/docs-observability-snapshot.yml | snapshot: Capture snapshot |
 | .github/workflows/docs-requirements-staleness-weekly.yml | staleness: recompile and diff |
@@ -144,7 +151,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-homebrew.yml | update-formula: Update Homebrew formula |
 | .github/workflows/publish.yml | build: Build<br>github-release: Create GitHub Release<br>protocol-gate: Protocol Compatibility Gate<br>publish: Publish to PyPI<br>publish-copr: Publish RPM to Copr<br>publish-mcp-registry: Publish MCP registry listing<br>publish-npm: Publish npm wrapper<br>rpm-install-smoke: RPM install smoke (${{ matrix.image }})<br>test: Verify tests pass<br>version-check: Verify tag matches pyproject.toml |
 | .github/workflows/quorum-rerun.yml | rerun |
-| .github/workflows/quorum.yml | quorum |
+| .github/workflows/quorum.yml | quorum: quorum |
 | .github/workflows/reconcile-release.yml | reconcile: Compare pyproject.toml vs published channels |
 | .github/workflows/release-major-minor.yml | release: ${{ inputs.bump }} release |
 | .github/workflows/rendering-lane.yml | rendering: Rendering fetcher (browser-backed) |
@@ -152,6 +159,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/runner-canary.yml | canary: Runner canary |
 | .github/workflows/sbom.yml | sbom: Generate SBOM |
 | .github/workflows/scorecard.yml | analysis: Scorecard analysis<br>upload: Filter suppressions and upload to Code Scanning |
+| .github/workflows/security-control-reachability.yml | gate: Unreached security controls (#5053) |
 | .github/workflows/soc2-evidence-weekly.yml | pack: generate evidence pack<br>preflight: preflight (gate) |
 | .github/workflows/spa-bundle-freshness.yml | rebuild: shipped bundle matches the lockfile |
 | .github/workflows/spiffe-extra-e2e.yml | spiffe-extra-e2e: SPIFFE extra E2E (built wheel, extra-present + no-extra suites) |
@@ -183,6 +191,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/branch-protection-audit.yml | audit: {"contents": "read", "issues": "write"} | BRANCH_PROTECTION_AUDIT_TOKEN |
 | .github/workflows/ci-gate-stub.yml | workflow: {"contents": "read"}<br>ci-gate: {"contents": "read"}<br>classify: {"contents": "read", "pull-requests": "read"} | - |
 | .github/workflows/ci-macos-nightly.yml | workflow: {"contents": "read"}<br>open-failure-issue: {"contents": "read", "issues": "write"}<br>test-macos-nightly: {"contents": "read"} | GITHUB_TOKEN |
+| .github/workflows/ci-post-merge-cadence.yml | dispatch: {"actions": "write"} | - |
 | .github/workflows/ci-topology-heal.yml | workflow: {"contents": "read"}<br>heal: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/ci-weekly-digest.yml | digest: {"actions": "read", "contents": "read", "issues": "write"} | - |
 | .github/workflows/ci.yml | workflow: {"contents": "read"}<br>actionlint: {"contents": "read"}<br>adapter-conformance-windows: {"contents": "read"}<br>adapter-integration: {"contents": "read"}<br>adapter-integration-macos: {"contents": "read"}<br>bandit: {"contents": "read"}<br>beartype: {"contents": "read"}<br>ci-gate: {"contents": "read"}<br>close-ci-issues: {"contents": "read", "issues": "write"}<br>coverage-report: {"contents": "read"}<br>dead-code: {"contents": "read"}<br>determine-changes: {"contents": "read"}<br>diff-coverage: {"contents": "read"}<br>dist-size: {"contents": "read"}<br>install-smoke-pipx: {"contents": "read"}<br>install-smoke-rpm: {"contents": "read"}<br>install-smoke-uv: {"contents": "read"}<br>integration-tests: {"contents": "read"}<br>lineage-gate: {"contents": "read"}<br>lint: {"contents": "read"}<br>mutmut-diff: {"contents": "read"}<br>mypy-strict-zone: {"contents": "read"}<br>pip-audit: {"contents": "read"}<br>property-tests: {"contents": "read"}<br>proto-drift: {"contents": "read"}<br>pyright-strict-zone: {"contents": "read"}<br>repo-hygiene: {"contents": "read"}<br>schemathesis-smoke: {"contents": "read"}<br>semgrep: {"contents": "read"}<br>snapshot-tests: {"contents": "read"}<br>spelling: {"contents": "read"}<br>test: {"contents": "read"}<br>test-macos: {"contents": "read"}<br>typecheck: {"contents": "read"} | CODECOV_TOKEN, GITHUB_TOKEN |
@@ -192,11 +201,13 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cluster-tunnel-e2e.yml | workflow: {"contents": "read"} | CF_TUNNEL_HOSTNAME, CF_TUNNEL_TOKEN |
 | .github/workflows/codeql.yml | workflow: {"contents": "read"}<br>analyze: {"actions": "read", "contents": "read", "security-events": "write"} | - |
 | .github/workflows/contract-drift-autofix.yml | workflow: {"contents": "read"}<br>autofix: {"contents": "write", "issues": "write", "pull-requests": "write"} | BOT_PAT, GITHUB_TOKEN |
+| .github/workflows/contributor-recognition.yml | render: {"contents": "read", "issues": "write"} | - |
 | .github/workflows/coverage-ratchet-weekly.yml | bump: {"contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/coverage-ratchet.yml | ratchet: {"actions": "read", "contents": "write", "pull-requests": "write"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/dependabot-auto-merge.yml | workflow: {"contents": "read"}<br>auto-merge: {"contents": "write", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/dependency-review.yml | workflow: {"contents": "read"}<br>review: {"contents": "read", "pull-requests": "write"} | - |
 | .github/workflows/detached-workflow-canary.yml | workflow: {"contents": "read"}<br>canary: {"actions": "read", "contents": "read"} | GITHUB_TOKEN |
+| .github/workflows/docs-build.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/docs-drift.yml | workflow: {"contents": "read"}<br>drift-check: {"contents": "read"}<br>drift-publish: {"contents": "read", "issues": "write", "pull-requests": "write"} | - |
 | .github/workflows/docs-observability-snapshot.yml | workflow: {"contents": "read"}<br>snapshot: {"contents": "write", "pull-requests": "write", "security-events": "read"} | BERNSTEIN_AUTOSYNC_TOKEN, GITHUB_TOKEN |
 | .github/workflows/docs-requirements-staleness-weekly.yml | workflow: {"contents": "read"}<br>staleness: {"contents": "read", "issues": "write"} | GITHUB_TOKEN |
@@ -221,7 +232,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/publish-docker.yml | publish: {"attestations": "write", "contents": "read", "id-token": "write", "packages": "write"} | GITHUB_TOKEN |
 | .github/workflows/publish-extension.yml | workflow: {"contents": "read"}<br>publish: {"contents": "read"} | OPEN_VSX_TOKEN, VS_MARKETPLACE_TOKEN |
 | .github/workflows/publish-homebrew.yml | workflow: {"contents": "read"}<br>update-formula: {"contents": "read"} | HOMEBREW_TAP_TOKEN |
-| .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"actions": "write", "contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read"}<br>rpm-install-smoke: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN, NPM_TOKEN |
+| .github/workflows/publish.yml | build: {"contents": "read"}<br>github-release: {"actions": "write", "contents": "write"}<br>protocol-gate: {"contents": "read"}<br>publish: {"attestations": "write", "contents": "read", "id-token": "write"}<br>publish-copr: {"contents": "read"}<br>publish-mcp-registry: {"contents": "read", "id-token": "write"}<br>publish-npm: {"contents": "read", "id-token": "write"}<br>rpm-install-smoke: {"contents": "read"}<br>test: {"contents": "read"}<br>version-check: {"contents": "read"} | COPR_CONFIG, GITHUB_TOKEN |
 | .github/workflows/quorum-rerun.yml | workflow: {"contents": "read"}<br>rerun: {"actions": "write", "contents": "read", "pull-requests": "write"} | GITHUB_TOKEN |
 | .github/workflows/quorum.yml | workflow: {"contents": "read"}<br>quorum: {"contents": "read", "pull-requests": "read"} | GITHUB_TOKEN |
 | .github/workflows/reconcile-release.yml | reconcile: {"contents": "read", "issues": "write"} | - |
@@ -231,6 +242,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/runner-canary.yml | - | - |
 | .github/workflows/sbom.yml | workflow: {"contents": "read"}<br>sbom: {"contents": "write"} | - |
 | .github/workflows/scorecard.yml | workflow: {"contents": "read"}<br>analysis: {"actions": "read", "contents": "read", "id-token": "write", "security-events": "write"}<br>upload: {"contents": "read", "security-events": "write"} | - |
+| .github/workflows/security-control-reachability.yml | workflow: {"contents": "read"} | - |
 | .github/workflows/soc2-evidence-weekly.yml | workflow: {"contents": "read"} | SOC2_EVIDENCE_ENABLED, SOC2_EVIDENCE_SINK |
 | .github/workflows/spa-bundle-freshness.yml | workflow: {"contents": "read"}<br>rebuild: {"contents": "read"} | - |
 | .github/workflows/spiffe-extra-e2e.yml | workflow: {"contents": "read"} | - |
@@ -261,6 +273,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/cifuzz-weekly.yml | cifuzz: upload cifuzz-artifacts-address |
 | .github/workflows/cluster-e2e.yml | cluster-e2e: upload cluster-e2e-logs |
 | .github/workflows/cluster-tunnel-e2e.yml | cluster-tunnel-e2e: upload cluster-tunnel-e2e-logs |
+| .github/workflows/contributor-recognition.yml | render: upload contributor-recognition |
 | .github/workflows/coverage-ratchet.yml | ratchet: download coverage-report |
 | .github/workflows/docs-drift.yml | drift-check: upload docs-drift-report<br>drift-publish: download docs-drift-report |
 | .github/workflows/eval-weekly.yml | bench: upload eval-weekly-${{ github.run_id }}<br>smoke: upload eval-weekly-smoke |
@@ -269,7 +282,7 @@ after workflow changes merge and opens a squash auto-merge PR when the committed
 | .github/workflows/nightly-deep-tests.yml | bandit-medium-and-high: upload nightly-bandit-results<br>mutmut-full: upload nightly-mutmut-results |
 | .github/workflows/pentest.yml | pentest: upload pentest-results-${{ github.run_number }} |
 | .github/workflows/project-pulse.yml | pulse: upload project-pulse |
-| .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist |
+| .github/workflows/publish.yml | build: upload dist<br>github-release: download dist<br>publish: download dist<br>publish-mcp-registry: upload docker-mcp-catalog-rendered |
 | .github/workflows/sbom.yml | sbom: upload sbom |
 | .github/workflows/scorecard.yml | analysis: upload scorecard-results<br>upload: download scorecard-results |
 | .github/workflows/soc2-evidence-weekly.yml | pack: upload soc2-evidence-${{ github.run_id }} |

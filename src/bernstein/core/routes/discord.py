@@ -128,7 +128,7 @@ async def discord_interactions(request: Request) -> JSONResponse:
 
     effective_command, option_map = _extract_command_options(payload)
 
-    from bernstein.core.sanitize import sanitize_log
+    from bernstein.core.security.sanitize import sanitize_log
 
     logger.info(
         "Discord slash command received: command=%r options=%r",
@@ -162,7 +162,7 @@ async def _handle_run(request: Request, options: dict[str, Any], payload: dict[s
     if not task_text:
         return _ephemeral("Please provide a task description. Usage: `/bernstein run task: <description>`")
 
-    from bernstein.core.sanitize import sanitize_log
+    from bernstein.core.security.sanitize import sanitize_log
     from bernstein.core.server import TaskCreate, TaskStore
 
     store: TaskStore = request.app.state.store  # type: ignore[attr-defined]

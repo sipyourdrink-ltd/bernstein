@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### опенсорсний governance-шар для AI-агентів
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -38,17 +38,17 @@
 
 > **Статус: бета.** Підтримується однією людиною, в активній розробці. Номер версії рахує релізи, а не зрілість — мінорні версії можуть змінювати інтерфейси. Фіксуйте версію для всього, від чого залежите; регресії виправляються швидко, [повідомляйте про них](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein — опенсорсний governance-шар для AI-агентів. Працює на policy as code: ти пишеш політику — хто що може робити, що потребує погодження, що має фіксуватися — а Bernstein застосовує її і формує запис, який можна перевірити. Детермінований планувальник — без моделі в циклі координації — запускає агентів паралельно, перевіряє результат на гейтах і записує кожен крок, тож запуск можна верифікувати постфактум, офлайн, лише за артефактами. CLI-агенти для коду працюють з коробки (Claude Code, Codex, Gemini CLI і ще 40+), і той самий шар говернить будь-яке агентне навантаження: результатом може бути диф, дослідницький звіт, датасет або пакет аудиторських свідчень. Профіль установки для air-gap у комплекті. Apache-2.0.
+Bernstein — опенсорсний governance-шар для AI-агентів. Працює на policy as code: ти пишеш політику — хто що може робити, що потребує погодження, що має фіксуватися — а Bernstein застосовує її і формує запис, який можна перевірити. Детермінований планувальник — без моделі в циклі координації — запускає агентів паралельно, перевіряє результат на гейтах і записує кожен крок, тож запуск можна верифікувати постфактум, офлайн, лише за артефактами. CLI-агенти для коду працюють з коробки (Claude Code, Codex, Gemini CLI і ще 52+), і той самий шар говернить будь-яке агентне навантаження: результатом може бути диф, дослідницький звіт, датасет або пакет аудиторських свідчень. Профіль установки для air-gap у комплекті. Apache-2.0.
 
 ### короткий огляд
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
 
 Чотири речі виділяють його з-поміж інших; решта — деталі.
 
 - **Жодних LLM у циклі координації.** Планування здійснюється чистою мовою Python, тому виконання є повністю відтворюваним від початку до кінця. Відтворіть учорашній план і отримайте вчорашній граф завдань.
 - **Перевірка постфактум.** Журнал відтворення записує кожне виконання, а завжди активний хребет походження (lineage spine) фіксує кожен крок, що несе історію походження; опціональний журнал аудиту, зв'язаний через HMAC (`BERNSTEIN_AUDIT=1`), додає квитанції (receipts), які можна верифікувати офлайн. Недетермінізм виявляється як розбіжність хешу на конкретному кроці, а не як нестабільність повторного запуску. Результати, що не є кодом, проходять таку саму перевірку: завдання може оголосити контракт на артефакт (звіт, набір даних, журнал дій, результат операцій) і завершується підписаною квитанцією походження замість git-коміту.
 - **Ізольованість за конструкцією.** Кожне завдання з кодування отримує власний git worktree за гейтами злиття; завдання в режимі артефактів отримують робочий каталог у `.sdd/workspaces/`. За замовчуванням агенти не мають спільного змінного робочого простору; єдиним спільним станом є беклог завдань, що резервується атомарно. Більш суворі обмеження файлової системи є опціональними завдяки [бекендам пісочниці](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Якщо вимкнути worktree, кожне завдання виконуватиметься у спільному робочому каталозі.
-- **Широкий та локальний.** Понад 40 адаптерів для CLI-агентів плюс універсальна обгортка `--prompt`, стан на основі файлів, без проміжних SaaS-сервісів, без сторонніх платформ обробки даних.
+- **Широкий та локальний.** Понад 52 адаптерів для CLI-агентів плюс універсальна обгортка `--prompt`, стан на основі файлів, без проміжних SaaS-сервісів, без сторонніх платформ обробки даних.
 
 Повний список наведено на [сторінці можливостей](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [матриця функцій](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) є вичерпним покажчиком.
 
@@ -134,7 +134,7 @@ flowchart LR
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://bernstein.readthedocs.io/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://bernstein.readthedocs.io/en/latest/installation/air-gap/).
+pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://docs.bernstein.run/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,9 +223,9 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 Гейти гігієни репозиторію: `bernstein readme-l10n verify` блокує PR, перекладені README якого відстали від англійського оригіналу (називаючи застарілий розділ), а `bernstein readme-l10n sync` оновлює зв'язки після змін в англійському тексті. Дивіться [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### підтримувані агенти
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen та інші. [Індекс адаптерів](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) містить команди встановлення для 30 з них. Команда `bernstein integrations list` перелічує всі 54 підключені інтеграції з файлу `src/bernstein/adapters/registry.py`, єдиного джерела істини. 52 з них — це доступні для вибору адаптери агентів; інші два рядки — тестова заглушка `mock` та профіль кінцевих точок `self-hosted-endpoints`. Будь-який інший інструмент із прапорцем `--prompt` працює через універсальну обгортку.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen та інші. [Індекс адаптерів](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) містить команди встановлення для 30 з них. Команда `bernstein integrations list` перелічує всі 56 підключені інтеграції з файлу `src/bernstein/adapters/registry.py`, єдиного джерела істини. 54 з них — це доступні для вибору адаптери агентів; інші два рядки — тестова заглушка `mock` та профіль кінцевих точок `self-hosted-endpoints`. Будь-який інший інструмент із прапорцем `--prompt` працює через універсальну обгортку.
 
 Комбінуйте агентів в одному запуску: дешеві локальні моделі для шаблонного коду, потужніші хмарні моделі для архітектури. Команда `bernstein integrations list --installed` показує, що доступно на вашому комп'ютері.
 
@@ -242,9 +242,9 @@ bernstein volunteer browse --budget 60
 [Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse` та `hub`.
 
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-Усі докладні відомості розміщено на [сайті документації](https://bernstein.readthedocs.io/):
+Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
 | сторінка | що вона охоплює |
 |---|---|

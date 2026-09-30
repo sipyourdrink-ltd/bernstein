@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.security.path_containment import (
     PathContainmentError,
+    contained_path,
     contained_subpath,
 )
 from bernstein.eval.metrics import EvalScoreComponents, TierScores
@@ -462,6 +463,14 @@ def _components_equal(a: EvalScoreComponents, b: EvalScoreComponents, *, tol: fl
 # ---------------------------------------------------------------------------
 
 
+def _receipt_filename(receipt_hash: str) -> str:
+    """Return the filesystem-safe filename for a canonical receipt hash."""
+    if not _RECEIPT_HASH_RE.match(receipt_hash):
+        msg = f"receipt_hash is not a canonical sha256 digest: {receipt_hash!r}"
+        raise ValueError(msg)
+    return f"{receipt_hash.removeprefix('sha256:')}.json"
+
+
 def trajectory_receipt_path(workdir: Path, receipt_hash: str) -> Path:
     """Return the on-disk receipt path for *receipt_hash* under *workdir*.
 
@@ -472,18 +481,18 @@ def trajectory_receipt_path(workdir: Path, receipt_hash: str) -> Path:
         ValueError: The hash is not a canonical ``sha256:`` digest, or the
             resolved path escapes the bench directory.
     """
-    if not _RECEIPT_HASH_RE.match(receipt_hash):
-        msg = f"receipt_hash is not a canonical sha256 digest: {receipt_hash!r}"
-        raise ValueError(msg)
     base = workdir.joinpath(*_BENCH_SUBPATH)
-    # contained_subpath, not contained_path: the canonical hash carries a
-    # ``sha256:`` prefix, and contained_path's single-segment allowlist has no
-    # ':' in it. The candidate is still one path component -- no '/' or '\\'
-    # ever reaches validate_relative_path -- so contained_subpath's weaker,
-    # multi-component-shaped check enforces the same barrier this needs: the
-    # allowlist step is a no-op given _RECEIPT_HASH_RE above, and the
-    # realpath-containment step is what actually guards a pre-planted symlink
-    # named "<hash>.json" inside the bench directory.
+    try:
+        return contained_path(base, _receipt_filename(receipt_hash), label="receipt hash")
+    except PathContainmentError as exc:
+        msg = f"receipt path escapes bench directory: {receipt_hash!r}"
+        raise ValueError(msg) from exc
+
+
+def _legacy_trajectory_receipt_path(workdir: Path, receipt_hash: str) -> Path:
+    """Return the legacy ``sha256:<digest>.json`` path on hosts that support it."""
+    _receipt_filename(receipt_hash)
+    base = workdir.joinpath(*_BENCH_SUBPATH)
     try:
         return contained_subpath(base, f"{receipt_hash}.json", label="receipt hash")
     except PathContainmentError as exc:
@@ -600,7 +609,7 @@ def build_trajectory_receipt(
     )
 
     spine = LineageSpine(lineage_root, run_id=EVAL_BENCH_RUN_ID, hmac_key=hmac_key)
-    artifact_path = "/".join((*_BENCH_SUBPATH, f"{receipt_hash}.json"))
+    artifact_path = "/".join((*_BENCH_SUBPATH, _receipt_filename(receipt_hash)))
     anchor = spine.record(
         artifact_path=artifact_path,
         content=sealed_no_anchor.canonical_bytes(),
@@ -707,7 +716,15 @@ def _load_receipt(workdir: Path, receipt_hash: str) -> tuple[TrajectoryReceipt |
     except ValueError as exc:
         return None, str(exc)
     if not path.is_file():
-        return None, f"no trajectory receipt for {receipt_hash!r}"
+        if os.name == "nt":
+            return None, f"no trajectory receipt for {receipt_hash!r}"
+        try:
+            legacy_path = _legacy_trajectory_receipt_path(workdir, receipt_hash)
+        except ValueError as exc:
+            return None, str(exc)
+        if not legacy_path.is_file():
+            return None, f"no trajectory receipt for {receipt_hash!r}"
+        path = legacy_path
     try:
         raw = path.read_bytes()
     except OSError as exc:
@@ -946,9 +963,15 @@ def verify_all_trajectory_receipts(workdir: Path, *, hmac_key: bytes) -> list[Tr
     lineage_root = workdir / ".sdd" / "lineage"
     if not bench_dir.is_dir():
         return []
+    receipt_hashes: set[str] = set()
+    for path in bench_dir.glob("*.json"):
+        stem = path.stem
+        receipt_hash = stem if _RECEIPT_HASH_RE.match(stem) else f"sha256:{stem}"
+        if _RECEIPT_HASH_RE.match(receipt_hash):
+            receipt_hashes.add(receipt_hash)
+
     results: list[TrajectoryVerifyResult] = []
-    for path in sorted(bench_dir.glob("sha256:*.json")):
-        receipt_hash = path.stem
+    for receipt_hash in sorted(receipt_hashes):
         results.append(
             verify_trajectory_receipt(
                 workdir=workdir,

@@ -15,7 +15,7 @@ Update this table whenever a release workflow is added, renamed, or moved.
 
 | Workflow | Name | Triggers | Owns | Handoff |
 |---|---|---|---|---|
-| `.github/workflows/post-ci-dispatcher.yml` | Post-CI dispatcher | `workflow_run` | Routes completed main-branch CI runs to release and recovery child workflows. | Calls `.github/workflows/auto-release.yml` when the upstream CI run targets `main`. |
+| `.github/workflows/post-ci-dispatcher.yml` | Post-CI dispatcher | `workflow_run` | Routes completed CI runs for `main` and for `gh-readonly-queue/main/...` refs to release and recovery child workflows. | Calls `.github/workflows/auto-release.yml` when the upstream CI run targets `main`, or a `gh-readonly-queue/main/...` ref that ended `success` (a queue-merged version bump has no `push` CI run). |
 | `.github/workflows/auto-release.yml` | Auto-release | `workflow_call` | Decides whether a green main-branch CI run should create a release tag. | Pushes a `v*` tag; `.github/workflows/publish.yml` owns tag publish. |
 | `.github/workflows/publish.yml` | Publish | `push` | Builds release distributions, attests `dist/*`, publishes PyPI, npm and Copr RPM packages, and creates or updates the GitHub Release for a `v*` tag. | Dispatches the Docker, Homebrew, and SBOM follow-up workflows after creating the release, because a release created with `GITHUB_TOKEN` emits no `release: published` event. |
 | `.github/workflows/release-major-minor.yml` | Major/Minor Release | `workflow_dispatch` | Manually cuts major or minor releases: checks CI, then bumps the version with `scripts/bump_version.py`. | Opens an `auto/bump-vX.Y.0` PR with auto-merge armed for the merge queue; `.github/workflows/auto-release.yml` tags the merge commit and `.github/workflows/publish.yml` builds, publishes, and creates the release from that tag -- the same chain patch releases use. |
@@ -37,9 +37,10 @@ approval actually protects.
 Every other job that used to sit behind the same `pypi` environment
 (`github-release`, `publish-npm`, `publish-mcp-registry`, and the single
 job in each of `publish-docker.yml`, `publish-homebrew.yml`, `sbom.yml`)
-authenticates a different way -- `GITHUB_TOKEN`, a long-lived `NPM_TOKEN`
-or `HOMEBREW_TAP_TOKEN`, or an OIDC audience that is not scoped by
-environment at all (the MCP registry's GitHub OIDC exchange grants
+authenticates a different way -- `GITHUB_TOKEN`, a long-lived
+`HOMEBREW_TAP_TOKEN`, npm trusted publishing (the registry-side publisher
+is bound to this repository, `publish.yml` and `release-channels`; no token
+is stored), or an OIDC audience that is not scoped by environment at all (the MCP registry's GitHub OIDC exchange grants
 `io.github.<owner>/*` off the token's repository-owner claim only). None
 of them had a credential the approval was protecting, so they now run
 under `release-channels`, an environment with the same branch/tag

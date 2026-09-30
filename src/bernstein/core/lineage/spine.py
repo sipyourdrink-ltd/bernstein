@@ -71,6 +71,12 @@ from bernstein.core.security.key_derivation import (
     domain_tag,
 )
 
+#: Legacy hash profile: Python json.dumps with ensure_ascii=False.
+HASH_PROFILE_LEGACY: str = "py-json-v1"
+
+#: RFC 8785 (JCS) hash profile: canonicalize_jcs, floats per ES6 Number.toString.
+HASH_PROFILE_JCS_V2: str = "jcs-v2"
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -271,19 +277,28 @@ class SpineEntry:
             res["baggage"] = self.baggage
         return res
 
-    def to_row(self) -> bytes:
+    def to_row(self, hash_profile: str = HASH_PROFILE_LEGACY) -> bytes:
         """Serialise the entry to its canonical single-line JSONL form."""
         row = self.body()
         row["hmac"] = self.hmac
+        if hash_profile == HASH_PROFILE_JCS_V2:
+            from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+            return canonicalize_jcs(row) + b"\n"
         return (json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
 
 
-def _canonical_body_bytes(body: dict[str, Any]) -> bytes:
+def _canonical_body_bytes(body: dict[str, Any], hash_profile: str = HASH_PROFILE_LEGACY) -> bytes:
+    """Canonicalize body dict to bytes according to hash_profile."""
+    if hash_profile == HASH_PROFILE_JCS_V2:
+        from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+        return canonicalize_jcs(body)
     return json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
-def _compute_hmac(key: bytes, body: dict[str, Any]) -> str:
-    return _hmac.new(key, _canonical_body_bytes(body), hashlib.sha256).hexdigest()
+def _compute_hmac(key: bytes, body: dict[str, Any], hash_profile: str = HASH_PROFILE_LEGACY) -> str:
+    return _hmac.new(key, _canonical_body_bytes(body, hash_profile), hashlib.sha256).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +393,7 @@ class LineageSpine:
         *,
         run_id: str,
         hmac_key: bytes,
+        hash_profile: str = HASH_PROFILE_LEGACY,
     ) -> None:
         self._root = Path(root)
         self._run_id = _validate_run_id(run_id)
@@ -387,6 +403,9 @@ class LineageSpine:
         # domain tag. ``self._hmac_key`` stays the raw master key for v1
         # backward compatibility.
         self._derived_key = derive_store_key(hmac_key, DOMAIN_LINEAGE)
+        if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+            raise ValueError(f"unknown hash_profile {hash_profile!r}")
+        self._hash_profile = hash_profile
 
     # -- paths --------------------------------------------------------------
 
@@ -426,7 +445,9 @@ class LineageSpine:
 
     def _write_head(self, head_hash: str, count: int) -> None:
         body = {"head_hash": head_hash, "count": count}
-        head_hmac = _compute_hmac(self._derived_key, body)
+        if self._hash_profile != HASH_PROFILE_LEGACY:
+            body["hash_profile"] = self._hash_profile
+        head_hmac = _compute_hmac(self._derived_key, body, self._hash_profile)
         payload = body | {"hmac": head_hmac}
         tmp = self.head_path.with_suffix(".head.tmp")
         tmp.write_text(
@@ -539,7 +560,7 @@ class LineageSpine:
                 body["tracestate"] = tracestate
             if baggage is not None:
                 body["baggage"] = baggage
-            tag = _compute_hmac(self._derived_key, body)
+            tag = _compute_hmac(self._derived_key, body, self._hash_profile)
             entry = SpineEntry(
                 v=SPINE_ENTRY_VERSION,
                 prev_hash=prev_hash,
@@ -557,7 +578,7 @@ class LineageSpine:
             )
             self.run_dir.mkdir(parents=True, exist_ok=True)
             with self.spine_path.open("ab") as fh:
-                fh.write(entry.to_row())
+                fh.write(entry.to_row(self._hash_profile))
                 fh.flush()
                 os.fsync(fh.fileno())
             self._write_head(e_hash, count + 1)
@@ -626,6 +647,22 @@ class LineageSpine:
             return SpineVerifyResult(status=SpineStatus.NO_ENTRIES, count=0)
 
         errors: list[str] = []
+        # Detect hash_profile from spine.head if present
+        hash_profile = HASH_PROFILE_LEGACY
+        if self.head_path.exists():
+            try:
+                head_data = json.loads(self.head_path.read_text())
+                if "hash_profile" in head_data:
+                    hash_profile = str(head_data["hash_profile"])
+                    if hash_profile not in (HASH_PROFILE_LEGACY, HASH_PROFILE_JCS_V2):
+                        return SpineVerifyResult(
+                            status=SpineStatus.TAMPERED,
+                            count=0,
+                            errors=[f"unknown hash_profile {hash_profile!r}"],
+                        )
+            except (json.JSONDecodeError, OSError):
+                pass
+
         prev_hash = _GENESIS_HASH
         count = 0
         # True until an entry that is *not* the internal journal-head seal is
@@ -690,7 +727,7 @@ class LineageSpine:
             if not _hmac.compare_digest(str(row["entry_hash"]), expected_hash):
                 errors.append(f"line {line_no}: entry_hash mismatch")
             body = {k: row[k] for k in row if k != "hmac"}
-            expected_hmac = _compute_hmac(verify_key, body)
+            expected_hmac = _compute_hmac(verify_key, body, hash_profile)
             if not _hmac.compare_digest(str(row["hmac"]), expected_hmac):
                 errors.append(f"line {line_no}: hmac mismatch")
             # An attempt record counts with the seal here: neither is a produced

@@ -1,0 +1,254 @@
+{
+  "$id": "https://raw.githubusercontent.com/usnistgov/OSCAL/v1.1.0/src/json/schema/oscal_assessment-results_schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OSCAL Assessment Results Schema",
+  "description": "JSON Schema for OSCAL Assessment Results documents",
+  "type": "object",
+  "properties": {
+    "assessment-results": {
+      "type": "object",
+      "required": ["uuid", "metadata", "results"],
+      "properties": {
+        "uuid": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Universally unique identifier for the assessment results"
+        },
+        "metadata": {
+          "type": "object",
+          "required": ["title", "published", "last-modified", "version", "oscal-version"],
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Title of the assessment results document"
+            },
+            "published": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Date and time the document was published"
+            },
+            "last-modified": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Date and time the document was last modified"
+            },
+            "version": {
+              "type": "string",
+              "description": "Version of the assessment results document"
+            },
+            "oscal-version": {
+              "type": "string",
+              "const": "1.1.0",
+              "description": "OSCAL version this document conforms to"
+            },
+            "roles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "title"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "title": { "type": "string" }
+                }
+              }
+            },
+            "parties": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["uuid", "type", "name"],
+                "properties": {
+                  "uuid": { "type": "string", "format": "uuid" },
+                  "type": { "type": "string", "enum": ["person", "organization"] },
+                  "name": { "type": "string" }
+                }
+              }
+            },
+            "responsible-parties": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["role-id", "party-uuids"],
+                "properties": {
+                  "role-id": { "type": "string" },
+                  "party-uuids": {
+                    "type": "array",
+                    "items": { "type": "string", "format": "uuid" }
+                  }
+                }
+              }
+            },
+            "remarks": { "type": "string" }
+          }
+        },
+        "import-ap": {
+          "type": "object",
+          "required": ["href"],
+          "properties": {
+            "href": { "type": "string" },
+            "remarks": { "type": "string" }
+          }
+        },
+        "results": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["uuid", "title", "description", "start", "observations", "findings"],
+            "properties": {
+              "uuid": { "type": "string", "format": "uuid" },
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "start": { "type": "string", "format": "date-time" },
+              "end": { "type": "string", "format": "date-time" },
+              "observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["uuid", "title", "description", "methods", "collected"],
+                  "properties": {
+                    "uuid": { "type": "string", "format": "uuid" },
+                    "title": { "type": "string" },
+                    "description": { "type": "string" },
+                    "methods": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "minItems": 1
+                    },
+                    "collected": { "type": "string", "format": "date-time" },
+                    "relevant-evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["description", "href"],
+                        "properties": {
+                          "href": { "type": "string" },
+                          "description": { "type": "string" }
+                        }
+                      }
+                    },
+                    "subject-uuids": {
+                      "type": "array",
+                      "items": { "type": "string", "format": "uuid" }
+                    },
+                    "props": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["name", "ns", "value"],
+                        "properties": {
+                          "name": { "type": "string" },
+                          "ns": { "type": "string", "format": "uri" },
+                          "value": { "type": "string" }
+                        }
+                      }
+                    },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["href", "rel"],
+                        "properties": {
+                          "href": { "type": "string" },
+                          "rel": { "type": "string" },
+                          "media-type": { "type": "string" }
+                        }
+                      }
+                    },
+                    "remarks": { "type": "string" }
+                  }
+                }
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["uuid", "title", "description", "target"],
+                  "properties": {
+                    "uuid": { "type": "string", "format": "uuid" },
+                    "title": { "type": "string" },
+                    "description": { "type": "string" },
+                    "target": {
+                      "type": "object",
+                      "required": ["type", "target-id", "status"],
+                      "properties": {
+                        "type": { "type": "string", "enum": ["control"] },
+                        "target-id": { "type": "string" },
+                        "status": {
+                          "type": "object",
+                          "required": ["state"],
+                          "properties": {
+                            "state": { "type": "string", "enum": ["satisfied", "not-satisfied", "other"] },
+                            "reason": { "type": "string" }
+                          }
+                        }
+                      }
+                    },
+                    "related-observations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["observation-uuid"],
+                        "properties": {
+                          "observation-uuid": { "type": "string", "format": "uuid" },
+                          "title": { "type": "string" }
+                        }
+                      }
+                    },
+                    "props": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["name", "ns", "value"],
+                        "properties": {
+                          "name": { "type": "string" },
+                          "ns": { "type": "string", "format": "uri" },
+                          "value": { "type": "string" }
+                        }
+                      }
+                    },
+                    "remarks": { "type": "string" }
+                  }
+                }
+              },
+              "related-results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["result-uuid", "title"],
+                  "properties": {
+                    "result-uuid": { "type": "string", "format": "uuid" },
+                    "title": { "type": "string" }
+                  }
+                }
+              },
+              "remarks": { "type": "string" }
+            }
+          }
+        },
+        "back-matter": {
+          "type": "object",
+          "properties": {
+            "resources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["uuid", "title", "description", "href"],
+                "properties": {
+                  "uuid": { "type": "string", "format": "uuid" },
+                  "title": { "type": "string" },
+                  "description": { "type": "string" },
+                  "href": { "type": "string" },
+                  "media-type": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "remarks": { "type": "string" }
+      }
+    }
+  },
+  "required": ["assessment-results"],
+  "additionalProperties": false
+}

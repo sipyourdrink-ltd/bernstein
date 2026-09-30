@@ -42,16 +42,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
 
+from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.security.audit_chain import (
     EVENT_TRAJECTORY_RECEIPT,
     AuditChainStore,
 )
 from bernstein.eval.metrics import EvalScoreComponents, TierScores
 from bernstein.eval.trajectory_receipt import (
+    EVAL_BENCH_RUN_ID,
     NO_TASKS_STATUS,
     SELECTION_BEST_OF_N,
     SELECTION_SINGLE_SHOT,
@@ -62,6 +65,7 @@ from bernstein.eval.trajectory_receipt import (
     build_trajectory_receipt,
     read_trajectory_receipt,
     trajectory_receipt_path,
+    verify_all_trajectory_receipts,
     verify_trajectory_receipt,
 )
 
@@ -493,22 +497,71 @@ def test_trajectory_receipt_path_refuses_hash_that_resolves_outside_bench_dir(tm
     function resolves it.
     """
     receipt_hash = "sha256:" + "c" * 64
+    receipt_filename = f"{'c' * 64}.json"
     workdir = tmp_path / "workdir"
     bench_dir = workdir.joinpath(".sdd", "eval", "bench")
     bench_dir.mkdir(parents=True)
     outside = tmp_path / "host-secret.json"
     outside.write_text("not a receipt", encoding="utf-8")
-    (bench_dir / f"{receipt_hash}.json").symlink_to(outside)
+    (bench_dir / receipt_filename).symlink_to(outside)
 
     with pytest.raises(ValueError, match="escapes bench directory"):
         trajectory_receipt_path(workdir, receipt_hash)
 
 
 def test_trajectory_receipt_path_accepts_the_ordinary_case(tmp_path: Path) -> None:
-    """Positive control: an un-planted hash still resolves under bench, unaltered."""
+    """Positive control: the canonical identity maps to a Windows-safe leaf."""
     receipt_hash = "sha256:" + "d" * 64
     path = trajectory_receipt_path(tmp_path, receipt_hash)
-    assert path == tmp_path.resolve() / ".sdd" / "eval" / "bench" / f"{receipt_hash}.json"
+    assert path == tmp_path.resolve() / ".sdd" / "eval" / "bench" / f"{'d' * 64}.json"
+    assert ":" not in path.name
+
+
+def test_build_uses_safe_filename_without_changing_receipt_identity(tmp_path: Path) -> None:
+    receipt = _build(tmp_path)
+    path = trajectory_receipt_path(tmp_path, receipt.receipt_hash)
+
+    assert path.name == f"{receipt.receipt_hash.removeprefix('sha256:')}.json"
+    assert ":" not in path.name
+    assert receipt.receipt_hash.startswith("sha256:")
+
+    spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id=EVAL_BENCH_RUN_ID, hmac_key=_KEY)
+    entries = list(spine.iter_entries())
+    assert len(entries) == 1
+    assert entries[0].artifact_path == f".sdd/eval/bench/{path.name}"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="legacy ':' filenames cannot be created on Windows")
+def test_legacy_receipt_filename_remains_readable_and_discoverable(tmp_path: Path) -> None:
+    receipt = _build(tmp_path)
+    safe_path = trajectory_receipt_path(tmp_path, receipt.receipt_hash)
+    legacy_path = safe_path.with_name(f"{receipt.receipt_hash}.json")
+    safe_path.replace(legacy_path)
+
+    assert read_trajectory_receipt(tmp_path, receipt.receipt_hash) == receipt
+    assert _verify(tmp_path, receipt.receipt_hash).ok
+    results = verify_all_trajectory_receipts(tmp_path, hmac_key=_KEY)
+    assert len(results) == 1
+    assert results[0].ok
+    assert results[0].requested_hash == receipt.receipt_hash
+
+
+@pytest.mark.skipif(os.name == "nt", reason="legacy ':' filenames cannot be created on Windows")
+def test_new_and_legacy_receipt_names_are_deduplicated_with_new_name_preferred(tmp_path: Path) -> None:
+    receipt = _build(tmp_path)
+    safe_path = trajectory_receipt_path(tmp_path, receipt.receipt_hash)
+    legacy_path = safe_path.with_name(f"{receipt.receipt_hash}.json")
+    legacy_path.write_bytes(safe_path.read_bytes())
+
+    results = verify_all_trajectory_receipts(tmp_path, hmac_key=_KEY)
+    assert len(results) == 1
+    assert results[0].ok
+
+    safe_path.write_text("not-json", encoding="utf-8")
+    results = verify_all_trajectory_receipts(tmp_path, hmac_key=_KEY)
+    assert len(results) == 1
+    assert not results[0].ok
+    assert "receipt bytes rejected" in results[0].reason
 
 
 # ---------------------------------------------------------------------------

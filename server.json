@@ -7,28 +7,22 @@
     "url": "https://github.com/sipyourdrink-ltd/bernstein",
     "source": "github"
   },
-  "version": "3.19.2",
+  "version": "3.20.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "bernstein",
-      "version": "3.19.2",
+      "version": "3.20.0",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein:3.19.2",
+      "identifier": "ghcr.io/sipyourdrink-ltd/bernstein:3.20.0",
       "transport": {
         "type": "stdio"
       }
-    }
-  ],
-  "remotes": [
-    {
-      "type": "streamable-http",
-      "url": "https://mcp.bernstein.run/mcp"
     }
   ]
 }

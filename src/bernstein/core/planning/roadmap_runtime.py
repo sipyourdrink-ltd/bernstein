@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, cast
 
 import yaml
 
-from bernstein.core.planning.scenario_library import ScenarioLibrary, ScenarioRecipe, load_scenario_library
+from bernstein.core.planning.scenario_library import (
+    ScenarioLibrary,
+    ScenarioRecipe,
+    load_layered_scenario_library,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -132,9 +136,11 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
             ),
         )
 
-    library_root = workdir / ".bernstein" / "scenarios"
-    library = load_scenario_library(library_root)
+    workspace_root = workdir / ".bernstein" / "scenarios"
+    packaged_root = workdir / "templates" / "scenarios"
+    library = load_layered_scenario_library(workspace_root, packaged_root)
     scenarios_found = len(library.scenarios)
+    library_root = f"{workspace_root} and {packaged_root}"
 
     roadmaps_dir = workdir / ".sdd" / "roadmaps" / "open"
     if not roadmaps_dir.exists():
@@ -143,7 +149,7 @@ def emit_roadmap_wave_outcome(workdir: Path, *, max_open_tickets: int = 10) -> R
             reason="no-roadmap",
             scenarios_found=scenarios_found,
             detail=(
-                f"Found {scenarios_found} scenario(s) under {library_root} and skipped "
+                f"Found {scenarios_found} scenario(s) under {workspace_root} and {packaged_root} and skipped "
                 f"them: {roadmaps_dir} does not exist, and a scenario is only emitted "
                 "as a ticket when a roadmap sequences it."
             ),

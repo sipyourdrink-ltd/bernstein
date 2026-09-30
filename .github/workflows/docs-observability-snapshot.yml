@@ -59,10 +59,12 @@ jobs:
           uv run bernstein doctor observe --json --no-persist > "${SNAPSHOT}"
 
       - name: Validate snapshot JSON
+        env:
+          SNAPSHOT_PATH: ${{ steps.capture.outputs.snapshot }}
         run: |
           set -euo pipefail
-          python3 -m json.tool "${{ steps.capture.outputs.snapshot }}" > /dev/null
-          echo "snapshot ${{ steps.capture.outputs.snapshot }} is valid JSON"
+          python3 -m json.tool "${SNAPSHOT_PATH}" > /dev/null
+          echo "snapshot ${SNAPSHOT_PATH} is valid JSON"
 
       - name: Render 30-day trends
         run: |

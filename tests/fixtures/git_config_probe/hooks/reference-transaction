@@ -1,0 +1,2 @@
+#!/bin/sh
+PROBE_NAME=reference-transaction exec "$(dirname "$0")/../probe.sh"
