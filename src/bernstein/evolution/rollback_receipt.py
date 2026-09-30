@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
@@ -170,6 +170,17 @@ def _hash_obj(obj: Any) -> str:
     return f"sha256:{hashlib.sha256(json_bytes).hexdigest()}"
 
 
+ROLLBACK_RECEIPT_ARTIFACT_DIR = ".sdd/upgrades/rollback-receipts"
+
+
+def _spine_timestamp(timestamp: str) -> int:
+    """Return *timestamp* as integer epoch seconds (0 if not numeric)."""
+    try:
+        return int(float(timestamp))
+    except ValueError:
+        return 0
+
+
 def build_rollback_receipt(
     *,
     workdir: Path,
@@ -196,32 +207,30 @@ def build_rollback_receipt(
         "timestamp": timestamp,
     }
     body_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    receipt_hash = _hash_obj(body)
-
     spine = LineageSpine(lineage_root, run_id=EVOLUTION_ROLLBACK_RUN_ID, hmac_key=hmac_key)
 
-    # Now that we have the receipt hash, we can compute the journal entry hash.
-    body_with_hash = {
-        **body,
-        "receipt_hash": receipt_hash,
-    }
-    journal_entry_hash = _hash_obj(body_with_hash)
+    # Anchor the canonical receipt bytes in the evolution-rollback spine; the
+    # returned spine entry hash is the receipt's journal anchor.
+    journal_entry_hash = spine.record(
+        artifact_path=f"{ROLLBACK_RECEIPT_ARTIFACT_DIR}/{_hash_obj(body).removeprefix('sha256:')}.json",
+        content=body_bytes,
+        actor=_ROLLBACK_ACTOR,
+        step_id=proposal_id,
+        model="none",
+        timestamp=_spine_timestamp(timestamp),
+    )
 
-    receipt = RollbackReceipt(
+    unsealed = RollbackReceipt(
         schema_version=ROLLBACK_RECEIPT_SCHEMA_VERSION,
         restored_files=restored_files,
         canonical_bytes=body_bytes,
         journal_entry_hash=journal_entry_hash,
-        receipt_hash=receipt_hash,
+        receipt_hash="",
     )
+    receipt = replace(unsealed, receipt_hash=_hash_obj(unsealed.body()))
 
     # Write the receipt to disk.
     write_rollback_receipt(workdir, receipt)
-
-    # Append the canonical bytes to the evolution-rollback spine and record in
-    # the HMAC audit chain.
-    spine.append(body_bytes)
-    # Note: The audit chain update is handled by the spine's append method.
 
     return receipt
 
@@ -289,7 +298,14 @@ def verify_rollback_receipt(
     if receipt.receipt_hash != receipt_hash:
         return RollbackVerifyResult(ok=False, reason="receipt hash does not match request", receipt=receipt)
 
-    recomputed = _hash_obj(receipt.body())
+    # Hash the stored document as-is (minus the hash itself) so an injected or
+    # altered field that from_dict() would silently drop is still detected.
+    try:
+        stored = json.loads(_read_leaf_text(rollback_receipt_path(workdir, receipt_hash)))
+        stored_body = {k: v for k, v in stored.items() if k != "receipt_hash"}
+    except (OSError, ValueError, AttributeError):
+        stored_body = receipt.body()
+    recomputed = _hash_obj(stored_body)
     if recomputed != receipt.receipt_hash:
         return RollbackVerifyResult(
             ok=False,
@@ -332,7 +348,7 @@ def verify_rollback_receipt(
             ok=False, reason=f"evolution-rollback spine failed verification: {detail}", receipt=receipt
         )
 
-    expected_content = content_hash_of(receipt.canonical_bytes())
+    expected_content = content_hash_of(receipt.canonical_bytes)
     anchored = any(
         entry.entry_hash == receipt.journal_entry_hash and entry.content_hash == expected_content
         for entry in spine.iter_entries()
