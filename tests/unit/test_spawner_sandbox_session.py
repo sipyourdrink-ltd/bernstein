@@ -759,12 +759,13 @@ def test_reachability_probe_uses_remote_task_server(tmp_path: Path, monkeypatch:
     assert "'tasks.example.com', 8443" in session.exec_calls[0][2]
 
 
-def test_remote_spawn_passes_only_model_credentials_and_external_token(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("backend_name", ["sandbox0", "docker", "libkrun", "firecracker"])
+def test_spawn_scopes_model_credentials_timeout_and_verbose_to_sandbox0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend_name: str
 ) -> None:
     from unittest.mock import AsyncMock
 
-    session = _FakeSession(backend_name="sandbox0", root=tmp_path)
+    session = _FakeSession(backend_name=backend_name, root=tmp_path)
     session.write = AsyncMock()
     spawner, adapter = _build_spawner(tmp_path, session=session)
     token_path = tmp_path / "agent.token"
@@ -784,9 +785,31 @@ def test_remote_spawn_passes_only_model_credentials_and_external_token(
             adapter=adapter,
         )
     env = submit.call_args.kwargs["env"]
-    assert set(env) == {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"}
-    assert submit.call_args.kwargs["timeout"] == 123
+    expected_env = {"ANTHROPIC_API_KEY"}
+    if backend_name == "sandbox0":
+        expected_env.update({"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"})
+    assert set(env) == expected_env
+    assert submit.call_args.kwargs["timeout"] == (123 if backend_name == "sandbox0" else None)
+    assert ("--verbose" in submit.call_args.kwargs["cmd"][2]) == (backend_name == "sandbox0")
     token_call, prompt_call = session.write.call_args_list
-    assert token_call.args == ("/tmp/bernstein-agent-tokens/S-remote.token", b"task-secret")
+    remote_token = (
+        "/tmp/bernstein-agent-tokens/S-remote.token"
+        if backend_name == "sandbox0"
+        else f"{session.workdir}/.sdd/runtime/agent_tokens/S-remote.token"
+    )
+    assert token_call.args == (remote_token, b"task-secret")
     assert token_call.kwargs["mode"] == 0o600
-    assert b"/tmp/bernstein-agent-tokens/S-remote.token" in prompt_call.args[1]
+    assert remote_token.encode() in prompt_call.args[1]
+
+
+def test_legacy_container_command_does_not_enable_verbose(tmp_path: Path) -> None:
+    spawner, adapter = _build_spawner(tmp_path, session=None)
+    cmd = spawner._adapter_cmd_for_container(
+        prompt_file=tmp_path / "prompt.md",
+        model_config=ModelConfig("sonnet", "high"),
+        session_id="S-legacy",
+        mcp_config=None,
+        adapter=adapter,
+    )
+    assert "--verbose" not in cmd[2]
+    assert "--output-format stream-json" in cmd[2]

@@ -6478,6 +6478,7 @@ class AgentSpawner:
                 mcp_config=mcp_config,
                 adapter=adapter,
                 sandbox_workdir=sbx_session.workdir,
+                sandbox0=sbx_session.backend_name == "sandbox0",
             )
 
             # 2b) Forward API keys to the sandbox so adapters can authenticate.
@@ -6490,7 +6491,9 @@ class AgentSpawner:
             adapter_name_lc = adapter.name().lower()
             _env_keys: list[str] = []
             if "claude" in adapter_name_lc:
-                _env_keys.extend(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"])
+                _env_keys.append("ANTHROPIC_API_KEY")
+                if sbx_session.backend_name == "sandbox0":
+                    _env_keys.extend(["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"])
             elif "gemini" in adapter_name_lc:
                 _env_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
             else:
@@ -6526,7 +6529,9 @@ class AgentSpawner:
                 session_id=session_id,
                 log_path=log_path,
                 env=sandbox_env,
-                timeout=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                timeout=(session.timeout_s or DEFAULT_TIMEOUT_SECONDS)
+                if sbx_session.backend_name == "sandbox0"
+                else None,
                 workdir=self._workdir,
             )
             self._sandbox_exec_handles[session_id] = handle
@@ -6913,6 +6918,7 @@ class AgentSpawner:
         mcp_config: dict[str, Any] | None,
         adapter: CLIAdapter,
         sandbox_workdir: str = "/workspace",
+        sandbox0: bool = False,
     ) -> list[str]:
         """Build the CLI command to run inside the container.
 
@@ -6963,6 +6969,7 @@ class AgentSpawner:
         q_binary = shlex.quote(cli_binary)
 
         if "claude" in adapter_name:
+            verbose_flag = "--verbose " if sandbox0 else ""
             cmd = [
                 "sh",
                 "-c",
@@ -6970,7 +6977,7 @@ class AgentSpawner:
                 f"--effort {q_effort} "
                 f"--max-turns 50 "
                 f"--dangerously-skip-permissions "
-                f"--output-format stream-json --verbose "
+                f"--output-format stream-json {verbose_flag}"
                 f'-p "$(cat {q_prompt})"',
             ]
         elif "qwen" in adapter_name:

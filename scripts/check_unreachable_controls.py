@@ -25,15 +25,12 @@ or from outside the scanned packages. So a symbol called only by another
 unreachable symbol stays unreachable, and allowlisting a symbol does *not*
 make what it calls reachable.
 
-Static approximation
---------------------
-Unqualified names and method attributes are matched by name, and a type
-annotation counts as a reference. These cases can *under*-report unused
-symbols. Module-qualified references to top-level symbols are matched to
-their imported module instead: an unrelated object's ``.create_context`` must
-not make ``security.policy.create_context`` appear live. Dynamic bindings
-through arbitrary objects cannot be resolved statically; document any such
-production caller when reviewing a finding.
+Approximation, in the safe direction
+------------------------------------
+Matching is by name, not by resolved binding, and a type annotation counts
+as a reference. Both make the check *under*-report: a symbol is reported
+only when its bare name appears nowhere in the package outside imports and
+strings. It never fails the build on a symbol that is actually called.
 
 The allowlist
 -------------
@@ -57,10 +54,9 @@ from __future__ import annotations
 
 import argparse
 import ast
-import importlib.util
 import sys
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_SCAN_ROOTS = (
@@ -130,20 +126,6 @@ class Finding:
     lineno: int
 
 
-@dataclass
-class References:
-    """Names, method attributes, and resolved top-level module attributes."""
-
-    names: set[str] = field(default_factory=set)
-    attributes: set[str] = field(default_factory=set)
-    qualified: set[SymbolId] = field(default_factory=set)
-
-    def update(self, other: References) -> None:
-        self.names.update(other.names)
-        self.attributes.update(other.attributes)
-        self.qualified.update(other.qualified)
-
-
 _DEF_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
@@ -191,78 +173,11 @@ def collect_symbols(scan_roots: list[Path], repo_root: Path) -> tuple[dict[Symbo
     return symbols, scanned
 
 
-def _module_name(path: str) -> str:
-    """Return the import path of a tracked ``src/`` Python module."""
-    return path.removeprefix("src/").removesuffix(".py").replace("/", ".")
-
-
-def _dotted_name(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        parent = _dotted_name(node.value)
-        return f"{parent}.{node.attr}" if parent else None
-    return None
-
-
-def _import_bindings(
-    tree: ast.Module,
-    module: str,
-    modules: dict[str, str],
-    symbols: dict[SymbolId, int],
-) -> tuple[dict[str, str], dict[str, SymbolId]]:
-    """Resolve imported module and symbol aliases used by attribute/name loads."""
-    module_aliases: dict[str, str] = {}
-    symbol_aliases: dict[str, SymbolId] = {}
-    package = module.rpartition(".")[0]
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                module_aliases[alias.asname or alias.name.split(".")[0]] = (
-                    alias.name if alias.asname else alias.name.split(".")[0]
-                )
-        elif isinstance(node, ast.ImportFrom):
-            imported_module = "." * node.level + (node.module or "")
-            if node.level:
-                try:
-                    imported_module = importlib.util.resolve_name(imported_module, package)
-                except ImportError:
-                    continue
-            for alias in node.names:
-                local_name = alias.asname or alias.name
-                candidate_module = f"{imported_module}.{alias.name}"
-                if candidate_module in modules:
-                    module_aliases[local_name] = candidate_module
-                elif imported_module in modules:
-                    candidate = SymbolId(modules[imported_module], alias.name)
-                    if candidate in symbols:
-                        symbol_aliases[local_name] = candidate
-    return module_aliases, symbol_aliases
-
-
-def _record(
-    refs: References,
-    node: ast.AST,
-    module_aliases: dict[str, str],
-    symbol_aliases: dict[str, SymbolId],
-    modules: dict[str, str],
-) -> None:
+def _record(refs: set[str], node: ast.AST) -> None:
     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-        refs.names.add(node.id)
-        if node.id in symbol_aliases:
-            refs.qualified.add(symbol_aliases[node.id])
+        refs.add(node.id)
     elif isinstance(node, ast.Attribute):
-        refs.attributes.add(node.attr)
-        receiver = _dotted_name(node.value)
-        if receiver is None:
-            return
-        first, _, rest = receiver.partition(".")
-        imported = module_aliases.get(first)
-        if imported is None:
-            return
-        module = f"{imported}.{rest}" if rest else imported
-        if module in modules:
-            refs.qualified.add(SymbolId(modules[module], node.attr))
+        refs.add(node.attr)
 
 
 def collect_references(
@@ -270,7 +185,7 @@ def collect_references(
     repo_root: Path,
     symbols: dict[SymbolId, int],
     scanned: set[str],
-) -> tuple[References, dict[SymbolId, References]]:
+) -> tuple[set[str], dict[SymbolId, set[str]]]:
     """Split every name reference in the package by the definition that owns it.
 
     Returns ``(root_refs, owned_refs)``. ``root_refs`` are references made from
@@ -278,9 +193,8 @@ def collect_references(
     unconditionally live. ``owned_refs`` maps a tracked definition to the names
     its body mentions, and only counts once that definition is reachable.
     """
-    root_refs = References()
-    owned_refs: dict[SymbolId, References] = defaultdict(References)
-    modules = {_module_name(symbol.path): symbol.path for symbol in symbols}
+    root_refs: set[str] = set()
+    owned_refs: dict[SymbolId, set[str]] = defaultdict(set)
 
     def walk(
         node: ast.AST,
@@ -289,8 +203,6 @@ def collect_references(
         rel: str,
         tracked: bool,
         at_module_level: bool,
-        module_aliases: dict[str, str],
-        symbol_aliases: dict[str, SymbolId],
     ) -> None:
         for child in ast.iter_child_nodes(node):
             child_owner = owner
@@ -299,65 +211,35 @@ def collect_references(
                     child_owner = SymbolId(rel, child.name)
                 elif owner is not None and owner.member is None and SymbolId(rel, owner.owner, child.name) in symbols:
                     child_owner = SymbolId(rel, owner.owner, child.name)
-            _record(
-                root_refs if owner is None else owned_refs[owner],
-                child,
-                module_aliases,
-                symbol_aliases,
-                modules,
-            )
-            walk(
-                child,
-                child_owner,
-                rel=rel,
-                tracked=tracked,
-                at_module_level=False,
-                module_aliases=module_aliases,
-                symbol_aliases=symbol_aliases,
-            )
+            _record(root_refs if owner is None else owned_refs[owner], child)
+            walk(child, child_owner, rel=rel, tracked=tracked, at_module_level=False)
 
     for path in _iter_python_files(reference_root):
         tree = _parse(path)
         if tree is None:
             continue
         rel = path.relative_to(repo_root).as_posix()
-        module_aliases, symbol_aliases = _import_bindings(tree, _module_name(rel), modules, symbols)
-        walk(
-            tree,
-            None,
-            rel=rel,
-            tracked=rel in scanned,
-            at_module_level=True,
-            module_aliases=module_aliases,
-            symbol_aliases=symbol_aliases,
-        )
+        walk(tree, None, rel=rel, tracked=rel in scanned, at_module_level=True)
 
     return root_refs, owned_refs
 
 
 def reachable_symbols(
     symbols: dict[SymbolId, int],
-    root_refs: References,
-    owned_refs: dict[SymbolId, References],
+    root_refs: set[str],
+    owned_refs: dict[SymbolId, set[str]],
 ) -> set[SymbolId]:
-    """Grow the live-reference set until it stops changing."""
-    live = References()
-    live.update(root_refs)
+    """Grow the live-name set until it stops changing, and return what it reached."""
+    live = set(root_refs)
     reached: set[SymbolId] = set()
     changed = True
     while changed:
         changed = False
         for symbol in symbols:
-            if symbol in reached:
-                continue
-            if symbol.member is None:
-                referenced = symbol.owner in live.names or symbol in live.qualified
-            else:
-                referenced = symbol.member in live.names or symbol.member in live.attributes
-            if not referenced:
+            if symbol in reached or symbol.local_name not in live:
                 continue
             reached.add(symbol)
-            live.update(owned_refs.get(symbol, References()))
+            live |= owned_refs.get(symbol, set())
             changed = True
     return reached
 

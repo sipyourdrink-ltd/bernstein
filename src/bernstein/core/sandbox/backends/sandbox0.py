@@ -11,6 +11,7 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -184,6 +185,7 @@ class Sandbox0SandboxSession(SandboxSession):
         started = time.monotonic()
         io_dir = f"/tmp/bernstein-exec-{uuid.uuid4().hex}"
         context = None
+        command_completed = False
         try:
             await asyncio.to_thread(self._sandbox.mkdir, io_dir, recursive=True)
             request = json.dumps(
@@ -216,16 +218,30 @@ class Sandbox0SandboxSession(SandboxSession):
                         raise RuntimeError("Sandbox0 command ended without an exit code")
                     stdout = await asyncio.to_thread(self._sandbox.read_file, io_dir + "/stdout")
                     stderr = await asyncio.to_thread(self._sandbox.read_file, io_dir + "/stderr")
+                    command_completed = True
                     return ExecResult(state.exit_code, stdout, stderr, time.monotonic() - started)
                 if time.monotonic() - started >= limit:
                     raise TimeoutError(f"Sandbox0 command exceeded {limit}s")
                 await asyncio.sleep(0.1)
         finally:
+            cleanup_errors: list[Exception] = []
+            # These files include stdin and the command environment. Delete
+            # them before the context, even if context deletion would fail.
+            try:
+                await asyncio.to_thread(self._sandbox.delete_file, io_dir)
+            except Exception as exc:
+                cleanup_errors.append(exc)
+                logging.getLogger(__name__).warning("Sandbox0 exec file cleanup failed")
             if context is not None:
-                await asyncio.to_thread(self._sandbox.delete_context, context.id)
-            # These files include stdin and the command environment. Never
-            # retain them in a subsequent RootFS snapshot.
-            await asyncio.to_thread(self._sandbox.delete_file, io_dir)
+                try:
+                    await asyncio.to_thread(self._sandbox.delete_context, context.id)
+                except Exception as exc:
+                    cleanup_errors.append(exc)
+                    logging.getLogger(__name__).warning("Sandbox0 exec context cleanup failed")
+            # Attempt both deletions, preserve command errors/cancellation,
+            # and never report success if sensitive files could remain.
+            if cleanup_errors and command_completed:
+                raise cleanup_errors[0]
 
     async def snapshot(self) -> str:
         # Metadata lives inside the encrypted snapshot, never in the id/logs.

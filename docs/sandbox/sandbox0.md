@@ -103,7 +103,10 @@ snapshot metadata** and restored with the snapshot. Reserve this field for
 non-sensitive configuration. Do not put model API keys, task tokens or other
 credentials there; pass those through `session.exec(..., env={...})` for each
 command instead. Per-command overrides are not copied into snapshot metadata;
-the adapter's temporary exec files live under `/tmp` and are cleaned up. This
+the adapter's temporary exec files live under `/tmp` and are cleaned up before
+the command context is deleted. Both deletions are attempted even if one fails;
+a cleanup failure prevents a successful command from being reported as successful
+and does not replace an existing command error or cancellation. This
 does not prevent the command itself from writing credentials to persistent
 files or logs. Encryption and mode 0600 do not expire a credential: deleting a
 session preserves its snapshots, and rotation/revocation and snapshot deletion

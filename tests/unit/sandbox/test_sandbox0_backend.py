@@ -304,3 +304,61 @@ async def test_snapshot_keeps_base_config_but_not_per_exec_credentials(backend, 
     assert "command-only-secret" not in reference
     assert session._manifest.env == {"APP_MODE": "test"}
     sb.delete_file.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_deletes", [("file",), ("context",), ("file", "context")])
+@pytest.mark.parametrize("command_times_out", [False, True])
+async def test_exec_cleanup_attempts_both_deletes_and_preserves_command_error(
+    backend, failed_deletes, command_times_out
+):
+    pytest.importorskip("sandbox0")
+    session = await backend.create(WorkspaceManifest())
+    sb = session._sandbox
+    sb.create_context.return_value.id = "context-1"
+    sb.get_context.return_value = SimpleNamespace(running=command_times_out, exit_code=0)
+    sb.read_file.return_value = b"output"
+    deletions = []
+
+    def delete_file(path):
+        deletions.append("file")
+        assert path.startswith("/tmp/bernstein-exec-")
+        if "file" in failed_deletes:
+            raise OSError("file cleanup failed")
+
+    def delete_context(context_id):
+        deletions.append("context")
+        assert context_id == "context-1"
+        if "context" in failed_deletes:
+            raise OSError("context cleanup failed")
+
+    sb.delete_file.side_effect = delete_file
+    sb.delete_context.side_effect = delete_context
+    error = TimeoutError if command_times_out else OSError
+    message = "exceeded" if command_times_out else f"{failed_deletes[0]} cleanup failed"
+    with pytest.raises(error, match=message):
+        await session.exec(["echo", "test"], timeout=0.01 if command_times_out else 30)
+    assert deletions == ["file", "context"]
+
+
+@pytest.mark.asyncio
+async def test_exec_cancellation_survives_file_cleanup_failure(backend):
+    pytest.importorskip("sandbox0")
+    session = await backend.create(WorkspaceManifest())
+    sb = session._sandbox
+    sb.create_context.return_value.id = "context-1"
+    started = threading.Event()
+
+    def poll(_):
+        started.set()
+        return SimpleNamespace(running=True)
+
+    sb.get_context.side_effect = poll
+    sb.delete_file.side_effect = OSError("file cleanup failed")
+    task = asyncio.create_task(session.exec(["sleep", "10"]))
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    sb.delete_file.assert_called_once()
+    sb.delete_context.assert_called_once_with("context-1")
