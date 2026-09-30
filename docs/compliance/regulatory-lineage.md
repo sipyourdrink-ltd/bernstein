@@ -113,7 +113,7 @@ are operator-provided.
 
 #### `kms_adapter: hsm` requires a real integration
 
-Setting `lineage.customer_signing.kms_adapter: hsm` in `bernstein.yaml`
+Setting `lineage.kms_adapter: hsm` in `bernstein.yaml`
 does **not** ship a working PKCS#11 / Cloud-KMS client. The base
 `HSMKMSAdapter` in `bernstein.core.security.key_custody` is a
 documentation stub: every `sign()` call raises `NotImplementedError`.
@@ -158,6 +158,7 @@ for rec in reader.iter_records(run_id="r-2026-05-05"):
 bernstein lineage export r-2026-05-05 --format html --output /tmp/audit.html
 bernstein lineage export r-2026-05-05 --format csv  --output /tmp/audit.csv
 bernstein lineage export r-2026-05-05 --format jsonld --output /tmp/audit.jsonld
+bernstein lineage export r-2026-05-05 --format openlineage --output /tmp/audit.ol.jsonl
 ```
 
 The HTML form is a single self-contained file (no JS, no external
@@ -171,7 +172,7 @@ verifier with a JSON-LD library can graph-walk the chain.
 The janitor's lineage compaction step runs a chain verification
 pass on every cycle. If verification fails the janitor:
 
-1. Emits an `audit.jsonl` entry of type `lineage_tamper_detected`.
+1. Emits an audit-chain entry of type `lineage_tamper_detected`.
 2. Increments `bernstein_lineage_tamper_total{run_id}`.
 3. POSTs to the configured SIEM webhook (if any).
 
@@ -185,25 +186,28 @@ closed on a broken sink (the janitor never blocks on a bad webhook).
 ```yaml
 tuning:
   lineage:
-    alert_sink:
-      kind: webhook
-      url: https://siem.internal/bernstein-lineage-tamper
-      headers:
-        Authorization: "Bearer ${SIEM_TOKEN}"
-      retries: 5
-      backoff_seconds: [1, 2, 4, 8, 16]
+    tamper_alert_enabled: true
+    tamper_alert_webhook_url: https://siem.internal/bernstein-lineage-tamper
+    tamper_alert_timeout_secs: 5.0
+    tamper_alert_max_retries: 3
 ```
 
-For air-gap deployments the alternative `kind: syslog` writes to the
-local syslog facility instead of HTTP.
+The webhook receives a JSON `POST` describing the event (`type`, `run_id`,
+`errors`, `record_count`, `detected_at`, `source`). 5xx responses and
+transport errors are retried with exponential back-off (0.5 s doubled per
+attempt) up to `tamper_alert_max_retries`; a 4xx is not retried. Tamper events
+are also mirrored to the portable side channel when
+`BERNSTEIN_TELEMETRY_DSN` is set.
 
 ### `bernstein lineage verify`
 
-A one-shot chain verification that exits 0 only if every record's
-HMAC and customer signature validate:
+A one-shot verification of a run's lineage spine. Exit codes: 0 = OK,
+1 = no entries / bad input, 2 = tamper detected, 3 = cannot verify (audit
+key missing). Pass `--public-key` to also re-verify every
+`customer_signature` on the legacy chain:
 
 ```bash
-bernstein lineage verify r-2026-05-05
+bernstein lineage verify r-2026-05-05 --public-key customer-ed25519.pub.pem
 ```
 
 Useful for compliance teams running ad-hoc checks against archived
