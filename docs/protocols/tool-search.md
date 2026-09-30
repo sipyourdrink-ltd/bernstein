@@ -57,9 +57,7 @@ from bernstein.core.protocols.mcp.mcp_tool_search import (
     expand_tools,
 )
 
-catalog = ToolCatalog(
-    [ToolEntry(name="gh.diff", summary="show a PR diff", server="gh", schema={})]
-)
+catalog = ToolCatalog([ToolEntry(name="gh.diff", summary="show a PR diff", server="gh", schema={})])
 engine = ToolSearchEngine(catalog)
 
 hits = engine.search("diff", limit=10)

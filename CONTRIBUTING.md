@@ -342,9 +342,20 @@ Adapters implement the `CLIAdapter` ABC from `adapters/base.py`:
 ```python
 class CLIAdapter(ABC):
     @abstractmethod
-    def spawn(self, *, prompt, workdir, model_config, session_id, mcp_config=None,
-              timeout_seconds=..., task_scope="medium", budget_multiplier=1.0,
-              system_addendum="", multimodal_context=None) -> SpawnResult: ...
+    def spawn(
+        self,
+        *,
+        prompt,
+        workdir,
+        model_config,
+        session_id,
+        mcp_config=None,
+        timeout_seconds=...,
+        task_scope="medium",
+        budget_multiplier=1.0,
+        system_addendum="",
+        multimodal_context=None,
+    ) -> SpawnResult: ...
     @abstractmethod
     def name(self) -> str: ...
     def is_alive(self, pid: int) -> bool: ...  # default provided
