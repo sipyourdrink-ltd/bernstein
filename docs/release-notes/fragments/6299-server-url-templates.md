@@ -1,5 +1,5 @@
 ---
-pr: 6299
+pr: 6316
 kind: fix
 area: templates
 ---
