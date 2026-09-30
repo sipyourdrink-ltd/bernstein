@@ -290,7 +290,7 @@ def test_retry_bodies_agree_on_lineage_fields(tmp_path):
     maybe_retry_task's, with nothing catching the drift until someone
     noticed the missing lineage in production. This pins "these two bodies
     carry the same lineage" as a property CI holds rather than a
-    coincidence a reviewer happens to catch (bernstein#6280 review).
+    coincidence a reviewer happens to catch.
     """
     task = _build_task(retry_count=0)
     task.completion_signals = [CompletionSignal(type="test_passes", value="pytest tests/test_widget.py")]
@@ -333,8 +333,8 @@ def test_retry_bodies_agree_on_lineage_fields(tmp_path):
     # completion_signals is the odd one out: both paths omit it entirely
     # (rather than posting an empty list) when the task has none, so "in
     # the body" is itself the carried-forward signal, checked and pinned by
-    # test_maybe_retry_preserves_completion_signals_owned_files_and_depends_on
-    # and its retry_or_fail_task counterpart above. Here both are non-empty.
+    # test_maybe_retry_preserves_completion_signals_owned_files_and_depends_on.
+    # Here both are non-empty.
     expected_signals = [{"type": "test_passes", "value": "pytest tests/test_widget.py"}]
     assert tick_body["completion_signals"] == reap_body["completion_signals"] == expected_signals
 
