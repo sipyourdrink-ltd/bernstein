@@ -428,9 +428,7 @@ class MCPGateway:
         try:
             response, latency_ms = await self._send_request(message, req_id)
         except TimeoutError:
-            await self._record_tool_effect(
-                prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout"
-            )
+            await self._record_tool_effect(prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout")
             raise
         from bernstein.core.security.toolcall_interlock import toolcall_effect_outcome
 
@@ -531,9 +529,7 @@ class MCPGateway:
         t0 = time.monotonic()
         try:
             await self._send_upstream(message)
-            response: dict[str, Any] = await asyncio.wait_for(
-                asyncio.shield(fut), timeout=_CONNECTOR_REQUEST_TIMEOUT_S
-            )
+            response: dict[str, Any] = await asyncio.wait_for(asyncio.shield(fut), timeout=_CONNECTOR_REQUEST_TIMEOUT_S)
         finally:
             self._pending.pop(req_id, None)
         return response, (time.monotonic() - t0) * 1000.0
@@ -578,9 +574,7 @@ class MCPGateway:
         try:
             settled, latency_ms = await self._send_request(retried, retried_id)
         except TimeoutError:
-            await self._record_tool_effect(
-                retried_prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout"
-            )
+            await self._record_tool_effect(retried_prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout")
             raise
         from bernstein.core.security.toolcall_interlock import toolcall_effect_outcome
 
