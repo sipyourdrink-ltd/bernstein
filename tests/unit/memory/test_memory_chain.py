@@ -27,8 +27,10 @@ import pytest
 
 from bernstein.core.lineage.spine import LineageSpine
 from bernstein.core.memory.chain import (
+    RECALL_SELECTOR_CLAIM_EXACT_V1,
     MemoryChain,
     MemoryChainStatus,
+    MemoryReplayError,
     MemoryScope,
 )
 
@@ -559,3 +561,134 @@ def test_fold_of_an_empty_namespace_is_empty_and_still_canonical(tmp_path: Path)
     assert chain.fold(MemoryScope.USER, "nobody") == ()
     raw = chain.fold_bytes(MemoryScope.USER, "nobody")
     assert json.loads(raw)["entries"] == []
+
+
+# ---------------------------------------------------------------------------
+# Historical exact recall -- receipt replay substrate (issue #2914)
+# ---------------------------------------------------------------------------
+
+
+def test_recall_exact_is_identical_across_readers_at_same_head(tmp_path: Path) -> None:
+    source = _anchor(tmp_path)
+    writer = _make_chain(tmp_path)
+    first = writer.write(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        claim="prefers dark mode",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s1",
+        model="claude",
+        timestamp=1,
+    )
+    second = writer.write(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        claim="prefers dark mode",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s2",
+        model="claude",
+        timestamp=2,
+    )
+    head = second.entry_hash
+
+    recall_a = _make_chain(tmp_path).recall_exact(
+        "prefers dark mode",
+        scope=MemoryScope.USER,
+        namespace="alex",
+        fold_head=head,
+    )
+    recall_b = _make_chain(tmp_path).recall_exact(
+        "prefers dark mode",
+        scope=MemoryScope.USER,
+        namespace="alex",
+        fold_head=head,
+    )
+
+    assert recall_a.selector == RECALL_SELECTOR_CLAIM_EXACT_V1
+    assert recall_a.fold_head == head
+    assert recall_a.fold_hash == recall_b.fold_hash
+    assert recall_a.record_hashes == recall_b.record_hashes == (first.entry_hash, second.entry_hash)
+
+
+def test_recall_exact_replays_historical_head_after_tombstone(tmp_path: Path) -> None:
+    source = _anchor(tmp_path)
+    chain = _make_chain(tmp_path)
+    original = chain.write(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        claim="prefers dark mode",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s1",
+        model="claude",
+        timestamp=1,
+    )
+    historical_head = original.entry_hash
+    chain.forget(
+        original.entry_hash,
+        scope=MemoryScope.USER,
+        namespace="alex",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s2",
+        model="claude",
+        timestamp=2,
+    )
+    replacement = chain.write(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        claim="prefers dark mode",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s3",
+        model="claude",
+        timestamp=3,
+    )
+
+    historical = chain.recall_exact(
+        "prefers dark mode",
+        scope=MemoryScope.USER,
+        namespace="alex",
+        fold_head=historical_head,
+    )
+    current = chain.recall_exact(
+        "prefers dark mode",
+        scope=MemoryScope.USER,
+        namespace="alex",
+    )
+
+    assert historical.record_hashes == (original.entry_hash,)
+    assert current.record_hashes == (replacement.entry_hash,)
+    assert historical.fold_hash != current.fold_hash
+    assert original.entry_hash in {entry.entry_hash for entry in chain.iter_entries(MemoryScope.USER, "alex")}
+
+
+def test_recall_exact_rejects_unknown_fold_head(tmp_path: Path) -> None:
+    source = _anchor(tmp_path)
+    chain = _make_chain(tmp_path)
+    chain.write(
+        scope=MemoryScope.USER,
+        namespace="alex",
+        claim="prefers dark mode",
+        actor="agent:worker",
+        source_hash=source,
+        run_id="run-1",
+        step_id="s1",
+        model="claude",
+        timestamp=1,
+    )
+
+    with pytest.raises(MemoryReplayError, match="fold head"):
+        chain.recall_exact(
+            "prefers dark mode",
+            scope=MemoryScope.USER,
+            namespace="alex",
+            fold_head="sha256:" + "f" * 64,
+        )
