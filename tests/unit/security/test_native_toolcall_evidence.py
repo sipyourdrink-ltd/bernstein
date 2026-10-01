@@ -23,6 +23,7 @@ from bernstein.core.security.toolcall_interlock import (
     canonical_effect_digest,
     derive_attestation_verdict,
     effect_digest_for_connector_response,
+    toolcall_effect_outcome,
 )
 
 _EFFECT_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "toolcall" / "effect_record.json"
@@ -152,7 +153,7 @@ async def test_effect_record_binds_to_the_intent_digest(tmp_path: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_missing_effect_record_reads_unobserved_not_success(tmp_path: Any) -> None:
-    """Attestation plus dispatch without an effect is unobserved, never ok."""
+    """Writer produces no effect row. Slice 2 will read that absence as unobserved, never success."""
     chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
     await NativeToolCallEvidenceProvider(chain).prepare_dispatch(_intent())
     events = chain.query(resource_id="scope:run-1:agent-1")
@@ -209,6 +210,13 @@ async def test_timeout_effect_stays_bound_to_the_intent(tmp_path: Any) -> None:
     assert events[-1].details["outcome"] == "timeout"
     assert events[-1].details["intent_digest"] == events[0].details["intent_digest"]
     assert events[-1].details["effect_digest"] == effect_digest_for_connector_response(None)
+
+
+def test_partial_outcome_when_result_and_error_are_both_present() -> None:
+    assert (
+        toolcall_effect_outcome({"result": {"ok": True}, "error": {"code": -32000, "message": "partial"}})
+        == "partial"
+    )
 
 
 def test_timestamp_echo_changes_the_raw_effect_digest() -> None:

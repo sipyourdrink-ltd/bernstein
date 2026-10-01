@@ -7533,7 +7533,9 @@ def record_toolcall_effect(
         attestation_ref: Opaque handle of the preceding attestation.
         dispatch_ref: Opaque handle of the preceding dispatch marker.
         actor: Recorded actor; defaults to ``"bernstein.toolcall-interlock"``.
-        resource_id: Scope the event is stored under; defaults to *intent_digest*.
+        resource_id: Scope the event is stored under. The live native path
+            passes ``intent.scope_id``; when omitted, the fallback is
+            *intent_digest*.
 
     Returns:
         The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.

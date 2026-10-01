@@ -77,6 +77,9 @@ outcome). Fields are `effect_digest`, `outcome` (`ok` / `error` / `timeout` /
 `partial`), and `duration_ms`. A missing or failed effect write is
 "dispatched, effect unobserved", never success. Completeness still comes
 from the pre-dispatch pair only; slice 2 adds the verifier triple.
+Production `bernstein gateway start` still constructs `MCPGateway`
+without `attestation_interlock`: the native writer is opt-in, and slice 1
+does not turn the CLI proxy into an always-on interlock.
 
 Canonical form of `effect_digest`: the raw connector return, compacted
 JSON with insertion order preserved (`json.dumps(..., separators=(",",
