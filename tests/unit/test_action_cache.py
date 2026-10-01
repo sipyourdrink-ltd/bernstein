@@ -244,34 +244,104 @@ class TestFactory:
 # ---------------------------------------------------------------------------
 
 
-class TestMetrics:
-    def test_hit_increments_prometheus_counter(self, tmp_path: Path) -> None:
-        from bernstein.core.observability import prometheus as _p
+@pytest.fixture
+def cache_counters(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
+    """Give one test its own action-cache counters, built from the real client.
 
-        before = _sample_counter(_p.action_cache_hits_total, model="opus")
+    Two separate problems make the module-level counters unusable here, and this
+    closes both.
+
+    The registry they live on is process-global, so their values depend on
+    everything else that ran in the worker. A delta around the action answers
+    that much.
+
+    A delta does not answer the second: `_emit_hit_metric` resolves both
+    counters by ``getattr`` on the prometheus module *at call time*, and that
+    module is re-imported by
+    `tests/unit/observability/test_prometheus_import_fallback.py`, which
+    deliberately builds it under a simulated Windows import timeout -- where
+    every metric is an inert stub that records nothing. Run this file after one
+    of those in the same worker and the cache increments a stub while the
+    assertion reads a stub, so the delta is zero with nothing wrong in the
+    cache. That is the shape #5920 measured.
+
+    Building the counters from `prometheus_client` directly, rather than from
+    whatever `bernstein.core.observability.prometheus` currently exposes, makes
+    this test independent of which version of that module is installed -- and
+    they are still by construction the objects `_emit_hit_metric` will find,
+    because it looks them up by name on the module these are patched onto.
+    """
+    prometheus_client = pytest.importorskip("prometheus_client")
+    from bernstein.core.observability import prometheus as _p
+
+    private = prometheus_client.CollectorRegistry(auto_describe=True)
+    hits = prometheus_client.Counter(
+        "bernstein_action_cache_hits_total",
+        "Action-cache hits (test-local registry).",
+        labelnames=["model"],
+        registry=private,
+    )
+    savings = prometheus_client.Counter(
+        "bernstein_action_cache_savings_usd",
+        "USD saved by the action cache (test-local registry).",
+        labelnames=["model"],
+        registry=private,
+    )
+    # No ``raising=False``: `_emit_hit_metric` silently no-ops on a missing
+    # name, so this setattr is the suite's check that both names still exist.
+    monkeypatch.setattr(_p, "action_cache_hits_total", hits)
+    monkeypatch.setattr(_p, "action_cache_savings_usd_total", savings)
+    return hits, savings
+
+
+class TestMetrics:
+    def test_hit_increments_prometheus_counter(self, tmp_path: Path, cache_counters: tuple[Any, Any]) -> None:
+        hits, _ = cache_counters
+
         cache = _make_cache(tmp_path)
         cache.record(model_id="opus", prompt="p", output_text="o", cost_usd=0.02)
         cache.lookup(model_id="opus", prompt="p")
-        after = _sample_counter(_p.action_cache_hits_total, model="opus")
-        assert after - before == pytest.approx(1.0)
 
-    def test_savings_counter_accumulates_cost(self, tmp_path: Path) -> None:
-        from bernstein.core.observability import prometheus as _p
+        assert _sample_counter(hits, model="opus") == pytest.approx(1.0)
 
-        before = _sample_counter(_p.action_cache_savings_usd_total, model="opus")
+    def test_savings_counter_accumulates_cost(self, tmp_path: Path, cache_counters: tuple[Any, Any]) -> None:
+        _, savings = cache_counters
+
         cache = _make_cache(tmp_path)
         cache.record(model_id="opus", prompt="q", output_text="o", cost_usd=0.13)
         cache.lookup(model_id="opus", prompt="q")
-        after = _sample_counter(_p.action_cache_savings_usd_total, model="opus")
-        assert after - before == pytest.approx(0.13)
+
+        assert _sample_counter(savings, model="opus") == pytest.approx(0.13)
+
+    def test_a_miss_increments_nothing(self, tmp_path: Path, cache_counters: tuple[Any, Any]) -> None:
+        """The counters start at zero here, so an absence is now assertable.
+
+        Against the shared registry this could not be written at all: a
+        non-zero starting value was indistinguishable from an increment.
+        """
+        hits, savings = cache_counters
+
+        cache = _make_cache(tmp_path)
+        cache.record(model_id="opus", prompt="p", output_text="o", cost_usd=0.02)
+        cache.lookup(model_id="opus", prompt="a different prompt")
+
+        assert _sample_counter(hits, strict=True, model="opus") == pytest.approx(0.0)
+        assert _sample_counter(savings, strict=True, model="opus") == pytest.approx(0.0)
 
 
-def _sample_counter(counter: Any, **labels: str) -> float:
-    """Return current value of a labelled Prometheus counter (or 0.0)."""
+def _sample_counter(counter: Any, *, strict: bool = False, **labels: str) -> float:
+    """Return current value of a labelled Prometheus counter (or 0.0).
+
+    ``strict=True`` re-raises instead of reading 0.0, for an assertion whose
+    whole claim is that the value is zero: there an unreadable counter must not
+    pass as an untouched one.
+    """
     try:
         labelled = counter.labels(**labels)
         # prometheus_client exposes ._value.get() on Counter children
         value = labelled._value.get()
         return float(value)
     except Exception:
+        if strict:
+            raise
         return 0.0

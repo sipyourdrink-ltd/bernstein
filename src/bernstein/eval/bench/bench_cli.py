@@ -160,12 +160,42 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
 @bench_group.command(name="verify")
 @click.argument("bundle")
 @click.option("--suite", default="golden-v1", show_default=True, help="Suite to verify against.")
-def bench_verify(bundle: str, suite: str) -> None:
+@click.option(
+    "--trusted-key",
+    "trusted_keys",
+    multiple=True,
+    metavar="FINGERPRINT=PATH",
+    help="A signer fingerprint and the SPKI PEM file that verifies it. Repeatable.",
+)
+@click.option(
+    "--stub-signer",
+    is_flag=True,
+    default=False,
+    help="Accept a bundle signed with the PUBLIC stub key. Proves nothing about origin; for testing.",
+)
+@click.option(
+    "--no-signature",
+    is_flag=True,
+    default=False,
+    help="Skip the signature check. Replay still runs; the bundle's origin is then unattested.",
+)
+def bench_verify(
+    bundle: str,
+    suite: str,
+    trusted_keys: tuple[str, ...],
+    stub_signer: bool,
+    no_signature: bool,
+) -> None:
     """Verify a bundle by replaying every task receipt offline.
 
     BUNDLE is the path to a submission bundle .json file.
 
-    Exits 0 on MATCH, 1 on any divergence or fabricated score.
+    The signature is checked FIRST, because it is the only part of a bundle a forger cannot
+    reproduce: every hash in one can be recomputed by whoever rebuilt it. Supply the signer's
+    public key with --trusted-key FINGERPRINT=PATH; without one, an install-identity signature
+    cannot be resolved and the bundle is reported UNSIGNED rather than assumed good.
+
+    Exits 0 on MATCH, 1 on any divergence, fabricated score, or unverifiable signature.
     """
     from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.runner import MockReplayAdapter, ReplayAdapter
@@ -186,7 +216,23 @@ def bench_verify(bundle: str, suite: str) -> None:
         adapter = ToolSurfaceReplayAdapter()
     else:
         adapter = MockReplayAdapter()
-    verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
+    keys: dict[str, bytes] = {}
+    for entry in trusted_keys:
+        fingerprint, sep, key_path = entry.partition("=")
+        if not sep or not fingerprint or not key_path:
+            raise click.ClickException(f"--trusted-key expects FINGERPRINT=PATH, got {entry!r}")
+        pem = Path(key_path)
+        if not pem.exists():
+            raise click.ClickException(f"Trusted key file not found: {pem}")
+        keys[fingerprint] = pem.read_bytes()
+
+    verifier = BenchVerifier(
+        suite=suite_obj,
+        adapter=adapter,
+        trusted_keys=keys,
+        allow_stub_signature=stub_signer,
+        require_signature=not no_signature,
+    )
     result = verifier.verify(bundle_obj)
 
     click.echo(result.report())

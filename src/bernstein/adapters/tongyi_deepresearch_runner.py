@@ -5,7 +5,7 @@ Runs inside the interpreter the agent's requirements are installed in, with
 imports only the standard library, the agent, and :mod:`deep_research_artifact`
 (loaded by file path).
 
-Two changes to the agent, both made here rather than in the checkout:
+Changes to the agent, all made here rather than in the checkout:
 
 * its planner client is built for a local inference server
   (``http://127.0.0.1:<port>/v1``, key ``EMPTY``); the client factory in
@@ -13,7 +13,14 @@ Two changes to the agent, both made here rather than in the checkout:
   ``OPENAI_API_KEY``, so the planner goes through the gateway;
 * its context counter loads the served model's tokenizer from a local path;
   a gateway model has none, so the count is estimated from characters
-  (4 per token), which keeps the agent's context-limit fallback working.
+  (4 per token), which keeps the agent's context-limit fallback working;
+* its search and scholar tools call ``https://google.serper.dev`` and its
+  visit tool calls ``https://r.jina.ai/<url>``, both hardcoded; with
+  ``SERPER_BASE_URL`` set, Serper requests go to that base with their path
+  appended (``/search``, ``/scholar``), and with ``JINA_BASE_URL`` set,
+  reader requests go to ``<JINA_BASE_URL>/<url>``. Headers, bodies and
+  response handling stay the agent's own, so the base must speak the same
+  protocol.
 
 Exit codes: 0 ok, 3 inconclusive (no answer), 1 the agent failed, 2 the
 checkout or its requirements are missing.
@@ -22,6 +29,7 @@ checkout or its requirements are missing.
 from __future__ import annotations
 
 import argparse
+import http.client
 import importlib.util
 import json
 import os
@@ -30,10 +38,13 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 AGENT = "tongyi-deepresearch"
 _TOOL_CALL = re.compile(r"<tool_call>(.*?)</tool_call>", re.S)
 _CHARS_PER_TOKEN = 4
+_SERPER_HOST = "google.serper.dev"
+_JINA_READER = "https://r.jina.ai/"
 
 
 def _isolate_and_load_artifact() -> Any:
@@ -98,6 +109,66 @@ def _bind_to_gateway(react_agent: Any) -> None:
     react_agent.MultiTurnReactAgent.count_tokens = estimated_tokens
 
 
+class _Overlay:
+    """A module stand-in: the given attributes, everything else from ``real``."""
+
+    def __init__(self, real: Any, **overrides: Any) -> None:
+        self._real = real
+        self.__dict__.update(overrides)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+
+def _http_base(name: str) -> str:
+    """``$name`` if set; exits 2 unless it is an absolute http(s) URL."""
+    value = os.environ.get(name, "").strip()
+    if value and (urlsplit(value).scheme not in ("http", "https") or not urlsplit(value).hostname):
+        raise SystemExit(f"{name} must be an http(s) URL, got {value!r}")
+    return value
+
+
+def _serper_connection(base_url: str) -> Any:
+    """An ``HTTPSConnection`` factory sending Serper's host to ``base_url``."""
+    parts = urlsplit(base_url)
+    real = http.client.HTTPSConnection
+    transport = real if parts.scheme == "https" else http.client.HTTPConnection
+    prefix = parts.path.rstrip("/")
+
+    class Redirected(transport):  # type: ignore[misc,valid-type]
+        def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> None:
+            super().request(method, prefix + url, *args, **kwargs)
+
+    def connect(host: str, *args: Any, **kwargs: Any) -> Any:
+        if host != _SERPER_HOST:
+            return real(host, *args, **kwargs)
+        return Redirected(parts.hostname, parts.port, *args, **kwargs)
+
+    return connect
+
+
+def _redirect_tools() -> None:
+    """Point the agent's search, scholar and visit tools at the configured bases."""
+    serper = _http_base("SERPER_BASE_URL")
+    jina = _http_base("JINA_BASE_URL")
+    if serper:
+        client = _Overlay(http.client, HTTPSConnection=_serper_connection(serper))
+        for name in ("tool_search", "tool_scholar"):
+            if name in sys.modules:
+                setattr(sys.modules[name], "http", _Overlay(http, client=client))  # noqa: B010
+    visit = sys.modules.get("tool_visit")
+    if jina and visit is not None:
+        requests = getattr(visit, "requests")  # noqa: B009 - the agent's module, untyped
+        base = jina.rstrip("/") + "/"
+
+        def get(url: Any, *args: Any, **kwargs: Any) -> Any:
+            if isinstance(url, str) and url.startswith(_JINA_READER):
+                url = base + url[len(_JINA_READER) :]
+            return requests.get(url, *args, **kwargs)
+
+        setattr(visit, "requests", _Overlay(requests, get=get))  # noqa: B010
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prompt-file", type=Path, required=True)
@@ -122,6 +193,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Tongyi DeepResearch requirements are not installed in {sys.executable}: {exc}", file=sys.stderr)
         return 2
     _bind_to_gateway(react_agent)
+    try:
+        _redirect_tools()
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 2
 
     started = time.time()
     try:

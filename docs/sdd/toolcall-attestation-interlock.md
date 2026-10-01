@@ -70,6 +70,25 @@ SHA-256 digest is recorded. If the second append fails, no evidence handle is
 returned, the connector remains unreachable in enforced mode, and the lone
 attestation projects as `observed` rather than `complete`.
 
+After the connector returns, the same provider appends `toolcall.effect`
+bound to that intent digest (`record_toolcall_effect`, same shape as
+`record_automation_action`: digest, dispatch handle, attestation handle,
+outcome). Fields are `effect_digest`, `outcome` (`ok` / `error` / `timeout` /
+`partial`), and `duration_ms`. A missing or failed effect write is
+"dispatched, effect unobserved", never success. Completeness still comes
+from the pre-dispatch pair only; slice 2 adds the verifier triple.
+Production `bernstein gateway start` still constructs `MCPGateway`
+without `attestation_interlock`: the native writer is opt-in, and slice 1
+does not turn the CLI proxy into an always-on interlock.
+
+Canonical form of `effect_digest`: the raw connector return, compacted
+JSON with insertion order preserved (`json.dumps(..., separators=(",",
+":"), ensure_ascii=False)`, no `sort_keys`). Timestamps and echoed
+request ids are not stripped — a connector that echoes a timestamp
+produces a different digest. A string-only `result` (and an explicit
+patch) uses SHA-256 of the UTF-8 bytes, the same preimage as
+`ResultBundle.patch_sha256`.
+
 With a run identity, lineage signer, and journal-head reader configured, the
 native provider additionally creates a versioned, JCS-canonicalized Ed25519
 identity envelope before either marker is appended. Its signature input is

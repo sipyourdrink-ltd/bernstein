@@ -57,6 +57,21 @@ model). Its own tool settings (`SERPER_KEY_ID`, `JINA_API_KEYS`,
 `SANDBOX_FUSION_ENDPOINT`, `MAX_LLM_CALL_PER_RUN`) are passed through
 unchanged.
 
+Its search, scholar and visit tools call `google.serper.dev` and `r.jina.ai`
+directly. Two variables send them elsewhere, for example to a gateway that
+meters and logs web access:
+
+| Variable | Effect |
+|---|---|
+| `BERNSTEIN_TONGYI_DEEPRESEARCH_SERPER_BASE_URL` | Serper requests go to this base, path appended (`https://gw/v1` → `https://gw/v1/search`, `/v1/scholar`) |
+| `BERNSTEIN_TONGYI_DEEPRESEARCH_JINA_BASE_URL` | reader requests go to `<base>/<page url>` instead of `https://r.jina.ai/<page url>` |
+
+Only the address changes: headers (`SERPER_KEY_ID` as `X-API-KEY`,
+`JINA_API_KEYS` as a bearer token), request bodies and response parsing stay
+the agent's own, so the endpoint must speak the Serper and Jina Reader
+protocols. A value that is not an absolute http(s) URL fails the run with
+exit 2.
+
 ## How the agent runs
 
 The adapter launches a runner script shipped with bernstein
@@ -73,6 +88,8 @@ editing the checkout:
 - It counts context with the served model's local tokenizer. A gateway model
   has no local tokenizer, so the count is estimated at four characters per
   token, which keeps the agent's context-limit fallback working.
+- With the tool base URLs above set, its search, scholar and visit tools are
+  pointed at them.
 
 Isolation is the spawner's concern, as for every adapter. A container
 backend with the gVisor runtime (`--runtime runsc`) and outbound-only
@@ -84,7 +101,7 @@ nothing on the host.
 | Symptom | Cause |
 |---|---|
 | `set BERNSTEIN_<AGENT>_...` at spawn | a gateway variable or the checkout path is unset |
-| runner exit 2 | the agent is not installed in `BERNSTEIN_<AGENT>_PYTHON`, or the checkout has no `inference/react_agent.py` |
+| runner exit 2 | the agent is not installed in `BERNSTEIN_<AGENT>_PYTHON`, the checkout has no `inference/react_agent.py`, or a Tongyi tool base URL is not http(s) |
 | state `driver_failure`, `detail` set | the agent raised; `detail` holds the exception |
 | state `inconclusive` | empty report, or Tongyi stopped without an answer (`detail` says why) |
 | state `tampered` | `report.md` or `sources.json` changed after the run |

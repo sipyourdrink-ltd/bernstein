@@ -11,11 +11,13 @@ import os
 import sys
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
 import click
 import httpx
+import yaml
 
 from bernstein.cli.first_run_guard import handle_first_run_exception
 from bernstein.cli.helpers import (
@@ -135,8 +137,51 @@ def _resolve_goal_and_team(workdir: Path, goal: str | None, seed_file: str | Non
     return seed.goal, team
 
 
+#: Plan-file suffixes parsed as YAML. Both spellings, because a plan is a file
+#: somebody writes by hand and the docs show `.yaml`.
+_YAML_PLAN_SUFFIXES = (".yaml", ".yml")
+
+
+def _yaml_plan_goal(content: str) -> str | None:
+    """The orchestration goal of a YAML plan, or ``None`` if it carries none.
+
+    Two shapes, because two things are spelled as plans here and
+    ``plan_loader`` reads both:
+
+    * a staged plan's ``name``, which :class:`PlanConfig` documents as "short
+      plan name used as the orchestration goal";
+    * a top-level ``goal``, which ``plan_loader._SEED_SHAPED_KEYS`` treats as
+      the mark of a seed config. Accepted here anyway: ``--from-plan`` on such
+      a file is a mistake that ``load_plan`` refuses a moment later with a
+      message naming ``--seed``, and refusing it HERE instead loses that
+      message and reports a missing goal on a file whose goal is right there.
+
+    ``goal`` wins when both are present: it is the more specific statement of
+    intent, and a plan carrying both is a seed somebody added stages to.
+    """
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("goal", "name"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _load_plan_goal(plan_path: Path) -> str:
-    """Extract the goal from a saved plan file (JSON or markdown).
+    """Extract the goal from a saved plan file (YAML, JSON or markdown).
+
+    Every shape ``--from-plan`` documents has to be readable here, because this
+    runs BEFORE ``load_plan`` and a failure stops the file ever reaching the
+    loader that understands it. YAML was missing, so
+    ``bernstein run --from-plan plan.yaml`` -- the exact command in
+    ``docs/architecture/plans.md`` -- failed with "Could not extract goal from
+    plan file" on a plan that was perfectly well-formed, and per-step model
+    routing had no reachable entry point at all (issue #6080).
 
     Args:
         plan_path: Path to the plan file.
@@ -155,6 +200,11 @@ def _load_plan_goal(plan_path: Path) -> str:
             data = json.loads(content)
             if "goal" in data:
                 return str(data["goal"])
+
+    if plan_path.suffix.lower() in _YAML_PLAN_SUFFIXES:
+        goal = _yaml_plan_goal(content)
+        if goal is not None:
+            return goal
 
     # Fall back to markdown: look for "**Goal:** ..." line
     for line in content.splitlines():
@@ -832,6 +882,76 @@ def _generate_default_yaml(project_type: str) -> str:
     return "\n".join(lines)
 
 
+# Workspace paths ``bernstein init`` writes, relative to the directory it
+# initialises. ``_init_impl`` writes them and :func:`plan_init_writes` reports
+# them, both through these names. ``tests/unit/test_adopt_cmd.py`` holds the
+# two to one list in both directions, so a dry run (``bernstein adopt
+# --dry-run``, #5435) cannot silently under-report what init writes.
+INIT_WORKSPACE_CONFIG = ".sdd/config.yaml"
+INIT_RUNTIME_GITIGNORE = ".sdd/runtime/.gitignore"
+INIT_PROJECT_CONFIG = "bernstein.yaml"
+INIT_TEMPLATES_DIR = "templates"
+INIT_ROOT_GITIGNORE = ".gitignore"
+INIT_GITIGNORE_ENTRY = ".sdd/runtime/"
+
+#: The path does not exist and init would create it.
+PLAN_CREATE = "create"
+#: The path exists and init leaves it untouched.
+PLAN_EXISTS = "exists"
+#: The root ``.gitignore`` exists without the runtime entry; init appends it.
+PLAN_APPEND = "append"
+
+
+@dataclass(frozen=True)
+class PlannedWrite:
+    """One path ``bernstein init`` would touch, and what it would do there.
+
+    Attributes:
+        path: POSIX path relative to the initialised directory.
+        action: :data:`PLAN_CREATE`, :data:`PLAN_EXISTS` or :data:`PLAN_APPEND`.
+    """
+
+    path: str
+    action: str
+
+
+def plan_init_writes(root: Path) -> tuple[PlannedWrite, ...]:
+    """Report what ``bernstein init`` would write under *root*, writing nothing.
+
+    Mirrors :func:`_init_impl` decision for decision and in the same order:
+    every ``SDD_DIRS`` entry, the workspace config, the runtime ``.gitignore``,
+    ``bernstein.yaml``, the bundled templates (only when the install ships
+    them) and the root ``.gitignore`` entry. Init never overwrites an existing
+    file, so an existing path is reported as :data:`PLAN_EXISTS`.
+
+    The README badge is not part of the plan: it is opt-in (``--add-badge``)
+    and edits a file the operator owns.
+
+    Args:
+        root: The directory init would run against.
+
+    Returns:
+        The planned writes, in the order init performs them.
+    """
+    from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
+
+    planned = [PlannedWrite(rel, PLAN_EXISTS if (root / rel).is_dir() else PLAN_CREATE) for rel in SDD_DIRS]
+    for rel in (INIT_WORKSPACE_CONFIG, INIT_RUNTIME_GITIGNORE, INIT_PROJECT_CONFIG):
+        planned.append(PlannedWrite(rel, PLAN_EXISTS if (root / rel).exists() else PLAN_CREATE))
+    if (root / INIT_TEMPLATES_DIR).exists():
+        planned.append(PlannedWrite(INIT_TEMPLATES_DIR, PLAN_EXISTS))
+    elif _BUNDLED_TEMPLATES_DIR.is_dir():
+        planned.append(PlannedWrite(INIT_TEMPLATES_DIR, PLAN_CREATE))
+    gitignore = root / INIT_ROOT_GITIGNORE
+    if not gitignore.exists():
+        planned.append(PlannedWrite(INIT_ROOT_GITIGNORE, PLAN_CREATE))
+    elif INIT_GITIGNORE_ENTRY in gitignore.read_text(encoding="utf-8", errors="replace"):
+        planned.append(PlannedWrite(INIT_ROOT_GITIGNORE, PLAN_EXISTS))
+    else:
+        planned.append(PlannedWrite(INIT_ROOT_GITIGNORE, PLAN_APPEND))
+    return tuple(planned)
+
+
 def is_codespace_runtime() -> bool:
     """Return True when running inside a GitHub Codespace.
 
@@ -990,7 +1110,7 @@ def _init_impl(
         p.mkdir(parents=True, exist_ok=True)
 
     # Write a minimal default config
-    config_path = root / ".sdd" / "config.yaml"
+    config_path = root / INIT_WORKSPACE_CONFIG
     if not config_path.exists():
         config_path.write_text(
             "# Bernstein workspace config\n"
@@ -1002,18 +1122,18 @@ def _init_impl(
         console.print(f"[green]Created[/green] {config_path.relative_to(root)}")
 
     # Write a .gitignore for the runtime dir
-    gi_path = root / ".sdd" / "runtime" / ".gitignore"
+    gi_path = root / INIT_RUNTIME_GITIGNORE
     if not gi_path.exists():
         gi_path.write_text("*.pid\n*.log\n")
 
     # Create bernstein.yaml in project root if not present
-    yaml_path = root / "bernstein.yaml"
+    yaml_path = root / INIT_PROJECT_CONFIG
     if not yaml_path.exists():
         yaml_path.write_text(_generate_default_yaml(project_type))
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
 
     # Copy bundled default templates if the project doesn't have its own
-    templates_dst = root / "templates"
+    templates_dst = root / INIT_TEMPLATES_DIR
     if not templates_dst.exists():
         import shutil
 
@@ -1024,8 +1144,8 @@ def _init_impl(
             console.print("[green]Created[/green] templates/ (default roles & prompts)")
 
     # Append .sdd/runtime/ to root .gitignore if not already present
-    root_gi_path = root / ".gitignore"
-    gitignore_entry = ".sdd/runtime/"
+    root_gi_path = root / INIT_ROOT_GITIGNORE
+    gitignore_entry = INIT_GITIGNORE_ENTRY
     if root_gi_path.exists():
         existing = root_gi_path.read_text()
         if gitignore_entry not in existing:
@@ -1065,7 +1185,7 @@ def _init_impl(
     # scenario behind ``demo --flask-todo`` carries its own inline copy of the
     # sample project and works from any install.
     console.print(
-        "  See [link=https://bernstein.readthedocs.io/en/latest/]docs[/link] "
+        "  See [link=https://docs.bernstein.run/en/latest/]docs[/link] "
         "or run [bold]bernstein demo --flask-todo[/bold] for a working example."
     )
 
@@ -1752,6 +1872,7 @@ def _await_first_spawn_outcome(
     timeout_s: float = _FIRST_SPAWN_WAIT_S,
     poll_interval_s: float = _FIRST_SPAWN_POLL_S,
     narrate_wait: bool = False,
+    on_poll: Any = None,
 ) -> tuple[str, str | None]:
     """Briefly poll the task server for the outcome of the first agent spawn.
 
@@ -1774,6 +1895,8 @@ def _await_first_spawn_outcome(
             already reports an agent -- stays silent. Off by default so the
             non-interactive detach branch and ``--quiet`` keep today's
             chatter-free behaviour.
+        on_poll: Optional callable invoked on each polling iteration to
+            observe task progress before detach.
 
     Returns:
         ``("spawned", None)`` once at least one agent is live,
@@ -1787,6 +1910,14 @@ def _await_first_spawn_outcome(
 
     def _poll_once() -> tuple[str, str | None] | None:
         nonlocal unreachable_polls, transient_reason
+        if on_poll is not None:
+            try:
+                on_poll()
+            except Exception as exc:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.warning("on_poll callback failed: %s", exc, exc_info=True)
+                else:
+                    logger.debug("on_poll callback failed: %s", exc, exc_info=True)
         health = server_get("/health")
         if not isinstance(health, dict):
             unreachable_polls += 1

@@ -137,7 +137,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://bernstein.run"
-Documentation = "https://bernstein.readthedocs.io"
+Documentation = "https://docs.bernstein.run"
 Repository = "https://github.com/sipyourdrink-ltd/bernstein"
 Source = "https://github.com/sipyourdrink-ltd/bernstein"
 Issues = "https://github.com/sipyourdrink-ltd/bernstein/issues"
@@ -968,6 +968,11 @@ docs = [
 # dependency-update run rather than just the two extras that actually clash
 # (#4088).
 conflicts = [[{ extra = "grpc" }, { extra = "modal" }], [{ extra = "otel" }, { extra = "modal" }]]
+# spiffe 0.3.1 caps pyjwt below 2.14, but pyjwt 2.13 carries ten published
+# advisories fixed in 2.14.0 and nothing in the spiffe extra depends on the
+# behaviour that cap guards. The override lets the universal lock resolve
+# pyjwt to a patched release; drop it once spiffe lifts its cap.
+override-dependencies = ["pyjwt>=2.14"]
 
 [tool.mutmut]
 # Lineage v1 mutation testing - see scripts/mutmut_lineage.py for the

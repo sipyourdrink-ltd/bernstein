@@ -93,6 +93,7 @@ src/bernstein/core/security/audit_chain.py::record_skill_usage                  
 src/bernstein/core/security/audit_chain.py::record_spiffe_svid_binding                         # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_taint_decision                              # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_thread_approval                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_toolcall_effect                             # slice 1 writer; only reached via NativeToolCallEvidenceProvider (already allowlisted). Production gateway start does not pass attestation_interlock
 src/bernstein/core/security/audit_chain.py::record_tournament_selection                        # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_webhook_node_receipt                        # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_webhook_payload_anchor                      # exported in the module's __all__ and exercised by tests; no production caller
@@ -420,6 +421,8 @@ src/bernstein/core/security/token_binding.py::x5t_s256_from_pem                 
 src/bernstein/core/security/toolcall_identity.py::LineageToolCallIdentitySigner                # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/toolcall_identity.py::ToolCallIdentitySigner                       # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/toolcall_interlock.py::AttestationModeProjection                   # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/toolcall_interlock.py::canonical_effect_digest                     # slice 1 digest helper; only reached via NativeToolCallEvidenceProvider.record_effect (already allowlisted). Production gateway start does not pass attestation_interlock
+src/bernstein/core/security/toolcall_interlock.py::effect_digest_for_connector_response        # slice 1 digest helper; only reached via NativeToolCallEvidenceProvider.record_effect (already allowlisted). Production gateway start does not pass attestation_interlock
 src/bernstein/core/security/toolcall_interlock.py::project_attestation_mode                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/url_allowlist.py::StrictHTTPRedirectHandler.redirect_request       # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/vault_injector.py::VaultInjector                                   # exercised by tests only; no production caller

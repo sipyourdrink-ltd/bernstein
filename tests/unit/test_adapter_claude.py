@@ -210,6 +210,21 @@ class TestSpawnCommandArgs:
         parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
         assert "bernstein" in parsed["mcpServers"]
 
+    def test_strict_mcp_config_rides_with_every_mcp_config(self, tmp_path: Path) -> None:
+        """`--strict-mcp-config` beside `--mcp-config`, and the payload is untouched (#5965).
+
+        The flag stops Claude Code merging the servers it discovers itself
+        (`claude mcp add` scopes, a repo's `.mcp.json`, plugins, connectors) on top
+        of what bernstein passes. It does not filter the payload: the servers in it,
+        including the bernstein bridge, all still reach the agent.
+        """
+        mcp = {"mcpServers": {"my-server": {"command": "npx"}}}
+        cmd, _, __ = self._spawn(tmp_path, mcp_config=mcp)
+
+        assert cmd.index("--strict-mcp-config") == cmd.index("--mcp-config") + 2
+        parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
+        assert {"my-server", "bernstein"} <= set(parsed["mcpServers"])
+
     def test_bernstein_bridge_targets_the_package_entrypoint(self, tmp_path: Path) -> None:
         """The bridge spec must spawn a module that actually answers stdio (#4313).
 
