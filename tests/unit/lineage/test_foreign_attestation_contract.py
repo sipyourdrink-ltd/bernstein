@@ -152,14 +152,9 @@ def test_foreign_attestation_taint_propagates_per_provenance_ordering() -> None:
     """
     from bernstein.core.lineage.provenance import (
         TrustClass,
-        effective_trust,
-        min_trust_class,
         is_untrusted,
+        min_trust_class,
     )
-
-    # Simulate a lineage closure: operator record (our conclusion) -> third_party record (foreign input)
-    operator_record_hash = "sha256:" + "a" * 64
-    third_party_record_hash = "sha256:" + "b" * 64
 
     # The effective trust of the operator record's closure includes third_party
     # min(operator, third_party) == third_party
@@ -182,8 +177,8 @@ def test_tampering_foreign_attestation_does_not_affect_local_chain_verification(
     verification stands on Bernstein lineage alone.
     """
     from bernstein.core.lineage.foreign_attestation import (
-        verify_foreign_attestation,
         ForeignAttestationVerdict,
+        verify_foreign_attestation,
     )
 
     fixture = _fixture()
