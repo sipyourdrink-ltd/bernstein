@@ -1433,7 +1433,7 @@ class CostTracker:
 
             return tracker
         except Exception as exc:
-            from bernstein.core.sanitize import sanitize_log
+            from bernstein.core.security.sanitize import sanitize_log
 
             logger.warning("Failed to load cost tracker for run %s: %s", sanitize_log(run_id), exc)
             return None

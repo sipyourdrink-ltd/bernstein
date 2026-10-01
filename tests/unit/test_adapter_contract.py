@@ -290,8 +290,9 @@ class TestAdapterContract:
 # Collection guard - whole-class adapter exclusions drop 13 cases each (#4935)
 # ---------------------------------------------------------------------------
 
-# 680 after restoring five adapters plus the guard test on current upstream main.
-_EXPECTED_COLLECTED = 681
+# 680 after restoring five adapters plus the guard test on current upstream main;
+# 707 with the two deep-research adapters (gpt_researcher, tongyi_deepresearch).
+_EXPECTED_COLLECTED = 707
 
 
 def test_module_collected_case_count() -> None:

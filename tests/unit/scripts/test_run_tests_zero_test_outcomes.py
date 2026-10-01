@@ -105,7 +105,9 @@ def test_summarize_pytest_counts_is_none_without_a_summary(run_tests_module: Mod
         # pytest exit 5: nothing was collected.
         (5, "no tests ran in 0.01s", "no-tests"),
         (1, "1 failed, 2 passed in 0.30s", "failed"),
-        (2, "ERROR: usage error", "failed"),
+        # Non-zero exit with no terminal summary: pytest died before it
+        # could report, which is a crash rather than a reported failure.
+        (2, "ERROR: usage error", "crashed"),
         # Process replaced mid-run: exit 0, no pytest summary anywhere.
         (0, "", "failed"),
         (0, "Bernstein starting\nOrchestrator ready\n", "failed"),
@@ -117,13 +119,14 @@ def test_classify_file_outcome(run_tests_module: ModuleType, code: int, output: 
 
 
 def test_outcome_constants_are_distinct(run_tests_module: ModuleType) -> None:
-    """The three outcomes are three values, not two."""
+    """The four outcomes are four values, not fewer."""
     outcomes = {
         run_tests_module.OUTCOME_PASSED,
         run_tests_module.OUTCOME_NO_TESTS,
         run_tests_module.OUTCOME_FAILED,
+        run_tests_module.OUTCOME_CRASHED,
     }
-    assert len(outcomes) == 3
+    assert len(outcomes) == 4
 
 
 # --- reporting -------------------------------------------------------------
@@ -154,9 +157,9 @@ def test_report_file_result_fails_a_replaced_process(
 def _stub_run_file(results: dict[str, tuple[int, str]]) -> Any:
     """Build a ``run_file`` replacement returning canned per-file results."""
 
-    def _run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple[Path, int, float, str]:
+    def _run_file(path: Path, extra_args: list[str], coverage: bool = False) -> tuple[Path, int, float, str, str]:
         code, output = results[path.name]
-        return path, code, 0.1, output
+        return path, code, 0.1, output, ""
 
     return _run_file
 

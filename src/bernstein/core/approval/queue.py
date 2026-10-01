@@ -37,7 +37,7 @@ from bernstein.core.approval.models import (
     ResolvedApproval,
     internal_principal,
 )
-from bernstein.core.sanitize import sanitize_log
+from bernstein.core.security.sanitize import sanitize_log
 
 logger = logging.getLogger(__name__)
 

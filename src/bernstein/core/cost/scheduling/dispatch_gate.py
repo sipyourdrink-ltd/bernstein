@@ -27,6 +27,7 @@ the orchestrator sealed.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -52,6 +53,8 @@ from bernstein.core.cost.spend_ledger import LedgerEntry
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_cost_caps(cost_policy: Any | None) -> CostCaps | None:
@@ -178,6 +181,7 @@ def build_dispatch_candidates(
     day_key: str,
     pool: str = "",
     knob_matrix: KnobMatrix | None = None,
+    default_adapter: str = "",
 ) -> list[DispatchCandidate]:
     """Build one :class:`DispatchCandidate` per about-to-spawn batch.
 
@@ -197,13 +201,21 @@ def build_dispatch_candidates(
     Args:
         batches: Role-grouped batches of Task-like objects (each item is
             iterable and indexable, exposing ``id`` and optional ``model`` /
-            ``adapter`` / ``effort`` / ``is_batch`` / ``cache_strategy``).
+            ``cli`` / ``effort`` / ``is_batch`` / ``cache_strategy``).
         cost_estimates: ``task_id -> estimated_cost_usd`` from the tick.
         run_id: The active run id (attributed to every candidate).
         day_key: UTC ``YYYY-MM-DD`` bucket for the day dimension.
         pool: Optional quota pool attributed to the candidates.
         knob_matrix: The pinned knob matrix to resolve per-call knobs against,
             or ``None`` to keep the pre-#2519 projection unchanged.
+        default_adapter: The run's effective adapter (e.g. the orchestrator's
+            resolved ``--cli`` / ``BERNSTEIN_ADAPTER`` / seed default), used
+            when a task's ``cli`` field is unset. ``Task.cli`` is a *per-step
+            override* and is ``None`` for the common case of a task running on
+            the run's default adapter, so without this fallback such a task
+            would present ``adapter=""`` to the knob matrix and silently miss
+            batch lane / cache economics even though its effective adapter is
+            batch- or cache-capable (#5878).
 
     Returns:
         Candidates in the batches' dispatch order.
@@ -215,6 +227,20 @@ def build_dispatch_candidates(
             continue
         lead = tasks[0]
         projected = sum(float(cost_estimates.get(getattr(task, "id", ""), 0.0)) for task in tasks)
+        adapter = str(getattr(lead, "cli", "") or "") or default_adapter
+        batch_eligible = bool(getattr(lead, "is_batch", False))
+        if not adapter and batch_eligible:
+            # This exact combination -- batch-eligible with no resolvable
+            # adapter -- is the signature of #5878 recurring: it silently
+            # pins the candidate to the interactive lane with no cache
+            # warm-up regardless of what the matrix grants. Surface it rather
+            # than let it disappear into an unremarkable-looking candidate.
+            logger.warning(
+                "dispatch candidate for task %r is batch-eligible but resolved to an "
+                "empty adapter name (no Task.cli override and no default_adapter); "
+                "batch lane and cache warm-up cannot be resolved for it",
+                str(getattr(lead, "id", "")),
+            )
         candidate = DispatchCandidate(
             task_id=str(getattr(lead, "id", "")),
             run_id=run_id,
@@ -222,9 +248,9 @@ def build_dispatch_candidates(
             projected_cost_usd=projected,
             day_key=day_key,
             pool=pool,
-            adapter=str(getattr(lead, "adapter", "") or ""),
+            adapter=adapter,
             requested_effort=str(getattr(lead, "effort", "") or ""),
-            batch_eligible=bool(getattr(lead, "is_batch", False)),
+            batch_eligible=batch_eligible,
             requested_cache=str(getattr(lead, "cache_strategy", "") or ""),
         )
         if knob_matrix is not None:

@@ -7221,6 +7221,100 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Delete a user (soft delete with history retention)",
+        "description": "Soft-delete a user per SCIM 2.0 DELETE semantics.\n\nSCIM clients expect DELETE to remove the resource. This server marks the\nprincipal inactive while retaining its history in the chain, as declared\nin ServiceProviderConfig. The 204 response signals successful removal to\nthe client; the ledger records the deprovisioning event.",
+        "operationId": "delete_user_scim_v2_Users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Update a user via PATCH operations",
+        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nOnly the deactivation operation (``replace`` of ``active`` with ``false``)\nis supported; any other operation is rejected with 400 ``invalidValue``.",
+        "operationId": "patch_user_scim_v2_Users__user_id__patch",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "400": {
+            "description": "Invalid PATCH operation"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/hooks/{session_id}": {
@@ -8148,9 +8242,9 @@
         "tags": [
           "governance"
         ],
-        "summary": "Verify Receipt",
+        "summary": "Verify Receipt Endpoint",
         "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
-        "operationId": "verify_receipt_governance_verify_receipt_post",
+        "operationId": "verify_receipt_endpoint_governance_verify_receipt_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -16292,6 +16386,100 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Delete a user (soft delete with history retention)",
+        "description": "Soft-delete a user per SCIM 2.0 DELETE semantics.\n\nSCIM clients expect DELETE to remove the resource. This server marks the\nprincipal inactive while retaining its history in the chain, as declared\nin ServiceProviderConfig. The 204 response signals successful removal to\nthe client; the ledger records the deprovisioning event.",
+        "operationId": "delete_user_api_v1_scim_v2_Users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "scim"
+        ],
+        "summary": "Update a user via PATCH operations",
+        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nOnly the deactivation operation (``replace`` of ``active`` with ``false``)\nis supported; any other operation is rejected with 400 ``invalidValue``.",
+        "operationId": "patch_user_api_v1_scim_v2_Users__user_id__patch",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown principal"
+          },
+          "400": {
+            "description": "Invalid PATCH operation"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/hooks/{session_id}": {
@@ -17219,9 +17407,9 @@
         "tags": [
           "governance"
         ],
-        "summary": "Verify Receipt",
+        "summary": "Verify Receipt Endpoint",
         "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
-        "operationId": "verify_receipt_api_v1_governance_verify_receipt_post",
+        "operationId": "verify_receipt_endpoint_api_v1_governance_verify_receipt_post",
         "responses": {
           "200": {
             "description": "Successful Response",

@@ -115,8 +115,11 @@ immediately so high-priority signals can't be cancelled by lower ones:
    cap. Prevents the system from crawling at one or two agents when
    five slots are available (`adaptive_parallelism.py`).
 
-Each rule that fires writes a one-line `INFO`/`WARNING` log so the
-trail is easy to read after a run.
+The CPU overload, high-error-rate and low-error-rate adjustments each
+write a one-line `WARNING`/`INFO` log, and `set_slo_constraint` logs when
+the SLO cap is set (`WARNING`) or cleared (`INFO`). The per-tick SLO
+`min()` clamp, the minimum-floor raise and cpu recovery change the
+ceiling without a log line.
 
 ---
 
@@ -124,8 +127,8 @@ trail is easy to read after a run.
 
 | Bound | Source | Default | YAML override |
 |-------|--------|---------|---------------|
-| Configured ceiling | `bernstein.yaml: max_agents` | `7` | `max_agents: <int>` |
-| Floor | `max(1, configured_max // 2)` | `3` for `max_agents=7` | implicit; not configurable |
+| Configured ceiling | `bernstein.yaml: max_agents` | `6` | `max_agents: <int>` |
+| Floor | `max(1, configured_max // 2)` | `3` for `max_agents=6` | implicit; not configurable |
 | Error rate "high" | `PARALLELISM.error_rate_high` | `0.20` | `tuning.parallelism.error_rate_high` |
 | Error rate "low" | `PARALLELISM.error_rate_low` | `0.05` | `tuning.parallelism.error_rate_low` |
 | Low-error sustain | `PARALLELISM.low_error_sustain_s` | `120 s` | `tuning.parallelism.low_error_sustain_s` |
@@ -141,8 +144,9 @@ config branch - leave them alone unless your workload is unusual.
 
 Two surfaces:
 
-- **Log lines.** Every adjustment writes one line at `INFO` (low-error
-  ramp-up, cpu recovery) or `WARNING` (cpu overload, slo cap). Search
+- **Log lines.** Most adjustments write one line at `INFO` (error-rate
+  reduction, low-error ramp-up, SLO cap cleared) or `WARNING` (cpu overload,
+  slo cap set); cpu recovery only updates the logged reason. Search
   for `"Adaptive parallelism:"` in the orchestrator log to reconstruct
   the trace.
 
@@ -167,9 +171,8 @@ Two surfaces:
 - **Status snapshot.** `controller.status()` returns an
   `AdaptiveParallelismStatus` (`configured_max`, `current_max`,
   `error_rate`, `cpu_percent`, `last_adjustment_reason`,
-  `window_size`). Used by the dashboard endpoints (`/status`,
-  `/dashboard/data`) so operators can see why the orchestrator chose a
-  given level.
+  `window_size`). Read by the orchestrator each tick to fill the
+  metric point above, so operators can see why it chose a given level.
 
 ---
 

@@ -55,7 +55,7 @@ SWE-Bench is the standard benchmark for autonomous code understanding and genera
 
 ### Current status: **preview artifacts**
 
-The results in `benchmarks/swe_bench/results/` are **mock preview artifacts** - not verified eval runs. They demonstrate the harness format and output structure but should not be used for public benchmark claims.
+Results written to `benchmarks/swe_bench/results/` by the harness's `mock` command are **mock preview artifacts** - not verified eval runs (the directory is generated and not committed). They demonstrate the harness format and output structure but should not be used for public benchmark claims.
 
 | Scenario | Source type | Verified | Sample size |
 |---|---|---|---:|
@@ -163,3 +163,24 @@ Real runs from the community. Submit yours via [issue #787](https://github.com/s
 | Startup latency (avg, 5 runs) | 3048.61 ms | `uv run python benchmarks/bench_startup.py` |
 
 **Notes:** Low-end consumer laptop (budget i3, 2016 generation, 3.7 GB RAM). Startup latency is higher than expected — likely cold import overhead from running a Python 3.14 pre-release build; expect lower on stable Python 3.12/3.13. Orchestrator tick and task store throughput look normal for this hardware class. Quality gate scaling is near-linear as the docs describe.
+
+---
+
+## BenchmarkSuite Protocol
+
+Foundation for pluggable benchmark suites. A suite implementation provides four methods:
+
+- `load(sample, seed)` → deterministic task sampling from the suite's dataset
+- `sandbox(task)` → context manager providing the execution environment (worktree, container, etc.)
+- `score(task, result)` → task-specific scoring logic returning a `Score`
+- `metadata()` → suite identification (name, version, dataset hash)
+
+### Score type
+
+Every benchmark task result is a `Score` dataclass:
+- `value`: float (+1 for resolved/pass, 0 for abstained, -lambda for wrong answer)
+- `passed`: bool (True if completed successfully)
+- `details`: dict for suite-specific metadata
+
+This protocol enables external benchmark suites to integrate with Bernstein's evaluation infrastructure without custom runner code.
+

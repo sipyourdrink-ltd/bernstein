@@ -262,7 +262,7 @@ def verify_cmd(receipt_hash: str, workdir: str) -> None:
     Exit codes: 0 = verified, 1 = verification failed, 2 = receipt/mandate not found.
     """
     from bernstein.core.payments.enforce import load_mandate
-    from bernstein.core.payments.receipt import load_receipt, verify_receipt
+    from bernstein.core.payments.receipt import load_receipt, verify_transaction_receipt
 
     root = Path(workdir).resolve()
     key = _audit_key()
@@ -273,7 +273,7 @@ def verify_cmd(receipt_hash: str, workdir: str) -> None:
         console.print(f"[yellow]NOT FOUND[/yellow] -- {exc}")
         raise SystemExit(2) from exc
 
-    result = verify_receipt(workdir=root, hmac_key=key, receipt=receipt, mandate=mandate)
+    result = verify_transaction_receipt(workdir=root, hmac_key=key, receipt=receipt, mandate=mandate)
 
     console.print()
     console.print(f"[bold]Receipt verify[/bold] hash={receipt_hash[:24]}")

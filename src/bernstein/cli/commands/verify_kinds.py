@@ -5,7 +5,9 @@ shape works, not all 55 groups. The two wired here were chosen because they
 are the artefact-path verifiers whose entire input is one portable file with
 no other required state (no ``--workdir``, no ``.sdd/`` lookup by id): an
 AI-BOM document (:mod:`bernstein.core.compliance.ai_bom`) and a result
-receipt bundle (:mod:`bernstein.core.security.result_receipt_bundle`).
+receipt bundle (:mod:`bernstein.core.security.result_receipt_bundle`). A
+batch pass receipt (:mod:`bernstein.core.persistence.batch_receipt`) joined
+them on the same footing: one portable, self-verifying file.
 
 Most of the other ~53 ``verify`` commands surveyed for this issue take an id
 (a run id, task id, or event id) and re-derive state from ``.sdd/`` rather
@@ -36,6 +38,7 @@ def register_default_verifiers() -> None:
         return
     register_verifier(VerifierSpec(kind="bom", sniff=_sniff_bom, verify=_verify_bom))
     register_verifier(VerifierSpec(kind="receipt-bundle", sniff=_sniff_receipt_bundle, verify=_verify_receipt_bundle))
+    register_verifier(VerifierSpec(kind=_BATCH_PASS_KIND, sniff=_sniff_batch_pass, verify=_verify_batch_pass))
     _registered = True
 
 
@@ -154,3 +157,55 @@ def _verify_receipt_bundle(path: Path) -> VerifyOutcome:
 
 
 __all__ = ["register_default_verifiers"]
+
+
+# ---------------------------------------------------------------------------
+# batch.pass -- bernstein.core.persistence.batch_receipt
+# ---------------------------------------------------------------------------
+
+#: The protocol kind string, repeated here so registration does not import
+#: the producing module at CLI start-up.
+_BATCH_PASS_KIND = "batch.pass"
+
+
+def _sniff_batch_pass(path: Path, payload: dict[str, Any] | None) -> bool:
+    return isinstance(payload, dict) and payload.get("kind") == _BATCH_PASS_KIND
+
+
+def _verify_batch_pass(path: Path) -> VerifyOutcome:
+    """Verify a pass receipt offline, from the envelope's own bytes.
+
+    The envelope embeds its public key, so this is the integrity tier (trust
+    on first use), the same footing as ``receipt-bundle`` above. Anchoring the
+    successes to the batch ledger needs the ledger directory, which the
+    dispatcher has no channel for; see
+    :func:`bernstein.core.persistence.batch_receipt.verify_batch_pass_against_ledger`.
+    """
+    # Importing the producing module registers the kind, so the check below
+    # never depends on the protocol's lazy kind loader having run.
+    from bernstein.core.persistence.batch_receipt import RECEIPT_KIND
+    from bernstein.core.receipts.protocol import verify_receipt
+
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return VerifyOutcome(kind=RECEIPT_KIND, ok=False, exit_code=1, message=f"could not parse receipt: {exc}")
+
+    result = verify_receipt(document)
+    if result.ok:
+        payload = cast("dict[str, Any]", document.get("payload", {}))
+        counts = ", ".join(f"{bucket} {len(payload.get(bucket) or [])}" for bucket in ("success", "failed", "skipped"))
+        return VerifyOutcome(
+            kind=_BATCH_PASS_KIND,
+            ok=True,
+            exit_code=0,
+            message=f"verifies against embedded key (trust on first use); {counts}; digest {result.payload_digest}",
+            detail={"payload_digest": result.payload_digest, "pinned_key": False},
+        )
+    return VerifyOutcome(
+        kind=_BATCH_PASS_KIND,
+        ok=False,
+        exit_code=1,
+        message=f"{len(result.errors)} error(s)",
+        detail={"errors": list(result.errors)},
+    )

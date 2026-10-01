@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,7 +63,8 @@ _KIND_ARTICLE12 = "article-12"
 _KIND_RETENTION = "retention"
 _KIND_INCIDENT = "incident"
 _KIND_OVERSIGHT = "oversight"
-_REGULATOR_KINDS = frozenset({_KIND_RETENTION, _KIND_INCIDENT, _KIND_OVERSIGHT})
+_KIND_AI_RMF = "ai-rmf"
+_REGULATOR_KINDS = frozenset({_KIND_RETENTION, _KIND_INCIDENT, _KIND_OVERSIGHT, _KIND_AI_RMF})
 
 
 # ---------- RFC 8785 JCS ----------
@@ -763,6 +765,114 @@ def _verify_incident(
         )
 
 
+def _verify_ai_rmf(
+    zf: zipfile.ZipFile,
+    manifest: dict[str, Any],
+    errors: list[str],
+    stats: dict[str, Any],
+) -> None:
+    """Check the NIST AI RMF projection: canonical evidence, hashes in the log.
+
+    An ``empty`` or ``unmatched`` window is valid and must not claim a Covered
+    row was evidenced. A cited hash that is absent from ``lineage-log.jsonl``
+    fails. Member-byte tamper is already reported by ``_verify_member_integrity``.
+    """
+    raw = _read_bytes_member(zf, "subcategory-evidence.json")
+    if raw is None:
+        errors.append("subcategory-evidence.json: missing")
+        return
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError:
+        errors.append("subcategory-evidence.json: invalid JSON")
+        return
+    if not isinstance(doc, dict) or _canonical_any(doc) != raw:
+        errors.append("subcategory-evidence.json: non-canonical bytes")
+        return
+
+    claim = doc.get("window_claim")
+    if claim not in {"empty", "unmatched", "evidenced"}:
+        errors.append(
+            "subcategory-evidence.json: window_claim must be empty, unmatched, or evidenced"
+        )
+    mapping_sha256 = doc.get("mapping_sha256")
+    if not isinstance(mapping_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", mapping_sha256):
+        errors.append(
+            "subcategory-evidence.json: mapping_sha256 must be 64 lowercase hex characters"
+        )
+    rows = doc.get("rows")
+    if not isinstance(rows, list):
+        errors.append("subcategory-evidence.json: rows missing")
+        rows = []
+
+    log = _read_bytes_member(zf, "lineage-log.jsonl")
+    if log is None:
+        errors.append("lineage-log.jsonl: missing")
+        return
+    hashes: set[str] = set()
+    line_count = 0
+    if log and not log.endswith(b"\n"):
+        errors.append("lineage-log.jsonl: missing trailing newline")
+    for lineno, line in enumerate(_split_jsonl_bytes(log), start=1):
+        if line == b"":
+            continue
+        line_count += 1
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            errors.append(f"lineage-log.jsonl:{lineno}: invalid JSON")
+            continue
+        if not isinstance(obj, dict) or _canonical_any(obj) != line:
+            errors.append(f"lineage-log.jsonl:{lineno}: non-canonical line bytes")
+            continue
+        hashes.add(_sha256_hex(line))
+
+    entry_count = doc.get("entry_count")
+    if entry_count != line_count:
+        errors.append(
+            f"subcategory-evidence.json: entry_count {entry_count} "
+            f"disagrees with lineage log ({line_count})"
+        )
+    if manifest.get("entry_count") != entry_count:
+        errors.append("pack-manifest.json: entry_count disagrees with subcategory-evidence.json")
+    if manifest.get("window_claim") != claim:
+        errors.append("pack-manifest.json: window_claim disagrees with subcategory-evidence.json")
+
+    ids = {row.get("id") for row in rows if isinstance(row, dict)}
+    evidenced_rows = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            errors.append("subcategory-evidence.json: row is not an object")
+            continue
+        row_id = str(row.get("id", ""))
+        cited = row.get("chain_entry_hashes", [])
+        if not isinstance(cited, list):
+            errors.append(f"{row_id}: chain_entry_hashes is not a list")
+            continue
+        if row.get("verdict") in {"Not-covered", "Partial"} and (cited or row.get("evidenced")):
+            errors.append(f"{row_id}: {row.get('verdict')} row claims chain evidence")
+        if claim in {"empty", "unmatched"} and (cited or row.get("evidenced")):
+            errors.append(f"{row_id}: {claim} window must not claim chain evidence")
+        if row.get("evidenced"):
+            evidenced_rows += 1
+            if not cited:
+                errors.append(f"{row_id}: evidenced row has no chain entries")
+        ref = row.get("genai_profile_ref")
+        if ref is not None and ref not in ids:
+            errors.append(f"{row_id}: genai_profile_ref {ref!r} is not a subcategory in this pack")
+        for digest in cited:
+            if digest not in hashes:
+                errors.append(f"{row_id}: chain entry {digest} is not in lineage-log.jsonl")
+
+    if claim == "empty" and hashes:
+        errors.append("window_claim empty but lineage-log.jsonl has entries")
+    if claim == "evidenced" and evidenced_rows == 0:
+        errors.append("window_claim evidenced but no Covered row carries chain entries")
+    stats["entry_count"] = len(hashes)
+    stats["window_claim"] = claim
+    stats["evidenced_rows"] = evidenced_rows
+
+
 def _verify_regulator_pack(
     zf: zipfile.ZipFile,
     manifest: dict[str, Any] | None,
@@ -787,5 +897,7 @@ def _verify_regulator_pack(
         _verify_oversight(zf, manifest, errors, stats)
     elif kind == _KIND_INCIDENT:
         _verify_incident(zf, manifest, errors, stats)
+    elif kind == _KIND_AI_RMF:
+        _verify_ai_rmf(zf, manifest, errors, stats)
 
     return VerifyResult(ok=not errors, errors=errors, stats=stats)

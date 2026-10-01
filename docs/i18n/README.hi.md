@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -38,17 +38,17 @@
 
 > **स्थिति: beta।** अकेले मेंटेन किया जा रहा है, सक्रिय विकास में। वर्ज़न नंबर रिलीज़ गिनता है, परिपक्वता नहीं — माइनर वर्ज़न में भी इंटरफ़ेस बदल सकते हैं। जिस पर आप निर्भर हैं उसका वर्ज़न पिन कर लें; रिग्रेशन जल्दी ठीक होते हैं, [उन्हें दर्ज करें](https://github.com/sipyourdrink-ltd/bernstein/issues)।
 
-Bernstein AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर है। यह policy as code पर चलता है: आप नीति लिखते हैं - कौन क्या कर सकता है, किसे स्वीकृति चाहिए, क्या दर्ज होना चाहिए - और Bernstein इसे लागू करता है और सत्यापन-योग्य रिकॉर्ड बनाता है। एक डिटर्मिनिस्टिक शेड्यूलर - कोऑर्डिनेशन लूप में कोई मॉडल नहीं - एजेंटों को समानांतर चलाता है, उनके आउटपुट को गेट से जाँचता है और हर कदम रिकॉर्ड करता है, इसलिए रन को बाद में, ऑफ़लाइन, केवल आर्टिफ़ैक्ट्स से सत्यापित किया जा सकता है। CLI कोडिंग एजेंट सीधे काम करते हैं (Claude Code, Codex, Gemini CLI और 40+ अन्य), और यही लेयर किसी भी एजेंट वर्कलोड को गवर्न करती है: डिलिवरेबल एक diff, रिसर्च रिपोर्ट, डेटासेट या ऑडिट एविडेंस पैक हो सकता है। Air-gap इंस्टॉल प्रोफ़ाइल शामिल। Apache-2.0.
+Bernstein AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर है। यह policy as code पर चलता है: आप नीति लिखते हैं - कौन क्या कर सकता है, किसे स्वीकृति चाहिए, क्या दर्ज होना चाहिए - और Bernstein इसे लागू करता है और सत्यापन-योग्य रिकॉर्ड बनाता है। एक डिटर्मिनिस्टिक शेड्यूलर - कोऑर्डिनेशन लूप में कोई मॉडल नहीं - एजेंटों को समानांतर चलाता है, उनके आउटपुट को गेट से जाँचता है और हर कदम रिकॉर्ड करता है, इसलिए रन को बाद में, ऑफ़लाइन, केवल आर्टिफ़ैक्ट्स से सत्यापित किया जा सकता है। CLI कोडिंग एजेंट सीधे काम करते हैं (Claude Code, Codex, Gemini CLI और 50+ अन्य), और यही लेयर किसी भी एजेंट वर्कलोड को गवर्न करती है: डिलिवरेबल एक diff, रिसर्च रिपोर्ट, डेटासेट या ऑडिट एविडेंस पैक हो सकता है। Air-gap इंस्टॉल प्रोफ़ाइल शामिल। Apache-2.0.
 
 ### एक नज़र में
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
 
 चार चीज़ें इसे अलग करती हैं; उसके बाद सब विवरण है।
 
 - **कोऑर्डिनेशन लूप में कोई LLM नहीं।** शेड्यूलिंग सादा Python है, इसलिए रन शुरू से आख़िर तक दोहराया जा सकता है। कल का प्लान रिप्ले कीजिए, कल वाला ही टास्क ग्राफ़ मिलेगा।
 - **बाद में जाँचा जा सकता है।** रिप्ले जर्नल हर रन दर्ज करता है, और हमेशा चालू रहने वाली लीनिएज स्पाइन हर लीनिएज-वाहक स्टेप दर्ज करती है; ऑप्ट-इन HMAC-चेन ऑडिट लॉग (`BERNSTEIN_AUDIT=1`) ऐसी रसीदें जोड़ता है जिन्हें आप ऑफ़लाइन सत्यापित कर सकते हैं। नॉन-डिटर्मिनिज़्म ठीक उसी स्टेप पर हैश मिसमैच बनकर सामने आता है, न कि किसी अस्थिर री-रन के रूप में। ग़ैर-कोड डिलिवरेबल के साथ भी यही बर्ताव है: कोई टास्क आर्टिफ़ैक्ट कॉन्ट्रैक्ट (रिपोर्ट, डेटासेट, ऐक्शन लॉग, ऑप्स नतीजा) घोषित कर सकता है और git कमिट के बजाय हस्ताक्षरित लीनिएज रसीद पर पूरा होता है।
 - **बनावट से ही अलग-थलग।** हर कोडिंग टास्क को मर्ज गेट के पीछे अपना git worktree मिलता है; आर्टिफ़ैक्ट-मोड टास्क को `.sdd/workspaces/` के नीचे एक वर्किंग डायरेक्टरी मिलती है। डिफ़ॉल्ट रूप से एजेंट कोई बदलने-योग्य वर्कस्पेस साझा नहीं करते; साझा अवस्था सिर्फ़ टास्क बैकलॉग है, जिसे एटॉमिक ढंग से क्लेम किया जाता है। इससे सख़्त फ़ाइल-सिस्टम पाबंदी ऑप्ट-इन है, [सैंडबॉक्स बैकएंड](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) से चुनकर। worktree बंद कर दीजिए तो हर टास्क साझा चेकआउट में चलेगा।
-- **व्यापक और लोकल।** 40 से ज़्यादा CLI एजेंट अडैप्टर, साथ में एक जेनेरिक `--prompt` रैपर, फ़ाइल-आधारित स्टेट, कोई SaaS हॉप नहीं, कोई थर्ड-पार्टी डेटा प्लेन नहीं।
+- **व्यापक और लोकल।** 53 से ज़्यादा CLI एजेंट अडैप्टर, साथ में एक जेनेरिक `--prompt` रैपर, फ़ाइल-आधारित स्टेट, कोई SaaS हॉप नहीं, कोई थर्ड-पार्टी डेटा प्लेन नहीं।
 
 पूरी सूची [कैपेबिलिटी पेज](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) पर है; [फ़ीचर मैट्रिक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) संपूर्ण अनुक्रमणिका है।
 
@@ -134,7 +134,7 @@ flowchart LR
 हर नोड वही एजेंट लेता है जिसका रोल फेज़ अनुमति देता है; रोल की बाड़ और अप्रूवल गेट टिके रहते हैं, एजेंट टास्क के भीतर चाहे जो करे। कोड नोड अपने git worktree में merge गेट्स के पीछे पूरा होता है। ऊपर के नोड अलग तरह से पूरे होते हैं: [आर्टिफ़ैक्ट कॉन्ट्रैक्ट](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) डिलिवरेबल का नाम तय करता है (रिपोर्ट, डेटासेट, स्कैन, एक्शन लॉग), और नोड कमिट की जगह हस्ताक्षरित lineage रसीद पर बंद होता है। वही शेड्यूलर, वही जर्नल, वही ऑफ़लाइन सत्यापन - ग्राफ़ कोड ले जाए, रिसर्च, ops बदलाव या तीनों का मिश्रण। सॉफ़्टवेयर, रिसर्च, डॉक्स, एंटरप्राइज़ और कंट्रीब्यूटर वर्कफ़्लो के तैयार ग्राफ़ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) में हैं।
 
 ### 30 सेकंड में इंस्टॉल
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm और Docker [इंस्टॉल गाइड](https://bernstein.readthedocs.io/en/latest/getting-started/install/) में हैं; एयर-गैप्ड wheelhouse की अपनी अलग [एयर-गैप गाइड](https://bernstein.readthedocs.io/en/latest/installation/air-gap/) है।
+pipx, pip, brew, dnf, npm और Docker [इंस्टॉल गाइड](https://docs.bernstein.run/en/latest/getting-started/install/) में हैं; एयर-गैप्ड wheelhouse की अपनी अलग [एयर-गैप गाइड](https://docs.bernstein.run/en/latest/installation/air-gap/) है।
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,14 +223,14 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 रिपॉज़िटरी हाइजीन गेट: `bernstein readme-l10n verify` उस PR को फ़ेल करता है जिसके अनूदित README अंग्रेज़ी स्रोत से भटक गए हों (और बासी सेक्शन का नाम बताता है), `bernstein readme-l10n sync` अंग्रेज़ी में बदलाव के बाद उन्हें दोबारा बाँध देता है। देखिए [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md)।
 
 ### समर्थित एजेंट
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen और भी कई। [अडैप्टर इंडेक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) उनमें से 30 के इंस्टॉल कमांड रखता है। `bernstein integrations list` `src/bernstein/adapters/registry.py` से जुड़े हुए सभी 54 इंटीग्रेशन गिनाता है — क्या रिज़ॉल्व होता है, इसका यही इकलौता स्रोत है। उनमें 52 चुनने-योग्य एजेंट अडैप्टर हैं; बाक़ी दो पंक्तियाँ `mock` टेस्ट स्टब और `self-hosted-endpoints` एंडपॉइंट प्रोफ़ाइल हैं। `--prompt` फ़्लैग वाली बाक़ी कोई भी चीज़ जेनेरिक रैपर से चलती है।
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen और भी कई। [अडैप्टर इंडेक्स](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) उनमें से 30 के इंस्टॉल कमांड रखता है। `bernstein integrations list` `src/bernstein/adapters/registry.py` से जुड़े हुए सभी 56 इंटीग्रेशन गिनाता है — क्या रिज़ॉल्व होता है, इसका यही इकलौता स्रोत है। उनमें 54 चुनने-योग्य एजेंट अडैप्टर हैं; बाक़ी दो पंक्तियाँ `mock` टेस्ट स्टब और `self-hosted-endpoints` एंडपॉइंट प्रोफ़ाइल हैं। `--prompt` फ़्लैग वाली बाक़ी कोई भी चीज़ जेनेरिक रैपर से चलती है।
 
 एक ही रन में एजेंट मिलाइए: बॉयलरप्लेट के लिए सस्ते लोकल मॉडल, आर्किटेक्चर के लिए भारी क्लाउड मॉडल। `bernstein integrations list --installed` दिखाता है कि आपकी मशीन पर क्या उपलब्ध है।
 
 ### स्वैच्छिक कंप्यूट
-<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
 
 कोई प्रोजेक्ट अपने issue को स्वयंसेवकों के लिए खुला चिह्नित कर सकता है, और कोई भी उनमें से एक को अपनी ही मशीन पर, बिना खाते और बिना समन्वयक के, चला सकता है। किसी कार्य को क्या करने की अनुमति है, यह प्रोजेक्ट `volunteer.json` मैनिफ़ेस्ट में घोषित करता है - सैंडबॉक्स बैकएंड, अनुमत नेटवर्क सूची, वॉल-क्लॉक और मेमोरी की ऊपरी सीमाएँ - और दाता की अपनी सीमाएँ इसे केवल संकरा कर सकती हैं, कभी चौड़ा नहीं। पूरा हुआ कार्य जो रसीद बनाता है वह परिणाम को उसी नियंत्रण-निर्णय से बाँध देती है जिसके अधीन वह चला, इसलिए अनुरक्षक महीनों बाद भी जाँच सकता है कि उस काम को वास्तव में किसे छूने की अनुमति थी।
 
@@ -239,12 +239,12 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse` और `hub` काम करने वाले सब-कमांड हैं।
+[दाता मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) वर्कर चलाने और आपके तय किए बजट को कवर करती है, [प्रोजेक्ट मार्गदर्शिका](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) मैनिफ़ेस्ट घोषित करना, और [ख़तरा मॉडल](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) बताता है कि हर सीमा किससे बचाती है और किससे नहीं। एक ही कमांड वाला रनर अभी जारी नहीं हुआ है: आज `verify`, `browse`, `budget`, `verify-bundle` और `hub` काम करने वाले सब-कमांड हैं।
 
 ### पहले पन्ने से आगे
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-गहराई की हर चीज़ [डॉक्स साइट](https://bernstein.readthedocs.io/) पर रहती है:
+गहराई की हर चीज़ [डॉक्स साइट](https://docs.bernstein.run/) पर रहती है:
 
 | पेज | इसमें क्या है |
 |---|---|

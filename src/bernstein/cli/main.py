@@ -83,6 +83,7 @@ from bernstein.cli.commands.impact_cmd import (
 from bernstein.cli.commands.integrations_cmd import integrations_group
 from bernstein.cli.commands.issue_to_pr_cmd import issue_to_pr_group
 from bernstein.cli.commands.knowledge_cmd import knowledge_group
+from bernstein.cli.commands.model_cmd import model_group
 from bernstein.cli.commands.pool_cmd import pool_group
 from bernstein.cli.commands.receipt_cmd import receipt_group
 from bernstein.cli.commands.resume_cmd import resume_cmd
@@ -504,7 +505,7 @@ def print_rich_help() -> None:
     opts.add_row("", "--fresh", "ignore saved session, start clean")
     opts.add_row("", "--version", "show version")
     c.print(opts)
-    c.print("\n  [dim]docs:[/dim] https://bernstein.readthedocs.io/en/latest/")
+    c.print("\n  [dim]docs:[/dim] https://docs.bernstein.run/en/latest/")
     c.print("  [dim]repo:[/dim] https://github.com/sipyourdrink-ltd/bernstein")
     c.print("  [dim]audit chain:[/dim] docs/security/audit-log.md  (RFC 2104 HMAC-SHA256)\n")
 
@@ -817,7 +818,7 @@ def cli(
 
     # Start background work, then show splash concurrently.
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _splash_future = executor.submit(_background_startup, workdir)
+    executor.submit(_background_startup, workdir)
 
     # Show splash immediately (gradient + logo) - no agent data needed for visuals.
     banner_shown = splash(
@@ -839,11 +840,9 @@ def cli(
     if banner_shown:
         ctx.obj["_BANNER_PRINTED"] = True
 
-    # Show immediate feedback while background finishes - no black screen.
-    console.print("[dim]Preparing...[/dim]", end="\r")
-
-    # Collect background results (should be done by now - splash took 3.5 seconds).
-    _bg = _splash_future.result(timeout=10)
+    # Startup results are cosmetic and not read downstream, so do not join the
+    # thread: a slow agent discovery pass would otherwise raise TimeoutError
+    # before the run callback (or --plan-only) ever executes.
     executor.shutdown(wait=False)
 
     if dry_run:
@@ -1161,9 +1160,12 @@ cli.add_command(listen_cmd, "listen")
 cli.add_command(self_update_cmd, "self-update")
 
 # Provenance-verified update lifecycle: check, update, pin, rollback (#2942)
+# Scenario commands
+from bernstein.cli.commands.scenario_cmd import scenario_group  # noqa: E402
 from bernstein.cli.commands.self_update_cmd import self_group  # noqa: E402
 
 cli.add_command(self_group, "self")
+cli.add_command(scenario_group, "scenario")
 
 cli.add_command(undo_cmd, "undo")
 cli.add_command(worker, "worker")
@@ -1500,4 +1502,11 @@ from bernstein.cli.commands.api_check_cmd import api_check_cmd  # noqa: E402
 cli.add_command(api_check_cmd, "api-check")
 cli.add_command(ab_test_cmd, "ab-test")
 cli.add_command(receipt_group, "receipt")
+cli.add_command(model_group, "model")
 cli.add_command(volunteer_group, "volunteer")
+
+# ``bernstein adopt`` (#5435, slice 1): detect the running agent session to
+# bring under governance. Only ``--dry-run`` is implemented; it writes nothing.
+from bernstein.cli.commands.adopt_cmd import adopt_cmd  # noqa: E402
+
+cli.add_command(adopt_cmd, "adopt")

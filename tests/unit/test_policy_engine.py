@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
 from bernstein.cli.policy_cmd import policy_group
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.policy_engine import (
@@ -12,6 +13,7 @@ from bernstein.core.policy_engine import (
     PolicyEngine,
     PolicyFile,
     PolicySubject,
+    _run_opa_eval,
     load_policy_engine,
     run_policy_engine,
 )
@@ -121,3 +123,68 @@ class TestPolicyEngine:
         assert result.exit_code != 0
         assert "no_eval" in result.output
         assert "blocked" in result.output.lower()
+
+
+class TestRunOpaEvalFailures:
+    """`_run_opa_eval` raising is the only channel an `opa` failure has.
+
+    Every existing Rego test monkeypatches `_run_opa_eval` away, so the error
+    path inside it never ran: the fallback chain that picks stderr, then
+    stdout, then a generic string could be broken without turning anything red.
+    """
+
+    @staticmethod
+    def _fake_run(monkeypatch: MonkeyPatch, *, stdout: str, stderr: str, seen: list[list[str]] | None = None) -> None:
+        """Make `opa eval` fail with the given output, recording its argv."""
+
+        def _run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            if seen is not None:
+                seen.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout=stdout, stderr=stderr)
+
+        monkeypatch.setattr("bernstein.core.policy_engine.subprocess.run", _run)
+
+    def test_opa_failure_surfaces_stderr_when_stdout_empty(self, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+        """The common CLI failure shape: a Rego error on stderr, nothing on stdout."""
+        self._fake_run(monkeypatch, stdout="", stderr="rego_parse_error: unexpected eof\n")
+
+        with pytest.raises(OSError) as excinfo:
+            _run_opa_eval(tmp_path / "limits.rego", {"files": 1})
+
+        assert "rego_parse_error: unexpected eof" in str(excinfo.value)
+
+    def test_opa_failure_surfaces_stdout_when_stderr_empty(self, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+        """Some failures report on stdout instead; that text must survive too."""
+        self._fake_run(monkeypatch, stdout="undefined function data.bernstein.deny\n", stderr="")
+
+        with pytest.raises(OSError) as excinfo:
+            _run_opa_eval(tmp_path / "limits.rego", {"files": 1})
+
+        assert "undefined function data.bernstein.deny" in str(excinfo.value)
+
+    def test_opa_failure_falls_back_to_generic_message(self, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+        """With both streams empty there is nothing to quote, so say so plainly."""
+        self._fake_run(monkeypatch, stdout="   ", stderr="\n")
+
+        with pytest.raises(OSError) as excinfo:
+            _run_opa_eval(tmp_path / "limits.rego", {"files": 1})
+
+        assert str(excinfo.value) == "opa eval failed"
+
+    def test_opa_failure_unlinks_input_file(self, monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+        """The payload temp file is removed even when the run failed.
+
+        It is written with `delete=False`, so only the `finally` removes it; a
+        failing policy run on a long-lived host would otherwise leak one file
+        per evaluation.
+        """
+        seen: list[list[str]] = []
+        self._fake_run(monkeypatch, stdout="", stderr="boom", seen=seen)
+
+        with pytest.raises(OSError):
+            _run_opa_eval(tmp_path / "limits.rego", {"files": 1})
+
+        assert len(seen) == 1
+        argv = seen[0]
+        input_path = Path(argv[argv.index("--input") + 1])
+        assert not input_path.exists()

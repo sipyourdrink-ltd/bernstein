@@ -9309,6 +9309,13 @@ EVENT_MODEL_ADMITTED = "model.admitted"
 #: stays reconstructible.
 EVENT_MODEL_WITHDRAWN = "model.withdrawn"
 
+#: Issue #5038 -- emitted when a routing path refuses a model reference that
+#: has no live admission in the chain-projected model registry. A silent
+#: decline is as opaque as a silent permit, so the refusal is itself a chained
+#: event naming the presented identities, the task class, and the projected
+#: instant.
+EVENT_MODEL_REFUSED = "model.refused"
+
 #: Issue #4975 -- emitted whenever an MCP server's advertised capability set
 #: changes between connections. The event carries the run id, the server name,
 #: previous capability digest (None for first contact), the current capability
@@ -9746,6 +9753,49 @@ def record_model_drift_observation(
     )
 
 
+def record_model_refusal(
+    chain: AuditChainStore,
+    *,
+    model_key: str,
+    provider: str,
+    model_requested: str,
+    model_reported: str | None,
+    version: str | None,
+    task_class: str,
+    at: str,
+    routing_path: str,
+    reason: str,
+    run_id: str = "",
+    task_id: str = "",
+    actor: str = "route_decision",
+) -> AuditEvent:
+    """Append a ``model.refused`` event into *chain*.
+
+    Routing paths record the negative decision instead of dropping it, so a
+    later reader can prove the installation refused a model that was not
+    admitted rather than never having consulted the registry at all.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MODEL_REFUSED,
+        actor=actor,
+        resource_type="model_refusal",
+        resource_id=model_key,
+        details={
+            "model_key": model_key,
+            "provider": provider,
+            "model_requested": model_requested,
+            "model_reported": model_reported,
+            "version": version,
+            "task_class": task_class,
+            "at": at,
+            "routing_path": routing_path,
+            "reason": reason,
+            "run_id": run_id,
+            "task_id": task_id,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -9821,6 +9871,7 @@ __all__ = [
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
     "EVENT_MODEL_DRIFT_OBSERVATION",
+    "EVENT_MODEL_REFUSED",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_ODATA_WRITEBACK",
     "EVENT_OTEL_PROJECTION",
@@ -9981,6 +10032,7 @@ __all__ = [
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
     "record_model_drift_observation",
+    "record_model_refusal",
     "record_multimodal_attach",
     "record_odata_writeback",
     "record_otel_projection",

@@ -140,6 +140,7 @@ def test_fetch_bounds_the_window_server_side_on_the_ci_workflow() -> None:
     assert "/actions/workflows/ci.yml/runs?" in url
     assert quote(">=2026-08-20T03:04:05Z", safe="") in url
     assert "branch=main" in url
+    assert "event=workflow_dispatch" in url
 
 
 def test_fetch_passes_a_timeout() -> None:

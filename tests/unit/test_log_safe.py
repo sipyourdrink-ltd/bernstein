@@ -40,6 +40,27 @@ def test_other_control_characters_are_hex_escaped() -> None:
     assert for_log("a\x85b") == "a\\x85b"
 
 
+def test_the_escape_character_is_escaped() -> None:
+    """ESC drives a terminal, not just a log parser.
+
+    An operator tailing a log file renders ANSI sequences, so an unescaped
+    ESC lets a value repaint the terminal -- overwriting the real record or
+    hiding itself -- without ever crossing a record boundary.
+    """
+    assert for_log("a\x1b[31mb") == "a\\x1b[31mb"
+
+
+def test_the_unicode_line_separators_are_escaped() -> None:
+    """U+2028/U+2029 break lines for readers that `str.splitlines` agrees with.
+
+    A pipeline that splits records with ``splitlines`` (or a chat/web renderer
+    downstream of the log) treats these as record boundaries even though CR
+    and LF are absent, so stripping only CR/LF would leave the forgery open.
+    """
+    assert for_log("line\u2028sep") == "line\\u2028sep"
+    assert for_log("line\u2029sep") == "line\\u2029sep"
+
+
 def test_a_tab_is_escaped_too() -> None:
     """Tab is a C0 control character; this helper escapes it like the rest.
 
