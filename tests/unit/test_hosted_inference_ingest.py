@@ -567,3 +567,4 @@ def test_extra_attributes_in_chain_event(adapter: HostedInferenceIngestAdapter) 
     assert chain_event is not None
     attrs = chain_event["attributes"]
     assert attrs["hosted_inference.extra.custom_field"] == "custom_value"
+
