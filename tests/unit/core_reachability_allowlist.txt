@@ -93,7 +93,6 @@ bernstein.core.identity.spiffe.mtls: #4526 audit in flight
 bernstein.core.interop.authority_envelope: #4526 audit in flight
 bernstein.core.knowledge.graphify_code_graph: #4526 audit in flight
 bernstein.core.lifecycle.pluggy_bridge: #4526 audit in flight
-bernstein.core.lineage.foreign_attestation: #4526 audit in flight
 bernstein.core.lineage.recorder: #4526 audit in flight
 bernstein.core.memory.compaction.auto: #4526 audit in flight
 bernstein.core.memory.compaction.micro: #4526 audit in flight
