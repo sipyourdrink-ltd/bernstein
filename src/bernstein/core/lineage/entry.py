@@ -185,10 +185,10 @@ class LineageEntry:
         if self.external_attestation is not None:
             # Validate the external attestation structure
             from .foreign_attestation import _REQUIRED_KEYS, _SHA256_DIGEST, _non_empty_string
-            
+
             if frozenset(self.external_attestation) != _REQUIRED_KEYS:
                 raise ValueError("external_attestation has unsupported or missing fields")
-                
+
             for field in ("issuer", "issuer_key_id", "claimed_subject"):
                 if not _non_empty_string(self.external_attestation[field]):
                     raise ValueError(f"external_attestation requires a non-empty {field}")

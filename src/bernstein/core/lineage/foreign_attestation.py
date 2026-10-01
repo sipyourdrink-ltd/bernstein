@@ -136,7 +136,7 @@ def verify_foreign_attestation_full(
         try:
             from cryptography.exceptions import InvalidSignature
             from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import ed25519, rsa, padding
+            from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa
         except ImportError:
             # If cryptography is not available, we cannot verify
             return ForeignAttestationResult(
@@ -148,9 +148,7 @@ def verify_foreign_attestation_full(
 
         try:
             # Load the public key
-            public_key = serialization.load_pem_public_key(
-                issuer_public_key_pem.encode("utf-8")
-            )
+            public_key = serialization.load_pem_public_key(issuer_public_key_pem.encode("utf-8"))
 
             # Get the signature from the envelope
             signature_b64 = typed_envelope.get("signature")
@@ -161,6 +159,7 @@ def verify_foreign_attestation_full(
                 )
 
             import base64
+
             try:
                 signature = base64.b64decode(signature_b64)
             except Exception:
@@ -216,7 +215,7 @@ def verify_foreign_attestation_full(
                 verdict=ForeignAttestationVerdict.UNVERIFIABLE,
                 verified=False,
                 taint=taint,
-                reason=f"failed to verify foreign attestation: {str(e)}",
+                reason=f"failed to verify foreign attestation: {e!s}",
             )
 
     # No key material provided or verification not attempted
