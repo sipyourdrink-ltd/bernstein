@@ -37,9 +37,10 @@ approval actually protects.
 Every other job that used to sit behind the same `pypi` environment
 (`github-release`, `publish-npm`, `publish-mcp-registry`, and the single
 job in each of `publish-docker.yml`, `publish-homebrew.yml`, `sbom.yml`)
-authenticates a different way -- `GITHUB_TOKEN`, a long-lived `NPM_TOKEN`
-or `HOMEBREW_TAP_TOKEN`, or an OIDC audience that is not scoped by
-environment at all (the MCP registry's GitHub OIDC exchange grants
+authenticates a different way -- `GITHUB_TOKEN`, a long-lived
+`HOMEBREW_TAP_TOKEN`, npm trusted publishing (the registry-side publisher
+is bound to this repository, `publish.yml` and `release-channels`; no token
+is stored), or an OIDC audience that is not scoped by environment at all (the MCP registry's GitHub OIDC exchange grants
 `io.github.<owner>/*` off the token's repository-owner claim only). None
 of them had a credential the approval was protecting, so they now run
 under `release-channels`, an environment with the same branch/tag

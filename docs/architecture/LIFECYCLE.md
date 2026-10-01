@@ -11,7 +11,7 @@ Source of truth: `src/bernstein/core/tasks/lifecycle.py` (transition tables),
 
 ---
 
-## Task States (12 states)
+## Task States (17 states)
 
 | Status | Description |
 |--------|-------------|
@@ -27,6 +27,11 @@ Source of truth: `src/bernstein/core/tasks/lifecycle.py` (transition tables),
 | `CANCELLED` | Manually or programmatically cancelled. Terminal state. |
 | `ORPHANED` | Agent crashed mid-task; pending crash recovery by the orchestrator. |
 | `PENDING_APPROVAL` | Task completed but requires human approval before taking effect. |
+| `SUSPENDED` | Operator-parked mid-session; infrastructure released, resumable from an attested receipt. Set by the suspension subsystem, not through `TASK_TRANSITIONS`. |
+| `ABANDONED` | Agent voluntarily abandoned the task with a structured reason. Terminal state, distinct from `FAILED`. |
+| `BLOCKED_BY_ABANDON` | Downstream task waiting on a dependency that was abandoned. |
+| `BLOCKED_BY_FAILED_DEP` | Downstream task whose dependency ended without delivering. |
+| `REFUSED` | Worker reported a typed refusal through the completion contract. Terminal state, distinct from `FAILED`. |
 
 ### Task State Diagram
 
@@ -37,10 +42,12 @@ stateDiagram-v2
 
     PLANNED --> OPEN : approved
     PLANNED --> CANCELLED : rejected
+    PLANNED --> FAILED : batch stage failure
 
     OPEN --> CLAIMED : agent claims task
     OPEN --> WAITING_FOR_SUBTASKS : decomposed before claim
     OPEN --> CANCELLED : manual cancel
+    OPEN --> FAILED : batch stage failure
 
     CLAIMED --> IN_PROGRESS : agent starts work
     CLAIMED --> OPEN : unclaim / force-reassign
@@ -64,25 +71,41 @@ stateDiagram-v2
 
     BLOCKED --> OPEN : dependency resolved
     BLOCKED --> CANCELLED : manual cancel
+    BLOCKED --> FAILED : batch stage failure
 
     WAITING_FOR_SUBTASKS --> DONE : all subtasks completed
     WAITING_FOR_SUBTASKS --> BLOCKED : subtask timeout escalation
     WAITING_FOR_SUBTASKS --> CANCELLED : manual cancel
+    WAITING_FOR_SUBTASKS --> FAILED : batch stage failure
 
     FAILED --> OPEN : retry (within max_retries)
 
     DONE --> CLOSED : janitor verified + merged
     DONE --> FAILED : verification rejected
+    DONE --> OPEN : janitor reopen (bounded)
+
+    PENDING_APPROVAL --> DONE : approval recorded
+
+    %% Abandon, refusal and failed-dependency edges are summarised here;
+    %% the transition table below lists each source state.
+    OPEN --> ABANDONED : agent abandons (also from CLAIMED, IN_PROGRESS, WAITING_FOR_SUBTASKS, BLOCKED, ORPHANED)
+    OPEN --> REFUSED : typed refusal (also from CLAIMED, IN_PROGRESS)
+    OPEN --> BLOCKED_BY_ABANDON : dependency abandoned (also from CLAIMED, IN_PROGRESS, WAITING_FOR_SUBTASKS)
+    OPEN --> BLOCKED_BY_FAILED_DEP : dependency failed (also from CLAIMED, IN_PROGRESS, WAITING_FOR_SUBTASKS)
+    BLOCKED_BY_ABANDON --> OPEN : requeued
+    BLOCKED_BY_FAILED_DEP --> OPEN : requeued
 
     CLOSED --> [*]
     CANCELLED --> [*]
+    ABANDONED --> [*]
+    REFUSED --> [*]
 
-    %% PENDING_APPROVAL is a terminal state set directly by the approval
-    %% subsystem. It has no FSM-managed inbound or outbound transitions.
-    PENDING_APPROVAL --> [*]
+    %% SUSPENDED is set by the suspension subsystem and has no
+    %% FSM-managed transitions.
+    SUSPENDED --> [*]
 ```
 
-> **Note - `PENDING_APPROVAL`:** This state exists in the `TaskStatus` enum and is used by the approval subsystem (see `src/bernstein/core/security/approval.py`). It is set directly rather than through the `TASK_TRANSITIONS` table, so it has no FSM-managed entry or exit path. Tasks in this state await human review and cannot progress further without manual intervention.
+> **Note - `PENDING_APPROVAL` and `SUSPENDED`:** `PENDING_APPROVAL` is set by the approval subsystem (see `src/bernstein/core/security/approval.py`); its only FSM-managed exit is `PENDING_APPROVAL -> DONE`, recorded when the approval decision accepts the work. `SUSPENDED` is set by the suspension subsystem (`src/bernstein/core/tasks/suspension.py`) and has no entry in `TASK_TRANSITIONS`, so the kernel treats it as terminal.
 
 ### Task Transition Table (exhaustive)
 
@@ -122,13 +145,44 @@ is `_always` (unconditional). Any transition not in this table raises
 | FAILED | OPEN | Retry (respects `max_retries`, default 3) |
 | DONE | CLOSED | Janitor verification passed + branch merged |
 | DONE | FAILED | Janitor verification rejected the result |
+| PLANNED | FAILED | Batch stage failure |
+| OPEN | FAILED | Batch stage failure on an unclaimed task |
+| BLOCKED | FAILED | Batch stage failure |
+| WAITING_FOR_SUBTASKS | FAILED | Batch stage failure |
+| DONE | OPEN | Janitor verification failed; task re-queued under the same id (bounded by `janitor_reopen_count`) |
+| PENDING_APPROVAL | DONE | Approval decision accepts the completed work |
+| OPEN | ABANDONED | Agent abandons the task with a structured reason |
+| CLAIMED | ABANDONED | Agent abandons the task with a structured reason |
+| IN_PROGRESS | ABANDONED | Agent abandons the task with a structured reason |
+| WAITING_FOR_SUBTASKS | ABANDONED | Agent abandons the task with a structured reason |
+| BLOCKED | ABANDONED | Agent abandons the task with a structured reason |
+| ORPHANED | ABANDONED | Agent abandons the task with a structured reason |
+| OPEN | REFUSED | Worker reports a typed refusal at the completion boundary |
+| CLAIMED | REFUSED | Worker reports a typed refusal at the completion boundary |
+| IN_PROGRESS | REFUSED | Worker reports a typed refusal at the completion boundary |
+| OPEN | BLOCKED_BY_ABANDON | A dependency was abandoned |
+| CLAIMED | BLOCKED_BY_ABANDON | A dependency was abandoned |
+| IN_PROGRESS | BLOCKED_BY_ABANDON | A dependency was abandoned |
+| WAITING_FOR_SUBTASKS | BLOCKED_BY_ABANDON | A dependency was abandoned |
+| BLOCKED_BY_ABANDON | OPEN | Operator requeues once the parent backlog is reseeded |
+| BLOCKED_BY_ABANDON | CANCELLED | Manual cancellation |
+| BLOCKED_BY_ABANDON | ABANDONED | Task itself abandoned |
+| OPEN | BLOCKED_BY_FAILED_DEP | A dependency ended without delivering |
+| CLAIMED | BLOCKED_BY_FAILED_DEP | A dependency ended without delivering |
+| IN_PROGRESS | BLOCKED_BY_FAILED_DEP | A dependency ended without delivering |
+| WAITING_FOR_SUBTASKS | BLOCKED_BY_FAILED_DEP | A dependency ended without delivering |
+| BLOCKED_BY_FAILED_DEP | OPEN | Requeued once the upstream is retried |
+| BLOCKED_BY_FAILED_DEP | CANCELLED | Manual cancellation |
+| BLOCKED_BY_FAILED_DEP | ABANDONED | Task itself abandoned |
 
 ### Terminal States
 
 Terminal states have no outbound transitions. Computed by the lifecycle kernel:
 - `CLOSED`
 - `CANCELLED`
-- `PENDING_APPROVAL` (awaits external action; no programmatic exit)
+- `REFUSED`
+- `ABANDONED`
+- `SUSPENDED` (set by the suspension subsystem; no FSM-managed exit)
 
 ### Adaptive Timeout
 
@@ -242,7 +296,7 @@ Source: `src/bernstein/tui/agent_states.py` (`AgentState`, `classify_agent_state
 | `RUNNING` | ● | green | Agent is actively working with a recent heartbeat (`in_progress`/`running` status). |
 | `STALLED` | ◐ | dark orange | Agent has a PID and active status but no heartbeat for > 5 minutes. |
 | `MERGING` | ⇄ | blue | Agent is committing, pushing, or merging results. |
-| `DEAD` | ○ | red | Session ended (`done`, `failed`, `cancelled`, `killed`), or spawn timed out, or no PID on a non-active status. |
+| `DEAD` | ○ | red | Session ended (`done`, `completed`, `failed`, `cancelled`, `killed`), or spawn timed out, or no PID on a non-active status. |
 | `IDLE` | □ | gray | Agent is waiting for a new task (`idle`, `waiting`, or `paused` status). |
 | `UNKNOWN` | ◌ | dim | Unrecognized status string or unexpected metadata combination. |
 

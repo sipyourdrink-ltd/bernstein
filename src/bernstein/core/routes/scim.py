@@ -513,8 +513,8 @@ def delete_user(user_id: str, request: Request) -> Response:
 def patch_user(user_id: str, request: Request, body: dict[str, Any]) -> _SCIMResponse:
     """Apply RFC 7644 §3.5.2 PATCH operations to a user.
 
-    This slice implements only the active=false deactivation path. Full PATCH
-    support for arbitrary attribute updates belongs to a later slice.
+    Only the deactivation operation (``replace`` of ``active`` with ``false``)
+    is supported; any other operation is rejected with 400 ``invalidValue``.
     """
     from bernstein.adapters.directory.scim import deprovision_user
 

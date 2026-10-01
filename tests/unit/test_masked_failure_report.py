@@ -27,6 +27,8 @@ def _run(
     *,
     attempts: int = 1,
     host: str = "builder-1",
+    capability_id: str = "",
+    adapter_id: str = "",
     started_at: float = 1000.0,
 ) -> FinishedRun:
     return FinishedRun(
@@ -37,6 +39,8 @@ def _run(
         started_at,
         attempt_count=attempts,
         host=host,
+        capability_id=capability_id,
+        adapter_id=adapter_id,
     )
 
 
@@ -129,7 +133,31 @@ def test_the_gate_admits_exactly_the_threshold() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_rows_are_grouped_by_the_attribution_runs_actually_carry() -> None:
+def test_rows_are_grouped_by_capability_id_when_present() -> None:
+    report = masked_failures(
+        [
+            _run("r1", attempts=3, capability_id="review.summarise"),
+            _run("r2", attempts=1, capability_id="review.summarise"),
+            _run("r3", attempts=2, capability_id="test.generate"),
+        ]
+    )
+    assert report.by_owner["review.summarise"] == (1, 2)
+    assert report.by_owner["test.generate"] == (1, 1)
+
+
+def test_rows_are_grouped_by_adapter_id_when_capability_id_missing() -> None:
+    report = masked_failures(
+        [
+            _run("r1", attempts=3, adapter_id="claude"),
+            _run("r2", attempts=1, adapter_id="claude"),
+            _run("r3", attempts=2, adapter_id="codex"),
+        ]
+    )
+    assert report.by_owner["claude"] == (1, 2)
+    assert report.by_owner["codex"] == (1, 1)
+
+
+def test_rows_are_grouped_by_host_when_both_capability_and_adapter_missing() -> None:
     report = masked_failures(
         [
             _run("r1", attempts=3, host="builder-1"),
@@ -146,6 +174,20 @@ def test_a_run_with_no_host_is_named_not_dropped() -> None:
     report = masked_failures([_run("r1", attempts=2, host="")])
     assert report.rows[0].owner == "unattributed"
     assert report.by_owner["unattributed"] == (1, 1)
+
+
+def test_priority_is_capability_then_adapter_then_host() -> None:
+    """Capability ID takes priority over adapter ID, which takes priority over host."""
+    report = masked_failures(
+        [
+            _run("r1", attempts=3, capability_id="review.summarise", adapter_id="claude", host="builder-1"),
+            _run("r2", attempts=3, adapter_id="codex", host="builder-1"),
+            _run("r3", attempts=3, host="builder-2"),
+        ]
+    )
+    assert report.by_owner["review.summarise"] == (1, 1)
+    assert report.by_owner["codex"] == (1, 1)
+    assert report.by_owner["builder-2"] == (1, 1)
 
 
 # ---------------------------------------------------------------------------

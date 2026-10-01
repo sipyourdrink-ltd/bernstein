@@ -315,12 +315,21 @@ def load_inline_override() -> dict[str, Any]:
     return _as_mapping(loaded, origin=f"${ENV_CONFIG_OVERRIDE}")
 
 
-def resolve_effective_mapping(base: Mapping[str, Any], *, config_path: Path) -> dict[str, Any]:
+def resolve_effective_mapping(
+    base: Mapping[str, Any],
+    *,
+    config_path: Path,
+    validate_layers: bool = True,
+) -> dict[str, Any]:
     """Return *base* merged with the overlay and the inline override.
+
+    Validates each layer independently before merge so invalid values are
+    reported with their source layer (#5110).
 
     Args:
         base: The mapping parsed from the committed configuration file.
         config_path: Where that file lives; used to locate the overlay.
+        validate_layers: Whether to validate overlay and inline layers before merge.
 
     Returns:
         A new mapping.  *base* is never mutated, and the file it came from is
@@ -329,10 +338,21 @@ def resolve_effective_mapping(base: Mapping[str, Any], *, config_path: Path) -> 
     Raises:
         RunOverlayError: if an overlay or inline override is present but
             unusable.
+        LayerValidationError: if an overlay or inline override fails schema
+            validation before merge.
     """
     overlay_path = resolve_overlay_path(config_path)
     overlay = load_overlay_mapping(overlay_path)
     inline = load_inline_override()
+
+    if validate_layers:
+        from bernstein.core.config.config_schema import validate_layer_partial
+
+        if overlay:
+            validate_layer_partial(overlay, layer_name="run-overlay", path=overlay_path)
+        if inline:
+            validate_layer_partial(inline, layer_name="inline-override", path=f"${ENV_CONFIG_OVERRIDE}")
+
     if not overlay and not inline:
         return dict(base)
     merged = deep_merge(base, overlay)
