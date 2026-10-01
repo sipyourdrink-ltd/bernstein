@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from jsonschema import Draft202012Validator
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 
 from bernstein.core.protocols.mcp_registry import MCPServerEntry, load_catalog_entries
 
@@ -260,7 +260,7 @@ async def _call_rejected(
     """Return True when a tool call is rejected via MCP error or ``isError`` result."""
     try:
         result = await session.call_tool(tool_name, arguments)
-    except McpError as exc:
+    except MCPError as exc:
         return True, exc.error.message
     if result.isError:
         return True, _tool_result_text(result)
@@ -275,7 +275,7 @@ async def _call_succeeds(
     """Return True when a tool call succeeds without protocol-level error."""
     try:
         result = await session.call_tool(tool_name, arguments)
-    except McpError as exc:
+    except MCPError as exc:
         return False, exc.error.message
     if result.isError:
         return False, _tool_result_text(result)
