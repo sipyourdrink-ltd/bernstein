@@ -242,7 +242,7 @@ def test_bench_run_and_verify_through_the_installed_entry_point(tmp_path: Path) 
     statuses = {r.receipt["surface"]: r.receipt["status"] for r in bundle.task_results}
     assert statuses["bench_bundle"] == "leaked" and statuses["journal"] == "not_exercised"
     assert "Pass rate   : 12.5%" in run.output  # one clean surface of eight
-    verify = CliRunner().invoke(cli, ["bench", "verify", str(out), "--suite", "leakage-v1"])
+    verify = CliRunner().invoke(cli, ["bench", "verify", str(out), "--suite", "leakage-v1", "--stub-signer"])
     assert verify.exit_code == 0, verify.output
     assert "MATCH" in verify.output
 
@@ -411,5 +411,7 @@ class TestReplayDerivesTheVerdictFromBytes:
             ],
             scheduler_config={},
         )
-        result = BenchVerifier(suite=suite, adapter=LeakageReplayAdapter(nonce="verifier_nonce")).verify(bundle)
+        result = BenchVerifier(
+            suite=suite, adapter=LeakageReplayAdapter(nonce="verifier_nonce"), require_signature=False
+        ).verify(bundle)
         assert result.status is VerificationStatus.MATCH
