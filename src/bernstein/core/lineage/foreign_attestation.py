@@ -1,10 +1,9 @@
-"""Classify foreign attestations without adopting their authority.
+"""Verify foreign attestations with optional issuer key material.
 
-This module deliberately handles only the safe first slice of foreign
-attestation support.  It validates the protocol-neutral envelope shape and
-reports a foreign claim as ``unverifiable`` until Bernstein has a native
-verifier for that issuer and format.  It never parses the foreign signature,
-adds the claim to Bernstein's HMAC chain, or upgrades its trust class.
+This module handles foreign attestation verification when issuer public key
+material is provided. It validates the protocol-neutral envelope shape and
+attempts to verify the foreign issuer signature when key material is available.
+Without key material, it reports unverifiable as before.
 """
 
 from __future__ import annotations
@@ -26,11 +25,13 @@ class ForeignAttestationVerdict(StrEnum):
 
     UNVERIFIABLE = "unverifiable"
     MALFORMED = "malformed"
+    REJECTED = "rejected"
+    VERIFIED_FOREIGN = "verified_foreign"
 
 
 @dataclass(frozen=True, slots=True)
 class ForeignAttestationResult:
-    """Fail-closed classification of an attestation Bernstein did not issue."""
+    """Classification of a foreign attestation with verification status."""
 
     verdict: ForeignAttestationVerdict
     verified: bool
@@ -60,6 +61,15 @@ def _malformed(reason: str, taint: TrustClass = LOWEST_TRUST_CLASS) -> ForeignAt
     )
 
 
+def _rejected(reason: str, taint: TrustClass) -> ForeignAttestationResult:
+    return ForeignAttestationResult(
+        verdict=ForeignAttestationVerdict.REJECTED,
+        verified=False,
+        taint=taint,
+        reason=reason,
+    )
+
+
 def verify_foreign_attestation(attestation: Mapping[str, object]) -> ForeignAttestationResult:
     """Classify one protocol-neutral foreign attestation without verifying it.
 
@@ -73,6 +83,28 @@ def verify_foreign_attestation(attestation: Mapping[str, object]) -> ForeignAtte
         issuer- and format-specific verifier was invoked.  Invalid metadata is
         ``malformed`` and fails closed at the lowest trust class.
     """
+    return verify_foreign_attestation_full(attestation, None)
+
+
+def verify_foreign_attestation_full(
+    attestation: Mapping[str, object], issuer_public_key_pem: str | None = None
+) -> ForeignAttestationResult:
+    """Verify a foreign attestation with optional issuer public key material.
+
+    Args:
+        attestation: The typed metadata attached beside a Bernstein lineage
+            record.  Its foreign envelope remains opaque to this function.
+        issuer_public_key_pem: Optional PEM-encoded public key of the foreign
+            issuer. If provided, attempts to verify the signature in the
+            envelope. If None or verification fails, falls back to classification.
+
+    Returns:
+        A result with verdict indicating whether the foreign signature was
+        verified (verified_foreign), could not be verified due to missing key
+        material (unverifiable), was evaluated but failed (rejected), or is
+        structurally invalid (malformed).
+    """
+    # First validate the basic structure
     if frozenset(attestation) != _REQUIRED_KEYS:
         return _malformed("foreign attestation has unsupported or missing fields")
 
@@ -98,6 +130,95 @@ def verify_foreign_attestation(attestation: Mapping[str, object]) -> ForeignAtte
     if not isinstance(payload_hash, str) or _SHA256_DIGEST.fullmatch(payload_hash) is None:
         return _malformed("foreign attestation envelope requires a sha256 payload_hash", taint)
 
+    # If we have issuer public key material, attempt to verify the signature
+    if issuer_public_key_pem is not None:
+        # Import here to avoid dependency if cryptography is not installed
+        try:
+            from cryptography.exceptions import InvalidSignature
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ed25519, padding, rsa
+        except ImportError:
+            # If cryptography is not available, we cannot verify
+            return ForeignAttestationResult(
+                verdict=ForeignAttestationVerdict.UNVERIFIABLE,
+                verified=False,
+                taint=taint,
+                reason="cryptography library not available for signature verification",
+            )
+
+        try:
+            # Load the public key
+            public_key = serialization.load_pem_public_key(issuer_public_key_pem.encode("utf-8"))
+
+            # Get the signature from the envelope
+            signature_b64 = typed_envelope.get("signature")
+            if not isinstance(signature_b64, str):
+                return _rejected(
+                    "foreign attestation envelope missing or invalid signature",
+                    taint,
+                )
+
+            import base64
+
+            try:
+                signature = base64.b64decode(signature_b64)
+            except Exception:
+                return _rejected(
+                    "foreign attestation envelope has invalid base64 signature",
+                    taint,
+                )
+
+            # The data that was signed is the payload hash
+            # We verify the signature against the payload_hash
+            data_to_verify = payload_hash.encode("utf-8")
+
+            # Verify based on key type
+            if isinstance(public_key, ed25519.Ed25519PublicKey):
+                try:
+                    public_key.verify(signature, data_to_verify)
+                    verified = True
+                except InvalidSignature:
+                    verified = False
+            elif isinstance(public_key, rsa.RSAPublicKey):
+                try:
+                    public_key.verify(
+                        signature,
+                        data_to_verify,
+                        padding.PKCS1v15(),
+                        hashes.SHA256(),
+                    )
+                    verified = True
+                except InvalidSignature:
+                    verified = False
+            else:
+                # Unsupported key type
+                return ForeignAttestationResult(
+                    verdict=ForeignAttestationVerdict.UNVERIFIABLE,
+                    verified=False,
+                    taint=taint,
+                    reason="unsupported public key type for signature verification",
+                )
+
+            if verified:
+                return ForeignAttestationResult(
+                    verdict=ForeignAttestationVerdict.VERIFIED_FOREIGN,
+                    verified=True,
+                    taint=taint,
+                    reason="foreign issuer signature verified successfully",
+                )
+            else:
+                return _rejected("foreign issuer signature verification failed", taint)
+
+        except Exception as e:
+            # Any error in key loading or verification process
+            return ForeignAttestationResult(
+                verdict=ForeignAttestationVerdict.UNVERIFIABLE,
+                verified=False,
+                taint=taint,
+                reason=f"failed to verify foreign attestation: {e!s}",
+            )
+
+    # No key material provided or verification not attempted
     return ForeignAttestationResult(
         verdict=ForeignAttestationVerdict.UNVERIFIABLE,
         verified=False,

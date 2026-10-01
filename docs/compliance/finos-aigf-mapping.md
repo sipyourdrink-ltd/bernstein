@@ -14,7 +14,7 @@ two sides of the framework are mapped end-to-end.
 
 | Status        | Count | Notes |
 |---------------|-------|-------|
-| Covered       | 16/16 | DSSE envelope on the audit chain, per-role adapter policy, and Sigstore-backed release attestation are wired in CI; release-artefact provenance ships via `actions/attest-build-provenance@v2` on every published wheel + sdist. |
+| Covered       | 16/16 | DSSE envelope on the audit chain, per-role adapter policy, and Sigstore-backed release attestation are wired in CI; release-artefact provenance ships via `actions/attest-build-provenance` on every published wheel + sdist. |
 
 ## 1. AIGF control inventory
 
@@ -27,7 +27,7 @@ control id is cited.
 |--------------|--------------------------|-------|---------|
 | `CTRL-AUDIT-TRAIL` | HMAC-chained JSONL audit log + Article 12 evidence bundle (deterministic zip with manifest, clause map, retention pin) + DSSE/in-toto envelope wrapper. | `src/bernstein/core/security/audit.py`, `src/bernstein/core/security/article12_bundle.py`, `src/bernstein/core/security/audit_dsse.py` | Covered. |
 | `CTRL-DATA-LINEAGE` | Per-artefact lineage WAL with `regulatory_class` field and customer-controlled Ed25519 detached signature (schema v2). Lineage v2 (two-layer parent ref + detached child body, HMAC-chained across both layers, SLSA v0.3 provenance export per child) lands as an opt-in writer via `BERNSTEIN_LINEAGE_V2=1` or `bernstein.yaml` `lineage.version: 2`; v1 stays default. | `src/bernstein/core/persistence/lineage.py`, `src/bernstein/core/persistence/lineage_signer.py`, `src/bernstein/core/lineage/v2_store.py` | Covered. |
-| `CTRL-MODEL-SUPPLY-CHAIN` | Per-task Sigstore/Rekor keyless attestation with Ed25519 fallback; agent-card signer + JWKS rotation; release-artefact build provenance via `actions/attest-build-provenance@v2` on every published wheel + sdist; `bernstein verify --sigstore` for consumers. | `src/bernstein/core/security/sigstore_attestation.py`, `src/bernstein/core/security/agent_card_signer.py`, `src/bernstein/core/security/agent_card_keystore.py`, `src/bernstein/core/distribution/sigstore_attestation_verify.py`, `.github/workflows/publish.yml`, `.github/workflows/auto-release.yml` | Covered. Both halves of the supply chain are signed: per-task Sigstore for runtime artefacts, `actions/attest-build-provenance@v2` (SLSA L3, keyless OIDC, Rekor public log) for release artefacts. Consumers verify with `gh attestation verify <file> --owner sipyourdrink-ltd` or, equivalently, `bernstein verify <wheelhouse> --sigstore --sigstore-owner sipyourdrink-ltd`. |
+| `CTRL-MODEL-SUPPLY-CHAIN` | Per-task Sigstore/Rekor keyless attestation with Ed25519 fallback; agent-card signer + JWKS rotation; release-artefact build provenance via `actions/attest-build-provenance` on every published wheel + sdist; `bernstein verify --sigstore` for consumers. | `src/bernstein/core/security/sigstore_attestation.py`, `src/bernstein/core/security/agent_card_signer.py`, `src/bernstein/core/security/agent_card_keystore.py`, `src/bernstein/core/distribution/sigstore_attestation_verify.py`, `.github/workflows/publish.yml` | Covered. Both halves of the supply chain are signed: per-task Sigstore for runtime artefacts, `actions/attest-build-provenance` (SLSA L3, keyless OIDC, Rekor public log) for release artefacts. Consumers verify with `gh attestation verify <file> --owner sipyourdrink-ltd` or, equivalently, `bernstein verify <wheelhouse> --sigstore --sigstore-owner sipyourdrink-ltd`. |
 | `CTRL-TOOL-INVENTORY` | Adapter registry + capability-matrix yaml + per-role profile manager. | `src/bernstein/adapters/registry.py`, `src/bernstein/core/security/capability_matrix.py`, `src/bernstein/core/security/claude_permission_profiles.py` | Covered. |
 | `CTRL-HUMAN-OVERSIGHT` | Single + dual approval gates, plan-approval workflow, per-role default deny. | `src/bernstein/core/security/approval.py`, `src/bernstein/core/security/dual_approval.py`, `src/bernstein/core/security/plan_approval.py`, `src/bernstein/core/security/auto_approve.py` | Covered. |
 | `CTRL-ACCESS-CONTROL` | API-route RBAC (admin/operator/viewer) + per-role allowed/disallowed tools + permission-graph + delegation matrix. | `src/bernstein/core/security/rbac.py`, `src/bernstein/core/security/claude_permission_profiles.py`, `src/bernstein/core/security/permission_graph.py`, `src/bernstein/core/security/permission_delegation.py`, `src/bernstein/core/security/permission_matrix.py` | Covered. |
@@ -40,12 +40,12 @@ control id is cited.
 | `CTRL-ENCRYPTION-AT-REST` | State-encryption module + credential vault (OS keychain transport) + injector. | `src/bernstein/core/security/state_encryption.py`, `src/bernstein/core/security/vault/`, `src/bernstein/core/security/vault_injector.py` | Covered. |
 | `CTRL-ENCRYPTION-IN-TRANSIT` | mTLS cluster guard + TLS pinning + socket guard. | `src/bernstein/core/security/socket_guard.py`, `src/bernstein/adapters/clm_tls_launcher.py` | Covered. |
 | `CTRL-DEPENDENCY-INTEGRITY` | SBOM generator + license scanner + vuln-disclosure pipeline + wheelhouse verify. | `src/bernstein/core/security/sbom.py`, `src/bernstein/core/security/license_scanner.py`, `src/bernstein/core/security/vuln_disclosure.py` | Covered. |
-| `CTRL-CHANGE-MANAGEMENT` | WAL + audit chain + git provenance signing. | `src/bernstein/core/security/commit_signing.py`, `src/bernstein/core/persistence/wal/` | Covered. |
+| `CTRL-CHANGE-MANAGEMENT` | WAL + audit chain + git provenance signing. | `src/bernstein/core/security/commit_signing.py`, `src/bernstein/core/persistence/wal.py` | Covered. |
 
 **Net result: 16 of 16 controls covered.** Release-artefact provenance via
-`actions/attest-build-provenance@v2` is wired into both release pipelines
-(`publish.yml` for tag-triggered publishes and `auto-release.yml` for the
-patch-bump path); a `bernstein verify --sigstore` consumer-side checker
+`actions/attest-build-provenance` is wired into `publish.yml` (the release
+pipeline that `auto-release.yml` dispatches after it pushes a release tag;
+container images are attested in `publish-docker.yml`); a `bernstein verify --sigstore` consumer-side checker
 re-runs the Rekor inclusion proof + Fulcio cert-chain validation via the
 official `gh attestation verify` CLI.
 
@@ -60,7 +60,7 @@ Same exercise on the AIR-* risk side.
 | `AIR-OP-001` | Tool-chain logic vulnerabilities | Lethal-trifecta capability matrix; refusal events emitted to the audit chain. | Covered. |
 | `AIR-OP-002` | Inadequate record-keeping for AI decisions | HMAC-chained audit + Article 12 bundle + DSSE envelope. | Covered. |
 | `AIR-OP-003` | Lack of explainability | Deterministic Python orchestration - coordination is zero-token, every decision is reproducible. The structural property that bernstein never delegates orchestration to an LLM is the basis for this mapping. | Covered (architectural). |
-| `AIR-OP-004` | Model supply-chain compromise | Per-task Sigstore + agent-card JWKS + GitHub `actions/attest-build-provenance@v2` build provenance on every released wheel + sdist + consumer-side `bernstein verify --sigstore`. | Covered. Both halves of the supply chain (runtime artefacts + release artefacts) carry Sigstore-backed provenance. |
+| `AIR-OP-004` | Model supply-chain compromise | Per-task Sigstore + agent-card JWKS + GitHub `actions/attest-build-provenance` build provenance on every released wheel + sdist + consumer-side `bernstein verify --sigstore`. | Covered. Both halves of the supply chain (runtime artefacts + release artefacts) carry Sigstore-backed provenance. |
 | `AIR-OP-005` | Hallucination in production | Out of scope - bernstein operates at task-level, not model-level. | Out of scope. |
 | `AIR-OP-006` | Inadequate human oversight | Approval, dual-approval, plan-approval, role-default deny. | Covered. |
 | `AIR-OP-007` | Regulatory-violation risk via missing audit trails | Same chain as `AIR-OP-002`; DSSE envelope provides third-party-verifiability. | Covered. |
@@ -88,7 +88,7 @@ Same exercise on the AIR-* risk side.
 | DSSE/in-toto envelope on the bundle | Round-trip + tamper tests in place. v1 uses local Ed25519; Sigstore keyless variant is documented in the module docstring. |
 | Standalone verifier | `tools/verify_audit_dsse.py`. Subprocess-isolated test enforces no `bernstein.*` import. Pure stdlib + `cryptography`. |
 | Per-role adapter deny-list | Empty allow-list = all-allowed. Hooks `bernstein.adapters.registry.get_adapter` so every spawn site is covered. |
-| Sigstore release attestation (SLSA L3) | `actions/attest-build-provenance@v2` runs on every published wheel + sdist via `publish.yml` and `auto-release.yml`. Consumers verify with `gh attestation verify <file> --owner sipyourdrink-ltd` or `bernstein verify <wheelhouse> --sigstore`. Smoke test in `tests/unit/test_release_attestation_workflow.py` guards against a workflow refactor silently re-opening the gap. |
+| Sigstore release attestation (SLSA L3) | `actions/attest-build-provenance` runs on every published wheel + sdist via `publish.yml`. Consumers verify with `gh attestation verify <file> --owner sipyourdrink-ltd` or `bernstein verify <wheelhouse> --sigstore`. Smoke test in `tests/unit/test_release_attestation_workflow.py` guards against a workflow refactor silently re-opening the gap. |
 
 ## 5. References
 

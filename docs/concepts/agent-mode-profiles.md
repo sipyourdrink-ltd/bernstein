@@ -24,18 +24,13 @@ default mapping is:
 | Model family | Profile | Why |
 |---|---|---|
 | Claude (Code, Opus, Sonnet) | `smart` | rapid feedback, full tool surface |
-| GPT-5.x, o-series | `deep` | longer turns, narrower tools, lower temp |
+| GPT-5.x, o-series | `deep` | longer turns (120), narrower tools (Read/Grep/Glob/Bash), temperature 0.3 |
 | Small / fast (Qwen, Haiku) | `fast` | one tool subset, short turn budget |
 
-Override per task via tag:
+Override per task via `metadata["mode"]` (a profile name known to the registry):
 
-```yaml
-stages:
-  - name: research
-    steps:
-      - role: backend
-        goal: "Map every callsite of FooClient"
-        tags: [mode:fast]
+```python
+task.metadata["mode"] = "fast"
 ```
 
 Inspect a model's resolved profile:
@@ -66,10 +61,10 @@ expected_runtime_minutes: 15
 |---|--:|---|
 | `defaults.MODE_PROFILES_ENABLED` | `true` | Master switch. |
 | `templates/mode_profiles/*.yaml` | three profiles shipped | Profile registry, loaded at startup. |
-| Per-task tag `mode=<name>` | none | Force a profile for one task. |
+| Per-task `metadata["mode"]` | none | Force a profile for one task. |
 
 Spawn metrics carry a `mode_profile` Prometheus label, so you can
-graph `spawns_total{mode_profile="deep"}` to see distribution.
+graph `bernstein_agent_spawns_by_mode_total{mode_profile="deep"}` to see distribution.
 
 ## Limitations
 

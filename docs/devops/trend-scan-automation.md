@@ -1,9 +1,10 @@
 # Trend scan automation
 
-A scheduled job that ingests upstream dependency-relevant signals into the
-orchestrator backlog directory as a markdown rollup. No tickets are filed
-automatically; the operator reviews the rollup and runs `bernstein backlog
-new` for the rows that warrant a ticket.
+An on-demand CLI job (no scheduled workflow ships) that ingests upstream
+dependency-relevant signals into a markdown rollup under `.sdd/trend-scan/`,
+gap-checked against the orchestrator backlog directory. No tickets are filed
+automatically; the operator reviews the rollup and adds a ticket file under
+`.sdd/backlog/open/` for the rows that warrant one.
 
 ## What it does
 
@@ -35,8 +36,9 @@ Common flags:
 | `--output` | Override the rollup file path. |
 | `--sources` | JSON file overriding the default source specs. |
 | `--fetcher-cmd` | External fetcher executable. Required unless `--offline-stub` is passed; without either, the command exits 2 rather than writing an empty rollup. |
-| `--offline-stub` | Force the no-op fetcher (no network). |
-| `--max-per-source` | Cap candidates surfaced per source (default 5). |
+| `--offline-stub` | Force the no-op fetcher (no network). Also forced by `BERNSTEIN_TREND_SCAN_OFFLINE=1`. |
+| `--fetcher-timeout` | Per-source fetcher timeout in seconds (default 30). |
+| `--max-per-source` | Cap candidates surfaced per source (default 5, range 1-50). |
 
 ### Source spec format
 
@@ -86,8 +88,8 @@ entry point. Reintroduce a workflow if and when someone owns the cadence.
 1. Run the CLI and open the rollup it writes under `.sdd/trend-scan/`.
 2. Skim the table; ignore `duplicate` and `recently-closed` rows unless
    context has changed.
-3. For each `new` row that warrants action, run `bernstein backlog new`
-   and paste the relevant URL plus a one-line problem statement.
+3. For each `new` row that warrants action, add a ticket file under
+   `.sdd/backlog/open/` with the relevant URL plus a one-line problem statement.
 
 ## Tests
 
