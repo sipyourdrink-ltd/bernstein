@@ -169,9 +169,7 @@ class HostedInferencePayload:
 
         missing = [field for field in required_str_fields if field not in raw]
         if missing:
-            raise HostedInferenceIngestError(
-                f"Missing required fields: {', '.join(missing)}"
-            )
+            raise HostedInferenceIngestError(f"Missing required fields: {', '.join(missing)}")
 
         # Validate string fields
         parsed_str = {}
@@ -188,9 +186,7 @@ class HostedInferencePayload:
         for json_key, attr_name in required_int_fields.items():
             value = raw[json_key]
             if not isinstance(value, int) or value < 0:
-                raise HostedInferenceIngestError(
-                    f"Field {json_key!r} must be a non-negative integer, got {value!r}"
-                )
+                raise HostedInferenceIngestError(f"Field {json_key!r} must be a non-negative integer, got {value!r}")
             parsed_int[attr_name] = value
 
         # Optional fields
@@ -208,9 +204,7 @@ class HostedInferencePayload:
 
         metadata = raw.get("metadata")
         if metadata is not None and not isinstance(metadata, dict):
-            raise HostedInferenceIngestError(
-                f"metadata must be a dict if provided, got {type(metadata).__name__!r}"
-            )
+            raise HostedInferenceIngestError(f"metadata must be a dict if provided, got {type(metadata).__name__!r}")
 
         return cls(
             principal_id=parsed_str["principal_id"],
@@ -386,9 +380,7 @@ class HostedInferenceIngestAdapter:
                 f"which this adapter can produce; supported types are {sorted(valid)}"
             )
 
-    def _resolve_certification(
-        self, base_url: str, model: str
-    ) -> tuple[str, frozenset[str], bool]:
+    def _resolve_certification(self, base_url: str, model: str) -> tuple[str, frozenset[str], bool]:
         """Resolve endpoint certification for the given endpoint/model.
 
         Returns:
@@ -477,9 +469,7 @@ class HostedInferenceIngestAdapter:
 
         return IngestCallResult(typed=activity)
 
-    def ingest_payload(
-        self, payload: list[dict[str, Any]] | dict[str, Any]
-    ) -> list[IngestCallResult]:
+    def ingest_payload(self, payload: list[dict[str, Any]] | dict[str, Any]) -> list[IngestCallResult]:
         """Ingest a hosted inference payload (atomic on parse errors).
 
         ``payload`` may be a single call dict or a list of call dicts.
@@ -512,9 +502,7 @@ class HostedInferenceIngestAdapter:
         results: list[IngestCallResult] = []
         for i, raw in enumerate(calls):
             if not isinstance(raw, dict):
-                raise HostedInferenceIngestError(
-                    f"call[{i}] is not a dict, got {type(raw).__name__!r}"
-                )
+                raise HostedInferenceIngestError(f"call[{i}] is not a dict, got {type(raw).__name__!r}")
             result = self.ingest_call(raw)
             if result.parse_error:
                 raise HostedInferenceIngestError(f"call[{i}] parse error: {result.parse_error}")
@@ -543,7 +531,5 @@ def ingest_payload(
         HostedInferenceIngestError: When the payload is malformed or a call
             within it cannot be parsed.
     """
-    adapter = HostedInferenceIngestAdapter(
-        source_label=source_label, certification_resolver=certification_resolver
-    )
+    adapter = HostedInferenceIngestAdapter(source_label=source_label, certification_resolver=certification_resolver)
     return adapter.ingest_payload(payload)

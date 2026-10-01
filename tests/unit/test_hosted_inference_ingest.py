@@ -81,7 +81,16 @@ def test_hosted_inference_payload_validation_principal_id_required() -> None:
     """A payload without principal_id raises HostedInferenceIngestError."""
     with pytest.raises(HostedInferenceIngestError, match="principal_id"):
         HostedInferencePayload.from_dict(
-            {"endpoint_base_url": "https://api.openai.com/v1", "model": "gpt-4", "request_digest": "abc", "response_digest": "def", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "operation": "chat"}  # type: ignore[typeddict-item]
+            {
+                "endpoint_base_url": "https://api.openai.com/v1",
+                "model": "gpt-4",
+                "request_digest": "abc",
+                "response_digest": "def",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "operation": "chat",
+            }  # type: ignore[typeddict-item]
         )
 
 
@@ -89,7 +98,16 @@ def test_hosted_inference_payload_validation_endpoint_base_url_required() -> Non
     """A payload without endpoint_base_url raises HostedInferenceIngestError."""
     with pytest.raises(HostedInferenceIngestError, match="endpoint_base_url"):
         HostedInferencePayload.from_dict(
-            {"principal_id": "user1", "model": "gpt-4", "request_digest": "abc", "response_digest": "def", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "operation": "chat"}  # type: ignore[typeddict-item]
+            {
+                "principal_id": "user1",
+                "model": "gpt-4",
+                "request_digest": "abc",
+                "response_digest": "def",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "operation": "chat",
+            }  # type: ignore[typeddict-item]
         )
 
 
@@ -97,7 +115,16 @@ def test_hosted_inference_payload_validation_model_required() -> None:
     """A payload without model raises HostedInferenceIngestError."""
     with pytest.raises(HostedInferenceIngestError, match="model"):
         HostedInferencePayload.from_dict(
-            {"principal_id": "user1", "endpoint_base_url": "https://api.openai.com/v1", "request_digest": "abc", "response_digest": "def", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "operation": "chat"}  # type: ignore[typeddict-item]
+            {
+                "principal_id": "user1",
+                "endpoint_base_url": "https://api.openai.com/v1",
+                "request_digest": "abc",
+                "response_digest": "def",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "operation": "chat",
+            }  # type: ignore[typeddict-item]
         )
 
 
@@ -105,7 +132,16 @@ def test_hosted_inference_payload_validation_request_digest_required() -> None:
     """A payload without request_digest raises HostedInferenceIngestError."""
     with pytest.raises(HostedInferenceIngestError, match="request_digest"):
         HostedInferencePayload.from_dict(
-            {"principal_id": "user1", "endpoint_base_url": "https://api.openai.com/v1", "model": "gpt-4", "response_digest": "def", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "operation": "chat"}  # type: ignore[typeddict-item]
+            {
+                "principal_id": "user1",
+                "endpoint_base_url": "https://api.openai.com/v1",
+                "model": "gpt-4",
+                "response_digest": "def",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "operation": "chat",
+            }  # type: ignore[typeddict-item]
         )
 
 
@@ -113,7 +149,16 @@ def test_hosted_inference_payload_validation_response_digest_required() -> None:
     """A payload without response_digest raises HostedInferenceIngestError."""
     with pytest.raises(HostedInferenceIngestError, match="response_digest"):
         HostedInferencePayload.from_dict(
-            {"principal_id": "user1", "endpoint_base_url": "https://api.openai.com/v1", "model": "gpt-4", "request_digest": "abc", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "operation": "chat"}  # type: ignore[typeddict-item]
+            {
+                "principal_id": "user1",
+                "endpoint_base_url": "https://api.openai.com/v1",
+                "model": "gpt-4",
+                "request_digest": "abc",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "operation": "chat",
+            }  # type: ignore[typeddict-item]
         )
 
 
@@ -175,7 +220,16 @@ def test_hosted_inference_payload_validation_operation_required() -> None:
     """A payload without operation raises HostedInferenceIngestError."""
     with pytest.raises(HostedInferenceIngestError, match="operation"):
         HostedInferencePayload.from_dict(
-            {"principal_id": "user1", "endpoint_base_url": "https://api.openai.com/v1", "model": "gpt-4", "request_digest": "abc", "response_digest": "def", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}  # type: ignore[typeddict-item]
+            {
+                "principal_id": "user1",
+                "endpoint_base_url": "https://api.openai.com/v1",
+                "model": "gpt-4",
+                "request_digest": "abc",
+                "response_digest": "def",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+            }  # type: ignore[typeddict-item]
         )
 
 
@@ -500,14 +554,36 @@ def test_empty_list_raises(adapter: HostedInferenceIngestAdapter) -> None:
 
 def test_missing_principal_id_returns_error_result(adapter: HostedInferenceIngestAdapter) -> None:
     """A call missing principal_id returns an error result."""
-    result = adapter.ingest_call({"endpoint_base_url": "https://api.openai.com/v1", "model": "gpt-4", "request_digest": "abc", "response_digest": "def", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "operation": "chat"})
+    result = adapter.ingest_call(
+        {
+            "endpoint_base_url": "https://api.openai.com/v1",
+            "model": "gpt-4",
+            "request_digest": "abc",
+            "response_digest": "def",
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "operation": "chat",
+        }
+    )
     assert result.is_error
     assert "principal_id" in result.parse_error
 
 
 def test_missing_model_returns_error_result(adapter: HostedInferenceIngestAdapter) -> None:
     """A call missing model returns an error result."""
-    result = adapter.ingest_call({"principal_id": "user1", "endpoint_base_url": "https://api.openai.com/v1", "request_digest": "abc", "response_digest": "def", "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2, "operation": "chat"})
+    result = adapter.ingest_call(
+        {
+            "principal_id": "user1",
+            "endpoint_base_url": "https://api.openai.com/v1",
+            "request_digest": "abc",
+            "response_digest": "def",
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "operation": "chat",
+        }
+    )
     assert result.is_error
     assert "model" in result.parse_error
 
@@ -567,4 +643,3 @@ def test_extra_attributes_in_chain_event(adapter: HostedInferenceIngestAdapter) 
     assert chain_event is not None
     attrs = chain_event["attributes"]
     assert attrs["hosted_inference.extra.custom_field"] == "custom_value"
-
