@@ -214,8 +214,7 @@ async def test_timeout_effect_stays_bound_to_the_intent(tmp_path: Any) -> None:
 
 def test_partial_outcome_when_result_and_error_are_both_present() -> None:
     assert (
-        toolcall_effect_outcome({"result": {"ok": True}, "error": {"code": -32000, "message": "partial"}})
-        == "partial"
+        toolcall_effect_outcome({"result": {"ok": True}, "error": {"code": -32000, "message": "partial"}}) == "partial"
     )
 
 
