@@ -111,7 +111,6 @@ bernstein.core.notifications.sinks.slack: resolved by dotted string from notific
 bernstein.core.notifications.sinks.telegram: resolved by dotted string from notifications.registry._BUILTIN_DRIVERS at build_sink() time
 bernstein.core.notifications.sinks.webhook: resolved by dotted string from notifications.registry._BUILTIN_DRIVERS at build_sink() time
 bernstein.core.observability.apm_export: #4526 audit in flight
-bernstein.core.observability.hosted_inference_ingest: exported from observability.__init__ for PR #6341
 bernstein.core.observability.apm_integration: #4526 audit in flight
 bernstein.core.observability.cascading_failure_circuit_breaker: #4526 audit in flight
 bernstein.core.observability.datadog_export: #4526 audit in flight
