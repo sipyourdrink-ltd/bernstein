@@ -116,12 +116,21 @@ def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
     suite whose unit of work is the scan report; ``holmesgpt`` is a read-only
     investigation CLI whose unit of work is the conclusion artifact (#3123);
     ``skyvern`` drives a browser-automation server whose unit of work is the
-    run result, not a commit. Every coding adapter keeps ``git-diff`` - growing
+    run result, not a commit; ``gpt_researcher`` and ``tongyi_deepresearch`` are
+    deep-research agents whose unit of work is the report bound to its sources.
+    Every coding adapter keeps ``git-diff`` - growing
     this set is a deliberate act, not a default drift, and each member needs a
     comment at its declaration saying what its unit of work is instead.
     """
     non_git_diff = {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF}
-    assert non_git_diff == {"computer_use", "garak", "holmesgpt", "skyvern"}
+    assert non_git_diff == {
+        "computer_use",
+        "garak",
+        "gpt_researcher",
+        "holmesgpt",
+        "skyvern",
+        "tongyi_deepresearch",
+    }
 
 
 def test_computer_use_declares_artifact_output_mode() -> None:

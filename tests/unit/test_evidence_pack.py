@@ -122,12 +122,12 @@ def sdd_dir(tmp_path: Path) -> Path:
 
 class TestStandardMap:
     def test_supported_standards_constant(self) -> None:
-        # ai-act, the two OWASP agentic-security catalogues, and the
-        # ISO/IEC 42001 Annex A subset ship with reviewed control maps.
+        # ai-act, the two OWASP agentic-security catalogues, the
+        # ISO/IEC 42001 Annex A subset, and CoSAI ship with reviewed control maps.
         # DORA and FINOS AIGF remain tracked under #1316 and must NOT be
         # selectable until their clause mappings are validated; emitting
         # TODO-only bundles would mislead operators.
-        assert set(SUPPORTED_STANDARDS) == {"ai-act", "owasp-asi", "owasp-skills", "iso-42001"}
+        assert set(SUPPORTED_STANDARDS) == {"ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai"}
         assert "dora" not in SUPPORTED_STANDARDS
         assert "finos-aigf" not in SUPPORTED_STANDARDS
 

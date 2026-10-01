@@ -946,7 +946,7 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
     """
     gate = ci_jobs[GATE_JOB_KEY]
     tolerated: set[str] = set()
-    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "PUSH_ONLY"):
+    for name in ("DOCS_ONLY_SKIPPABLE", "MACOS_GATED", "POST_MERGE_PUSH_SKIPPABLE"):
         bucket = rollup_constants.get(name)
         assert bucket, f"the roll-up no longer declares {name}"
         tolerated |= set(bucket)
@@ -964,7 +964,8 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
     assert not undeclared, (
         "these jobs are required by `CI gate` and gate themselves on the event shape, but no tolerance bucket in "
         f"the roll-up names them: {undeclared}. On a merge_group ref they may skip; an undeclared skip is flagged "
-        "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or PUSH_ONLY with "
+        "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or "
+        "POST_MERGE_PUSH_SKIPPABLE with "
         "the reason its skip is safe, or drop the event condition."
     )
 

@@ -202,6 +202,13 @@ class TestRegulatedData:
         result = _scanner().scan_diff(diff)
         assert _has_rule(result, "us_ssn")
 
+    def test_same_rule_reported_for_each_occurrence_across_lines(self) -> None:
+        diff = '+ssn_alice = "123-45-6789"\n+some unrelated line\n+ssn_bob = "987-65-4321"\n'
+        result = _scanner().scan_diff(diff)
+        ssn_findings = [f for f in result.findings if f.rule == "us_ssn"]
+        assert len(ssn_findings) == 2
+        assert {f.line_number for f in ssn_findings} == {1, 3}
+
 
 # ---------------------------------------------------------------------------
 # Proprietary data detection

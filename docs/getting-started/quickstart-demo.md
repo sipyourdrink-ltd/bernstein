@@ -37,7 +37,7 @@ bernstein demo --flask-todo --real --adapter codex
 | Flag | Default | Meaning |
 |---|---|---|
 | `--keep` | off | Preserve the temp project directory after completion instead of deleting it. |
-| `--timeout SECONDS` | 300 | Maximum seconds to wait for all seeded tasks to finish. |
+| `--timeout SECONDS` | 300 | Maximum seconds to wait for all seeded tasks to finish. (`bernstein demo --help` shows 120 because that is plain `demo`'s default; `--flask-todo` uses 300 unless you pass `--timeout`.) |
 | `--adapter NAME` | `mock` | CLI adapter to drive the agents. Like the rest of `bernstein demo`, real agents run only behind `--real`; without it the scenario runs on mock agents and costs nothing. |
 
 `bernstein quickstart` remains registered as a deprecated alias for the whole

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from rich.console import Console
 
@@ -129,6 +129,8 @@ async def run_all(
     adapter_names: Iterable[str] | None = None,
     provider_names: Iterable[str] | None = None,
     audit_dir: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    unattended: bool = False,
 ) -> list[DoctorResult]:
     """Run every doctor category and return the merged result list.
 
@@ -141,6 +143,8 @@ async def run_all(
         provider_names: Restrict the network probes.
         audit_dir: Audit directory to check the append lock against. Defaults
             to ``.sdd/audit`` under the working directory.
+        env: Optional environment mapping for probes.
+        unattended: Whether to run in unattended mode with spawner environment.
     """
     from bernstein.cli.doctor.adapter_checks import run_adapter_checks
     from bernstein.cli.doctor.audit_lock_checks import check_audit_lock_filesystem
@@ -152,7 +156,10 @@ async def run_all(
     env_results = run_environment_checks()
     env_results.append(check_audit_lock_filesystem(audit_dir or Path.cwd() / ".sdd" / "audit"))
 
-    adapter_task = asyncio.create_task(run_adapter_checks(adapter_names))
+    if env is not None or unattended:
+        adapter_task = asyncio.create_task(run_adapter_checks(adapter_names, env=env, unattended=unattended))
+    else:
+        adapter_task = asyncio.create_task(run_adapter_checks(adapter_names))
     network_task = asyncio.create_task(run_network_checks(provider_names))
 
     adapter_results, network_results = await asyncio.gather(

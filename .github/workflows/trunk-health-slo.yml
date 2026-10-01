@@ -1,12 +1,17 @@
 name: Trunk Health SLO
 
-# Compute the last-24h main-red rate (failed CI runs / total CI runs on
-# main) and toggle a marker issue labeled `trunk-unstable` accordingly. A
+# Compute the last-24h main-red rate from completed full-suite CI runs and
+# toggle a marker issue labeled `trunk-unstable` accordingly. A
 # companion gate step (the trunk andon gate in `pr-policy.yml`) keys off
 # that open issue to hold merges on every PR until the trunk recovers,
 # unless the PR carries the `hotfix-cleared` label. The flag is an issue
 # rather than an Actions variable because GITHUB_TOKEN can write issues
 # but not variables, so the mechanism needs no separately provisioned PAT.
+# This SLO intentionally samples completed full-suite `workflow_dispatch`
+# runs rather than ordinary main-push CI verdicts. A non-test failure first
+# seen on an ordinary push is re-exercised when the cadence dispatches current
+# main, so the SLO can observe it later; 45 minutes is only the nominal cadence,
+# and GitHub's best-effort scheduler can make that delay longer.
 #
 # The toggle exists so a red trunk stops new merges from piling on top
 # of an already-broken main: while the red rate is over threshold the
@@ -142,7 +147,7 @@ jobs:
             echo ""
             echo "| metric | value |"
             echo "|---|---|"
-            echo "| CI runs on main (window) | ${TOTAL} |"
+            echo "| full-suite CI runs on main (window) | ${TOTAL} |"
             echo "| failed runs | ${RED} |"
             echo "| red-rate | ${RED_PCT}% |"
             echo "| insufficient sample | ${INSUFFICIENT} |"
