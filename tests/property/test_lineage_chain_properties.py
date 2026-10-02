@@ -217,7 +217,17 @@ def test_byte_flip_breaks_chain_or_signature(
     if not raw:
         pytest.skip("WAL produced no bytes")
 
-    pos = flip_offset % len(raw)
+    covered_indices: list[int] = []
+    offset = 0
+    for line in raw.splitlines(keepends=True):
+        line_stripped = line.rstrip(b"\r\n")
+        covered_indices.extend(range(offset, offset + len(line_stripped)))
+        offset += len(line)
+
+    if not covered_indices:
+        pytest.skip("WAL produced no payload bytes")
+
+    pos = covered_indices[flip_offset % len(covered_indices)]
     mutated = bytearray(raw)
     mutated[pos] ^= 0x01
     if mutated == raw:
@@ -227,6 +237,31 @@ def test_byte_flip_breaks_chain_or_signature(
     result = verify_run_chain(sdd, "prop-flip", verifier=verifier)
     assert not result.ok, f"byte flip went undetected at offset {pos}"
     assert result.errors, "verify_run_chain returned ok=False with empty error list"
+
+
+@settings(max_examples=30)
+@given(records=st.lists(_record_strategy(), min_size=2, max_size=6))
+def test_byte_flip_uncovered_region_is_record_delimiters(records: list[LineageRecord]) -> None:
+    """All bytes outside the signed/hashed JSON payloads are line delimiters."""
+    writer, _verifier, sdd = _make_signed_writer("prop-uncovered")
+    for record in records:
+        writer.emit(record)
+
+    wal_path = sdd / "runtime" / "wal" / "prop-uncovered.wal.jsonl"
+    raw = wal_path.read_bytes()
+    if not raw:
+        pytest.skip("WAL produced no bytes")
+
+    covered_indices: set[int] = set()
+    offset = 0
+    for line in raw.splitlines(keepends=True):
+        line_stripped = line.rstrip(b"\r\n")
+        covered_indices.update(range(offset, offset + len(line_stripped)))
+        offset += len(line)
+
+    uncovered_indices = [i for i in range(len(raw)) if i not in covered_indices]
+    for pos in uncovered_indices:
+        assert raw[pos] in b"\r\n", f"unexpected uncovered byte {raw[pos]!r} at offset {pos}"
 
 
 # ---------------------------------------------------------------------------

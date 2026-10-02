@@ -54,13 +54,14 @@ is constructed against `.sdd/cas/` and exposed for:
    prompt-cache snapshots) get hashed into CAS so disk usage tracks
    *unique* bytes, not write count.
 2. **Replay state.** WAL replay (`wal_replay.py`) restores the task graph
-   on restart; large blob payloads referenced from WAL entries live in
-   CAS rather than being copied inline.
-3. **Audit evidence.** Tamper-evident audit logs use Merkle seals
-   over CAS-resident content; the seal can be verified without re-reading
-   the original blobs.
-4. **Snapshot manifests.** `bernstein dr` snapshots reference CAS
-   digests instead of duplicating large files into the snapshot dir.
+   on restart; digests referenced from WAL `inputs` / `output` fields are
+   kept alive by the GC.
+3. **Attachments and attestations.** `core/agents/attachment_dispatch.py`
+   and the micro-VM sandbox backend (`core/sandbox/backends/microvm.py`)
+   write their bytes into a `CASStore` under `.sdd/cas/`.
+4. **GC roots.** `bernstein gc cas` treats WAL entries, audit Merkle
+   seals, lineage spines, and backlog tasks as durable roots that keep a
+   digest alive (see below). Session snapshots are not scanned as roots.
 
 `bernstein.core.persistence.cas_store` is the only module that touches
 the on-disk layout - every other consumer goes through `put()` /
@@ -167,21 +168,18 @@ operations:
 
 - **Safe incremental pruning / `bernstein gc cas`.** Performs a
   mark-and-sweep over the CAS store, deleting unreferenced blobs
-   older than a configured retention window (default 30 days). Uses
-   reachability analysis over durable roots (WAL, audit seals,
-   lineage spines, backlog tasks) and preserves referenced or young
-   entries. The operation writes a prune receipt to the CAS store for
-   verification. Recommended for regular CAS maintenance.
-- **Project reset / `bernstein cleanup`.** Removes the entire
-  `.sdd/cas/` tree along with the rest of `.sdd/runtime/`. Use this if
-  you've confirmed nothing in the durable state still points at CAS
-  digests. **Dangerous: this deletes everything in CAS unconditionally.**
-- **Disaster-recovery snapshot rotation.** Old `bernstein dr` snapshots
-  drop their reference to CAS digests; a follow-up sweep can delete
-  any blob whose digest is no longer referenced by any snapshot
-  manifest.
-- **Audit seal expiry.** When a Merkle seal ages out, the CAS entries
-  it referenced can be deleted via `store.delete(digest)`.
+  older than a configured retention window (default 30 days,
+  `cas_retention_days` in `core/defaults.py`). Uses
+  reachability analysis over durable roots (WAL, audit seals, lineage
+  spines, backlog tasks) and preserves referenced or young entries. Only
+  a sweep that deletes at least one entry writes a prune receipt to the
+  CAS store for verification; a `--dry-run`, a run with nothing to
+  delete, or a run refused because a root could not be read writes no
+  receipt. Refuses to delete anything when a root could not be
+  read. Recommended for regular CAS maintenance.
+- **Manual deletion.** Anything that knows a digest is no longer
+  referenced (for example an expired audit seal) can call
+  `store.delete(digest)`.
 
 The `bernstein gc cas` command is the safe, incremental approach to
 CAS maintenance, designed to minimize the risk of accidentally deleting
@@ -199,14 +197,15 @@ from unreferenced artifacts while protecting referenced content.
 The command provides several safety guarantees:
 
 1. **Retention window** – By default, only blobs older than 30 days
-   are eligible for deletion. You can adjust this with `--days N`.
+   are eligible for deletion (`cas_retention_days`). You can adjust this
+   with `--days N`.
 
 2. **Reachability analysis** – The command scans durable roots to
    determine what is still referenced:
    - WAL entries (`.sdd/runtime/wal/*.wal.jsonl`)
    - Audit Merkle seals (`.sdd/audit/merkle/seal-*.json`)
    - Lineage spines (`.sdd/lineage/*/spine.jsonl`)
-   - Backlog tasks (`.sdd/backlog/*/{*.yaml,*.yml}`)
+   - Backlog tasks (`.sdd/backlog/{open,done}/{*.yaml,*.yml}`)
 
    Only blobs whose digests are NOT in this referenced set are
    candidates for deletion.
@@ -214,10 +213,11 @@ The command provides several safety guarantees:
 3. **Preserve young entries** – Blobs created within the retention
    window are preserved even if unreferenced.
 
-4. **Prune receipts** – Each successful `gc cas` operation writes a
-   prune receipt to the CAS store itself. This receipt documents what
-   was deleted and serves as verification that the operation
-   completed as expected.
+4. **Prune receipts** – A `gc cas` sweep that deletes at least one
+   entry writes a prune receipt to the CAS store itself (a `--dry-run`,
+   a run with nothing to delete, or a refused run writes none). This
+   receipt documents what was deleted and serves as verification that
+   the operation completed as expected.
 
 ### Command usage
 
@@ -237,83 +237,66 @@ bernstein gc cas --days 0
 
 ### Key options
 
-- `--days N` – Delete blobs older than N days (default 30, 0 = immediate)
+- `--days N` – Delete blobs older than N days (default: the configured retention window, 30; 0 = immediate)
 - `--dry-run` – Preview deletions without modifying the store
-- `--workdir PATH` – Root directory containing `.sdd/` (default `.sdd`)
+- `--workdir PATH` – Root directory containing `.sdd/` (default `.`)
+- `--yes` – Skip the confirmation prompt
 
 ### What happens during GC
 
 1. **Mark phase** – Collect all referenced digests from durable roots
 2. **Sweep phase** – Delete unreferenced blobs older than retention window
-3. **Receipt** – Write prune receipt documenting the operation
+3. **Receipt** – Write a prune receipt documenting the operation, only when the sweep deleted at least one entry
 
 ### Common scenarios
 
-**Snapshot rotation cleanup**
-
-When you rotate old `bernstein dr` snapshots, they drop references to CAS
-blobs. Run `bernstein gc cas` after rotation to delete the now-unreferenced
-blobs:
-
-```bash
-# Rotate snapshots
-bernstein dr --rotate --keep 30
-
-# Clean up unreferenced CAS
-bernstein gc cas
-```
-
 **Storage recovery after artifact churn**
 
-If your workflow generates many temporary artifacts (e.g. heavy snapshot
-rotation, build caches), run periodic GC to prevent CAS store growth:
+If your workflow generates many temporary artifacts (e.g. build caches),
+run periodic GC to prevent CAS store growth:
 
 ```bash
 # Weekly cleanup (crontab entry)
-bernstein gc cas --days 7
+bernstein gc cas --days 7 --yes
 ```
 
-### Migration notes
+### Relation to `bernstein cleanup`
 
-If you were previously using `bernstein cleanup` for CAS maintenance,
-replace it with `bernstein gc cas` for incremental, safer pruning. Use
-`bernstein cleanup` only when you need to reset the entire project
-and can confirm no running tasks or backups still reference CAS digests.
+`bernstein cleanup` removes Bernstein worktrees that no longer back active
+tasks; it does not touch `.sdd/cas/`. Use `bernstein gc cas` for CAS
+maintenance.
 
 Because `delete()` is explicit and per-digest, GC is essentially "find
-the orphans and call delete on each one". A reference scan over WAL +
-snapshots + audit seals produces the live set; everything in
-`store.list_entries()` not in the live set is orphaned.
-
-There is no built-in mark-and-sweep job for other content (WAL, audit
-logs, etc.). If your workload churns through artifacts (e.g. heavy
-snapshot rotation), wire one up against your reference set and run it
-as a periodic CLI step.
+the orphans and call delete on each one". The reference scan over WAL,
+audit seals, lineage spines, and backlog tasks produces the live
+set; everything in `store.list_entries()` not in the live set (and older
+than the retention window) is orphaned.
 
 ---
 
 ## Integrity: Merkle hash tree
 
-CAS pairs naturally with the Merkle integrity layer at
-`core/persistence/merkle.py`. The Merkle tree builds a binary hash tree
+The Merkle integrity layer at `core/persistence/merkle.py` seals the daily
+HMAC-chained audit log files, not CAS blobs. It builds a binary hash tree
 over a deterministically-ordered list of `(path, leaf_hash)` pairs and
-publishes the root as a single SHA-256 string. For CAS entries:
+publishes the root as a single SHA-256 string:
 
-- The **leaf hash** for a blob is its digest (which is its SHA-256 by
-  construction).
-- The **internal nodes** combine children with a domain-separated
-  hash: `sha256("merkle:" + left + ":" + right)`
-  (`merkle.py:_combine_hashes` at `merkle.py`).
-- The **root** signs the entire CAS state at a point in time. A single
-  root hash proves the contents of every leaf without re-reading them.
+- The **leaf hash** for a file binds its whole canonical content, hashed
+  with a `0x00` domain tag (`_leaf_digest`).
+- The **internal nodes** combine children with a `0x01` domain tag,
+  `sha256(0x01 || left || right)` (`_combine_internal`); a lone node at an
+  odd level is promoted unchanged. Seals recorded under the earlier
+  scheme (v1, `sha256("merkle:" + left + ":" + right)`) still verify
+  (`_combine_hashes`).
+- The **root** signs the whole audit-log state at a point in time.
 
 Seals are JSON files at `.sdd/audit/merkle/seal-<ISO-timestamp>.json`
 and serve compliance evidence: a verifier rebuilds the tree from the
 on-disk leaves, compares roots, and reports tamper.
 
-If a CAS blob is corrupted (digest mismatch on read) or deleted
-underneath the Merkle layer, the next seal verification will surface
-the discrepancy.
+The two layers meet in GC: a CAS digest mentioned in a seal file counts as
+referenced, so `bernstein gc cas` will not delete it. Integrity of the blobs
+themselves comes from the re-hash on every `get()`.
 
 ---
 
@@ -341,5 +324,6 @@ the discrepancy.
 | Digest validation (path-traversal guard) | `_HEX_RE`, `_validate_digest` at `cas_store.py` |
 | Shard layout | `_shard_dir`, `_blob_path`, `_meta_path` at `cas_store.py` |
 | Merkle leaf hashing | `src/bernstein/core/persistence/merkle.py` |
-| Merkle tree builder | `merkle.py` |
+| Merkle tree builder | `build_merkle_tree` at `merkle.py` |
+| CAS garbage collection | `src/bernstein/core/persistence/cas_gc.py` |
 | State-persistence overview | `docs/architecture/state-persistence.md` |

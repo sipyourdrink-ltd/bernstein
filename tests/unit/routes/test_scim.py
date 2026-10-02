@@ -57,6 +57,7 @@ _ALLOWED_IMPORT_ROOTS = frozenset(
         "datetime",
         "fastapi",
         "typing",
+        "pathlib",
     }
 )
 
@@ -118,21 +119,18 @@ def test_service_provider_config_advertises_supported_operations_truthfully(
 
     mounted = _mounted_methods(app, SCIM_BASE_PATH)
     assert "GET" in mounted, "the read surface must be mounted"
+    # PATCH and DELETE are now implemented (slice 3: deactivate/delete)
 
-    # PATCH is RFC 7644 §3.5.2 and belongs to a later slice: not advertised,
-    # and not mounted.
-    assert body["patch"]["supported"] is False
-    assert "PATCH" not in mounted
+    assert body["patch"]["supported"] is True
+    assert "PATCH" in mounted
+    assert "DELETE" in mounted
 
     # Nothing else is built either, and nothing else is claimed.
     for capability in ("bulk", "filter", "changePassword", "sort", "etag"):
         assert body[capability]["supported"] is False, capability
 
     extension = body[SCIM_SPC_EXTENSION]
-    assert extension["resourceMutability"] == "read-only"
-    assert not (mounted & set(_MUTATING_METHODS)), (
-        f"ServiceProviderConfig says the surface is read-only but {sorted(mounted & set(_MUTATING_METHODS))} is mounted"
-    )
+    assert extension["resourceMutability"] == "read-write"
 
     schemes = body["authenticationSchemes"]
     assert [scheme["type"] for scheme in schemes] == ["oauthbearertoken"]
@@ -145,8 +143,8 @@ def test_service_provider_config_declares_delete_as_soft_and_history_retaining(
     body = client.get(f"{SCIM_BASE_PATH}/ServiceProviderConfig").json()
     delete = body[SCIM_SPC_EXTENSION]["delete"]
 
-    # Not built yet - slice 1 is read-only.
-    assert delete["supported"] is False
+    # Now implemented in slice 3 (deactivate/delete).
+    assert delete["supported"] is True
     # But the semantics a client will meet are declared now, not discovered later.
     assert delete["semantics"] == "soft"
     assert delete["retainsHistory"] is True

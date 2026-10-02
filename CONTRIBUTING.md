@@ -48,8 +48,12 @@ Beyond that, three labelled queues cover the rest:
 Every issue in those queues states what "done" looks like before you
 start. If one does not, that is a defect in the issue — say so on it.
 
-Comment to claim an issue. If it is assigned but has been quiet for a
-couple of weeks, ask anyway; stalled is not the same as taken.
+Comment to claim an issue, and wait for the assignment: a maintainer
+assigns it, and the assignee field is the record. A comment alone does not
+reserve an issue, and one person holds at most three open assignments at a
+time -- finish or release one before asking for the next. If an issue is
+assigned but has been quiet for a couple of weeks, ask anyway; stalled is
+not the same as taken.
 
 Before proposing something large, read [Scope](docs/scope.md). It lists
 the boundaries that are already decided and the reason for each, with
@@ -99,7 +103,7 @@ uv run ruff format src/
 uv run pyright src/
 ```
 
-All three must pass before committing. No exceptions, no "fix later."
+`ruff check` and `ruff format` must pass before committing (CI runs `ruff format --check`). `pyright src/` is advisory repo-wide in CI, but the curated strict zone blocks: `uv run pyright --project pyrightconfig.strict.json`. No exceptions, no "fix later."
 
 ## Development Workflow
 
@@ -118,7 +122,9 @@ All three must pass before committing. No exceptions, no "fix later."
 Every change lands through the merge queue with the approvals the
 [review charter](docs/governance/review-charter.md) requires: two, from
 committers who are not the author, at least one of them a core reviewer
-(the roster is `.github/quorum-roster.toml`). Ownership is separate: any
+(three, two of them core, for a change over 400 lines or one touching a
+`sandbox`, `security` or `audit` path outside `tests/` and `docs/`; the
+roster is `.github/quorum-roster.toml`). Ownership is separate: any
 path with a named owner in [CODEOWNERS](.github/CODEOWNERS) needs that
 owner's approval as well, rather than the core approval standing in for
 it. Protected paths also need the maintainer. Reviewer checklist:
@@ -223,7 +229,7 @@ Two markers are recognised:
 
 - `intentional-broad-except`: legitimate best-effort path (telemetry,
   optional analytics, lineage append, etc.). The body should route any
-  sensitive message through `bernstein.core.sanitize.sanitize_log`.
+  sensitive message through `bernstein.core.security.sanitize.sanitize_log`.
 - `bot-ack: <short-tag>`: previously reviewed broad clause; the tag
   identifies the rationale (e.g. `bot-ack: pre-existing-1723`,
   `bot-ack: legacy-shim`).
@@ -240,6 +246,36 @@ Run locally before committing:
 uv run python scripts/check_routes_broad_except.py
 ```
 
+### Production reachability (security and identity controls)
+
+`src/bernstein/core/security/**.py` and `src/bernstein/core/identity/**.py`
+are policed by a CI lint (`scripts/check_unreachable_controls.py`) that fails
+the build when a public symbol has no caller inside the shipped package. A
+control whose only importers are its own tests, an `__init__` re-export, or
+the lazy module map in `src/bernstein/core/__init__.py` passes every other
+check while never running.
+
+Only `Name` loads and attribute accesses count as callers. Imports and string
+literals do not, which is what makes a re-export and the lazy module map
+invisible to the check. Reachability is a fixpoint, so a symbol called only by
+another unreached symbol is still unreached.
+
+Known cases live in `unreachable_controls_allowlist.txt`, one line per symbol
+with a mandatory written reason. Removing an entry is the goal: an entry whose
+symbol becomes reachable fails the gate, so the list cannot rot.
+
+Run locally before committing:
+
+```bash
+uv run python scripts/check_unreachable_controls.py
+# after adding or deleting a symbol, refresh the entry list (reasons survive):
+uv run python scripts/check_unreachable_controls.py --update
+```
+
+Replace every `REASON REQUIRED` marker `--update` writes before committing --
+the gate rejects it.
+
+
 See [AGENTS.md](AGENTS.md) for the full doctrine, including change classification, conflict protocol, and zero-tolerance failures.
 
 ## CLI Structure
@@ -248,11 +284,11 @@ The CLI is split into two layers under `src/bernstein/cli/`:
 
 **Top-level** (`cli/`): `main.py` (Click group), `run.py`, `run_cmd.py`, `live.py`, `dashboard.py`, `helpers.py`, `ui.py`, `status.py`
 
-**Commands sub-package** (`cli/commands/`): 70+ command modules including:
+**Commands sub-package** (`cli/commands/`): 200+ command modules including:
 
 | Module | Purpose |
 |---|---|
-| `run_cmd.py` | `bernstein run` / `-g` orchestration entry point |
+| `run_cmd.py` (in `cli/`) | `bernstein run` / `-g` orchestration entry point |
 | `stop_cmd.py` | `bernstein stop` graceful shutdown |
 | `status_cmd.py` | `bernstein status` / `bernstein ps` |
 | `evolve_cmd.py` | `bernstein evolve` subcommands |
@@ -273,7 +309,7 @@ When adding a new CLI command, create a new `*_cmd.py` module in `cli/commands/`
 
 ## Supported CLI Adapters
 
-Bernstein ships with 40+ CLI agent adapters, plus a generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
+Bernstein ships with 50+ CLI agent adapters, plus a generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
 
 | Adapter | File | Agent |
 |---------|------|-------|
@@ -307,18 +343,29 @@ Adapters implement the `CLIAdapter` ABC from `adapters/base.py`:
 ```python
 class CLIAdapter(ABC):
     @abstractmethod
-    def spawn(self, *, prompt, workdir, model_config, session_id, mcp_config=None) -> SpawnResult: ...
-    @abstractmethod
-    def is_alive(self, pid: int) -> bool: ...
-    @abstractmethod
-    def kill(self, pid: int) -> ProcessReapReceipt: ...
+    def spawn(
+        self,
+        *,
+        prompt,
+        workdir,
+        model_config,
+        session_id,
+        mcp_config=None,
+        timeout_seconds=...,
+        task_scope="medium",
+        budget_multiplier=1.0,
+        system_addendum="",
+        multimodal_context=None,
+    ) -> SpawnResult: ...
     @abstractmethod
     def name(self) -> str: ...
+    def is_alive(self, pid: int) -> bool: ...  # default provided
+    def kill(self, pid: int) -> ProcessReapReceipt: ...  # default provided
     def detect_tier(self) -> ApiTierInfo | None: ...  # optional
 ```
 
 Steps:
-1. Create `src/bernstein/adapters/mycli.py` implementing all four abstract methods. See `adapters/claude.py` for a complete reference.
+1. Create `src/bernstein/adapters/mycli.py` implementing the two abstract methods (`spawn` and `name`). See `adapters/claude.py` for a complete reference.
 2. Register in `adapters/registry.py`: `_ADAPTERS["mycli"] = MyCLIAdapter`
 3. Run checks: `uv run ruff check src/ && uv run pyright src/ && uv run python scripts/run_tests.py -x`
 4. Open a PR - include a short note on how you tested it.
@@ -327,7 +374,7 @@ Steps:
 
 ### Writing a Custom CI Parser
 
-CI parsers implement the `CILogParser` protocol from `core/ci_log_parser.py`:
+CI parsers implement the `CILogParser` protocol from `core/quality/ci_log_parser.py`:
 
 ```python
 class CILogParser(Protocol):
@@ -338,7 +385,7 @@ class CILogParser(Protocol):
 
 Steps:
 1. Create `src/bernstein/adapters/ci/<name>.py` from the template in `templates/ci-parsers/TEMPLATE.py`. See `adapters/ci/github_actions.py` for a working example.
-2. Register: `from bernstein.core.ci_log_parser import register_parser; register_parser(MyCIParser())`
+2. Register: `from bernstein.core.quality.ci_log_parser import register_parser; register_parser(MyCIParser())`
 3. Run checks and open a PR.
 
 ## Writing a Custom Role
@@ -386,9 +433,14 @@ pkill -f bernstein   # kills everything including your own shell session
 ## Recognition
 
 All contributors are listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
-Outstanding contributions are featured in our
-[monthly Community Spotlight](https://alexchernysh.com/blog)
-blog posts, which are shared on Twitter/X, LinkedIn, and dev.to.
+
+Roughly once every couple of weeks the project's LinkedIn page names, in one
+consolidated post, the contributors who asked to be named and says what they
+built. Opting in is one email; the how, the soft gate and the exception path
+are in the pinned recognition issue, and the operator side is
+[docs/community/recognition.md](docs/community/recognition.md). If you did the
+work, put it on your CV; the post exists so that there is a public record you
+did not write about yourself.
 
 ## Naming
 

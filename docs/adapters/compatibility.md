@@ -20,7 +20,7 @@ Last updated: 2026-07-16
 | `codex` | OpenAI | JSON (`--json`) | No |
 | `gemini` | Google | JSON (`--output-format json`) | No |
 | `antigravity` | Google (alias of `gemini`, enterprise / API-key lane) | JSON (`--output-format json`) | No |
-| `agy` | Google (Antigravity successor CLI, consumer lane) | JSON (`--output-format json`) | No |
+| `agy` | Google (Antigravity successor CLI, consumer lane) | No (plain-text print mode) | No |
 | `openai_agents` | OpenAI (Agents SDK v2) | JSONL event stream | Yes (Bernstein-bridged) |
 | `clm` | Customer-side NIM / vLLM gateway | No | No |
 | `devin_terminal` | Cognition | No | No |
@@ -60,10 +60,10 @@ Compatibility details can vary by adapter version and local toolchain.
 
 ### MCP
 
-- Bernstein includes an MCP server (`src/bernstein/core/protocols/mcp_server.py`) exposed via `bernstein mcp`.
+- Bernstein includes an MCP server (`src/bernstein/core/protocols/mcp/mcp_server.py`) exposed via `bernstein mcp`.
 - MCP tool registry with auto-discovery and per-task configuration.
 - MCP gateway proxy (`bernstein gateway`) for routing MCP traffic.
-- MCP health monitoring, lazy discovery, sandbox, marketplace, and metrics modules in `src/bernstein/core/protocols/`.
+- MCP health monitoring, lazy discovery, sandbox, marketplace, and metrics modules in `src/bernstein/core/protocols/mcp/`.
 - MCP auth lifecycle management and version compatibility checking.
 - MCP composition and skill bridge for combining tools across servers.
 - Practical compatibility depends on client/runtime transport expectations.
@@ -71,7 +71,7 @@ Compatibility details can vary by adapter version and local toolchain.
 ### A2A
 
 - A2A task/artifact routes implemented in task routes.
-- A2A federation support (`a2a_federation.py`) for cross-instance agent coordination.
+- A2A federation support (`protocols/a2a/a2a_federation.py`) for cross-instance agent coordination.
 - A2A available as part of the server API surface.
 
 ### ACP

@@ -233,25 +233,31 @@ class TestLogInjection:
         assert "Malformed SLA contract" in rendered
         assert rendered.splitlines() == [rendered]
 
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            ("plain", "plain"),
-            ("a\nb", "a\\nb"),
-            ("a\r\nb", "a\\r\\nb"),
-            ("a\tb", "a\\tb"),
-            ("a\x1b[31mb", "a\\x1b[31mb"),
-            ("line\u2028sep", "line\\u2028sep"),
-        ],
-    )
-    def test_single_line_escapes_every_control_character(self, raw: str, expected: str) -> None:
-        from bernstein.core.planning.sla_store import _single_line
+    def test_a_bidi_override_in_a_contract_id_is_escaped_in_the_refusal(self, tmp_path: Path) -> None:
+        """U+202E reverses the text after it when an operator reads the message.
 
-        assert _single_line(raw) == expected
+        The refusal quotes the rejected id back, so the id has to arrive as a
+        visible escape rather than a character that reorders the line.
+        """
+        store = SLAStore(tmp_path / ".sdd")
+        contract_id = "sla_" + chr(0x202E) + "txt.evil" + chr(0x200B)
+        with pytest.raises(SLAContractIdError) as excinfo:
+            store.get(contract_id)
+        message = str(excinfo.value)
+        assert chr(0x202E) not in message
+        assert chr(0x200B) not in message
+        assert "sla_\\u202etxt.evil\\u200b" in message
 
-    def test_single_line_caps_length(self) -> None:
-        from bernstein.core.planning.sla_store import _single_line
+    def test_a_bidi_override_in_a_store_path_is_escaped_in_the_log(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from bernstein.core.planning.sla_store import _load_contract
 
-        out = _single_line("x" * 5000)
-        assert out.endswith("...(truncated)")
-        assert len(out) < 300
+        path = tmp_path / f"abc{chr(0x202E)}txt.json"
+        with caplog.at_level(logging.WARNING, logger="bernstein.core.planning.sla_store"):
+            assert _load_contract(path) is None
+
+        assert caplog.records, "the failed load must still be logged"
+        rendered = caplog.records[0].getMessage()
+        assert chr(0x202E) not in rendered
+        assert "abc\\u202etxt.json" in rendered

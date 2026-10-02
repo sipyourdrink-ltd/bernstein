@@ -76,6 +76,31 @@ def _resolves_to(*addresses: str):
     return lambda _host: list(addresses)
 
 
+def _resolves_to_preserving_ips(*addresses: str):
+    """A resolver that answers with fixed addresses for hostnames, but returns IP addresses as-is."""
+    import ipaddress
+
+    def resolver(host: str) -> list[str]:
+        # If host is already an IP address, return it directly (no DNS needed)
+        try:
+            ipaddress.ip_address(host)
+            return [host]
+        except ValueError:
+            # Host is a hostname, return the mocked addresses
+            return list(addresses)
+
+    return resolver
+
+
+@pytest.fixture(autouse=True)
+def _patch_default_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch the default DNS resolver so volunteer registry tests avoid real DNS."""
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        _resolves_to_preserving_ips("140.82.112.3"),
+    )
+
+
 class _FakeTransport:
     """Test double for HTTPTransport that returns canned responses."""
 

@@ -42,7 +42,7 @@ The failures this module exists to prevent
    measured ``head_sha``.
 
 6. **A ratchet that is correct and never fires.** (4) and (5) interact:
-   on a ``push`` trigger the ratchet and the CI run start from the same
+   on a direct ``push`` trigger the ratchet and the CI run start from the same
    event, so the coverage artifact does not exist yet when the ratchet
    looks. Pinning ``head_sha`` without moving the trigger makes every
    commit skip. The trigger must therefore be CI *completion*, and it
@@ -200,10 +200,8 @@ def test_fires_on_ci_completion_not_on_the_push(workflow: dict) -> None:
 def test_completion_trigger_is_not_narrowed_to_successful_runs(workflow: dict) -> None:
     """`types: [completed]` must stay unfiltered by conclusion.
 
-    ci.yml's cancel-in-progress concurrency cancels most main runs. A
-    trigger that only fired on success would leave the ratchet idle
-    almost permanently - the reason the original implementation avoided
-    workflow_run altogether.
+    A full run can still be operator-cancelled. The completion trigger stays
+    conclusion-agnostic so the exact-SHA sibling fallback remains reachable.
     """
     on = workflow.get("on", workflow.get(True))
 
@@ -236,10 +234,12 @@ def test_privileged_checkout_is_confined_to_commits_from_this_repository(
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in guard, (
         "without a same-repository guard, a fork PR from a branch named `main` reaches the privileged checkout below"
     )
-    assert "github.event.workflow_run.event == 'push'" in guard, (
-        "a pull_request-triggered CI run measures the merge commit of an "
-        "unmerged branch; only a push to the default branch may be ratcheted"
+    assert "github.event.workflow_run.event == 'push'" in guard
+    assert "github.event.workflow_run.event == 'workflow_dispatch'" in guard, (
+        "the cadenced main full suite is dispatched manually by the controller, "
+        "so excluding workflow_dispatch would discard its coverage artifact"
     )
+    assert "github.event.workflow_run.event == 'pull_request'" not in guard
 
 
 # --------------------------------------------------------------------------- #
@@ -254,13 +254,30 @@ def _checkout_step(steps: list[dict]) -> dict:
     raise AssertionError("coverage-ratchet.yml no longer checks out the repo")
 
 
-def test_checkout_pins_the_measured_commit(steps: list[dict]) -> None:
-    """Neither `main` nor `github.sha` is the commit CI measured.
+def test_checkout_never_interpolates_workflow_run_data(steps: list[dict]) -> None:
+    """The checkout ref must not name a commit straight from the event.
 
-    `main` has usually moved on, and on a workflow_run event `github.sha`
-    is the default-branch head rather than the triggering run's commit.
+    A workflow_run checkout whose ``ref`` interpolates
+    ``github.event.workflow_run.*`` is the untrusted-checkout pattern that
+    Scorecard Dangerous-Workflow flags. The measured commit is still checked
+    out, but only by a later step that proves it is in main's history first.
     """
-    assert _checkout_step(steps)["with"]["ref"] == "${{ github.event.workflow_run.head_sha }}"
+    ref = _checkout_step(steps)["with"]["ref"]
+    assert "github.event.workflow_run" not in ref, (
+        "the checkout ref must be a trusted ref; the event's head_sha belongs "
+        "in a verified checkout step, not the checkout action's ref"
+    )
+    assert ref == "main"
+
+
+def test_measured_commit_is_checked_out_only_after_an_ancestor_check(
+    steps: list[dict],
+) -> None:
+    """The event's head_sha is trusted only once proven to be on main."""
+    verify = next(s for s in steps if "merge-base --is-ancestor" in str(s.get("run", "")))
+    assert verify["env"]["TARGET_SHA"] == "${{ github.event.workflow_run.head_sha }}"
+    assert "git checkout" in verify["run"]
+    assert "merge-base --is-ancestor" in verify["run"]
 
 
 def test_run_resolution_targets_the_triggering_run(steps: list[dict]) -> None:

@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### lapisan governance open source untuk agen AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -38,17 +38,17 @@
 
 > **Status: beta.** Dikelola secara mandiri, dalam pengembangan aktif. Nomor versi menghitung rilis, bukan kematangan — versi minor dapat mengubah antarmuka. Kunci versi untuk ketergantungan penting; regresi diperbaiki dengan cepat, [laporkan di sini](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein adalah lapisan governance open source untuk agen AI. Berjalan di atas policy as code: kamu menulis kebijakannya - siapa boleh melakukan apa, apa yang butuh persetujuan, apa yang harus dicatat - dan Bernstein menegakkannya serta menghasilkan catatan yang bisa diverifikasi. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI, dan 40+ lainnya), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
+Bernstein adalah lapisan governance open source untuk agen AI. Berjalan di atas policy as code: kamu menulis kebijakannya - siapa boleh melakukan apa, apa yang butuh persetujuan, apa yang harus dicatat - dan Bernstein menegakkannya serta menghasilkan catatan yang bisa diverifikasi. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI, dan 50+ lainnya), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
 
 ### sekilas pandang
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
 
 Empat hal membedakannya dari yang lain; selebihnya adalah detail.
 
 - **Tanpa LLM dalam loop koordinasi.** Penjadwalan murni menggunakan Python, sehingga eksekusi dapat direproduksi secara menyeluruh dari awal hingga akhir. Jalankan kembali rencana kemarin dan dapatkan graf tugas yang sama persis.
 - **Dapat diaudit setelah selesai.** Jurnal pemutaran ulang (replay journal) mencatat setiap eksekusi, dan tulang punggung asal-usul (lineage spine) yang selalu aktif merekam setiap langkah bernilai silsilah; log audit berantai HMAC opsional (`BERNSTEIN_AUDIT=1`) menambahkan tanda terima (receipts) yang dapat diverifikasi secara offline. Non-determinisme muncul sebagai ketidakcocokan hash pada langkah yang tepat, bukan sebagai kegagalan acak saat eksekusi ulang. Hasil kerja non-kode diperlakukan sama: tugas dapat mendeklarasikan kontrak artefak (laporan, dataset, log tindakan, hasil ops) dan diselesaikan dengan tanda terima silsilah yang ditandatangani, bukan commit git.
 - **Terisolasi secara terstruktur.** Setiap tugas pengodean mendapatkan git worktree terpisah di balik gerbang penggabungan; tugas mode artefak mendapatkan direktori kerja di bawah `.sdd/workspaces/`. Agen secara default tidak berbagi ruang kerja yang dapat diubah; satu-satunya status bersama adalah backlog tugas, yang diklaim secara atomik. Penegakan sistem berkas yang lebih ketat bersifat opsional melalui [backend sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Nonaktifkan worktree dan setiap tugas akan berjalan di direktori bersama.
-- **Luas dan lokal.** Lebih dari 40 adaptor agen CLI ditambah wrapper `--prompt` generik, status berbasis berkas, tanpa perantara SaaS, tanpa lapisan data pihak ketiga.
+- **Luas dan lokal.** Lebih dari 53 adaptor agen CLI ditambah wrapper `--prompt` generik, status berbasis berkas, tanpa perantara SaaS, tanpa lapisan data pihak ketiga.
 
 Daftar lengkap ada di [halaman kemampuan](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [matriks fitur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) adalah indeks lengkapnya.
 
@@ -134,7 +134,7 @@ flowchart LR
 Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate persetujuan tetap berlaku apa pun yang dilakukan agen di dalam tugas. Node kode selesai di balik merge gate dalam git worktree-nya sendiri. Node di atas selesai dengan cara lain: [kontrak artefak](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) menamai hasilnya (laporan, dataset, pemindaian, log aksi), dan node ditutup dengan tanda terima lineage yang ditandatangani, bukan commit. Penjadwal yang sama, journal yang sama, verifikasi offline yang sama - entah graf itu membawa kode, riset, perubahan ops, atau campuran ketiganya. Graf siap pakai untuk software, riset, dokumentasi, enterprise, dan alur kontributor ada di [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm, dan Docker dibahas dalam [panduan instalasi](https://bernstein.readthedocs.io/en/latest/getting-started/install/); paket terisolasi memiliki [panduan air-gap](https://bernstein.readthedocs.io/en/latest/installation/air-gap/) tersendiri.
+pipx, pip, brew, dnf, npm, dan Docker dibahas dalam [panduan instalasi](https://docs.bernstein.run/en/latest/getting-started/install/); paket terisolasi memiliki [panduan air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) tersendiri.
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,14 +223,14 @@ Status eksekusi disimpan sebagai checkpoint ke `.sdd/runs/<run_id>/` pada setiap
 Gerbang kebersihan repositori: `bernstein readme-l10n verify` menggagalkan PR yang terjemahan README-nya menyimpang dari sumber bahasa Inggris (menyebutkan bagian yang usang), `bernstein readme-l10n sync` mengikat ulang tautan setelah pengeditan bahasa Inggris. Lihat [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### agen yang didukung
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, dan banyak lagi. [Indeks adaptor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) memuat perintah instalasi untuk 30 di antaranya. `bernstein integrations list` menampilkan ke-54 integrasi aktif dari `src/bernstein/adapters/registry.py`, satu-satunya sumber kebenaran. 52 di antaranya adalah adaptor agen yang dapat dipilih; dua baris lainnya adalah stub uji `mock` dan profil endpoint `self-hosted-endpoints`. Alat lain dengan flag `--prompt` dapat berjalan melalui wrapper generik.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen, dan banyak lagi. [Indeks adaptor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) memuat perintah instalasi untuk 30 di antaranya. `bernstein integrations list` menampilkan ke-56 integrasi aktif dari `src/bernstein/adapters/registry.py`, satu-satunya sumber kebenaran. 54 di antaranya adalah adaptor agen yang dapat dipilih; dua baris lainnya adalah stub uji `mock` dan profil endpoint `self-hosted-endpoints`. Alat lain dengan flag `--prompt` dapat berjalan melalui wrapper generik.
 
 Gabungkan berbagai agen dalam satu eksekusi: model lokal hemat biaya untuk kode repetitif, model cloud berkapasitas besar untuk arsitektur. `bernstein integrations list --installed` menampilkan apa saja yang tersedia di mesin Anda.
 
 ### komputasi sukarela
-<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
 
 Sebuah proyek dapat menandai isu sebagai terbuka bagi relawan, dan siapa pun dapat menjalankan salah satunya di mesin sendiri tanpa akun dan tanpa koordinator. Apa yang boleh dilakukan sebuah tugas dideklarasikan proyek dalam manifes `volunteer.json` - backend sandbox, daftar jaringan yang diizinkan, batas atas waktu dan memori - dan batas milik donor hanya dapat mempersempitnya, tidak pernah memperlebarnya. Tanda terima yang dihasilkan tugas yang selesai mengikat hasilnya pada keputusan pengungkungan tempat ia berjalan, sehingga seorang pengelola dapat memeriksa berbulan-bulan kemudian apa yang sebenarnya boleh disentuh oleh pekerjaan itu.
 
@@ -239,12 +239,12 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, dan `hub` adalah subperintah yang berfungsi.
+[Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi.
 
 ### di luar halaman utama
-<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://bernstein.readthedocs.io/):
+Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstein.run/):
 
 | halaman | cakupan materi |
 |---|---|

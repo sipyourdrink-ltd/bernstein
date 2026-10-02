@@ -21,6 +21,7 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+from bernstein.core.config.config_schema import LayerValidationError
 from bernstein.core.config.run_overlay import (
     RunOverlayError,
     resolve_effective_mapping,
@@ -2259,6 +2260,25 @@ def _parse_mcp_signing_mode(data: dict[str, object]) -> Literal["warn", "strict"
     return cast("Literal['warn', 'strict', 'off']", candidate)
 
 
+def _parse_data_class(raw: object) -> Literal["restricted", "internal", "confidential", "public"] | None:
+    """Parse the optional ``data_class`` field.
+
+    Allowed values: restricted, internal, confidential, public.
+    When absent, defaults to None (the emitter uses "confidential").
+
+    Raises:
+        SeedError: When the value is not one of the four permitted literals.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise SeedError(f"data_class must be a string, got: {type(raw).__name__}")
+    allowed = {"restricted", "internal", "confidential", "public"}
+    if raw not in allowed:
+        raise SeedError(f"data_class must be one of {sorted(allowed)}, got: {raw!r}")
+    return cast("Literal['restricted', 'internal', 'confidential', 'public']", raw)
+
+
 # Every top-level key ``parse_seed`` consumes, directly or via a helper
 # that receives the whole mapping. Any new ``data.get(...)`` read must be
 # added here; keys outside the known set trigger the unknown-key warning
@@ -2279,6 +2299,7 @@ _PARSED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "context_files",
         "cors",
         "cost",
+        "data_class",
         "cost_autopilot",
         "cost_tags",
         "dashboard_auth",
@@ -2440,7 +2461,7 @@ def parse_seed(path: Path) -> SeedConfig:
     # a setup that edits the committed file directly behaves as it always did.
     try:
         data: dict[str, object] = cast("_StrObjDict", resolve_effective_mapping(committed, config_path=path))
-    except RunOverlayError as exc:
+    except (RunOverlayError, LayerValidationError) as exc:
         raise SeedError(str(exc)) from exc
 
     _warn_unknown_top_level_keys(data)
@@ -2563,6 +2584,7 @@ def parse_seed(path: Path) -> SeedConfig:
 
     metrics = _parse_metrics(data.get("metrics"))
     mcp_signing_mode = _parse_mcp_signing_mode(data)
+    data_class = _parse_data_class(data.get("data_class"))
     _parse_tuning(data)
 
     return SeedConfig(
@@ -2625,4 +2647,5 @@ def parse_seed(path: Path) -> SeedConfig:
         org_policies=org_policies,
         metrics=metrics,
         mcp_signing_mode=mcp_signing_mode,
+        data_class=data_class,
     )

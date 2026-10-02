@@ -171,6 +171,16 @@ BERNSTEIN_CONFIG_OVERLAY=/run/bernstein/overlay.yaml bernstein run
 With no overlay and neither variable set, the merge is the identity: a setup
 that edits `bernstein.yaml` directly behaves exactly as it always has.
 
+#### Pre-merge layer validation
+
+Before the merge, each overlay and inline layer is validated against the
+Pydantic schemas in `config_schema.py`. An invalid value — wrong type, out of
+range, unrecognised enum variant — raises `LayerValidationError` naming the
+offending layer and source path, so the operator sees *which* layer introduced
+the bad value rather than getting a generic post-merge error. Missing fields
+are allowed because partial overlays are expected to supply only the keys they
+override; the base config supplies the rest.
+
 Two consequences worth knowing:
 
 - The default overlay is inside `.git/`, so `git status` never reports it and
@@ -366,7 +376,7 @@ orchestrator instance, not on every tick.
 
 The orchestrator's ordinary self-stop fires when a tick reaches quiescence
 (`open_tasks == active_agents == 0`) **and** at least one task has reached
-`done` or `failed`. That gate is what stops tick #1 of a fresh run being read
+`done`, `failed` or `closed`. That gate is what stops tick #1 of a fresh run being read
 as "the run finished". It also means a run that reaches quiescence having
 finished *nothing* has no exit at all: it idles until the container is torn
 down, and reports the run as healthy.
@@ -374,7 +384,7 @@ down, and reports the run as healthy.
 `core/orchestration/run_stall.py` supplies the missing terminal state. It
 stops the run only when every one of the following holds:
 
-- the tick is quiescent with zero `done` and zero `failed` tasks;
+- the tick is quiescent with zero `done`, `failed` and `closed` tasks;
 - at least one task is declared and at least one is actively unfinished
   (`open`, `claimed`, `in_progress`, `orphaned`) - an empty backlog is the
   pre-ingest startup window, and tasks that are only parked (`planned`,

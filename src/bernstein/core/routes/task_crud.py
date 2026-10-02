@@ -1842,6 +1842,7 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
             "blocked",
             "waiting_for_subtasks",
             "planned",
+            "suspended",
         }
         if existing_task.status.value not in cancellable:
             raise ValueError(

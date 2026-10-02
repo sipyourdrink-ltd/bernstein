@@ -39,11 +39,14 @@ Determinism rules applied to the zip:
 - Fixed file order (alphabetical).
 - Fixed mtime (1980-01-01 - the floor zip can encode).
 - Stored mode `0644`.
-- Canonical JSON (sorted keys, no whitespace) for every JSON entry.
+- Canonical JSON (sorted keys, two-space indent, trailing newline) for every
+  `.json` entry; `events.jsonl` is one sorted-key JSON object per line.
 
 Same input bundle bytes hash to the same SHA-256 every run. The auditor
-re-runs the build a year later and compares against the published
-`manifest.json:archive_sha256`.
+re-runs the build a year later and compares the archive's SHA-256
+(`sha256sum article12_<bundle_id>.zip`, or `bundle.sha256` from the Python
+API) against the published value. The CLI summary shows only the first 16
+hex characters.
 
 ## Retention pin
 
@@ -52,7 +55,7 @@ re-runs the build a year later and compares against the published
 | Field | Meaning |
 |---|---|
 | `risk_class` | `high`, `limited`, or `minimal`. |
-| `retention_days` | Computed retention horizon. 10 years (3653 days) for `high`; 183 days minimum otherwise. |
+| `retention_days` | Computed retention horizon. 10 years (3652 days) for `high`; 183 days minimum otherwise. |
 | `retention_until` | ISO-8601 date by which deletion is forbidden. |
 | `last_event_ts` | ISO-8601 timestamp of the latest covered event (the anchor for the retention horizon). |
 
@@ -180,7 +183,7 @@ deployment context.
 
 | Class | Retention | When to use |
 |---|---|---|
-| `high` | 10 years (3653 days) | Annex III high-risk domains: biometrics, critical infrastructure, education, employment, essential services, law enforcement, migration, justice. |
+| `high` | 10 years (3652 days) | Annex III high-risk domains: biometrics, critical infrastructure, education, employment, essential services, law enforcement, migration, justice. |
 | `limited` | 183 days minimum | Article 50 transparency-only systems. |
 | `minimal` | 183 days minimum | Article 5-allowed minimal-risk systems. |
 

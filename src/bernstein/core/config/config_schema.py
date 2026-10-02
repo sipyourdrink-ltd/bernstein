@@ -13,12 +13,12 @@ import json
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -925,9 +925,17 @@ class BernsteinConfig(BaseModel):
         description="CLI agent backend.",
     )
     max_agents: int = Field(default=6, ge=1, description="Maximum concurrent agents.")
+    effort: Literal["max", "medium", "low"] | None = Field(
+        default=None,
+        description="Default effort level for reasoning models.",
+    )
     model: str | None = Field(default=None, description="Model override.")
     team: Literal["auto"] | list[str] = Field(default="auto", description="Role team selection.")
     budget: str | int | float | None = Field(default=None, description='Spending cap ("$20", 20, or 20.0).')
+    data_class: Literal["restricted", "internal", "confidential", "public"] | None = Field(
+        default=None,
+        description="Operator-declared data sensitivity for trust records. Defaults to confidential when undeclared.",
+    )
 
     # --- Behavioral flags ---
     evolution_enabled: bool = Field(default=True, description="Enable self-evolution loop.")
@@ -1452,3 +1460,111 @@ def export_json_schema(*, indent: int = 2) -> str:
         JSON string of the schema.
     """
     return json.dumps(BernsteinConfig.json_schema(), indent=indent)
+
+
+# ---------------------------------------------------------------------------
+# Section schemas & pre-merge partial layer validation (issue #5110)
+# ---------------------------------------------------------------------------
+
+SECTION_SCHEMAS: dict[str, type[BaseModel]] = {
+    "notify": NotifyConfigSchema,
+    "quality_gates": QualityGatesSchema,
+    "admission": AdmissionSchema,
+    "model_policy": ModelPolicySchema,
+    "worktree_setup": WorktreeSetupSchema,
+    "storage": StorageSchema,
+    "sovereign": SovereignProfileSchema,
+    "session": SessionSchema,
+    "github": GithubSchema,
+    "orchestration": OrchestrationSchema,
+    "cluster": ClusterSchema,
+    "remote": RemoteSchema,
+    "agency": AgencySchema,
+    "formal_verification": FormalVerificationSchema,
+    "batch": BatchSchema,
+    "cost_policy": CostPolicySchema,
+    "test_agent": TestAgentSchema,
+    "smtp": SmtpSchema,
+    "model_fallback": ModelFallbackSchema,
+    "provider_availability": ProviderAvailabilitySchema,
+    "arch_conformance": ArchConformanceSchema,
+}
+
+
+class LayerValidationError(ValueError):
+    """Raised when a configuration layer fails schema validation before merge (#5110)."""
+
+    def __init__(self, layer_name: str, path: str | None, errors: list[str]) -> None:
+        self.layer_name = layer_name
+        self.path = path
+        self.errors = errors
+        source = path or layer_name
+        super().__init__(
+            f"Config layer '{layer_name}' (source: {source}) failed validation with {len(errors)} error(s):\n"
+            + "\n".join(f"  - {e}" for e in errors)
+        )
+
+
+_FIELD_VALIDATOR_MODELS: dict[str, type[BaseModel]] = {}
+
+
+def _get_field_validator_model(key: str) -> type[BaseModel]:
+    """Return a single-field Pydantic model for validating *key* with its Field constraints."""
+    if key not in _FIELD_VALIDATOR_MODELS:
+        field_info = BernsteinConfig.model_fields[key]
+        field_def: Any = (field_info.annotation, field_info)
+        _FIELD_VALIDATOR_MODELS[key] = create_model(
+            f"FieldValidator_{key}",
+            **{key: field_def},
+        )
+    return _FIELD_VALIDATOR_MODELS[key]
+
+
+def validate_layer_partial(
+    data: Mapping[str, Any],
+    *,
+    layer_name: str,
+    path: str | Path | None = None,
+) -> None:
+    """Validate a partial configuration layer before it is merged into the effective config.
+
+    Validates any sections present against their dedicated Pydantic schemas,
+    and any recognized top-level fields against BernsteinConfig field types and constraints.
+
+    Args:
+        data: Partial dictionary from the configuration layer.
+        layer_name: Human-readable layer name (e.g. 'run-overlay', 'inline-override').
+        path: File path or source identifier if available.
+
+    Raises:
+        LayerValidationError: If any fields present in *data* fail schema validation.
+    """
+    errors: list[str] = []
+    str_path = str(path) if path is not None else None
+
+    for key, value in data.items():
+        if key in SECTION_SCHEMAS:
+            if isinstance(value, dict):
+                schema_cls = SECTION_SCHEMAS[key]
+                try:
+                    schema_cls.model_validate(value)
+                except ValidationError as exc:
+                    for issue in exc.errors():
+                        if issue["type"] == "missing":
+                            continue
+                        loc = ".".join(str(p) for p in issue["loc"])
+                        errors.append(f"{key}.{loc}: {issue['msg']}")
+            elif value is not None:
+                errors.append(f"{key}: expected a mapping/dictionary, got {type(value).__name__}")
+        elif key in BernsteinConfig.model_fields:
+            validator_model = _get_field_validator_model(key)
+            try:
+                validator_model.model_validate({key: value})
+            except ValidationError as exc:
+                for issue in exc.errors():
+                    loc = ".".join(str(p) for p in issue["loc"])
+                    field_desc = loc if loc else key
+                    errors.append(f"{field_desc}: {issue['msg']}")
+
+    if errors:
+        raise LayerValidationError(layer_name=layer_name, path=str_path, errors=errors)

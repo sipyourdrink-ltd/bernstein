@@ -74,18 +74,13 @@ def _revalidate_seconds() -> int:
 
 def _build_service() -> CatalogService:
     """Construct a :class:`CatalogService` wired to host paths."""
-    cache_path = (
-        Path(os.environ["BERNSTEIN_MCP_CATALOG_CACHE_PATH"])
-        if os.environ.get("BERNSTEIN_MCP_CATALOG_CACHE_PATH")
-        else default_cache_path()
-    )
     user_config = (
         Path(os.environ["BERNSTEIN_MCP_USER_CONFIG_PATH"])
         if os.environ.get("BERNSTEIN_MCP_USER_CONFIG_PATH")
         else default_user_config_path()
     )
     fetcher = CatalogFetcher(
-        cache_path=cache_path,
+        cache_path=default_cache_path(),
         revalidate_seconds=_revalidate_seconds(),
     )
     auditor = CatalogAuditor(audit_dir=_audit_dir())
@@ -388,14 +383,17 @@ def status_cmd() -> None:
 def maybe_run_background_check(*, on_serve_startup: bool = False) -> dict[str, Any]:
     """Trigger a non-blocking background catalog check.
 
-    Called by ``bernstein mcp serve`` startup. Returns a small summary
-    dict so the caller can log without re-reading the audit log.
+    Called by ``bernstein mcp serve`` startup, which runs once per agent
+    session. The check honours the cache revalidation window, so a fresh
+    cache answers it with no request and a stale one costs a conditional
+    request. Returns a small summary dict so the caller can log without
+    re-reading the audit log.
     """
     service = _build_service()
     if on_serve_startup and not service.background_check_due():
         return {"checked": False, "reason": "cadence not elapsed"}
     try:
-        service.browse(force_refresh=True)
+        service.browse()
     except (CatalogValidationError, RuntimeError) as exc:
         logger.warning("Background catalog check failed: %s", exc)
         return {"checked": False, "reason": str(exc)}

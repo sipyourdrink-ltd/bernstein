@@ -28,16 +28,16 @@ post-completion verification entry point. Inputs: a `Task` and the
 worktree path. Outputs: a `JanitorResult` per signal evaluated.
 
 The janitor evaluates each `CompletionSignal` declared on the task
-(`janitor.py:48-77`):
+(`evaluate_signal()` in `janitor.py`):
 
 | Signal type      | Behaviour                                                               |
 | ---------------- | ----------------------------------------------------------------------- |
 | `path_exists`    | File or directory exists at the given relative path.                    |
 | `glob_exists`    | At least one file matches the glob.                                     |
 | `test_passes`    | The named shell command exits 0 (e.g. `pytest tests/foo.py`).            |
-| `file_contains`  | A regex matches the file's content.                                     |
+| `file_contains`  | The file exists and contains the given substring (value `path :: needle`). |
 | `llm_review`     | Synchronous LLM review against a written rubric.                        |
-| `llm_judge`      | Async LLM judge (`judge_task()`, `janitor.py:462`); used for ambiguous tasks. |
+| `llm_judge`      | Async LLM judge (`judge_task()` in `janitor.py`); used for ambiguous tasks. |
 | `absence_verified` | The claim is an *absence* ("no occurrences found"). `value` is the `tool_call_id` that reported it; the signal passes only when that call's recorded coverage payload hash-matches a `coverage` lineage entry anchored to the same `tool_call_id` and describes a complete, exit-checked walk. Every missing or mismatched piece fails closed as `unverified`. |
 | `schema_valid` / `criteria_match` / `hash_stable` / `figures_grounded` | Artifact-mode criteria over the produced artifact's canonical bytes. They fail closed on the filesystem path; only `evaluate_artifact_signals()`, called with the artifact in scope, can pass one. |
 
@@ -60,22 +60,21 @@ below, unchanged; an artifact-mode task is evaluated against the artifact it
 produced and completes on a signed lineage receipt rather than a commit. See
 [../operations/artifacts.md](../operations/artifacts.md).
 
-`verify_task()` (`janitor.py:80-97`) reduces all signals to a single
+`verify_task()` (`janitor.py`) reduces all signals to a single
 pass/fail and a list of failure descriptions. The async
-`run_janitor()` entry point (`janitor.py:171-260`) is what the
+`run_janitor()` entry point (`janitor.py`) is what the
 orchestrator calls after each agent completes. It mixes synchronous
-signal evaluation with async LLM judges (`judge_task()`,
-`janitor.py:462`), enforces a per-judge `CompletionBudget`, and emits one
+signal evaluation with async LLM judges (`judge_task()`), enforces a per-judge `CompletionBudget`, and emits one
 `JanitorResult` per evaluated task.
 
 Two LLM-mediated paths exist for ambiguous verification:
 
-- **`llm_review`** - synchronous, runs once per signal, expects a yes/no
-  verdict against a rubric (`janitor.py:_check_llm_review`).
+- **`llm_review`** - synchronous, runs once per signal, expects a
+  `PASS` / `FAIL` first line against a rubric (`janitor.py:_check_llm_review`).
 - **`llm_judge`** - async with retry. `JUDGE_MODEL = "anthropic/
   claude-sonnet-4-20250514"`, `JUDGE_MAX_TOKENS = 1024`,
   `JUDGE_CONFIDENCE_THRESHOLD = 0.7`; below the threshold, results are
-  flagged for human review (`janitor.py:36-44`). The judge prompt template
+  flagged for human review (`janitor.py`). The judge prompt template
   lives in `prompts/judge.md`.
 
 The janitor never blocks merge by itself - it produces results that the
@@ -96,10 +95,10 @@ flag, and an execution condition. Gates run on the diff after every agent
 completion, in the order the configured pipeline lists them.
 
 The full set of recognised built-in gate names lives in
-`gate_pipeline.py:VALID_GATE_NAMES` (`:16-41`). The default pipeline,
+`gate_pipeline.py:VALID_GATE_NAMES`. The default pipeline,
 synthesised when `quality_gates.pipeline` is not explicitly set, is
-`build_default_pipeline()` in `gate_pipeline.py:164-170`, driven by the
-table at `gate_pipeline.py:137-161`. Each entry is
+`build_default_pipeline()` in `gate_pipeline.py`, driven by the
+`_DEFAULT_GATE_SPECS` table in the same file. Each entry is
 `(config_flag, gate_name, required, condition)`.
 
 Default required gates (only those whose `quality_gates.<flag>: true`):
@@ -129,7 +128,15 @@ Default required gates (only those whose `quality_gates.<flag>: true`):
 | `test_expansion`         | `test_expansion`            | `python_changed`   | optional            |
 | `agent_test_mutation`    | `agent_test_mutation`       | `tests_changed`    | required            |
 | `behavior_probe`         | `behavior_probe`            | `python_changed`   | optional            |
+| `migration_reversibility` | `migration_reversibility_check` | `any_changed`  | required            |
 | `benchmark`              | `benchmark.enabled`         | `always`           | required            |
+| `incident_evals`         | (no flag; not available)    | `always`           | required            |
+
+`incident_evals` is not available: `_DEFAULT_GATE_SPECS` lists it, but
+`QualityGatesConfig` has no `incident_evals` flag, so the default pipeline
+never includes it, and `GateRunner` has no handler for it, so naming it in
+an explicit `quality_gates.pipeline` fails with
+`ValueError: Unsupported gate name: 'incident_evals'`.
 
 A failing **required** gate hard-blocks merge. A failing **optional** gate
 is reported but does not block.
@@ -160,17 +167,17 @@ in the receipt with a reason code (`missing-annotation`,
 `behavior_probe_per_callable_timeout_s`, `behavior_probe_gate_timeout_s` and
 the two probe caps.
 
-Gate conditions (`gate_pipeline.py:42`) gate execution by what changed:
+Gate conditions (`VALID_GATE_CONDITIONS` in `gate_pipeline.py`) gate execution by what changed:
 `always`, `python_changed`, `tests_changed`, `any_changed`, `deps_changed`.
 The legacy condition string `changed_files.any('.py')` is normalised to
-`python_changed` (`gate_pipeline.py:74-81`).
+`python_changed` (`normalize_gate_condition()`).
 
 ### Adding a custom gate
 
 Custom gates plug in through the `bernstein.gates` entry-point group
-(`gate_plugins.py:107-120`) or via a Python file dropped into
-`.bernstein/gates/*.py` (`gate_plugins.py:87-105`). Both modes load
-classes that subclass `GatePlugin` (`gate_plugins.py:20-46`):
+(`GatePluginRegistry` in `gate_plugins.py`) or via a Python file dropped into
+`.bernstein/gates/*.py` (`GatePluginRegistry`). Both modes load
+classes that subclass `GatePlugin` (`gate_plugins.py`):
 
 ```python
 from pathlib import Path
@@ -219,7 +226,7 @@ no_foo = "my_pkg.gates:NoFooGate"
 ```
 
 The plugin name must not collide with a built-in
-(`gate_plugins.py:81-82`). Names are validated and duplicates raise.
+(`GatePluginRegistry`). Names are validated and duplicates raise.
 File-based plugins under `.bernstein/gates/` are loaded for ad-hoc
 project-local checks; they have the same lifecycle but are not packaged.
 
@@ -230,7 +237,7 @@ Source: `src/bernstein/core/quality/cross_model_verifier.py`. This is the
 a *different* model (a cheap one from a different provider) with a
 focused code-review prompt.
 
-The default reviewer mapping (`cross_model_verifier.py:37-43`):
+The default reviewer mapping (`_WRITER_TO_REVIEWER` in `cross_model_verifier.py`):
 
 | Writer family contains | Reviewer model                        |
 | ---------------------- | ------------------------------------- |
@@ -239,11 +246,12 @@ The default reviewer mapping (`cross_model_verifier.py:37-43`):
 | `gpt` / `codex`        | `gemini-flash-1.5` / `claude-haiku`   |
 | `qwen`                 | `claude-haiku`                        |
 
-`CrossModelVerifierConfig` (`:84-106`) is `enabled=True` *as a class
-default*, but the orchestrator config wires it off by default - operators
-must enable it explicitly via `quality_gates.cross_model.enabled: true`.
+`CrossModelVerifierConfig` is `enabled=True` *as a class
+default*, but the orchestrator treats it as off unless
+`OrchestratorConfig.cross_model_verify` carries a
+`CrossModelVerifierConfig` (no `bernstein.yaml` key populates it today).
 
-The reviewer is asked for one of two verdicts (`:120-123`):
+The reviewer is asked for one of two verdicts (`_REVIEW_PROMPT_TEMPLATE`):
 
 - `approve` - diff is fine.
 - `request_changes` - diff has issues. When `block_on_issues=True`
@@ -252,10 +260,10 @@ The reviewer is asked for one of two verdicts (`:120-123`):
 
 For higher-stakes deployments, `voting_config: VotingConfig` lets you
 elect multiple reviewer models and apply quorum logic
-(`cross_model_verifier.py:106`). A single reviewer is the default
+(`CrossModelVerifierConfig.voting_config`). A single reviewer is the default
 QUORUM(1,1) behaviour.
 
-Cost controls baked into the module (`:29-34`): diff truncated at 12,000
+Cost controls baked into the module (`_MAX_DIFF_CHARS`, `_MAX_TOKENS`, `_PROVIDER`): diff truncated at 12,000
 chars, response capped at 512 tokens, `provider="openrouter"`. With
 default reviewers this is in the cents-per-task range.
 
@@ -267,20 +275,18 @@ contract is in `src/bernstein/core/routing/cascade_router.py`.
 
 After the orchestrator records a completed attempt, it calls
 `CascadeRouter.record_and_escalate(chain_id, task, attempt,
-janitor_passed=..., output=...)` (`cascade_router.py:386-478`). The
-function consults `_should_escalate()` (`:639-673`) in this order:
+janitor_passed=..., output=...)` (`cascade_router.py`). The
+function consults `_should_escalate()` in this order:
 
 1. **Hard task failure** - `attempt.success=False` with no other context →
-   escalate (`:655-657`).
-2. **Janitor verification failure** - `janitor_passed=False` → escalate
-   (`:660-661`). This is the wire from janitor results into model
+   escalate.
+2. **Janitor verification failure** - `janitor_passed=False` → escalate. This is the wire from janitor results into model
    escalation.
 3. **Low-confidence regex on agent output** - `detect_low_confidence()`
    scans the last 2,000 chars for phrases like `"I'm not sure"`,
-   `"partial implementation"`, `"TODO: escalat"` (`:371-384`,
-   `_LOW_CONFIDENCE_PATTERN`). When matched, escalate.
+   `"partial implementation"`, `"TODO: escalat"` (`_LOW_CONFIDENCE_PATTERN`). When matched, escalate.
 4. **Explicit failure flag** - `attempt.success=False` after the above
-   checks (`:670-671`).
+   checks.
 
 If any trigger fires, the cascade list (`_cascade_for_task()`) is
 consulted: tasks step `sonnet → opus`. The earlier `haiku` tier was
@@ -295,7 +301,7 @@ every observation (`cascade_router.py`). On the next call to
 opus."
 
 Chain reports persist to `.sdd/metrics/cascade_chains.jsonl`
-(`save_chain()`, `:518-539`). Each line lists every attempt with
+(`save_chain()`). Each line lists every attempt with
 `{model, cost_usd, latency_s, success, escalated, escalation_reason}`,
 the final model, total cost, and `saved_vs_direct_opus_usd`.
 
@@ -308,7 +314,7 @@ documented end-to-end in [Model routing](model-routing.md).
 
 All knobs live under `quality_gates.*` in `bernstein.yaml`. The dataclass
 that defines them is `QualityGatesConfig`
-(`core/quality/quality_gates.py:135-265`). Highlights:
+(`core/quality/quality_gates.py`). Highlights:
 
 ```yaml
 quality_gates:
@@ -342,9 +348,6 @@ quality_gates:
     enabled: false               # LLM-based "did this satisfy intent?"
     model: "google/gemini-flash-1.5"
     block_on_no: true
-
-  cross_model:                   # cross-model verifier (writer != reviewer)
-    enabled: false
 ```
 
 When `pipeline:` is omitted, Bernstein synthesises one from the booleans
@@ -368,19 +371,19 @@ Quality endpoints (FastAPI, all in `core/routes/quality.py` and
 | Endpoint                              | Returns                                                                  |
 | ------------------------------------- | ------------------------------------------------------------------------ |
 | `GET /quality`                        | Aggregated success rate, gate pass rate, p50/p90/p99 task duration.     |
-| `GET /quality/budget-forecast`        | Forecast of remaining budget given current burn rate (`:376`).          |
-| `GET /quality/trend`                  | Time-series of pass/fail counts (`:561`).                                |
-| `GET /quality/models`                 | Per-model success metrics (`:625`).                                      |
-| `GET /quality/file-health`            | File-level health scores (`file_health.py:31`).                          |
-| `GET /quality/file-health/flagged`    | Files currently flagged by gates (`:85`).                                |
-| `GET /quality/file-health/{path}`     | Single-file health report (`:107`).                                      |
+| `GET /quality/budget-forecast`        | Forecast of remaining budget given current burn rate.          |
+| `GET /quality/trend`                  | Time-series of pass/fail counts.                                |
+| `GET /quality/models`                 | Per-model success metrics.                                      |
+| `GET /quality/file-health`            | File-level health scores.                          |
+| `GET /quality/file-health/flagged`    | Files currently flagged by gates.                                |
+| `GET /quality/file-health/{path}`     | Single-file health report.                                      |
 
 On-disk artefacts:
 
 - `.sdd/metrics/quality_gates.jsonl` - one line per gate execution
-  (`quality_gates.py:1148`).
+  (`quality_gates.py`).
 - `.sdd/metrics/cascade_chains.jsonl` - one line per cascade chain
-  completion (`cascade_router.py:533`).
+  completion (`cascade_router.py`).
 - `.sdd/metrics/tasks.jsonl` - task lifecycle events used by behaviour
   anomaly detection.
 

@@ -169,6 +169,7 @@ class AgyAdapter(CLIAdapter):
     # the gemini adapter so the enterprise / API-key lane keeps routing
     # to the legacy binary cascade.
     provides = ("agy",)
+    model_vendor = "google"
 
     # This is the documented sentinel for "the backend picks the model" - the
     # same value the canary matrix pins for this adapter - and exists so the

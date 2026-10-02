@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI ajanları için açık kaynak governance katmanı
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:62785f3e7464" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -38,17 +38,17 @@
 
 > **Durum: beta.** Tek bir kişi tarafından sürdürülmekte olup aktif geliştirme aşamasındadır. Sürüm numarası olgunluğu değil yayınları sayar — ara sürümler (minor) arayüzleri değiştirebilir. Bağımlı olduğunuz her şey için sürümü sabitleyin; gerilemeler (regressions) hızla düzeltilir, [bildirin](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 40+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
+Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 50+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
 
 ### bir bakışta
-<!-- l10n: en="at a glance" hash="sha256:97aa8e70f076" -->
+<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
 
 Dört özellik onu farklı kılar; gerisi ayrıntıdır.
 
 - **Koordinasyon döngüsünde LLM yok.** Çizelgeleme saf Python'dur, bu nedenle bir çalıştırma baştan sona yeniden üretilebilirdir. Dünün planını yeniden oynatın ve dünün görev grafiğini elde edin.
 - **Sonradan doğrulanabilir.** Yeniden oynatma günlüğü (replay journal) her çalıştırmayı kaydeder ve her zaman açık olan soy kütüğü omurgası (lineage spine) soy kütüğü oluşturan her adımı kaydeder; isteğe bağlı HMAC zincirli denetim günlüğü (`BERNSTEIN_AUDIT=1`) çevrimdışı doğrulayabileceğiniz makbuzlar (receipts) ekler. Deterministik olmama durumu, kararsız bir yeniden çalıştırma yerine tam adımda bir karma (hash) uyuşmazlığı olarak ortaya çıkar. Kod dışı çıktılar da aynı muameleyi görür: bir görev bir yapıt sözleşmesi (rapor, veri seti, eylem günlüğü, operasyon sonucu) bildirebilir ve bir git işlemesi (commit) yerine imzalı bir soy kütüğü makbuzu ile tamamlanır.
 - **Tasarım gereği yalıtılmış.** Her kodlama görevi, birleştirme kapılarının arkasında kendi git worktree'sini alır; yapıt modundaki görevler `.sdd/workspaces/` altında bir çalışma dizini alır. Ajanlar varsayılan olarak değiştirilebilir çalışma alanını paylaşmaz; tek paylaşılan durum, atomik olarak talep edilen görev birikimidir. Daha katı dosya sistemi denetimi [sandbox arka uçlarından](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) isteğe bağlıdır. Worktree'leri devre dışı bırakırsanız her görev paylaşılan çalışma kopyasında çalışır.
-- **Geniş ve yerel.** 40'tan fazla CLI ajan adaptörü artı genel bir `--prompt` sarmalayıcısı, dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.
+- **Geniş ve yerel.** 53'ten fazla CLI ajan adaptörü artı genel bir `--prompt` sarmalayıcısı, dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.
 
 Tam liste [yetenekler sayfasında](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) yer alır; [özellik matrisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) kapsamlı dizindir.
 
@@ -134,7 +134,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +143,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm ve Docker [kurulum kılavuzunda](https://bernstein.readthedocs.io/en/latest/getting-started/install/) ele alınmıştır; yalıtılmış paket kendi [air-gap kılavuzuna](https://bernstein.readthedocs.io/en/latest/installation/air-gap/) sahiptir.
+pipx, pip, brew, dnf, npm ve Docker [kurulum kılavuzunda](https://docs.bernstein.run/en/latest/getting-started/install/) ele alınmıştır; yalıtılmış paket kendi [air-gap kılavuzuna](https://docs.bernstein.run/en/latest/installation/air-gap/) sahiptir.
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -223,14 +223,14 @@ bernstein workflow resume <run_id>                    # picks up at the first no
 Depo hijyen kapıları: `bernstein readme-l10n verify`, çevrilmiş README'leri İngilizce kaynaktan sapan bir PR'ı başarısız kılar (güncelliğini yitirmiş bölümü adlandırarak); `bernstein readme-l10n sync`, İngilizce düzenlemelerden sonra bunları yeniden bağlar. Bkz. [readme-l10n](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/playbooks/readme-l10n.md).
 
 ### desteklenen ajanlar
-<!-- l10n: en="supported agents" hash="sha256:237685a67917" -->
+<!-- l10n: en="supported agents" hash="sha256:6a62582765f7" -->
 
-Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ve daha fazlası. [Adaptör dizini](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bunlardan 30'u için kurulum komutlarını içerir. `bernstein integrations list`, neyin çözümlendiğine dair tek doğruluk kaynağı olan `src/bernstein/adapters/registry.py` dosyasındaki 54 bağlı entegrasyonun tamamını listeler. Bunların 52'u seçilebilir ajan adaptörleridir; diğer iki satır ise test taslağı `mock` ve uç nokta profili `self-hosted-endpoints`tir. `--prompt` bayrağına sahip diğer her şey genel sarmalayıcı aracılığıyla çalışır.
+Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Muse Code, OpenAI Agents SDK, Amp, Cody, Continue, Devin Terminal, Junie, Kilo, Kiro, AWS Q Developer, Ollama, OpenCode, OpenHands, Open Interpreter, gptme, Plandex, AIChat, Letta Code, Qwen ve daha fazlası. [Adaptör dizini](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/adapters/index.md) bunlardan 30'u için kurulum komutlarını içerir. `bernstein integrations list`, neyin çözümlendiğine dair tek doğruluk kaynağı olan `src/bernstein/adapters/registry.py` dosyasındaki 56 bağlı entegrasyonun tamamını listeler. Bunların 54'u seçilebilir ajan adaptörleridir; diğer iki satır ise test taslağı `mock` ve uç nokta profili `self-hosted-endpoints`tir. `--prompt` bayrağına sahip diğer her şey genel sarmalayıcı aracılığıyla çalışır.
 
 Aynı çalıştırmada ajanları birleştirin: standart şablon kodlar için ucuz yerel modeller, mimari için daha güçlü bulut modelleri. `bernstein integrations list --installed` makinenizde nelerin mevcut olduğunu gösterir.
 
 ### gönüllü işlem gücü
-<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
 
 Bir proje sorunları gönüllülere açık olarak işaretleyebilir ve herkes bunlardan birini kendi makinesinde, hesap ve koordinatör olmadan çalıştırabilir. Bir görevin ne yapmasına izin verildiğini proje bir `volunteer.json` manifestinde bildirir - sanal alan arka ucu, izin verilen ağ listesi, duvar saati ve bellek tavanları - ve bağışçının kendi sınırları bunu yalnızca daraltabilir, asla genişletemez. Tamamlanan bir görevin ürettiği makbuz, sonucu altında çalıştığı sınırlama kararına bağlar; böylece bir bakımcı aylar sonra bile işin gerçekte neye dokunmasına izin verildiğini denetleyebilir.
 
@@ -239,12 +239,12 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse` ve `hub`.
+[Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse`, `budget`, `verify-bundle` ve `hub`.
 
 ### ön sayfanın ötesinde
-<!-- l10n: en="beyond the front page" hash="sha256:7dc120ea1ae4" -->
+<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
 
-Daha derinlemesine tüm konular [belgelendirme sitesinde](https://bernstein.readthedocs.io/) yer alır:
+Daha derinlemesine tüm konular [belgelendirme sitesinde](https://docs.bernstein.run/) yer alır:
 
 | sayfa | kapsamı |
 |---|---|

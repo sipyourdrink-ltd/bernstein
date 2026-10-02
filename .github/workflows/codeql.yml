@@ -61,16 +61,30 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         with:
           languages: ${{ matrix.language }}
           queries: +security-extended
           config-file: .github/codeql/codeql-config.yml
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        env:
+          # The only way to load an unpublished model pack that lives in this
+          # repository. `packs:` in the config file resolves names through the
+          # registry, so it cannot see this one; a path there is ignored with a
+          # warning rather than an error, which is why the pack was silently
+          # absent from every analysis between #4426 and #6024. The action
+          # forwards this JSON to the named CodeQL subcommand, so the flags
+          # land on `database run-queries`, after the database already exists.
+          # `--additional-packs` is the directory searched for packs, so it is
+          # the parent of the pack directory, not the pack itself.
+          CODEQL_ACTION_EXTRA_OPTIONS: >-
+            {"database":{"run-queries":[
+            "--additional-packs","${{ github.workspace }}/.github/codeql",
+            "--model-packs","bernstein/codeql-sanitizers"]}}
         with:
           category: "/language:${{ matrix.language }}"

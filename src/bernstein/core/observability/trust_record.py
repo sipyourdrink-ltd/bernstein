@@ -91,7 +91,10 @@ specification):
 - ``model_id`` / ``model_provider`` / ``model_version`` (optional) on any
   event: the *last* event carrying ``model_id`` wins, so a mid-run model
   switch is reflected honestly. Required -- ``model`` is a required TRACE
-  member and there is no honest default for it.
+  member and there is no honest default for it. For a per-worker hop
+  (:meth:`TrustRecordEmitter.emit_hop_records`) the same keys are read from
+  the hop's own ``agent_id``-scoped events only, never borrowed from a
+  sibling worker.
 - ``gate_config`` on any event: the *last* such event's value is the
   resolved policy/gate configuration this execution ran under.
   ``policy.bundle_hash`` is ``sha256:`` + the hex digest of its JCS
@@ -304,7 +307,8 @@ class TrustRecord:
         data_class: Operator-declared data sensitivity, conservative default
             when undeclared.
         tool_transcript: ``{"hash": <sha256 over tool-call entries>,
-            "call_count": <int>}``.
+            "call_count": <int>}``, or ``None`` when this execution has
+            no observed tool-call evidence (the member is omitted).
         build_provenance: ``{"slsa_level": 0, "digest": <sha256 hex>,
             "provenance_uri": <url>}``.
         appraisal: ``{"status": "none", "verifier": <fixed URI>,
@@ -330,7 +334,7 @@ class TrustRecord:
     runtime: dict[str, str]
     policy: dict[str, Any]
     data_class: str
-    tool_transcript: dict[str, Any]
+    tool_transcript: dict[str, Any] | None
     build_provenance: dict[str, Any]
     appraisal: dict[str, Any]
     cnf: dict[str, Any]
@@ -359,7 +363,6 @@ _BASE_SIGNED_FIELDS: tuple[str, ...] = (
     "runtime",
     "policy",
     "data_class",
-    "tool_transcript",
     "build_provenance",
     "appraisal",
     "cnf",
@@ -375,6 +378,8 @@ def _record_dict_without_signature(record: TrustRecord) -> dict[str, Any]:
     from, so the two can never disagree about what the signature covers.
     """
     body: dict[str, Any] = {field: getattr(record, field) for field in _BASE_SIGNED_FIELDS}
+    if record.tool_transcript is not None:
+        body["tool_transcript"] = record.tool_transcript
     if record.delegation is not None:
         body["delegation"] = record.delegation
     if record.references is not None:
@@ -672,7 +677,7 @@ class TrustRecordEmitter:
         except OSError:
             lines = []
 
-        events = []
+        events: list[dict[str, Any]] = []
         for line in lines:
             if line.strip():
                 try:
@@ -680,6 +685,43 @@ class TrustRecordEmitter:
                 except json.JSONDecodeError:
                     continue
 
+        return self._build_unsigned_record_for_events(
+            events,
+            journal_path,
+            run_id,
+            exec_id,
+            kid=kid,
+            parent_record=parent_record,
+            credential_id=credential_id,
+            cnf_jwk_members=cnf_jwk_members,
+            tool_transcript=_build_tool_transcript(events),
+        )
+
+    def _build_unsigned_record_for_events(
+        self,
+        events: list[dict[str, Any]],
+        journal_path: Path,
+        run_id: str,
+        exec_id: str,
+        *,
+        kid: str,
+        parent_record: str | None = None,
+        credential_id: str | None = None,
+        cnf_jwk_members: Mapping[str, Any] | None = None,
+        tool_transcript: dict[str, Any] | None = None,
+        agent_id: str | None = None,
+    ) -> TrustRecord:
+        """Build an unsigned Trust Record from already-loaded journal events.
+
+        Identical to :meth:`_build_unsigned_record` except the journal rows are
+        passed in rather than read here, and ``tool_transcript`` is passed
+        verbatim: ``None`` omits the member (unobserved transcript), a dict is
+        used as given. The ordinary ``_build_unsigned_record`` computes the
+        transcript from the events before calling here. When *agent_id* is
+        given, the run-local facts (model, data class, ``iat``,
+        ``references``) are scoped to that one worker's events rather than read
+        last-event-wins across the whole run.
+        """
         # Verify the journal's hash chain before trusting anything it
         # recorded. A tampered journal (reordered or mutated events) must
         # not produce a record; the error names the divergent step so a
@@ -696,14 +738,29 @@ class TrustRecordEmitter:
             msg = f"journal {journal_path} has no events: no completion time to source iat/appraisal.timestamp from"
             raise ValueError(msg)
 
-        iat = round(float(events[-1].get("ts", 0.0)))
+        hop_events = (
+            [event for event in events if event.get("agent_id") == agent_id] if agent_id is not None else events
+        )
+        if agent_id is not None and not hop_events:
+            raise ValueError(f"agent {agent_id} has no events in journal {journal_path}")
 
-        model = _extract_model(events, journal_path)
+        iat = round(float(hop_events[-1].get("ts", 0.0)))
+
+        model = _extract_model(
+            events,
+            journal_path,
+            agent_id=agent_id,
+            label=f"agent {agent_id}" if agent_id is not None else None,
+        )
         gate_config = _extract_last(events, "gate_config")
         if gate_config is None:
             msg = f"journal {journal_path} names no gate_config: cannot compute policy.bundle_hash"
             raise ValueError(msg)
-        data_class = _extract_last(events, "data_class", default=_DEFAULT_DATA_CLASS)
+        data_class = _extract_last(
+            hop_events,
+            "data_class",
+            default=_extract_last(events, "data_class", default=_DEFAULT_DATA_CLASS),
+        )
 
         subject = spiffe_subject_for_execution(run_id, exec_id)
 
@@ -716,8 +773,6 @@ class TrustRecordEmitter:
 
         bundle_hash = f"sha256:{hashlib.sha256(canonicalize_jcs(gate_config)).hexdigest()}"
         policy: dict[str, Any] = {"bundle_hash": bundle_hash, "enforcement_mode": _ENFORCEMENT_MODE}
-
-        tool_transcript = _build_tool_transcript(events)
 
         build_provenance: dict[str, Any] = {
             "slsa_level": _SLSA_LEVEL,
@@ -763,7 +818,7 @@ class TrustRecordEmitter:
                 "credential_id": credential_id,
             }
 
-        references = _build_references(events) or None
+        references = _build_references(hop_events, agent_id=agent_id) or None
 
         return TrustRecord(
             eat_profile=_EAT_PROFILE,
@@ -860,6 +915,104 @@ class TrustRecordEmitter:
 
         return json.dumps(output, sort_keys=True, separators=(",", ":"))
 
+    def emit_hop_records(
+        self,
+        journal_path: Path,
+        run_id: str,
+    ) -> HopExportResult:
+        """Emit one signed Trust Record per worker hop, plus a run-level aggregate.
+
+        A real orchestrator journal holds one hash chain for the whole run with
+        several ``agent_spawned`` events - one per worker, each with its own
+        ``agent_id`` and model. This function splits such a run into one
+        execution record per spawned worker (``exec_id`` = that event's
+        ``agent_id``, in spawn order) and folds them into the existing run-level
+        aggregate.
+
+        A journal with no ``agent_spawned`` event (every committed vector, every
+        hand-built legacy journal) keeps the pre-#6045 single-record behaviour:
+        one synthetic hop whose ``exec_id`` is *run_id* and whose
+        ``tool_transcript`` is always present.
+
+        Args:
+            journal_path: Path to the journal.jsonl file.
+            run_id: The overall run identifier shared by every hop.
+
+        Returns:
+            The ordered hop records and the signed aggregate JSON.
+
+        Raises:
+            ValueError: The chain is broken, a hop's own spawn carries no
+                ``model_provider``/``model_id``, or no event carries ``gate_config``.
+        """
+        try:
+            lines = journal_path.read_text(encoding="utf-8").strip().splitlines()
+        except OSError:
+            lines = []
+        events: list[dict[str, Any]] = []
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+        # Verify the whole journal's chain once, before any hop is emitted.
+        from bernstein.core.replay.journal import verify_events
+
+        verdict = verify_events(events)
+        if not verdict.chain_consistent:
+            reason = verdict.errors[0] if verdict.errors else f"step {verdict.divergent_index}"
+            raise ValueError(f"journal chain broken: {reason}")
+
+        spawns = [event for event in events if event.get("event") == "agent_spawned"]
+
+        if not spawns:
+            # Legacy journal: one record, exec_id = run_id, transcript always present.
+            record = self.emit_trust_record(journal_path, run_id, run_id)
+            aggregate = self.emit_aggregate_trust_record(run_id, [record])
+            return HopExportResult(
+                records=[HopRecord(exec_id=run_id, record=record)],
+                aggregate=aggregate,
+            )
+
+        records: list[HopRecord] = []
+        for spawn in spawns:
+            agent_id = spawn.get("agent_id")
+            if not isinstance(agent_id, str) or not agent_id:
+                raise ValueError(f"agent_spawned event carries no usable agent_id: {spawn!r}")
+            _require_spiffe_segment(agent_id, "agent_id")
+            hop_events = [event for event in events if event.get("agent_id") == agent_id]
+            has_tool_calls = any(event.get("event") == "tool_call" for event in hop_events)
+            install_rev = self._get_install_rev()
+            kid = f"install-{install_rev}"
+            tool_transcript = _build_tool_transcript(events, agent_id=agent_id) if has_tool_calls else None
+            record = self._build_unsigned_record_for_events(
+                events,
+                journal_path,
+                run_id,
+                agent_id,
+                kid=kid,
+                tool_transcript=tool_transcript,
+                agent_id=agent_id,
+            )
+            signed = self._sign_record(record)
+            output = _record_dict_without_signature(signed)
+            output["signature"] = signed.signature
+            records.append(
+                HopRecord(
+                    exec_id=agent_id,
+                    record=json.dumps(output, sort_keys=True, separators=(",", ":")),
+                )
+            )
+
+        aggregate = self.emit_aggregate_trust_record(
+            run_id,
+            [hop.record for hop in records],
+        )
+        return HopExportResult(records=records, aggregate=aggregate)
+
     def emit_aggregate_trust_record(
         self,
         run_id: str,
@@ -907,11 +1060,12 @@ class TrustRecordEmitter:
           (``restricted < internal < confidential < public``). An aggregate
           covers all members, so its classification ceiling is the most
           restrictive member's ceiling.
-        - ``tool_transcript``: ``call_count`` sums the members' counts;
-          ``hash`` is ``sha256:`` + the hex SHA-256 of the JCS
-          canonicalisation of the ordered list of member
-          ``tool_transcript.hash`` values (a hash of hashes, same shape as
-          ``policy.bundle_hash`` above).
+        - ``tool_transcript``: present only when every member carries one
+          (an aggregate cannot total what some members never reported). When
+          present, ``call_count`` sums the members' counts and ``hash`` is
+          ``sha256:`` + the hex SHA-256 of the JCS canonicalisation of the
+          ordered list of member ``tool_transcript.hash`` values (a hash of
+          hashes, same shape as ``policy.bundle_hash`` above).
         - ``build_provenance``/``appraisal``/``cnf``: built the same way as
           for an execution record (this producer's own build digest,
           self-declared "none" appraisal, this install's signing key).
@@ -966,10 +1120,12 @@ class TrustRecordEmitter:
             key=lambda dc: _DATA_CLASS_PRECEDENCE.get(dc, 99),
         )
 
-        call_count = sum(int(member["tool_transcript"]["call_count"]) for member in members)
-        member_transcript_hashes = [member["tool_transcript"]["hash"] for member in members]
-        transcript_digest = hashlib.sha256(canonicalize_jcs(member_transcript_hashes)).hexdigest()
-        tool_transcript: dict[str, Any] = {"hash": f"sha256:{transcript_digest}", "call_count": call_count}
+        tool_transcript: dict[str, Any] | None = None
+        if all("tool_transcript" in member for member in members):
+            call_count = sum(int(member["tool_transcript"]["call_count"]) for member in members)
+            member_transcript_hashes = [member["tool_transcript"]["hash"] for member in members]
+            transcript_digest = hashlib.sha256(canonicalize_jcs(member_transcript_hashes)).hexdigest()
+            tool_transcript = {"hash": f"sha256:{transcript_digest}", "call_count": call_count}
 
         build_provenance: dict[str, Any] = {
             "slsa_level": _SLSA_LEVEL,
@@ -1040,23 +1196,64 @@ class TrustRecordEmitter:
         return json.dumps(output, sort_keys=True, separators=(",", ":"))
 
 
-def _extract_last(events: list[dict[str, Any]], key: str, *, default: Any = None) -> Any:
-    """Return the value of *key* on the last event that carries it, or *default*."""
+@dataclass(frozen=True, slots=True)
+class HopRecord:
+    """One worker hop's signed record and its ``exec_id``."""
+
+    exec_id: str
+    record: str
+
+
+@dataclass(frozen=True, slots=True)
+class HopExportResult:
+    """The ordered hop records and the run-level aggregate for a journal."""
+
+    records: list[HopRecord]
+    aggregate: str
+
+
+def _extract_last(
+    events: list[dict[str, Any]],
+    key: str,
+    *,
+    default: Any = None,
+    agent_id: str | None = None,
+) -> Any:
+    """Return the value of *key* on the last event that carries it, or *default*.
+
+    When *agent_id* is given, only events whose ``agent_id`` equals it are
+    considered - the per-hop exporter scopes run-local facts (model, data
+    class) to one worker this way.
+    """
     for event in reversed(events):
+        if agent_id is not None and event.get("agent_id") != agent_id:
+            continue
         if key in event:
             return event[key]
     return default
 
 
-def _extract_model(events: list[dict[str, Any]], journal_path: Path) -> dict[str, Any]:
-    """Return the ``model`` member sourced from the last ``model_id``-bearing event."""
-    provider = _extract_last(events, "model_provider")
-    model_id = _extract_last(events, "model_id")
+def _extract_model(
+    events: list[dict[str, Any]],
+    journal_path: Path,
+    *,
+    agent_id: str | None = None,
+    label: str | None = None,
+) -> dict[str, Any]:
+    """Return the ``model`` member sourced from the last ``model_id``-bearing event.
+
+    When *agent_id* is given, only that hop's own events are considered, so a
+    worker's model never borrows another worker's. *label* names the refusal's
+    owner when the caller wants a more specific subject than the journal path.
+    """
+    provider = _extract_last(events, "model_provider", agent_id=agent_id)
+    model_id = _extract_last(events, "model_id", agent_id=agent_id)
     if model_id is None or provider is None:
-        msg = f"journal {journal_path} names no model_provider/model_id: cannot populate required 'model' member"
+        who = label if label is not None else f"journal {journal_path}"
+        msg = f"{who} names no model_provider/model_id: cannot populate required 'model' member"
         raise ValueError(msg)
     model: dict[str, Any] = {"provider": provider, "model_id": model_id}
-    version = _extract_last(events, "model_version")
+    version = _extract_last(events, "model_version", agent_id=agent_id)
     if version is not None:
         model["version"] = version
     return model
@@ -1066,36 +1263,49 @@ def _extract_model(events: list[dict[str, Any]], journal_path: Path) -> dict[str
 _JOURNAL_CHAIN_FIELDS = frozenset({"index", "event", "prev_hash", "payload_hash", "event_hash", "ts", "elapsed_s"})
 
 
-def _build_tool_transcript(events: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_tool_transcript(
+    events: list[dict[str, Any]],
+    *,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
     """Fold every ``tool_call`` event, in journal order, into ``tool_transcript``.
 
     Always returns a populated object, even at zero calls: "no tool calls
     happened" is a fact this execution attests to, not an unknown value to
-    omit the way a missing timestamp is.
+    omit the way a missing timestamp is. When *agent_id* is given, only that
+    hop's own ``tool_call`` events are folded - the per-hop exporter calls this
+    once per worker rather than lumping every worker's calls together.
     """
     from bernstein.core.security.agent_card_signer import canonicalize_jcs
 
     calls = [
         {k: v for k, v in event.items() if k not in _JOURNAL_CHAIN_FIELDS}
         for event in events
-        if event.get("event") == "tool_call"
+        if event.get("event") == "tool_call" and (agent_id is None or event.get("agent_id") == agent_id)
     ]
     digest = hashlib.sha256(canonicalize_jcs(calls)).hexdigest()
     return {"hash": f"sha256:{digest}", "call_count": len(calls)}
 
 
-def _build_references(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_references(
+    events: list[dict[str, Any]],
+    *,
+    agent_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Return one ``rel: "produced-artifact"`` entry per ``artifact_produced`` event.
 
     No ``rel: "evidence"`` entry is ever produced for an execution record:
     ``tool_transcript`` covers the journal now. The ``member-execution``
     relation belongs to the run-level aggregate record
     (:meth:`TrustRecordEmitter.emit_aggregate_trust_record`), never to one
-    built from a journal.
+    built from a journal. When *agent_id* is given, only that hop's own
+    ``artifact_produced`` events are folded.
     """
     references: list[dict[str, Any]] = []
     for event in events:
         if event.get("event") != "artifact_produced":
+            continue
+        if agent_id is not None and event.get("agent_id") != agent_id:
             continue
         references.append(
             {

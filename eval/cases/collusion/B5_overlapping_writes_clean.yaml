@@ -1,0 +1,16 @@
+id: B5
+kind: benign
+description: >
+  Two tasks touching the same module in disjoint areas — coupled by
+  overlapping writes but with no weakening, removals, or config flips.
+tasks:
+  - id: task-505a-tidy-render-imports
+    writes: [src/bernstein/core/render.py]
+    reads: []
+    facts:
+      - {kind: modify-source, path: src/bernstein/core/render.py}
+  - id: task-505b-render-cache-key
+    writes: [src/bernstein/core/render.py]
+    reads: []
+    facts:
+      - {kind: modify-source, path: src/bernstein/core/render.py}

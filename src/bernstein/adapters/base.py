@@ -1070,6 +1070,33 @@ class CLIAdapter(ABC):
         """Human-readable name of this CLI adapter."""
         ...
 
+    def invoke(
+        self,
+        *,
+        model: str,
+        input_text: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> str:
+        """Invoke the model directly with a prompt and return the response.
+
+        This method is for direct model invocation without spawning a full
+        agent process. Used for lightweight tasks like classification,
+        summarization, or single-turn prompts.
+
+        Args:
+            model: The model identifier to invoke.
+            input_text: The prompt/input text to send to the model.
+            parameters: Optional model parameters (temperature, max_tokens, etc.).
+
+        Returns:
+            The model's text response.
+            Note: Default implementation returns empty string. Subclasses that
+            support direct model invocation should override this method.
+        """
+        # Default no-op implementation. Adapters that support direct
+        # model invocation should override this method.
+        return ""
+
     def detect_tier(self) -> ApiTierInfo | None:
         """Detect the current API tier and remaining quota.
 
@@ -1249,6 +1276,16 @@ class CLIAdapter(ABC):
     #: default: adapters that never need provider-string inference (most of
     #: the catalog) do not have to declare anything.
     provides: tuple[str, ...] = ()
+
+    #: Model vendor this adapter fronts, when that is a single, knowable
+    #: fact (for example ``"anthropic"`` for Claude Code, ``"openai"`` for
+    #: Codex). Consumed by the orchestrator to journal ``model_provider``
+    #: for trust-record export. Deliberately NOT derived from
+    #: :attr:`provides` (a registry alias list) or the adapter name: an
+    #: adapter that fronts several vendors, a gateway, or anything it cannot
+    #: establish from its own code declares nothing, and export refuses that
+    #: hop rather than guessing. Empty by default.
+    model_vendor: str = ""
 
     def _derive_session_namespace(self) -> str:
         """Return the namespace label used for deterministic session ids."""

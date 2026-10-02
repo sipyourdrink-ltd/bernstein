@@ -29,9 +29,10 @@ stages:
         phases: [research, plan, implement, verify]
 ```
 
-When the orchestrator reaches that step, it spawns one agent per
-phase. Each phase writes a structured artefact to
-`.sdd/runtime/phase_artifacts/<task_id>/<phase>.json`:
+The plan loader records the phases in `task.metadata["phases"]`; the
+orchestrator does not yet spawn per-phase agents. A caller that drives
+`PhasedRunner` runs one executor call per phase, and each phase writes a
+structured artefact to `.sdd/runtime/phase_artifacts/<task_id>/<phase>.json`:
 
 ```json
 {
@@ -65,11 +66,20 @@ phase default when present.
 
 ## Configuration
 
+The `tuning.phase_pipeline.*` keys below are accepted and stored on
+`defaults.PHASE_PIPELINE`, but no shipped code reads them yet: the
+orchestrator does not route `phases:` steps through `PhasedRunner`, and
+`PhasedRunner` takes `gate_enabled` (default `true`), `gate_max_retries`
+(default `1`) and `store` (default root `.sdd/runtime/phase_artifacts`)
+as constructor arguments.
+
 | Knob | Default | Controls |
 |---|--:|---|
-| `phase_pipeline.enabled` | `true` | Honour `phases:` in plans. |
-| `phase_pipeline.artefact_path` | `.sdd/runtime/phase_artifacts/` | Distilled handoff store. |
-| `phase_pipeline.gc_on_close` | `true` | Drop artefacts when the parent task closes. |
+| `tuning.phase_pipeline.enabled` | `false` | Route `phases:` steps through the phased runner. |
+| `tuning.phase_pipeline.artifact_root` | `.sdd/runtime/phase_artifacts` | Distilled handoff store. |
+| `tuning.phase_pipeline.gc_on_task_close` | `true` | Drop artefacts when the parent task closes. |
+| `tuning.phase_pipeline.gate_enabled` | `true` | Mechanical exit-criteria gate at each phase boundary. |
+| `tuning.phase_pipeline.gate_max_retries` | `1` | Re-fires of a failing phase before the task fails. |
 
 ## Limitations
 
