@@ -2532,6 +2532,62 @@ class AgentSpawner:
                 exc,
             )
 
+    def _enforce_model_registry_gate(
+        self,
+        *,
+        session_id: str,
+        tasks: list[Task],
+        model_config: ModelConfig,
+        provider_name: str | None,
+        adapter: Any,
+        routing_path: str,
+    ) -> None:
+        """Refuse a final model choice that has no live registry admission.
+
+        Every spawn route (router, role policy, operator pin, failover and
+        crash resume) converges on a resolved ``model_config`` just before a
+        process starts; this is the one place the model-registry policy
+        (``BERNSTEIN_MODEL_REGISTRY_ENFORCEMENT``) is consulted for them. With
+        the flag off this is a no-op. With it on, an unadmitted model raises
+        :class:`SpawnError` after the refusal has been appended to the audit
+        chain, so no agent is started.
+
+        The registry provider is the adapter's declared model vendor, else the
+        routed provider name, else the adapter name. The task class is the
+        batch's role.
+
+        Args:
+            session_id: Spawn session identifier (for the error message).
+            tasks: The task batch being spawned.
+            model_config: The resolved model for this attempt.
+            provider_name: Router-selected provider, if any.
+            adapter: The adapter that would run the model.
+            routing_path: Which spawn route is asking, recorded on a refusal.
+
+        Raises:
+            SpawnError: If enforcement is on and the model is not admitted.
+        """
+        from bernstein.core.routing.route_decision import (
+            ModelNotAdmittedError,
+            enforce_model_registry_for_dispatch,
+        )
+
+        vendor = getattr(adapter, "model_vendor", "")
+        provider = (vendor if isinstance(vendor, str) else "") or provider_name or str(adapter.name())
+        try:
+            enforce_model_registry_for_dispatch(
+                workdir=self._workdir,
+                provider=provider,
+                model=model_config.model,
+                task_class=tasks[0].role,
+                routing_path=routing_path,
+                run_id=getattr(self, "_run_id", "") or "",
+                task_id=tasks[0].id,
+            )
+        except ModelNotAdmittedError as exc:
+            logger.error("Refusing spawn %s (role=%s): %s", session_id, tasks[0].role, exc)
+            raise SpawnError(f"model registry refused: {exc}") from exc
+
     def _enforce_admission_policy(
         self,
         *,
@@ -4720,6 +4776,22 @@ class AgentSpawner:
         resolved_endpoint_adapter_name = self._adapter.name()
         resolved_endpoint_model = model_config.model
 
+        # Model-registry gate: the final model choice (router, role policy,
+        # operator pin, override) is fully resolved here and no process has
+        # started yet. A router failover inside the spawn loop below re-checks
+        # whatever model it switches to.
+        _registry_gated: set[tuple[str, str]] = set()
+        _registry_provider_key = provider_name or self._adapter.name()
+        self._enforce_model_registry_gate(
+            session_id=session_id,
+            tasks=tasks,
+            model_config=model_config,
+            provider_name=provider_name,
+            adapter=self._adapter,
+            routing_path="spawner",
+        )
+        _registry_gated.add((_registry_provider_key, model_config.model))
+
         # Executor admission (#4907).  The gate runs here rather than
         # beside the lethal-trifecta check above because the executor
         # identity it judges - adapter, model, endpoint - is only fully
@@ -5128,6 +5200,25 @@ class AgentSpawner:
                     except Exception as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         break
+
+                    # A failover that switched provider/model after the gate
+                    # above must pass the registry too: refuse rather than
+                    # start a model nobody admitted.
+                    _registry_key = (provider_name or self._adapter.name(), model_config.model)
+                    if _registry_key not in _registry_gated:
+                        try:
+                            self._enforce_model_registry_gate(
+                                session_id=session_id,
+                                tasks=tasks,
+                                model_config=model_config,
+                                provider_name=provider_name,
+                                adapter=target_adapter,
+                                routing_path="spawner_failover",
+                            )
+                        except SpawnError:
+                            self._release_warm_pool_slot(session_id)
+                            raise
+                        _registry_gated.add(_registry_key)
 
                     # Fail loudly when sampling/endpoint overrides are
                     # requested for an adapter that does not declare the
@@ -5786,6 +5877,17 @@ class AgentSpawner:
             )
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
+
+        # Resume goes straight to ``self._adapter``; gate its model like the
+        # fresh-spawn path does, before any process starts.
+        self._enforce_model_registry_gate(
+            session_id=session_id,
+            tasks=tasks,
+            model_config=model_config,
+            provider_name=None,
+            adapter=self._adapter,
+            routing_path="spawner_resume",
+        )
 
         meta_messages = ["This is a crash recovery session. Continue from where the previous agent left off."]
 
