@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AIエージェントのためのオープンソース・ガバナンスレイヤー
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,7 +41,7 @@
 Bernstein は AI エージェントのためのオープンソース・ガバナンスレイヤーです。policy as code の上で動きます。誰が何をしてよいか・何に承認が要るか・何を記録すべきかをポリシーとして書けば、Bernstein がそれを適用し、検証可能な記録を作ります。決定論的スケジューラ - 調整ループにモデルは入らない - がエージェントを並列に走らせ、成果物をゲートで検査し、全ステップを記録します。だから実行は事後に、オフラインで、アーティファクトだけから検証できます。CLI コーディングエージェントはそのまま動き(Claude Code、Codex、Gemini CLI ほか 50+)、同じレイヤーがあらゆるエージェントワークロードをガバナンスします: 成果物は diff でも、調査レポートでも、データセットでも、監査エビデンスパックでも構いません。エアギャップ用インストールプロファイル同梱。Apache-2.0。
 
 ### 概要
-<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 他と違う点は 4 つ。以降はすべて詳細である。
 

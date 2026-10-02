@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI ajanları için açık kaynak governance katmanı
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,7 +41,7 @@
 Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 50+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
 
 ### bir bakışta
-<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 Dört özellik onu farklı kılar; gerisi ayrıntıdır.
 

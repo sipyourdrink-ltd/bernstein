@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### שכבת הגברנס בקוד פתוח לסוכני AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,7 +41,7 @@
 Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא פועל לפי policy as code: אתה כותב את המדיניות - מי רשאי לעשות מה, מה טעון אישור, מה חייב להירשם - ו-Bernstein אוכף אותה ומפיק רשומה שניתנת לאימות. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI ועוד 50+), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
 
 ### במבט חטוף
-<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 ארבעה דברים מייחדים אותו; כל השאר הם פרטים.
 

@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### tầng governance mã nguồn mở cho AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,7 +41,7 @@
 Bernstein là tầng governance mã nguồn mở cho AI agent. Nó chạy trên policy as code: bạn viết chính sách - ai được làm gì, cái gì cần phê duyệt, cái gì phải được ghi lại - và Bernstein thực thi chính sách đó và tạo ra bản ghi có thể xác minh. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI và hơn 50 agent khác), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
 
 ### tổng quan nhanh
-<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 Bốn đặc điểm tạo nên sự khác biệt; mọi thứ phía sau chỉ là chi tiết.
 
