@@ -256,7 +256,7 @@ def test_jcs_v2_journal_round_trips_write_verify_resume(tmp_path: Path) -> None:
 
     journal = EventJournal(run_id="run-v2-rt", sdd_dir=tmp_path, hash_profile=HASH_PROFILE_JCS_V2)
     journal.record("tool_call", path="a.py", x=1.5)
-    journal.record("tool_call", task_id="T-1", note="caf\u00e9")
+    journal.record("tool_call", task_id="T-1", note="\u00e9\u2603")
 
     rows = load_events(journal.path).events
     assert all(row["hash_profile"] == HASH_PROFILE_JCS_V2 for row in rows)
