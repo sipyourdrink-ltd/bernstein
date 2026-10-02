@@ -32,7 +32,7 @@ from bernstein.core.skill_discovery import SkillDefinition, SkillSource
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 log = logging.getLogger(__name__)
 

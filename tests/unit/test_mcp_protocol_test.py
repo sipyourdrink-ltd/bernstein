@@ -18,7 +18,7 @@ def _write_stdio_fixture_server(path: Path) -> None:
             """
             from __future__ import annotations
 
-            from mcp.server.fastmcp import FastMCP
+            from mcp.server.mcpserver import MCPServer as FastMCP
 
             mcp = FastMCP("fixture")
 
@@ -42,8 +42,8 @@ def _write_stdio_fixture_server(path: Path) -> None:
 class TestValidateToolContracts:
     def test_reports_invalid_schema_and_duplicate_names(self) -> None:
         tools = [
-            Tool(name="dup", inputSchema={"type": "object", "properties": {}}),
-            Tool(name="dup", inputSchema={"type": "definitely-not-a-real-jsonschema-type"}),
+            Tool(name="dup", input_schema={"type": "object", "properties": {}}),
+            Tool(name="dup", input_schema={"type": "definitely-not-a-real-jsonschema-type"}),
         ]
 
         reports, failures = validate_tool_contracts(tools)

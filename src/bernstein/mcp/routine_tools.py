@@ -33,7 +33,7 @@ from bernstein.mcp.input_validation import (
 )
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 logger = logging.getLogger(__name__)
 

@@ -105,8 +105,8 @@ def validate_tool_contracts(tools: Sequence[Tool]) -> tuple[tuple[ToolValidation
             failures.append(f"Duplicate tool name returned by server: {tool.name}")
         seen_names.add(tool.name)
 
-        required_arguments = _required_arguments(tool.inputSchema)
-        input_schema_error = _schema_error(tool.inputSchema)
+        required_arguments = _required_arguments(tool.input_schema)
+        input_schema_error = _schema_error(tool.input_schema)
         output_schema_error = _schema_error(tool.outputSchema) if tool.outputSchema is not None else None
 
         if input_schema_error is not None:
@@ -239,7 +239,7 @@ def _required_arguments(schema: dict[str, Any]) -> tuple[str, ...]:
 def _first_tool_with_required_arguments(tools: Sequence[Tool]) -> Tool | None:
     """Return the first tool whose input schema has required fields."""
     for tool in tools:
-        if _required_arguments(tool.inputSchema):
+        if _required_arguments(tool.input_schema):
             return tool
     return None
 
@@ -247,7 +247,7 @@ def _first_tool_with_required_arguments(tools: Sequence[Tool]) -> Tool | None:
 def _first_tool_without_required_arguments(tools: Sequence[Tool]) -> Tool | None:
     """Return the first tool whose input schema can be called with ``{}``."""
     for tool in tools:
-        if not _required_arguments(tool.inputSchema):
+        if not _required_arguments(tool.input_schema):
             return tool
     return None
 

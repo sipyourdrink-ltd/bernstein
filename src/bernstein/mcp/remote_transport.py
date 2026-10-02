@@ -92,7 +92,7 @@ def _header_checks_enabled() -> bool:
 
 def _supported_protocol_versions() -> tuple[str, ...]:
     """The protocol revisions this deployment serves, from the pinned SDK."""
-    from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
+    from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS
 
     return tuple(SUPPORTED_PROTOCOL_VERSIONS)
 
@@ -364,7 +364,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
             "parent_task_id to create the run as a subtask of an existing "
             "task."
         ),
-        "inputSchema": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "goal": {"type": "string"},
@@ -384,7 +384,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
             "Liveness, task counts, and cost in one read. Pass status to "
             "include the matching tasks; pass detail=true for full rows."
         ),
-        "inputSchema": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "status": {"type": "string"},
@@ -399,7 +399,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
             "running. An already-terminal task is reported with its state, "
             "and an unknown task id is refused."
         ),
-        "inputSchema": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "task_id": {"type": "string"},
@@ -415,7 +415,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
             "every run, every worker - by writing the SHUTDOWN signal. To "
             "stop a single run, use bernstein_cancel instead."
         ),
-        "inputSchema": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "workdir": {"type": "string", "default": "."},
@@ -431,7 +431,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
             "the plan it belongs to. Not a way to finish work - use "
             "bernstein_complete for that."
         ),
-        "inputSchema": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "task_id": {"type": "string"},
@@ -448,7 +448,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
             "its subtasks, one whose worker is gone, or one already awaiting "
             "a decision is refused."
         ),
-        "inputSchema": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "task_id": {"type": "string"},

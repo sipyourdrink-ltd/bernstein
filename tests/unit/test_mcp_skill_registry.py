@@ -152,9 +152,9 @@ class TestBuildMcpSkillsFromTools:
         assert skills == []
 
     def test_extra_fields_preserved_in_metadata(self) -> None:
-        tools = [{"name": "query", "description": "Query DB.", "inputSchema": {"type": "object"}}]
+        tools = [{"name": "query", "description": "Query DB.", "input_schema": {"type": "object"}}]
         skills = build_mcp_skills_from_tools("db-server", tools)
-        assert "inputSchema" in skills[0].metadata
+        assert "input_schema" in skills[0].metadata
 
     def test_name_and_description_not_in_metadata(self) -> None:
         tools = [{"name": "foo", "description": "bar", "extra": 1}]
