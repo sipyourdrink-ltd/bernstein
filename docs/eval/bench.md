@@ -624,12 +624,14 @@ src/bernstein/eval/bench/
 ├── ci.py                # BenchScorecard, evaluate_ci_scorecard, post_bench_check_run (#5458)
 ├── leaderboard.py       # Leaderboard, LeaderboardEntry, Markdown render & rotation alert
 ├── reliability.py       # pass^k reliability floor (see reliability.md)
+├── goal_drift_suite.py  # goal-drift trajectory evaluation suite (goal-drift-v1)
 ├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
 ├── gate_evasion_suite.py# gate-evasion-v1 benchmark suite & corpus loader (#5448)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
 ├── test_bench.py                   # TDD suite — core acceptance criteria
+├── test_goal_drift_suite.py        # goal-drift suite tests
 ├── test_bench_cost_budget.py       # cost accounting, compare deltas, budget gate and refusal receipts (#5464)
 ├── test_bench_ci.py                # SARIF shape, scorecard conclusions, check-run posting, CLI (#5458)
 ├── test_rotation_contamination.py  # Rotation, private holdout, and contamination tests (#5459)
@@ -644,6 +646,14 @@ docs/eval/
 ├── reliability.md            # pass^k reliability floor
 └── trajectory-receipts.md   # offline-verifiable benchmark score receipts (#2925)
 ```
+
+---
+
+## Goal-Drift Suite (`goal-drift-v1`)
+
+The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically from lineage events and diffs without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
+
+Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 
 ---
 

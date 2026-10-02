@@ -41,12 +41,14 @@ if TYPE_CHECKING:
 def _get_suite(name: str):
     """Resolve a suite name or .json path to a BenchSuite."""
     from bernstein.eval.bench.gate_evasion_suite import build_gate_evasion_suite_v1
+    from bernstein.eval.bench.goal_drift_suite import build_goal_drift_suite
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
     from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     _BUILTIN = {
         "gate-evasion-v1": build_gate_evasion_suite_v1,
+        "goal-drift-v1": build_goal_drift_suite,
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
     }
@@ -168,6 +170,26 @@ def bench_group() -> None:
     help="Stop running tasks once cumulative cost reaches this USD limit. Not combined with --reliability.",
 )
 @click.option(
+    "--trajectory",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to trajectory JSON file (events and diff).",
+)
+@click.option(
+    "--diff",
+    "diff_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to git diff file for goal-drift suite.",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Drift threshold tolerance for goal-drift suite.",
+)
+@click.option(
     "--ci",
     is_flag=True,
     default=False,
@@ -207,13 +229,16 @@ def bench_run(
     scheduler: str,
     stub_signer: bool,
     reliability_k: int | None,
-    budget: float | None,
-    ci: bool,
-    sarif_out: str | None,
-    baseline: str | None,
-    regression_threshold: float,
-    repo: str,
-    head_sha: str,
+    budget: float | None = None,
+    trajectory: Path | None = None,
+    diff_file: Path | None = None,
+    threshold: float = 0.0,
+    ci: bool = False,
+    sarif_out: str | None = None,
+    baseline: str | None = None,
+    regression_threshold: float = 0.0,
+    repo: str = "",
+    head_sha: str = "",
 ) -> None:
     """Execute a suite and emit a signed submission bundle.
 
@@ -287,12 +312,29 @@ def bench_run(
         from bernstein.eval.bench.gate_evasion_suite import GateEvasionReplayAdapter
 
         adapter = GateEvasionReplayAdapter()
+    elif suite_obj.version == "goal-drift-v1":
+        from bernstein.eval.bench.goal_drift_suite import GoalDriftReplayAdapter
+
+        trajectory_data = None
+        if trajectory is not None:
+            with open(trajectory, encoding="utf-8") as f:
+                trajectory_data = json.load(f)
+        diff_text = None
+        if diff_file is not None:
+            with open(diff_file, encoding="utf-8") as f:
+                diff_text = f.read()
+
+        adapter = GoalDriftReplayAdapter(
+            trajectory_data=trajectory_data,
+            diff_text=diff_text,
+            threshold=threshold,
+        )
     else:
         adapter = MockReplayAdapter()
     runner = BenchRunner(
         suite=suite_obj,
         adapter=adapter,
-        scheduler_config={"scheduler": scheduler},
+        scheduler_config={"scheduler": scheduler, "threshold": threshold},
         budget_usd=budget,
     )
 
@@ -460,6 +502,10 @@ def bench_verify(
         from bernstein.eval.bench.gate_evasion_suite import GateEvasionReplayAdapter
 
         adapter = GateEvasionReplayAdapter()
+    elif suite_obj.version == "goal-drift-v1":
+        from bernstein.eval.bench.goal_drift_suite import GoalDriftReplayAdapter
+
+        adapter = GoalDriftReplayAdapter()
     else:
         adapter = MockReplayAdapter()
     keys: dict[str, bytes] = {}
