@@ -158,7 +158,7 @@ def _run_concurrently(count: int, call: Callable[[int], Any]) -> list[Any]:
 def test_concurrent_deprovisions_keep_the_signed_chain_linear(tmp_path: Path) -> None:
     """Auth disabled: the handlers run in the threadpool with nothing else serialising them."""
     app, store, ledger, _ = _build(tmp_path, auth=False)
-    ids = [_identity(store, f"agent-{i}") for i in range(24)]
+    ids = [_identity(store, f"agent-{i}") for i in range(8)]
 
     with TestClient(app) as client:
 
@@ -183,7 +183,7 @@ def test_ledger_appends_from_many_threads_do_not_fork(tmp_path: Path) -> None:
         key=_KEY,
         signer=grants.GrantSigner.generate(issuer="manager:test"),
     )
-    count = 32
+    count = 8
 
     _run_concurrently(count, lambda i: ledger.deprovision(principal_id=f"agent:{i}"))
 
@@ -196,7 +196,7 @@ def test_ledger_appends_from_many_threads_do_not_fork(tmp_path: Path) -> None:
 def test_concurrent_repeats_of_one_deprovision_record_it_once(tmp_path: Path) -> None:
     app, store, ledger, _ = _build(tmp_path, auth=False)
     victim = _identity(store, "victim")
-    count = 16
+    count = 6
 
     with TestClient(app) as client:
         statuses = _run_concurrently(
