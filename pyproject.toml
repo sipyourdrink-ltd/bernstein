@@ -513,6 +513,11 @@ artifacts = [
 # Built-in team manifests (#2248) so `team_manifest: python` and the
 # `bernstein team` commands resolve right after pip install.
 "templates/teams" = "bernstein/_default_templates/teams"
+# Packaged scenario library for `bernstein scenario list|run` and
+# `bernstein routine ...`. Resolved by
+# bernstein.core.planning.scenario_library.packaged_scenarios_dir; without
+# this entry the commands see an empty library on every pip install.
+"templates/scenarios" = "bernstein/_default_templates/scenarios"
 # Adapter admission evidence (#3547). The verdict `bernstein adapters
 # verify --seal` derives is a projection of the pinned contract's bytes and
 # the golden-transcript replay, so both have to be resolvable off a pip

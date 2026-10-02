@@ -57,7 +57,7 @@ from bernstein.core.orchestration.process_utils import (
     Liveness,
     classify_pidfile_liveness,
 )
-from bernstein.core.plan_loader import PlanLoadError, load_plan, load_plan_from_yaml
+from bernstein.core.plan_loader import PlanConfig, PlanLoadError, load_plan, load_plan_from_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +151,11 @@ def _yaml_plan_goal(content: str) -> str | None:
     * a staged plan's ``name``, which :class:`PlanConfig` documents as "short
       plan name used as the orchestration goal";
     * a top-level ``goal``, which ``plan_loader._SEED_SHAPED_KEYS`` treats as
-      the mark of a seed config. Accepted here anyway: ``--from-plan`` on such
-      a file is a mistake that ``load_plan`` refuses a moment later with a
-      message naming ``--seed``, and refusing it HERE instead loses that
-      message and reports a missing goal on a file whose goal is right there.
+      the mark of a seed config.
+
+    This reads the goal only. ``bernstein run --from-plan`` does not use it for
+    YAML: that path goes through :func:`_stage_yaml_from_plan`, which loads the
+    stages and steps and refuses a seed-shaped file.
 
     ``goal`` wins when both are present: it is the more specific statement of
     intent, and a plan carrying both is a seed somebody added stages to.
@@ -172,16 +173,49 @@ def _yaml_plan_goal(content: str) -> str | None:
     return None
 
 
+#: Plan-level settings the run path has no way to apply. ``--from-plan`` refuses
+#: a plan that sets one, because running anyway would silently execute a
+#: different plan from the one the file describes.
+_UNAPPLIED_PLAN_SETTINGS = ("max_agents", "repos", "constraints")
+
+
+def _stage_yaml_from_plan(plan_path: Path) -> PlanConfig:
+    """Validate a YAML ``--from-plan`` file and return its plan-level config.
+
+    The stages and steps are loaded again by the plan-file dispatch that this
+    file is then routed to; loading here is what makes a malformed plan, a
+    seed-shaped file, or a plan setting something the run cannot honour stop
+    the command before anything starts.
+
+    Raises:
+        SystemExit: The plan does not load, or sets ``max_agents``, ``repos``
+            or ``constraints`` (never applied by ``bernstein run``).
+    """
+    try:
+        config, _tasks = load_plan(plan_path)
+    except PlanLoadError as exc:
+        console.print(f"[red]Failed to load plan file:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    unapplied = [name for name in _UNAPPLIED_PLAN_SETTINGS if getattr(config, name)]
+    if unapplied:
+        console.print(
+            f"[red]Cannot run {plan_path} with --from-plan:[/red] it sets "
+            f"{', '.join(unapplied)}, which `bernstein run` does not apply, so the run "
+            "would not match the plan. Remove the setting(s) (configure agent count in "
+            "bernstein.yaml) and run again."
+        )
+        raise SystemExit(1)
+    return config
+
+
 def _load_plan_goal(plan_path: Path) -> str:
     """Extract the goal from a saved plan file (YAML, JSON or markdown).
 
-    Every shape ``--from-plan`` documents has to be readable here, because this
-    runs BEFORE ``load_plan`` and a failure stops the file ever reaching the
-    loader that understands it. YAML was missing, so
-    ``bernstein run --from-plan plan.yaml`` -- the exact command in
-    ``docs/architecture/plans.md`` -- failed with "Could not extract goal from
-    plan file" on a plan that was perfectly well-formed, and per-step model
-    routing had no reachable entry point at all (issue #6080).
+    Used for the saved-plan formats that carry only a goal: the JSON
+    ``PlanStore`` shape and the markdown ``**Goal:**`` line. A YAML plan carries
+    stages and steps as well, so ``bernstein run --from-plan plan.yaml`` loads
+    it with :func:`_stage_yaml_from_plan` instead of reducing it to this goal.
 
     Args:
         plan_path: Path to the plan file.
@@ -2611,6 +2645,17 @@ def _run_impl(
         from bernstein.core.telemetry.wire import maybe_print_first_run_notice
 
         maybe_print_first_run_notice()
+
+    # ``--from-plan`` on a YAML plan: the file carries stages and steps, so run
+    # it exactly like the positional plan file instead of reducing it to a goal
+    # and re-decomposing (which dropped every step, model pin and dependency).
+    if plan_file is None and from_plan is not None and from_plan.suffix.lower() in _YAML_PLAN_SUFFIXES:
+        _staged_config = _stage_yaml_from_plan(from_plan)
+        plan_file, from_plan = from_plan, None
+        if cli is None:
+            cli = _staged_config.cli
+        if budget_spec is None and max_cost_usd is None:
+            budget_spec = _staged_config.budget
 
     _telemetry_first_run_timer: Any = None
     try:

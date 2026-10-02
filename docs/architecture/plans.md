@@ -48,12 +48,12 @@ Source-of-truth files:
 | `name` | string | yes | Short plan name; appears in logs and is used as the orchestration goal. |
 | `stages` | list | yes | Ordered execution stages (≥1). |
 | `description` | string | no | Free-text summary of what the plan changes. |
-| `cli` | string | no | Adapter to pin every step to (`auto`, `claude`, `codex`, ...). Per-step `cli` overrides this. |
-| `budget` | string \| number | no | Spending cap (`"$10"`, `5.00`). Stops the run when exceeded. |
-| `max_agents` | integer | no | Override `bernstein.yaml`'s `max_agents` for this plan. |
-| `constraints` | list[string] | no | Hard constraints injected into every agent's prompt. |
+| `cli` | string | no | Adapter for the run (`auto`, `claude`, `codex`, ...); the `--cli` flag wins. Per-step `cli` overrides this. |
+| `budget` | string \| number | no | Spending cap (`"$10"`, `5.00`). `bernstein run --from-plan` applies it as the run cost cap; `--budget` / `--max-cost-usd` on the command line wins. |
+| `max_agents` | integer | no | Parsed, but `bernstein run` does not apply it; `--from-plan` refuses a plan that sets it. Set `max_agents` in `bernstein.yaml`. |
+| `constraints` | list[string] | no | Parsed, but `bernstein run` does not inject them; `--from-plan` refuses a plan that sets them. |
 | `context_files` | list[string] | no | Reference files (worktree-relative) every worker on this plan should read. Stamped onto each task's `metadata["context_files"]` at load, listed in the worker's per-session CLAUDE.md at spawn, and content-addressed into the run record (see below). |
-| `repos` | list[object] | no | Repo references for multi-repo plans. Each entry is `{path, branch?, name?}`; `path` is required. |
+| `repos` | list[object] | no | Repo references for multi-repo plans. Each entry is `{path, branch?, name?}`; `path` is required. Parsed, but `bernstein run` does not apply them; `--from-plan` refuses a plan that sets them. |
 
 Source: `plan_schema.py` (`PLAN_JSON_SCHEMA`).
 
@@ -218,8 +218,10 @@ capable available planning model (Opus / o3) and produces
 
 ## Plan loading and execution
 
-When you run `bernstein run --from-plan path.yaml` (or pass it via API),
-the loader does the following:
+When you run `bernstein run --from-plan path.yaml` (the same as
+`bernstein run path.yaml`), the loader does the following. A YAML file
+that is not a staged plan (for example a seed with a top-level `goal:`
+and no `stages:`) is refused with a message naming `--seed`:
 
 1. **Parse YAML** (`plan_loader.load_plan()`).
 2. **Build a `PlanConfig`** - top-level metadata (name, description,
@@ -358,9 +360,6 @@ name: rate-limit-api
 description: Add Redis-backed rate limiting to the public API.
 
 budget: "$5"
-max_agents: 4
-constraints:
-  - All HTTP calls must declare an explicit timeout.
 
 stages:
   - name: design
@@ -458,7 +457,7 @@ graph TD
 ```
 
 Three stages, each fully blocking the next. The implement stage runs the
-three steps in parallel (subject to `max_agents: 4`), and verify only
+three steps in parallel, and verify only
 fires once every implement task is `DONE`.
 
 Run it:
