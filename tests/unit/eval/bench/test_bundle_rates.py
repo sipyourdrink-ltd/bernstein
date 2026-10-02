@@ -10,6 +10,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
 
 
@@ -99,11 +101,10 @@ class TestRatesThatNeedAbstentionDataAreUnavailable:
             scheduler_config={},
         )
 
-    def test_rates_are_none_whatever_the_results(self) -> None:
-        for bundle in (self._bundle(), self._bundle(True, True), self._bundle(True, False), self._bundle(False)):
-            assert bundle.resolve_rate is None
-            assert bundle.abstain_rate is None
-            assert bundle.confident_error_rate is None
+    @pytest.mark.parametrize("results", [(), (True, True), (True, False), (False,)])
+    @pytest.mark.parametrize("rate", ["resolve_rate", "abstain_rate", "confident_error_rate"])
+    def test_rate_is_none_whatever_the_results(self, rate: str, results: tuple[bool, ...]) -> None:
+        assert getattr(self._bundle(*results), rate) is None
 
     def test_pass_rate_is_still_measured(self) -> None:
         assert self._bundle(True, False).pass_rate == 0.5
