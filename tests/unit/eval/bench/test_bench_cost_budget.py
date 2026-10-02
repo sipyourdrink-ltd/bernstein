@@ -192,7 +192,18 @@ class TestPreExistingBundlesStillLoad:
         # Re-saving emits no zeros: the task record keeps the legacy key set.
         assert loaded.to_dict()["task_results"][0].keys() == task_row.keys()
         assert loaded.total_cost_usd == 0.0
-        result = BenchVerifier(suite=suite, adapter=MockReplayAdapter(), require_signature=False).verify(loaded)
+
+        class _AcceptsHandWrittenReceipt:
+            """The receipt above is hand-built, not one MockReplayAdapter would have emitted."""
+
+            def score_task(self, task: BenchTask, receipt: dict) -> tuple[bool, float, dict]:
+                return True, 1.0, {}
+
+        result = BenchVerifier(
+            suite=suite,
+            adapter=_AcceptsHandWrittenReceipt(),
+            require_signature=False,  # type: ignore[arg-type]
+        ).verify(loaded)
         assert result.status is VerificationStatus.MATCH, result.report()
 
     def test_bundle_with_resource_metrics_binds_them_into_the_hash(self) -> None:

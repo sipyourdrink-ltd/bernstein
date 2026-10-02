@@ -70,7 +70,17 @@ class MockReplayAdapter:
     The receipt is derived from the task content hash so two calls with the
     same task produce byte-identical receipts (empirical determinism property
     the acceptance test verifies).
+
+    The verdict is SYNTHETIC. It is not derived from any run, so a bundle
+    scored by this adapter is not evidence that a task was done. ``synthetic``
+    lets a caller refuse to attach a real signature to such a bundle, or label
+    its output as mock. ``score_task`` does check that the receipt is the one
+    this adapter would have produced for the task, so a swapped receipt does
+    not replay as a pass; that is a consistency check, not scoring.
     """
+
+    #: Verdicts from this adapter are not derived from real task execution.
+    synthetic = True
 
     def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
         task_hash = task.content_hash()
@@ -91,7 +101,10 @@ class MockReplayAdapter:
         }
 
     def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
-        return True, 1.0, {"note": "mock: all assertions satisfied"}
+        expected = self.run_task(task, {})
+        if any(receipt.get(key) != expected[key] for key in ("journal_head", "spine_head", "run_id")):
+            return False, 0.0, {"note": "mock: receipt is not the one this adapter emits for the task"}
+        return True, 1.0, {"note": "mock: synthetic verdict, no assertions were evaluated"}
 
 
 # ---------------------------------------------------------------------------

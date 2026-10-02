@@ -60,9 +60,11 @@ bernstein bench run <suite>
 | Property | How it is enforced |
 |---|---|
 | Same task set | `suite_hash` = SHA-256 of ordered task hashes; two runners on the same hash ran the same tasks |
-| Score = replay | `bench verify` replays every receipt offline and re-derives the verdict; mismatch → rejected |
-| No fabrication | Flipping a verdict without a matching receipt fails verification at the diverging task |
+| Score = replay | `bench verify` replays every receipt offline and re-derives both the verdict and the score; either one differing from what is stored → rejected |
+| No fabrication | Flipping a verdict, or raising a score, without a matching receipt fails verification at the diverging task |
 | No missing receipts | An empty/absent receipt fails the entire bundle |
+| Whole suite, once | The bundle must hold exactly one result for every suite task. An empty bundle, a subset, a repeated task or a task the suite does not define is `COVERAGE_MISMATCH`, however clean each present task replays |
+| Settings and ranking weight are attested | `lambda_value` is part of `bundle_hash` (so of the signature) whenever it is not the default, and `bench verify` recomputes `harness_fingerprint` from `scheduler_config` |
 | Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
 | Attributable | The bundle carries a detached Ed25519 JWS over its hash, made with the install identity. `bench verify` checks it against a key you supply with `--trusted-key FINGERPRINT=PATH` |
 
@@ -85,18 +87,38 @@ run.
 ### 1. Run the suite
 
 ```bash
-# Run the canonical golden-v1 suite and emit a submission bundle
-bernstein bench run golden-v1 --out my-bundle.json
+# Run a suite that has a production adapter and emit a signed submission bundle
+bernstein bench run gate-evasion-v1 --out my-bundle.json
 
 # The same, refusing to spend more than $0.50 (CI)
-bernstein bench run golden-v1 --out my-bundle.json --budget 0.50
+bernstein bench run gate-evasion-v1 --out my-bundle.json --budget 0.50
 ```
 
-This executes every task in `golden-v1` via the real adapter, collects
-per-task run receipts (journal head + spine head), scores them with the
-`harness.py` multiplicative scorer, records each task's tokens, USD cost
+This executes every task in the suite through the suite's adapter, collects
+per-task run receipts, scores them, records each task's tokens, USD cost
 and duration as the adapter reports them, and writes a signed
 `SubmissionBundle` to `my-bundle.json`.
+
+**Which suites have a production adapter.** Only `gate-evasion-v1` and
+`tool-surface-v1`. `golden-v1` and any `.json` suite you supply have no
+production adapter yet: they are scored by `MockReplayAdapter`, which passes
+every task with score 1.0 without evaluating any assertion. A mock-scored run
+therefore:
+
+- is **refused** unless you pass `--stub-signer`. The install identity will not
+  sign a bundle whose verdicts nothing produced;
+- records `"adapter": "mock"` in the bundle's `scheduler_config`, so it is
+  hashed, signed, shows up in the harness fingerprint, and cannot be ranked
+  against a really-scored bundle without `--allow-harness-drift`;
+- prints a `MOCK` notice, and its score line is labelled synthetic.
+
+`--reliability K` currently has no production adapter for any suite, so it
+follows the same rule: without `--stub-signer` it refuses.
+
+```bash
+# A mock-scored, stub-signed bundle (plumbing and tests only)
+bernstein bench run golden-v1 --out my-bundle.json --stub-signer
+```
 
 With `--budget <usd>`, the runner checks the cumulative spend before each
 task and, once it reaches the limit, stops running tasks: every remaining
@@ -123,13 +145,25 @@ bernstein bench verify my-bundle.json
 
 The verifier:
 
-1. Confirms `bundle.suite_hash` matches the suite you loaded.
+1. Confirms `bundle.suite_hash` matches the suite you loaded, and that
+   `harness_fingerprint` matches the bundle's `scheduler_config`.
 2. For each task result:
    - Checks the stored `receipt_hash` matches `sha256(receipt bytes)`.
    - Re-runs harness scoring against the receipt (no access to the
      submitter's machine).
-   - Compares the replayed verdict to the stored verdict.
-3. Reports **MATCH** or names the exact task whose replay diverged.
+   - Compares the replayed verdict **and score** to the stored ones.
+3. Checks the results cover the suite exactly once: no task missing, repeated
+   or unknown to the suite, and at least one result. A bundle that fails
+   this is `COVERAGE_MISMATCH` even when every task present replays clean.
+4. Reports **MATCH** or names the exact task whose replay diverged.
+
+A bundle file edited after it was written does not load at all; `bench verify`
+reports that (the hash mismatch) and exits 1 rather than printing a verdict
+table.
+
+For a suite scored by the mock adapter (see above) the replay is itself
+synthetic, so MATCH covers receipt integrity, coverage and the signature, and
+`bench verify` says so. It does not show that any task passed.
 
 Example output:
 
@@ -164,7 +198,8 @@ each row linking its bundle hash so anyone can re-verify.
 bernstein bench compare a.json b.json
 ```
 
-`bench compare` ranks two bundles by score, but only when they were
+`bench compare` ranks two bundles by expected value (see
+[Lambda](#lambda-λ-weight-for-wrong-answers)), but only when they were
 produced by the **same harness settings**.  Every bundle carries a
 `harness_fingerprint` (see [Bundle format](#bundle-format)) — a SHA-256
 over the canonical JSON of the `scheduler_config` mapping that shaped
@@ -213,7 +248,7 @@ as meaningless as a score delta.
 ### 5. Report into CI (`--ci`, `--sarif-out`, `--baseline`)
 
 ```bash
-bernstein bench run golden-v1 --out run.json \
+bernstein bench run gate-evasion-v1 --out run.json \
   --ci \
   --sarif-out run.sarif \
   --baseline main-bundle.json \
@@ -235,7 +270,7 @@ and prints a scorecard:
 
 | Suite | Pass Rate | Score | Baseline Pass Rate | Delta | Bundle Hash | Status |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `golden-v1` | 100.0% | 1.00 | 100.0% | +0.0% | `3f9a2c1d4e5f` | ✓ PASS |
+| `gate-evasion-v1` | 100.0% | 1.00 | 100.0% | +0.0% | `3f9a2c1d4e5f` | ✓ PASS |
 
 The conclusion is **success** or **failure** (pass rate dropped by more
 than `--regression-threshold`) only over a baseline that is *signed*,
@@ -292,7 +327,7 @@ report a **floor** instead of a ceiling — does every task pass *all* of
 `k` attempts under byte-identical coordination, not just one? — run:
 
 ```bash
-bernstein bench run golden-v1 --reliability 5 --out reliability.json
+bernstein bench run golden-v1 --reliability 5 --out reliability.json --stub-signer
 bernstein bench reliability-verify reliability.json
 bernstein bench reliability-check reliability.json
 ```
@@ -381,25 +416,38 @@ the number for something the run did not do.
 
 ### Lambda (λ): weight for wrong answers
 
-The `SubmissionBundle` carries a `lambda_value` (default `0.5`) that weights wrong
-answers in the expected-value score used to rank bundles:
+This section is about `bench compare` on submission bundles. The rates above are
+defined for the SWE-bench harness, which records abstentions. A **submission
+bundle does not**: a task result carries `passed` and `score`, with no
+`abstained` or confident-error marker. So for a bundle:
+
+- `resolve_rate`, `abstain_rate` and `confident_error_rate` are written as
+  `null` (unavailable), not as numbers. `pass_rate` is the measured figure;
+- every task counts as attempted, and every task that did not pass (a budget
+  refusal included) counts as wrong.
+
+The bundle carries a `lambda_value` (default `0.5`) that weights wrong answers in
+the expected value `bench compare` ranks by:
 
 ```
-expected_value = (resolved - lambda * wrong) / attempted
+expected_value = (passed - lambda * wrong) / attempted
 ```
 
-- `resolved` — tasks the run answered correctly
-- `wrong` — tasks the run answered incorrectly (confident errors)
-- `attempted` — tasks the run attempted (`resolved + wrong`, abstentions excluded)
-- `lambda` — penalty weight for a wrong answer relative to a correct one
+- `passed` — tasks that passed
+- `wrong` — tasks that did not pass
+- `attempted` — every task in the bundle
+- `lambda` — the bundle's own `lambda_value`
 
 A `lambda` of `0.5` means a wrong answer costs half a correct one. Raising `lambda`
 penalises guessing more aggressively; lowering it makes the score closer to raw
-resolve rate. The value is recorded in the bundle so the ranking is reproducible.
+pass rate. `lambda_value` is part of `bundle_hash` whenever it differs from the
+default, so it is covered by the signature and cannot be changed after signing
+(a bundle with the default has no such key in its hash payload, which keeps older
+bundles loading). When two bundles carry different values `bench compare` ranks
+each by its own and warns that the expected values are not on one scale.
 
-**Existing bundles are unaffected.** A bundle written before abstentions
-existed has `abstained: 0`, so `attempted` is `total - skipped` for it exactly
-as it always was and its published resolve rate does not move.
+`bench compare` does not verify the bundles it ranks. Run `bench verify` on each
+first.
 
 ---
 
@@ -441,6 +489,10 @@ Two runners on the same `suite_hash` provably ran the same task set.
   "harness_fingerprint": "<sha256 of canonical scheduler_config JSON>",
   "overall_score": 0.95,
   "pass_rate": 1.0,
+  "lambda_value": 0.5,
+  "resolve_rate": null,
+  "abstain_rate": null,
+  "confident_error_rate": null,
   "task_results": [
     {
       "task_id": "file_io_read_write",

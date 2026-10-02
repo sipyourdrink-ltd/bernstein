@@ -189,6 +189,9 @@ class TaskResult:
 
 FINGERPRINT_SCHEMA_VERSION = 1
 
+#: ``SubmissionBundle.lambda_value`` when a writer did not set one.
+DEFAULT_LAMBDA = 0.5
+
 #: Schema version of the submission bundle itself (#5464).
 #:
 #: 1 is the implicit version of every bundle written before this field
@@ -253,8 +256,11 @@ class SubmissionBundle:
     # stored value so a tampered one survives load for compare to catch,
     # and a pre-#5568 bundle derives it on load instead of failing.
     harness_fingerprint: str = ""
-    # Lambda value for scoring trade-off (if applicable, otherwise default).
-    lambda_value: float = 0.5
+    # Weight of a wrong answer in :meth:`expected_value`. Bound into the bundle hash (and so the
+    # signature) whenever it differs from the default, so the ranking a bundle carries cannot be
+    # changed after signing. A default value is left out of the payload: a bundle written before
+    # the field was hashed has no such key, and its stored hash must still recompute.
+    lambda_value: float = DEFAULT_LAMBDA
     # Schema version of this bundle (#5464). Newly built bundles declare the
     # current version; `from_dict` infers 1 for a bundle written before the
     # field existed, so the hash of an old bundle still recomputes to its
@@ -311,45 +317,42 @@ class SubmissionBundle:
     def total_duration_seconds(self) -> float:
         return sum(r.duration_seconds for r in self.task_results if r.duration_seconds is not None)
 
-    @property
-    def resolve_rate(self) -> float:
-        """Proportion of tasks that passed among those that were attempted (not abstained)."""
-        if not self.task_results:
+    def expected_value(self) -> float:
+        """``(passed - lambda * wrong) / attempted``, with this bundle's own ``lambda_value``.
+
+        ``attempted`` is every task in the bundle and ``wrong`` is every task that did not pass
+        (refusals included): a task result carries no abstention marker, so a task cannot be
+        excluded from the denominator for having been declined.
+        """
+        total = len(self.task_results)
+        if total == 0:
             return 0.0
-        # In the context of SubmissionBundle, we consider a task "passed" if it succeeded
-        # For now, we'll use the passed field as equivalent to resolved
-        # Attempted = total tasks (since we don't have explicit abstention tracking in TaskResult yet)
-        # This is a placeholder implementation - in a real system, TaskResult would need to track abstention
-        passed_count = sum(1 for r in self.task_results if r.passed)
-        total_count = len(self.task_results)
-        return passed_count / total_count if total_count > 0 else 0.0
+        passed = sum(1 for r in self.task_results if r.passed)
+        return (passed - self.lambda_value * (total - passed)) / total
+
+    # The three rates below need a per-task abstained / confident-error marker that
+    # ``TaskResult`` does not have. They report ``None`` ("unavailable") rather than a number
+    # derived from pass/fail: ``resolve_rate`` would only restate ``pass_rate``, and an
+    # abstain or confident-error figure computed without that marker would be invented.
+    @property
+    def resolve_rate(self) -> None:
+        """Unavailable: resolved / attempted needs abstention data a bundle does not record."""
+        return None
 
     @property
-    def abstain_rate(self) -> float:
-        """Proportion of tasks that were abstained (declined to answer)."""
-        if not self.task_results:
-            return 0.0
-        # Placeholder - in a real system, we'd need to track abstentions in TaskResult
-        # For now, return 0.0 as we don't have abstention data
-        return 0.0
+    def abstain_rate(self) -> None:
+        """Unavailable: a bundle records no abstentions."""
+        return None
 
     @property
-    def confident_error_rate(self) -> float:
-        """Proportion of tasks that were confidently wrong among those attempted."""
-        if not self.task_results:
-            return 0.0
-        # Placeholder - in a real system, we'd need to distinguish between different failure types
-        # For now, we'll treat all non-passed tasks as confident errors (simplification)
-        passed_count = sum(1 for r in self.task_results if r.passed)
-        total_count = len(self.task_results)
-        if total_count == 0:
-            return 0.0
-        return (total_count - passed_count) / total_count
+    def confident_error_rate(self) -> None:
+        """Unavailable: a bundle cannot tell a confident error from any other failure."""
+        return None
 
     # ------------------------------------------------------------------
     # Content hash. Covers the suite identity, the submission time, the
     # scheduler config, every task record (resource metrics included, when
-    # set) and holdout_hash when set. It deliberately leaves out the
+    # set), holdout_hash when set and lambda_value when not the default. It deliberately leaves out the
     # signature and signer_fingerprint, and every field that is recomputed
     # from the task records on read -- overall_score, pass_rate, the three
     # total_* sums, harness_fingerprint -- so a writer that did not emit
@@ -371,6 +374,9 @@ class SubmissionBundle:
         }
         if self.holdout_hash:
             payload_dict["holdout_hash"] = self.holdout_hash
+        # Absent means the default, so the payload is an injective function of the value.
+        if self.lambda_value != DEFAULT_LAMBDA:
+            payload_dict["lambda_value"] = self.lambda_value
         # Bound into the hash only from version 2 onward. A version-1 bundle
         # never carried the key, and its stored hash was computed without it,
         # so adding it unconditionally would fail every pre-existing bundle's
@@ -512,7 +518,7 @@ class SubmissionBundle:
             signer_fingerprint=raw.get("signer_fingerprint", ""),
             holdout_hash=raw.get("holdout_hash", ""),
             harness_fingerprint=raw.get("harness_fingerprint", ""),
-            lambda_value=raw.get("lambda_value", 0.5),
+            lambda_value=raw.get("lambda_value", DEFAULT_LAMBDA),
             # A bundle with no declared version is a version-1 bundle. Do not
             # default it to the current version: that would add the key to the
             # recomputed hash payload and break its stored hash.
