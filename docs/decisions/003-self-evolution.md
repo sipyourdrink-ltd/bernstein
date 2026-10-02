@@ -207,9 +207,15 @@ graph LR
    a tree in an undeclared state.
 
    Every rollback writes a receipt to `upgrades/rollbacks/<proposal id>.json`
-   carrying the files restored and a sha256 over the receipt body's canonical
-   JSON — the same shape the change-contract verdict receipt uses, so a reader
-   holding only the file can tell whether it has been edited since.
+   (a repeat rollback or a reused id writes `<proposal id>.<n>.json` rather than
+   overwriting) carrying the files restored and a sha256 over the receipt body's
+   canonical JSON — the same shape the change-contract verdict receipt uses. The
+   checksum is keyless: it catches accidental corruption, not deliberate edits,
+   since anyone who changes the body can recompute it.
+
+   No category has a sink that writes backups today, so in a shipped build the
+   manifest branch is not reached and every rollback is the "nothing was
+   applied" row above.
 
 3. **Verification**
    - Immediate metric check (did things improve?)

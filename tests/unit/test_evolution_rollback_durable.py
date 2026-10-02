@@ -152,8 +152,9 @@ def test_a_rollback_leaves_a_receipt_that_verifies_offline(tmp_path: Path) -> No
     """Rollback recorded nothing at all before this.
 
     The hash is over the receipt body's canonical JSON, the same shape
-    `change_contract_replay.write_verdict_receipt` uses, so a reader holding
-    only the file can tell whether it has been edited since it was written.
+    `change_contract_replay.write_verdict_receipt` uses. The hash is keyless, so
+    it checks the file against accidental corruption, not against an editor
+    who recomputes it.
     """
     import hashlib
 
