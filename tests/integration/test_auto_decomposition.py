@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,15 +29,6 @@ async def test_auto_decomposition(
     orch._approval_gate = None
     orch._incident_manager.auto_pause = False
     orch._config.force_parallel = True
-
-    # Agent exit is recorded as a crash under the real adapter name (#5875),
-    # so the now-correct per-adapter spawn-failure cooldown blocks the mock
-    # adapter's immediate respawn. That cooldown is orthogonal to the
-    # auto-decomposition path under test, so disable it like the
-    # orchestrator unit test does.
-    from bernstein.core.agents import spawner_core
-
-    monkeypatch.setattr(spawner_core, "SPAWN", replace(spawner_core.SPAWN, spawn_failure_cooldown_s=0.0))
 
     handled_decompose_ids = set()
 

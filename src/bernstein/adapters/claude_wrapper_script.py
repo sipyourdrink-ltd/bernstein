@@ -22,7 +22,13 @@ from bernstein.adapters.claude_stream_parser import PROVIDER_MUTATION_SUBTYPES
 # NDJSON one line at a time, extracts printable text for the adapter log,
 # then optionally runs the feature-specific blocks below.
 _WRAPPER_PRELUDE: str = (
-    "import sys, json\n"
+    "import os, sys, json\n"
+    "try:\n"
+    "    _cap = int(os.environ.get('BERNSTEIN_LOG_INPUT_CHARS', '2000'))\n"
+    "except ValueError:\n"
+    "    _cap = 2000\n"
+    "if _cap <= 0:\n"
+    "    _cap = 2000\n"
     "seen_text = set()\n"
     "for raw in sys.stdin:\n"
     "    raw = raw.strip()\n"
@@ -48,7 +54,7 @@ _WRAPPER_DISPATCH: str = (
     "                    print(txt, flush=True)\n"
     "            elif block.get('type') == 'tool_use':\n"
     "                name = block.get('name', '?')\n"
-    "                inp = str(block.get('input', ''))[:150]\n"
+    "                inp = str(block.get('input', ''))[:_cap]\n"
     "                print(f'[{name}] {inp}', flush=True)\n"
     "    elif t == 'result':\n"
     "        txt = msg.get('result', '')\n"

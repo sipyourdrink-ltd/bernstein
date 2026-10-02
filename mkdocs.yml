@@ -164,7 +164,11 @@ markdown_extensions:
 nav:
   - Home:
       - index.md
-      - Use cases: use-cases.md
+      - Use cases:
+          - Who it is for: use-cases.md
+          - Reproducible nightly runs: use-cases/reproducible-nightly-runs.md
+          - Tamper-evident audit trail: use-cases/tamper-evident-audit-trail.md
+          - Signed results from untrusted workers: use-cases/signed-worker-results.md
       - Scope (what this does not do): scope.md
       - What's new: whats-new.md
       - Mentions: mentions.md
@@ -184,6 +188,10 @@ nav:
       - First run: getting-started/first-run.md
       - Tutorial: getting-started/quickstart-tutorial.md
       - Zero-config demo: getting-started/quickstart-demo.md
+      - Tutorials:
+          - tutorials/index.md
+          - Verified scheduled run: tutorials/verified-scheduled-run.md
+          - Signed result receipt: tutorials/signed-result-receipt.md
   - Guides:
       - guides/index.md
       - Web GUI:
@@ -411,11 +419,13 @@ nav:
           - Error telemetry & SBOM: operations/error-telemetry.md
           - Telemetry disclosure: telemetry.md
           - Side-channel telemetry: observability/side-channel.md
+          - Run archive retention: observability/run-archive-retention.md
           - LLM watcher: observability/llm-watcher.md
           - Ticket bundle: observability/ticket-bundle.md
           - Trace store: observability/trace-store.md
           - OTLP export: observability/otlp-export.md
           - Trends: observability/trends.md
+          - Retry sequences: observability/retry-sequences.md
           - Progress watch: observability/progress-watch.md
           - Task artifacts and progress: observability/task-artifacts.md
           - Rate limits: observability/rate-limits.md
@@ -477,6 +487,7 @@ nav:
           - JCS canonicalization: security/jcs-canonicalization.md
           - MCP signing: security/mcp-signing.md
           - OWASP ASI detectors: security/owasp-asi.md
+          - NIST AI 100-2 crosswalk: security/nist-ai-100-2-crosswalk.md
           - Promptware: security/promptware.md
           - Lethal trifecta: security/lethal-trifecta.md
           - Coordinated disclosure: security/bug-bounty.md
@@ -496,6 +507,7 @@ nav:
           - Regulator-mapped compliance packs: compliance/regulator-mapped-packs.md
           - FINOS AIGF mapping: compliance/finos-aigf-mapping.md
           - ISO/IEC 42001 mapping: compliance/iso42001-mapping.md
+          - CoSAI mapping: compliance/cosai-mapping.md
           - Regulator-class lineage: compliance/regulatory-lineage.md
           - Lineage export: compliance/lineage-export.md
           - Lineage v1 (user reference): lineage.md

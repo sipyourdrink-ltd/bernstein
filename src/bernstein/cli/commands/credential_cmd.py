@@ -4,7 +4,7 @@ Two subcommands project the lineage spine into a signed C2PA manifest
 and verify it back against the artifact and the install identity:
 
 * ``bernstein credential emit <artifact>`` -- project the artifact's
-  lineage-spine subtree into a C2PA 2.2 manifest, sign it with the
+  lineage-spine subtree into a C2PA 2.4 manifest, sign it with the
   install-identity Ed25519 key, and write it next to the artifact as
   ``<artifact>.c2pa.json``.
 * ``bernstein credential verify <artifact>`` -- re-read the manifest and

@@ -769,7 +769,7 @@ def test_the_release_guard_covers_the_known_surrender_paths() -> None:
 
     # Delivery must be exempt by name, not by having drifted out of the walk.
     assert {"DONE", "CLOSED"} <= _EXEMPT_TARGETS
-    assert "SUSPENDED" not in _EXEMPT_TARGETS, "SUSPENDED has no transitions in the task FSM"
+    assert "SUSPENDED" in _EXEMPT_TARGETS, "cooperative suspension retains the live worker's claim"
 
 
 # ---------------------------------------------------------------------------

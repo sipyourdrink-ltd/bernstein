@@ -48,14 +48,14 @@ Source-of-truth files:
 | `name` | string | yes | Short plan name; appears in logs and is used as the orchestration goal. |
 | `stages` | list | yes | Ordered execution stages (≥1). |
 | `description` | string | no | Free-text summary of what the plan changes. |
-| `cli` | string | no | Adapter to pin every step to (`auto`, `claude`, `codex`, ...). Per-step `cli` overrides this. |
-| `budget` | string \| number | no | Spending cap (`"$10"`, `5.00`). Stops the run when exceeded. |
-| `max_agents` | integer | no | Override `bernstein.yaml`'s `max_agents` for this plan. |
-| `constraints` | list[string] | no | Hard constraints injected into every agent's prompt. |
+| `cli` | string | no | Adapter for the run (`auto`, `claude`, `codex`, ...); the `--cli` flag wins. Per-step `cli` overrides this. |
+| `budget` | string \| number | no | Spending cap (`"$10"`, `5.00`). `bernstein run --from-plan` applies it as the run cost cap; `--budget` / `--max-cost-usd` on the command line wins. |
+| `max_agents` | integer | no | Parsed, but `bernstein run` does not apply it; `--from-plan` refuses a plan that sets it. Set `max_agents` in `bernstein.yaml`. |
+| `constraints` | list[string] | no | Parsed, but `bernstein run` does not inject them; `--from-plan` refuses a plan that sets them. |
 | `context_files` | list[string] | no | Reference files (worktree-relative) every worker on this plan should read. Stamped onto each task's `metadata["context_files"]` at load, listed in the worker's per-session CLAUDE.md at spawn, and content-addressed into the run record (see below). |
-| `repos` | list[object] | no | Repo references for multi-repo plans. Each entry is `{path, branch?, name?}`; `path` is required. |
+| `repos` | list[object] | no | Repo references for multi-repo plans. Each entry is `{path, branch?, name?}`; `path` is required. Parsed, but `bernstein run` does not apply them; `--from-plan` refuses a plan that sets them. |
 
-Source: `plan_schema.py:198-244` (`PLAN_JSON_SCHEMA`).
+Source: `plan_schema.py` (`PLAN_JSON_SCHEMA`).
 
 ### Stage fields
 
@@ -67,7 +67,7 @@ Source: `plan_schema.py:198-244` (`PLAN_JSON_SCHEMA`).
 | `depends_on` | list[string] | no | Names of upstream stages that must complete first. |
 | `repo` | string | no | Route every step in this stage to one repo (multi-repo plans only). |
 
-Source: `plan_schema.py:155-178` (`_STAGE_SCHEMA`).
+Source: `plan_schema.py` (`_STAGE_SCHEMA`).
 
 ---
 
@@ -90,18 +90,20 @@ alias).
 | `effort` | enum | - | Effort knob: `low`, `normal`, `high`, `max`. |
 | `estimated_minutes` | int | `30` | Used by the duration predictor and plan cost estimate. |
 | `mode` | string | - | Execution mode (e.g. `batch`). |
-| `cli` | string | - | Override adapter for this step only. |
+| `cli` | string | - | Override adapter for this step only (the loader honours it, but the plan schema does not list it, so `plan validate` warns about it). |
 | `repo` | string | - | Multi-repo: route this step to a named repo. Falls back to stage-level `repo`. |
 | `depends_on_repo` | string | - | Cross-repo dependency: another repo must complete first. |
 | `files` | list[string] | `[]` | File ownership for conflict detection - agents declare which files they will touch. Must be a list: a scalar value fails the load with `PlanLoadError` (#3534); an explicit `null` loads as `[]`. `plan validate` rejects non-string items; the load path currently coerces them to strings instead of rejecting (#3556). |
 | `completion_signals` | list[object] | `[]` | Machine-checkable completion criteria (see below). |
+| `artifact_spec` | object | - | Declared artifact contract (`kind`, `output_path`, `canonicalisation`, `criteria`); any kind but `code_diff` completes on a signed lineage receipt instead of a git commit. |
+| `phases` | list[enum] | - | Opt-in split of the step into `research`, `plan`, `implement`, `verify` phases with distilled handoffs. |
 
 Step-level `depends_on` is *not* on the schema - dependencies between
 steps are declared at the **stage** level. The loader expands stage
 dependencies into per-step `depends_on` lists when it builds the Task
-objects (`plan_loader.py:244-249`).
+objects (`plan_loader.py`).
 
-Source: `plan_schema.py:79-153` (`_STEP_SCHEMA`).
+Source: `plan_schema.py` (`_STEP_SCHEMA`).
 
 ### Completion signals
 
@@ -119,7 +121,7 @@ keys depend on `type`:
 | `llm_judge` | `value` | Free-form LLM judgement. |
 | `absence_verified` | `value` (tool_call_id) | The named tool call reported "nothing found" and its anchored coverage record proves what it searched. |
 
-Source: `plan_schema.py:49-77`, `plan_loader.py:70-97`.
+Source: `plan_schema.py` (`COMPLETION_SIGNAL_TYPES`), `plan_loader.py`.
 
 ---
 
@@ -157,14 +159,14 @@ Common errors:
 | `stages[2]: missing required field 'name'` | Every stage must have a unique `name:`. |
 | `stages[2].steps: must contain at least one step` | Empty stages aren't allowed. |
 | `stages[2].steps[0]: step must have a 'title' or 'goal' field` | Add `title:` (preferred) or `goal:`. |
-| `stages[2].steps[0].role: invalid value 'devsecops'` | Use one of the 19 known roles. |
+| `Task 'X' uses unknown role 'devsecops'` (warning, not an error) | Use one of the 19 known roles, or add the role under `templates/roles/`. |
 | `Plan file must be a YAML mapping` | Top-level must be a dict, not a list. |
 | `Cycle detected: a -> b -> a` | Break the dependency chain. |
 
 Run validation in CI before merging plan files - schema drift and missing
 deps are the two failure modes that bite hardest.
 
-Source: `cli/commands/plan_validate_cmd.py:142-163`.
+Source: `cli/commands/plan_validate_cmd.py`.
 
 ---
 
@@ -186,10 +188,10 @@ bernstein plan generate "Add OpenTelemetry tracing" --dry-run
 bernstein plan generate "Bump dependencies" -o plans/deps.yaml
 ```
 
-What the command does (`cli/commands/plan_generate_cmd.py:268-340`):
+What the command does (`cli/commands/plan_generate_cmd.py`):
 
 1. **Gather repo context** - directory tree, `README.md`, top-level
-   files, build config (capped at ~8 KB).
+   files, build config (capped at ~4 KB).
 2. **Build prompt** - concatenates description + repo context + a system
    prompt asking for `name / description / stages / steps` YAML.
 3. **Call LLM** - Haiku 4.5 by default (cheap; you usually iterate on the
@@ -202,23 +204,26 @@ What the command does (`cli/commands/plan_generate_cmd.py:268-340`):
    to stdout.
 
 The output is **never** auto-executed. You're expected to read it, edit
-roles/scopes, and run `bernstein validate` before `bernstein run
+roles/scopes, and run `bernstein plan validate` before `bernstein run
 --from-plan`.
 
 There is also a higher-tier API in
-`core/planning/plan_execute.py` (`build_plan`, `save_plan`) which the
-manager agent uses internally - it picks the most capable available
-planning model (Opus / o3) and produces `GeneratedPlan` objects with
-per-task `recommended_model` selections (`plan_execute.py:120-203`).
+`core/planning/plan_execute.py` (`build_plan`, `save_plan`), a library
+API not currently called by the manager or the CLI - it picks the most
+capable available planning model (Opus / o3) and produces
+`GeneratedPlan` objects with per-task `recommended_model` selections
+(`plan_execute.py`).
 
 ---
 
 ## Plan loading and execution
 
-When you run `bernstein run --from-plan path.yaml` (or pass it via API),
-the loader does the following:
+When you run `bernstein run --from-plan path.yaml` (the same as
+`bernstein run path.yaml`), the loader does the following. A YAML file
+that is not a staged plan (for example a seed with a top-level `goal:`
+and no `stages:`) is refused with a message naming `--seed`:
 
-1. **Parse YAML** (`plan_loader.load_plan()` at `plan_loader.py:120-196`).
+1. **Parse YAML** (`plan_loader.load_plan()`).
 2. **Build a `PlanConfig`** - top-level metadata (name, description,
    constraints, repos, budget, max_agents, cli).
 3. **Walk stages** - for each stage build an in-order list of step titles.
@@ -226,7 +231,7 @@ the loader does the following:
    - `id = "plan-<stage_idx>-<step_idx>"` (replaced server-side once
      posted to `/tasks`).
    - `depends_on` populated from the upstream stages' step titles
-     (cross-stage dep expansion at `plan_loader.py:244-249`).
+     (cross-stage dependency expansion in `plan_loader.py`).
    - `owned_files` from the step's `files` list - used by the conflict
      detector so two parallel agents can't clobber each other.
    - `completion_signals` parsed and validated (invalid entries are
@@ -262,10 +267,10 @@ successor that adds:
 - **Retry loops** - `retry: {max_attempts: 3, until: "status == 'done'"}`.
 - **Safe expression evaluator** - no `eval()`; AST is whitelisted to
   comparisons, boolean ops, attribute / subscript access, and literals
-  (`workflow_dsl.py:108-228`).
+  (`workflow_dsl.py`).
 
 Workflow DSL files live under `.bernstein/workflows/` and load by name
-(`load_workflow_dsl(name)` at `workflow_dsl.py:1013-1038`).
+(`load_workflow_dsl(name)` in `workflow_dsl.py`).
 
 Example (cribbed from the module docstring):
 
@@ -355,9 +360,6 @@ name: rate-limit-api
 description: Add Redis-backed rate limiting to the public API.
 
 budget: "$5"
-max_agents: 4
-constraints:
-  - All HTTP calls must declare an explicit timeout.
 
 stages:
   - name: design
@@ -422,7 +424,10 @@ Validation:
 
 ```bash
 bernstein plan validate plans/rate-limit-api.yaml
-# ✓ 6 tasks, 3 stages, max parallel = 3
+#   Stages: 3
+#   Tasks: 7
+#   Max parallel width: 3
+# Plan is valid.
 ```
 
 DAG:
@@ -452,7 +457,7 @@ graph TD
 ```
 
 Three stages, each fully blocking the next. The implement stage runs the
-three steps in parallel (subject to `max_agents: 4`), and verify only
+three steps in parallel, and verify only
 fires once every implement task is `DONE`.
 
 Run it:
@@ -475,7 +480,7 @@ bernstein run --from-plan plans/rate-limit-api.yaml
 | Workflow DSL (conditional DAG) | `src/bernstein/core/planning/workflow_dsl.py` |
 | Role resolver | `src/bernstein/core/planning/role_resolver.py` |
 | Duration predictor | `src/bernstein/core/planning/duration_predictor.py` |
-| `bernstein validate` CLI | `src/bernstein/cli/commands/plan_validate_cmd.py` |
+| `bernstein plan validate` CLI | `src/bernstein/cli/commands/plan_validate_cmd.py` |
 | `bernstein plan generate` CLI | `src/bernstein/cli/commands/plan_generate_cmd.py` |
 
 See also: [`state-persistence.md`](state-persistence.md) for how plans

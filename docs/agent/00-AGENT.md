@@ -1,6 +1,6 @@
 # bernstein — agent entrypoint
 
-Generated from commit `1567ca0397b6`. Every row below is anchored to `path:line`; an anchor that no longer matches means the row is stale.
+Generated from commit `f5400d757fb0`. Every row below is anchored to `path:line`; an anchor that no longer matches means the row is stale.
 
 | Doc | Answers |
 |---|---|
@@ -9,15 +9,15 @@ Generated from commit `1567ca0397b6`. Every row below is anchored to `path:line`
 | [30-ci.md](./30-ci.md) | what must be green before merge |
 | [40-env.md](./40-env.md) | which env vars the code reads |
 | [50-invariants.md](./50-invariants.md) | what you must not touch |
-| `.machine/facts.json` | the same facts, machine-readable |
+| `.machine/facts.json` | an older machine-readable snapshot (commit `1567ca0397b6`), not regenerated with these pages |
 
 ## Golden commands
 
 | Command | Kind | Anchor |
 |---|---|---|
-| `ruff check .` | inferred | `pyproject.toml:552` |
-| `pytest` | inferred | `pyproject.toml:796` |
-| `mypy .` | inferred | `pyproject.toml:672` |
+| `ruff check .` | inferred | `pyproject.toml:554` |
+| `pytest` | inferred | `pyproject.toml:798` |
+| `mypy .` | inferred | `pyproject.toml:674` |
 
 ## Rules for agents editing this repo
 

@@ -74,23 +74,33 @@ def _loads(text: str) -> Any:
         return json.loads(text)
 
 
+def _visit_targets(call: Any) -> list[str]:
+    """The URLs one parsed tool call asks ``visit`` to open; nothing for any other shape."""
+    if not isinstance(call, dict) or call.get("name") != "visit":
+        return []
+    arguments = call.get("arguments")
+    target = arguments.get("url") if isinstance(arguments, dict) else None
+    candidates = [target] if isinstance(target, str) else target if isinstance(target, list | tuple) else []
+    return [url.strip() for url in candidates if isinstance(url, str) and url.strip()]
+
+
 def visited_urls(messages: list[dict[str, Any]]) -> list[str]:
-    """Every URL the agent's ``visit`` tool was asked to open, distinct, sorted."""
+    """Every URL the agent's ``visit`` tool was asked to open, distinct, sorted.
+
+    The messages are the agent's own transcript, so a tool call of any shape can
+    appear in it. One that does not fit contributes nothing; it never stops the
+    answer that follows it from being recorded.
+    """
     urls: set[str] = set()
     for message in messages:
-        if message.get("role") != "assistant":
+        if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
         for raw in _TOOL_CALL.findall(str(message.get("content", ""))):
             try:
                 call = _loads(raw.strip())
             except Exception:
                 continue
-            if not isinstance(call, dict) or call.get("name") != "visit":
-                continue
-            target = (call.get("arguments") or {}).get("url")
-            for url in [target] if isinstance(target, str) else list(target or ()):
-                if isinstance(url, str) and url.strip():
-                    urls.add(url.strip())
+            urls.update(_visit_targets(call))
     return sorted(urls)
 
 

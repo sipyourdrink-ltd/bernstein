@@ -233,6 +233,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein run plan.yaml` | Full | 3 | Plan file execution |
 | `bernstein gc cas` | Full | 3 | Mark and sweep unreferenced blobs from the CAS store |
 | `bernstein init` | Full | 3 | Workspace setup. The documented first run is covered by `tests/integration/test_first_run_documented_path.py`, which runs the command from an empty directory and asserts the created artifacts plus the key output lines documented in `first-run.md`. |
+| `bernstein adopt` | Full | 1 | Detects the running agent session (`--dry-run` only, writes nothing). Writing the adoption, the signed receipt and the MCP tool are later slices of #5435 |
 | `bernstein stop` | Full | 3 | Graceful/force stop |
 | `bernstein live` | Full | 3 | TUI dashboard. Readiness is the first rendered frame, identified by the `AGENTS` and `TASKS` pane headers; `tests/integration/test_first_run_long_running_surfaces.py` starts it from an empty workspace, waits for that frame, and asserts a traceback-free exit on `SIGINT`. |
 | `bernstein dashboard` | Full | 3 | Web dashboard |
@@ -276,7 +277,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein review/approve/reject/pending`](cli/task-lifecycle.md) | Full | 3 | Review workflow |
 | [`bernstein sync`](../operations/backlog-sync.md) | Full | 3 | Sync backlog with server |
 | [`bernstein manifest`](../operations/run-manifest.md) | Full | 3 | Run manifest inspection |
-| [`bernstein gateway`](../operations/mcp-gateway.md) | Full | 3 | MCP gateway proxy |
+| [`bernstein gateway`](../operations/mcp-gateway.md) | Full | 3 | MCP gateway proxy; when `attestation_interlock` is wired, the native path writes `toolcall.effect` after connector return |
 | [`bernstein workflow`](../operations/workflow-manifests.md) | Full | 3 | Workflow DSL |
 | [`bernstein watch`](../operations/watch.md) | Full | 3 | Directory file watcher |
 | [`bernstein listen`](../operations/voice-control.md) | Full | 2 | **Preview.** Voice commands are experimental. A base install exits with the `pip install 'bernstein[voice]'` hint; a usable first run also requires microphone/audio support and downloads the selected Whisper model on first use. |

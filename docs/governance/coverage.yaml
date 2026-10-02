@@ -25,30 +25,34 @@
 rows:
   - failure_class: Goal hijack through injected content
     control: >-
-      Prompt-injection scanner over untrusted text, and a typed tool-result
-      boundary so gate output reaches the model as structured results rather
-      than as prose it can be told to reinterpret.
+      A prompt-injection scanner over untrusted text exists as a library, but no
+      run path calls it, so no untrusted text is screened during a run. This row
+      stays until the scanner is wired into the spawn and tool-result paths.
     module: src/bernstein/core/tokens/prompt_injection.py
-    test: tests/unit/test_prompt_injection.py::TestIgnorePrevious::test_basic_ignore_previous
+    test: null
     residual: >-
-      Pattern-based, so it recognises phrasings it has seen. It raises the cost
-      of the obvious attack and is not a decision procedure for the general one.
-    status: partial
-    issue: null
+      Nothing in a run screens injected content today. Once wired the scanner is
+      pattern-based, so it would recognise phrasings it has seen: it raises the
+      cost of the obvious attack and is not a decision procedure for the general
+      one.
+    status: none
+    issue: 4526
 
   - failure_class: Tool misuse and over-broad permissions
     control: >-
-      Scoped command allowlist: every shell command is checked against the scope
-      the run was granted, and a command outside it is refused rather than
-      logged.
+      A scoped command allowlist exists as a library (a command outside the
+      granted scope is refused), but no run path calls it, so shell commands are
+      not checked against it during a run. This row stays until it is wired into
+      command execution.
     module: src/bernstein/core/security/command_allowlist.py
-    test: tests/unit/test_command_allowlist.py::TestCheckCommand::test_small_scope_denies_rm_rf
+    test: null
     residual: >-
-      Governs commands, not the arguments a permitted command is given. A
+      No shell command is checked against a granted scope today. Once wired it
+      would govern commands, not the arguments a permitted command is given; a
       permitted tool pointed at the wrong target is a different class, covered
       by path scoping.
-    status: covered
-    issue: null
+    status: none
+    issue: 4526
 
   - failure_class: Identity and privilege abuse across delegation
     control: >-
@@ -66,14 +70,16 @@ rows:
 
   - failure_class: Compromised skills, tools or dependencies
     control: >-
-      Plugin trust assessment before load: signature fingerprint, declared
-      metadata and provenance decide a trust tier, and an unsigned plugin is
-      reported as unknown rather than trusted by default.
+      Plugin trust assessment shown by `bernstein plugins`: signature
+      fingerprint, declared metadata and provenance decide a trust tier, and an
+      unsigned plugin is reported as unknown rather than trusted by default. It
+      is a report for the operator; it does not gate loading a plugin.
     module: src/bernstein/plugins/plugin_trust.py
     test: tests/unit/test_plugin_trust.py::TestCheckPluginTrust::test_minimal_plugin_returns_unknown
     residual: >-
-      A signature proves who published a plugin, not that what they published is
-      safe. Nothing here inspects a dependency's transitive tree.
+      Nothing refuses to load a low-trust plugin. A signature proves who
+      published a plugin, not that what they published is safe, and nothing here
+      inspects a dependency's transitive tree.
     status: partial
     issue: null
 
@@ -105,17 +111,18 @@ rows:
 
   - failure_class: Cascading failures across agents
     control: >-
-      Parallel admission from the code graph: two tasks run concurrently only
-      when both attributions are provable and their symbol neighbourhoods do not
-      intersect. An unprovable attribution serialises rather than proceeding.
+      Parallel admission from the code graph exists as a library: two tasks
+      would run concurrently only when both attributions are provable and their
+      symbol neighbourhoods do not intersect. No scheduling path calls it, so
+      the scheduler does not consult it when deciding what runs in parallel.
     module: src/bernstein/core/parallel_admission.py
-    test: tests/unit/test_parallel_admission.py::test_truncated_index_makes_every_attribution_unproven
+    test: null
     residual: >-
-      Prevents concurrent tasks from colliding in the same code. It is not a
-      fan-out ceiling and not a circuit breaker: a run that spawns without bound
-      is a separate gap.
-    status: partial
-    issue: 5439
+      Concurrent tasks are not checked for colliding in the same code today.
+      Once wired it would not be a fan-out ceiling or a circuit breaker: a run
+      that spawns without bound is a separate gap.
+    status: none
+    issue: 4526
 
   - failure_class: Exploitation of human trust in agent output
     control: >-

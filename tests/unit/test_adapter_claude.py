@@ -210,6 +210,21 @@ class TestSpawnCommandArgs:
         parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
         assert "bernstein" in parsed["mcpServers"]
 
+    def test_strict_mcp_config_rides_with_every_mcp_config(self, tmp_path: Path) -> None:
+        """`--strict-mcp-config` beside `--mcp-config`, and the payload is untouched (#5965).
+
+        The flag stops Claude Code merging the servers it discovers itself
+        (`claude mcp add` scopes, a repo's `.mcp.json`, plugins, connectors) on top
+        of what bernstein passes. It does not filter the payload: the servers in it,
+        including the bernstein bridge, all still reach the agent.
+        """
+        mcp = {"mcpServers": {"my-server": {"command": "npx"}}}
+        cmd, _, __ = self._spawn(tmp_path, mcp_config=mcp)
+
+        assert cmd.index("--strict-mcp-config") == cmd.index("--mcp-config") + 2
+        parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
+        assert {"my-server", "bernstein"} <= set(parsed["mcpServers"])
+
     def test_bernstein_bridge_targets_the_package_entrypoint(self, tmp_path: Path) -> None:
         """The bridge spec must spawn a module that actually answers stdio (#4313).
 
@@ -735,6 +750,86 @@ class TestWrapperScriptCompletionMarker:
             timeout=5,
         )
         assert not marker_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# _wrapper_script() - tool_use input truncation (#6120)
+# ---------------------------------------------------------------------------
+
+
+class TestWrapperScriptToolInputTruncation:
+    """_wrapper_script() logs tool_use input up to BERNSTEIN_LOG_INPUT_CHARS."""
+
+    def _run_with_command(self, script: str, command: str, env: dict[str, str]) -> str:
+        tool_use_json = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "message": {},
+                    "content": [{"type": "tool_use", "name": "Bash", "input": {"command": command}}],
+                },
+            }
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            input=tool_use_json + "\n",
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=env,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return proc.stdout
+
+    def test_default_limit_keeps_a_500_char_command_intact(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_LOG_INPUT_CHARS", raising=False)
+        command = "x" * 500
+        script = ClaudeCodeAdapter._wrapper_script(session_id="s1")
+
+        stdout = self._run_with_command(script, command, env=os.environ.copy())
+
+        assert command in stdout
+
+    def test_configured_limit_cuts_a_500_char_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_LOG_INPUT_CHARS", "50")
+        command = "x" * 500
+        script = ClaudeCodeAdapter._wrapper_script(session_id="s2")
+
+        stdout = self._run_with_command(script, command, env=os.environ.copy())
+
+        assert command not in stdout
+        expected_cut = str({"command": command})[:50]
+        assert expected_cut in stdout
+
+    def test_invalid_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_LOG_INPUT_CHARS", "unlimited")
+        command = "x" * 500
+        script = ClaudeCodeAdapter._wrapper_script(session_id="s3")
+
+        stdout = self._run_with_command(script, command, env=os.environ.copy())
+
+        # Should not crash and should use default (2000) so full command is logged
+        assert command in stdout
+
+    def test_zero_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_LOG_INPUT_CHARS", "0")
+        command = "x" * 500
+        script = ClaudeCodeAdapter._wrapper_script(session_id="s4")
+
+        stdout = self._run_with_command(script, command, env=os.environ.copy())
+
+        # Should not crash and should use default (2000) so full command is logged
+        assert command in stdout
+
+    def test_negative_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_LOG_INPUT_CHARS", "-100")
+        command = "x" * 500
+        script = ClaudeCodeAdapter._wrapper_script(session_id="s5")
+
+        stdout = self._run_with_command(script, command, env=os.environ.copy())
+
+        # Should not crash and should use default (2000) so full command is logged
+        assert command in stdout
 
 
 # ---------------------------------------------------------------------------

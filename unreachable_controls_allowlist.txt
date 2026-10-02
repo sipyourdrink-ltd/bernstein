@@ -28,9 +28,9 @@ src/bernstein/core/identity/agent_jwt.py::AgentIdentityStore.validate_task_acces
 src/bernstein/core/identity/agent_registry.py::RegistryError                                   # exercised by tests only; no production caller
 src/bernstein/core/identity/delegation.py::DelegationReceipt.principal_ids                     # exercised by tests only; no production caller
 src/bernstein/core/identity/delegation_scope.py::DelegationScope.is_narrowing_of               # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/identity/grants.py::GrantLedger.issue_grant                                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantReceipt.to_entry                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantSigner.with_issuer                                 # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/identity/http_signing.py::verify_request                                    # exported and exercised by tests; no production caller
 src/bernstein/core/identity/principal.py::AgentPrincipal.credential_for                        # exercised by tests only; no production caller
 src/bernstein/core/identity/principal.py::AgentPrincipal.with_credential                       # exercised by tests only; no production caller
 src/bernstein/core/identity/principal.py::CredentialRef.is_valid_at                            # exercised by tests only; no production caller
@@ -93,6 +93,7 @@ src/bernstein/core/security/audit_chain.py::record_skill_usage                  
 src/bernstein/core/security/audit_chain.py::record_spiffe_svid_binding                         # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_taint_decision                              # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_thread_approval                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_toolcall_effect                             # slice 1 writer; only reached via NativeToolCallEvidenceProvider (already allowlisted). Production gateway start does not pass attestation_interlock
 src/bernstein/core/security/audit_chain.py::record_tournament_selection                        # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_webhook_node_receipt                        # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_webhook_payload_anchor                      # exported in the module's __all__ and exercised by tests; no production caller
@@ -132,7 +133,6 @@ src/bernstein/core/security/capability_tokens.py::Caveats.is_narrowing_of       
 src/bernstein/core/security/capability_tokens.py::TokenVerificationError                       # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/capability_tokens.py::attenuate                                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/capability_tokens.py::caveats_for_scope                            # exported in the module's __all__ as public surface; no in-tree caller
-src/bernstein/core/security/capability_tokens.py::globs_narrow                                 # exercised by tests only; no production caller
 src/bernstein/core/security/capability_tokens.py::mint_root                                    # root of the capability-token chain; the delegation CLI verifies chains but nothing mints one, so no production path reaches it
 src/bernstein/core/security/capability_tokens.py::sign_token                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/capability_tokens.py::to_actor_claims                              # exported in the module's __all__ and exercised by tests; no production caller
@@ -279,7 +279,9 @@ src/bernstein/core/security/permission_graph.py::ClassifierLayer                
 src/bernstein/core/security/permission_graph.py::DenyRulesLayer                                # exercised by tests only; no production caller
 src/bernstein/core/security/permission_graph.py::PermissionGraph                               # exercised by tests only; no production caller
 src/bernstein/core/security/permission_graph.py::PromptLayer                                   # exercised by tests only; no production caller
+src/bernstein/core/security/permission_matrix.py::PermissionResolutionMatrix                   # exercised by tests and the unused resolve_permission wrapper; no production caller
 src/bernstein/core/security/permission_matrix.py::log_resolution                               # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/permission_matrix.py::resolve_permission                           # exercised by tests only; no production caller
 src/bernstein/core/security/permission_mode.py::default_for_no_match                           # exercised by tests only; no production caller
 src/bernstein/core/security/permission_policy.py::check_tool_call                              # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/permission_policy.py::list_builtin_profiles                        # exported in the module's __all__ and exercised by tests; no production caller
@@ -398,6 +400,7 @@ src/bernstein/core/security/state_encryption.py::EncryptedFile.encrypted_path   
 src/bernstein/core/security/state_encryption.py::KeyManager                                    # exercised by tests only; no production caller
 src/bernstein/core/security/state_encryption.py::decrypt_file                                  # exercised by tests only; no production caller
 src/bernstein/core/security/state_encryption.py::encrypt_file                                  # exercised by tests only; no production caller
+src/bernstein/core/security/state_encryption.py::generate_key                                  # called by KeyManager.ensure_key, whose class has no production caller
 src/bernstein/core/security/state_encryption.py::is_encrypted                                  # exercised by tests only; no production caller
 src/bernstein/core/security/surface_grant_delta.py::SurfaceGrantChange                         # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/surface_grant_delta.py::SurfaceGrantDelta                          # exported in the module's __all__ and exercised by tests; no production caller
@@ -420,6 +423,8 @@ src/bernstein/core/security/token_binding.py::x5t_s256_from_pem                 
 src/bernstein/core/security/toolcall_identity.py::LineageToolCallIdentitySigner                # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/toolcall_identity.py::ToolCallIdentitySigner                       # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/toolcall_interlock.py::AttestationModeProjection                   # exported in the module's __all__ as public surface; no in-tree caller
+src/bernstein/core/security/toolcall_interlock.py::canonical_effect_digest                     # slice 1 digest helper; only reached via NativeToolCallEvidenceProvider.record_effect (already allowlisted). Production gateway start does not pass attestation_interlock
+src/bernstein/core/security/toolcall_interlock.py::effect_digest_for_connector_response        # slice 1 digest helper; only reached via NativeToolCallEvidenceProvider.record_effect (already allowlisted). Production gateway start does not pass attestation_interlock
 src/bernstein/core/security/toolcall_interlock.py::project_attestation_mode                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/url_allowlist.py::StrictHTTPRedirectHandler.redirect_request       # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/vault_injector.py::VaultInjector                                   # exercised by tests only; no production caller

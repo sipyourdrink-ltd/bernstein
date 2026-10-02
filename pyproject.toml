@@ -513,6 +513,11 @@ artifacts = [
 # Built-in team manifests (#2248) so `team_manifest: python` and the
 # `bernstein team` commands resolve right after pip install.
 "templates/teams" = "bernstein/_default_templates/teams"
+# Packaged scenario library for `bernstein scenario list|run` and
+# `bernstein routine ...`. Resolved by
+# bernstein.core.planning.scenario_library.packaged_scenarios_dir; without
+# this entry the commands see an empty library on every pip install.
+"templates/scenarios" = "bernstein/_default_templates/scenarios"
 # Adapter admission evidence (#3547). The verdict `bernstein adapters
 # verify --seal` derives is a projection of the pinned contract's bytes and
 # the golden-transcript replay, so both have to be resolvable off a pip
@@ -564,6 +569,9 @@ extend-exclude = [
     # security-pentest eval scenario. Linting it makes no sense; the
     # files exist so the security role can find seeded findings.
     "tests/fixtures/eval/security_pentest/**",
+    # Gate-evasion corpus fixtures containing intentional syntax errors,
+    # broken code, and mock patterns used to evaluate quality gates.
+    "src/bernstein/eval/cases/gate_evasion/**",
     # Cookiecutter source templates with Jinja-interpolated identifiers
     # ({{cookiecutter.X}}) that ruff cannot parse as Python.
     "templates/**",
@@ -946,7 +954,7 @@ dev = [
 docs = [
     "mkdocs>=1.6.1,<2",
     "mkdocs-material>=9.7.7,<10",
-    "mkdocs-redirects>=1.2,<1.2.4",
+    "mkdocs-redirects>=1.2,<1.2.3",
     "mkdocs-minify-plugin>=0.8,<1",
 ]
 
@@ -968,6 +976,11 @@ docs = [
 # dependency-update run rather than just the two extras that actually clash
 # (#4088).
 conflicts = [[{ extra = "grpc" }, { extra = "modal" }], [{ extra = "otel" }, { extra = "modal" }]]
+# spiffe 0.3.1 caps pyjwt below 2.14, but pyjwt 2.13 carries ten published
+# advisories fixed in 2.14.0 and nothing in the spiffe extra depends on the
+# behaviour that cap guards. The override lets the universal lock resolve
+# pyjwt to a patched release; drop it once spiffe lifts its cap.
+override-dependencies = ["pyjwt>=2.14"]
 
 [tool.mutmut]
 # Lineage v1 mutation testing - see scripts/mutmut_lineage.py for the

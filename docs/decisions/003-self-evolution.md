@@ -184,6 +184,39 @@ graph LR
    - Version control integration (git commit per change)
    - Notification to running agents
 
+   **Rollback semantics.** A rollback is driven by the proposal it is given and
+   by a record written to disk at apply time, never by state held in the
+   applying process. `FileUpgradeExecutor` copies each file aside under
+   `upgrades/backups/<proposal id>/` and writes a `manifest.json` beside it, so
+   `rollback_upgrade(proposal)` works in a process that did not perform the
+   apply — after a restart, or from a different command.
+
+   It has exactly three outcomes, and the distinction between the first two
+   matters:
+
+   | Situation | Result |
+   |---|---|
+   | `history.jsonl` records no applied change for this proposal | `True` — there is nothing to undo |
+   | The manifest exists and every file in it was restored | `True` |
+   | Applied with no manifest, or a restore failed | `RollbackError` |
+
+   The third case used to be the first: an empty in-process backup map iterated
+   zero times and returned `True`, so a rollback that restored nothing reported
+   success. A rollback that cannot be performed now fails loudly, and the
+   evolution loop re-raises rather than continuing to apply proposals on top of
+   a tree in an undeclared state.
+
+   Every rollback writes a receipt to `upgrades/rollbacks/<proposal id>.json`
+   (a repeat rollback or a reused id writes `<proposal id>.<n>.json` rather than
+   overwriting) carrying the files restored and a sha256 over the receipt body's
+   canonical JSON — the same shape the change-contract verdict receipt uses. The
+   checksum is keyless: it catches accidental corruption, not deliberate edits,
+   since anyone who changes the body can recompute it.
+
+   No category has a sink that writes backups today, so in a shipped build the
+   manifest branch is not reached and every rollback is the "nothing was
+   applied" row above.
+
 3. **Verification**
    - Immediate metric check (did things improve?)
    - A/B comparison with baseline

@@ -1,0 +1,3 @@
+## Benchmark bundles record what each verdict cost, and a run can be given a budget
+
+Each task record in a `bernstein bench` submission bundle now carries the tokens, USD cost and wall-clock duration the adapter reported, bound into the bundle hash when set; bundles emitted before the fields existed load unchanged. `bernstein bench compare` prints the cost, token and duration deltas after its ranking (or the full report with `--format markdown|json`), still refusing across differing harness settings. `bernstein bench run --budget <usd>` stops once the cumulative spend reaches the limit, records a refusal receipt for every task it did not run, says so on the way out and exits 2; `bench verify` checks a refusal claims nothing for its task (#5464).

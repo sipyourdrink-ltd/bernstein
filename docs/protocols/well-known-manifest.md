@@ -5,6 +5,7 @@ Bernstein's task server publishes a small set of unauthenticated discovery endpo
 | Path | Purpose | Reference |
 |---|---|---|
 | `GET /.well-known/agent.json` | A2A v1.0 signed agent card (JCS-canonical body, detached Ed25519 JWS). | [a2a.md](../architecture/a2a.md) |
+| `GET /.well-known/agent-card.json` | Alias of `/.well-known/agent.json`; same signed card. | [a2a.md](../architecture/a2a.md) |
 | `GET /.well-known/agent.json/keys` | JWKS for verifying the agent-card signatures. | [a2a.md](../architecture/a2a.md#how-a-verifier-consumes-the-card) |
 | `GET /llms.txt` | Markdown summary of the same public surface for LLM consumers. | [a2a.md](../architecture/a2a.md#endpoints-summary) |
 | `GET /.well-known/http-message-signatures-directory` | JWKS for verifying the RFC 9421 HTTP Message Signatures on Bernstein's outbound agent-facing requests (install-identity keypair). | `src/bernstein/core/routes/well_known.py` |
