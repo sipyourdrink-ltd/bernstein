@@ -502,3 +502,14 @@ Alias resolution feeds the cached `imports` lists, so changing it means
 bumping `_ANALYZER_CACHE_VERSION` and `_COMPAT_CACHE_VERSION` in
 `src/bernstein/core/quality/test_impact.py`. File hashes alone will not
 invalidate a map whose edges were derived under the old rule.
+
+## Sandbox0 live integration
+
+Sandbox0's unit tests use an injected SDK client. The opt-in live suite runs
+the shared sandbox contract plus command cancellation, binary I/O, independent
+RootFS restores, and Git/file injection. A separate model-backed smoke test
+runs a real CLI agent through the spawner and checks an authenticated callback,
+committed Git bundle retrieval, and deletion. Both require isolated test
+resources; skips do not count as provider validation. See
+[Sandbox0 validation](../sandbox/sandbox0.md#validation) for credentials and
+explicit opt-in commands.

@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,7 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.sandbox import WorkspaceManifest
 from bernstein.core.sandbox.backend import ExecResult, SandboxSession
+from bernstein.core.sandbox.backends.sandbox0 import Sandbox0SandboxBackend
 from bernstein.core.sandbox.selector import SandboxSelectionError
 from bernstein.core.security.audit import AuditLog
 
@@ -291,7 +293,7 @@ class _FakeBackend:
 def _build_spawner_with_backend(
     tmp_path: Path,
     *,
-    backend: _FakeBackend,
+    backend: _FakeBackend | Sandbox0SandboxBackend,
     server_port: int | None = None,
     image: str = "img:test",
 ) -> tuple[AgentSpawner, _FakeAdapter]:
@@ -696,3 +698,179 @@ def test_sync_back_fetches_bundle_refs_into_host_repo(tmp_path: Path) -> None:
         check=True,
     ).stdout
     assert "refs/remotes/sandbox/S-42/agent-work" in refs
+
+
+def test_sandbox0_provision_failure_never_runs_on_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An attached remote backend must fail closed even without CLI env flags."""
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
+    backend = _ImageMissingBackend(tmp_path)
+    backend.name = "sandbox0"
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend, image="unused")
+    with pytest.raises(SandboxSelectionError, match="refusing to fall back"):
+        spawner._spawn_via_sandbox_session(
+            session_id="S-sandbox0-fail",
+            prompt="test",
+            spawn_cwd=tmp_path,
+            model_config=ModelConfig("sonnet", "high"),
+            mcp_config=None,
+            session=AgentSession(id="S-sandbox0-fail", role="backend"),
+            adapter=adapter,
+        )
+    assert not adapter.spawn_calls
+
+
+@pytest.mark.parametrize("failure_step", ["claim", "mkdir"])
+def test_sandbox0_sdk_creation_failure_never_runs_on_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_step: str
+) -> None:
+    """Exercise the real backend create path, including partial SDK setup."""
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
+    client = MagicMock()
+    client.sandboxes.claim.return_value.id = "sandbox-failed-create"
+    failure = OSError("SDK provisioning failed")
+    if failure_step == "claim":
+        client.sandboxes.claim.side_effect = failure
+    else:
+        client.sandboxes.claim.return_value.mkdir.side_effect = failure
+    missing = RuntimeError("not found")
+    missing.status_code = 404
+    client.sandboxes.get.side_effect = missing
+    backend = Sandbox0SandboxBackend(client=client)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+
+    with patch("bernstein.core.agents.spawner_core.submit_session_exec") as submit:
+        with pytest.raises(SandboxSelectionError, match="refusing to fall back") as raised:
+            _spawn_one(spawner, adapter, "S-sdk-fail")
+
+    assert raised.value.__cause__ is failure
+    client.sandboxes.claim.assert_called_once()
+    assert not adapter.spawn_calls
+    submit.assert_not_called()
+    assert not spawner._sandbox_owned_sessions
+    assert not backend._sessions
+    if failure_step == "mkdir":
+        client.delete_sandbox.assert_called_once_with("sandbox-failed-create")
+    else:
+        client.delete_sandbox.assert_not_called()
+
+
+def test_sandbox0_creation_logs_and_audit_exclude_snapshot_id(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Only selected session identifiers are recorded, never the SDK response."""
+    snapshot_id = "sensitive-snapshot-id-do-not-log"
+    client = MagicMock()
+    client.sandboxes.claim.return_value = SimpleNamespace(
+        id="sandbox-log-test", snapshot_id=snapshot_id, mkdir=MagicMock()
+    )
+    backend = Sandbox0SandboxBackend(client=client)
+    spawner, _ = _build_spawner_with_backend(tmp_path, backend=backend)
+    with (
+        caplog.at_level(logging.INFO),
+        patch.object(spawner, "_check_task_server_reachability"),
+        patch.object(spawner, "_emit_sandbox_audit") as audit,
+    ):
+        session = spawner._provision_sandbox_session("S-log-test")
+
+    assert session.session_id == "sandbox-log-test"
+    assert "Provisioned sandbox session sandbox-log-test" in caplog.text
+    assert snapshot_id not in caplog.text
+    audit.assert_called_once()
+    assert snapshot_id not in repr(audit.call_args)
+    assert "snapshot_id" not in audit.call_args.kwargs["details"]
+
+
+def test_prompt_failure_destroys_owned_sandbox(tmp_path: Path) -> None:
+    backend = _FakeBackend(tmp_path)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+    with patch("bernstein.core.agents.spawner_core.write_prompt_to_session", side_effect=OSError("write failed")):
+        with pytest.raises(OSError, match="write failed"):
+            spawner._spawn_via_sandbox_session(
+                session_id="S-write-fail",
+                prompt="test",
+                spawn_cwd=tmp_path,
+                model_config=ModelConfig("sonnet", "high"),
+                mcp_config=None,
+                session=AgentSession(id="S-write-fail", role="backend"),
+                adapter=adapter,
+            )
+    assert not spawner._sandbox_owned_sessions
+    assert not adapter.spawn_calls
+    assert len(backend.destroyed) == 1
+
+
+def test_sandbox0_crash_resume_refuses_host_execution(tmp_path: Path) -> None:
+    from bernstein.core.models import Task
+
+    backend = _FakeBackend(tmp_path)
+    backend.name = "sandbox0"
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+    with pytest.raises(SandboxSelectionError, match="explicit RootFS snapshot restore"):
+        spawner.spawn_for_resume(
+            [Task(id="T-remote", title="resume", description="resume", role="backend")],
+            worktree_path=tmp_path,
+            changed_files=[],
+        )
+    assert not adapter.spawn_calls
+
+
+def test_reachability_probe_uses_remote_task_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_SERVER_URL", "https://tasks.example.com:8443")
+    session = _FakeSession(backend_name="sandbox0", root=tmp_path)
+    spawner, _ = _build_spawner(tmp_path, session=session)
+    spawner._check_task_server_reachability(session)
+    assert "'tasks.example.com', 8443" in session.exec_calls[0][2]
+
+
+@pytest.mark.parametrize("backend_name", ["sandbox0", "docker", "libkrun", "firecracker"])
+def test_spawn_scopes_model_credentials_timeout_and_verbose_to_sandbox0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend_name: str
+) -> None:
+    from unittest.mock import AsyncMock
+
+    session = _FakeSession(backend_name=backend_name, root=tmp_path)
+    session.write = AsyncMock()
+    spawner, adapter = _build_spawner(tmp_path, session=session)
+    token_path = tmp_path / "agent.token"
+    token_path.write_bytes(b"task-secret")
+    spawner._agent_token_files["S-remote"] = token_path
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "SANDBOX0_API_KEY"):
+        monkeypatch.setenv(name, "test-" + name)
+    agent = AgentSession(id="S-remote", role="backend", timeout_s=123)
+    with patch("bernstein.core.agents.spawner_core.submit_session_exec") as submit:
+        spawner._spawn_via_sandbox_session(
+            session_id=agent.id,
+            prompt=f"Read token at {token_path}",
+            spawn_cwd=tmp_path,
+            model_config=ModelConfig("glm-4.7", "high"),
+            mcp_config=None,
+            session=agent,
+            adapter=adapter,
+        )
+    env = submit.call_args.kwargs["env"]
+    expected_env = {"ANTHROPIC_API_KEY"}
+    if backend_name == "sandbox0":
+        expected_env.update({"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"})
+    assert set(env) == expected_env
+    assert submit.call_args.kwargs["timeout"] == (123 if backend_name == "sandbox0" else None)
+    assert ("--verbose" in submit.call_args.kwargs["cmd"][2]) == (backend_name == "sandbox0")
+    token_call, prompt_call = session.write.call_args_list
+    remote_token = (
+        "/tmp/bernstein-agent-tokens/S-remote.token"
+        if backend_name == "sandbox0"
+        else f"{session.workdir}/.sdd/runtime/agent_tokens/S-remote.token"
+    )
+    assert token_call.args == (remote_token, b"task-secret")
+    assert token_call.kwargs["mode"] == 0o600
+    assert remote_token.encode() in prompt_call.args[1]
+
+
+def test_legacy_container_command_does_not_enable_verbose(tmp_path: Path) -> None:
+    spawner, adapter = _build_spawner(tmp_path, session=None)
+    cmd = spawner._adapter_cmd_for_container(
+        prompt_file=tmp_path / "prompt.md",
+        model_config=ModelConfig("sonnet", "high"),
+        session_id="S-legacy",
+        mcp_config=None,
+        adapter=adapter,
+    )
+    assert "--verbose" not in cmd[2]
+    assert "--output-format stream-json" in cmd[2]

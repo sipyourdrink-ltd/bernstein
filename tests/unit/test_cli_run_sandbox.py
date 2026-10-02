@@ -227,3 +227,16 @@ class TestSandboxFlag:
             f"Sandbox CLI flag does not expose selector backend(s): {sorted(missing)}. "
             "Update bernstein.cli.run_bootstrap.SANDBOX_CHOICES + the cli() option."
         )
+
+
+@pytest.mark.usefixtures("isolated_sandbox_env")
+@pytest.mark.parametrize("allow_paid", [False, True])
+def test_sandbox0_cli_requires_explicit_paid_opt_in(monkeypatch, allow_paid):
+    monkeypatch.delenv("BERNSTEIN_CONTAINER", raising=False)
+    _stub_run_body(monkeypatch)
+    args = ["--sandbox", "sandbox0", "--dry-run"]
+    if allow_paid:
+        args.append("--allow-paid")
+    result = CliRunner().invoke(run, args)
+    assert result.exit_code == (0 if allow_paid else 2), result.output
+    assert os.environ.get("BERNSTEIN_CONTAINER") != "1"

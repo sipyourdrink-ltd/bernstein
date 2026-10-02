@@ -263,6 +263,7 @@ openai = ["openai-agents>=0.4.0"]
 # corresponding SandboxBackend. Kept optional so minimal installs stay lean.
 docker = ["docker>=7.1.0"]
 e2b = ["e2b-code-interpreter>=1.0"]
+sandbox0 = ["sandbox0>=0.10.2,<0.11"]
 modal = ["modal>=1.4.2"]
 # Cloud artifact storage sinks. Each extra pulls in the provider SDK
 # needed by the corresponding ArtifactSink. Kept optional so local-only
