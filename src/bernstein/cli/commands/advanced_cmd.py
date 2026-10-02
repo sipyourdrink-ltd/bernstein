@@ -563,6 +563,13 @@ def plugins_cmd(workdir: str, trust_details: bool) -> None:
     default=False,
     help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
 )
+@click.option(
+    "--unattended",
+    "unattended",
+    is_flag=True,
+    default=False,
+    help="Execute probes through the unattended spawner environment.",
+)
 @click.pass_context
 def doctor(
     ctx: click.Context,
@@ -576,6 +583,7 @@ def doctor(
     endpoint_timeout: float,
     roles: tuple[str, ...],
     failover_drill: bool,
+    unattended: bool = False,
 ) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
@@ -636,7 +644,7 @@ def doctor(
     # the trailing hint to keep the exit code unchanged.
     exit_code = 0
     try:
-        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix)
+        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix, unattended=unattended)
     except SystemExit as exc:  # NOSONAR python:S5754 - captured to add a hint, re-raised below
         exit_code = int(exc.code or 0)
 
@@ -2875,6 +2883,7 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
         console.print("[dim]No quarantined tasks.[/dim]")
         return
 
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(show_header=True, header_style="bold red")
@@ -2886,12 +2895,13 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
 
     for entry in entries:
         fail_style = "bold red" if entry.fail_count >= QUARANTINE_THRESHOLD else "yellow"
+        # Rich parses cells as markup; titles and reasons are free text.
         table.add_row(
-            entry.task_title,
+            escape(entry.task_title),
             f"[{fail_style}]{entry.fail_count}[/{fail_style}]",
             entry.last_failure,
             entry.action,
-            entry.reason,
+            escape(entry.reason),
         )
 
     console.print(table)

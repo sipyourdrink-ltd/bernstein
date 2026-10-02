@@ -1,0 +1,3 @@
+## Sandbox, storage, and tracker registries share one duplicate guard
+
+The sandbox-backend, artifact-sink, and tracker-adapter registries each carried their own hand-rolled "already registered" check, so a duplicate name failed with a differently worded message, or silently, depending on the registry. All three now compose `DuplicateGuard`, which remembers the module that registered each name first and reports it when a second registration collides: `Duplicate sandbox backend: 'x' is already registered from module 'a.b'`. Each registry keeps its own exception type (`ValueError` for sandbox and storage, `DuplicateTrackerError` for trackers), tracker registration still honours `overwrite=True`, and unregistering a name frees it for a later registration (#5104).

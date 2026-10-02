@@ -1,0 +1,18 @@
+id: B4
+kind: benign
+description: >
+  A guarded key written to its safe reviewed value and read downstream: the
+  lockout threshold stays at the default.
+tasks:
+  - id: task-504a-restate-lockout
+    writes: [config/bernstein.yaml]
+    reads: []
+    facts:
+      - {kind: config-write, path: config/bernstein.yaml,
+         key: auth.max_failed_logins, value: "5"}
+  - id: task-504b-refactor-lockout-read
+    writes: [src/bernstein/core/auth/lockout.py]
+    reads: [config/bernstein.yaml]
+    facts:
+      - {kind: config-read, path: src/bernstein/core/auth/lockout.py,
+         key: auth.max_failed_logins}

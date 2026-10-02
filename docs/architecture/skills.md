@@ -77,12 +77,14 @@ Defined by :class:`bernstein.core.skills.SkillManifest` (Pydantic,
 
 | field                | type          | notes                                  |
 | -------------------- | ------------- | -------------------------------------- |
-| ``name``             | ``str``       | matches ``^[a-z][a-z0-9-]*$``          |
+| ``manifest_schema``  | ``int``       | defaults to ``1``                      |
+| ``name``             | ``str``       | 1-64 chars, matches ``^[a-z][a-z0-9-]*$`` |
 | ``description``      | ``str``       | 20-500 chars, shown in the index       |
 | ``trigger_keywords`` | ``list[str]`` | optional keyword hints                 |
 | ``references``       | ``list[str]`` | files under ``<skill>/references/``    |
 | ``scripts``          | ``list[str]`` | files under ``<skill>/scripts/``       |
 | ``assets``           | ``list[str]`` | files under ``<skill>/assets/``        |
+| ``sandbox_profile``  | ``str\|None`` | optional, same slug pattern, max 64    |
 | ``version``          | ``str``       | defaults to ``"1.0.0"``                |
 | ``author``           | ``str\|None`` | optional                               |
 
@@ -112,25 +114,29 @@ Registered by :mod:`bernstein.mcp.server` under the name ``load_skill``:
 
 ```python
 async def load_skill(
-    name: str,
+    name: str | None = None,
     reference: str | None = None,
     script: str | None = None,
-) -> dict: ...
+) -> str: ...
 ```
 
-Returns JSON with:
+Omitting ``name`` returns the compact skill index. With a name it returns
+JSON with:
 
 - ``name`` - echoed back.
-- ``body`` - ``SKILL.md`` body when ``reference`` and ``script`` are unset.
+- ``body`` - the ``SKILL.md`` body.
 - ``available_references`` / ``available_scripts`` - always populated.
 - ``reference_content`` - the requested reference's raw text (only when
   ``reference`` was passed).
 - ``script_content`` - the requested script's raw text.
 - ``error`` - populated when the skill / file could not be loaded.
 
-Every invocation emits a ``skill_loaded`` WAL event (best-effort) with
+Every load of an existing named skill passes a ``skill_loaded`` event to
+a WAL sink callback (default: an ``INFO`` log line) with
 ``name``, ``reference``, ``script``, ``source``, ``duration_s``, and
-``error`` fields.
+``error`` fields (including loads whose reference or script read failed,
+which set ``error``); a name that is not found returns an error result
+without emitting the event.
 
 ## Sources
 
@@ -141,7 +147,7 @@ silently shadowed.
 
 ### First-party
 
-``bernstein/templates/skills/`` loaded by
+``templates/skills/`` loaded by
 :class:`bernstein.core.skills.sources.LocalDirSkillSource`.
 
 ### Plugin packs
@@ -185,11 +191,10 @@ bernstein skills show backend --script lint.sh
 
 ## Observability
 
-Every successful ``load_skill`` invocation emits a structured
-``skill_loaded`` event. Hook it into the WAL
-(``src/bernstein/core/persistence/wal.py``) or a Prometheus metric
-(``skill_load_total{name=..., source=...}``,
-``skill_load_duration_seconds{name=...}``) to see:
+Every named-skill ``load_skill`` invocation emits a structured
+``skill_loaded`` event (``src/bernstein/core/skills/load_skill_tool.py``).
+Route it into the WAL (``src/bernstein/core/persistence/wal.py``) or derive
+metrics from it to see:
 
 - Which skills get exercised vs. sit dead.
 - Whether agents converge on a small core set.

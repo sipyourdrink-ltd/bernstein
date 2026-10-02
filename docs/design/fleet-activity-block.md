@@ -141,6 +141,8 @@ The block content (captured group 1) is parsed as JSON. Malformed JSON produces 
 
 ## 6 File Locations
 
+The workflow and generation script below are the planned locations; neither exists in the repository yet, and `README.md` carries no markers.
+
 | Artifact | Path |
 |---|---|
 | Block definition | `docs/design/fleet-activity-block.md` (this file) |

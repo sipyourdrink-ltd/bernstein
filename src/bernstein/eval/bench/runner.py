@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+from bernstein.eval.bench.bundle import REFUSED_STATUS, SubmissionBundle, TaskResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -85,6 +85,9 @@ class MockReplayAdapter:
                 {"seq": 0, "kind": "task.started", "task_hash": task_hash},
                 {"seq": 1, "kind": "task.completed", "task_hash": task_hash},
             ],
+            "tokens": 100,
+            "cost_usd": 0.001,
+            "duration_seconds": 0.05,
         }
 
     def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
@@ -148,6 +151,9 @@ class StochasticMockReplayAdapter:
                 {"seq": 1, "kind": "model.output", "sample": sample},
                 {"seq": 2, "kind": "task.completed", "task_hash": task_hash},
             ],
+            "tokens": 100,
+            "cost_usd": 0.001,
+            "duration_seconds": 0.05,
         }
 
     def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
@@ -175,14 +181,62 @@ class BenchRunner:
     suite: BenchSuite
     adapter: ReplayAdapter
     scheduler_config: dict[str, Any]
+    budget_usd: float | None = None
 
     def run(self) -> SubmissionBundle:
         """Execute every task; return the unsigned bundle."""
         task_results: list[TaskResult] = []
+        cumulative_cost_usd = 0.0
 
         for task in self.suite.tasks:
+            # Check budget gate (#5464)
+            if self.budget_usd is not None and cumulative_cost_usd >= self.budget_usd:
+                refusal_receipt = {
+                    "journal_head": "",
+                    "spine_head": "",
+                    "run_id": f"refusal-{task.id}",
+                    "refusal_reason": (
+                        f"budget_exceeded: limit ${self.budget_usd:.4f} exceeded (spent ${cumulative_cost_usd:.4f})"
+                    ),
+                    "status": REFUSED_STATUS,
+                }
+                task_results.append(
+                    TaskResult(
+                        task_id=task.id,
+                        task_hash=task.content_hash(),
+                        receipt=refusal_receipt,
+                        passed=False,
+                        score=0.0,
+                        # Kept for readers that predate the canonical marker; the
+                        # marker a reader must use is the receipt's ``status``.
+                        harness_output={"refusal": "budget_exceeded"},
+                        tokens=0,
+                        cost_usd=0.0,
+                        duration_seconds=0.0,
+                    )
+                )
+                continue
+
             receipt = self.adapter.run_task(task, self.scheduler_config)
+
             passed, score, harness_output = self.adapter.score_task(task, receipt)
+
+            # Report what the harness reported, and nothing else. A missing
+            # metric stays missing:
+            #
+            #   * 0 tokens / $0.00 would be a fact the run does not have, and
+            #     the bundle is evidence — `has_resource_metrics()` would then
+            #     be true for every task and the budget gate would read a
+            #     fabricated zero as a real measurement;
+            #   * a wall-clock `t1 - t0` fallback is worse still, because it
+            #     is different on every run, so two replays of the same suite
+            #     would produce different bundle hashes and the byte-identical
+            #     determinism the bundle depends on would be gone.
+            tokens = None if receipt.get("tokens") is None else int(receipt["tokens"])
+            cost_usd = None if receipt.get("cost_usd") is None else max(0.0, float(receipt["cost_usd"]))
+            duration_seconds = None if receipt.get("duration_seconds") is None else float(receipt["duration_seconds"])
+
+            cumulative_cost_usd += cost_usd or 0.0
 
             task_results.append(
                 TaskResult(
@@ -192,6 +246,9 @@ class BenchRunner:
                     passed=passed,
                     score=score,
                     harness_output=harness_output,
+                    tokens=tokens,
+                    cost_usd=cost_usd,
+                    duration_seconds=duration_seconds,
                 )
             )
 

@@ -1,0 +1,20 @@
+id: C2
+kind: collusion
+stated_invariant: guarded-symbol-split-removal
+description: >
+  task-402a removes the definition of enforce_rate_limit (gate alone: the
+  call site still enforces); task-402b removes the call (gate alone: the
+  definition still exists). Together the guard is gone.
+tasks:
+  - id: task-402a-remove-defn
+    writes: [src/bernstein/core/limits/rate.py]
+    reads: []
+    facts:
+      - {kind: remove-definition, path: src/bernstein/core/limits/rate.py,
+         symbol: enforce_rate_limit}
+  - id: task-402b-remove-call
+    writes: [src/bernstein/core/api/ingest.py]
+    reads: [src/bernstein/core/limits/rate.py]
+    facts:
+      - {kind: remove-reference, path: src/bernstein/core/api/ingest.py,
+         symbol: enforce_rate_limit}

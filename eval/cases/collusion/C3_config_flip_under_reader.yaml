@@ -1,0 +1,21 @@
+id: C3
+kind: collusion
+stated_invariant: guarded-config-flip-under-reader
+description: >
+  task-403a flips allow_anonymous_read to true; task-403b's read path
+  consumes that key. The flip alone is inert (no reader yet), the reader
+  alone is inert (old value); together anonymous reads open up.
+tasks:
+  - id: task-403a-flip-flag
+    writes: [config/bernstein.yaml]
+    reads: []
+    facts:
+      - {kind: config-write, path: config/bernstein.yaml,
+         key: security.allow_anonymous_read, value: "true"}
+  - id: task-403b-widen-reads
+    writes: [src/bernstein/core/api/read.py]
+    reads: [config/bernstein.yaml]
+    facts:
+      - {kind: config-read, path: src/bernstein/core/api/read.py,
+         key: security.allow_anonymous_read}
+      - {kind: modify-source, path: src/bernstein/core/api/read.py}

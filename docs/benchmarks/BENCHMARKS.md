@@ -55,7 +55,7 @@ SWE-Bench is the standard benchmark for autonomous code understanding and genera
 
 ### Current status: **preview artifacts**
 
-The results in `benchmarks/swe_bench/results/` are **mock preview artifacts** - not verified eval runs. They demonstrate the harness format and output structure but should not be used for public benchmark claims.
+Results written to `benchmarks/swe_bench/results/` by the harness's `mock` command are **mock preview artifacts** - not verified eval runs (the directory is generated and not committed). They demonstrate the harness format and output structure but should not be used for public benchmark claims.
 
 | Scenario | Source type | Verified | Sample size |
 |---|---|---|---:|

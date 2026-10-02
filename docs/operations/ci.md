@@ -29,9 +29,9 @@ Every test file must be reachable from a CI lane. The mapping:
 
 | Directory | Lane | Events | Selection |
 |---|---|---|---|
-| `tests/unit/**` | `test` (4 shards x os x python) | pull_request | impacted slice only (`--affected`) |
+| `tests/unit/**` | `test` (4 shards x os x python) | pull_request | impacted slice from the shared affected-test plan |
 | `tests/unit/**` | `test` (8 ubuntu / 4 windows shards x python) | merge_group, workflow_dispatch, release push | whole directory |
-| `tests/integration/**` | `test` (4 shards x os x python) | pull_request | impacted slice only (`--affected`) |
+| `tests/integration/**` | `test` (4 shards x os x python) | pull_request | impacted slice from the shared affected-test plan |
 | `tests/integration/**` | `integration-tests` | all | whole directory |
 | `tests/property/**` | `property-tests` | all | whole directory |
 | `tests/snapshot/**` | `snapshot-tests` | all | whole directory |
@@ -44,12 +44,18 @@ Every test file must be reachable from a CI lane. The mapping:
 
 Two things this table is deliberately explicit about:
 
-- On `pull_request` the `test` job runs `scripts/run_tests.py --affected`,
-  which selects only the files the impact map ties to the changed sources.
-  The whole `tests/unit/**` directory runs in the merge queue and on full
-  workflow dispatches (plus immediate release pushes), not on an ordinary
-  post-merge push. A file that no lane other than the affected slice covers
-  is therefore not guaranteed to run before a merge.
+- On `pull_request`, `plan-affected-tests` computes the impacted file list once
+  against the event's pinned base SHA and uploads it as an artifact. Every Linux
+  and macOS shard downloads that same plan, so delayed cells cannot select
+  different lists. The artifact digest is a planner output, and reruns reuse
+  the run-scoped artifact. The whole `tests/unit/**` directory runs in the merge
+  queue and on full workflow dispatches (plus immediate release pushes), not on
+  a PR or an ordinary post-merge push. A file that no lane other than the
+  affected slice covers is therefore not guaranteed to run before a merge.
+- An empty affected set is a named `Nothing affected` planner step that prints
+  the base and head SHAs. Empty individual shards also have a named step.
+  A code or workflow change with no mapped tests still fails closed before the
+  artifact is uploaded.
 - `tests/chaos/**` (11 files), `tests/perf/**` (1 file) and
   `tests/test_worktree.py` are collected by no lane at all. `tests/protocol`,
   `tests/pentest` and `tests/stress` do run, but in workflows that do not

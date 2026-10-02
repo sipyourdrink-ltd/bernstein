@@ -21,6 +21,7 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+from bernstein.core.config.config_schema import LayerValidationError
 from bernstein.core.config.run_overlay import (
     RunOverlayError,
     resolve_effective_mapping,
@@ -2259,7 +2260,7 @@ def _parse_mcp_signing_mode(data: dict[str, object]) -> Literal["warn", "strict"
     return cast("Literal['warn', 'strict', 'off']", candidate)
 
 
-def _parse_data_class(raw: object) -> str | None:
+def _parse_data_class(raw: object) -> Literal["restricted", "internal", "confidential", "public"] | None:
     """Parse the optional ``data_class`` field.
 
     Allowed values: restricted, internal, confidential, public.
@@ -2275,7 +2276,7 @@ def _parse_data_class(raw: object) -> str | None:
     allowed = {"restricted", "internal", "confidential", "public"}
     if raw not in allowed:
         raise SeedError(f"data_class must be one of {sorted(allowed)}, got: {raw!r}")
-    return raw
+    return cast("Literal['restricted', 'internal', 'confidential', 'public']", raw)
 
 
 # Every top-level key ``parse_seed`` consumes, directly or via a helper
@@ -2460,7 +2461,7 @@ def parse_seed(path: Path) -> SeedConfig:
     # a setup that edits the committed file directly behaves as it always did.
     try:
         data: dict[str, object] = cast("_StrObjDict", resolve_effective_mapping(committed, config_path=path))
-    except RunOverlayError as exc:
+    except (RunOverlayError, LayerValidationError) as exc:
         raise SeedError(str(exc)) from exc
 
     _warn_unknown_top_level_keys(data)

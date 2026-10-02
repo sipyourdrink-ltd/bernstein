@@ -558,6 +558,43 @@ def _segment_stamp(path: Path) -> tuple[int, int, int, int]:
     )
 
 
+#: Initial backward-read window for :func:`_tail_line`, doubled until a full
+#: line is found. Generously larger than an ordinary audit record so the
+#: common case is one read, not a loop.
+_TAIL_PROBE_BYTES = 65536
+
+
+def _tail_line(path: Path) -> bytes | None:
+    """Return the last non-empty line of *path*, without reading the file.
+
+    Reads backward from the end in doubling windows until a ``b"\\n"``
+    boundary is found or the whole file has been read, so the cost tracks
+    the size of the last record rather than the segment - the same "damaged
+    suffix, not the segment" shape :func:`_local_tail_state` already uses on
+    the slow path, applied to a plain stat-matched read instead of a torn
+    one. Returns ``None`` for a missing or empty file.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size == 0:  # pragma: no cover - a synced segment is never empty
+        return None
+    window = _TAIL_PROBE_BYTES
+    with path.open("rb") as handle:
+        while True:
+            start = max(0, size - window)
+            handle.seek(start)
+            data = handle.read(size - start)
+            body = data[:-1] if data.endswith(b"\n") else data
+            newline_at = body.rfind(b"\n")
+            if newline_at != -1:
+                return body[newline_at + 1 :]
+            if start == 0:
+                return body
+            window *= 2
+
+
 def _read_live_segment(log_path: Path, audit_dir: Path) -> bytes | None:
     """Read a live segment, following retention when it archived it mid-read.
 
@@ -2027,6 +2064,30 @@ class AuditLog:
         self._sync_for_append(day_path)
         return self._prev_hmac
 
+    def _tail_still_matches_cached_head(self, log_path: Path) -> bool:
+        """Confirm a stamp-matched segment's last record is still our head.
+
+        ``(st_dev, st_ino, st_size, st_mtime_ns)`` can collide across a
+        remove-and-regrow when the replacement lands on a reused inode within
+        one mtime tick (#5953): the stamp alone cannot distinguish "still the
+        file we last appended to" from "a different file that happens to
+        stat the same". This reads back only the last line
+        (:func:`_tail_line`, a bounded backward read - not the full-segment
+        rescan the stamp match exists to skip) and checks it is still the
+        canonical, ``hmac``-bearing record this instance cached as its head.
+        A regrow changes that record; an untouched segment cannot.
+        """
+        tail = _tail_line(log_path)
+        if tail is None:
+            return False
+        try:
+            entry = json.loads(tail)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return False
+        if not isinstance(entry, dict) or json.dumps(entry, sort_keys=True).encode() != tail:
+            return False
+        return entry.get("hmac") == self._prev_hmac
+
     def _sync_for_append(self, log_path: Path) -> None:
         """Bring the cached chain head in line with *log_path* before appending.
 
@@ -2038,17 +2099,23 @@ class AuditLog:
         Fast path: when the day file is the same file, of the same length, as
         the one this instance's own last append left behind, no other writer
         has touched it, our own append always ends in ``b"\\n"`` so the tail
-        cannot be torn, and both the tear probe and the full rescan are
-        skipped. The probe must stay behind this branch: unconditionally it is
-        a stat + open + seek + read on every append, which is a measurable
-        fraction of append throughput.
+        cannot be torn, and the full rescan (:func:`_local_tail_state` over
+        the whole segment) is skipped. The torn-tail probe must stay behind
+        this branch: unconditionally it is a stat + open + seek + read of the
+        *entire* segment on every append, which is a measurable fraction of
+        append throughput.
 
-        "Same file" is a real part of that test, not decoration. Length alone
-        stopped being sufficient once a segment could be removed and regrown
-        (see :func:`_segment_stamp`): the fast path then fired over a segment
-        holding a different chain, and the append chained onto a head that was
-        no longer on disk. The stamp is read from the same ``stat`` the length
-        comes from, so the check costs nothing extra.
+        "Same file" is a real part of that test, not decoration, but a stat
+        tuple is still just a claim about identity, not proof of it: a
+        segment can be removed and regrown onto a reused inode within one
+        mtime tick (see :func:`_segment_stamp`), and the replacement can
+        present the cached stamp while holding a different chain, so the fast
+        path fires over a segment the head no longer matches and the append
+        chains onto a head that is no longer on disk (#5953). The stamp match
+        is therefore confirmed, not trusted outright, by
+        :meth:`_tail_still_matches_cached_head` - a *bounded* backward read of
+        only the last line (:func:`_tail_line`), unrelated in cost to the
+        full-segment rescan this branch exists to skip.
 
         The slow path records what it synced, so a nested append inside the
         same ``append_transaction`` section takes the fast path instead of
@@ -2056,7 +2123,11 @@ class AuditLog:
         chain append lock.
         """
         stamp = _segment_stamp(log_path)
-        if log_path == self._synced_path and stamp == self._synced_stamp:
+        if (
+            log_path == self._synced_path
+            and stamp == self._synced_stamp
+            and self._tail_still_matches_cached_head(log_path)
+        ):
             return
         # One read serves both the tear gate and head recovery, so the slow
         # path costs a single pass over the day segment - the same order as

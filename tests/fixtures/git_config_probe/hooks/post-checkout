@@ -1,2 +1,0 @@
-#!/bin/sh
-PROBE_NAME=post-checkout exec "$(dirname "$0")/../probe.sh"

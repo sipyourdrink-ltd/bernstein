@@ -38,7 +38,7 @@ from bernstein.core.sandbox import (
 
 A `runtime_checkable` `Protocol`. Every backend exposes:
 
-- `name: str` - canonical identifier referenced from `plan.yaml`.
+- `name: str` - canonical identifier used by `bernstein run --sandbox <name>` and the backend registry.
 - `capabilities: frozenset[SandboxCapability]` - feature flags.
 - `async def create(manifest, options=None) -> SandboxSession` -
   provision a fresh sandbox.
@@ -63,8 +63,8 @@ An `ABC` with six abstract methods:
 
 ### `SandboxCapability`
 
-An `StrEnum` with six values: `FILE_RW`, `EXEC`, `NETWORK`, `GPU`,
-`SNAPSHOT`, `PERSISTENT_VOLUMES`. Every backend advertises the set
+An `StrEnum` with seven values: `FILE_RW`, `EXEC`, `NETWORK`, `GPU`,
+`SNAPSHOT`, `PERSISTENT_VOLUMES`, `SCOPED_MOUNT`. Every backend advertises the set
 it supports; schedulers reject manifests requiring capabilities the
 selected backend does not expose.
 
@@ -80,22 +80,24 @@ class WorkspaceManifest:
     files: tuple[FileEntry, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
     timeout_seconds: int = 1800
+    artifact_mounts: tuple[ArtifactMount, ...] = ()
 ```
 
 `GitRepoEntry` and `FileEntry` are companion frozen dataclasses.
-Cloud-specific mount entries (S3, persistent volumes, secrets
-manager bindings) are intentionally deferred to the storage-sinks
-work.
+`ArtifactMount` is a union alias of the frozen `S3Mount`, `GCSMount`,
+`AzureBlobMount` and `R2Mount` dataclasses.
+Object-store mount entries (`S3Mount`, `GCSMount`, `AzureBlobMount`,
+`R2Mount`) live in `src/bernstein/core/sandbox/manifest.py`.
 
 ## First-party backends
 
 | Backend | Ships in | `capabilities`                                  | Notes |
 |---------|----------|--------------------------------------------------|-------|
-| `worktree` | core     | `FILE_RW`, `EXEC`, `NETWORK`                     | Wraps the existing `WorktreeManager`. Zero behaviour change. Default. |
+| `worktree` | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | Wraps the existing `WorktreeManager`. Zero behaviour change. Default. |
 | `docker`   | core     | `FILE_RW`, `EXEC`, `NETWORK`                     | Launches a container per session via the `docker` Python SDK. Needs `pip install bernstein[docker]`. |
 | `e2b`      | `[e2b]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`     | Runs in E2B Firecracker microVMs. Needs `pip install bernstein[e2b]` plus `E2B_API_KEY`. |
 | `modal`    | `[modal]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`, `GPU` | Serverless containers with optional GPU. Needs `pip install bernstein[modal]` plus `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. |
-| `microvm`  | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | microVM per session — isolates kernel / network / PID namespace at a hardware boundary. Snapshots are **content-addressed** (the snapshot id *is* the SHA-256 of the image bytes in CAS). Two adapters: **libkrun** boots a real guest on Linux/KVM and macOS/arm64 (opt in with `BERNSTEIN_MICROVM_MONITOR=libkrun`; see [MicroVM on libkrun](../operations/microvm-libkrun.md)), **Firecracker** is the default and still refuses to boot. Opt-in: not a free backend, so the heuristic path never auto-selects it; an explicit `sandbox.backend: microvm` on an unsupported host fails loudly rather than degrading isolation. |
+| `microvm`  | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | microVM per session — isolates kernel / network / PID namespace at a hardware boundary. Snapshots are **content-addressed** (the snapshot id *is* the SHA-256 of the image bytes in CAS). Two adapters: **libkrun** boots a real guest on Linux/KVM and macOS/arm64 (opt in with `BERNSTEIN_MICROVM_MONITOR=libkrun`; see [MicroVM on libkrun](../operations/microvm-libkrun.md)), **Firecracker** is the default and still refuses to boot. Opt-in: not a free backend, so the heuristic path never auto-selects it; an explicit `--sandbox microvm` on an unsupported host fails loudly rather than degrading isolation. |
 
 ### Trade-offs
 
@@ -109,7 +111,7 @@ work.
   `docker` provides cgroup + namespace isolation but shares the
   kernel; `e2b` runs in a fresh Firecracker microVM per session;
   `modal` runs in dedicated serverless containers.
-- **Capabilities.** `e2b`, `modal`, `daytona`, `runloop`, `vercel`, and `microvm` support snapshot/resume (as does the local `worktree`);
+- **Capabilities.** `e2b`, `modal`, `daytona`, `runloop`, and `microvm` support snapshot/resume (as does the local `worktree`); `blaxel` declares `PERSISTENT_VOLUMES` instead;
   only `modal` exposes GPU today.
 - **Supported exec semantics.** Every first-party backend handles
   argv-based exec with exit-code, stdout, and stderr capture.
@@ -452,26 +454,22 @@ verdicts, and the selector wiring that makes them load-bearing, land
 separately; until then an attestation is evidence about this host that nothing
 consumes.
 
-## `plan.yaml` extension
+## Selecting a backend
 
-```yaml
-stages:
-  - name: risky-execution
-    sandbox:
-      backend: docker          # worktree (default), docker, e2b, modal, or a plugin name
-      options:
-        image: python:3.13-slim
-        memory_mb: 2048
-        timeout_seconds: 1800
-    steps:
-      - title: "Run untrusted code analysis"
-        role: security
-        cli: claude
+The backend is chosen per run, not per plan stage. Pass `--sandbox` to
+`bernstein run` to override the selector's deterministic precedence:
+
+```bash
+bernstein run --sandbox docker --goal "Run untrusted code analysis"
+bernstein run --sandbox e2b --allow-paid --goal "..."   # paid backends need --allow-paid
 ```
 
-`sandbox:` is entirely optional. When omitted the stage runs in the
-worktree backend - byte-identical to the pre-pluggable-sandbox
-behaviour.
+Choices are `docker`, `podman`, `worktree`, `e2b`, `modal`, `daytona`,
+`blaxel`, `runloop`, `vercel` and `microvm`. The plan schema has no
+per-stage `sandbox:` key. Without `--sandbox` the selector
+(`select_sandbox()`) picks the cheapest backend that satisfies the
+manifest, and the stage runs in the worktree backend when nothing
+stronger is required.
 
 ## Registering a custom backend
 
@@ -505,15 +503,18 @@ Third-party backends must:
 - `AgentSpawner` accepts an optional `sandbox_session` parameter; when
   `None` it falls back to the direct-worktree path.
 - `bernstein agents sandbox-backends` lists installed backends.
-- `plan.yaml` accepts an optional `sandbox:` block per stage.
+- `bernstein run --sandbox <name>` selects a backend explicitly.
 
 ## Observability
 
-Each backend create/destroy cycle emits WAL + Prometheus metrics:
+Sandbox sessions have these Prometheus metrics. `created_total` and
+`exec_count_total` are emitted today; `destroyed_total` and
+`duration_seconds` are defined but not yet recorded:
 
-- `sandbox_session_created{backend=..., session_id=...}`
-- `sandbox_session_destroyed{backend=..., duration_seconds=...}`
-- `sandbox_exec_count{backend=..., exit_code=...}`
+- `bernstein_sandbox_session_created_total{backend=...}`
+- `bernstein_sandbox_session_destroyed_total{backend=...}`
+- `bernstein_sandbox_session_duration_seconds{backend=...}`
+- `bernstein_sandbox_exec_count_total{backend=..., exit_code=...}`
 
 ## Conformance
 

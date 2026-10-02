@@ -5,6 +5,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from bernstein.adapters.scanner import (
     DeterminismTier,
     OutputFormat,
@@ -12,6 +14,7 @@ from bernstein.adapters.scanner import (
     ScannerCategory,
     ScanResult,
     ScanScope,
+    normalize_report_path,
 )
 from bernstein.adapters.scanner_finding import Finding
 
@@ -232,3 +235,86 @@ def test_scanner_category_comparison() -> None:
     assert ScannerCategory.SAST == "sast"
     assert ScannerCategory.SAST == "sast"
     assert ScannerCategory.SAST != ScannerCategory.SCA
+
+
+# --- report-path normalisation (#5787) -------------------------------------
+#
+# The Windows unit lane ran 8 of 679 files before `-x` stopped it, so these
+# failures were invisible except as a job that finished early and reported
+# success. Every case below is written in terms of the path TEXT rather than
+# the host's flavour, so the Windows behaviour is exercised on Linux and macOS
+# too -- a fix proved only by a green Windows cell would be proved by the one
+# lane that was not running.
+
+
+@pytest.mark.parametrize(
+    ("reported", "root", "expected"),
+    [
+        # The three scanner failures, which were one defect. On Windows
+        # `PureWindowsPath("/checkout/project/app.env").is_absolute()` is False
+        # (no drive), so the relativisation never ran and this came back whole.
+        ("/checkout/project/app.env", "/checkout/project", "app.env"),
+        # A report produced ON Windows: absolute to Windows, and to POSIX an
+        # ordinary relative path whose first segment happens to be "C:".
+        (r"C:\checkout\project\app.env", "C:/checkout/project", "app.env"),
+        ("C:/checkout/project/app.env", "C:/checkout/project", "app.env"),
+        # Nested, so this is not passing by returning the last segment.
+        ("/checkout/project/src/config/app.env", "/checkout/project", "src/config/app.env"),
+        # Separators are normalised even when nothing is relativised.
+        (r"src\config\app.env", "/checkout/project", "src/config/app.env"),
+    ],
+)
+def test_a_report_path_under_the_scan_target_is_relativised_in_either_flavour(
+    reported: str, root: str, expected: str
+) -> None:
+    assert normalize_report_path(reported, Path(root)) == expected
+
+
+@pytest.mark.parametrize(
+    ("reported", "root"),
+    [
+        # Outside the scan target: reported as-is, on purpose. Relativising it
+        # would claim the finding is somewhere it is not.
+        ("/etc/passwd", "/checkout/project"),
+        (r"D:\elsewhere\app.env", "C:/checkout/project"),
+        # A sibling whose name merely starts with the root's -- the case a
+        # string-prefix comparison gets wrong, which is why this compares as
+        # paths.
+        ("/checkout/project-two/app.env", "/checkout/project"),
+    ],
+)
+def test_a_path_outside_the_scan_target_is_never_silently_relativised(reported: str, root: str) -> None:
+    assert normalize_report_path(reported, Path(root)) == reported.replace("\\", "/")
+
+
+def test_without_a_scan_target_only_the_separators_are_normalised() -> None:
+    assert normalize_report_path(r"src\config\app.env", None) == "src/config/app.env"
+    assert normalize_report_path("/checkout/project/app.env", None) == "/checkout/project/app.env"
+
+
+def test_the_scan_scope_serialises_roots_the_same_way_on_every_host() -> None:
+    """`to_dict` is hashed, so a host-dependent separator is a broken contract.
+
+    It reaches `CleanRunAttestation.body()` and from there `canonical_bytes()`,
+    whose docstring promises cross-machine byte-equality. `str(Path)` renders
+    the host's separator, so the same scope sealed a different attestation hash
+    into the lineage spine depending on which runner produced it.
+    """
+    roots = ScanScope(roots=(Path("/tmp/a"), Path("/tmp/b"))).to_dict()["roots"]
+    assert roots == ["/tmp/a", "/tmp/b"]
+    assert all("\\" not in root for root in roots)
+
+
+def test_the_three_scanners_normalise_through_one_helper() -> None:
+    """All three failed on Windows identically because each carried its own copy.
+
+    Asserted on identity rather than behaviour: three implementations that
+    agree today are three places for the next platform difference to be fixed
+    in two of them.
+    """
+    from bernstein.adapters import gitleaks, semgrep, trivy
+
+    assert gitleaks.normalize_report_path is normalize_report_path
+    assert semgrep.normalize_report_path is normalize_report_path
+    # trivy decodes its `file:` URI first, then delegates the path question.
+    assert trivy.normalize_report_path is normalize_report_path
