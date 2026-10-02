@@ -1,0 +1,3 @@
+## Foreign attestation field on lineage records
+
+A new optional `external_attestation` field carries a foreign attestation (issuer, key ID, content hash, claimed subject, trust class, opaque envelope) beside Bernstein's own HMAC-chained lineage. The foreign attestation verifier now reports three distinct verdicts: `verified_foreign` (issuer signature verified), `unverifiable` (no native verifier or key material), `rejected` (evaluated and failed), plus `malformed` (structurally invalid). Foreign attestations propagate taint per the provenance trust ordering and are isolated from Bernstein's chain — tampering the foreign field does not affect local chain verification. Closes #3133.

@@ -35,6 +35,11 @@ steps:
       - "Bash Read Grep Glob Agent"
       - "--max-budget-usd"
       - "5.00"
+      # Rides with --mcp-config, whose JSON payload is checked separately
+      # below. Without it Claude Code merges its own discovered MCP servers
+      # (claude mcp add scopes, a repo's .mcp.json, plugins, connectors) on
+      # top of the payload bernstein passes (#5965).
+      - "--strict-mcp-config"
       - "-p"
       - "fix the bug in main.py"
     # Flags that must appear with a JSON payload argument (JSON content

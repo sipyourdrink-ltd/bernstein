@@ -1,4 +1,4 @@
-"""SCIM 2.0 service-provider endpoints - read-only discovery and ``GET /Users``.
+"""SCIM 2.0 service-provider endpoints - discovery, ``GET /Users``, and deprovisioning.
 
 An operator's identity system already owns a SCIM client. Speaking SCIM 2.0
 (RFC 7643 schema, RFC 7644 protocol) means that client can read the agent
@@ -25,13 +25,18 @@ Endpoints
     Agent principals projected into SCIM ``User`` resources, in the RFC 7644
     §3.4.2 ``ListResponse`` envelope.
 
+``DELETE /scim/v2/Users/{id}`` / ``PATCH /scim/v2/Users/{id}``
+    Deprovision a principal. ``PATCH`` accepts only ``replace`` of ``active``
+    with ``false``. Both answer 404 for a principal that is unknown or already
+    deprovisioned, and neither appends a second record for it.
+
 Deletion semantics
 ------------------
 SCIM clients expect ``DELETE`` to remove a resource. The record this server
 keeps is append-only, so a principal removed upstream becomes inactive here
 while the record of its existence and of its removal stays. That reconciliation
 is declared in ``ServiceProviderConfig`` up front rather than discovered by a
-client after the fact, even though the write surface itself is not built yet.
+client after the fact.
 
 Access
 ------
@@ -43,16 +48,18 @@ here: the server-wide middleware resolves the requirement like any other route.
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from bernstein.core.routes.identities import identity_store_for_request
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from pathlib import Path
 
 router = APIRouter(tags=["scim"])
 
@@ -66,8 +73,7 @@ SCIM_MEDIA_TYPE = "application/scim+json"
 #: Permission a caller needs to read the provisioning surface.
 SCIM_PERM_READ = "scim:read"
 
-#: Permission a caller needs to change it. No route requires it yet; it exists
-#: so a write route added later cannot fall back to a read permission.
+#: Permission a caller needs to change it (``DELETE``/``PATCH``); held by ADMIN.
 SCIM_PERM_WRITE = "scim:write"
 
 _SCHEMA_SERVICE_PROVIDER_CONFIG = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
@@ -286,15 +292,14 @@ def _scim_user(identity: Any, request: Request) -> dict[str, Any]:
 def service_provider_config(request: Request) -> _SCIMResponse:
     """Return the RFC 7643 §5 discovery document for this service provider.
 
-    Everything reported here is what the mounted surface actually does. The
-    write operations are absent rather than advertised-and-unimplemented, and
-    the deletion semantics a client will eventually meet are stated now.
+    Everything reported here is what the mounted surface actually does,
+    including the soft-delete semantics a client meets on ``DELETE``.
     """
     return _SCIMResponse(
         content={
             "schemas": [_SCHEMA_SERVICE_PROVIDER_CONFIG],
             "documentationUri": _DOCUMENTATION_URI,
-            "patch": {"supported": False},
+            "patch": {"supported": True},
             "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
             "filter": {"supported": False, "maxResults": 0},
             "changePassword": {"supported": False},
@@ -313,14 +318,14 @@ def service_provider_config(request: Request) -> _SCIMResponse:
                 }
             ],
             SCIM_SPC_EXTENSION: {
-                "resourceMutability": "read-only",
+                "resourceMutability": "read-write",
                 "delete": {
-                    "supported": False,
+                    "supported": True,
                     "semantics": "soft",
                     "retainsHistory": True,
                     "description": (
-                        "When deletion is served it will mark the principal inactive and "
-                        "answer 204. The record of the principal and of its removal is "
+                        "Deletion marks the principal inactive and answers 204. "
+                        "The record of the principal and of its removal is "
                         "retained, so a question about a past date can still be answered."
                     ),
                 },
@@ -438,6 +443,134 @@ def list_users(
 def get_user(user_id: str, request: Request) -> _SCIMResponse:
     """Fetch a single agent principal by its SCIM ``id``."""
     identity = identity_store_for_request(request).get(user_id)
-    if identity is None:
+    from bernstein.core.identity.agent_jwt import AgentIdentityStatus
+
+    if identity is None or identity.status == AgentIdentityStatus.REVOKED:
         return _scim_error(404, f"Principal {user_id} not found", scim_type="invalidValue")
     return _SCIMResponse(content=_scim_user(identity, request))
+
+
+# ---------------------------------------------------------------------------
+# DELETE and PATCH (slice 3: deactivation/deletion with history retention)
+# ---------------------------------------------------------------------------
+
+
+def _principal_ledger_for_request(request: Request) -> Any:
+    """Lazily create or retrieve the principal ledger from app state.
+
+    The SCIM write surface appends to the principal ledger, which is separate
+    from (but parallel to) the agent identity store used for reads.
+    """
+
+    from bernstein.core.identity.principals import default_principal_ledger
+
+    ledger = getattr(request.app.state, "principal_ledger", None)
+    if ledger is None:
+        runtime_dir: Path = request.app.state.runtime_dir  # type: ignore[assignment]
+        root = runtime_dir.parent
+        ledger = default_principal_ledger(root=root)
+        request.app.state.principal_ledger = ledger  # type: ignore[attr-defined]
+    return ledger
+
+
+def _active_identity(store: Any, user_id: str) -> Any:
+    """Return the identity for ``user_id`` unless it is unknown or already revoked."""
+    from bernstein.core.identity.agent_jwt import AgentIdentityStatus
+
+    identity = store.get(user_id)
+    if identity is None or identity.status == AgentIdentityStatus.REVOKED:
+        return None
+    return identity
+
+
+#: Serialises the check -> ledger -> revoke sequence so two requests for one
+#: principal cannot both observe it active. The ledger's own append lock keeps
+#: the signed chain linear across processes; this one keeps the identity store
+#: and the chain from disagreeing within the process.
+_DEPROVISION_LOCK = threading.Lock()
+
+
+def _deprovision(request: Request, user_id: str, *, reason: str) -> Any:
+    """Deprovision an active principal; return it, or ``None`` if unknown or already revoked.
+
+    The signed ledger record is written first and is idempotent, so a request
+    retried after a failed revoke converges instead of appending a second
+    record.
+    """
+    from bernstein.adapters.directory.scim import deprovision_user
+
+    store: Any = identity_store_for_request(request)
+    with _DEPROVISION_LOCK:
+        identity = _active_identity(store, user_id)
+        if identity is None:
+            return None
+        deprovision_user(_principal_ledger_for_request(request), user_id)
+        if not store.revoke(user_id, reason=reason, actor="scim"):
+            return None
+    return identity
+
+
+@router.delete(
+    f"{SCIM_BASE_PATH}/Users/{{user_id}}",
+    summary="Delete a user (soft delete with history retention)",
+    responses={404: {"description": "Unknown principal"}},
+    status_code=204,
+)
+def delete_user(user_id: str, request: Request) -> Response:
+    """Soft-delete a user per SCIM 2.0 DELETE semantics.
+
+    SCIM clients expect DELETE to remove the resource. This server marks the
+    principal inactive while retaining its history in the chain, as declared
+    in ServiceProviderConfig. The 204 response signals successful removal to
+    the client; the ledger records the deprovisioning event.
+    """
+    if _deprovision(request, user_id, reason="scim_delete") is None:
+        return _scim_error(404, f"Principal {user_id} not found", scim_type="invalidValue")
+
+    return Response(status_code=204)
+
+
+@router.patch(
+    f"{SCIM_BASE_PATH}/Users/{{user_id}}",
+    summary="Update a user via PATCH operations",
+    responses={
+        404: {"description": "Unknown principal"},
+        400: {"description": "Invalid PATCH operation"},
+    },
+    status_code=200,
+)
+def patch_user(user_id: str, request: Request, body: dict[str, Any]) -> _SCIMResponse:
+    """Apply RFC 7644 §3.5.2 PATCH operations to a user.
+
+    Only the deactivation operation (``replace`` of ``active`` with ``false``)
+    is supported; any other operation is rejected with 400 ``invalidValue``.
+    """
+    store: Any = identity_store_for_request(request)
+    if _active_identity(store, user_id) is None:
+        return _scim_error(404, f"Principal {user_id} not found", scim_type="invalidValue")
+
+    # Parse PATCH operations
+    operations = body.get("Operations", [])
+    if not isinstance(operations, list):
+        return _scim_error(400, "Operations must be a list", scim_type="invalidSyntax")
+
+    # Look for active=false
+    for op in operations:
+        if not isinstance(op, dict):
+            continue
+        if op.get("op") == "replace" and op.get("path") == "active" and op.get("value") is False:
+            identity = _deprovision(request, user_id, reason="scim_deactivate")
+            if identity is None:
+                return _scim_error(404, f"Principal {user_id} not found", scim_type="invalidValue")
+
+            # Return the deactivated user
+            user_resource = _scim_user(identity, request)
+            user_resource["active"] = False
+            return _SCIMResponse(content=user_resource)
+
+    # If we get here, no active=false operation was found
+    return _scim_error(
+        400,
+        "This implementation supports only active=false PATCH operations",
+        scim_type="invalidValue",
+    )

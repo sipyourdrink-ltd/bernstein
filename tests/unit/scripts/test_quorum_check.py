@@ -51,8 +51,10 @@ def roster(qc: ModuleType):
 OWNERS = [("*", ["core1", "core2"]), ("/.github/", ["owner"]), ("/src/bernstein/core/", ["owner"])]
 
 
-def _review(qc: ModuleType, login: str, state: str, *, sha: str = HEAD, at: str = "2026-09-10T10:00:00Z"):
-    return qc.Review(login=login, state=state, commit_id=sha, submitted_at=at)
+def _review(
+    qc: ModuleType, login: str, state: str, *, sha: str = HEAD, at: str = "2026-09-10T10:00:00Z", body: str = ""
+):
+    return qc.Review(login=login, state=state, commit_id=sha, submitted_at=at, body=body)
 
 
 def _pr(
@@ -167,6 +169,35 @@ def test_a_later_approval_replaces_an_earlier_request_for_changes(qc: ModuleType
         ],
     )
     assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_dismissed_approval_does_not_revive_an_earlier_request_for_changes(qc: ModuleType, roster) -> None:
+    # GitHub dismisses an approval as stale on the next push. The reviewer had
+    # already withdrawn their request by approving; the dismissal must not
+    # bring the request back.
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "CHANGES_REQUESTED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "core2", "APPROVED"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_a_dismissed_request_for_changes_does_not_revive_an_earlier_approval(qc: ModuleType, roster) -> None:
+    pr = _pr(
+        qc,
+        reviews=[
+            _review(qc, "core1", "APPROVED", at="2026-09-10T09:00:00Z"),
+            _review(qc, "core1", "DISMISSED", at="2026-09-10T10:00:00Z"),
+            _review(qc, "comm1", "APPROVED"),
+        ],
+    )
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
 
 
 # --- size and sensitivity (charter section 3) -------------------------------
@@ -365,6 +396,59 @@ def test_a_stranger_cannot_block_the_maintainer(qc: ModuleType, roster) -> None:
     assert _evaluate(qc, roster, pr).passed
 
 
+# --- adopted pull requests (charter section 3, until 2026-10-05) -------------
+
+
+def _adopted(qc: ModuleType, **overrides):
+    """A large, sensitive contributor change the maintainer has pushed to and declared adopted."""
+    fields = dict(
+        changed_lines=600,
+        paths=["src/bernstein/core/security/dlp_scanner.py"],
+        contributors={"outsider", "owner"},
+        reviews=[_review(qc, "owner", "COMMENTED", body=qc.ADOPTION_NOTICE)],
+    )
+    fields.update(overrides)
+    return _pr(qc, **fields)
+
+
+def test_an_adopted_change_merges_without_approvals(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc))
+    assert verdict.passed
+    assert any("Adopted by the maintainer" in note for note in verdict.notes)
+
+
+def test_the_notice_alone_does_not_adopt_a_change_the_maintainer_never_pushed_to(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, contributors={"outsider"}))
+    assert not verdict.passed
+    assert "3 approvals" in verdict.requirements[0].text
+
+
+def test_a_push_alone_does_not_adopt_and_the_summary_says_what_would(qc: ModuleType, roster) -> None:
+    verdict = _evaluate(qc, roster, _adopted(qc, reviews=[]))
+    assert not verdict.passed
+    assert any(qc.ADOPTION_NOTICE in note for note in verdict.notes)
+
+
+def test_a_notice_given_before_the_last_push_does_not_adopt(qc: ModuleType, roster) -> None:
+    stale = [_review(qc, "owner", "COMMENTED", sha="e" * 40, body=qc.ADOPTION_NOTICE)]
+    assert not _evaluate(qc, roster, _adopted(qc, reviews=stale)).passed
+
+
+def test_a_committer_can_block_an_adopted_change(qc: ModuleType, roster) -> None:
+    reviews = [
+        _review(qc, "owner", "COMMENTED", body=qc.ADOPTION_NOTICE),
+        _review(qc, "comm1", "CHANGES_REQUESTED"),
+    ]
+    assert not _evaluate(qc, roster, _adopted(qc, reviews=reviews)).passed
+
+
+def test_adoption_ends_on_its_date(qc: ModuleType, roster) -> None:
+    after = qc.ADOPTION_ENDS + timedelta(seconds=1)
+    verdict = qc.evaluate(_adopted(qc), roster, OWNERS, after)
+    assert not verdict.passed
+    assert not any("dopted" in note for note in verdict.notes)
+
+
 # --- the objection window on governance files (charter section 10) ----------
 
 
@@ -384,6 +468,91 @@ def test_the_window_applies_to_the_roster_and_to_this_script(qc: ModuleType, ros
     for path in (".github/quorum-roster.toml", "scripts/quorum_check.py"):
         pr = _pr(qc, author="owner", contributors={"owner"}, paths=[path], pushed_hours_ago=2)
         assert not _evaluate(qc, roster, pr).passed, path
+
+
+# --- the backlog window (charter section 3, until 2026-10-05) ---------------
+
+
+def test_the_maintainers_approval_alone_passes_an_ordinary_change_in_the_window(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert "2026-10-05" in verdict.requirements[0].text
+
+
+def test_an_unapproved_change_in_the_window_names_the_maintainer_as_a_way_out(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "core1", "APPROVED")])
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    assert "or @owner alone" in verdict.requirements[0].who
+
+
+def test_the_window_does_not_lift_the_third_approval_on_a_large_change(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, changed_lines=401, reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_does_not_lift_the_third_approval_on_a_sensitive_path(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, paths=["src/bernstein/core/security/auth.py"], reviews=[_review(qc, "owner", "APPROVED")])
+    assert not _evaluate(qc, roster, pr).passed
+
+
+def test_the_window_closes_on_its_date(qc: ModuleType, roster) -> None:
+    pr = _pr(qc, reviews=[_review(qc, "owner", "APPROVED")])
+    after = qc.BACKLOG_WINDOW_ENDS + timedelta(minutes=1)
+    verdict = qc.evaluate(pr, roster, OWNERS, after)
+    assert not verdict.passed
+    assert "2026-10-05" not in verdict.requirements[0].text
+
+
+def test_the_window_applies_to_the_workflows_that_invoke_the_check(qc: ModuleType, roster) -> None:
+    """Changing whether the gate runs is a change to the gate.
+
+    A pull request editing only the workflow -- which events it fires on, which
+    checkout it evaluates, whether it fails closed when the script is missing --
+    used to merge under ordinary rules. Editing the script's *contents* needed
+    three days; editing whether the script ran at all needed none.
+    """
+    for path in (".github/workflows/quorum.yml", ".github/workflows/quorum-rerun.yml"):
+        pr = _pr(qc, author="owner", contributors={"owner"}, paths=[path], pushed_hours_ago=2)
+        verdict = _evaluate(qc, roster, pr)
+        assert not verdict.passed, path
+        assert path in verdict.requirements[0].text, path
+
+
+def test_an_unrelated_workflow_edit_is_not_held_for_three_days(qc: ModuleType, roster) -> None:
+    """The entries are literal paths, not a `.github/workflows/` prefix rule.
+
+    A prefix rule would catch a future `quorum-*.yml` for free, and would also
+    put every unrelated CI edit behind a 72-hour window. That is a cost the gate
+    does not have to pay to protect itself.
+    """
+    pr = _pr(
+        qc,
+        author="owner",
+        contributors={"owner"},
+        paths=[".github/workflows/ci.yml"],
+        pushed_hours_ago=2,
+    )
+    assert _evaluate(qc, roster, pr).passed
+
+
+def test_every_governance_path_exists_in_the_repository(qc: ModuleType) -> None:
+    """A path that no longer exists protects nothing, and reads as if it does."""
+    missing = [p for p in qc.GOVERNANCE_PATHS if not (REPO_ROOT / p).is_file()]
+    assert missing == []
+
+
+def test_the_paths_are_reportable_so_the_sweep_need_not_restate_them(qc: ModuleType, capsys) -> None:
+    """`quorum-rerun.yml` re-runs exactly these pull requests on its hourly sweep.
+
+    It used to carry its own copy of the list in a jq filter, so a path added
+    here was covered by the window and then never swept once the window closed:
+    the pull request stayed red until somebody pushed to it. The sweep now asks.
+    """
+    assert qc.main(["--governance-paths"]) == 0
+    printed = capsys.readouterr().out.splitlines()
+    assert printed == list(qc.GOVERNANCE_PATHS)
 
 
 # --- drafts and plumbing ----------------------------------------------------

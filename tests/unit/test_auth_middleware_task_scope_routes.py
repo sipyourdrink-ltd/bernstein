@@ -116,8 +116,11 @@ def test_every_mutating_task_route_is_scope_checked(app: FastAPI) -> None:
     """Every mutating per-task route reports an out-of-scope task id."""
     for method, template in _mutating_task_id_routes(app):
         path = template.replace("{task_id}", _OUT_OF_SCOPE_TASK_ID)
-        error = _check_agent_task_scope(path, [_IN_SCOPE_TASK_ID])
+        error = _check_agent_task_scope(path, [_IN_SCOPE_TASK_ID], method=method)
 
+        if method == "POST" and template.endswith("/messages"):
+            assert error is None, "mailbox POST must defer to protocol-aware handler authorization"
+            continue
         assert error is not None, f"{method} {path} is not scope-checked"
         assert _OUT_OF_SCOPE_TASK_ID in error, f"{method} {path}"
 
@@ -139,7 +142,15 @@ def test_every_mutating_task_route_denies_out_of_scope_identity(app: FastAPI) ->
         # requests/minute per client and would answer 429 long before the
         # enumeration finished, masking the authorization result.
         client = TestClient(app, client=(f"10.{index // 256}.{index % 256}.1", 40000 + index))
-        response = client.request(method, path, headers=headers, json={})
+        body = {}
+        if method == "POST" and template.endswith("/messages"):
+            body = {
+                "sender": "session-scope-probe",
+                "acting_task_id": _IN_SCOPE_TASK_ID,
+                "kind": "finding",
+                "body": "cross-task findings stay forbidden",
+            }
+        response = client.request(method, path, headers=headers, json=body)
 
         assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
 

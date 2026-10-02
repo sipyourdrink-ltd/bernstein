@@ -24,7 +24,6 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.planning.routine_provisioner import (
@@ -34,10 +33,12 @@ from bernstein.core.planning.routine_provisioner import (
 from bernstein.core.planning.scenario_library import (
     ScenarioRecipe,
     load_layered_scenario_library,
+    packaged_scenarios_dir,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from bernstein.core.planning.scenario_library import ScenarioLibrary
     from bernstein.core.tasks.artifacts import ArtifactSpec
@@ -266,7 +267,8 @@ class RoutineBridge:
 
         Args:
             scenarios_dir: Directory of scenario YAML files (workspace scenarios).
-            state_dir: Directory for the binding registry. Created on demand.
+            state_dir: Directory for the binding registry. Created when the first
+                binding is saved, so read-only commands leave no trace.
             bernstein_url: Default Bernstein task server URL.
 
         Returns:
@@ -274,10 +276,9 @@ class RoutineBridge:
         """
         # Load layered library with workspace scenarios taking precedence over packaged
         workspace_root = scenarios_dir
-        packaged_root = Path(__file__).resolve().parent.parent.parent.parent.parent / "templates" / "scenarios"
+        packaged_root = packaged_scenarios_dir()
         library = load_layered_scenario_library(workspace_root, packaged_root)
         provisioner = RoutineProvisioner(library=library, bernstein_url=bernstein_url)
-        state_dir.mkdir(parents=True, exist_ok=True)
         return cls(library=library, provisioner=provisioner, state_dir=state_dir)
 
     # ------------------------------------------------------------------ A

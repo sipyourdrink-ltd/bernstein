@@ -26,6 +26,7 @@ import multiprocessing
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,11 @@ _THREAD_EXHAUSTION_MARKER = "RuntimeError: can't start new thread"
 OUTCOME_PASSED = "passed"
 OUTCOME_NO_TESTS = "no-tests"
 OUTCOME_FAILED = "failed"
+# A file whose process died before pytest printed anything to report on: a
+# segfault, an OOM kill, a hard exit from inside a test. It counts towards the
+# same failure total, but there is no failure section to quote, so it is
+# reported by its exit status instead of by whatever the file printed last.
+OUTCOME_CRASHED = "crashed"
 
 # pytest's terminal summary counts, e.g. "1 failed, 2 passed in 0.30s".
 _PYTEST_COUNT_RE = re.compile(
@@ -212,6 +218,8 @@ def executed_test_count(counts: dict[str, int]) -> int:
 def classify_file_outcome(code: int, output: str) -> str:
     """Classify one test file's subprocess result.
 
+    - ``OUTCOME_CRASHED``: the process exited non-zero and printed no pytest
+      terminal summary, so it died before pytest could report anything.
     - ``OUTCOME_FAILED``: pytest reported a failure, *or* exited 0 without a
       terminal summary (the process was replaced mid-run).
     - ``OUTCOME_NO_TESTS``: pytest ran to completion and executed nothing
@@ -221,6 +229,8 @@ def classify_file_outcome(code: int, output: str) -> str:
     if code == 5:
         return OUTCOME_NO_TESTS
     if code != 0:
+        if summarize_pytest_counts(output) is None:
+            return OUTCOME_CRASHED
         return OUTCOME_FAILED
     counts = summarize_pytest_counts(output)
     if counts is None:
@@ -453,8 +463,14 @@ def run_file(
     extra_args: list[str],
     coverage: bool = False,
     temp_root: Path | None = None,
-) -> tuple[Path, int, float, str]:
-    """Run a single test file in a subprocess. Returns (path, exitcode, duration, output).
+) -> tuple[Path, int, float, str, str]:
+    """Run a single test file in a subprocess.
+
+    Returns ``(path, exitcode, duration, output, stderr)``. ``output`` is stdout
+    and stderr combined, as every caller reads it; ``stderr`` is also returned on
+    its own because the suite runs uncaptured, so when the process dies without a
+    pytest summary its stderr is the only part of the output that is about the
+    death rather than about some test that printed as it went.
 
     When ``coverage`` is True, the process is wrapped in ``coverage run`` with a
     parallel-safe data file so that many subprocesses can be combined later.
@@ -505,7 +521,7 @@ def run_file(
     )
     duration = time.monotonic() - start
     output = result.stdout + result.stderr
-    return path, result.returncode, duration, output
+    return path, result.returncode, duration, output, result.stderr
 
 
 def retry_on_thread_exhaustion(
@@ -514,29 +530,64 @@ def retry_on_thread_exhaustion(
     code: int,
     output: str,
     coverage: bool = False,
-) -> tuple[int, float, str] | None:
+) -> tuple[int, float, str, str] | None:
     """Re-run *path* once serially when it failed from OS thread exhaustion.
 
-    Returns the retry ``(code, duration, output)`` when the original failure
+    Returns the retry ``(code, duration, output, stderr)`` when the original failure
     carried the thread-exhaustion marker, otherwise ``None`` (no retry). The
     retry runs the same isolated subprocess as ``run_file``; because the caller
     invokes it serially, the transient thread pressure has cleared by then.
     """
     if code == 0 or _THREAD_EXHAUSTION_MARKER not in output:
         return None
-    _path, retry_code, retry_duration, retry_output = run_file(path, extra_args, coverage=coverage)
-    return retry_code, retry_duration, retry_output
+    _path, retry_code, retry_duration, retry_output, retry_stderr = run_file(path, extra_args, coverage=coverage)
+    return retry_code, retry_duration, retry_output, retry_stderr
 
 
-def _print_failure_summary(output: str) -> None:
+#: How much of a crashed file's stderr to quote under its report line.
+_CRASH_STDERR_LINES = 30
+
+
+def _format_exit_status(code: int) -> str:
+    """Describe a subprocess exit status, naming the signal when one killed it."""
+    if code >= 0:
+        return f"exit code {code}"
+    try:
+        return f"killed by signal {-code} ({signal.Signals(-code).name})"
+    except ValueError:
+        return f"killed by signal {-code}"
+
+
+def _print_crash_detail(stderr: str, exit_status: str) -> None:
+    """Print what is known about a file whose process died without reporting."""
+    print(f"       process {exit_status}, and printed no pytest summary")
+    tail = [line for line in stderr.strip().split("\n") if line.strip()][-_CRASH_STDERR_LINES:]
+    if not tail:
+        print("       it wrote nothing to stderr")
+        return
+    print("       last lines of its stderr:")
+    for line in tail:
+        print(f"       {line}")
+
+
+def _print_failure_summary(output: str, stderr: str = "", exit_status: str = "") -> None:
     """Print the pytest failure summary from subprocess output.
 
     Extracts the 'FAILURES' section and 'short test summary' rather than
     dumping everything (which can be 1000+ lines with -s / no-capture).
+
+    ``exit_status`` is passed only for a crashed file, where pytest printed
+    neither section. The tail of the output is no use there: the suite runs
+    uncaptured, so the last lines belong to whichever test printed most
+    recently and say nothing about the crash. The exit status and the
+    process's own stderr do.
     """
     lines = output.strip().split("\n")
     extracted = _extract_failure_sections(lines)
     if not extracted:
+        if exit_status:
+            _print_crash_detail(stderr, exit_status)
+            return
         for line in lines[-30:]:
             if line.strip():
                 print(f"       {line}")
@@ -568,7 +619,7 @@ def _format_counts(counts: dict[str, int]) -> str:
     return ", ".join(f"{value} {outcome}" for outcome, value in sorted(counts.items()))
 
 
-def _report_file_result(label: str, code: int, duration: float, output: str) -> str:
+def _report_file_result(label: str, code: int, duration: float, output: str, stderr: str = "") -> str:
     """Report a single file result. Returns the ``OUTCOME_*`` classification."""
     outcome = classify_file_outcome(code, output)
     if outcome in (OUTCOME_PASSED, OUTCOME_NO_TESTS):
@@ -579,6 +630,14 @@ def _report_file_result(label: str, code: int, duration: float, output: str) -> 
         detail = _format_counts(counts)
         prefix = "PASS" if outcome == OUTCOME_PASSED else "NO TESTS"
         print(f"  {prefix} {label} ({duration:.1f}s) {detail}")
+        return outcome
+    if outcome == OUTCOME_CRASHED:
+        # No counts to print: pytest never got as far as a terminal summary.
+        # The exit status takes their place, so the shard log says why the file
+        # is red without anyone having to reproduce it locally.
+        exit_status = _format_exit_status(code)
+        print(f"  CRASH {label} ({duration:.1f}s) {exit_status}")
+        _print_failure_summary(output, stderr=stderr, exit_status=exit_status)
         return outcome
     if code == 0:
         # Exit 0 with no pytest terminal summary: the subprocess stopped being
@@ -622,7 +681,7 @@ def run_sequential(
     for i, path in enumerate(files, 1):
         label = f"[{i}/{len(files)}] {durations_key(path)}"
         try:
-            _fpath, code, duration, output = run_file(path, extra_args, coverage=coverage)
+            _fpath, code, duration, output, stderr = run_file(path, extra_args, coverage=coverage)
         except subprocess.TimeoutExpired as exc:
             print(f"  TIMEOUT {label} (>{exc.timeout:g}s)")
             failed += 1
@@ -633,12 +692,12 @@ def run_sequential(
         retry = retry_on_thread_exhaustion(path, extra_args, code, output, coverage=coverage)
         if retry is not None:
             print(f"  RETRIED (thread exhaustion) {label}")
-            code, duration, output = retry
+            code, duration, output, stderr = retry
 
         total_duration += duration
         if recorded_durations is not None:
             recorded_durations[durations_key(path)] = duration
-        outcome = _report_file_result(label, code, duration, output)
+        outcome = _report_file_result(label, code, duration, output, stderr)
         if outcome == OUTCOME_PASSED:
             passed += 1
         elif outcome == OUTCOME_NO_TESTS:
@@ -695,7 +754,7 @@ def run_parallel(
                     future.cancel()
                     continue
                 try:
-                    fpath, code, duration, output = future.result(timeout=360)
+                    fpath, code, duration, output, stderr = future.result(timeout=360)
                 except Exception as exc:
                     fpath = futures[future]
                     done += 1
@@ -710,13 +769,13 @@ def run_parallel(
                 retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
                 if retry is not None:
                     print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
-                    code, duration, output = retry
+                    code, duration, output, stderr = retry
 
                 done += 1
                 label = f"[{done}/{total}] {durations_key(fpath)}"
                 if recorded_durations is not None:
                     recorded_durations[durations_key(fpath)] = duration
-                outcome = _report_file_result(label, code, duration, output)
+                outcome = _report_file_result(label, code, duration, output, stderr)
                 if outcome == OUTCOME_PASSED:
                     passed += 1
                 elif outcome == OUTCOME_NO_TESTS:
@@ -735,7 +794,7 @@ def run_parallel(
                 if abort:
                     break
                 try:
-                    fpath, code, duration, output = run_file(f, extra_args, coverage)
+                    fpath, code, duration, output, stderr = run_file(f, extra_args, coverage)
                 except Exception as exc:
                     done += 1
                     print(f"  ERROR [{done}/{total}] {durations_key(f)}: {exc}")
@@ -747,13 +806,13 @@ def run_parallel(
                 retry = retry_on_thread_exhaustion(fpath, extra_args, code, output, coverage=coverage)
                 if retry is not None:
                     print(f"  RETRIED (thread exhaustion) {durations_key(fpath)}")
-                    code, duration, output = retry
+                    code, duration, output, stderr = retry
 
                 done += 1
                 label = f"[{done}/{total}] {durations_key(f)}"
                 if recorded_durations is not None:
                     recorded_durations[durations_key(fpath)] = duration
-                outcome = _report_file_result(label, code, duration, output)
+                outcome = _report_file_result(label, code, duration, output, stderr)
                 if outcome == OUTCOME_PASSED:
                     passed += 1
                 elif outcome == OUTCOME_NO_TESTS:

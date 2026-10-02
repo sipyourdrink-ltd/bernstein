@@ -3199,7 +3199,9 @@ class TestDeadAgentFileOwnershipEdgeCases:
         assert "src/main.py" not in orch._file_ownership
         assert "src/utils.py" not in orch._file_ownership
 
-    def test_file_overlap_cleared_after_dead_agent_allows_respawn(self, tmp_path: Path) -> None:
+    def test_file_overlap_cleared_after_dead_agent_allows_respawn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Spawn is blocked while an agent owns a file; after it dies the next tick spawns."""
         task1 = _make_task(id="T-owner", role="backend")
         task1.owned_files = ["src/shared.py"]

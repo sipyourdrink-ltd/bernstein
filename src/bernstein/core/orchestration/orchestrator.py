@@ -347,6 +347,29 @@ _complete_task = complete_task
 _parse_backlog_file = parse_backlog_file
 
 
+def has_terminal_task(tasks_by_status: Mapping[str, list[Task]]) -> bool:
+    """Has any task in this run actually reached a terminal state?
+
+    Step-8b quiescence self-stops only once the answer is yes. The guard exists
+    because a brand-new or empty backlog also reads ``open=0 agents=0`` on tick
+    #1 -- a server that has not ingested its seed task, or a harness driving
+    ``tick()`` against an empty transport -- and self-stopping there would end
+    the orchestrator before it ever did anything.
+
+    ``closed`` counts, and its absence is what #5968 reports. A verified task is
+    archived out of ``done`` into ``closed``, so on a run whose tasks all
+    completed and were archived this answered "nothing has run" on every tick:
+    quiescence logged ``done 0->0, failed 0->0``, the self-stop was never
+    reached, and neither ``run_completed`` nor ``run_quiescence`` was ever
+    journalled. A finished run with no ending.
+
+    ``.get`` for every key so a caller passing a narrower status list -- the
+    parameter ``fetch_all_tasks`` still honours -- gets a false rather than a
+    KeyError.
+    """
+    return bool(tasks_by_status.get("done") or tasks_by_status.get("failed") or tasks_by_status.get("closed"))
+
+
 def _model_identity(
     model: str | None,
     provider: str | None,
@@ -960,8 +983,11 @@ class Orchestrator:
         # Reset error budget AND metric collector each run - stale failure
         # data from prior runs must not throttle a fresh run's agent capacity.
         self._slo_tracker = SLOTracker()
-        # Clear prior-run task metrics so error budget starts at 0/0
+        # Clear prior-run task metrics so error budget starts at 0/0, and
+        # prior-run agents so a stale agent (with a role from another run's
+        # spawner) never reaches this run's retrospective agent summary.
         get_collector().reset_task_metrics()
+        get_collector().reset_agent_metrics()
         self._runbook_engine = RunbookEngine()
         self._incident_manager = IncidentManager()
         self._consecutive_failures: int = 0
@@ -1452,6 +1478,7 @@ class Orchestrator:
             run_id=self._run_id,
             day_key=day_key,
             knob_matrix=knob_matrix,
+            default_adapter=str(getattr(self._spawner, "default_adapter_name", None) or ""),
         )
         entries = SpendLedger.load_entries(self._spend_ledger.path)
         outcome = evaluate_run_dispatch(
@@ -2517,7 +2544,7 @@ class Orchestrator:
             # harness driving tick() directly against an empty transport).
             # Self-stopping in that case would end the orchestrator before
             # it ever does anything.
-            _had_any_terminal_task = bool(refreshed_tasks_by_status["done"] or refreshed_tasks_by_status["failed"])
+            _had_any_terminal_task = has_terminal_task(refreshed_tasks_by_status)
             if not _had_any_terminal_task:
                 logger.debug(
                     "8b quiescence (tick #%d) with zero terminal tasks - not eligible "
@@ -2778,7 +2805,7 @@ class Orchestrator:
 
         Called from the tick's step-8b quiescence handling, on the branch
         where ``open_tasks == active_agents == 0`` **and** no task reached
-        ``done`` or ``failed``. That branch previously only logged: the
+        ``done``, ``failed`` or ``closed``. That branch previously only logged: the
         self-stop next to it is gated on a terminal task existing, so this
         exact shape - the one where nothing ever finished, which is the one
         an operator most needs terminated and reported - was the single case

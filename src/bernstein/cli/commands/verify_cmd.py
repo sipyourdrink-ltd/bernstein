@@ -339,8 +339,8 @@ def _verify_artefact_by_kind(path: Path) -> int:
     This is the ``bernstein verify <artefact>`` half of the command: a
     kind-detecting dispatcher over a registry of ``(kind, verifier)`` pairs,
     so an operator holding an artefact does not need to already know which
-    of the many ``<group> verify`` commands produced it. Only two kinds are
-    wired so far (``bom``, ``receipt-bundle``) -- see
+    of the many ``<group> verify`` commands produced it. Three kinds are
+    wired so far (``bom``, ``receipt-bundle``, ``batch.pass``) -- see
     :mod:`bernstein.cli.commands.verify_kinds` for why, and for the ~53
     ``verify`` commands not yet migrated.
     """

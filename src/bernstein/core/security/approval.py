@@ -27,6 +27,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.defaults import APPROVAL
+from bernstein.core.identity.grants import GrantLedger, install_grant_signer
+from bernstein.core.security.audit import load_or_create_audit_key
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -498,6 +500,12 @@ class ApprovalGate:
         ``approve_on_timeout=True`` is the one way to make an expiry resolve
         to approved, and it still leaves ``resolution="timed_out"`` on the
         record.
+
+        The chain-anchored grant ledger records what actually happened: a
+        refusal when the task is rejected (explicit rejection or fail-closed
+        timeout), and an approval attributed to the timeout policy when
+        ``approve_on_timeout`` lets an expired review proceed. Either way the
+        outcome is an auditable event rather than just an in-process callback.
         """
         pending_dir = self._workdir / ".sdd" / "runtime" / "pending_approvals"
         approvals_dir = self._workdir / ".sdd" / "runtime" / "approvals"
@@ -527,21 +535,136 @@ class ApprovalGate:
         decision = self._poll_decision(task.id, approvals_dir, **kwargs)
 
         if decision == "timed_out":
+            detail = f"Approval gate timed out after {timeout_s or _DEFAULT_MAX_WAIT_S:.0f}s with no decision"
             if approve_on_timeout:
+                # The ledger must say what actually happened: the task proceeds,
+                # so record an approval attributed to the timeout policy (not a
+                # refusal, and not a grant by a person).
+                self._record_timeout_policy_approval(
+                    task_id=task.id,
+                    session_id=session_id,
+                    detail=detail,
+                )
                 logger.warning(
                     "Approval gate: task %s expired with no decision - resolving to approved "
                     "(approve_on_timeout opt-in); recorded as timed_out, not a granted approval",
                     task.id,
                 )
                 return ApprovalResult(approved=True, resolution="timed_out")
+            # Record a chain-anchored refusal for the missing approval
+            self._record_approval_refusal(
+                task_id=task.id,
+                session_id=session_id,
+                reason="approval_timeout",
+                detail=detail,
+            )
             logger.warning(
                 "Approval gate: task %s expired with no decision - failing closed to rejected",
                 task.id,
             )
             return ApprovalResult(approved=False, rejected=True, resolution="timed_out")
         if decision == "rejected":
+            # Record explicit rejection as chain-anchored refusal
+            self._record_approval_refusal(
+                task_id=task.id,
+                session_id=session_id,
+                reason="explicit_rejection",
+                detail="Approval explicitly rejected via decision file",
+            )
             return ApprovalResult(approved=False, rejected=True)
         return ApprovalResult(approved=True)
+
+    def _approval_ledger(self) -> GrantLedger:
+        """Open the grant ledger with the install-anchored signer."""
+        return GrantLedger(
+            root=self._workdir / ".sdd" / "audit",
+            key=load_or_create_audit_key(),
+            signer=install_grant_signer(issuer="approval-gate"),
+        )
+
+    def _record_timeout_policy_approval(
+        self,
+        *,
+        task_id: str,
+        session_id: str,
+        detail: str,
+    ) -> None:
+        """Record that ``approve_on_timeout`` approved a task nobody decided on.
+
+        The record is a ``grant_issued`` entry whose signed reason names the
+        timeout policy, so the chain shows the task proceeded and that no person
+        granted it. Best-effort, like :meth:`_record_approval_refusal`.
+        """
+        try:
+            self._approval_ledger().issue_grant(
+                run_id=f"approval-{task_id}",
+                task_id=task_id,
+                secret_name=f"approval:{session_id}",
+                audience="approval-gate",
+                grant_id=task_id,
+                reason=f"approved_by_timeout_policy: {detail}",
+            )
+            logger.info(
+                "Approval gate: recorded chain-anchored timeout-policy approval for task %s",
+                task_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "Approval gate: failed to record timeout-policy approval for task %s: %s",
+                task_id,
+                exc,
+            )
+
+    def _record_approval_refusal(
+        self,
+        *,
+        task_id: str,
+        session_id: str,
+        reason: str,
+        detail: str,
+    ) -> None:
+        """Record an approval refusal as a chain-anchored event.
+
+        This ensures that refusals (whether from timeout or explicit rejection)
+        are recorded in the tamper-evident audit chain, making them independently
+        verifiable rather than just an in-process callback.
+
+        Args:
+            task_id: The task that was refused
+            session_id: The agent session that produced the work
+            reason: Short reason code (e.g., "approval_timeout", "explicit_rejection")
+            detail: Human-readable detail about the refusal
+        """
+        try:
+            # Use a deterministic run_id based on the task for the grant ledger
+            run_id = f"approval-{task_id}"
+
+            # Get or create the grant ledger with install-anchored signer
+            ledger = self._approval_ledger()
+
+            # Record the refusal - we use the grant_refused kind since it's
+            # the appropriate chain-anchored refusal record
+            ledger.record_refusal(
+                run_id=run_id,
+                task_id=task_id,
+                secret_name=f"approval:{session_id}",
+                reason=f"{reason}: {detail}",
+                grant_id=task_id,
+                audience="approval-gate",
+            )
+            logger.info(
+                "Approval gate: recorded chain-anchored refusal for task %s (reason: %s)",
+                task_id,
+                reason,
+            )
+        except Exception as exc:
+            # Log but don't fail - the refusal recording is best-effort
+            # The approval decision itself is already made
+            logger.error(
+                "Approval gate: failed to record chain-anchored refusal for task %s: %s",
+                task_id,
+                exc,
+            )
 
     def _get_diff_stats(self, worktree_path: Path, base_branch: str) -> dict[str, Any]:
         """Get diff statistics for the PR body.

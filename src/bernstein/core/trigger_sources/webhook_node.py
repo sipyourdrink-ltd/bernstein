@@ -58,7 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.replay.journal import EventJournal
-from bernstein.core.sanitize import sanitize_log
+from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
 
 if TYPE_CHECKING:

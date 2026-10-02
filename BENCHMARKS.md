@@ -8,6 +8,7 @@ This document records the canonical benchmark suites provided by `bernstein.eval
 |---|---|---|---|---|
 | `golden-v1` | Core orchestrator determinism and task execution suite | — | 5 tasks | 1.0 (100%) |
 | `tool-surface-v1` | Tool-surface risk scoring, risky triple detection, and forced approval gating | `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04` | 10 fixtures | 1.0 (100%) |
+| `gate-evasion-v1` | Each fixture is a way a change once evaded a quality gate; the named gate runs on it through `GateRunner`, and only a gate finding counts as a catch | — | 8 classes | today 2/8, see `docs/eval/bench.md` |
 
 ---
 
@@ -45,3 +46,6 @@ bernstein bench run tool-surface-v1 --out tool-surface-bundle.json
 # Offline independent verification
 bernstein bench verify tool-surface-bundle.json --suite tool-surface-v1
 ```
+| Suite | Cases | Result | Notes |
+|---|---|---|---|
+| collusion-pairs | 10 | collusion flagged 5/5 · benign passed 5/5 | cross-task check at merge admission (#5398) — eval suite only; live admission wiring is #5463 slice 2 |

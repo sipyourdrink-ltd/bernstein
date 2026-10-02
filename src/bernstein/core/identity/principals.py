@@ -52,9 +52,13 @@ One JSONL line per record under ``<root>/principals/<scope>.jsonl``::
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac as _hmac
 import json
+import os
+import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,7 +71,7 @@ from bernstein.core.identity.grants import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 __all__ = [
     "DEFAULT_SCOPE",
@@ -90,6 +94,29 @@ PRINCIPAL_DEPROVISIONED: Final[str] = "principal_deprovisioned"
 _KINDS: Final[frozenset[str]] = frozenset({PRINCIPAL_PROVISIONED, PRINCIPAL_DEPROVISIONED})
 
 _SUBDIR: Final[str] = "principals"
+
+if sys.platform == "win32":
+    fcntl = None  # type: ignore[assignment]
+else:
+    import fcntl  # type: ignore[no-redef]
+
+#: In-process append locks keyed by the resolved journal path. Shared by every
+#: :class:`PrincipalLedger` in the process (a ledger is often rebuilt per
+#: request), so two threads never recover the same tail and fork the chain.
+_PATH_LOCKS: Final[dict[str, threading.Lock]] = {}
+_PATH_LOCKS_GUARD: Final[threading.Lock] = threading.Lock()
+
+
+def _path_lock(path: Path) -> threading.Lock:
+    """Return the process-wide append lock for the journal at ``path``."""
+    key = str(path.resolve())
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PATH_LOCKS[key] = lock
+        return lock
+
 
 #: Principals outlive runs, so the journal is scoped to the install rather than
 #: to a run id the way the grant journal is.
@@ -261,21 +288,42 @@ class PrincipalLedger:
         """Return the JSONL path backing this ledger's scope."""
         return self._dir / f"{_safe_scope(self._scope)}.jsonl"
 
-    def _tail(self) -> tuple[str, int]:
-        """Return ``(prev_hmac, next_record_index)`` for the scope."""
+    @contextlib.contextmanager
+    def _append_lock(self) -> Iterator[None]:
+        """Serialise the tail-read-through-append for this scope.
+
+        Holds an in-process :class:`threading.Lock` (threads of one server) and
+        an OS ``flock(LOCK_EX)`` on a sibling lock file (separate processes)
+        for the whole read-modify-write. Without both, two writers recover the
+        same ``prev_hmac`` and ``record_index`` and the chain forks, which
+        fails :func:`verify_principal_chain` permanently. Falls back to the
+        in-process lock alone where ``fcntl`` is unavailable (Windows).
+        """
+        path = self.receipt_path()
+        with _path_lock(path):
+            if fcntl is None:  # pragma: no cover - Windows path
+                yield
+                return
+            fd = os.open(str(path) + ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+
+    def _entries(self) -> list[dict[str, Any]]:
+        """Return the scope's journal lines, oldest first."""
         path = self.receipt_path()
         if not path.is_file():
-            return GENESIS_HMAC, 0
-        prev = GENESIS_HMAC
-        count = 0
+            return []
+        entries: list[dict[str, Any]] = []
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if not line:
-                continue
-            obj = json.loads(line)
-            prev = obj.get("hmac", prev)
-            count += 1
-        return prev, count
+            if line:
+                entries.append(json.loads(line))
+        return entries
 
     def _append(
         self,
@@ -287,12 +335,51 @@ class PrincipalLedger:
         capability_ceiling: Sequence[str],
         reason: str,
         created: int | None,
+        idempotent: bool = False,
     ) -> PrincipalReceipt:
         if kind not in _KINDS:  # pragma: no cover - defensive
             raise PrincipalError(f"unknown principal record kind {kind!r}")
         if not principal_id:
             raise PrincipalError("principal_id must not be empty")
-        prev_hmac, record_index = self._tail()
+        with self._append_lock():
+            return self._append_locked(
+                kind=kind,
+                principal_id=principal_id,
+                external_id=external_id,
+                display_name=display_name,
+                capability_ceiling=capability_ceiling,
+                reason=reason,
+                created=created,
+                idempotent=idempotent,
+            )
+
+    def _append_locked(
+        self,
+        *,
+        kind: str,
+        principal_id: str,
+        external_id: str,
+        display_name: str,
+        capability_ceiling: Sequence[str],
+        reason: str,
+        created: int | None,
+        idempotent: bool,
+    ) -> PrincipalReceipt:
+        """Append one record; the caller holds :meth:`_append_lock`."""
+        entries = self._entries()
+        if idempotent:
+            # A repeat of the principal's latest record kind is a no-op: the
+            # chain already says this, so return that record rather than
+            # signing another.
+            for existing in reversed(entries):
+                if existing.get("principal_id") == principal_id:
+                    if existing.get("kind") == kind:
+                        return PrincipalReceipt.from_entry(existing)
+                    break
+        prev_hmac = GENESIS_HMAC
+        for obj in entries:
+            prev_hmac = obj.get("hmac", prev_hmac)
+        record_index = len(entries)
         ts = int(created if created is not None else time.time())
         signed = {
             "scope": self._scope,
@@ -354,8 +441,15 @@ class PrincipalLedger:
         principal_id: str,
         reason: str = "deprovisioned",
         created: int | None = None,
+        idempotent: bool = False,
     ) -> PrincipalReceipt:
-        """Append a signed ``principal_deprovisioned`` record drawing the line."""
+        """Append a signed ``principal_deprovisioned`` record drawing the line.
+
+        With ``idempotent=True`` a principal whose latest chain record is
+        already a deprovision is not recorded again: the existing record is
+        returned and nothing is appended. The check runs under the append
+        lock, so concurrent repeats cannot both write.
+        """
         return self._append(
             kind=PRINCIPAL_DEPROVISIONED,
             principal_id=principal_id,
@@ -364,6 +458,7 @@ class PrincipalLedger:
             capability_ceiling=(),
             reason=reason,
             created=created,
+            idempotent=idempotent,
         )
 
 

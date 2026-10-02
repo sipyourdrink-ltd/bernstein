@@ -1,7 +1,17 @@
+# Python models-as-data resolves the first column with API::moduleImport,
+# which only knows top-level packages: a dotted module name such as
+# "bernstein.core.log_safe" matches no node and the row is silently dead.
+# Name the package in the first column and walk to the function with
+# Member[...] tokens instead. tests/unit/test_codeql_sanitizer_model.py
+# enforces this shape and that every row resolves to a real function.
+#
+# CodeQL matches the import path as written, so an import through a legacy
+# alias served by _CoreRedirectFinder (e.g. bernstein.core.sanitize) is not
+# covered by these rows; the same test forbids those imports.
 extensions:
   - addsTo:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["bernstein.core.security.sanitize", "Member[sanitize_log].ReturnValue", "log-injection"]
-      - ["bernstein.core.log_safe", "Member[for_log].ReturnValue", "log-injection"]
+      - ["bernstein", "Member[core].Member[security].Member[sanitize].Member[sanitize_log].ReturnValue", "log-injection"]
+      - ["bernstein", "Member[core].Member[log_safe].Member[for_log].ReturnValue", "log-injection"]

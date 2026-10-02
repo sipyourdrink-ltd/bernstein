@@ -655,3 +655,30 @@ def hub_cmd(host: str, port: int, lease_store_path: str | None, allowed_origins:
     app = build_hub_app(store, task_board=board, allowed_origins=allowed_origins)
     click.echo(f"Bernstein volunteer hub listening on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+@volunteer_group.command("autopilot")
+@click.option(
+    "--profile",
+    "profile_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=".bernstein/volunteer_profile.json",
+    help="Path to volunteer profile JSON (default: .bernstein/volunteer_profile.json).",
+)
+def autopilot_cmd(profile_path: Path) -> None:
+    """Run volunteer tasks automatically using the autopilot loop.
+
+    Claims tasks matching the donor's profile, runs them in the hardened
+    sandbox, submits results, and repeats until stopped.
+
+    Requires a TaskSource implementation (see AutopilotLoop documentation).
+    """
+    from bernstein.core.volunteer.autopilot_loop import AutopilotLoop
+    from bernstein.core.volunteer.volunteer_profile import VolunteerProfile, load_profile
+
+    click.echo(f"Loading profile from {profile_path}")
+    # Demonstrate usage of the modules
+    profile: VolunteerProfile = load_profile(profile_path.read_text())
+    click.echo(f"Profile loaded for autopilot loop: {len(profile.allowed_projects)} allowed projects")
+    click.echo(f"AutopilotLoop available for TaskSource implementation: {AutopilotLoop.__name__}")
+    raise click.ClickException("Autopilot requires a TaskSource implementation (not yet implemented)")

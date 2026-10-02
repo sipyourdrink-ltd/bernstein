@@ -186,7 +186,11 @@ def deprovision_user(
     reason: str = DEACTIVATED_REASON,
     created: int | None = None,
 ) -> PrincipalReceipt:
-    """Record the deprovision a SCIM delete (or deactivation) implies."""
+    """Record the deprovision a SCIM delete (or deactivation) implies.
+
+    Idempotent: a principal the chain already shows as deprovisioned gets no
+    second record, and the existing one is returned.
+    """
     if not principal_id:
         raise DirectorySchemaError("cannot deprovision without a principal id")
-    return ledger.deprovision(principal_id=principal_id, reason=reason, created=created)
+    return ledger.deprovision(principal_id=principal_id, reason=reason, created=created, idempotent=True)

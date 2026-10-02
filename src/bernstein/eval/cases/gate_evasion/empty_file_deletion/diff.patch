@@ -1,0 +1,5 @@
+--- a/empty_module.py
++++ b/empty_module.py
+@@ -1,2 +0,0 @@
+-def old_helper():
+-    return 42

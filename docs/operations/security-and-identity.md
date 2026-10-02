@@ -208,15 +208,15 @@ Per-role permission table
 | `bulletin:write`   |  yes  |   yes    |  no    |
 | `admin:manage`     |  yes  |   no     |  no    |
 | `scim:read`        |  yes  |   no     |  no    |
-| `scim:write`       |  no   |   no     |  no    |
+| `scim:write`       |  yes  |   no     |  no    |
 
 `admin:manage` is the kill-switch: shutdown, broadcast, drain, and the
 config writer all require it. Only ADMIN holds it by design
 (`core/security/auth.py:109-113`).
 
-`scim:write` is held by no role: the SCIM surface serves reads only, so
-nothing may hold the authority to reach a write route that does not exist.
-A write slice adds the routes and the grant together.
+`scim:write` is held by ADMIN only: it gates `DELETE` and `PATCH` on
+`/scim/v2/Users/{id}`, which deprovision a principal. OPERATOR and VIEWER get
+403 on those routes.
 
 RBAC is enforced at the route level by `RBACEnforcer`
 (`core/security/rbac.py:118-...`), which maps URL prefixes + HTTP
@@ -517,12 +517,12 @@ unfiltered list would look like a successful narrow query.
 **Deletion semantics.** A SCIM client expects `DELETE` to remove a resource.
 The record kept here is append-only, so a principal removed upstream becomes
 inactive while the record of its existence and of its removal stays. That is
-declared now, under
+declared under
 `urn:ietf:params:scim:schemas:extension:bernstein:2.0:ServiceProviderConfig`,
-rather than met as a surprise once the write surface exists:
+rather than met as a surprise:
 
 ```json
-"delete": { "supported": false, "semantics": "soft", "retainsHistory": true }
+"delete": { "supported": true, "semantics": "soft", "retainsHistory": true }
 ```
 
 **Access.** Reads need `scim:read`, writes `scim:write`. The requirement is

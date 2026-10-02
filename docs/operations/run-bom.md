@@ -67,7 +67,21 @@ bernstein bom verify ./bom.json
 
 `verify` is structural: it checks the schema version, that every element
 carries a well-formed `sha256:` value, and that the deterministic ordering has
-not been edited. Verifying the chain itself is `bernstein lineage verify <run>`.
+not been edited.
+
+To confirm the document is a faithful projection of what actually ran, pass
+`--from-lineage` with the run id:
+
+```bash
+bernstein bom verify ./bom.json --from-lineage --run 20260101-104501
+```
+
+This re-derives the projection offline from `.sdd/lineage/<run>/` and fails
+closed when any component hash does not resolve to a verifying lineage entry
+or when the document's `lineage_root_hash` differs from the chain head. Each
+failure names the offending line item. The audit key the chain was written
+under is loaded read-only and never minted. Verifying the chain's own HMAC
+integrity is `bernstein lineage verify <run>`.
 
 ## Determinism
 

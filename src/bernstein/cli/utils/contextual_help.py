@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_DOCS_BASE = "https://bernstein.readthedocs.io/en/latest"
+_DOCS_BASE = "https://docs.bernstein.run/en/latest"
 
 _ADAPTER_GUIDE = f"{_DOCS_BASE}/adapter-guide"
 
@@ -112,7 +112,7 @@ def format_help_suggestion(link: HelpLink) -> str:
         link: The help link to format.
 
     Returns:
-        A string like ``"See: https://bernstein.readthedocs.io/en/latest/<section>"``.
+        A string like ``"See: https://docs.bernstein.run/en/latest/<section>"``.
     """
     return f"See: {link.url}"
 
