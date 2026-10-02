@@ -12,6 +12,7 @@ Holds three properties of the write surface:
 from __future__ import annotations
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -33,6 +34,7 @@ from bernstein.core.security.auth import (
 from bernstein.core.security.auth_middleware import SSOAuthMiddleware
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _KEY = b"k" * 32
@@ -135,27 +137,37 @@ def test_admin_can_deprovision_with_patch(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _run_concurrently(count: int, call: Callable[[int], Any]) -> list[Any]:
+    """Run ``call(i)`` on ``count`` threads released together; re-raise any failure.
+
+    The barrier is bounded so a worker that fails before reaching it fails the
+    test instead of leaving the others waiting.
+    """
+    start = threading.Barrier(count, timeout=30)
+
+    def worker(i: int) -> Any:
+        start.wait()
+        return call(i)
+
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        futures = [pool.submit(worker, i) for i in range(count)]
+        return [f.result(timeout=60) for f in futures]
+
+
+@pytest.mark.timeout(120)
 def test_concurrent_deprovisions_keep_the_signed_chain_linear(tmp_path: Path) -> None:
     """Auth disabled: the handlers run in the threadpool with nothing else serialising them."""
     app, store, ledger, _ = _build(tmp_path, auth=False)
     ids = [_identity(store, f"agent-{i}") for i in range(24)]
-    start = threading.Barrier(len(ids))
-    statuses: list[int] = []
-    guard = threading.Lock()
 
-    def worker(i: int, user_id: str) -> None:
-        with TestClient(app) as client:
-            start.wait()
-            url = f"{scim.SCIM_BASE_PATH}/Users/{user_id}"
+    with TestClient(app) as client:
+
+        def call(i: int) -> int:
+            url = f"{scim.SCIM_BASE_PATH}/Users/{ids[i]}"
             resp = client.delete(url) if i % 2 else client.patch(url, json=_patch_body())
-        with guard:
-            statuses.append(resp.status_code)
+            return resp.status_code
 
-    threads = [threading.Thread(target=worker, args=(i, uid)) for i, uid in enumerate(ids)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+        statuses = _run_concurrently(len(ids), call)
 
     assert sorted(set(statuses)) == [200, 204]
     result = _chain(ledger)
@@ -164,6 +176,7 @@ def test_concurrent_deprovisions_keep_the_signed_chain_linear(tmp_path: Path) ->
     assert {r.principal_id for r in result.records} == set(ids)
 
 
+@pytest.mark.timeout(120)
 def test_ledger_appends_from_many_threads_do_not_fork(tmp_path: Path) -> None:
     ledger = principals.PrincipalLedger(
         root=tmp_path,
@@ -171,43 +184,24 @@ def test_ledger_appends_from_many_threads_do_not_fork(tmp_path: Path) -> None:
         signer=grants.GrantSigner.generate(issuer="manager:test"),
     )
     count = 32
-    start = threading.Barrier(count)
 
-    def worker(i: int) -> None:
-        start.wait()
-        ledger.deprovision(principal_id=f"agent:{i}")
-
-    threads = [threading.Thread(target=worker, args=(i,)) for i in range(count)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    _run_concurrently(count, lambda i: ledger.deprovision(principal_id=f"agent:{i}"))
 
     result = _chain(ledger)
     assert result.valid, result.errors
     assert [r.record_index for r in result.records] == list(range(count))
 
 
+@pytest.mark.timeout(120)
 def test_concurrent_repeats_of_one_deprovision_record_it_once(tmp_path: Path) -> None:
     app, store, ledger, _ = _build(tmp_path, auth=False)
     victim = _identity(store, "victim")
     count = 16
-    start = threading.Barrier(count)
-    statuses: list[int] = []
-    guard = threading.Lock()
 
-    def worker() -> None:
-        with TestClient(app) as client:
-            start.wait()
-            resp = client.delete(f"{scim.SCIM_BASE_PATH}/Users/{victim}")
-        with guard:
-            statuses.append(resp.status_code)
-
-    threads = [threading.Thread(target=worker) for _ in range(count)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    with TestClient(app) as client:
+        statuses = _run_concurrently(
+            count, lambda _i: client.delete(f"{scim.SCIM_BASE_PATH}/Users/{victim}").status_code
+        )
 
     assert statuses.count(204) == 1
     assert statuses.count(404) == count - 1
