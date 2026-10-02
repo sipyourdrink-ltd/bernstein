@@ -775,6 +775,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         resume=ResumeStrategy.UNSUPPORTED,
         dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
         event_channel=EventChannel.TEXT_SIGNALS,
+        output_mode=OutputMode.ARTIFACT,
     ),
     # Hermes is driven through its one-shot mode, which auto-bypasses approvals
     # rather than exposing a flag to do so - the CLI is unattended by
@@ -881,6 +882,7 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         resume=ResumeStrategy.UNSUPPORTED,
         dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
         event_channel=EventChannel.TEXT_SIGNALS,
+        output_mode=OutputMode.ARTIFACT,
     ),
 }
 
