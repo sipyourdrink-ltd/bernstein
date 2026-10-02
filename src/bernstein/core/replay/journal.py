@@ -578,7 +578,14 @@ class EventJournal:
                     prior = 0
             index = self._index
             prev_hash = self._head
-            p_hash = _payload_hash(event, data, self._hash_profile)
+            # The row carries ``hash_profile`` for non-legacy profiles, and the
+            # verifier hashes every non-envelope row key. Hash the same
+            # projection here so the profile is covered by the chain and the
+            # write and verify payloads are identical.
+            hashed_payload: dict[str, Any] = data
+            if self._hash_profile != HASH_PROFILE_LEGACY:
+                hashed_payload = {"hash_profile": self._hash_profile, **data}
+            p_hash = _payload_hash(event, hashed_payload, self._hash_profile)
             e_hash = compute_event_hash(
                 prev_hash=prev_hash,
                 event_type=event,
