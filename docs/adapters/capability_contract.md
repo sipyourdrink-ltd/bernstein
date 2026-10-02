@@ -72,7 +72,9 @@ that decides which completion check owns the verdict.
 
 Coding adapters declare `git-diff` (the default), so the coding path is
 unchanged; the research and browser adapters (`computer_use`, `garak`,
-`gpt_researcher`, `holmesgpt`, `skyvern`, `tongyi_deepresearch`) declare `artifact`. See [../operations/artifacts.md](../operations/artifacts.md) for the
+`holmesgpt`, `skyvern`) declare `artifact`. The deep-research adapters
+(`gpt_researcher`, `tongyi_deepresearch`) do not: their report stays in the
+run directory and nothing publishes it to a task's artifact path. See [../operations/artifacts.md](../operations/artifacts.md) for the
 artifact-mode completion path.
 
 ### Session state (`SessionState`)
