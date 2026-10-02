@@ -10,4 +10,4 @@ The writer now hashes the same projection the verifier recomputes, so the
 profile is part of what the chain covers. A journal written under `jcs-v2`
 verifies, rebuilds to its own head and resumes; rewriting a row's
 `hash_profile` breaks verification. Journals under the default `py-json-v1`
-profile are unchanged and keep verifying.
+profile are unchanged and keep verifying (#6358).
