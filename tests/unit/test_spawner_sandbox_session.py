@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,7 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.sandbox import WorkspaceManifest
 from bernstein.core.sandbox.backend import ExecResult, SandboxSession
+from bernstein.core.sandbox.backends.sandbox0 import Sandbox0SandboxBackend
 from bernstein.core.sandbox.selector import SandboxSelectionError
 from bernstein.core.security.audit import AuditLog
 
@@ -291,7 +293,7 @@ class _FakeBackend:
 def _build_spawner_with_backend(
     tmp_path: Path,
     *,
-    backend: _FakeBackend,
+    backend: _FakeBackend | Sandbox0SandboxBackend,
     server_port: int | None = None,
     image: str = "img:test",
 ) -> tuple[AgentSpawner, _FakeAdapter]:
@@ -715,6 +717,65 @@ def test_sandbox0_provision_failure_never_runs_on_host(tmp_path: Path, monkeypat
             adapter=adapter,
         )
     assert not adapter.spawn_calls
+
+
+@pytest.mark.parametrize("failure_step", ["claim", "mkdir"])
+def test_sandbox0_sdk_creation_failure_never_runs_on_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_step: str
+) -> None:
+    """Exercise the real backend create path, including partial SDK setup."""
+    monkeypatch.delenv("BERNSTEIN_SANDBOX_RUNTIME", raising=False)
+    client = MagicMock()
+    client.sandboxes.claim.return_value.id = "sandbox-failed-create"
+    failure = OSError("SDK provisioning failed")
+    if failure_step == "claim":
+        client.sandboxes.claim.side_effect = failure
+    else:
+        client.sandboxes.claim.return_value.mkdir.side_effect = failure
+    missing = RuntimeError("not found")
+    missing.status_code = 404
+    client.sandboxes.get.side_effect = missing
+    backend = Sandbox0SandboxBackend(client=client)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+
+    with patch("bernstein.core.agents.spawner_core.submit_session_exec") as submit:
+        with pytest.raises(SandboxSelectionError, match="refusing to fall back") as raised:
+            _spawn_one(spawner, adapter, "S-sdk-fail")
+
+    assert raised.value.__cause__ is failure
+    client.sandboxes.claim.assert_called_once()
+    assert not adapter.spawn_calls
+    submit.assert_not_called()
+    assert not spawner._sandbox_owned_sessions
+    assert not backend._sessions
+    if failure_step == "mkdir":
+        client.delete_sandbox.assert_called_once_with("sandbox-failed-create")
+    else:
+        client.delete_sandbox.assert_not_called()
+
+
+def test_sandbox0_creation_logs_and_audit_exclude_snapshot_id(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Only selected session identifiers are recorded, never the SDK response."""
+    snapshot_id = "sensitive-snapshot-id-do-not-log"
+    client = MagicMock()
+    client.sandboxes.claim.return_value = SimpleNamespace(
+        id="sandbox-log-test", snapshot_id=snapshot_id, mkdir=MagicMock()
+    )
+    backend = Sandbox0SandboxBackend(client=client)
+    spawner, _ = _build_spawner_with_backend(tmp_path, backend=backend)
+    with (
+        caplog.at_level(logging.INFO),
+        patch.object(spawner, "_check_task_server_reachability"),
+        patch.object(spawner, "_emit_sandbox_audit") as audit,
+    ):
+        session = spawner._provision_sandbox_session("S-log-test")
+
+    assert session.session_id == "sandbox-log-test"
+    assert "Provisioned sandbox session sandbox-log-test" in caplog.text
+    assert snapshot_id not in caplog.text
+    audit.assert_called_once()
+    assert snapshot_id not in repr(audit.call_args)
+    assert "snapshot_id" not in audit.call_args.kwargs["details"]
 
 
 def test_prompt_failure_destroys_owned_sandbox(tmp_path: Path) -> None:

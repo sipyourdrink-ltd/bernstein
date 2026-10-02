@@ -21,3 +21,10 @@ retryable and independent of snapshot retention. RootFS snapshots restore into
 new sessions and carry workspace metadata inside the encrypted filesystem.
 
 See [operator setup and limitations](../sandbox/sandbox0.md).
+
+Snapshot references are opaque provider handles, not client-verified CAS digests.
+Bernstein trusts the provider binding to the captured immutable generation;
+provider-side block checksums do not detect a compromised provider substituting
+a different generation. Provisioning logs/audit select identifiers and exclude
+the SDK response and snapshot ids. Tests exercise SDK allocation/setup errors
+through AgentSpawner and verify no host spawn or exec submission occurs.

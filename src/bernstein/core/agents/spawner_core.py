@@ -6374,9 +6374,9 @@ class AgentSpawner:
             # construction. Its lifecycle belongs to whoever built it.
             sbx_session = self._sandbox_session
         else:
-            # Issue #2162: one session per spawn. Provisioning failure
-            # falls back to the direct adapter spawn, mirroring the
-            # ContainerError fallback in _spawn_in_sandbox.
+            # Issue #2162: one session per spawn. Sandbox0 and explicitly
+            # requested runtimes fail closed on provisioning failure;
+            # other automatic selections retain the direct-spawn fallback.
             try:
                 sbx_session = self._provision_sandbox_session(session_id)
             except Exception as exc:
@@ -6636,8 +6636,9 @@ class AgentSpawner:
             The freshly created :class:`SandboxSession`.
 
         Raises:
-            Exception: Whatever the backend raised; the caller falls
-                back to a direct adapter spawn.
+            Exception: Whatever the backend raised. Sandbox0 and explicit
+                runtime requests fail closed; other automatic selections
+                may fall back to a direct adapter spawn.
         """
         assert self._sandbox_backend is not None
         assert self._sandbox_manifest_factory is not None
@@ -6645,6 +6646,8 @@ class AgentSpawner:
         sbx_session = asyncio.run(self._sandbox_backend.create(manifest, options=self._sandbox_options.copy()))
         backend_name = getattr(sbx_session, "backend_name", "unknown")
         sandbox_session_created_total.labels(backend=backend_name).inc()
+        # Record selected identifiers only. SDK responses/session objects
+        # can contain sensitive snapshot references and must not be logged.
         logger.info(
             "Provisioned sandbox session %s for agent %s (backend=%s)",
             sbx_session.session_id,

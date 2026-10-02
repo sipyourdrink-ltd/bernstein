@@ -553,3 +553,9 @@ contract through the Sandbox0 Python SDK. The run-level `--sandbox sandbox0`
 flag attaches a backend and manifest factory to `AgentSpawner`, creating one
 remote sandbox per agent. Creation failure is fail-closed. RootFS snapshots
 survive session destruction and restore into independent new sandboxes.
+The provider binds an opaque snapshot id to an immutable filesystem generation
+and verifies its content-addressed blocks. Bernstein trusts that binding; it
+does not independently verify a RootFS digest or detect provider substitution.
+Creation logs and audit events select session/backend identifiers and exclude
+the SDK response, including sensitive snapshot ids. See the
+[snapshot trust boundary](../sandbox/sandbox0.md#snapshots-and-cleanup).

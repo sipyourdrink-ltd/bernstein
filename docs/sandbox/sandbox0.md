@@ -128,6 +128,20 @@ The caller owns snapshot retention: delete the provider snapshot identified by
 
 The provider snapshot id is not a Bernstein CAS digest. The existing
 CAS-specific `sandbox fork-race` receipt flow is not exposed for this backend.
+Sandbox0 binds each snapshot to a captured durable filesystem generation;
+subsequent writes to the source or a restored sandbox do not change that
+generation. The provider stores content-addressed RootFS blocks and verifies
+their checksums on reads. However, Bernstein's opaque reference is not a
+client-verified digest of the restored filesystem: Bernstein trusts the
+configured provider to resolve the snapshot id to the correct generation.
+It cannot independently detect a compromised provider substituting a
+different generation and its matching checksums. Use a provider within your
+trust boundary; this backend does not offer the independently verifiable CAS
+restore guarantee of the microvm backend.
+
+Snapshot references are sensitive and should not appear in INFO logs.
+Provisioning logs and audit events record selected session/backend identifiers,
+not the SDK creation response or its `snapshot_id` field.
 
 ## Validation
 
