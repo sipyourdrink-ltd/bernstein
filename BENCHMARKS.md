@@ -9,6 +9,7 @@ This document records the canonical benchmark suites provided by `bernstein.eval
 | `golden-v1` | Core orchestrator determinism and task execution suite | — | 5 tasks | 1.0 (100%) |
 | `tool-surface-v1` | Tool-surface risk scoring, risky triple detection, and forced approval gating | `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04` | 10 fixtures | 1.0 (100%) |
 | `gate-evasion-v1` | Each fixture is a way a change once evaded a quality gate; the named gate runs on it through `GateRunner`, and only a gate finding counts as a catch | — | 8 classes | today 2/8, see `docs/eval/bench.md` |
+| `leakage-v1` | Seeded canaries scanned on the bytes each output surface actually emits; five surfaces and four of five seed points driven, the rest need a governed run | — | 8 surfaces | zero hits on every exercised surface (today 1 of 5 clean, see `docs/eval/bench.md`) |
 
 ---
 
