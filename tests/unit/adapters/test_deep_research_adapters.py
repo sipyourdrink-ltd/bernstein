@@ -8,10 +8,12 @@ write and the adapters verify, and the runners' isolation from bernstein.
 from __future__ import annotations
 
 import ast
+import http.server
 import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -123,6 +125,19 @@ def test_tongyi_command_names_the_checkout(tmp_path: Path) -> None:
     assert cmd[cmd.index("--model") + 1] == "tongyi-planner"
 
 
+def test_tongyi_tool_base_urls_reach_the_runner_only_when_set() -> None:
+    assert "SERPER_BASE_URL" not in TongyiDeepResearchAdapter().build_env(GATEWAY)
+    env = TongyiDeepResearchAdapter().build_env(
+        {
+            **GATEWAY,
+            "BERNSTEIN_TONGYI_DEEPRESEARCH_SERPER_BASE_URL": " http://gw.test/v1 ",
+            "BERNSTEIN_TONGYI_DEEPRESEARCH_JINA_BASE_URL": "http://gw.test/v1/web/fetch",
+        }
+    )
+    assert env["SERPER_BASE_URL"] == "http://gw.test/v1"
+    assert env["JINA_BASE_URL"] == "http://gw.test/v1/web/fetch"
+
+
 def test_tongyi_without_a_checkout_is_a_config_error(tmp_path: Path) -> None:
     env = {k: v for k, v in GATEWAY.items() if k != "BERNSTEIN_TONGYI_DEEPRESEARCH_HOME"}
     with pytest.raises(GatewayConfigError, match="BERNSTEIN_TONGYI_DEEPRESEARCH_HOME"):
@@ -206,9 +221,8 @@ def test_a_missing_run_record_is_a_driver_failure(tmp_path: Path) -> None:
         ("tongyi_deepresearch", TongyiDeepResearchAdapter),
     ],
 )
-def test_adapters_are_registered_with_artifact_output(name: str, cls: type) -> None:
+def test_adapters_are_registered(name: str, cls: type) -> None:
     assert isinstance(get_adapter(name), cls)
-    assert strategy_for(name).output_mode is OutputMode.ARTIFACT
 
 
 @pytest.mark.parametrize(
@@ -476,3 +490,313 @@ def test_paper_qa_runner_without_papers_exits_2(tmp_path: Path) -> None:
     )
     assert proc.returncode == 2
     assert "no papers directory" in proc.stderr
+
+
+_STUB_TOOL_SEARCH = """
+import http.client, json
+def search(query):
+    conn = http.client.HTTPSConnection("google.serper.dev")
+    conn.request("POST", "/search", json.dumps({"q": query}), {"X-API-KEY": "sk", "Content-Type": "application/json"})
+    return json.loads(conn.getresponse().read())
+"""
+
+_STUB_TOOL_VISIT = """
+class requests:
+    @staticmethod
+    def get(url, headers=None, timeout=None):
+        return url
+def read(url):
+    return requests.get(f"https://r.jina.ai/{url}", headers={"Authorization": "Bearer j"}, timeout=5)
+"""
+
+_STUB_REDIRECTED_AGENT = """
+import tool_search, tool_visit
+class OpenAI:
+    def __init__(self, **kwargs):
+        pass
+class MultiTurnReactAgent:
+    def __init__(self, llm, function_list):
+        pass
+    def _run(self, data, model):
+        assert tool_search.search("q") == {"organic": []}
+        assert tool_visit.read("https://a.test/x") == "http://gw.test/v1/web/fetch/https://a.test/x"
+        return {"prediction": "ok", "termination": "answer", "messages": []}
+"""
+
+
+def _tongyi_checkout(tmp_path: Path, agent: str, **tools: str) -> Path:
+    inference = tmp_path / "checkout" / "inference"
+    inference.mkdir(parents=True)
+    (inference / "react_agent.py").write_text(agent)
+    for name, source in tools.items():
+        (inference / f"{name}.py").write_text(source)
+    (tmp_path / "p.txt").write_text("What is X?")
+    return tmp_path / "checkout"
+
+
+def _tongyi_args(tmp_path: Path, checkout: Path) -> list[str]:
+    return [
+        "--prompt-file",
+        str(tmp_path / "p.txt"),
+        "--out-dir",
+        str(tmp_path / "out"),
+        "--repo-dir",
+        str(checkout),
+        "--model",
+        "m2",
+    ]
+
+
+def test_tongyi_runner_sends_search_and_visit_to_the_configured_bases(tmp_path: Path) -> None:
+    """Serper calls keep their path under the base's path; reader calls get the base in place of r.jina.ai."""
+    seen: list[tuple[str, str | None]] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers["Content-Length"]))
+            seen.append((self.path, self.headers["X-API-KEY"]))
+            body = b'{"organic": []}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        checkout = _tongyi_checkout(
+            tmp_path, _STUB_REDIRECTED_AGENT, tool_search=_STUB_TOOL_SEARCH, tool_visit=_STUB_TOOL_VISIT
+        )
+        proc = _run_runner(
+            "tongyi_deepresearch_runner.py",
+            _tongyi_args(tmp_path, checkout),
+            {
+                "OPENAI_BASE_URL": "http://gw.test/v1",
+                "OPENAI_API_KEY": "k2",
+                "SERPER_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                "JINA_BASE_URL": "http://gw.test/v1/web/fetch/",
+            },
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    assert seen == [("/v1/search", "sk")]
+
+
+def test_tongyi_runner_rejects_a_tool_base_that_is_not_http(tmp_path: Path) -> None:
+    checkout = _tongyi_checkout(
+        tmp_path, _STUB_REDIRECTED_AGENT, tool_search=_STUB_TOOL_SEARCH, tool_visit=_STUB_TOOL_VISIT
+    )
+    proc = _run_runner(
+        "tongyi_deepresearch_runner.py",
+        _tongyi_args(tmp_path, checkout),
+        {"OPENAI_BASE_URL": "http://gw.test/v1", "OPENAI_API_KEY": "k2", "SERPER_BASE_URL": "gw.test/v1"},
+    )
+    assert proc.returncode == 2
+    assert "SERPER_BASE_URL" in proc.stderr
+
+
+# --- network egress policy ---------------------------------------------------------------
+
+
+class _PopenRecorder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        self.calls += 1
+        proc = type("_Proc", (), {"pid": 4242})()
+        return proc
+
+
+def _spawn(adapter: object, workdir: Path) -> object:
+    from bernstein.core.models import ModelConfig
+
+    return adapter.spawn(  # type: ignore[attr-defined]
+        prompt="What is X?",
+        workdir=workdir,
+        model_config=ModelConfig(model="m", effort="high"),
+        session_id="analyst-ab12cd34",
+        timeout_seconds=0,
+    )
+
+
+@pytest.fixture
+def popen(monkeypatch: pytest.MonkeyPatch) -> _PopenRecorder:
+    recorder = _PopenRecorder()
+    monkeypatch.setattr("bernstein.adapters.deep_research.subprocess.Popen", recorder)
+    for key in list(os.environ):
+        if key.startswith("BERNSTEIN_") and key != "BERNSTEIN_PROFILE_MODE":
+            monkeypatch.delenv(key)
+    for key, value in GATEWAY.items():
+        monkeypatch.setenv(key, value)
+    return recorder
+
+
+_ADAPTERS = [GPTResearcherAdapter, TongyiDeepResearchAdapter]
+
+
+@pytest.mark.parametrize("cls", _ADAPTERS)
+def test_spawn_is_refused_under_deny_all_before_anything_starts(
+    cls: type, popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.security.network_policy import NetworkPolicyDenied
+
+    monkeypatch.setenv("BERNSTEIN_PROFILE_MODE", "airgap")
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "none")
+    with pytest.raises(NetworkPolicyDenied, match=r"gw\.test:80"):
+        _spawn(cls(), tmp_path)
+    assert popen.calls == 0
+    assert not (tmp_path / ".sdd").exists()
+
+
+@pytest.mark.parametrize("cls", _ADAPTERS)
+def test_spawn_without_a_policy_in_an_airgap_profile_is_deny_all(
+    cls: type, popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.security.network_policy import NetworkPolicyDenied
+
+    monkeypatch.setenv("BERNSTEIN_PROFILE_MODE", "airgap")
+    monkeypatch.delenv("BERNSTEIN_NETWORK_POLICY", raising=False)
+    with pytest.raises(NetworkPolicyDenied):
+        _spawn(cls(), tmp_path)
+    assert popen.calls == 0
+
+
+@pytest.mark.parametrize("cls", _ADAPTERS)
+def test_spawn_is_unchanged_without_a_restrictive_policy(cls: type, popen: _PopenRecorder, tmp_path: Path) -> None:
+    result = _spawn(cls(), tmp_path)
+    assert result.pid == 4242  # type: ignore[attr-defined]
+    assert popen.calls == 1
+    assert (tmp_path / ".sdd" / cls.slug / "analyst-ab12cd34" / "prompt.txt").read_text() == "What is X?"  # type: ignore[attr-defined]
+
+
+def test_gpt_researcher_needs_its_retriever_host_allowed_too(
+    popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.security.network_policy import NetworkPolicyDenied
+
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80")
+    with pytest.raises(NetworkPolicyDenied, match=r"api\.tavily\.com:443"):
+        _spawn(GPTResearcherAdapter(), tmp_path)
+    assert popen.calls == 0
+
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80,api.tavily.com:443")
+    _spawn(GPTResearcherAdapter(), tmp_path)
+    assert popen.calls == 1
+
+
+def test_gpt_researcher_checks_every_listed_retriever(
+    popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.security.network_policy import NetworkPolicyDenied
+
+    monkeypatch.setenv("RETRIEVER", "searx, serper")
+    monkeypatch.setenv("SEARX_URL", "https://searx.internal:8443")
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80,searx.internal:8443")
+    with pytest.raises(NetworkPolicyDenied, match=r"google\.serper\.dev:443"):
+        _spawn(GPTResearcherAdapter(), tmp_path)
+    assert popen.calls == 0
+
+
+def test_gpt_researcher_refuses_a_retriever_it_cannot_place(
+    popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.security.network_policy import NetworkPolicyDenied
+
+    monkeypatch.setenv("RETRIEVER", "custom")
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80")
+    with pytest.raises(NetworkPolicyDenied, match="custom"):
+        _spawn(GPTResearcherAdapter(), tmp_path)
+    assert popen.calls == 0
+    # An unrestricted policy never needs to place it.
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "any")
+    _spawn(GPTResearcherAdapter(), tmp_path)
+    assert popen.calls == 1
+
+
+def test_tongyi_needs_its_default_tool_hosts_allowed(
+    popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.core.security.network_policy import NetworkPolicyDenied
+
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80")
+    with pytest.raises(NetworkPolicyDenied, match=r"google\.serper\.dev:443"):
+        _spawn(TongyiDeepResearchAdapter(), tmp_path)
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80,google.serper.dev:443")
+    with pytest.raises(NetworkPolicyDenied, match=r"r\.jina\.ai:443"):
+        _spawn(TongyiDeepResearchAdapter(), tmp_path)
+    assert popen.calls == 0
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80,google.serper.dev:443,r.jina.ai:443")
+    _spawn(TongyiDeepResearchAdapter(), tmp_path)
+    assert popen.calls == 1
+
+
+def test_tongyi_checks_the_redirected_tool_bases_not_the_defaults(
+    popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BERNSTEIN_TONGYI_DEEPRESEARCH_SERPER_BASE_URL", "http://gw.test/v1")
+    monkeypatch.setenv("BERNSTEIN_TONGYI_DEEPRESEARCH_JINA_BASE_URL", "http://gw.test/v1/web/fetch")
+    monkeypatch.setenv("SANDBOX_FUSION_ENDPOINT", "http://sandbox.test:8080")
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80")
+    from bernstein.core.security.network_policy import NetworkPolicyDenied
+
+    with pytest.raises(NetworkPolicyDenied, match=r"sandbox\.test:8080"):
+        _spawn(TongyiDeepResearchAdapter(), tmp_path)
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80,sandbox.test:8080")
+    _spawn(TongyiDeepResearchAdapter(), tmp_path)
+    assert popen.calls == 1
+
+
+@pytest.mark.parametrize("cls", _ADAPTERS)
+def test_a_gateway_url_without_a_host_fails_closed(
+    cls: type, popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(f"BERNSTEIN_{cls.slug.upper().replace('-', '_')}_OPENAI_BASE_URL", "not a url")  # type: ignore[attr-defined]
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80")
+    with pytest.raises(GatewayConfigError, match="OPENAI_BASE_URL"):
+        _spawn(cls(), tmp_path)
+    assert popen.calls == 0
+
+
+# --- artifact declaration ------------------------------------------------------------------
+
+
+def test_the_adapters_do_not_claim_a_completion_path_they_do_not_feed() -> None:
+    """The runners leave the report in their own run directory; nothing copies it to a
+    task's declared artifact path, so declaring ``artifact`` would fail every
+    declared-artifact task at verification."""
+    for name in ("gpt_researcher", "tongyi_deepresearch"):
+        assert strategy_for(name).output_mode is OutputMode.GIT_DIFF
+
+
+# --- tool-call parsing ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        '{"name": "visit", "arguments": "https://a.test"}',
+        '{"name": "visit", "arguments": ["https://a.test"]}',
+        '{"name": "visit", "arguments": null}',
+        '{"name": "visit", "arguments": {"url": 5}}',
+        '{"name": "visit", "arguments": {"url": {"u": "https://a.test"}}}',
+        '{"name": "visit", "arguments": {"url": [5, null, ["x"]]}}',
+        '{"name": "visit"}',
+        "[1, 2]",
+        "5",
+        "null",
+    ],
+)
+def test_a_malformed_tool_call_never_discards_the_answer(call: str) -> None:
+    good = '{"name": "visit", "arguments": {"url": "https://ok.test"}}'
+    messages = [
+        {"role": "assistant", "content": f"<tool_call>{call}</tool_call>"},
+        {"role": "assistant", "content": f"<tool_call>{good}</tool_call>"},
+        "not a message",
+        {"role": "assistant", "content": None},
+    ]
+    assert visited_urls(messages) == ["https://ok.test"]  # type: ignore[arg-type]
