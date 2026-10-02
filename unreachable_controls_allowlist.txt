@@ -28,7 +28,6 @@ src/bernstein/core/identity/agent_jwt.py::AgentIdentityStore.validate_task_acces
 src/bernstein/core/identity/agent_registry.py::RegistryError                                   # exercised by tests only; no production caller
 src/bernstein/core/identity/delegation.py::DelegationReceipt.principal_ids                     # exercised by tests only; no production caller
 src/bernstein/core/identity/delegation_scope.py::DelegationScope.is_narrowing_of               # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/identity/grants.py::GrantLedger.issue_grant                                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantReceipt.to_entry                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantSigner.with_issuer                                 # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/identity/http_signing.py::verify_request                                    # exported and exercised by tests; no production caller
