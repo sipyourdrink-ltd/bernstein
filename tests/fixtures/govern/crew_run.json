@@ -1,0 +1,95 @@
+{
+  "run_id": "crew-run-alpha-4965",
+  "crew_id": "research-analysis-crew",
+  "roles": [
+    {
+      "role_id": "coordinator",
+      "name": "Coordinator",
+      "goal": "Orchestrate multi-agent investigation",
+      "backstory": "Experienced project lead directing tasks."
+    },
+    {
+      "role_id": "researcher",
+      "name": "Researcher",
+      "goal": "Gather public facts and technical data",
+      "backstory": "Detailed researcher digging into source documents."
+    },
+    {
+      "role_id": "analyst",
+      "name": "Analyst",
+      "goal": "Synthesize findings into a final report",
+      "backstory": "Senior technical analyst summarizing research findings."
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "task-init",
+      "description": "Initialize research scope and assign tasks",
+      "assigned_role": "coordinator",
+      "tool_calls": [
+        {
+          "tool_name": "config_loader",
+          "call_id": "call-1",
+          "args": {
+            "profile": "prod"
+          },
+          "output": "ok"
+        }
+      ],
+      "output": "Plan created"
+    },
+    {
+      "task_id": "task-search",
+      "description": "Perform deep research on target query",
+      "assigned_role": "researcher",
+      "tool_calls": [
+        {
+          "tool_name": "web_search",
+          "call_id": "call-2",
+          "args": {
+            "query": "agent governance"
+          },
+          "output": "Found 12 sources"
+        }
+      ],
+      "output": "Data collected"
+    },
+    {
+      "task_id": "task-summarize",
+      "description": "Synthesize findings and write audit trail",
+      "assigned_role": "analyst",
+      "tool_calls": [
+        {
+          "tool_name": "doc_writer",
+          "call_id": "call-3",
+          "args": {
+            "format": "markdown"
+          },
+          "output": "Summary written"
+        }
+      ],
+      "output": "Report complete"
+    }
+  ],
+  "handoffs": [
+    {
+      "from_role": "coordinator",
+      "to_role": "researcher",
+      "act": "task.handoff",
+      "task_id": "task-search",
+      "timestamp": 1730000100
+    },
+    {
+      "from_role": "researcher",
+      "to_role": "analyst",
+      "act": "task.handoff",
+      "task_id": "task-summarize",
+      "timestamp": 1730000200,
+      "parent_handoff_index": 0
+    }
+  ],
+  "metadata": {
+    "engine": "crew-runtime",
+    "version": "1.0.0"
+  }
+}

@@ -48,9 +48,9 @@ modification.
 | `sessionEnd` | `session_id`, `status` | `total_cost`, `total_tokens` |
 
 Extra keys are always allowed. Schemas are validated up-front by
-`bernstein hooks dry-run` and at dispatch time when a payload is
-explicitly supplied; missing required keys raise `PayloadSchemaError`
-before any script runs.
+`bernstein hooks dry-run`; missing required keys raise
+`PayloadSchemaError` before any script runs. Other dispatch paths do not
+validate payloads.
 
 ### Bernstein-native events
 
@@ -64,6 +64,13 @@ by issue #1323. Existing hook scripts continue to work without edits.
 | `pre_merge` / `post_merge` | Around integration merges. |
 | `pre_spawn` / `post_spawn` | Around agent session spawn. |
 | `pre_archive` / `post_archive` | Around task archival. |
+| `task.resume` | When `bernstein resume <task-id>` loads a checkpoint and is about to re-spawn the task. |
+| `kb.fact_published` | When a task publishes a fact through the cross-task knowledge base. |
+| `rate_limit.hit` | On each 429-class upstream signal from an adapter. |
+| `agent.retry_continuation` | When a "success without commit" exit triggers a continuation retry. |
+| `agent.progress_stalled` | When an agent's session log stops growing (progress watch). |
+| `agent.startup_exhausted` | When agent startup retries are exhausted. |
+| `worker.escalated` | When a worker is escalated. |
 
 These events accept any payload shape - no schema is enforced.
 
@@ -77,7 +84,8 @@ There are three registration channels:
 1. **Convention-based** - drop an executable at
    `.bernstein/hooks/<event>.{sh,py}`. The filename stem is matched
    against the event vocabulary; `preToolUse.sh`, `preToolUse.py`, and
-   `session_start.sh` are all valid examples.
+   `sessionStart.sh` are all valid examples (the stem must equal an
+   event value exactly, so `session_start.sh` is ignored).
 2. **Config-based** - declare scripts in `bernstein.yaml` under the
    top-level `hooks:` key. Use this when you want explicit ordering or
    a non-default timeout.
@@ -137,8 +145,8 @@ following environment variables on the subprocess:
 | `BERNSTEIN_WORKDIR` | Working directory the hook should treat as CWD. |
 | `BERNSTEIN_*` | Any other `BERNSTEIN_*` env variable inherited from the parent. |
 
-Anything else is stripped - secrets and unrelated process state do not
-leak into hook subprocesses.
+Apart from `PATH`, `HOME` and `USER`, everything else is stripped -
+secrets and unrelated process state do not leak into hook subprocesses.
 
 ### Output
 
@@ -149,7 +157,7 @@ treated as an implicit `allow`.
 | Decision | Effect |
 |----------|--------|
 | `{"decision": "allow"}` | Default. Continue the chain. |
-| `{"decision": "deny", "reason": "<text>"}` | For `preToolUse`, blocks the tool call and surfaces a structured audit-chain event. |
+| `{"decision": "deny", "reason": "<text>"}` | For `preToolUse`, raises `HookDenied` with the reason; no audit-chain event is recorded yet. |
 | `{"decision": "mutate", "data": {...}}` | Replaces `LifecycleContext.data` for the rest of the chain. |
 | `{"decision": "annotate", "data": {...}}` | Merges keys into `LifecycleContext.data` without replacing it. |
 
@@ -162,8 +170,8 @@ responses.
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | Success. Decision parsed from stdout (if any). |
-| `2` | Blocking error. Pipeline halts and stderr is surfaced. |
-| Any other non-zero | Treated as a failure, raises `HookFailure`. |
+| Any non-zero (including `2`) | Treated as a failure, raises `HookFailure` with the exit code and stderr. |
+| Timeout | Also raises `HookFailure` (default timeout 30 s, override with `timeout:` in config). |
 
 A `deny` decision is distinct from a non-zero exit: deny is a
 *structured* refusal that the orchestrator records as an audit event,
@@ -195,7 +203,7 @@ Smoke-test:
 
 ```bash
 bernstein hooks dry-run preToolUse
-# DENIED: preToolUse blocked by script:.bernstein/hooks/preToolUse.sh: shell.run blocked by site policy
+# DENIED: preToolUse blocked by script: shell.run blocked by site policy
 ```
 
 ---
@@ -274,17 +282,11 @@ prefer `dry-run` for new workflows since it ships sample payloads.
 
 ## Audit-chain integration
 
-Every `deny` decision in the `preToolUse` chain produces a structured
-audit event (issue #1316 surface). The event payload includes:
-
-- The event value (`preToolUse`).
-- The denying hook's label (e.g. `script:.bernstein/hooks/preToolUse.sh`).
-- The reason string returned by the hook.
-- The original `LifecycleContext.data` (with `tool`, `args`, etc.).
-
-These events are forwarded through the standard `on_audit_event`
-pluggy hook so any SIEM sink (Splunk, Datadog, Elastic, MQTT) sees
-denials automatically.
+A `deny` raises `HookDenied` (label `script` for script hooks, with the
+returned reason). No code path records a deny as an audit event or
+forwards it through `on_audit_event` yet, and the orchestrator does not
+dispatch `preToolUse`. Today a deny is observable through
+`bernstein hooks dry-run` (exit 2).
 
 ---
 

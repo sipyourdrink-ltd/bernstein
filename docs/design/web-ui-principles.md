@@ -1,6 +1,6 @@
 # Web UI — design principles
 
-The browser operator UI has eight screens, a task drawer with six feature
+The browser operator UI has ten screens, a task drawer with seven feature
 panels, and no written description of what it is trying to be. Contributors
 are adding screens against it (tracking issue #1262), and the vocabulary they
 match is whatever screen they happened to read first. This file is that
@@ -82,9 +82,11 @@ preference.
 | Agents | `web/src/routes/Agents.tsx` | configured adapters |
 | Missions | `web/src/routes/Missions.tsx` | mission-level grouping |
 | Settings | `web/src/routes/Settings.tsx` | local preferences |
+| Governance | `web/src/routes/Governance.tsx` | governance coverage |
+| Vocabulary | `web/src/routes/Vocabulary.tsx` | design-vocabulary reference (not in operator navigation) |
 
 Task drawer panels live under `web/src/components/<feature>/`: `artifacts`,
-`deps`, `diff`, `gates`, `logs`, `trace`.
+`deps`, `diff`, `gates`, `logs`, `steer`, `trace`.
 
 ## Using this file
 

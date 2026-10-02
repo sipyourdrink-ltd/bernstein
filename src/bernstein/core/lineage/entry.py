@@ -152,6 +152,11 @@ class LineageEntry:
     # directions (minimum over the closure vs maximum over it). When not None
     # must be one of SENSITIVITY_CLASSES.
     sensitivity: str | None = None
+    # Additive, optional (issue #5937). ``None`` is dropped from the canonical
+    # bytes so every historical entry keeps its exact wire form, signature and
+    # HMAC. Carries a foreign attestation with issuer metadata and opaque
+    # envelope. Not part of the HMAC audit chain.
+    external_attestation: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.v != LINEAGE_ENTRY_VERSION:
@@ -177,6 +182,30 @@ class LineageEntry:
             raise ValueError(f"model_ref must be a ModelRef instance, got {type(self.model_ref).__name__}")
         if self.sensitivity is not None and self.sensitivity not in SENSITIVITY_CLASSES:
             raise ValueError(f"unknown sensitivity: {self.sensitivity!r}")
+        if self.external_attestation is not None:
+            # Validate the external attestation structure
+            from .foreign_attestation import _REQUIRED_KEYS, _SHA256_DIGEST, _non_empty_string
+
+            if frozenset(self.external_attestation) != _REQUIRED_KEYS:
+                raise ValueError("external_attestation has unsupported or missing fields")
+
+            for field in ("issuer", "issuer_key_id", "claimed_subject"):
+                if not _non_empty_string(self.external_attestation[field]):
+                    raise ValueError(f"external_attestation requires a non-empty {field}")
+
+            content_hash = self.external_attestation["content_hash"]
+            if not isinstance(content_hash, str) or _SHA256_DIGEST.fullmatch(content_hash) is None:
+                raise ValueError("external_attestation requires a sha256 content_hash")
+
+            # Trust class validation is done by the foreign attestation verifier
+            envelope = self.external_attestation["envelope"]
+            if not isinstance(envelope, dict):
+                raise ValueError("external_attestation requires an envelope")
+            if not _non_empty_string(envelope.get("format")):
+                raise ValueError("external_attestation envelope requires a format")
+            payload_hash = envelope.get("payload_hash")
+            if not isinstance(payload_hash, str) or _SHA256_DIGEST.fullmatch(payload_hash) is None:
+                raise ValueError("external_attestation envelope requires a sha256 payload_hash")
 
 
 def _canonical_body(entry: LineageEntry) -> dict[str, object]:
@@ -201,6 +230,8 @@ def _canonical_body(entry: LineageEntry) -> dict[str, object]:
         body.pop("model_ref", None)
     if body.get("sensitivity") is None:
         body.pop("sensitivity", None)
+    if body.get("external_attestation") is None:
+        body.pop("external_attestation", None)
     return body
 
 

@@ -56,6 +56,7 @@ The surface Bernstein reads for an adapter's lifecycle signals.
 | `stream-json` | Newline-delimited JSON events from the upstream CLI. |
 | `text-signals` | Plain stdout carrying the canonical `BERNSTEIN:<KIND>` grammar (see [stream_signals.md](stream_signals.md)). |
 | `hooks` | The upstream SDK fires hooks/callbacks Bernstein registers against. |
+| `acp` | Typed JSON-RPC lifecycle events over the Agent Client Protocol (see [ADAPTER_GUIDE.md](ADAPTER_GUIDE.md#declaring-acp-as-the-event-channel)). |
 | `poll-pty` | No structured channel; Bernstein polls a PTY or log for liveness. |
 | `none` | No event channel; process-exit detection only. |
 
@@ -69,8 +70,9 @@ that decides which completion check owns the verdict.
 | `git-diff` | The run's product is a commit on the worktree branch. Completion is workspace HEAD movement (`commit_completion`). |
 | `artifact` | The run's product is a canonical artifact recorded as a signed lineage entry. Completion is the entry hash (`artifact_completion`); HEAD is not consulted. |
 
-Every shipped adapter declares `git-diff` (the default), so the coding path is
-unchanged. See [../operations/artifacts.md](../operations/artifacts.md) for the
+Coding adapters declare `git-diff` (the default), so the coding path is
+unchanged; the research and browser adapters (`computer_use`, `garak`,
+`gpt_researcher`, `holmesgpt`, `skyvern`, `tongyi_deepresearch`) declare `artifact`. See [../operations/artifacts.md](../operations/artifacts.md) for the
 artifact-mode completion path.
 
 ### Session state (`SessionState`)
@@ -86,7 +88,7 @@ replaying the same inputs can be expected to reproduce the same outputs.
 | `persistent-agent` | The agent keeps its own state across spawns - a server-side session, a memory store, a persistent thread. A replay is **not** reproducible: inputs Bernstein never saw can influence the run. |
 
 `stateless` is the default, so every adapter that has not declared otherwise
-keeps its existing meaning.
+keeps its existing meaning. Only `letta_code` declares `persistent-agent`.
 
 ## Declaring a strategy
 
@@ -117,17 +119,19 @@ git-diff output mode, stateless session state).
 Every shipped adapter must declare its strategy on each axis. The
 conformance harness calls `assert_strategies_declared()`, which raises
 `StrategyDeclarationError` listing any registry adapter missing a row in
-`STRATEGY_MATRIX`. `bernstein adapters check` surfaces the per-adapter
-strategy table (`strategy_conformance_table`) so operators can compare
-adapters at a glance.
+`STRATEGY_MATRIX`. `bernstein adapters check --format json` carries each
+adapter's declared strategy in its `strategy` field; `strategy_conformance_table()`
+in `conformance.py` builds the per-adapter strategy table for the live registry.
 
 ## Shipped adapter declarations
 
 | Adapter | Resume | Dangerous mode | Event channel |
 | --- | --- | --- | --- |
+| `agy` | unsupported | cli-flag | text-signals |
 | `aichat` | unsupported | unsupported | text-signals |
 | `aider` | unsupported | unsupported | text-signals |
 | `amp` | unsupported | unsupported | text-signals |
+| `antigravity` | unsupported | cli-flag | stream-json |
 | `auggie` | unsupported | unsupported | text-signals |
 | `autohand` | unsupported | unsupported | text-signals |
 | `charm` | unsupported | cli-flag | text-signals |
@@ -138,20 +142,25 @@ adapters at a glance.
 | `codex` | unsupported | cli-flag | text-signals |
 | `cody` | unsupported | unsupported | text-signals |
 | `composio` | unsupported | unsupported | hooks |
+| `computer_use` | unsupported | unsupported | poll-pty |
 | `continue` | unsupported | unsupported | text-signals |
 | `copilot` | unsupported | cli-flag | text-signals |
 | `cursor` | unsupported | cli-flag | stream-json |
 | `devin_terminal` | unsupported | unsupported | poll-pty |
 | `droid` | unsupported | unsupported | text-signals |
 | `forge` | unsupported | unsupported | text-signals |
+| `garak` | unsupported | unsupported | text-signals |
 | `gemini` | unsupported | cli-flag | stream-json |
 | `generic` | unsupported | unsupported | text-signals |
 | `goose` | unsupported | env-var | stream-json |
+| `gpt_researcher` | unsupported | unsupported | text-signals |
 | `gptme` | unsupported | unsupported | text-signals |
 | `hermes` | unsupported | always-on | text-signals |
+| `holmesgpt` | unsupported | unsupported | text-signals |
 | `iac` | unsupported | unsupported | text-signals |
 | `junie` | unsupported | unsupported | text-signals |
 | `kilo` | unsupported | unsupported | acp |
+| `kimchi` | flag | cli-flag | acp |
 | `kimi` | unsupported | cli-flag | text-signals |
 | `kiro` | unsupported | unsupported | text-signals |
 | `letta_code` | unsupported | cli-flag | stream-json |
@@ -165,10 +174,14 @@ adapters at a glance.
 | `openhands` | unsupported | unsupported | text-signals |
 | `pi` | unsupported | unsupported | text-signals |
 | `plandex` | unsupported | unsupported | text-signals |
+| `pydantic_ai` | unsupported | unsupported | text-signals |
+| `python_runtime` | unsupported | always-on | stream-json |
 | `q_dev` | unsupported | unsupported | text-signals |
 | `qwen` | unsupported | unsupported | text-signals |
 | `ralphex` | unsupported | unsupported | text-signals |
 | `rovo` | unsupported | cli-flag | text-signals |
+| `skyvern` | unsupported | unsupported | poll-pty |
+| `tongyi_deepresearch` | unsupported | unsupported | text-signals |
 
 The matrix is the source of truth; this table is regenerated from
 `strategy_conformance_table()`. Out of scope for this contract: runtime

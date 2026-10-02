@@ -16,16 +16,17 @@ locally without waiting for the cloud runner.
 | **Schemathesis**            | 5xx leaks against fuzzed REST inputs                              | PR (allow-list), nightly (full)  |
 | **CrossHair**               | Logic errors in pure helpers (concolic execution, assert checks)  | nightly only         |
 | **mutmut diff-only**        | Test-effectiveness gaps on PR-changed lines                       | PR (advisory)       |
-| **mutmut fixed paths**      | Per-module kill-rate gate on a fixed critical-path module list    | PR (path-filtered) + weekly cron  |
+| **mutmut fixed paths**      | Per-module kill-rate gate on a fixed critical-path module list    | weekly cron + manual dispatch  |
 | **mutmut full**             | Test-effectiveness gaps across the whole repo                     | nightly (advisory)  |
 | **Semgrep** (custom rules)  | eval/exec/pickle in production, env-leak in `_spawn_*`            | PR (ERROR fails)    |
 | **Bandit**                  | Generic Python security smells (shell=True, weak hash, tarfile)   | PR (HIGH only)      |
 | **pip-audit**               | Known PyPI CVEs in production deps                                | PR (strict)         |
-| **Beartype** (claw)         | Runtime type-contract violations on public security/cluster APIs  | PR                  |
+| **Beartype** (claw)         | Runtime type-contract violations in the allow-listed strict zone (`tests/_beartype_claw.py`; today `core.persistence.lineage_signer`) | PR                  |
 | **syrupy** (snapshot)       | JSONL/audit/lineage wire-format drift                             | PR                  |
-| **Pyright strict zone**     | Untyped/implicit-Any leakage in `core/security/`, `core/protocols/cluster/` | PR                  |
-| **mypy strict zone**        | Same, from mypy's inference, in `core/{evidence,identity,lineage,persistence}/` | PR                  |
+| **Pyright strict zone**     | Untyped/implicit-Any leakage in the allow-list in `pyrightconfig.strict.json` (lineage, lineage signer, WAL, lineage v2 store) | PR                  |
+| **mypy strict zone**        | Same, from mypy's inference, in `core/{evidence,identity,lineage,persistence}/` and `cli/commands/pr_cmd.py` | PR                  |
 | **Vulture**                 | Dead code (unused functions/classes/vars at confidence ≥80)       | PR                  |
+| **Unreachable controls**    | Security/identity symbols with no production caller or stale allowlist reasons | PR unit suite |
 | **diff-cover** (LEVEL 1)    | Changed lines below the committed diff-coverage floor             | PR (advisory)       |
 | **coverage ratchet** (LEVEL 2) | Total coverage dropped below the committed high-water mark      | push to main (advisory) |
 | **import-linter**           | Architecture-contract violations (cross-package imports)          | PR                  |
@@ -33,7 +34,7 @@ locally without waiting for the cloud runner.
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
-| **Web Node tests**          | Pre-hydration theme resolution and browser-bootstrap safety         | PR (focused)        |
+| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes | local only (`cd web && npm test`; not run in CI) |
 
 ## Web UI tests
 
@@ -106,8 +107,9 @@ BERNSTEIN_AUTH_DISABLED=1 SCHEMATHESIS_PROFILE=smoke \
 
 # Semgrep (project rules; ERROR severity is the PR gate).
 # Install once via `uv tool install semgrep` - semgrep's transitive
-# pins (click<8.2, opentelemetry-sdk<1.26) conflict with our project
-# floors, so it lives in its own venv outside `uv sync`.
+# pins (click<8.2, opentelemetry-sdk<1.38) conflict with our project
+# floors (click>=8.3.3, opentelemetry-sdk>=1.41.1), so it lives in its
+# own venv outside `uv sync`.
 uv tool install semgrep
 uv tool run semgrep --config .semgrep.yml --severity ERROR --error src/
 
@@ -117,16 +119,14 @@ uv run bandit -r src/ -ll --severity-level high -b .bandit-baseline.json
 # pip-audit
 uv run pip-audit --strict
 
-# Beartype claw - runs the focused unit tests under runtime type
-# enforcement on core.security + core.agents + core.protocols.cluster
+# Beartype claw - runs the lineage-signer unit tests under runtime type
+# enforcement (allow-list: tests/_beartype_claw.py)
 BEARTYPE_USE_CLAW=enable \
   uv run pytest tests/unit/ -q --no-cov \
-  -k 'security or agent or cluster or audit or lineage'
+  -k 'lineage_signer or lineage_record or lineage_export'
 
 # Pyright strict zone
-uv run pyright --typecheckingmode strict \
-  src/bernstein/core/security/ \
-  src/bernstein/core/protocols/cluster/
+uv run pyright --project pyrightconfig.strict.json
 
 # mypy strict zone (gated). Widen it by removing entries from `exclude`
 # in mypy.gate.ini as each module reaches strict cleanliness.
@@ -138,7 +138,7 @@ uv run mypy --config-file mypy.gate.ini
 uv run mypy src
 
 # Vulture
-vulture src/ vulture_whitelist.py --min-confidence 80 --exclude tests,docs
+vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
 # Diff-cover (after a coverage run). The floor is the committed
 # diff_coverage_floor_percent in .coverage-baseline.json (LEVEL 1 of the
@@ -161,6 +161,16 @@ uv run python scripts/coverage_ratchet.py verify \
 ```
 
 ## When a tool fires on you
+
+### Unreachable controls
+Run `uv run python scripts/check_unreachable_controls.py` to compare the
+security/identity tree with `unreachable_controls_allowlist.txt`. The checker
+tracks calls through imported modules and aliases for top-level symbols;
+unrelated object methods with the same name do not count as callers. It still
+uses conservative name matching for unqualified references and methods. If a
+finding is truly uncalled, record a specific reason in the allowlist. If a
+production caller exists, extend the checker and its synthetic-tree tests to
+recognize that binding before updating the allowlist.
 
 ### Semgrep ERROR
 The rule is intentionally tight. If you genuinely need the pattern,
@@ -205,24 +215,27 @@ in a comment-only path), document why in `mutmut_config.py`.
 ### mutmut fixed-paths gate
 `mutation-fixed.yml` runs `scripts/mutmut_critical.py` against a
 fixed list of high-risk modules (atomic claim, HMAC audit chain,
-audit integrity verifier, lineage v1 trio, seed parser) and gates
+audit integrity verifier, lineage gate/tips/merge, seed parser, journal verify,
+sandbox eval, policy engine, compliance policies, audit pack) and gates
 on a per-module kill rate. The module list, per-module thresholds,
 and wall-clock budgets live in `scripts/mutmut_critical.py:MODULES`.
 
 The gate enforces per module: `continue-on-error` in the workflow's
 matrix `include` is `false` for every module that holds its threshold
 with real margin, so a regression there fails the weekly audit run.
-`audit_log` is the one pinned exception - its kill rate is well below threshold and needs test
-backfill on `src/bernstein/core/security/audit.py` before it can gate
-for real (`tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES`
-is the source of truth for which modules are still advisory). Each
+`audit_log`, `sandbox_eval`, `policy_engine`, `compliance_policies` and
+`audit_pack` are the pinned exceptions that stay advisory (`audit_log`'s
+kill rate is well below threshold and needs test backfill on
+`src/bernstein/core/security/audit.py` before it can gate for real;
+`tests/unit/test_mutation_fixed_workflow_yaml.py:ADVISORY_MODULES` is the
+source of truth). Each
 module uploads its result JSON - score and survivor list - as a
 workflow artifact either way.
 
 Reproduce locally:
 
 ```bash
-# All modules (slow - budgets sum to about an hour).
+# All modules (slow - budgets sum to about three and a half hours).
 uv run python scripts/mutmut_critical.py
 
 # One module:
@@ -231,9 +244,11 @@ uv run python scripts/mutmut_critical.py --list   # show keys
 ```
 
 Adding a module to the gate: extend `MODULES` in
-`scripts/mutmut_critical.py`, mirror the matrix in
-`.github/workflows/mutation-fixed.yml`, and add the source/test
-paths to the `paths:` filter on the same workflow.
+`scripts/mutmut_critical.py`, add the key to
+`jobs.mutate.strategy.matrix.module` in
+`.github/workflows/mutation-fixed.yml` with a matching `include` entry
+(`advisory: false` unless it is added to `ADVISORY_MODULES` in
+`tests/unit/test_mutation_fixed_workflow_yaml.py`).
 
 ## Hermetic unit tests (no network)
 
@@ -331,6 +346,8 @@ that runs the same fixture through N adapters in parallel and reports
 the per-adapter and aggregate consensus precision/recall split:
 
 ```python
+from pathlib import Path
+
 from bernstein.eval.pentest_runner import (
     load_scenario_config,
     mock_adapter,
@@ -368,9 +385,10 @@ output exactly - existing scripts keep working unchanged.
 
 PR-time CI must stay under 2× the pre-2026 baseline. Heavy work
 (full mutmut, deep Hypothesis, full Schemathesis, full CrossHair)
-runs only in `nightly-deep-tests.yml` (cron `0 3 * * *`) and is
-explicitly `continue-on-error` so an overnight regression doesn't
-block tomorrow's PRs.
+runs only in `nightly-deep-tests.yml` (cron `0 3 * * *`). That
+workflow has no `pull_request` trigger and is not a required check, so
+a red night blocks no PR. Its jobs are not `continue-on-error`;
+genuinely advisory tools tolerate failure with a step-level `|| true`.
 
 The added PR-time jobs target ≤8 min wall-clock each and run in
 parallel after the lint job clears (so a typo PR fails fast in <2
@@ -436,13 +454,18 @@ uv run python scripts/run_tests.py --shard 1/4 --record-durations
 In CI the `ubuntu`/`windows` `Test` cells fan out across a `shard`
 matrix dimension; the rolled-up `needs.test.result` the `CI gate`
 aggregator reads is `failure` if *any* shard cell fails, so every shard
-is still required. Coverage / JUnit / Codecov upload runs on shard 1
-only (its own file loop still covers every file, so the pin
-deduplicates without narrowing coverage). The `macos` cell keeps a
-single literal job name (branch-protection required-context); it runs a
-deterministic `--shard 1/4` subset on push and the affected slice on
-PRs, with `ci-macos-nightly.yml` running the full macOS matrix daily as
-the safety net.
+is still required. Each ubuntu Python 3.13 shard uploads its own
+`.coverage.<shard>` artifact on pushes to main (and on manual dispatches
+on main). The `coverage-report` job, which runs on main only for a
+manual dispatch or a release commit (`chore(release)` / `release:`),
+combines the four shards and uploads to Codecov. No JUnit report is
+produced. The only shard-1 pin is the capability-matrix spawn-refusal
+integration test, so it runs once per cell. The `test-macos` job shards
+the file list across four cells (templated name; no test cell is a
+required context). It runs only when the diff is macOS-sensitive or the
+PR carries `macos-needed`, never in the merge queue, and
+`ci-macos-nightly.yml` runs the full macOS suite daily as the safety
+net.
 
 ### Legacy import aliases and `--affected`
 

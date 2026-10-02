@@ -387,11 +387,13 @@ class SLAStore:
                 if it does not land directly in the store directory.
         """
         if not _CONTRACT_ID_RE.match(contract_id):
-            raise SLAContractIdError(f"invalid SLA contract id '{for_log(contract_id, limit=256)}'")
+            shown = for_log(contract_id, limit=256, escape_nonprintable=True)
+            raise SLAContractIdError(f"invalid SLA contract id '{shown}'")
         base = os.path.normpath(str(self._dir))
         candidate = os.path.normpath(os.path.join(base, f"{contract_id}.json"))
         if not candidate.startswith(base + os.sep) or os.path.dirname(candidate) != base:
-            raise SLAContractIdError(f"SLA contract id '{for_log(contract_id, limit=256)}' escapes the contract store")
+            shown = for_log(contract_id, limit=256, escape_nonprintable=True)
+            raise SLAContractIdError(f"SLA contract id '{shown}' escapes the contract store")
         return Path(candidate)
 
     def add(self, contract: SLAContract, *, now: float | None = None) -> SLAContract:
@@ -444,7 +446,11 @@ def _load_contract(path: Path) -> SLAContract | None:
     try:
         raw: Any = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Could not load SLA contract %s: %s", for_log(path, limit=256), for_log(exc, limit=256))
+        logger.warning(
+            "Could not load SLA contract %s: %s",
+            for_log(path, limit=256, escape_nonprintable=True),
+            for_log(exc, limit=256, escape_nonprintable=True),
+        )
         return None
     if not isinstance(raw, dict):
         return None
@@ -452,7 +458,11 @@ def _load_contract(path: Path) -> SLAContract | None:
     try:
         return contract_from_dict(data)
     except SLAContractError as exc:
-        logger.warning("Malformed SLA contract %s: %s", for_log(path, limit=256), for_log(exc, limit=256))
+        logger.warning(
+            "Malformed SLA contract %s: %s",
+            for_log(path, limit=256, escape_nonprintable=True),
+            for_log(exc, limit=256, escape_nonprintable=True),
+        )
         return None
 
 

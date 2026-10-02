@@ -26,9 +26,13 @@ It is also the tool we reach for when:
 
 ## How to use it
 
-Lineage records are emitted automatically by the WAL writer on every
-`apply_patch`-style tool call. There is nothing to enable for the
-write side. To read the chain back, use the `lineage` CLI:
+Per-artifact spine entries are emitted at the in-process write
+boundary (`record_artifact_write`) into `.sdd/lineage/<run_id>/spine.jsonl`;
+`bernstein lineage verify` and `lineage replay` read them. The file walk
+(`bernstein lineage <file>[:line]`), `lineage export` and `LineageReader`
+read `LineageRecord` rows from the run WAL, which only the deprecated
+`LineageWriter.emit` writes and no shipped path calls, so on a current
+run they return no records. The `lineage` CLI:
 
 ```bash
 # Walk the chain for one file (or one line within it)
@@ -38,7 +42,7 @@ bernstein lineage src/foo.py:42
 # Filter by run
 bernstein lineage src/foo.py --run r-2026-05-05
 
-# Export for a regulator (HTML / CSV / JSON-LD)
+# Export for a regulator (HTML / CSV / JSON-LD / OpenLineage)
 bernstein lineage export r-2026-05-05 --format html  --output /tmp/audit.html
 bernstein lineage export r-2026-05-05 --format csv   --output /tmp/audit.csv
 bernstein lineage export r-2026-05-05 --format jsonld --output /tmp/audit.jsonld
@@ -47,9 +51,9 @@ bernstein lineage export r-2026-05-05 --format jsonld --output /tmp/audit.jsonld
 bernstein lineage verify r-2026-05-05
 ```
 
-The chain walks output → producing prompt → input artefact → upstream
-producer recursively. CLI text output prints the most recent producer
-first; `--limit` caps how many records are shown.
+The walk lists the records whose output artefact matches the path (and
+line); it does not recurse into input artefacts. Output is chronological
+with the newest record last; `--limit` (default 20) keeps the most recent N.
 
 ### Coverage and the `SEAL_ONLY` verify status
 
@@ -108,14 +112,18 @@ Each `LineageRecord` carries:
 
 ## Configuration
 
+The `tuning.lineage.*` fields below are accepted in `bernstein.yaml` and
+stored on `defaults.LINEAGE`, but no shipped code path reads them today; a
+regulatory class or customer signature is applied only when a caller
+constructs `LineageWriter(signer=..., default_regulatory_class=...)`
+directly.
+
 | Knob | Default | Controls |
 |---|--:|---|
-| `lineage.enabled` | `true` | Emit records on every write. |
-| `lineage.compaction.enabled` | `true` | Janitor gzips per-day files at compaction time. |
-| `lineage.regulatory_class.default` | `null` | Pin a default regulatory class for the run. |
-| `lineage.customer_signing.*` | see [regulator doc](../compliance/regulatory-lineage.md) | Customer-key signing knobs. |
-
-`bernstein debug bundle` includes the lineage graph for the run.
+| `tuning.lineage.regulatory_class_default` | `null` | Pin a default regulatory class for the run. |
+| `tuning.lineage.customer_signing_enabled` | `false` | Customer-key signing (see [regulator doc](../compliance/regulatory-lineage.md)). |
+| `tuning.lineage.customer_signing_key_path` / `customer_signing_key_kind` | `null` / `ed25519` | Customer-key signing knobs. |
+| `tuning.lineage.tamper_alert_*` | off | Tamper-alert webhook knobs. |
 
 ## Limitations
 
@@ -123,7 +131,7 @@ Each `LineageRecord` carries:
   per-run records, join externally).
 - No backfill. Historical writes from before the feature was enabled
   have no records.
-- CLI text and HTML/CSV/JSON-LD exporters; no GUI.
+- CLI text and HTML/CSV/JSON-LD/OpenLineage exporters; no GUI.
 - PII redaction lives in `core/security/pii_output_gate.py`; lineage
   records inherit whatever redaction the audit log already applies -
   no extra layer.

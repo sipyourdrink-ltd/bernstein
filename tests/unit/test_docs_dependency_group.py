@@ -59,3 +59,14 @@ def test_docs_group_mirrors_requirements_in() -> None:
     """The two toolchain declarations must name the same packages at the same floors."""
     in_text = REQUIREMENTS_IN.read_text(encoding="utf-8")
     assert _normalised(_docs_group()) == _normalised(_direct_requirements(in_text))
+
+
+def test_docs_group_rejects_mkdocs_redirects_123() -> None:
+    """The live .in specifier must reject 1.2.3 because it adds the properdocs dependency."""
+    in_text = REQUIREMENTS_IN.read_text(encoding="utf-8")
+    requirements = _direct_requirements(in_text)
+
+    redirects_req = next((req for req in requirements if req.name == "mkdocs-redirects"), None)
+    assert redirects_req is not None, "mkdocs-redirects must be declared"
+
+    assert not redirects_req.specifier.contains("1.2.3"), "mkdocs-redirects 1.2.3 must be rejected by the specifier"
