@@ -39,6 +39,7 @@ from bernstein.core.log_redact import install_pii_filter
 from bernstein.core.orchestration.preflight import (
     _claude_has_oauth_session,
     _codex_has_auth,
+    check_adapter_configured,
     gemini_has_auth,
     preflight_checks,
 )
@@ -1068,7 +1069,7 @@ def _supervisor_should_stand_down(workdir: Path) -> str | None:
       ordinary restart default is untouched. Reading the journal directly
       (rather than the audit-chain closure marker ``_restart_spawner``
       reconciles as bookkeeping) keeps this cheap enough to call every poll --
-      the marker it looks for is written once, at the very end of one run's
+      the marker it looks for is written once, near the end of one run's
       own small journal, not re-derived by re-verifying the whole project's
       audit history.
 
@@ -1096,7 +1097,9 @@ def _supervisor_should_stand_down(workdir: Path) -> str | None:
     if owner is not None:
         journal_path = contained_run_journal(sdd_dir / "runs", owner.run_id)
         events = load_events(journal_path).events if journal_path is not None else []
-        if events and events[-1].get("event") == "run_completed":
+        # ``run_completed`` is not the last row: the shutdown sequence appends
+        # ``run_quiescence`` after it, so look for it rather than at the tail.
+        if any(event.get("event") == "run_completed" for event in events):
             return f"run {owner.run_id} already self-stopped cleanly (run_completed journaled)"
     return None
 
@@ -1212,6 +1215,7 @@ def run_watchdog(
             now=now,
             restart_fn=_restart_spawner,
             liveness=spawner_liveness,
+            workdir=workdir,
         )
 
 
@@ -1503,6 +1507,12 @@ def _bootstrap_from_goal_impl(
         console.print(f"[green]{_icons.arrow_right}[/green] Created .sdd/ workspace")
     else:
         console.print(f"[green]{_icons.arrow_right}[/green] Workspace ready")
+
+    # An inline goal carries no seed, so the orchestrator subprocess can only learn
+    # its adapter from a concrete ``cli`` or BERNSTEIN_ADAPTER. Checked after the
+    # workspace step so a first-run ``bernstein.yaml`` is already in place, and
+    # before the server and watchdog exist to be left running behind a dead run (#6126).
+    check_adapter_configured(cli, workdir)
 
     with Status("[bold]Loading agent catalog...[/bold]", console=console):
         _discover_catalog(workdir)

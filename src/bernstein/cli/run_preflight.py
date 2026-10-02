@@ -696,11 +696,24 @@ class TaskStateProgressTracker:
     Emits one line per state transition:
     task <id> <state> adapter=<name> model=<route> title="<first 60 chars>"
     plus a 'planned' line when the task is first observed.
+
+    Task rows carry an adapter or model only when one was routed to that task
+    specifically; every other task runs on the run's own adapter and model,
+    which ``default_adapter`` / ``default_model`` name. ``unknown`` is left for
+    a run whose adapter is auto-detected inside the orchestrator.
     """
 
-    def __init__(self, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        *,
+        default_adapter: str | None = None,
+        default_model: str | None = None,
+    ) -> None:
         self.console = console or make_console()
         self.seen_states: dict[str, str] = {}
+        self.default_adapter = default_adapter or "unknown"
+        self.default_model = default_model or "unknown"
 
     @staticmethod
     def format_line(task_id: str, state: str, adapter: str, model: str, title: str) -> str:
@@ -714,8 +727,8 @@ class TaskStateProgressTracker:
             if not task_id:
                 continue
             current_state = str(task.get("status") or "open")
-            adapter = str(task.get("adapter") or task.get("cli") or "unknown")
-            model = str(task.get("model") or "unknown")
+            adapter = str(task.get("adapter") or task.get("cli") or self.default_adapter)
+            model = str(task.get("model") or self.default_model)
             title = str(task.get("title") or "")
 
             if task_id not in self.seen_states:
@@ -753,7 +766,12 @@ class TaskStateProgressTracker:
             return []
 
 
-def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
+def _finalize_run_output(
+    *,
+    quiet: bool,
+    wait: float | None = None,
+    seed: SeedConfig | None = None,
+) -> None:
     """Render either the interactive dashboard or the final summary.
 
     Uses terminal capability detection (TUI-003) to choose between the
@@ -800,6 +818,8 @@ def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
         quiet: When True, wait for quiescence and print only the terminal summary.
         wait: Seconds to wait for quiescence, keeping the progress output;
             None detaches as before.
+        seed: The run's resolved seed. Its adapter and model label the
+            non-interactive progress lines of tasks routed to neither.
     """
     from bernstein.cli.run_bootstrap import (
         _RUN_WAIT_DEFAULT_S,
@@ -859,7 +879,12 @@ def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
             # outcome and surface a refusal as a non-zero exit.
             from bernstein.cli.run_bootstrap import _await_first_spawn_outcome
 
-            tracker = TaskStateProgressTracker(console=console)
+            run_adapter = seed.cli if seed is not None and seed.cli != "auto" else None
+            tracker = TaskStateProgressTracker(
+                console=console,
+                default_adapter=run_adapter,
+                default_model=seed.model if seed is not None else None,
+            )
             tracker.poll()
             outcome, reason = _await_first_spawn_outcome(on_poll=tracker.poll)
             tracker.poll()

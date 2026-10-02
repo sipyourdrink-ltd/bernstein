@@ -15,11 +15,14 @@ journal entry are the other slices and are not here.
 
 from __future__ import annotations
 
+import subprocess
+import time
+from threading import Event
 from typing import TYPE_CHECKING
 
 import pytest
 
-from bernstein.core.agents import agent_discovery
+from bernstein.core.agents import agent_discovery, detector_runtime
 from bernstein.core.agents.agent_discovery import (
     DetectorRegistration,
     register_detector,
@@ -144,3 +147,77 @@ def test_unregistering_removes_the_pair(clean_registry: list[DetectorRegistratio
     unregister_detector(registration)
     assert resolve_detector("ephemeral") is None
     unregister_detector(registration)
+
+
+def test_hanging_registered_detector_does_not_block_later_adapter(
+    clean_registry: list[DetectorRegistration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deep detector that misses its deadline cannot stop the registry sweep."""
+    release = Event()
+    collected: list[str] = []
+
+    def _hang(name: str) -> tuple[AgentCapabilities | None, list[str]]:
+        collected.append(name)
+        release.wait(1.0)
+        return None, []
+
+    def _after(name: str) -> tuple[AgentCapabilities | None, list[str]]:
+        collected.append(name)
+        return None, ["after answered"]
+
+    register_detector(lambda name: name == "hang", _hang, source="test:hang")
+    register_detector(lambda name: name == "after", _after, source="test:after")
+    monkeypatch.setattr(
+        "bernstein.adapters.registry.iter_adapter_specs", lambda: iter((("hang", object()), ("after", object())))
+    )
+    monkeypatch.setattr(detector_runtime, "_DETECTOR_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(detector_runtime, "_DETECTOR_START_JITTER_S", 0.0)
+
+    started = time.monotonic()
+    try:
+        result = agent_discovery.discover_agents()
+    finally:
+        release.set()
+
+    assert time.monotonic() - started < 0.5
+    assert collected == ["hang", "after"]
+    assert result.warnings == ["after answered"]
+
+
+def test_builtin_multi_probe_detector_can_exceed_one_subprocess_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three individually in-budget OpenCode probes may cumulatively exceed 3s."""
+    calls: list[tuple[str, ...]] = []
+
+    def _slow_probe(
+        cmd: list[str], timeout: float = agent_discovery._PROBE_TIMEOUT_S
+    ) -> subprocess.CompletedProcess[str]:
+        assert timeout == agent_discovery._PROBE_TIMEOUT_S == 3.0
+        calls.append(tuple(cmd))
+        time.sleep(1.05)
+        if cmd[-1] == "--version":
+            stdout = "opencode 1.2.3\n"
+        elif cmd[-2:] == ["auth", "list"]:
+            stdout = "openai\n"
+        else:
+            stdout = "model-x\n"
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("bernstein.adapters.registry.iter_adapter_specs", lambda: iter((("opencode", object()),)))
+    monkeypatch.setattr(agent_discovery.shutil, "which", lambda binary: f"/usr/local/bin/{binary}")
+    monkeypatch.setattr(agent_discovery, "_run_probe", _slow_probe)
+    monkeypatch.setattr(detector_runtime, "_DETECTOR_START_JITTER_S", 0.0)
+
+    started = time.monotonic()
+    result = agent_discovery.discover_agents()
+    elapsed = time.monotonic() - started
+
+    assert calls == [
+        ("opencode", "--version"),
+        ("opencode", "auth", "list"),
+        ("opencode", "models"),
+    ]
+    assert elapsed > agent_discovery._PROBE_TIMEOUT_S
+    assert [agent.name for agent in result.agents] == ["opencode"]
+    assert result.agents[0].version == "1.2.3"
+    assert result.agents[0].available_models == ["model-x"]

@@ -15,6 +15,7 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 | RPM smoke safety net | Daily, regardless of diff | `.github/workflows/install-smoke-rpm-nightly.yml` |
 | macOS safety net | Nightly + push-on-sensitive | `.github/workflows/ci-macos-nightly.yml` |
 | Required check | Single `CI gate` job | `.github/workflows/ci.yml` |
+| Gate-evasion floor | Required on quality/corpus/benchmark/tool/baseline changes (#6154) | `.github/gate-evasion-baseline.json` |
 | Post-merge full suite | Current `main`, every 45 minutes when CI-relevant pushes landed | `.github/workflows/ci-post-merge-cadence.yml` |
 | Concurrency | PR + ordinary main push cancel stale runs; full-suite dispatches do not | `.github/workflows/ci.yml` |
 | Integration suite | Whole directory, every event, via `integration-tests` | `.github/workflows/ci.yml` |
@@ -25,12 +26,37 @@ documentation read the inline comments in `.github/workflows/ci.yml`.
 
 ## Test directory coverage
 
+### Gate-evasion baseline is required on relevant changes
+
+The `gate-evasion` job runs on changes to
+`src/bernstein/core/quality/**`, `src/bernstein/eval/cases/gate_evasion/**`,
+the gate-evasion benchmark/check implementation, the committed baseline,
+`pyproject.toml`, `uv.lock`, and the CI gate definition/tests. The
+`determine-changes` planner uses the pull-request merge diff, or the
+`merge_group` base SHA for the combined queue batch; failures to calculate
+the diff choose **run**, never skip. On a truly unrelated diff, the planner
+publishes `gate_evasion_relevant=false` and `CI gate` permits only that
+explicit skip. Missing/unknown planner outputs, cancellation, unexpected
+skips, or a failing gate-evasion job make the required roll-up fail.
+
+The job uses bootstrap Python 3.13, `uv sync --locked --group dev --python
+3.13`, and `uv run --no-sync bernstein bench gate-evasion-baseline` in the
+same environment; a separate `uv tool install vulture` does not provide the
+tested interpreter's `vulture`. The baseline records tool versions and hashes
+the full corpus bytes, so any different environment, changed fixture,
+incomplete result or caught-to-missed regression fails rather than lowering
+the sample size. Deliberate baseline changes require a local `--update
+--reason` run, a second read-only check, and a reviewed commit. CI cannot
+update this artifact. See [the baseline procedure](../eval/bench.md#required-catch-rate-baseline-6154)
+for commands and the limits of content-addressing (it is not a signature).
+
 Every test file must be reachable from a CI lane. The mapping:
 
 | Directory | Lane | Events | Selection |
 |---|---|---|---|
 | `tests/unit/**` | `test` (4 shards x os x python) | pull_request | impacted slice from the shared affected-test plan |
-| `tests/unit/**` | `test` (8 ubuntu / 4 windows shards x python) | merge_group, workflow_dispatch, release push | whole directory |
+| `tests/unit/**` | `test` (8 ubuntu shards) | merge_group | whole directory |
+| `tests/unit/**` | `test` (8 ubuntu / 4 windows shards x python) | workflow_dispatch, release push | whole directory |
 | `tests/integration/**` | `test` (4 shards x os x python) | pull_request | impacted slice from the shared affected-test plan |
 | `tests/integration/**` | `integration-tests` | all | whole directory |
 | `tests/property/**` | `property-tests` | all | whole directory |
@@ -48,9 +74,12 @@ Two things this table is deliberately explicit about:
   against the event's pinned base SHA and uploads it as an artifact. Every Linux
   and macOS shard downloads that same plan, so delayed cells cannot select
   different lists. The artifact digest is a planner output, and reruns reuse
-  the run-scoped artifact. The whole `tests/unit/**` directory runs in the merge
-  queue and on full workflow dispatches (plus immediate release pushes), not on
-  a PR or an ordinary post-merge push. A file that no lane other than the
+  the run-scoped artifact. On `merge_group` there is no plan and every shard
+  runs the whole list: the group is the last check before `main`, and a
+  tree-wide gate such as unreachable controls fails on a change that no
+  file-level slice maps to it (#5743 passed a sliced group and broke `main`). The whole
+  `tests/unit/**` directory runs on full workflow dispatches (the post-merge
+  cadence) and immediate release pushes. A file that no lane other than the
   affected slice covers is therefore not guaranteed to run before a merge.
 - An empty affected set is a named `Nothing affected` planner step that prints
   the base and head SHAs. Empty individual shards also have a named step.

@@ -58,6 +58,7 @@ _ALLOWED_IMPORT_ROOTS = frozenset(
         "fastapi",
         "typing",
         "pathlib",
+        "threading",
     }
 )
 

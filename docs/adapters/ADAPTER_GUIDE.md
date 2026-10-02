@@ -50,7 +50,7 @@ This means you can run Bernstein with **zero Claude Code dependency** - use `qwe
 | `continue` | Multi | Anthropic/OpenAI/Google | Inherited from model | $–$$$ | Full | No | Teams with existing Continue.dev configurations |
 | `opencode` | Multi | Any configured provider | Inherited from model | $–$$$ | Full | JSON (`--format json`) | No | Multi-provider setups; single CLI interface |
 | `kiro` | AWS | AWS-managed models | ★★★ | $$ | Full | No | AWS-centric teams using AWS AI services |
-| `kilo` | Stackblitz | Any (via provider routing) | Inherited from model | $–$$$ | Full | No | Web development; Stackblitz-integrated teams |
+| `kilo` | Kilo Code | Any (via provider routing) | Inherited from model | $–$$$ | Full | No | Teams already using Kilo Code |
 | `kimchi` | Open-weight / Hosted | Open-weight, Ollama, hosted | ★★★★ | $–$$$ | Full | ACP (`--mode acp`) | No | Open-weight or Ollama-hosted models; unattended runs completing on a commit |
 | `iac` | N/A | N/A (Terraform/Pulumi) | N/A | N/A | IaC plan+apply | No | Infrastructure tasks - pair with LLM adapter for codegen |
 | `generic` | Any | Pass-through | Depends on CLI | Varies | Depends on CLI | No | Unlisted CLIs; prototyping new adapters |
@@ -182,15 +182,15 @@ npm install -g @google/gemini-cli
 
 **Best for:** Free tier users (generous free quota). Cost-effective for medium-complexity tasks. Good as a tertiary provider for rate-limit resilience.
 
-**Lane split:** the `gemini` key also resolves the `antigravity` binary; the same adapter discovers `antigravity` first on PATH and falls back to `gemini`. The `gemini`/`antigravity` keys cover the enterprise / API-key lane; consumer-lane operators should route through the separate `agy` adapter (see [agy.md](agy.md)).
+**Lane split:** the `gemini` key covers the enterprise / API-key lane; consumer-lane operators should route through the separate `agy` adapter (see [agy.md](agy.md)), which is also registered as `antigravity`.
 
 ---
 
 ### agy (Google Antigravity successor CLI)
 
 Successor CLI for the discontinued non-enterprise hosted Gemini backend. A
-separate registry entry from `gemini`/`antigravity`, which stay on the
-dual-binary enterprise / API-key lane. See [agy.md](agy.md) for the full
+separate adapter from `gemini`, which stays on the enterprise / API-key
+lane. The `antigravity` registry key is an alias of `agy`. See [agy.md](agy.md) for the full
 split and configuration knobs.
 
 ---
@@ -444,7 +444,7 @@ npm install -g opencode-ai
 
 ---
 
-### kilo (Stackblitz)
+### kilo (Kilo Code)
 
 **Install:**
 ```bash
@@ -455,9 +455,9 @@ npm install -g kilocode
 - ACP/MCP protocol support
 - MCP config injection via `--mcp` flag
 - Auto-approve mode (`--yes`)
-- Provider routing via Stackblitz's model infrastructure
+- Provider routing through the providers configured in Kilo
 
-**Best for:** Web development workflows and Stackblitz-integrated teams. Kilo's ACP support means it can participate in Bernstein's agent-to-agent communication protocols.
+**Best for:** Teams already using Kilo Code. Kilo's ACP support means it can participate in Bernstein's agent-to-agent communication protocols.
 
 ---
 

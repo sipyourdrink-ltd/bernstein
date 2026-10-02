@@ -464,13 +464,19 @@ def _invoke_verifier(
     """Run ``verifier_path`` as a subprocess against one receipt file.
 
     Every implementation is invoked the same way this project's own
-    standalone verifier is: ``<verifier> --receipt <path> --format <fmt>``,
-    exit 0 = accept, nonzero = reject. A ``.py`` verifier runs under this
-    interpreter; anything else runs directly, so a non-Python implementation
-    that speaks the same two flags can be pointed at the corpus too.
+    standalone verifier is: ``<verifier> --receipt <path> --format <fmt>
+    --allow-unpinned-key``, exit 0 = accept, nonzero = reject. A ``.py``
+    verifier runs under this interpreter; anything else runs directly, so a
+    non-Python implementation that speaks the same flags can be pointed at
+    the corpus too.
+
+    ``--allow-unpinned-key`` is passed because the corpus measures format and
+    binding requirements, not key trust: its cases are signed with a
+    throwaway corpus key that nobody pins, and a verifier that (correctly)
+    refuses an unpinned key by default would otherwise reject every case.
     """
     argv = [sys.executable, str(verifier_path)] if verifier_path.suffix == ".py" else [str(verifier_path)]
-    argv += ["--receipt", str(receipt_path), "--format", verify_format]
+    argv += ["--receipt", str(receipt_path), "--format", verify_format, "--allow-unpinned-key"]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -560,7 +566,7 @@ def _run_verifier_verbose(
     requirement is reported unattributed (see :func:`evaluate_receipt`).
     """
     argv = [sys.executable, str(verifier_path)] if verifier_path.suffix == ".py" else [str(verifier_path)]
-    argv += ["--receipt", str(receipt_path), "--format", "all", "--verbose"]
+    argv += ["--receipt", str(receipt_path), "--format", "all", "--verbose", "--allow-unpinned-key"]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=timeout)
     except subprocess.TimeoutExpired:

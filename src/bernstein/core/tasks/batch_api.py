@@ -386,6 +386,28 @@ class ProviderBatchManager:
             return BatchSubmissionResult(handled=False, submitted=False)
         assert provider_kind is not None
 
+        # Model-registry gate: a provider batch is a dispatch of its own, so the
+        # routed model is checked here before any worktree or provider job
+        # exists. A refusal declines the batch route; the realtime spawn path
+        # then applies the same policy to the task.
+        from bernstein.core.routing.route_decision import (
+            ModelNotAdmittedError,
+            enforce_model_registry_for_dispatch,
+        )
+
+        try:
+            enforce_model_registry_for_dispatch(
+                workdir=self._workdir,
+                provider=provider_kind,
+                model=decision.model_config.model,
+                task_class=task.role,
+                routing_path="provider_batch",
+                task_id=task.id,
+            )
+        except ModelNotAdmittedError as exc:
+            logger.warning("Provider batch declined for %s: %s", task.id, exc)
+            return BatchSubmissionResult(handled=False, submitted=False, reason=f"model registry refused: {exc}")
+
         worktree_mgr = getattr(getattr(orch, "_spawner", None), "_worktree_mgr", None)
         if worktree_mgr is None:
             return BatchSubmissionResult(handled=False, submitted=False)

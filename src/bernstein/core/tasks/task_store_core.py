@@ -26,6 +26,7 @@ from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
@@ -50,7 +51,7 @@ from bernstein.core.tasks.unreachable import (
 from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.tasks.contracts import ContractViolation, WorkerCompletion, WorkerRefusal
@@ -2049,6 +2050,7 @@ class TaskStore:
         tenant_id: str | None = None,
         claimed_by_session: str | None = None,
         parent_session_id: str | None = None,
+        task_ids: Collection[str] | None = None,
     ) -> Task | None:
         """Claim the highest-priority open task for *role*.
 
@@ -2063,6 +2065,11 @@ class TaskStore:
                 matches this value. Workers from a coordinator should pass their
                 coordinator's session ID here so they never steal tasks belonging to
                 a different orchestrator namespace.
+            task_ids: If set, only tasks whose id is in this collection are
+                candidates; an empty collection makes nothing claimable.  The
+                claim-next route passes a task-scoped caller's scope here so
+                an out-of-scope task is never chosen.  Skipped candidates stay
+                queued for callers whose scope includes them.
 
         Returns:
             The claimed Task, or None if nothing is available.
@@ -2091,6 +2098,11 @@ class TaskStore:
                     blocked_entries.append((priority, task_id))
                     continue
                 if parent_session_id is not None and candidate.parent_session_id != parent_session_id:
+                    blocked_entries.append((priority, task_id))
+                    continue
+                # Checked before the stranding pass below so an out-of-scope
+                # candidate is left exactly as it was, not transitioned.
+                if task_ids is not None and task_id not in task_ids:
                     blocked_entries.append((priority, task_id))
                     continue
                 # A dependency that ended without delivering makes this
@@ -2167,9 +2179,7 @@ class TaskStore:
                     f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
             if agent_role is not None and task.role != agent_role:
-                raise ValueError(
-                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
-                )
+                raise role_mismatch_error(task_id, task.role, agent_role)
             if task.status != TaskStatus.OPEN:
                 # never silently re-return an already-claimed or
                 # terminal task - that enables double-claim. Raise so the

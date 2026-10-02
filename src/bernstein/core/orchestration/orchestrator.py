@@ -110,6 +110,11 @@ from bernstein.core.orchestration.controller_state import (
     save as _save_controller_state,
 )
 from bernstein.core.orchestration.evolution import EvolutionCoordinator
+
+# The no-adapter message lives in ``preflight`` so the CLI can print it without
+# importing this module; it is re-exported here because this is where the
+# orchestrator subprocess raises it and where callers have always imported it.
+from bernstein.core.orchestration.preflight import NO_ADAPTER_CONFIGURED as NO_ADAPTER_CONFIGURED
 from bernstein.core.orchestration.run_stall import (
     ACTIVE_UNFINISHED_STATUSES,
     STUCK_TASK_FAIL_REASON,
@@ -173,6 +178,7 @@ from bernstein.core.task_lifecycle import (
     collect_completion_data,
     evict_degraded_sessions,
     maybe_retry_task,
+    note_queued_retries,
     prepare_speculative_warm_pool,
     process_completed_tasks,
     retry_or_fail_task,
@@ -185,21 +191,6 @@ from bernstein.core.watchdog import WatchdogManager, collect_watchdog_findings
 from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor
 from bernstein.evolution.risk import RiskScorer
-
-_BERNSTEIN_YAML = "bernstein.yaml"
-
-#: What an operator is told when no adapter resolves. Every flag it names has to
-#: be a flag of the ``bernstein`` command, because that is what the reader typed
-#: and what they will check against ``bernstein --help``. This module's own
-#: ``--adapter`` argparse flag belongs to the orchestrator subprocess and is not
-#: reachable from there; naming it sent readers looking for an option that does
-#: not exist (#3526). ``tests/unit/test_adapter_fatal_message.py`` resolves each
-#: flag here against the registered CLI, so the text cannot drift back.
-NO_ADAPTER_CONFIGURED = (
-    "FATAL: no adapter configured. Bernstein does not default to Claude - "
-    f"pass --cli (e.g. --cli codex), set BERNSTEIN_ADAPTER, or set 'cli' in {_BERNSTEIN_YAML}. "
-    "Run 'bernstein integrations list --installed' to see which adapters resolve here."
-)
 
 # Preserve underscore-prefixed aliases so existing test imports keep working
 _compute_total_spent = compute_total_spent
@@ -2205,6 +2196,10 @@ class Orchestrator:
 
         # 4b. Use cached failed tasks and maybe retry with escalation
         failed_tasks = tasks_by_status["failed"]
+        note_queued_retries(
+            (task for tasks in tasks_by_status.values() for task in tasks),
+            self._retried_task_ids,
+        )
         for task in failed_tasks:
             if self._maybe_retry_task(task):
                 result.retried.append(task.id)
@@ -3258,6 +3253,20 @@ class Orchestrator:
         # before the first tick.
         self._reconcile_claimed_tasks()
         self._record_run_started()
+        # The owner record names the ``run_started`` row itself: recovery
+        # verifies it against the journal's first event, so it is published
+        # before any other row is appended.
+        try:
+            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+
+            write_spawner_run_owner(
+                sdd_dir=self._workdir / ".sdd",
+                run_id=self._run_id,
+                journal_head=self._recorder.fingerprint(),
+                journal_event_count=self._recorder.event_count(),
+            )
+        except OSError as exc:
+            logger.warning("Run owner record not written for %s: %s", self._run_id, sanitize_log(str(exc)))
         # Record the skill and plugin set this install actually resolved,
         # once per run and before the first agent spawns. `bernstein skills`
         # and `bernstein plugins` report the declaration; a path override, a
@@ -3279,17 +3288,6 @@ class Orchestrator:
         except Exception:
             logger.exception("Loaded extension set not recorded (non-fatal) - continuing startup")
 
-        try:
-            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
-
-            write_spawner_run_owner(
-                sdd_dir=self._workdir / ".sdd",
-                run_id=self._run_id,
-                journal_head=self._recorder.fingerprint(),
-                journal_event_count=self._recorder.event_count(),
-            )
-        except OSError as exc:
-            logger.warning("Run owner record not written for %s: %s", self._run_id, sanitize_log(str(exc)))
         # WAL recovery: detect uncommitted entries from crashed previous runs.
         # Must run after WAL writer is initialized (in __init__) so that
         # acknowledgement entries are written to the current run's WAL.
@@ -6732,6 +6730,31 @@ def _resolve_spawner_adapter_name(
     return seed_value or None
 
 
+def _stand_down_watchdog(workdir: Path, reason: str) -> None:
+    """Tell the recovery watchdog this process is exiting for good and must not be respawned.
+
+    The watchdog restarts the orchestrator whenever its pidfile is not alive,
+    because for a crash that is the right default. A startup configuration
+    failure is the opposite case: the next launch reads the same flags, the same
+    environment and the same seed, so it fails the same way. Without this marker
+    the watchdog relaunches it every poll and the run sits there looking live
+    (#6126). The marker is the same one a quiescence self-stop writes, so
+    ``bootstrap._watchdog_check_process`` already honours it, and it is cleared
+    again when the next run starts.
+
+    Best-effort: a marker that cannot be written leaves the watchdog's ordinary
+    restart budget as the backstop, which is the behaviour before this existed.
+
+    Args:
+        workdir: Project root that holds ``.sdd/runtime``.
+        reason: Short tag, surfaced in the watchdog log when it declines to restart.
+    """
+    marker = workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+    with contextlib.suppress(OSError):
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(reason)
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -6948,6 +6971,7 @@ if __name__ == "__main__":
             # not list sends the reader looking for something that is not there
             # (#3526).
             logger.error("%s", NO_ADAPTER_CONFIGURED)
+            _stand_down_watchdog(workdir, "no-adapter-configured")
             sys.exit(1)
 
         # Run-level model: ``--model`` flag (threaded from ``bernstein run
@@ -6979,6 +7003,7 @@ if __name__ == "__main__":
             adapter_inst = get_adapter(adapter_name)
         if not adapter_inst:
             logger.error("No adapter found (tried: %s)", adapter_name)
+            _stand_down_watchdog(workdir, "adapter-not-found")
             sys.exit(1)
 
         # Create TierAwareRouter from providers.yaml if available

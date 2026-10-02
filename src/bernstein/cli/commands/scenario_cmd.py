@@ -115,25 +115,39 @@ def scenario_run(
         console.print(f"[red]Unknown scenario: {scenario_id}[/red]")
         raise SystemExit(1) from exc
 
+    # Spawn first: the JSON form reports what happened, not what would.
+    task_ids = spawn_scenario_tasks(payloads, poster=server_post)
+    expected = len(payloads)
+    complete = expected > 0 and len(task_ids) == expected
+
     if as_json:
         import json
 
-        console.print(
+        click.echo(
             json.dumps(
                 {
                     "orchestration_id": invocation.orchestration_id,
                     "scenario_id": invocation.scenario_id,
                     "task_count": invocation.task_count,
+                    "spawned_count": len(task_ids),
                     "estimated_minutes": invocation.estimated_minutes,
-                    "task_ids": [],
+                    "task_ids": task_ids,
                 },
                 indent=2,
             )
         )
+        if not complete:
+            raise SystemExit(1)
         return
 
-    # Actually spawn the tasks
-    task_ids = spawn_scenario_tasks(payloads, poster=server_post)
+    if not complete:
+        console.print(
+            f"[red]Spawned {len(task_ids)} of {expected} tasks for scenario '{scenario_id}'.[/red] "
+            "The task server was unreachable or rejected the rest (is `bernstein run` running?)."
+        )
+        for task_id in task_ids:
+            console.print(f"  spawned: {task_id}")
+        raise SystemExit(1)
 
     console.print(f"[green]Successfully spawned {len(task_ids)} tasks for scenario '{scenario_id}'[/green]")
     console.print(f"Orchestration ID: {invocation.orchestration_id}")

@@ -158,6 +158,25 @@ def test_verify_without_an_anchor_says_so_rather_than_failing_open(tmp_path: Pat
     assert "no anchor" in result.output.lower()
 
 
+@pytest.mark.parametrize(
+    "bad_key",
+    ["zz" * 32, "ab" * 31, "ab" * 33, ""],
+    ids=["non-hex", "too-short", "too-long", "empty"],
+)
+def test_verify_rejects_a_malformed_log_public_key_at_parse_time(tmp_path: Path, bad_key: str) -> None:
+    """A typo in the pinned log key is a usage error, not an anchor verdict."""
+    sdd_dir = tmp_path / ".sdd"
+
+    result = CliRunner().invoke(
+        seal_group,
+        ["verify", "run-any", "--sdd-dir", str(sdd_dir), "--log-public-key", bad_key],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "--log-public-key" in result.output
+    assert "no anchor" not in result.output.lower()
+
+
 def _symlink_or_skip(link: Path, target: Path) -> None:
     """Point *link* at *target*, or skip where the platform forbids it."""
     try:

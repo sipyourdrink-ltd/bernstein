@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
-from bernstein.core.lineage.provenance import LOWEST_TRUST_CLASS, TrustClass
+from bernstein.core.lineage.provenance import LOWEST_TRUST_CLASS, UNTRUSTED_THRESHOLD, TrustClass, trust_rank
 
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _REQUIRED_KEYS = frozenset({"issuer", "issuer_key_id", "content_hash", "claimed_subject", "trust_class", "envelope"})
@@ -119,6 +119,16 @@ def verify_foreign_attestation_full(
     taint = _trust_class(attestation["trust_class"])
     if taint is None:
         return _malformed("foreign attestation has an unknown trust_class")
+    # A foreign attestation is material Bernstein did not issue, so it can only
+    # hold an outsider class. A claim of ``first_party``, ``workspace`` or
+    # ``operator`` trust is the attestation asserting Bernstein's own authority;
+    # adopting it would carry that authority into every taint computation over
+    # the record, and a valid issuer signature would then report it verified.
+    if trust_rank(taint) > trust_rank(UNTRUSTED_THRESHOLD):
+        return _malformed(
+            f"foreign attestation cannot claim {taint.value} trust; "
+            f"a claim Bernstein did not issue is at most {UNTRUSTED_THRESHOLD.value}"
+        )
 
     envelope = attestation["envelope"]
     if not isinstance(envelope, Mapping):

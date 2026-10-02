@@ -212,6 +212,43 @@ class TestCIWorkflowExists:
         assert "uv run python scripts/run_tests.py" in run_script
         assert "--parallel 6" in run_script
 
+    def test_merge_queue_runs_the_whole_list(self) -> None:
+        """A merge group never plans, so every shard runs the full list.
+
+        The group is the last check before main. A tree-wide gate fails on a
+        change no file-level slice maps to it: #5743 passed a sliced group and
+        broke main on the unreachable-controls gate.
+        """
+        data = _load_ci_workflow()
+        jobs = cast("dict[str, Any]", data["jobs"])
+        planner = cast("dict[str, Any]", jobs["plan-affected-tests"])
+        steps = cast("list[dict[str, Any]]", planner["steps"])
+        by_name = {step.get("name"): step for step in steps}
+
+        assert "Resolve the merge-queue batch root" not in by_name
+        assert "merge_group" not in yaml.safe_dump(steps)
+
+        plan = by_name["Compute affected-test plan"]
+        assert plan.get("if") == "github.event_name == 'pull_request'"
+        assert "planned=true" in plan.get("run", "")
+        assert planner["outputs"]["planned"] == "${{ steps.plan.outputs.planned }}"
+
+    def test_merge_queue_test_job_keys_on_the_plan_not_the_event(self) -> None:
+        """Shards select whenever a plan exists, and run the full list when one does not."""
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        by_name = {step.get("name"): step for step in steps}
+        planned = "needs.plan-affected-tests.outputs.planned == 'true'"
+
+        assert by_name["Download affected-test plan"].get("if") == f"{planned} && runner.os != 'Windows'"
+        assert by_name["Select affected-test shard"].get("if") == f"{planned} && runner.os != 'Windows'"
+        run = by_name["Run isolated test suite (Linux/macOS)"]
+        assert "needs.plan-affected-tests.outputs.planned != 'true'" in run.get("if", "")
+        assert (run.get("env") or {}).get("PLANNED") == "${{ needs.plan-affected-tests.outputs.planned }}"
+        script = run.get("run", "")
+        assert '[ "${PLANNED}" = "true" ]' in script
+        assert '--shard "${SHARD}/${SHARD_COUNT}"' in script, "no plan still runs the full list, sharded"
+
     def test_coverage_reporting_only_runs_on_push(self) -> None:
         data = _load_ci_workflow()
         steps = _ci_test_steps(data)

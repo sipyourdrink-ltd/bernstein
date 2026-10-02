@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.20.0"
+version = "3.21.0"
 description = "The open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs Claude Code, Codex, Gemini CLI, and 40+ CLI agents; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -133,6 +133,7 @@ dependencies = [
     # and ``bernstein doctor`` crashed with ModuleNotFoundError. Promoted to a
     # direct dependency so the resolver always installs it. Pure-Python.
     "packaging>=24",
+    "tzdata>=2024.1",
 ]
 
 [project.urls]
@@ -158,6 +159,7 @@ dev = [
     "hypothesis>=6.100",
     "respx>=0.22",
     "ruff>=0.9",
+    "vulture==2.14",  # Gate-evasion baseline: hermetic dead-code gate tool
     "pyright>=1.1",
     # Declared so `uv run mypy` resolves the project interpreter instead of
     # falling through to whatever `mypy` sits on PATH. A PATH mypy bound to
@@ -193,7 +195,7 @@ dev = [
     "pytest-xflaky>=1.0.3",
     "pytest-json-report>=1.5",
     # TRACE 0.2 Trust Record emitter tests.
-    "agentrust-trace-tests>=0.5,<0.6",
+    "agentrust-trace-tests>=0.6,<0.7",
     # Error-telemetry SDK for the operator-managed Sentry-protocol-compatible
     # error sink. Imported lazily in src/bernstein/cli/main.py and only
     # initialised when BERNSTEIN_TELEMETRY_DSN is set. Kept in dev so the
@@ -336,7 +338,7 @@ research-render = [
 # TRACE 0.2 Trust Record emitter (src/bernstein/core/observability/trust_record.py).
 # Optional so minimal installs stay dependency-free. Enable with:
 #   pip install 'bernstein[trace]'
-trace = ["agentrust-trace>=0.10,<0.11"]
+trace = ["agentrust-trace>=0.11,<0.12"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"
@@ -513,6 +515,11 @@ artifacts = [
 # Built-in team manifests (#2248) so `team_manifest: python` and the
 # `bernstein team` commands resolve right after pip install.
 "templates/teams" = "bernstein/_default_templates/teams"
+# Packaged scenario library for `bernstein scenario list|run` and
+# `bernstein routine ...`. Resolved by
+# bernstein.core.planning.scenario_library.packaged_scenarios_dir; without
+# this entry the commands see an empty library on every pip install.
+"templates/scenarios" = "bernstein/_default_templates/scenarios"
 # Adapter admission evidence (#3547). The verdict `bernstein adapters
 # verify --seal` derives is a projection of the pinned contract's bytes and
 # the golden-transcript replay, so both have to be resolvable off a pip
@@ -870,6 +877,7 @@ dev = [
     "hypothesis>=6.100",
     "respx>=0.22",
     "ruff>=0.9",
+    "vulture==2.14",  # Gate-evasion baseline: mirror the dev extra
     "pyright>=1.1",
     # Declared so `uv run mypy` resolves the project interpreter instead of
     # falling through to whatever `mypy` sits on PATH. A PATH mypy bound to

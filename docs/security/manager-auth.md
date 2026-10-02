@@ -18,7 +18,8 @@ almost always a missing or stripped bearer token on the manager's `POST
 |------|-------|----------|
 | Per-session bearer (zero-trust) | `.sdd/runtime/agent_tokens/{session_id}.token` (mode `0600`) | 4 h (task-scoped) |
 | Legacy fallback bearer | `BERNSTEIN_AUTH_TOKEN` env var | Process lifetime |
-| JWT signing secret | `.sdd/auth/jwt_secret` | Until manually rotated |
+| JWT signing secret | Derived from the install audit key (outside the workdir); `BERNSTEIN_AUTH_JWT_SECRET` overrides | Until the audit key or the override changes |
+| Identity record (role, permissions, scope) | `.sdd/auth/agent_identities/{session_id}.json`, MAC'd with a key derived from the install audit key | Until revoked or the token expires |
 | Auth opt-out | `BERNSTEIN_AUTH_DISABLED=1` | Process lifetime - logs loud WARN |
 
 Auth is **ENABLED by default**. A spawned manager that does not present a
@@ -96,9 +97,15 @@ Source pointers (read these if you need to debug from code):
 ```
 
 - **Created**: at agent spawn, inside `AgentSpawner._issue_agent_token`.
-- **Format**: HS256 JWT signed with the secret from `.sdd/auth/jwt_secret`
-  (auto-generated on first run; persisted across restarts).
+- **Format**: HS256 JWT. The signing secret is derived from the install
+  audit key, which lives outside the workdir (see
+  [Signing key and identity records](#signing-key-and-identity-records));
+  nothing under `.sdd/` can sign a token.
 - **Claims**: `sub=session_id`, `role`, `task_ids=[…]`, `iat`, `exp`, `jti`.
+- **Task scope**: the server limits every task write, and every claim it
+  picks for the caller, to `task_ids`. An empty list means "all tasks" only
+  for the `manager` role (the run-root identity); a token of any other role
+  with an empty list reaches no task.
 - **Expiry**: 4 h for task-scoped tokens (default 14400 s); 24 h
   for unrestricted (manager / orchestrator) tokens.
 - **Revocation**: deleted from disk and revoked in `AgentIdentityStore` when
@@ -117,16 +124,55 @@ Source pointers (read these if you need to debug from code):
 - **When used**: backwards compatibility for deployments that pre-date the
   per-session JWT flow.
 
-### JWT signing secret
+### Signing key and identity records
 
-```
-.sdd/
-└── auth/
-    └── jwt_secret                          # mode 0600, base64url 32-byte secret
-```
+Spawned agents run as the same OS user as the orchestrator, from a worktree
+under `.sdd/worktrees/`, so they can read every file under `.sdd/` and write
+new ones there. Neither the token-signing secret nor the authority behind a
+token is therefore kept in the workdir:
 
-Rotating this file invalidates **all** outstanding agent tokens. Restart the
-orchestrator after rotation so the in-memory `AuthService` re-reads it.
+- **Key**: both keys below are derived (HKDF-SHA256, one domain each) from the
+  install audit key - `$BERNSTEIN_AUDIT_KEY_PATH`, else
+  `$XDG_STATE_HOME/bernstein/audit.key`, else
+  `~/.local/state/bernstein/audit.key`, mode `0600` enforced. It is the same
+  key the audit chain and the delegation ledger use, so there is no extra
+  setup. See [Audit log - key management](audit-log.md#key-management).
+- **Token signature**: HS256 under the derived JWT key, unless
+  `BERNSTEIN_AUTH_JWT_SECRET` is set, which overrides it.
+- **Identity record**: `.sdd/auth/agent_identities/{session_id}.json` carries
+  a `record_mac` under the derived record key. The store ignores - and logs
+  `Ignoring unauthenticated identity record` for - any record whose MAC is
+  missing or wrong, or whose `id` does not match its file name. Such a file
+  is never an identity, also not after a restart.
+- **Where authority comes from**: role, permissions, task scope and file
+  scope are read from the authenticated record. The token's claims must match
+  it exactly; a token asserting a scope the record does not grant does not
+  authenticate. The auth middleware's permission gate reads the record.
+
+Consequences for operators:
+
+- Processes that mint identities (orchestrator, spawner) and the task server
+  must resolve the same audit key. On one host this is automatic; across
+  hosts or containers, point `BERNSTEIN_AUDIT_KEY_PATH` at the same key.
+- Changing the audit key invalidates every outstanding agent token and
+  identity record. Stop the run first.
+- Records written by versions before record authentication carry no MAC and
+  are ignored: agents spawned before an upgrade must be re-spawned. The old
+  in-tree `.sdd/auth/agent_identity_jwt_secret` is no longer read and is
+  removed when the store starts.
+- Hand-editing a record makes it unreadable. To change what an agent may do,
+  revoke it and spawn it again.
+
+What this does **not** protect against: the audit key is a file owned by the
+same OS user. An agent process that is not confined by a sandbox can read it
+from the home directory and mint records. A process that can write `.sdd/`
+can also put back an earlier authentic copy of a record (for example one
+from before a revocation) for the remaining lifetime of its token, and can
+delete records. Per-session token files under `.sdd/runtime/agent_tokens/`
+are readable by the same user, so a peer agent's token can be presented as
+that peer. Run agents in a sandbox that denies the home directory's
+`.local/state/bernstein/`, `.sdd/auth/` and `.sdd/runtime/agent_tokens/` where
+these matter.
 
 ---
 
@@ -182,16 +228,16 @@ and never repeats it.
 
 ### Symptom 3 - Token rotation between manager spawn and POST
 
-If `.sdd/auth/jwt_secret` is rotated (or `.sdd/runtime/agent_tokens/` is
-wiped) while a manager is mid-flight, that manager's cached token still
+If the install audit key or `BERNSTEIN_AUTH_JWT_SECRET` changes (or
+`.sdd/runtime/agent_tokens/` is wiped) while a manager is mid-flight, that manager's cached token still
 points at the old file path - `cat` returns empty / file-not-found, and the
 resulting `Bearer ` header is rejected with 401.
 
 **Indicators:** mid-run `401 Unauthorized` on `POST /tasks` after the
 manager had previously succeeded.
 
-**Fix:** never rotate `jwt_secret` or clear `agent_tokens/` while a run is
-in flight. Use `bernstein stop` first.
+**Fix:** never change the audit key or the JWT secret override, or clear
+`agent_tokens/`, while a run is in flight. Use `bernstein stop` first.
 
 ---
 
@@ -203,7 +249,6 @@ this flow are:
 | Check | What it verifies |
 |-------|------------------|
 | Adapter auth (claude / codex / gemini) | The agent **provider** credentials. Does NOT verify Bernstein's internal task-server auth - these are different layers. |
-| `.sdd/auth/jwt_secret` present | Per-session JWT issuance can succeed. |
 | `.sdd workspace` | `.sdd/runtime/`, `.sdd/auth/` exist with correct modes. |
 
 `bernstein doctor` does **not** yet have a dedicated check for the
@@ -243,7 +288,9 @@ curl -s -o /dev/null -w "HTTP %{http_code}\n" \
 ```
 
 Expected: `HTTP 200`. Anything else (especially `HTTP 401`) means the token
-is rejected - re-check the JWT secret hasn't been rotated underneath.
+is rejected - re-check the audit key or the JWT secret override hasn't
+changed underneath, and look in the server log for `Ignoring unauthenticated
+identity record`.
 
 ### 3. Is auth even enabled?
 

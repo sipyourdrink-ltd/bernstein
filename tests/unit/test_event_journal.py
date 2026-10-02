@@ -242,6 +242,70 @@ def test_legacy_profile_journal_still_verifies(tmp_path: Path) -> None:
     assert result.identity == "verified"
 
 
+def test_jcs_v2_journal_round_trips_write_verify_resume(tmp_path: Path) -> None:
+    """A jcs-v2 journal verifies, rebuilds to its own head, and resumes."""
+    from bernstein.core.replay.journal import (
+        HASH_PROFILE_JCS_V2,
+        EventJournal,
+        JournalSeal,
+        load_events,
+        rebuild_state,
+        verify_events,
+        verify_journal,
+    )
+
+    journal = EventJournal(run_id="run-v2-rt", sdd_dir=tmp_path, hash_profile=HASH_PROFILE_JCS_V2)
+    journal.record("tool_call", path="a.py", x=1.5)
+    journal.record("tool_call", task_id="T-1", note="\u00e9\u2603")
+
+    rows = load_events(journal.path).events
+    assert all(row["hash_profile"] == HASH_PROFILE_JCS_V2 for row in rows)
+
+    assert verify_events(rows).chain_consistent
+    seal = JournalSeal(head=journal.head(), event_count=journal.event_count())
+    result = verify_journal(journal.path, seal=seal)
+    assert result.chain_consistent, result.errors
+    assert result.identity == "verified"
+    assert rebuild_state(journal.path, from_step=2)["head_hash"] == journal.head()
+
+    resumed = EventJournal.resume("run-v2-rt", tmp_path)
+    assert resumed.head() == journal.head()
+    resumed.record("tool_call", path="c.py")
+    assert verify_journal(resumed.path).chain_consistent
+    assert EventJournal.resume("run-v2-rt", tmp_path).event_count() == 3
+
+
+def test_jcs_v2_rejected_write_leaves_chain_valid(tmp_path: Path) -> None:
+    """A non-JSON write refused under jcs-v2 does not corrupt later appends."""
+    from bernstein.core.replay.journal import HASH_PROFILE_JCS_V2, EventJournal, verify_journal
+
+    journal = EventJournal(run_id="run-v2-rej", sdd_dir=tmp_path, hash_profile=HASH_PROFILE_JCS_V2)
+    journal.record("a", task_id="T-1")
+    with pytest.raises(TypeError):
+        journal.record("b", data={1, 2})
+    journal.record("c", task_id="T-1")
+
+    result = verify_journal(journal.path)
+    assert result.chain_consistent, result.errors
+    assert result.count == 2
+
+
+def test_jcs_v2_hash_profile_is_covered_by_the_chain(tmp_path: Path) -> None:
+    """Rewriting hash_profile on a row breaks verification instead of passing silently."""
+    from bernstein.core.replay.journal import HASH_PROFILE_JCS_V2, EventJournal, verify_journal
+
+    journal = EventJournal(run_id="run-v2-tamper", sdd_dir=tmp_path, hash_profile=HASH_PROFILE_JCS_V2)
+    journal.record("a", task_id="T-1")
+    journal.record("b", task_id="T-1")
+    lines = journal.path.read_text(encoding="utf-8").splitlines()
+    second = json.loads(lines[1])
+    second["hash_profile"] = "py-json-v1"
+    lines[1] = json.dumps(second)
+    journal.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    assert verify_journal(journal.path).chain_consistent is False
+
+
 def test_unknown_profile_fails_closed(tmp_path: Path) -> None:
     """A journal claiming an unknown hash_profile is malformed, not skipped."""
     from bernstein.core.replay.journal import EventJournal, JournalSeal, verify_journal

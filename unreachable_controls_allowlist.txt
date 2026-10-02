@@ -28,7 +28,6 @@ src/bernstein/core/identity/agent_jwt.py::AgentIdentityStore.validate_task_acces
 src/bernstein/core/identity/agent_registry.py::RegistryError                                   # exercised by tests only; no production caller
 src/bernstein/core/identity/delegation.py::DelegationReceipt.principal_ids                     # exercised by tests only; no production caller
 src/bernstein/core/identity/delegation_scope.py::DelegationScope.is_narrowing_of               # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/identity/grants.py::GrantLedger.issue_grant                                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantReceipt.to_entry                                   # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/identity/grants.py::GrantSigner.with_issuer                                 # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/identity/http_signing.py::verify_request                                    # exported and exercised by tests; no production caller
@@ -81,6 +80,7 @@ src/bernstein/core/security/audit_chain.py::record_escalation_ladder_refusal    
 src/bernstein/core/security/audit_chain.py::record_expectation_expired                         # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_capsule                              # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_drift                                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_lane_retired                                # exported in the module's __all__ as public surface; lane_registry projects lane.retired, no CLI verb emits it yet
 src/bernstein/core/security/audit_chain.py::record_mcp_task_handle                             # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_memory_write                                # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_pool_claim_receipt                          # exported in the module's __all__ as public surface; no in-tree caller
@@ -296,6 +296,7 @@ src/bernstein/core/security/policy.py::PolicyEngine.enable_policy               
 src/bernstein/core/security/policy.py::PolicyEngine.list_policies                              # exercised by tests only; no production caller
 src/bernstein/core/security/policy.py::PolicyEngine.remove_policy                              # exercised by tests only; no production caller
 src/bernstein/core/security/policy.py::create_context                                          # exercised by tests only; no production caller
+src/bernstein/core/security/policy_engine.py::DecisionGraph                                    # exercised by tests only; no production caller. run_guardrails built it and never evaluated it; #6183 removed that and keeps DecisionGraph for a future consumer of evaluate()
 src/bernstein/core/security/policy_engine.py::PolicyCheckResult                                # no production caller and no test reference; baseline entry from the first scan
 src/bernstein/core/security/policy_engine.py::evaluate_lethal_trifecta                         # exercised by tests only; no production caller
 src/bernstein/core/security/policy_engine.py::run_policy_engine                                # exercised by tests only; no production caller
@@ -348,6 +349,7 @@ src/bernstein/core/security/sandbox_profiles.py::list_builtin_profiles          
 src/bernstein/core/security/sandbox_profiles.py::render_profile_summary                        # exercised by tests only; no production caller
 src/bernstein/core/security/sandbox_profiles.py::validate_profile                              # exercised by tests only; no production caller
 src/bernstein/core/security/sbom.py::SBOMScanResult.has_critical                               # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/sbom.py::SBOMScanResult.has_high                                   # no production caller and no test reference. It only looked reached because a local variable named has_high in quality_gates.py matched by name (#6191)
 src/bernstein/core/security/seccomp_profiles.py::build_custom_profile                          # exercised by tests only; no production caller
 src/bernstein/core/security/seccomp_profiles.py::build_profile                                 # exercised by tests only; no production caller
 src/bernstein/core/security/seccomp_profiles.py::profile_for_role                              # exercised by tests only; no production caller

@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la capa de gobernanza open source para agentes de IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,7 +41,7 @@
 Bernstein es la capa de gobernanza open source para agentes de IA. Funciona con policy as code: tú escribes la política - quién puede hacer qué, qué necesita aprobación, qué debe quedar registrado - y Bernstein la aplica y produce el registro verificable. Un planificador determinista - sin modelo en el bucle de coordinación - ejecuta agentes en paralelo, filtra lo que producen con gates y registra cada paso, de modo que una ejecución puede verificarse a posteriori, offline, solo con los artefactos. Los agentes CLI de código funcionan de serie (Claude Code, Codex, Gemini CLI y 50+ más), y la misma capa gobierna cualquier carga agéntica: el entregable puede ser un diff, un informe de investigación, un dataset o un paquete de evidencias de auditoría. Perfil de instalación air-gap incluido. Apache-2.0.
 
 ### de un vistazo
-<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 Cuatro cosas lo diferencian; todo lo demás son detalles.
 

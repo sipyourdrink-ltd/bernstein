@@ -1,0 +1,3 @@
+## The QA role prompt no longer assumes a Python toolchain
+
+The built-in QA role prompt told every QA agent to run `uv run ruff check src/` and `uv run python scripts/run_tests.py -x` unconditionally. In a repository that is not Python, each agent followed that, the spawn failed, and the task was retried to the same end. The QA system and task prompts now tell the agent to find and use the repository's own lint, format and test commands, and name `ruff` and `scripts/run_tests.py` only when the repository uses them. The warning against running `pytest` over the whole suite is kept for repositories that have `scripts/run_tests.py`. The other role prompts are unchanged (#6138).

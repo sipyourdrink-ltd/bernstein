@@ -1,25 +1,24 @@
-"""FINOS AI Governance Framework mitigation catalogue.
+"""FINOS AI Governance Framework mitigation and risk catalogues.
 
-The one place in this tree that says which FINOS AIGF mitigation ids exist
-and what each one is called. It exists because the cross-framework
+The one place in this tree that says which FINOS AIGF mitigation and risk ids
+exist and what each one is called. It exists because the cross-framework
 references in :mod:`bernstein.compliance.controls` used to carry an
 ``AIGF-GOV-01``-style vocabulary that FINOS does not publish: an auditor
 following such a reference back to the framework finds nothing, which is
 worse than carrying no reference at all.
 
 The framework numbers its mitigations ``mi-1`` .. ``mi-23`` (file names and
-``sequence`` front-matter in ``docs/_mitigations/``) and its risks ``ri-N``.
-Each mitigation is typed ``PREV`` (preventative) or ``DET`` (detective).
-The titles below are the ``title:`` front-matter values, copied verbatim.
+``sequence`` front matter in ``docs/_mitigations/``) and its risks ``ri-N``
+(23 non-consecutive entries in ``docs/_risks/``). Mitigations use ``PREV``
+or ``DET``; risks use ``RC``, ``OP`` or ``SEC``. The titles below are the
+upstream ``title:`` front-matter values, copied verbatim.
 
-Source: https://github.com/finos/ai-governance-framework, ``docs/_mitigations/``
+Source: https://github.com/finos/ai-governance-framework, ``docs/_mitigations/`` and ``docs/_risks/``
 at commit ``aabbffbe02a4aae8e6d5f8534d63edf9248fa302`` (read 2026-09-21).
 Community Specification License v1.0.
 
-Note for readers of ``docs/compliance/finos-aigf-mapping.md``: that document
-predates this module and still uses a ``CTRL-*`` / ``AIR-*`` vocabulary from
-the framework's earlier "AI Readiness" naming. Reconciling it is tracked
-in #6148; this module is the vocabulary the code cites.
+``docs/compliance/finos-aigf-mapping.md`` cross-walks both pinned catalogues
+against Bernstein's current capabilities and documented gaps.
 """
 
 from __future__ import annotations
@@ -51,6 +50,33 @@ MITIGATIONS: dict[str, tuple[str, str]] = {
     "mi-23": ("Agentic System Credential Protection Framework", "PREV"),
 }
 
+#: Risk id -> (title, type). Verbatim from upstream docs/_risks/ front matter.
+RISKS: dict[str, tuple[str, str]] = {
+    "ri-1": ("Information Leaked To Hosted Model", "RC"),
+    "ri-2": ("Information Leaked to Vector Store", "SEC"),
+    "ri-4": ("Hallucination and Inaccurate Outputs", "OP"),
+    "ri-5": ("Foundation Model Versioning", "OP"),
+    "ri-6": ("Non-Deterministic Behaviour", "OP"),
+    "ri-7": ("Availability of Foundational Model", "OP"),
+    "ri-8": ("Tampering With the Foundational Model", "SEC"),
+    "ri-9": ("Data Poisoning", "SEC"),
+    "ri-10": ("Prompt Injection", "SEC"),
+    "ri-14": ("Inadequate System Alignment", "OP"),
+    "ri-16": ("Bias and Discrimination", "OP"),
+    "ri-17": ("Lack of Explainability", "OP"),
+    "ri-18": ("Model Overreach / Expanded Use", "OP"),
+    "ri-19": ("Data Quality and Drift", "OP"),
+    "ri-20": ("Reputational Risk", "OP"),
+    "ri-22": ("Regulatory Compliance and Oversight", "RC"),
+    "ri-23": ("Intellectual Property (IP) and Copyright", "RC"),
+    "ri-24": ("Agent Action Authorization Bypass", "SEC"),
+    "ri-25": ("Tool Chain Manipulation and Injection", "SEC"),
+    "ri-26": ("MCP Server Supply Chain Compromise", "SEC"),
+    "ri-27": ("Agent State Persistence Poisoning", "SEC"),
+    "ri-28": ("Multi-Agent Trust Boundary Violations", "OP"),
+    "ri-29": ("Agent-Mediated Credential Discovery and Harvesting", "SEC"),
+}
+
 #: Human-readable catalogue name.
 REGULATION: str = "FINOS AI Governance Framework (mitigations mi-1..mi-23)"
 
@@ -80,6 +106,7 @@ def reference_label(mitigation_id: str) -> str:
 __all__ = [
     "MITIGATIONS",
     "REGULATION",
+    "RISKS",
     "SPEC_COMMIT",
     "SPEC_URL",
     "mitigation_titles",

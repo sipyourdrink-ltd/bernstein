@@ -24,9 +24,24 @@ it.
 from __future__ import annotations
 
 import json
+import math
+import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from bernstein.core.govern.probe_runtime import (
+    ProbeCollector,
+    ProbeFactCache,
+    ProbeFailure,
+    ProbeFailureKind,
+    ProbeResult,
+    ProbeRunJournalEntry,
+    ProbeRunResult,
+    ProbeStatus,
+    record_probe_run,
+    run_probe_set,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -36,9 +51,19 @@ __all__ = [
     "CollectionMethod",
     "CostClass",
     "Probe",
+    "ProbeCollector",
     "ProbeError",
+    "ProbeFactCache",
+    "ProbeFailure",
+    "ProbeFailureKind",
+    "ProbeResult",
+    "ProbeRunJournalEntry",
+    "ProbeRunResult",
     "ProbeSet",
+    "ProbeStatus",
     "load_probe_set",
+    "record_probe_run",
+    "run_probe_set",
 ]
 
 
@@ -82,6 +107,8 @@ _KNOWN_KEYS = frozenset(
         "id",
         "attribute",
         "collection_method",
+        "fallback_methods",
+        "max_retries",
         "refresh_interval_s",
         "timeout_s",
         "cost_class",
@@ -100,6 +127,12 @@ class Probe:
             implementation does.
         attribute: The attribute this probe produces.
         collection_method: How it is obtained.
+        fallback_methods: Optional ordered methods tried after the primary
+            collection method.
+        max_retries: Optional number of retries after the first attempt for
+            each available collection method. ``None`` means no retries and is
+            omitted when serializing an older declaration that did not carry
+            the field.
         refresh_interval_s: How long a result stays usable. ``0`` means every
             pass re-collects.
         timeout_s: Hard ceiling for one invocation. A probe with no ceiling is
@@ -118,6 +151,8 @@ class Probe:
     cost_class: CostClass = CostClass.CHEAP
     taint_tags: tuple[str, ...] = ()
     unknown: dict[str, Any] = field(default_factory=dict[str, Any])
+    fallback_methods: tuple[CollectionMethod, ...] | None = None
+    max_retries: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the canonical serialization, unknown fields included.
@@ -130,11 +165,19 @@ class Probe:
             "id": self.id,
             "attribute": self.attribute,
             "collection_method": str(self.collection_method),
-            "refresh_interval_s": self.refresh_interval_s,
-            "timeout_s": self.timeout_s,
-            "cost_class": str(self.cost_class),
-            "taint_tags": list(self.taint_tags),
         }
+        if self.fallback_methods is not None:
+            out["fallback_methods"] = [str(method) for method in self.fallback_methods]
+        if self.max_retries is not None:
+            out["max_retries"] = self.max_retries
+        out.update(
+            {
+                "refresh_interval_s": self.refresh_interval_s,
+                "timeout_s": self.timeout_s,
+                "cost_class": str(self.cost_class),
+                "taint_tags": list(self.taint_tags),
+            }
+        )
         for key in sorted(self.unknown):
             out[key] = self.unknown[key]
         return out
@@ -160,18 +203,26 @@ class Probe:
             else CostClass.CHEAP
         )
         timeout = _require_positive(raw, "timeout_s", origin, probe_id)
+        fallbacks = _optional_members(raw, "fallback_methods", CollectionMethod, origin, probe_id)
+        max_retries = _optional_non_negative_int(raw, "max_retries", origin, probe_id)
         refresh = _optional_non_negative(raw, "refresh_interval_s", origin, probe_id)
         tags = raw.get("taint_tags", ())
-        if not isinstance(tags, list | tuple) or any(not isinstance(t, str) for t in tags):
+        if not isinstance(tags, list | tuple):
             raise ProbeError(f"{origin}: probe {probe_id!r} taint_tags must be a list of strings")
+        typed_tags = cast("list[Any] | tuple[Any, ...]", tags)
+        if any(not isinstance(tag, str) for tag in typed_tags):
+            raise ProbeError(f"{origin}: probe {probe_id!r} taint_tags must be a list of strings")
+        string_tags = cast("list[str] | tuple[str, ...]", typed_tags)
         return cls(
             id=probe_id,
             attribute=attribute,
             collection_method=method,
             timeout_s=timeout,
+            fallback_methods=fallbacks,
+            max_retries=max_retries,
             refresh_interval_s=refresh,
             cost_class=cost,
-            taint_tags=tuple(str(t) for t in tags),
+            taint_tags=tuple(string_tags),
             unknown={k: v for k, v in raw.items() if k not in _KNOWN_KEYS},
         )
 
@@ -246,7 +297,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         raise ProbeError(f"{path}: cannot be read as JSON: {exc}") from exc
     if not isinstance(loaded, dict):
         raise ProbeError(f"{path}: a probe declaration must be an object")
-    return dict(loaded)
+    return cast("dict[str, Any]", loaded)
 
 
 def _require_text(raw: dict[str, Any], key: str, origin: str) -> str:
@@ -269,11 +320,57 @@ def _require_positive(raw: dict[str, Any], key: str, origin: str, probe_id: str)
     value = raw.get(key)
     if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
         raise ProbeError(f"{origin}: probe {probe_id!r} {key} must be a positive number")
-    return float(value)
+    try:
+        numeric = float(value)
+    except OverflowError as exc:
+        raise ProbeError(f"{origin}: probe {probe_id!r} {key} must be a finite positive number") from exc
+    if not math.isfinite(numeric) or numeric > threading.TIMEOUT_MAX:
+        raise ProbeError(
+            f"{origin}: probe {probe_id!r} {key} must be finite and no greater than {threading.TIMEOUT_MAX:g}"
+        )
+    return numeric
 
 
 def _optional_non_negative(raw: dict[str, Any], key: str, origin: str, probe_id: str) -> float:
     value = raw.get(key, 0.0)
     if not isinstance(value, int | float) or isinstance(value, bool) or value < 0:
         raise ProbeError(f"{origin}: probe {probe_id!r} {key} must be a non-negative number")
-    return float(value)
+    try:
+        numeric = float(value)
+    except OverflowError as exc:
+        raise ProbeError(f"{origin}: probe {probe_id!r} {key} must be a finite non-negative number") from exc
+    if not math.isfinite(numeric):
+        raise ProbeError(f"{origin}: probe {probe_id!r} {key} must be a finite non-negative number")
+    return numeric
+
+
+def _optional_members(
+    raw: dict[str, Any],
+    key: str,
+    enum: type[StrEnum],
+    origin: str,
+    probe_id: str,
+) -> tuple[Any, ...] | None:
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, list | tuple):
+        raise ProbeError(f"{origin}: probe {probe_id!r} {key} must be a list")
+    typed_value = cast("list[Any] | tuple[Any, ...]", value)
+    members: list[Any] = []
+    for item in typed_value:
+        try:
+            members.append(enum(str(item)))
+        except ValueError as exc:
+            allowed = ", ".join(sorted(str(member) for member in enum))
+            raise ProbeError(f"{origin}: probe {probe_id!r} {key} contains {item!r}, not one of: {allowed}") from exc
+    return tuple(members)
+
+
+def _optional_non_negative_int(raw: dict[str, Any], key: str, origin: str, probe_id: str) -> int | None:
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ProbeError(f"{origin}: probe {probe_id!r} {key} must be a non-negative integer")
+    return value

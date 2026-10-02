@@ -22,11 +22,13 @@ The chart sets up:
 
 ## Quick Start
 
-### 1. Add the Bernstein Helm repository (when available)
+### 1. Get the chart
+
+The chart ships in the repository under `deploy/helm/bernstein`; there is no separate chart repository.
 
 ```bash
-helm repo add bernstein https://charts.bernstein.dev
-helm repo update
+git clone https://github.com/sipyourdrink-ltd/bernstein
+cd bernstein/deploy/helm
 ```
 
 ### 2. Install from local chart

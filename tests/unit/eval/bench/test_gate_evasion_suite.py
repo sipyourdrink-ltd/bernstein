@@ -224,9 +224,9 @@ class TestRealGateEvaluation:
     starts or stops catching -- shows up here, which is the point of the suite.
     """
 
-    #: class -> (gate, verdict). ``command_not_found`` is what an uninstalled
-    #: tool reports (vulture is not a project dependency); ``no_gate`` is a
-    #: manifest naming a gate GateRunner does not have.
+    #: The checked-in baseline pins the required interpreter tools. A
+    #: deletion-only dead-code fixture is a known unsupported inspection, not
+    #: a vulture invocation failure.
     EXPECTED = {
         "broad_except_failure_hiding": ("lint", "fail"),
         "broken_code_scanner_silencing": ("lint", "fail"),
@@ -234,26 +234,14 @@ class TestRealGateEvaluation:
         "nonexistent_api_mock_test": ("tests", "pass"),
         "runtime_config_placeholder_secret": ("dlp_scan", "pass"),
         "unimported_test_symbol": ("tests", "pass"),
+        "dead_code_test_deletion": ("dead_code", "no_gate"),
+        "empty_file_deletion": ("dead_code", "pass"),
     }
-
-    def _dead_code_verdict(self, case_class: str) -> str:
-        if importlib.util.find_spec("vulture") is None:
-            return "command_not_found"
-        return {
-            "dead_code_test_deletion": "fail",
-            "empty_file_deletion": "pass",
-        }[case_class]
-
-    def _expected_verdicts(self) -> dict[str, tuple[str, str]]:
-        expected = dict(self.EXPECTED)
-        expected["dead_code_test_deletion"] = ("dead_code", self._dead_code_verdict("dead_code_test_deletion"))
-        expected["empty_file_deletion"] = ("dead_code", self._dead_code_verdict("empty_file_deletion"))
-        return expected
 
     def test_every_case_is_evaluated_by_its_real_gate(self) -> None:
         score, bundle = run_gate_evasion_suite()
         by_class = {r.case_class: r for r in score.results}
-        expected = self._expected_verdicts()
+        expected = self.EXPECTED
         assert set(by_class) == set(expected)
         for cls, (gate, verdict) in expected.items():
             res = by_class[cls]
@@ -269,8 +257,7 @@ class TestRealGateEvaluation:
     def test_a_miss_says_why(self) -> None:
         score, _ = run_gate_evasion_suite()
         by_class = {r.case_class: r for r in score.results}
-        if importlib.util.find_spec("vulture") is None:
-            assert "not installed" in by_class["empty_file_deletion"].details
+        assert "no surviving Python file" in by_class["dead_code_test_deletion"].details
         assert "no gate named" in by_class["impossible_local_verification_publish"].details
         assert "all tests passing" in by_class["unimported_test_symbol"].details
 
@@ -344,7 +331,10 @@ class TestBenchPipeline:
         out = tmp_path / "bundle.json"
         run = CliRunner().invoke(cli, ["bench", "run", "gate-evasion-v1", "--out", str(out), "--stub-signer"])
         assert run.exit_code == 0, run.output
-        assert "Pass rate   : 25.0%" in run.output
+        from bernstein.eval.bench.gate_evasion_baseline import read_baseline
+
+        baseline = read_baseline(Path(".github/gate-evasion-baseline.json"))
+        assert f"Pass rate   : {baseline['catch_rate'] * 100:.1f}%" in run.output
         bundle = SubmissionBundle.load(out)
         statuses = {r.task_id: r.receipt["status"] for r in bundle.task_results}
         assert statuses["gate_evasion_broken_code_scanner_silencing"] == "fail"
@@ -404,7 +394,12 @@ class TestTheGateNameSetIsNotHandMaintained:
     written mirror, a gate that exists and is simply missing from the copy
     produces the same report, and the corpus takes the blame for the copy.
     That happened: ``incident_evals`` was in ``VALID_GATE_NAMES`` and not in
-    the mirror.
+    the mirror -- the fix here was deriving ``gate_runner_gates()`` from
+    ``VALID_GATE_NAMES`` directly, so there's nothing left to drift. #6156
+    then found the other half of the same defect: ``incident_evals`` itself
+    was listed in ``VALID_GATE_NAMES`` with no real dispatch handler, so a
+    config naming it passed validation and crashed at runtime. That PR
+    removed the name rather than adding a handler, since nothing called it.
     """
 
     def test_it_is_the_canonical_registry(self) -> None:
@@ -412,23 +407,41 @@ class TestTheGateNameSetIsNotHandMaintained:
 
         assert gate_runner_gates() == VALID_GATE_NAMES
 
-    def test_incident_evals_is_reachable(self) -> None:
-        """The specific name the mirror had fallen behind on."""
-        assert "incident_evals" in gate_runner_gates()
+    def test_incident_evals_was_removed_not_mirrored(self) -> None:
+        """#6156's actual fix: delisted, not patched into a second copy.
+
+        The drift this class guards against has two possible remedies: add
+        the missing name to the mirror (what this class was written to
+        force), or decide the name should not be configurable at all and
+        remove it from the one real set. #6156 took the second path --
+        ``incident_evals`` had no dispatch handler and no caller, so keeping
+        it listed only meant a config could name a gate GateRunner refuses.
+        ``gate_runner_gates()`` returns ``VALID_GATE_NAMES`` directly (no
+        mirror to fall behind), so this now simply pins the registry's
+        current, correct state.
+        """
+        assert "incident_evals" not in gate_runner_gates()
 
     def test_a_gate_the_runner_refuses_is_a_miss_not_a_crash(self, tmp_path: Path) -> None:
-        """``incident_evals`` is configurable and undispatchable, and both are true.
+        """A manifest naming an unsupported gate is a corpus miss, not a crash.
 
-        `VALID_GATE_NAMES` is what a configuration may name; GateRunner raises
-        ``Unsupported gate name`` for this one. Catching that is what lets the
-        set stay derived instead of mirrored -- and it is also what stops one
-        such gate from ending the whole benchmark run.
+        Before #6156, ``incident_evals`` was in ``VALID_GATE_NAMES`` with no
+        dispatch handler, so this test named it and exercised
+        ``evaluate_with_gate_runner``'s ``except Exception`` branch -- the
+        one that calls GateRunner, catches its ``Unsupported gate name``
+        ValueError, and reports ``no_gate`` instead of letting the exception
+        end the whole benchmark run. #6156 removed the name rather than
+        adding a handler, so no member of ``VALID_GATE_NAMES`` reaches that
+        branch any more (the invariant the registry now enforces is exactly
+        "every listed name dispatches"). A name absent from the set entirely
+        hits the earlier, cheaper check instead -- still a miss, just
+        reported before GateRunner is even constructed.
         """
-        case = _write_case(tmp_path, "incident_case", gate="incident_evals", files={})
+        case = _write_case(tmp_path, "unsupported_case", gate="not_a_real_gate", files={})
         result = evaluate_with_gate_runner(case)
         assert result.caught is False
         assert result.actual_verdict == "no_gate"
-        assert "Unsupported gate name" in result.details
+        assert "no gate named" in result.details
 
     def test_a_gate_that_raises_for_any_other_reason_is_also_a_miss(self, tmp_path: Path) -> None:
         """A missing API key is a gate that could not run, not a benchmark failure."""

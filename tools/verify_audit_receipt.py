@@ -33,14 +33,17 @@ Usage::
         [--jwk /path/to/trusted.jwk.json] \\
         [--public-key /path/to/ed25519.pub.pem] \\
         [--format cose|intoto|transparency|all] \\
-        [--verbose]
+        [--allow-unpinned-key] [--verbose]
 
 Exit codes: ``0`` all enabled checks passed, ``1`` a check failed, ``2`` bad
 arguments or unreadable inputs.
 
-By default the verifier trusts the Ed25519 key embedded in the receipt
-(``signing.public_key_jwk``) on first use. Pass ``--jwk`` or ``--public-key``
-to pin an out-of-band key; the embedded key must then match it.
+Pass ``--jwk`` or ``--public-key`` to pin an out-of-band key; the embedded key
+(``signing.public_key_jwk``) must then match it. Without a pin the receipt can
+only be checked against the key it carries (trust-on-first-use), which proves
+integrity but not who signed it, so the ``public_key`` check fails and the
+overall result is FAIL unless ``--allow-unpinned-key`` is given. The key-trust
+status is always printed.
 """
 
 from __future__ import annotations
@@ -69,6 +72,18 @@ COSE_ALG_EDDSA = -8
 COSE_LABEL_ALG = 1
 EMPTY_TREE_ROOT = hashlib.sha256(b"empty-tree").hexdigest()
 VALID_FORMATS = ("cose", "intoto", "transparency")
+
+# Key-trust notes returned by ``_resolve_public_key``. Only a key pinned out of
+# band proves who signed the receipt; the embedded key proves only that the
+# file is internally consistent, because anyone holding the receipt can
+# re-sign it under a key of their own.
+KEY_TRUST_UNPINNED = "trust-on-first-use"
+UNPINNED_KEY_FAIL_DETAIL = (
+    "trust-on-first-use: the receipt was checked only against the key it carries, "
+    "which does not show who signed it. Pin the signer's key with --public-key or "
+    "--jwk, or pass --allow-unpinned-key to accept an integrity-only check."
+)
+UNPINNED_KEY_PASS_DETAIL = "trust-on-first-use (unpinned key accepted by --allow-unpinned-key; integrity only)"
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +261,7 @@ def _resolve_public_key(
             raise ValueError(msg)
         return _public_key_from_jwk(embedded_jwk), "pinned-jwk"
 
-    return _public_key_from_jwk(embedded_jwk), "trust-on-first-use"
+    return _public_key_from_jwk(embedded_jwk), KEY_TRUST_UNPINNED
 
 
 # ---------------------------------------------------------------------------
@@ -474,11 +489,11 @@ _VERIFIERS = {
 }
 
 
-def _print_check(check: CheckResult, *, verbose: bool, stream: io.TextIOBase) -> None:
+def _print_check(check: CheckResult, *, verbose: bool, always_detail: bool = False, stream: io.TextIOBase) -> None:
     """Emit one PASS/FAIL line."""
     status = "PASS" if check.ok else "FAIL"
     line = f"[{status}] {check.name}"
-    if check.detail and (not check.ok or verbose):
+    if check.detail and (not check.ok or verbose or always_detail):
         line += f" - {check.detail}"
     print(line, file=stream)
 
@@ -491,6 +506,7 @@ def run_verify(
     pinned_pem: bytes | None,
     verbose: bool,
     stream: io.TextIOBase,
+    allow_unpinned_key: bool = False,
 ) -> VerifyResult:
     """Run every enabled check and emit human-readable output."""
     result = VerifyResult()
@@ -510,9 +526,17 @@ def run_verify(
         result.checks.append(check)
         _print_check(check, verbose=verbose, stream=stream)
         return result
-    key_check = CheckResult("public_key", ok=True, detail=note)
+    # An unpinned key is a failing check unless the caller opted in, and the
+    # key-trust status is always printed so a PASS is never read as provenance.
+    unpinned = note == KEY_TRUST_UNPINNED
+    if unpinned and not allow_unpinned_key:
+        key_check = CheckResult("public_key", ok=False, detail=UNPINNED_KEY_FAIL_DETAIL)
+    elif unpinned:
+        key_check = CheckResult("public_key", ok=True, detail=UNPINNED_KEY_PASS_DETAIL)
+    else:
+        key_check = CheckResult("public_key", ok=True, detail=note)
     result.checks.append(key_check)
-    _print_check(key_check, verbose=verbose, stream=stream)
+    _print_check(key_check, verbose=verbose, stream=stream, always_detail=True)
 
     binding_check, recomputed_head = verify_subject_binding(receipt)
     result.checks.append(binding_check)
@@ -538,7 +562,10 @@ def run_verify(
         result.checks.append(check)
         _print_check(check, verbose=verbose, stream=stream)
 
-    print(f"OVERALL: {'PASS' if result.ok else 'FAIL'}", file=stream)
+    overall = "PASS" if result.ok else "FAIL"
+    if result.ok and unpinned:
+        overall += " (unpinned key: integrity only)"
+    print(f"OVERALL: {overall}", file=stream)
     return result
 
 
@@ -565,6 +592,15 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=[*VALID_FORMATS, "all"],
         default="all",
         help="Which format(s) to verify (default: all present).",
+    )
+    parser.add_argument(
+        "--allow-unpinned-key",
+        action="store_true",
+        help=(
+            "Accept a receipt checked only against its embedded key (trust-on-first-use). "
+            "Without a pinned --public-key/--jwk this proves integrity, not who signed it; "
+            "the default is to report such a receipt as FAIL."
+        ),
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Print PASS-line details.")
     return parser
@@ -607,6 +643,7 @@ def main(argv: list[str] | None = None) -> int:
         pinned_pem=pinned_pem,
         verbose=args.verbose,
         stream=sys.stdout,
+        allow_unpinned_key=args.allow_unpinned_key,
     )
     return 0 if result.ok else 1
 

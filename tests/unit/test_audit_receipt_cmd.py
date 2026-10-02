@@ -76,10 +76,24 @@ def test_receipt_export_then_verify(tmp_path: Path, monkeypatch) -> None:
     events = AuditLog(workdir / ".sdd" / "audit", key_path=audit_key).query()
     assert any(e.event_type == "audit.receipt_export" for e in events)
 
-    # verify shells to the standalone tool and passes.
-    verify = runner.invoke(audit_group, ["receipt", "verify", str(receipts[0])])
+    # verify shells to the standalone tool. With no pinned key it refuses to
+    # call the receipt verified, and says why.
+    unpinned = runner.invoke(audit_group, ["receipt", "verify", str(receipts[0])])
+    assert unpinned.exit_code == 1, unpinned.output
+    assert "trust-on-first-use" in unpinned.output
+
+    # Pinned against the operator's key it passes.
+    jwk_path = tmp_path / "trusted.jwk.json"
+    jwk_path.write_text(json.dumps(receipt["signing"]["public_key_jwk"]))
+    verify = runner.invoke(audit_group, ["receipt", "verify", str(receipts[0]), "--jwk", str(jwk_path)])
     assert verify.exit_code == 0, verify.output
     assert "OVERALL: PASS" in verify.output
+    assert "pinned-jwk" in verify.output
+
+    # The integrity-only tier is available as an explicit opt-in.
+    opted_in = runner.invoke(audit_group, ["receipt", "verify", str(receipts[0]), "--allow-unpinned-key"])
+    assert opted_in.exit_code == 0, opted_in.output
+    assert "integrity only" in opted_in.output
 
 
 def test_receipt_verify_detects_tamper(tmp_path: Path, monkeypatch) -> None:

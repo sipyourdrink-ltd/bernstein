@@ -19,6 +19,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 _FIXTURE_PATH = Path(__file__).with_name("fixtures") / "foreign_attestation_unverifiable.json"
 
 #: Every key a foreign attestation may carry.  An allowlist rather than a
@@ -247,3 +249,99 @@ def test_foreign_attestation_isolation_independent_verdicts() -> None:
 
     # Local chain expectation unchanged
     assert fixture["local_chain"]["expected_verdict"] == "verified"
+
+
+# ---------------------------------------------------------------------------
+# A foreign attestation cannot claim Bernstein's own authority
+# ---------------------------------------------------------------------------
+
+#: Trust classes that describe material produced inside Bernstein's authority.
+#: The tampering tests above used ``operator_hmac`` -- not a trust class at all,
+#: so it failed parsing whatever the verifier's policy was. These are the real
+#: enum values, which parsed cleanly and were adopted as the claim's taint.
+_INSIDER_CLASSES = ("operator", "workspace", "first_party")
+
+
+def _attestation(**overrides: object) -> dict[str, object]:
+    record = _fixture()["lineage_record"]
+    assert isinstance(record, dict)
+    attestation = copy.deepcopy(record["external_attestation"])
+    assert isinstance(attestation, dict)
+    attestation.update(overrides)
+    return attestation
+
+
+def _signed(attestation: dict[str, object]) -> tuple[dict[str, object], str]:
+    """Return *attestation* carrying a valid issuer signature, and the issuer's public key PEM."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    envelope = attestation["envelope"]
+    assert isinstance(envelope, dict)
+    payload_hash = envelope["payload_hash"]
+    assert isinstance(payload_hash, str)
+    signed_envelope = {**envelope, "signature": base64.b64encode(key.sign(payload_hash.encode("utf-8"))).decode()}
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode("ascii")
+    )
+    return {**attestation, "envelope": signed_envelope}, public_pem
+
+
+@pytest.mark.parametrize("trust_class", _INSIDER_CLASSES)
+def test_a_foreign_claim_of_insider_trust_fails_closed(trust_class: str) -> None:
+    from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation
+
+    result = verify_foreign_attestation(_attestation(trust_class=trust_class))
+
+    assert result.verdict == "malformed"
+    assert result.verified is False
+    assert result.taint.value == "public"
+    assert trust_class in result.reason
+
+
+@pytest.mark.parametrize("trust_class", _INSIDER_CLASSES)
+def test_a_valid_issuer_signature_does_not_launder_an_insider_claim(trust_class: str) -> None:
+    """The load-bearing case: a signature check must not turn a claim of our authority into ``verified``.
+
+    Before this, ``operator`` came back ``verified_foreign`` with
+    ``taint=operator`` -- not tainted, by ``provenance.is_untrusted`` -- for any
+    key that had signed the envelope's payload hash.
+    """
+    from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation_full
+    from bernstein.core.lineage.provenance import is_untrusted
+
+    attestation, issuer_pem = _signed(_attestation(trust_class=trust_class))
+
+    result = verify_foreign_attestation_full(attestation, issuer_pem)
+
+    assert result.verdict == "malformed"
+    assert result.verified is False
+    assert is_untrusted(result.taint)
+
+
+@pytest.mark.parametrize("trust_class", ["third_party", "public"])
+def test_outsider_classes_keep_their_declared_taint(trust_class: str) -> None:
+    """The ceiling removes nothing a foreign claim was entitled to."""
+    from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation
+
+    result = verify_foreign_attestation(_attestation(trust_class=trust_class))
+
+    assert result.verdict == "unverifiable"
+    assert result.taint.value == trust_class
+
+
+def test_a_signed_third_party_claim_still_verifies() -> None:
+    from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation_full
+
+    attestation, issuer_pem = _signed(_attestation(trust_class="third_party"))
+
+    result = verify_foreign_attestation_full(attestation, issuer_pem)
+
+    assert result.verdict == "verified_foreign"
+    assert result.verified is True
+    assert result.taint.value == "third_party"

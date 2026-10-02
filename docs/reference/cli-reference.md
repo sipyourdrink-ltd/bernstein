@@ -352,6 +352,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
 | `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
 | `bernstein runs report` | Finished runs with a classified outcome. | `cli/commands/runs_cmd.py` |
+| `bernstein runs helpers RUN_ID` | Agent-written helpers captured for a run. | `cli/commands/runs_cmd.py` |
 | `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
 | `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
@@ -444,6 +445,20 @@ carries the outcome class and the one line of evidence it was classified from:
 run), `no-changes` (zero commits over base), `infra-error` (adapter or transport
 death, or no wrap-up was ever recorded), and `wedged` (the run ended with open
 tasks nothing could spawn).
+
+##### `bernstein runs helpers`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `RUN_ID` | required | Run whose helpers to list (positional). |
+| `--workdir PATH` | `.` | Project root. |
+| `--json` | off | Emit stable machine-readable rows instead of the table. |
+
+Lists `.sdd/runs/<run_id>/run_helpers.jsonl`: each executed, agent-created
+file with its origin step, execution count, exit codes (`?` for unknown) and
+content hash. A row whose record hash no longer recomputes is left out.
+`worktrees gc` does not capture helpers yet; see
+[worktrees](../operations/worktrees.md#run-helpers-not-yet-captured-by-gc).
 
 #### `bernstein watch`
 
@@ -941,6 +956,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein mandate` | Verifiable spending mandates as journal-anchored consent receipts (group): `emit` / `verify` / `revoke`. | `cli/commands/mandate_cmd.py` |
 | `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
+| `bernstein trust` | Grant, show (`--status`) or revoke (`--revoke`) workspace trust: script hooks, plugin hooks and workflow command nodes run only in a trusted workspace. | `cli/commands/trust_cmd.py:trust_cmd` |
 | `bernstein approve-tool` | Approve a tool-call request (alias; flag form `approve --tool <id>`). | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request (alias; flag form `reject --tool <id>`). | `cli/commands/approval_cmd.py:reject_tool_cmd` |
 | `bernstein review-receipt` | Attested PR review receipts binding issue / plan / tool calls / diff (group): `emit` / `verify`. | `cli/commands/review_receipt_cmd.py` |
@@ -955,6 +971,8 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein govern posture` | Score the install's governance posture from chain-evidenced facts only: per-control coverage over the lineage log, no configuration read. Names every contributing chain event, the weights version, and its own denominator (the weight that was measurable). Signed with the audit-chain key; `--json-output` prints the canonical document. | `cli/commands/governance_cmd.py` |
 | `bernstein govern inventory --render` | Emit the inventory topology graph from a store as mermaid or dot. Same store, same bytes. | `cli/commands/govern_cmd.py` |
 | `bernstein govern reconcile` | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it. | `cli/commands/govern_cmd.py` |
+| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--json`. | `cli/commands/govern_audit_cmd.py` |
+| `bernstein govern audit-keys` | Check whether verifier keys are stale relative to the install identity. | `cli/commands/governance_cmd.py` |
 | `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
 | `bernstein limits` | Lease-backed admission and concurrency limits (group): `pool`, `tag`, `rate`, `queue`, `status`, `verify`. Projected from admission ledger. Distinct from `bernstein pool`. | `cli/commands/limits_cmd.py` |
@@ -1652,7 +1670,7 @@ verify` recomputes both and rejects a description whose diff has since changed.
 | `bernstein ledger runs` | List runs with an anchored work ledger in this repository. `--json` for machine output. | `cli/commands/ledger_cmd.py` |
 | `bernstein ledger gc <run>` | Squash the run's anchor history to a single commit, preserving the current anchored tree byte for byte. Superseded chunk blobs become unreachable so a normal `git gc` reclaims them -- the repo-bloat bound for long runs. Exit 0 done, 1 no anchored ledger. | `cli/commands/ledger_cmd.py` |
 | `bernstein seal publish <run>` | Anchor the run's sealed journal head to an RFC 3161 timestamping authority, so the head carries an external witness of when it existed. Refuses a run whose journal chain does not verify or whose recomputed head disagrees with the seal in its lineage spine. `--tsa-url <url>` requests a token (the only option that opens a socket); `--token <file>` stores a DER reply obtained on another host, for installs with no network. The reply is written to `.sdd/runs/<run>/seal_anchor.json`. Exit 0 anchored, 1 nothing to anchor / refused. | `cli/commands/seal_cmd.py` |
-| `bernstein seal verify <run>` | Re-check a stored anchor offline: recompute the journal head, confirm the anchor witnesses exactly that head, then chain the timestamp token to TSA roots supplied with `--rfc3161-trusted-tsa-bundle <file>` and confirm its `messageImprint` covers the head. Never contacts the TSA. `--json` for machine output. Exit 0 `verified`; 1 for `mismatched` (the head moved since anchoring), `invalid` (the token failed to chain), `unverifiable` (no trust bundle), or no anchor at all. | `cli/commands/seal_cmd.py` |
+| `bernstein seal verify <run>` | Re-check a stored anchor offline: recompute the journal head, confirm the anchor witnesses exactly that head, then dispatch on `anchor_kind`. An `rfc3161` record is chained to TSA roots supplied with `--rfc3161-trusted-tsa-bundle <file>` and its `messageImprint` must cover the head. A `transparency-log` record recomputes the RFC 6962 leaf from the sealed head, walks the stored inclusion proof, and verifies the log's signed tree head against `--log-public-key` (repeatable). The key inside the artefact is only a hint to select among those pins — a self-signed forged anchor is refused. No network; an empty TSA bundle is not a fallback for a log anchor. `--json` for machine output. Exit 0 `verified`; 1 for `mismatched` (the head moved since anchoring), `invalid` (the token or inclusion proof failed), `unverifiable` (RFC 3161 with no trust bundle, or a log anchor with no pinned key), or no anchor at all. | `cli/commands/seal_cmd.py` |
 | `bernstein run-service submit <goal> --task <id>...` | Open a detached run: seed the work ledger (`run.open` + one `task.scheduled` per `--task`), persist the run descriptor (goal digest, never the goal text), and sign a `submitted` lifecycle receipt into the HMAC audit chain. By default spawns a session-detached supervisor that survives the terminal; `--foreground` advances the run in-process; `--per-task-delay` makes off-terminal progress observable; `--json` for machine output. `--backend ssh` runs each task off-host on the ssh backend in its own isolated remote git worktree (one branch per task) and signs a `run.ssh_task` receipt binding that worktree; pass `--ssh-host` and `--ssh-path` (absolute remote dir), optionally `--ssh-user`/`--ssh-port`/`--ssh-identity`, `--ssh-repo` to git-worktree from with `--ssh-base-branch`, and `--ssh-secret ENV=PROVIDER` (repeatable) to inject a vault credential into the remote env resolved from the vault only, never the ledger or the receipts. | `cli/commands/run_service_cmd.py` |
 | `bernstein run-service attach <run>` | Reattach from any shell: prove the current ledger head is a forward extension of the head last seen (the reattach artefact is that continuity proof), record a `reattached` receipt, and render the live projection (completed / in-flight / scheduled tasks). `--json` for machine output. Exit 0 continuous, 1 no such run, 3 continuity broken (the ledger diverged or failed to verify). | `cli/commands/run_service_cmd.py` |
 | `bernstein run-service status [<run>]` | Show supervisor liveness plus the ledger projection for a run; with no run id, list every run in the project. `--json` for machine output. Exit 1 when the named run does not exist. | `cli/commands/run_service_cmd.py` |

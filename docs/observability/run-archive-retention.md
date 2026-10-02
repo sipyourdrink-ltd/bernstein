@@ -2,9 +2,24 @@
 
 An unattended run on an ephemeral workspace — a CI runner, a container, a
 per-issue clone — deletes the workspace when the run ends. The evidence that
-would explain a failure goes with it. `bernstein run archive` is what survives,
-so for a postmortem the archive *is* the evidence, and evidence that cannot be
-checked is a claim.
+would explain a failure goes with it. The run archive is what survives, so for
+a postmortem the archive *is* the evidence, and evidence that cannot be checked
+is a claim.
+
+The archive is a Python API in `bernstein.cli.run_archive`: `create_archive`
+writes it and `verify_archive` checks it. There is no `bernstein` command for
+either yet, so a CI job or a script calls them directly:
+
+```python
+from pathlib import Path
+
+from bernstein.cli.run_archive import create_archive, verify_archive
+
+archive = Path("run-archive.zip")
+manifest = create_archive(Path.cwd(), archive)  # the manifest it wrote
+result = verify_archive(archive)
+assert result.ok, result
+```
 
 ## What an archive contains
 

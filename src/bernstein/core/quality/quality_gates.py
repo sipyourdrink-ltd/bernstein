@@ -892,8 +892,8 @@ def _run_pii_gate(
             files are scanned.
 
     Returns:
-        QualityGateCheckResult with ``blocked=True`` if any high-severity
-        finding is detected.
+        QualityGateCheckResult with ``blocked=True`` if any finding has
+        ``block_merge`` set: a high-severity secret, or regulated PII.
     """
     from bernstein.core.pii_output_gate import format_findings, scan_text
 
@@ -925,7 +925,9 @@ def _run_pii_gate(
             detail="No secrets or PII detected in agent output.",
         )
 
-    has_high = any(f.severity == "high" for _, f in all_findings)
+    # The finding says whether it blocks. Asking the severity string instead let
+    # an SSN or a card number through while a private key blocked (#6191).
+    blocks = any(f.block_merge for _, f in all_findings)
     finding_objs = [f for _, f in all_findings]
     detail = format_findings(finding_objs)
 
@@ -936,8 +938,8 @@ def _run_pii_gate(
 
     return QualityGateCheckResult(
         gate="pii_scan",
-        passed=not has_high,
-        blocked=has_high,
+        passed=not blocks,
+        blocked=blocks,
         detail=detail,
     )
 

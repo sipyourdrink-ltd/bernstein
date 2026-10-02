@@ -1,20 +1,19 @@
-"""Google Gemini / Antigravity CLI adapter.
+"""Google Gemini CLI adapter.
 
-The upstream CLI is changing binary names ahead of a deprecation date:
-the legacy ``gemini`` binary stops serving free / AI Pro / Ultra
-subscribers on 2026-06-18; the replacement ``antigravity`` binary uses
-the same model set and the same ``--output-format`` semantics.
-Enterprise customers retain the legacy binary via paid API keys.
+The legacy ``gemini`` binary stops serving free / AI Pro / Ultra
+subscribers on 2026-06-18; Enterprise customers retain it via paid API
+keys. The consumer successor, the Antigravity CLI (``agy``), is a
+distinct tool with its own flags, hooks and config layout, not a rename;
+it has its own adapter in :mod:`bernstein.adapters.agy`, registered
+under both the ``agy`` and ``antigravity`` keys.
 
-The adapter is dual-binary aware. At spawn time it discovers which
-binary is on ``PATH`` using a deterministic cascade defined by
-``_DISCOVERY_CASCADE``:
+At spawn time the adapter resolves its binary with a deterministic
+cascade defined by ``_DISCOVERY_CASCADE``:
 
 1. The operator override ``BERNSTEIN_GEMINI_BINARY`` wins when set
    (and must resolve on ``PATH``, regardless of ``strict`` mode).
-2. Otherwise ``antigravity`` is preferred.
-3. The legacy ``gemini`` binary is used as a fallback.
-4. If neither resolves, behavior depends on the ``strict`` flag
+2. Otherwise the ``gemini`` binary is used.
+3. If it does not resolve, behavior depends on the ``strict`` flag
    passed to :func:`resolve_google_cli_binary`:
 
    - ``strict=True`` (used by ``bernstein adapters check`` / doctor):
@@ -26,14 +25,9 @@ binary is on ``PATH`` using a deterministic cascade defined by
      codex / aider adapter posture and keeps tests that mock
      ``subprocess`` from tripping on eager discovery.
 
-The adapter contract (flags, env-isolation allow-list, sandbox
-profile, rate-limit meter, network policy) is unchanged: only the
-binary name and the discovery step differ.
-
-Recommended models (identical on both binaries):
-``gemini-3.1-pro`` (highest reasoning), ``gemini-3-flash`` (default in
-the Gemini app, Pro-grade reasoning at Flash speed), or
-``gemini-3.1-flash-lite`` for the cheapest tier.
+Recommended models: ``gemini-3.1-pro`` (highest reasoning),
+``gemini-3-flash`` (default in the Gemini app, Pro-grade reasoning at
+Flash speed), or ``gemini-3.1-flash-lite`` for the cheapest tier.
 """
 
 from __future__ import annotations
@@ -66,22 +60,20 @@ logger = logging.getLogger(__name__)
 #: rely on ``PATH`` ordering.
 BINARY_ENV_VAR: str = "BERNSTEIN_GEMINI_BINARY"
 
-#: Replacement binary shipped by the upstream CLI rename.
-ANTIGRAVITY_BINARY: str = "antigravity"
-
-#: Legacy binary name, retained for operators still on the deprecated
+#: Gemini CLI binary name, retained for operators still on the deprecated
 #: install path or on a paid Enterprise license.
 LEGACY_GEMINI_BINARY: str = "gemini"
 
-#: Discovery cascade in priority order. ``antigravity`` first; the
-#: legacy binary as fallback.
-_DISCOVERY_CASCADE: tuple[str, ...] = (ANTIGRAVITY_BINARY, LEGACY_GEMINI_BINARY)
+#: Discovery cascade in priority order. The Antigravity CLI is not a
+#: candidate: it ships as ``agy`` with a different command line and is
+#: served by :mod:`bernstein.adapters.agy`.
+_DISCOVERY_CASCADE: tuple[str, ...] = (LEGACY_GEMINI_BINARY,)
 
 
 class BinaryNotInstalledError(SpawnError):
-    """Raised when neither ``antigravity`` nor ``gemini`` resolves on ``PATH``.
+    """Raised when the ``gemini`` binary does not resolve on ``PATH``.
 
-    The message lists both expected binaries and the override env var so
+    The message names the expected binary and the override env var so
     the operator-facing error is self-explanatory without consulting the
     docs.
     """
@@ -142,10 +134,10 @@ def resolve_google_cli_binary(
 
     if strict:
         raise BinaryNotInstalledError(
-            "Neither 'antigravity' nor 'gemini' was found on PATH. "
-            "Install the Antigravity CLI (per docs/adapters/antigravity.md), "
-            "or set "
-            f"{BINARY_ENV_VAR}=<path-or-name> to override discovery."
+            "'gemini' was not found on PATH. Install the Gemini CLI "
+            "(per docs/adapters/gemini.md), or set "
+            f"{BINARY_ENV_VAR}=<path-or-name> to override discovery. "
+            "For the Antigravity CLI ('agy') use the 'agy' adapter."
         )
     # Non-strict mode: return the first cascade entry as a fallback so
     # the call site (typically subprocess.Popen) surfaces the missing
@@ -199,7 +191,7 @@ def _inject_multimodal_attachments(prompt: str, multimodal_context: Any) -> str:
 
 
 class GeminiAdapter(CLIAdapter):
-    """Spawn and monitor Google Gemini / Antigravity CLI sessions."""
+    """Spawn and monitor Google Gemini CLI sessions."""
 
     # Provider-string aliases this adapter resolves from in
     # ``_infer_adapter_name_for_provider`` (via the registry's
@@ -295,8 +287,9 @@ class GeminiAdapter(CLIAdapter):
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError(
-                    f"{binary} not found in PATH. Install the Antigravity CLI "
-                    "or the legacy Gemini CLI; see docs/adapters/antigravity.md."
+                    f"{binary} not found in PATH. Install the Gemini CLI "
+                    "(see docs/adapters/gemini.md); for the Antigravity CLI "
+                    "use the 'agy' adapter."
                 ) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing {binary}: {exc}") from exc
@@ -358,7 +351,6 @@ class GeminiAdapter(CLIAdapter):
 
 
 __all__ = [
-    "ANTIGRAVITY_BINARY",
     "BINARY_ENV_VAR",
     "LEGACY_GEMINI_BINARY",
     "BinaryNotInstalledError",

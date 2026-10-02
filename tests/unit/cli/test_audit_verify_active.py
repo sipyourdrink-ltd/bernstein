@@ -194,3 +194,84 @@ def test_verify_counts_match_entry_count(project: Path) -> None:
     assert "Total entries" in result.output and "3" in result.output
     assert "Active entries" in result.output and "3" in result.output
     assert "Inactive entries" in result.output and "0" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Inactive and revoked entries fail the pillar
+# ---------------------------------------------------------------------------
+
+
+def _lineage_store(project: Path) -> LineageStore:
+    store = LineageStore(project / ".sdd" / "lineage")
+    store.log_path.parent.mkdir(parents=True, exist_ok=True)
+    return store
+
+
+def test_lineage_pillar_passes_when_every_entry_is_active(project: Path) -> None:
+    from bernstein.cli.commands.audit_cmd import _verify_lineage_active_set
+
+    _write_lineage_entry(_lineage_store(project), _create_lineage_entry(project / "a.py"))
+
+    assert _verify_lineage_active_set() is True
+
+
+def test_lineage_pillar_fails_on_entry_with_unknown_parent(project: Path) -> None:
+    from dataclasses import replace
+
+    from bernstein.cli.commands.audit_cmd import _verify_lineage_active_set
+
+    orphan = replace(_create_lineage_entry(project / "b.py"), parent_hashes=["sha256:" + "f" * 64])
+    _write_lineage_entry(_lineage_store(project), orphan)
+
+    assert _verify_lineage_active_set() is False
+
+
+def test_lineage_pillar_fails_on_revoked_entry(project: Path) -> None:
+    from bernstein.cli.commands.audit_cmd import _verify_lineage_active_set
+    from bernstein.core.lineage.entry import entry_hash
+    from bernstein.core.security.audit_chain import EVENT_MANDATE_REVOCATION, AuditChainStore
+
+    entry = _create_lineage_entry(project / "c.py")
+    _write_lineage_entry(_lineage_store(project), entry)
+    audit_dir = project / ".sdd" / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    chain = AuditChainStore(audit_dir, key=load_or_create_audit_key())
+    chain.log_with_prev_digest(
+        event_type=EVENT_MANDATE_REVOCATION,
+        actor="operator",
+        resource_type="mandate_revocation",
+        resource_id="m-1",
+        details={"lineage_entry_hash": entry_hash(entry), "reason": "revoked"},
+    )
+
+    assert _verify_lineage_active_set() is False
+
+
+def test_lineage_pillar_fails_closed_when_revocations_cannot_be_read(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.cli.commands.audit_cmd import _verify_lineage_active_set
+    from bernstein.core.security.audit import AuditKeyMissingError
+
+    _write_lineage_entry(_lineage_store(project), _create_lineage_entry(project / "d.py"))
+    (project / ".sdd" / "audit").mkdir(parents=True, exist_ok=True)
+
+    def _no_key(*_a: object, **_k: object) -> bytes:
+        raise AuditKeyMissingError("no key")
+
+    monkeypatch.setattr("bernstein.core.security.audit.load_audit_key", _no_key)
+
+    assert _verify_lineage_active_set() is False
+
+
+def test_audit_verify_names_the_lineage_pillar_on_inactive_entries(project: Path) -> None:
+    from dataclasses import replace
+
+    _setup_audit_dir(project)
+    orphan = replace(_create_lineage_entry(project / "e.py"), parent_hashes=["sha256:" + "e" * 64])
+    _write_lineage_entry(_lineage_store(project), orphan)
+
+    result = _run("verify")
+
+    assert result.exit_code != 0
+    assert "Lineage Activity" in result.output

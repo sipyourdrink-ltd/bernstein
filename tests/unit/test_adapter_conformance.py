@@ -503,10 +503,9 @@ def test_golden_transcripts_all_pass(tmp_path: Path) -> None:
 
     harness = ConformanceHarness()
     # Patch subprocess at the base level for the adapters the harness
-    # actually drives. Gemini joined the patched set in #1740 when the
-    # discovery cascade started returning ``antigravity`` as the
-    # non-strict default, which subprocess.Popen would otherwise try
-    # to spawn for real in CI where neither binary is installed.
+    # actually drives. Gemini joined the patched set in #1740: the
+    # non-strict discovery default (``gemini``) would otherwise be
+    # spawned for real by subprocess.Popen.
     # Use unbounded iterators so the test stays stable as transcript
     # coverage grows: a fixed-length list would raise ``StopIteration``
     # once the harness needed more than 100 Popen invocations.

@@ -631,3 +631,144 @@ def test_annotation_strips_backticks_and_handles_a_single_gap(qc: ModuleType) ->
         qc.Requirement("72 hours open for objections (touches `GOVERNANCE.md`)", False, "nobody")
     )
     assert qc.annotation(verdict) == "waiting for: 72 hours open for objections (touches GOVERNANCE.md) - nobody"
+
+
+# --- delegation ladder: triagers, area reviewers, terms --------------------
+
+TODAY = NOW.date()
+
+
+def _write_roster(tmp_path: Path, body: str) -> str:
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "quorum-roster.toml").write_text(body, encoding="utf-8")
+    return str(tmp_path)
+
+
+def test_old_shape_roster_loads_unchanged(qc: ModuleType, tmp_path: Path) -> None:
+    root = _write_roster(
+        tmp_path,
+        'maintainer = "owner"\ncore_reviewers = ["a", "b"]\ncommitters = ["c"]\nautomation = ["bot[bot]"]\n',
+    )
+    loaded = qc.load_roster(root, today=TODAY)
+    assert loaded.core_reviewers == {"a", "b"}
+    assert loaded.committers == {"c"}
+    assert loaded.triagers == frozenset()
+    assert loaded.area_reviewers == {}
+
+
+def test_repository_roster_loads(qc: ModuleType) -> None:
+    assert qc.load_roster(str(REPO_ROOT), today=TODAY).maintainer == "chernistry"
+
+
+def test_expired_entry_is_ignored_and_default_term_applies(qc: ModuleType, tmp_path: Path) -> None:
+    root = _write_roster(
+        tmp_path,
+        'maintainer = "owner"\n'
+        'core_reviewers = [{ login = "old", expires = "2026-09-01" }, { login = "new", expires = "2027-01-01" }]\n'
+        'committers = [{ login = "termed", granted = "2026-03-10" }, { login = "fresh", granted = "2026-03-11" }]\n'
+        'triagers = [{ login = "t", expires = "2026-09-10" }]\n',
+    )
+    loaded = qc.load_roster(root, today=TODAY)
+    assert loaded.core_reviewers == {"new"}
+    # granted 2026-03-10 lapses 2026-09-10 (today): absent; the next day's grant is still live
+    assert loaded.committers == {"fresh"}
+    assert loaded.triagers == frozenset()
+
+
+def test_add_months_clamps_month_end(qc: ModuleType) -> None:
+    assert qc.add_months(qc.date(2026, 8, 31), 6) == qc.date(2027, 2, 28)
+    assert qc.add_months(qc.date(2026, 10, 1), 6) == qc.date(2027, 4, 1)
+
+
+@pytest.fixture
+def area_roster(qc: ModuleType):
+    return qc.Roster(
+        maintainer="owner",
+        core_reviewers=frozenset({"core1"}),
+        committers=frozenset({"comm1"}),
+        automation=frozenset(),
+        triagers=frozenset({"triager"}),
+        area_reviewers={"adapters": frozenset({"areaman"})},
+    )
+
+
+def test_area_reviewer_counts_as_core_inside_the_area(qc: ModuleType, area_roster) -> None:
+    pr = _pr(
+        qc,
+        paths=["src/bernstein/adapters/aider.py", "tests/unit/adapters/test_aider.py"],
+        reviews=[_review(qc, "areaman", "APPROVED"), _review(qc, "comm1", "APPROVED")],
+    )
+    assert _evaluate(qc, area_roster, pr).passed
+
+
+def test_area_reviewer_is_a_plain_committer_outside_the_area(qc: ModuleType, area_roster) -> None:
+    pr = _pr(
+        qc,
+        paths=["src/bernstein/adapters/aider.py", "src/bernstein/cli/main.py"],
+        reviews=[_review(qc, "areaman", "APPROVED"), _review(qc, "comm1", "APPROVED")],
+    )
+    verdict = _evaluate(qc, area_roster, pr)
+    assert not verdict.passed
+    assert "core reviewer" in verdict.requirements[0].text
+    # still counts as an approval alongside a real core reviewer
+    pr = _pr(
+        qc,
+        paths=["src/bernstein/cli/main.py"],
+        reviews=[_review(qc, "areaman", "APPROVED"), _review(qc, "core1", "APPROVED")],
+    )
+    assert _evaluate(qc, area_roster, pr).passed
+
+
+def test_triager_never_counts(qc: ModuleType, area_roster) -> None:
+    assert "triager" not in area_roster.quorum_holders
+    assert "triager" not in area_roster.core_for(["src/bernstein/adapters/x.py"])
+    pr = _pr(qc, reviews=[_review(qc, "triager", "APPROVED"), _review(qc, "core1", "APPROVED")])
+    assert not _evaluate(qc, area_roster, pr).passed
+
+
+def test_expired_area_reviewer_counts_as_absent(qc: ModuleType, tmp_path: Path) -> None:
+    root = _write_roster(
+        tmp_path,
+        'maintainer = "owner"\ncommitters = ["comm1"]\n'
+        'area_reviewers = { adapters = [{ login = "areaman", expires = "2026-01-01" }] }\n',
+    )
+    loaded = qc.load_roster(root, today=TODAY)
+    assert "areaman" not in loaded.quorum_holders
+    assert loaded.area_reviewers == {"adapters": frozenset()}
+
+
+def test_a_rename_out_of_the_area_is_seen_through_its_previous_name(qc: ModuleType) -> None:
+    roster = qc.Roster(
+        maintainer="owner",
+        core_reviewers=frozenset({"core1"}),
+        committers=frozenset(),
+        automation=frozenset(),
+        area_reviewers={"docs": frozenset({"d1", "d2"})},
+    )
+    reviews = [_review(qc, "d1", "APPROVED"), _review(qc, "d2", "APPROVED")]
+    # the files API lists a move as the new name plus previous_filename
+    files = [{"filename": "docs/x.py", "previous_filename": "src/bernstein/cli/x.py", "status": "renamed"}]
+    paths = [name for f in files for name in (f["filename"], f.get("previous_filename")) if name]
+    assert not _evaluate(qc, roster, _pr(qc, paths=paths, reviews=reviews)).passed
+    assert _evaluate(qc, roster, _pr(qc, paths=["docs/x.py"], reviews=reviews)).passed
+
+
+def test_fetch_pull_request_includes_previous_filenames(qc: ModuleType) -> None:
+    import inspect
+
+    assert "previous_filename" in inspect.getsource(qc.fetch_pull_request)
+
+
+def test_unknown_roster_entry_key_fails_closed(qc: ModuleType, tmp_path: Path) -> None:
+    root = _write_roster(
+        tmp_path,
+        'maintainer = "owner"\ncommitters = [{ login = "x", expiry = "2020-01-01" }]\n',
+    )
+    with pytest.raises(ValueError):
+        qc.load_roster(root, today=TODAY)
+
+
+def test_unknown_area_fails_closed(qc: ModuleType, tmp_path: Path) -> None:
+    root = _write_roster(tmp_path, 'maintainer = "owner"\narea_reviewers = { adapter = ["x"] }\n')
+    with pytest.raises(ValueError):
+        qc.load_roster(root, today=TODAY)

@@ -52,6 +52,24 @@ cli: claude   # must match a registered name exactly
 - For third-party adapters, ensure the package exposes a `bernstein.adapters` entry point and is installed in the same virtualenv.
 - For arbitrary CLIs, use `cli: generic` with `cli_command`, `prompt_flag`, and `model_flag` settings.
 
+### 1a. `FATAL: no adapter configured`
+
+**Symptom:** `bernstein -g "<goal>"` exits `1` immediately with `FATAL: no adapter configured. Bernstein does not default to Claude ...`. No task server or watchdog is left running.
+
+**Cause:** Bernstein never falls back to a default adapter, because that would spend a provider's tokens nobody asked it to. An inline goal carries no seed file, so the adapter has to come from one of three places, and none of them is present:
+
+| Source | Lives in |
+|--------|----------|
+| `--cli <adapter>` | the single invocation |
+| `BERNSTEIN_ADAPTER` | the current shell |
+| `cli:` in `bernstein.yaml` | the project directory |
+
+Each one stays behind when you start a run in a fresh checkout or worktree, which is why a new directory is where this shows up first.
+
+**Resolution:** supply any one of the three, for example `bernstein -g "<goal>" --cli codex`. `bernstein integrations list --installed` shows which adapters resolve on this machine.
+
+**Why it exits instead of retrying:** a missing adapter is a configuration error. The next launch would read the same flags, environment and seed and fail the same way, so nothing is retried. Before this was fixed the run reported success and the recovery watchdog relaunched the failing orchestrator every ~5 seconds ([#6126](https://github.com/sipyourdrink-ltd/bernstein/issues/6126)). If the orchestrator subprocess still reaches this failure through another launch path, it writes `.sdd/runtime/spawner-deliberate-stop` (reason `no-adapter-configured`, or `adapter-not-found` when the named adapter does not resolve) so the watchdog stands down, and the next run clears that marker.
+
 ---
 
 ## 2. CLI Binary Not in PATH
@@ -610,6 +628,44 @@ fails verification with the cause named.
   conflicted merge (see also issue #2756).
 - Verify delivery manually: the path in the detail message is repo-relative;
   check it exists in your checkout after the run.
+
+---
+
+## 23. QA Tasks Fail with "Failed to spawn: ruff" in a Non-Python Repository
+
+**Symptom:** Every QA-role task in a repository that is not Python (for
+example TypeScript on Bun) fails, is retried, and fails identically. The agent
+log shows `error: Failed to spawn: ruff` or `command not found`. See issue
+[#6138](https://github.com/sipyourdrink-ltd/bernstein/issues/6138).
+
+**Cause:** The built-in QA role prompt (`templates/roles/qa/`) used to tell
+every QA agent to run `uv run ruff check src/` unconditionally. In a
+repository without Python or `ruff` the agent followed that instruction, the
+spawn failed, and nothing about the code under test was wrong. The QA prompt
+now tells the agent to find and use the repository's own lint, format and test
+commands, and names `ruff` and `scripts/run_tests.py` only when the repository
+uses them.
+
+**Diagnosis:**
+```bash
+grep -n "ruff\|uv run" .sdd/runtime/<session>.log   # which command was run
+```
+
+**Resolution:**
+- Upgrade to a release that includes the neutral QA prompt.
+- The other built-in role prompts (`backend`, `frontend`, `devops`, ...) still
+  name the Python toolchain. If an agent in one of those roles fails the same
+  way, add a `critical` entry to `.sdd/recommendations.yaml` that names the
+  repository's real toolchain; it reaches every role:
+  ```yaml
+  recommendations:
+    - id: toolchain
+      category: verification
+      severity: critical
+      text: 'This repository is TypeScript on Bun. Never run ruff, uv or pytest; use bun.'
+      applies_to: []   # empty = every role
+  ```
+  The top-level `recommendations:` key is required; a bare list is ignored.
 
 ---
 

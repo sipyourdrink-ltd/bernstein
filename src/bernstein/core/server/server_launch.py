@@ -69,6 +69,10 @@ def _clean_stale_runtime(workdir: Path) -> None:
         if pid is None or not _is_alive(pid):
             pid_file.unlink(missing_ok=True)
 
+    # A stop marker belongs to the run that wrote it. Left behind, it would make
+    # this run's watchdog decline to restart an orchestrator that really crashed.
+    (runtime_dir / "spawner-deliberate-stop").unlink(missing_ok=True)
+
     # Preserve logs across runs, but rotate oversized ones.
     for log_name in ("server.log", "spawner.log"):
         rotate_log_file(runtime_dir / log_name)

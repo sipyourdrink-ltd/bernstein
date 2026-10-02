@@ -993,15 +993,25 @@ class EvolutionLoop:
             # Asked BEFORE the rollback, which writes `rolled_back` to history
             # and would flip the answer.
             changed_something = self._executor.was_applied(proposal.id)
+            if changed_something:
+                # Recorded BEFORE the rollback runs, not after it. The rollback
+                # writes `rolled_back` to history and retires the manifest, so
+                # anything that fails or is killed from here on - a full disk
+                # while writing the receipt, say - would otherwise leave the
+                # tree restored, the evidence gone, and the breaker closed.
+                # Failing closed costs one halt on a change that was in fact
+                # reverted; failing open lets evolution carry on after one.
+                self._breaker.record_rollback(proposal.id)
             try:
                 self._executor.rollback_upgrade(proposal)
             except RollbackError:
                 # NOT swallowed. A failed apply whose rollback also failed
                 # leaves the tree in a state nobody declared, and continuing the
                 # loop over it would apply the next proposal on top. The breaker
-                # is tripped first so the failure is recorded even though this
-                # does not return.
-                self._breaker.record_rollback(proposal.id)
+                # is tripped even when no apply was evidenced, so the failure is
+                # recorded although this does not return.
+                if not changed_something:
+                    self._breaker.record_rollback(proposal.id)
                 logger.exception("Proposal %s rollback FAILED; the tree is in an undeclared state", proposal.id)
                 raise
             # Only a real revert is a rollback. `execute_upgrade` answers False
@@ -1012,9 +1022,7 @@ class EvolutionLoop:
             # `record_rollback` trips the breaker on ANY rollback inside 48h,
             # so one no-op was enough, and the halt reason read "Rollback
             # detected" for a tree nothing had touched.
-            if changed_something:
-                self._breaker.record_rollback(proposal.id)
-            else:
+            if not changed_something:
                 logger.info("Proposal %s changed nothing, so there was nothing to roll back", proposal.id)
 
         return success

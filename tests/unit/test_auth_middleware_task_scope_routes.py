@@ -298,12 +298,12 @@ def _client(application: FastAPI, index: int) -> TestClient:
     return TestClient(application, client=(f"10.20.{index // 256}.{index % 256}", 41000 + index))
 
 
-def _create_task(application: FastAPI, index: int, title: str) -> str:
+def _create_task(application: FastAPI, index: int, title: str, role: str = "backend") -> str:
     """Create a task with the operator credential and return its server-assigned id."""
     response = _client(application, index).post(
         "/tasks",
         headers={"Authorization": f"Bearer {_OPERATOR_TOKEN}"},
-        json={"title": title, "description": title, "role": "backend"},
+        json={"title": title, "description": title, "role": role},
     )
     assert response.status_code == 201, response.text
     return str(response.json()["id"])
@@ -380,14 +380,18 @@ def test_body_scoped_routes_allow_the_agents_own_task(authed_app: FastAPI) -> No
 
 
 def test_body_scoped_routes_allow_an_unscoped_manager_token(authed_app: FastAPI) -> None:
-    """A token with ``task_ids == []`` stays unrestricted, as on the path gate."""
+    """A manager token with ``task_ids == []`` stays unrestricted, as on the path gate.
+
+    The tasks carry the manager role: a claim is bound to the token's role,
+    and that binding is a separate rule from the scope this test covers.
+    """
     store: Any = authed_app.state.identity_store
-    _, token = store.create_identity("session-manager", "backend", task_ids=[])
+    _, token = store.create_identity("session-manager", "manager", task_ids=[])
 
     for index, segment in enumerate(sorted(TASK_BODY_SCOPED_SEGMENTS)):
         # A task the manager token was never scoped to, fresh per segment so
         # one probe cannot leave the next one nothing to act on.
-        target_id = _create_task(authed_app, 40 + index, f"manager-target-{segment}")
+        target_id = _create_task(authed_app, 40 + index, f"manager-target-{segment}", role="manager")
         response = _client(authed_app, 50 + index).post(
             f"/tasks/{segment}",
             headers={"Authorization": f"Bearer {token}"},

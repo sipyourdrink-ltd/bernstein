@@ -55,18 +55,73 @@ import hashlib
 import json
 import logging
 import re
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from bernstein.core.git.git_basic import run_git
+from bernstein.core.git.git_basic import GitResult, run_git
+
+#: Bound for the short plumbing commands (``read-tree``, ``write-tree``).
+#: Matches ``run_git``'s own default; stated here so the snapshot path's
+#: bounds are visible in one place.
+_GIT_TIMEOUT_S = 30
+
+#: Bound for ``git add -A``, which walks the entire work tree. Generous
+#: enough that a large repository is slow rather than killed, and finite so a
+#: git holding ``index.lock`` cannot stop the orchestrator indefinitely.
+_GIT_ADD_TIMEOUT_S = 300
+
+
+def _run_git(
+    args: list[str],
+    cwd: Path,
+    *,
+    timeout: int = _GIT_TIMEOUT_S,
+    env: Mapping[str, str] | None = None,
+) -> GitResult:
+    """Run git for the snapshot path, reporting an overrun as a snapshot failure.
+
+    Every git this module runs goes through here, for two reasons.
+
+    ``run_git`` bounds the call, and an unbounded one is what the snapshot
+    path cannot afford: it is on the orchestrator's checkpoint route and
+    ``git add -A`` walks the whole work tree, so a git blocked on
+    ``index.lock`` would stop the run rather than fail it.
+
+    And a bound that escapes as :class:`subprocess.TimeoutExpired` trades a
+    hang for an exception type no caller guards on - every caller of this
+    module handles :class:`SnapshotError`. Converting here means the bound
+    holds for *all* of the module's git, not only the calls inside one
+    function's ``try``.
+
+    Args:
+        args: Git sub-command and arguments, without the leading ``git``.
+        cwd: Repository directory.
+        timeout: Seconds before the command is killed.
+        env: Complete environment for the child; ``None`` inherits.
+
+    Returns:
+        The :class:`GitResult`, whatever its return code - a non-zero exit is
+        the caller's to interpret.
+
+    Raises:
+        SnapshotError: When the command exceeds *timeout* and is killed.
+    """
+    try:
+        return run_git(args, cwd, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as exc:
+        command = " ".join(str(part) for part in list(exc.cmd)[1:])
+        raise SnapshotError(f"git {command} exceeded {exc.timeout}s and was killed") from exc
+
 
 if TYPE_CHECKING:
     # Only reachable from annotations: ``SnapshotStore.list`` shadows the
     # builtin inside the class body, so return types have to name it
     # explicitly.
     import builtins
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +225,7 @@ def _make_snapshot_id(task_id: str | None, tool_call_id: str | None, ts_ns: int)
 
 def _ensure_repo(cwd: Path) -> None:
     """Raise :class:`SnapshotError` when *cwd* is not a git work tree."""
-    result = run_git(["rev-parse", "--is-inside-work-tree"], cwd)
+    result = _run_git(["rev-parse", "--is-inside-work-tree"], cwd)
     if not result.ok:
         raise SnapshotError(f"{cwd} is not inside a git work tree: {result.stderr.strip()}")
 
@@ -190,7 +245,6 @@ def _write_tree(cwd: Path) -> str:
     the ``finally`` block whether or not the plumbing succeeded.
     """
     import os
-    import subprocess
 
     tmp_index = cwd / ".git" / f"bernstein-snapshot-index.{time.time_ns()}"
     merged_env = os.environ | {"GIT_INDEX_FILE": str(tmp_index)}
@@ -198,71 +252,55 @@ def _write_tree(cwd: Path) -> str:
         # Seed the temp index from HEAD when one exists. Without HEAD
         # (fresh repo with no commits) we simply start from an empty
         # index, which is fine - ``git add -A`` will populate it.
-        head_result = run_git(["rev-parse", "--verify", "HEAD"], cwd)
+        head_result = _run_git(["rev-parse", "--verify", "HEAD"], cwd)
         if head_result.ok:
-            seed = subprocess.run(
-                ["git", "read-tree", "HEAD"],
-                cwd=cwd,
-                env=merged_env,
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            seed = _run_git(["read-tree", "HEAD"], cwd, env=merged_env, timeout=_GIT_TIMEOUT_S)
             if seed.returncode != 0:
                 raise SnapshotError(f"git read-tree HEAD failed: {seed.stderr.strip()}")
         # Stage everything (tracked + untracked + deletes) into the
         # temp index. We pass ``--`` to defend against pathological
         # filenames starting with a dash.
-        add = subprocess.run(
-            ["git", "add", "-A", "--", "."],
-            cwd=cwd,
-            env=merged_env,
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        # ``git add -A`` walks the whole work tree, so it gets the longer
+        # bound: a large repository is slow, not stuck.
+        add = _run_git(["add", "-A", "--", "."], cwd, env=merged_env, timeout=_GIT_ADD_TIMEOUT_S)
         if add.returncode != 0:
             raise SnapshotError(f"git add -A failed: {add.stderr.strip()}")
-        write = subprocess.run(
-            ["git", "write-tree"],
-            cwd=cwd,
-            env=merged_env,
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        write = _run_git(["write-tree"], cwd, env=merged_env, timeout=_GIT_TIMEOUT_S)
         if write.returncode != 0:
             raise SnapshotError(f"git write-tree failed: {write.stderr.strip()}")
         return write.stdout.strip()
     finally:
-        if tmp_index.exists():
+        # The lock as well as the index. ``subprocess.run``'s timeout path
+        # kills with SIGKILL, which git cannot catch, so a ``git add`` killed
+        # at the bound leaves ``<tmp_index>.lock`` behind - an exit this
+        # module could not reach before it had a timeout at all. The index
+        # name carries ``time.time_ns()``, so a stale lock cannot block a
+        # later snapshot the way ``.git/index.lock`` would; it would just
+        # accumulate one file per timeout.
+        for stale in (tmp_index, tmp_index.with_name(tmp_index.name + ".lock")):
+            if not stale.exists():
+                continue
             try:
-                tmp_index.unlink()
+                stale.unlink()
             except OSError as exc:  # pragma: no cover - best-effort cleanup
-                logger.warning("failed to remove temp snapshot index %s: %s", tmp_index, exc)
+                logger.warning("failed to remove temp snapshot file %s: %s", stale, exc)
 
 
 def _update_ref(cwd: Path, ref: str, value: str) -> None:
     """Point *ref* at *value* via ``git update-ref``."""
-    result = run_git(["update-ref", ref, value], cwd)
+    result = _run_git(["update-ref", ref, value], cwd)
     if not result.ok:
         raise SnapshotError(f"git update-ref {ref} failed: {result.stderr.strip()}")
 
 
 def _delete_ref(cwd: Path, ref: str) -> None:
     """Best-effort ``git update-ref -d``; swallow missing-ref errors."""
-    run_git(["update-ref", "-d", ref], cwd)
+    _run_git(["update-ref", "-d", ref], cwd)
 
 
 def _resolve_ref(cwd: Path, ref: str) -> str | None:
     """Return the sha *ref* points at, or ``None`` when it does not exist."""
-    result = run_git(["rev-parse", "--verify", ref], cwd)
+    result = _run_git(["rev-parse", "--verify", ref], cwd)
     if not result.ok:
         return None
     return result.stdout.strip() or None
@@ -452,7 +490,7 @@ class SnapshotStore:
         """
         if task_id is not None:
             _validate_task_id(task_id)
-        result = run_git(
+        result = _run_git(
             ["for-each-ref", "--format=%(refname)", SNAPSHOT_REF_PREFIX],
             self.cwd,
         )
@@ -486,7 +524,8 @@ class SnapshotStore:
         the typical operator question is *"what changed between these
         two snapshots?"*, and rendering full patch text in a terminal
         is rarely useful. Callers that want a full diff can call
-        ``run_git(["diff", a_tree, b_tree])`` directly.
+        ``run_git(["diff", a_tree, b_tree])`` directly - ``_run_git`` is
+        module-private and is not reachable from outside this module.
         """
         snap_a = self.get(a)
         snap_b = self.get(b)
@@ -494,7 +533,7 @@ class SnapshotStore:
             raise SnapshotError(f"snapshot {a!r} not found")
         if snap_b is None:
             raise SnapshotError(f"snapshot {b!r} not found")
-        result = run_git(["diff", "--stat", snap_a.tree_sha, snap_b.tree_sha], self.cwd)
+        result = _run_git(["diff", "--stat", snap_a.tree_sha, snap_b.tree_sha], self.cwd)
         if not result.ok:
             raise SnapshotError(f"git diff failed: {result.stderr.strip()}")
         return result.stdout
@@ -528,7 +567,7 @@ class SnapshotStore:
             raise SnapshotError(f"snapshot {snapshot_id!r} not found")
 
         if not allow_dirty:
-            status = run_git(["status", "--porcelain"], self.cwd)
+            status = _run_git(["status", "--porcelain"], self.cwd)
             if status.ok and status.stdout.strip():
                 raise SnapshotError(
                     "work tree has uncommitted changes; pass allow_dirty=True or take a fresh snapshot before undoing"
@@ -538,7 +577,7 @@ class SnapshotStore:
         # work tree contents with *tree* and resets the index. This is
         # the same mechanism ``git checkout`` uses internally but with
         # a tree-ish that isn't on any branch.
-        result = run_git(["read-tree", "--reset", "-u", snap.tree_sha], self.cwd)
+        result = _run_git(["read-tree", "--reset", "-u", snap.tree_sha], self.cwd)
         if not result.ok:
             raise SnapshotError(f"git read-tree failed: {result.stderr.strip()}")
         logger.info("snapshot.undo id=%s tree=%s", snapshot_id, snap.tree_sha)
@@ -675,7 +714,7 @@ def stack_list(cwd: Path, *, task_id: str) -> list[StackEntry]:
     _validate_task_id(task_id)
     _ensure_repo(Path(cwd))
     prefix = f"{STACK_REF_PREFIX}{task_id}/"
-    result = run_git(["for-each-ref", "--format=%(refname)", prefix], Path(cwd))
+    result = _run_git(["for-each-ref", "--format=%(refname)", prefix], Path(cwd))
     if not result.ok:
         return []
     entries: list[StackEntry] = []

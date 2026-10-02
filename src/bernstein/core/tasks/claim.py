@@ -86,6 +86,9 @@ class ClaimFilter:
             admission engine's projection so the claim path is the one
             admission gate. ``None`` disables the tag gate (default), keeping
             every legacy claim unchanged.
+        task_ids: Optional allowlist of row ids the claimer may take. Set to
+            a task-scoped caller's scope so a row outside it is never chosen;
+            an empty set admits nothing. ``None`` (default) admits any row.
     """
 
     project: str | None = None
@@ -94,13 +97,18 @@ class ClaimFilter:
     completed_ids: frozenset[str] = field(default_factory=frozenset)
     max_attempts: int | None = None
     admits: Callable[[frozenset[str]], bool] | None = None
+    task_ids: frozenset[str] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "completed_ids", frozenset(self.completed_ids))
+        if self.task_ids is not None:
+            object.__setattr__(self, "task_ids", frozenset(self.task_ids))
 
     def allows(self, entry: BacklogEntry) -> bool:
         """Return True when *entry* satisfies every claim predicate."""
         if entry.status != _OPEN_STATUS or entry.claimer is not None:
+            return False
+        if self.task_ids is not None and entry.id not in self.task_ids:
             return False
         if self.project is not None and entry.project != self.project:
             return False

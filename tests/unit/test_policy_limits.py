@@ -206,6 +206,34 @@ class TestDenyOnMissConstant:
 # ---------------------------------------------------------------------------
 
 
+TEST_API_URL = "https://policy.example.test/v1/policy-limits"
+
+
+class TestNoDefaultEndpoint:
+    """Without an operator-supplied ``api_url`` the client never fetches."""
+
+    @pytest.mark.asyncio
+    async def test_no_api_url_means_no_fetch(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+
+        async def fake_fetch(api_url, etag=None, timeout=10.0):
+            calls.append(api_url)
+            return None, None
+
+        with patch("bernstein.core.security.policy_limits._fetch_limits_from_api", fake_fetch):
+            client = PolicyLimitsClient(cache_dir=tmp_path)
+            await client.initialize()
+            assert client.is_allowed("anything") is True
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_no_api_url_means_no_poller(self, tmp_path: Path) -> None:
+        client = PolicyLimitsClient(cache_dir=tmp_path)
+        await client.initialize()
+        client.start_background_polling()
+        assert client._poll_task is None
+
+
 class TestPolicyLimitsClient:
     def test_is_allowed_fail_open_before_init(self) -> None:
         client = PolicyLimitsClient()
@@ -242,7 +270,7 @@ class TestPolicyLimitsClient:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=AsyncMock(return_value=(None, None)),
         ):
-            client = PolicyLimitsClient(cache_dir=tmp_path)
+            client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path)
             await client.initialize()
 
         assert client.is_allowed("cached_feature") is False
@@ -254,7 +282,7 @@ class TestPolicyLimitsClient:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=AsyncMock(return_value=(payload, '"fresh-etag"')),
         ):
-            client = PolicyLimitsClient(cache_dir=tmp_path)
+            client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path)
             await client.initialize()
 
         assert client.is_allowed("new_feature") is False
@@ -276,7 +304,7 @@ class TestPolicyLimitsClient:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=slow_fetch,
         ):
-            client = PolicyLimitsClient(cache_dir=tmp_path, init_timeout=0.05)
+            client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path, init_timeout=0.05)
             await client.initialize()
 
         # Should still be initialized and fail-open
@@ -297,7 +325,7 @@ class TestPolicyLimitsClient:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=AsyncMock(side_effect=OSError("connection refused")),
         ):
-            client = PolicyLimitsClient(cache_dir=tmp_path)
+            client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path)
             await client.initialize()
 
         assert client.is_allowed("f") is False
@@ -308,7 +336,7 @@ class TestPolicyLimitsClient:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=AsyncMock(return_value=(None, None)),
         ):
-            client = PolicyLimitsClient(cache_dir=tmp_path, poll_interval=0.05)
+            client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path, poll_interval=0.05)
             await client.initialize()
             client.start_background_polling()
             assert client._poll_task is not None
@@ -336,7 +364,7 @@ class TestPolicyLimitsClient:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=counted_fetch,
         ):
-            client = PolicyLimitsClient(cache_dir=tmp_path, poll_interval=0.05)
+            client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path, poll_interval=0.05)
             await client.initialize()
             init_count = call_count
 
@@ -359,7 +387,7 @@ class TestPolicyLimitsClient:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=capture_etag,
         ):
-            client = PolicyLimitsClient(cache_dir=tmp_path)
+            client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path)
             # First fetch - no etag
             await client._refresh()
             # Second fetch - should send the etag from first
@@ -376,7 +404,7 @@ class TestPolicyLimitsClient:
     @pytest.mark.asyncio
     async def test_start_polling_without_event_loop(self, tmp_path: Path) -> None:
         """stop_background_polling is safe when no task was started."""
-        client = PolicyLimitsClient(cache_dir=tmp_path)
+        client = PolicyLimitsClient(api_url=TEST_API_URL, cache_dir=tmp_path)
         # No loop running when this is called outside async context
         client.stop_background_polling()  # should not raise
 
@@ -394,7 +422,7 @@ class TestManagedPolicyLimits:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=AsyncMock(return_value=(payload, '"etag"')),
         ):
-            async with managed_policy_limits(cache_dir=tmp_path, poll=False) as client:
+            async with managed_policy_limits(api_url=TEST_API_URL, cache_dir=tmp_path, poll=False) as client:
                 assert client.is_allowed("managed_feat") is False
 
     @pytest.mark.asyncio
@@ -403,7 +431,7 @@ class TestManagedPolicyLimits:
             "bernstein.core.policy_limits._fetch_limits_from_api",
             new=AsyncMock(return_value=({"limits": []}, '"e"')),
         ):
-            async with managed_policy_limits(cache_dir=tmp_path, poll=True) as client:
+            async with managed_policy_limits(api_url=TEST_API_URL, cache_dir=tmp_path, poll=True) as client:
                 task = client._poll_task
 
         # After exit the client no longer holds a reference to the task.

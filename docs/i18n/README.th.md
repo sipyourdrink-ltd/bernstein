@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### เลเยอร์ governance โอเพนซอร์สสำหรับ AI agent
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,7 +41,7 @@
 Bernstein คือเลเยอร์ governance โอเพนซอร์สสำหรับ AI agent ทำงานแบบ policy as code คุณเขียนนโยบายเอง - ใครทำอะไรได้บ้าง อะไรต้องขออนุมัติ อะไรต้องถูกบันทึก - แล้ว Bernstein จะบังคับใช้และสร้างบันทึกที่ตรวจสอบย้อนกลับได้ ตัวจัดตารางแบบดีเทอร์มินิสติก - ไม่มีโมเดลในลูปประสานงาน - รัน agent แบบขนาน คัดกรองผลงานผ่านเกต และบันทึกทุกขั้นตอน ทำให้ตรวจสอบการรันย้อนหลังได้แบบออฟไลน์จากอาร์ติแฟกต์ล้วน ๆ CLI coding agent ใช้ได้ทันที (Claude Code, Codex, Gemini CLI และอีก 50+) และเลเยอร์เดียวกันนี้กำกับเวิร์กโหลด agent ทุกแบบ: ผลส่งมอบจะเป็น diff รายงานวิจัย ชุดข้อมูล หรือแพ็กหลักฐานการตรวจสอบก็ได้ มาพร้อมโปรไฟล์ติดตั้งแบบ air-gap Apache-2.0
 
 ### สรุปภาพรวม
-<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 สี่จุดเด่นที่สร้างความแตกต่าง ส่วนที่เหลือคือรายละเอียด
 

@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### lapisan governance open source untuk agen AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:228b1d7b92f6" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -41,7 +41,7 @@
 Bernstein adalah lapisan governance open source untuk agen AI. Berjalan di atas policy as code: kamu menulis kebijakannya - siapa boleh melakukan apa, apa yang butuh persetujuan, apa yang harus dicatat - dan Bernstein menegakkannya serta menghasilkan catatan yang bisa diverifikasi. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI, dan 50+ lainnya), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
 
 ### sekilas pandang
-<!-- l10n: en="at a glance" hash="sha256:06ea79947291" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 Empat hal membedakannya dari yang lain; selebihnya adalah detail.
 

@@ -28,10 +28,11 @@ from bernstein.core.eu_ai_act import (
 )
 from bernstein.core.lifecycle import IllegalTransitionError
 from bernstein.core.log_safe import for_log
+from bernstein.core.persistence.store import RoleMismatchError
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
 from bernstein.core.routes._sse import SSE_RESPONSES
-from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
+from bernstein.core.security.auth_middleware import agent_task_scope, enforce_agent_task_scope_for_ids
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_subpath,
@@ -269,6 +270,21 @@ def _resolve_request_tenant_scope(request: Request, requested_tenant: str | None
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _caller_agent_role(request: Request) -> str | None:
+    """Return the role an authenticated agent token was issued for.
+
+    ``None`` for every credential that is not an agent identity (operator
+    bearer, SSO users, the cluster secret, auth disabled): those keep full
+    control over task roles.  An agent identity with no role yields ``""``,
+    which matches no task, so a malformed identity fails closed.
+    """
+    identity = getattr(request.state, "agent_identity", None)
+    if identity is None:
+        return None
+    role = getattr(identity, "role", "")
+    return role if isinstance(role, str) else ""
 
 
 def _require_task_access(task: Task, request: Request, requested_tenant: str | None = None) -> None:
@@ -1277,12 +1293,22 @@ async def next_task(
             detail=_DRAINING_DETAIL,
         )
     claimed_by_session = _checked_claim_session(claimed_by_session)
+    agent_role = _caller_agent_role(request)
+    if agent_role is not None and role != agent_role:
+        raise HTTPException(
+            status_code=403,
+            detail=f"role mismatch: token is issued for role '{agent_role}', not '{role}'",
+        )
     store = _get_store(request)
+    # The caller names no task, so the path gate has nothing to check; a
+    # task-scoped agent token is instead limited to its own tasks in the
+    # candidate query, so a task outside its scope is never chosen.
     task = await store.claim_next(
         role,
         tenant_id=_resolve_request_tenant_scope(request),
         claimed_by_session=claimed_by_session,
         parent_session_id=parent_session_id,
+        task_ids=agent_task_scope(request),
     )
     if task is None:
         logger.info(
@@ -1319,6 +1345,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
         claimed, failed = await store.claim_batch(
             list(body.task_ids),
             body.agent_id,
+            agent_role=_caller_agent_role(request),
             claimed_by_session=claim_session,
             tenant_id=tenant_id,
         )
@@ -1378,6 +1405,7 @@ async def claim_task(
             task = await store.claim_by_id(
                 task_id,
                 expected_version=expected_version,
+                agent_role=_caller_agent_role(request),
                 claimed_by_session=claimed_by_session,
             )
         except KeyError:
@@ -1387,6 +1415,16 @@ async def claim_task(
                 for_log(str(claimed_by_session)),
             )
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except RoleMismatchError as exc:
+            # The role comes from the caller's token, so retrying cannot help:
+            # answer 403 rather than the 409 a version conflict gets.
+            logger.warning(
+                "task.claim 403: task_id=%s claimed_by_session=%s reason=%s",
+                for_log(task_id),
+                for_log(str(claimed_by_session)),
+                sanitize_log(str(exc)),
+            )
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         except ValueError as exc:
             # This is the single most important line for diagnosing claim-conflict
             # churn: log expected vs. actual version/status so a retry storm is
@@ -1567,7 +1605,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                     "task.complete auto-claim: task_id=%s reverted to open, re-claiming before complete",
                     for_log(task_id),
                 )
-                await store.claim_by_id(task_id)
+                await store.claim_by_id(task_id, agent_role=_caller_agent_role(request))
             structured = _parse_terminal_body(body)
             if isinstance(structured, WorkerRefusal):
                 refusal = structured
@@ -1586,6 +1624,10 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                 task = await store.complete(task_id, result_summary, completion=structured)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except RoleMismatchError as exc:
+            # Only the auto-claim above raises this: an agent token may not
+            # claim (and so finish) an open task of another role.
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         except ContractViolation as exc:
             raise await _handle_contract_violation(request, task_id, exc, store, sse_bus) from None
         except EmptyCompletionError as exc:
@@ -1690,10 +1732,13 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
                 "task.fail auto-claim: task_id=%s reverted to open, re-claiming before fail",
                 for_log(task_id),
             )
-            await store.claim_by_id(task_id)
+            await store.claim_by_id(task_id, agent_role=_caller_agent_role(request))
         task = await store.fail(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except RoleMismatchError as exc:
+        # Raised by the auto-claim above, as in ``complete_task``.
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     except IllegalTransitionError as exc:
         logger.warning(
             "task.fail 409: task_id=%s current_status=%s reason=%s",
@@ -2370,8 +2415,14 @@ def get_task_gates(task_id: str, request: Request) -> JSONResponse:
 async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> TaskResponse:
     """Update mutable task fields (role, priority, model) - manager corrections.
 
-    Used by the manager agent or dashboard to correct mis-assigned tasks,
-    adjust priority, or change model without interrupting the orchestrator.
+    Used by the operator, the orchestrator or the dashboard to correct
+    mis-assigned tasks, adjust priority, or change model without
+    interrupting the orchestrator.
+
+    An agent token may not move a task between roles: a ``role`` in the
+    body must equal the token's role *and* the task's current role, so a
+    worker cannot re-label a task into its own role and then claim it.
+    Role reassignment stays with operator credentials.
     """
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
@@ -2380,6 +2431,18 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
+        agent_role = _caller_agent_role(request)
+        if (
+            agent_role is not None
+            and body.role is not None
+            and (body.role != agent_role or existing_task.role != agent_role)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"role mismatch: token is issued for role '{agent_role}'; agent tokens cannot reassign task roles"
+                ),
+            )
         task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None

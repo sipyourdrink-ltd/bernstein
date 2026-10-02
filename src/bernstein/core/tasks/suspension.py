@@ -1619,9 +1619,12 @@ def approval_decision_ref(workdir: Path, task_id: str) -> str:
     """Return the approval decision digest for a woken ``--until approval`` park.
 
     The digest binds the task id and the content of the
-    ``<task_id>.approved`` decision file written by ``bernstein approve``. It
-    is empty when no approval decision exists yet, so a resume gated on
-    approval can refuse to proceed until the operator lands the decision. The
+    ``<task_id>.approved`` decision record written by ``bernstein approve``. It
+    is empty when no approval decision exists yet -- or when the file is not an
+    authentic decision record for this task (see
+    :mod:`bernstein.core.security.approval_decision`) -- so a resume gated on
+    approval refuses to proceed until the operator lands the decision. A parked
+    task has no open request nonce, so the nonce is not checked here. The
     same digest is written into the resume receipt, so the approval record and
     the resume receipt reference each other.
 
@@ -1633,8 +1636,18 @@ def approval_decision_ref(workdir: Path, task_id: str) -> str:
         UnsafeTaskIdError: ``task_id`` is not a safe single path segment, or
             the derived path escapes the approvals directory.
     """
+    from bernstein.core.security.approval_decision import check_decision_file
+
     approved = _contained_approval_path(workdir, task_id, ".approved")
     if not approved.exists():
+        return ""
+    check = check_decision_file(approved, slot="approved", task_id=task_id, expected_nonce=None)
+    if not check.verified:
+        logger.warning(
+            "approval decision for parked task %s is not an authentic decision record (%s); not honoured",
+            task_id,
+            check.failure,
+        )
         return ""
     try:
         content = approved.read_bytes()

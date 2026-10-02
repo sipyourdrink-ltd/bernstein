@@ -149,7 +149,7 @@ See [`docs/security/bug-bounty.md`](docs/security/bug-bounty.md) for the full sa
 
 | Version | Supported |
 |---------|-----------|
-| 3.20.x  | Yes       |
-| < 3.20  | No        |
+| 3.21.x  | Yes       |
+| < 3.21  | No        |
 
 Fixes ship on the current release line. There is no backport branch.

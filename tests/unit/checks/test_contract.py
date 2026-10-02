@@ -13,7 +13,6 @@ Tests verify:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,9 +22,6 @@ from bernstein.core.checks.adapters import (
 )
 from bernstein.core.checks.contract import Evidence, Finding, Verdict
 from bernstein.core.checks.registry import CheckRegistry
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class _DummyCheck:
@@ -180,6 +176,27 @@ def test_raising_check_is_reported_not_dropped(tmp_path: Path) -> None:
     assert healthy_result.message == "Healthy check passed"
 
 
+def test_check_returning_non_finding_reported_as_not_measurable(tmp_path: Path) -> None:
+    """A check whose run() returns a dict or non-Finding object is reported as not_measurable."""
+    registry = CheckRegistry()
+
+    class _DictReturningCheck:
+        check_id = "test:bad_return"
+
+        def run(self, workdir: Path | None = None) -> object:
+            return {"status": "ok", "passed": True}
+
+    registry.register(_DictReturningCheck())  # type: ignore[arg-type]
+
+    findings = registry.run_all(tmp_path)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.check_id == "test:bad_return"
+    assert f.verdict == Verdict.NOT_MEASURABLE
+    assert f.reason == "TypeError"
+    assert "TypeError" in (f.what_would_make_it_measurable or "")
+
+
 # ---------------------------------------------------------------------------
 # 4. Check IDs are unique and namespaced
 # ---------------------------------------------------------------------------
@@ -218,6 +235,22 @@ def test_ids_are_unique_and_namespaced() -> None:
 
     registered_ids = [c.check_id for c in registry.iter_checks()]
     assert registered_ids == ["security:rbac_check", "doctor:auth_status"]
+
+
+def test_register_non_string_check_id_raises() -> None:
+    """Registering a check with a non-string check_id raises TypeError."""
+    registry = CheckRegistry()
+    ev = Evidence(locator="test:loc", sha256="sha256:aabbccdd")
+    finding = Finding(check_id="ns:valid", verdict=Verdict.PASS, evidence=(ev,))
+
+    class _IntIdCheck:
+        check_id = 123
+
+        def run(self, workdir: Path | None = None) -> Finding:
+            return finding
+
+    with pytest.raises(TypeError, match="check_id must be a string"):
+        registry.register(_IntIdCheck())  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

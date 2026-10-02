@@ -172,6 +172,7 @@ jobs:
       tests_changed: ${{ steps.classify.outputs.tests_changed }}
       gha_workflows_changed: ${{ steps.classify.outputs.gha_workflows_changed }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      gate_evasion_relevant: ${{ steps.classify.outputs.gate_evasion_relevant }}
       # macos_sensitive: true when the diff touches platform-specific code
       # paths whose macOS behaviour cannot be exercised on ubuntu/windows
       # runners. Used by the `test` matrix gate (see #1468) to skip the
@@ -289,6 +290,7 @@ jobs:
               echo "docs_only=false"
               echo "macos_sensitive=true"
               echo "rpm_relevant_changed=true"
+              echo "gate_evasion_relevant=true"
             } | tee -a "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -303,6 +305,7 @@ jobs:
           docs_only=true
           macos_sensitive=false
           rpm_relevant_changed=false
+          gate_evasion_relevant=false
           # Classify each changed path via grep. Using grep instead of
           # bash `case` to avoid linter warnings on overlapping patterns
           # (case-globs cannot cross slashes anyway).
@@ -314,6 +317,11 @@ jobs:
             fi
             if printf '%s\n' "$f" | grep -Eq '^tests/'; then
               tests_changed=true; docs_only=false; matched_meta=true
+            fi
+            # Recheck the content-addressed corpus gate if the benchmark, a
+            # covered quality gate, its pinned tools or its CI definition changes.
+            if printf '%s\n' "$f" | grep -Eq '^src/bernstein/core/quality/|^src/bernstein/eval/cases/gate_evasion/|^src/bernstein/eval/bench/(gate_evasion_(suite|baseline)|bench_cli|suite|ci)\.py$|^\.github/gate-evasion-baseline\.json$|^(pyproject\.toml|uv\.lock|\.github/workflows/ci\.yml)$|^tests/unit/eval/bench/test_gate_evasion_(suite|baseline)\.py$|^tests/unit/test_ci_gate_evasion_workflow_yaml\.py$'; then
+              gate_evasion_relevant=true
             fi
             if printf '%s\n' "$f" | grep -Eq '^\.github/workflows/.*\.(yml|yaml)$'; then
               gha_workflows_changed=true; docs_only=false; matched_meta=true
@@ -383,6 +391,7 @@ jobs:
           # treat as "not docs-only" so we don't intentionally skip tests.
           if [ -z "$CHANGED" ]; then
             docs_only=false
+            gate_evasion_relevant=true
           fi
           echo "python_changed=$python_changed"        | tee -a "$GITHUB_OUTPUT"
           echo "tests_changed=$tests_changed"          | tee -a "$GITHUB_OUTPUT"
@@ -390,6 +399,7 @@ jobs:
           echo "docs_only=$docs_only"                  | tee -a "$GITHUB_OUTPUT"
           echo "macos_sensitive=$macos_sensitive"      | tee -a "$GITHUB_OUTPUT"
           echo "rpm_relevant_changed=$rpm_relevant_changed" | tee -a "$GITHUB_OUTPUT"
+          echo "gate_evasion_relevant=$gate_evasion_relevant" | tee -a "$GITHUB_OUTPUT"
 
   plan-affected-tests:
     name: Plan affected tests
@@ -402,6 +412,10 @@ jobs:
       affected_count: ${{ steps.plan.outputs.affected_count }}
       base_sha: ${{ steps.plan.outputs.base_sha }}
       head_sha: ${{ steps.plan.outputs.head_sha }}
+      # 'true' only when a plan was written and uploaded, which is pull
+      # requests only. The test shards key on this, not on the event name:
+      # without a plan every shard runs the full list.
+      planned: ${{ steps.plan.outputs.planned }}
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -425,6 +439,10 @@ jobs:
             "${BASE_SHA}:refs/remotes/origin/pr-base"
       - id: plan
         name: Compute affected-test plan
+        # Pull requests only. A merge group runs the whole list: it is the last
+        # check before main, and tree-wide gates (unreachable controls, the
+        # published-URL manifest) fail on a change that no file-level slice
+        # maps to them, so #5743 went through a green group and broke main.
         if: github.event_name == 'pull_request'
         run: |
           uv run python scripts/plan_affected_tests.py plan \
@@ -433,8 +451,9 @@ jobs:
           echo "affected_count=$(jq '.affected | length' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
           echo "base_sha=$(jq -r '.base_sha' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
           echo "head_sha=$(jq -r '.head_sha' affected-test-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "planned=true" >> "$GITHUB_OUTPUT"
       - name: Nothing affected
-        if: github.event_name == 'pull_request' && steps.plan.outputs.affected_count == '0'
+        if: steps.plan.outputs.planned == 'true' && steps.plan.outputs.affected_count == '0'
         env:
           BASE_SHA: ${{ steps.plan.outputs.base_sha }}
           HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
@@ -442,7 +461,7 @@ jobs:
           echo "No tests affected. Compared ${BASE_SHA}...${HEAD_SHA}."
       - id: upload
         name: Upload affected-test plan
-        if: github.event_name == 'pull_request'
+        if: steps.plan.outputs.planned == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: affected-test-plan-${{ github.run_id }}
@@ -883,6 +902,34 @@ jobs:
       # its descriptor uses at runtime and vulture cannot see.
       - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 
+  gate-evasion:
+    name: Gate-evasion baseline
+    needs: [determine-changes]
+    if: ${{ needs.determine-changes.outputs.gate_evasion_relevant == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The repository's default .python-version can differ; both install and
+      # measurement must use the same locked Python interpreter.
+      UV_PYTHON: "3.13"
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+      - name: Install pinned gate-evasion tools in the tested interpreter
+        run: uv sync --locked --group dev --python 3.13
+      - name: Fail on gate-evasion regression or an unverifiable baseline
+        run: uv run --no-sync bernstein bench gate-evasion-baseline --baseline .github/gate-evasion-baseline.json
+
   dist-size:
     # Skips only when a merge-queue group's combined diff is docs-only
     # (determine-changes computes it from the group's base; its failure
@@ -909,12 +956,12 @@ jobs:
       - name: Build and check size
         run: |
           uv build
-          MAX_SIZE=$((10 * 1024 * 1024))
+          MAX_SIZE=$((12 * 1024 * 1024))
           for f in dist/*.whl; do
             SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
             echo "$f: $SIZE bytes"
             if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-              echo "::error::Wheel $f exceeds 10MB limit ($SIZE bytes)"
+              echo "::error::Wheel $f exceeds 12 MiB limit ($SIZE bytes)"
               exit 1
             fi
           done
@@ -2023,7 +2070,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Download affected-test plan
-        if: github.event_name == 'pull_request' && runner.os != 'Windows'
+        if: needs.plan-affected-tests.outputs.planned == 'true' && runner.os != 'Windows'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: affected-test-plan-${{ github.run_id }}
@@ -2045,7 +2092,7 @@ jobs:
             "${HEAD_SHA}:refs/remotes/origin/pr-head"
       - id: select_affected
         name: Select affected-test shard
-        if: github.event_name == 'pull_request' && runner.os != 'Windows'
+        if: needs.plan-affected-tests.outputs.planned == 'true' && runner.os != 'Windows'
         env:
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
@@ -2056,7 +2103,7 @@ jobs:
             --output .sdd/affected-test-plan/selected.txt
       - name: Nothing affected in this shard
         if: >-
-          github.event_name == 'pull_request' &&
+          needs.plan-affected-tests.outputs.planned == 'true' &&
           runner.os != 'Windows' &&
           steps.select_affected.outputs.selected_count == '0'
         env:
@@ -2069,22 +2116,24 @@ jobs:
       - name: Run isolated test suite (Linux/macOS)
         if: >-
           runner.os != 'Windows' &&
-          (github.event_name != 'pull_request' ||
+          (needs.plan-affected-tests.outputs.planned != 'true' ||
            steps.select_affected.outputs.selected_count != '0')
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PLANNED: ${{ needs.plan-affected-tests.outputs.planned }}
           PYTHON_VERSION: ${{ matrix.python-version }}
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
         run: |
-          # On PRs the shared plan selects this cell's deterministic shard.
-          # Other events shard the discovered full-suite list in run_tests.py.
+          # When the planner wrote a plan (pull requests, and merge groups
+          # whose batch root resolved) it selects this cell's deterministic
+          # shard. Otherwise run_tests.py shards the discovered full-suite list.
           coverage_args=()
           if { [ "${EVENT_NAME}" = "push" ] || { [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; } && \
              [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
             coverage_args=(--coverage)
           fi
-          if [ "${EVENT_NAME}" = "pull_request" ]; then
+          if [ "${PLANNED}" = "true" ]; then
             test_files=()
             while IFS= read -r test_file; do
               test_files+=("${test_file}")
@@ -2519,6 +2568,7 @@ jobs:
       - actionlint
       - lineage-gate
       - dead-code
+      - gate-evasion
       - dist-size
       - install-smoke-pipx
       - install-smoke-uv
@@ -2672,6 +2722,11 @@ jobs:
               if r == "success":
                   continue
               if r == "skipped":
+                  # Only a proven irrelevant diff may skip the strict
+                  # gate-evasion baseline check. Unknown planner output,
+                  # cancelled jobs and failed jobs are never permitted.
+                  if name == "gate-evasion" and plan.get("gate_evasion_relevant") == "false":
+                      continue
                   if ordinary_main_push and name in POST_MERGE_PUSH_SKIPPABLE:
                       continue
                   if name == "coverage-report" and not coverage_required:

@@ -1,0 +1,3 @@
+## Goal-drift benchmark suite and trajectory evaluation
+
+Added the `goal-drift-v1` evaluation benchmark suite (`CTRL-GOAL-ALIGNMENT`, `ASI01`) with >= 10 canonical fixtures with planted distractions (TODO scope creep, tempting refactors, unrelated failing tests, stale docs, and premature optimizations). The suite evaluates agent trajectories against explicit `DriftContract`s and deterministically measures out-of-scope file modifications, forbidden changes, and hard drift curves from trajectory JSON without model calls. Default runs record unmeasured fail-closed baselines; `--smoke-synthetic` provides hermetic mock trajectories (marked synthetic); `--require-step-coverage` enforces full step coverage (#5453).

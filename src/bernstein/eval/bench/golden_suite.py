@@ -5,9 +5,9 @@ These tasks are a representative sample of the real golden task set.
 They are intentionally hermetic: no network calls, no real adapters —
 the mock adapter in ``runner.py`` can execute them.
 
-In production, ``bernstein bench run golden-v1`` loads this suite,
-runs each task via the real ``scenario_runner.py`` adapter, and emits
-a signed :class:`SubmissionBundle`.
+``golden-v1`` has no production adapter yet. ``bernstein bench run golden-v1``
+scores it with the mock adapter (every task passes), so the install identity
+refuses to sign the result; ``--stub-signer`` emits a mock-labelled test bundle.
 """
 
 from __future__ import annotations

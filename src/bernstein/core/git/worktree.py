@@ -278,6 +278,62 @@ def _copy_files(repo_root: Path, worktree_path: Path, files: Sequence[str]) -> N
             logger.warning("Failed to copy %r into worktree: %s", file_name, exc)
 
 
+#: Characters that gitignore reads as pattern syntax rather than literal text.
+#: A configured name is a path, never a pattern, so each one is escaped.
+_GITIGNORE_GLOB_CHARS = frozenset("\\*?[")
+
+
+def _escape_gitignore_path(rel: str) -> str:
+    """Return *rel* as gitignore pattern text that matches exactly that path.
+
+    A leading ``#`` or ``!`` needs no escape: every caller anchors the entry
+    with ``/``, so neither is ever the first character of the line.
+    """
+    escaped = "".join(f"\\{ch}" if ch in _GITIGNORE_GLOB_CHARS else ch for ch in rel)
+    # Trailing spaces are stripped by git unless escaped.
+    stripped = escaped.rstrip(" ")
+    return stripped + "\\ " * (len(escaped) - len(stripped))
+
+
+def _copy_files_exclude_entries(repo_root: Path, files: Sequence[str]) -> tuple[str, ...]:
+    """Build worktree-local exclude entries for the names in ``copy_files``.
+
+    ``copy_files`` gives each worktree its own copy of untracked per-checkout
+    inputs. Names in :data:`_MERGE_DENY_EXACT` (``.env`` and friends) are
+    already excluded by :func:`_derive_local_exclude_entries`; any other name
+    (``secrets.env``, ``config/local.toml``) was stageable, so an agent's
+    ``git add -A`` committed it and the merge back failed with an
+    untracked-overwrite error on a file nobody asked the agent to touch (#5966).
+
+    Every configured name is included, not only the ones this run copied: a
+    file already present at the target is skipped by :func:`_copy_files` and is
+    just as stageable.
+
+    Each entry is the name's resolved path relative to the repository root, in
+    POSIX form, anchored with a leading ``/`` so it cannot hide a same-named
+    file the project tracks elsewhere, and with gitignore metacharacters
+    escaped so ``a[1].env`` matches that file and nothing else. Names that
+    resolve outside the repository, or to a directory, are skipped:
+    :func:`_copy_files` only copies files, and an anchored directory entry
+    would hide every new file the agent writes under it.
+    """
+    root = repo_root.resolve()
+    entries: list[str] = []
+    for file_name in files:
+        if not file_name.strip():
+            continue
+        candidate = (root / file_name).resolve()
+        try:
+            rel = candidate.relative_to(root)
+        except ValueError:
+            logger.warning("Not excluding copy_files entry %r: it resolves outside the repository", file_name)
+            continue
+        if not rel.parts or candidate.is_dir():
+            continue
+        entries.append("/" + _escape_gitignore_path(rel.as_posix()))
+    return tuple(entries)
+
+
 def setup_worktree_env(
     repo_root: Path,
     worktree_path: Path,
@@ -288,7 +344,8 @@ def setup_worktree_env(
     1. Symlinks large shared directories so the agent doesn't need to
        reinstall dependencies.
     2. Copies per-worktree files (e.g. ``.env``) so each agent has its
-       own editable copy.
+       own editable copy. ``WorktreeManager.create`` excludes them, scoped to
+       the worktree, before this runs (see :func:`_copy_files_exclude_entries`).
     3. Applies sparse checkout if configured.
     4. Optionally runs a setup command (e.g. ``npm install``) inside the
        worktree when symlinks are insufficient.
@@ -542,7 +599,7 @@ def _worktree_config_would_rescope_core_settings(worktree_path: Path) -> bool:
     return False
 
 
-def _ensure_worktree_local_excludes(worktree_path: Path) -> None:
+def _ensure_worktree_local_excludes(worktree_path: Path, extra_entries: Sequence[str] = ()) -> None:
     """Scope orchestrator runtime-state exclusion to this worktree only.
 
     Bernstein orchestrates agents against arbitrary target repositories that
@@ -574,6 +631,8 @@ def _ensure_worktree_local_excludes(worktree_path: Path) -> None:
 
     Args:
         worktree_path: Root of the newly-created worktree.
+        extra_entries: Further exclude lines for this worktree only, such as
+            the ``copy_files`` names from :func:`_copy_files_exclude_entries`.
     """
     git_dir = _resolve_git_dir(worktree_path)
     if git_dir is None:
@@ -593,7 +652,7 @@ def _ensure_worktree_local_excludes(worktree_path: Path) -> None:
         return
 
     exclude_path = git_dir / _LOCAL_EXCLUDES_FILENAME
-    entries = _derive_local_exclude_entries()
+    entries = (*_derive_local_exclude_entries(), *extra_entries)
     content = "\n".join(("# Local agent-orchestrator runtime state (not a project deliverable).", *entries, ""))
     try:
         exclude_path.write_text(content, encoding="utf-8")
@@ -1043,6 +1102,17 @@ class WorktreeManager:
     # Public API
     # ------------------------------------------------------------------
 
+    def _require_inside_base_dir(self, worktree_path: Path) -> None:
+        """Raise unless *worktree_path* resolves to a direct child of the base dir.
+
+        Raises:
+            WorktreeError: If the resolved path is outside the base directory.
+        """
+        base = self._base_dir.resolve()
+        resolved = worktree_path.resolve()
+        if resolved.parent != base:
+            raise WorktreeError(f"Worktree path '{worktree_path}' resolves outside the worktree base '{base}'")
+
     def create(self, session_id: str) -> Path:
         """Create a git worktree for *session_id* and return its path.
 
@@ -1058,13 +1128,21 @@ class WorktreeManager:
             Path to the newly-created worktree directory.
 
         Raises:
-            WorktreeError: If the worktree or branch already exists, or if
+            WorktreeError: If *session_id* is not a valid worktree slug, if
+                the resulting path would fall outside the worktree base
+                directory, if the worktree or branch already exists, or if
                 the ``git worktree add`` command fails for any other reason.
         """
         if self._shutdown_event is not None and self._shutdown_event.is_set():
             raise WorktreeError("Orchestrator shutting down - refusing new worktree")
 
+        # The id becomes a directory name and part of a branch name: validate
+        # it as a slug, then confirm the resolved path stays under the base
+        # directory (a symlink planted at the target would otherwise redirect
+        # the worktree) before anything touches the filesystem.
+        validate_worktree_slug(session_id)
         worktree_path = self._base_dir / session_id
+        self._require_inside_base_dir(worktree_path)
         branch_name = f"agent/{session_id}"
 
         if worktree_path.exists():
@@ -1105,7 +1183,10 @@ class WorktreeManager:
             # change what the operator's own main checkout (or any other
             # worktree of the same clone) picks up. Must happen before any
             # setup step that might itself write into the worktree.
-            _ensure_worktree_local_excludes(worktree_path)
+            copy_entries: tuple[str, ...] = ()
+            if self._setup_config is not None:
+                copy_entries = _copy_files_exclude_entries(self.repo_root, self._setup_config.copy_files)
+            _ensure_worktree_local_excludes(worktree_path, copy_entries)
 
             # Write lock file for stale detection (T487)
             worker_pid = os.getpid()

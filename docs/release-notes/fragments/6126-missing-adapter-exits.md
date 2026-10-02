@@ -1,0 +1,3 @@
+## A run with no adapter configured now exits instead of retrying forever
+
+`bernstein -g "<goal>"` with no `--cli`, no `BERNSTEIN_ADAPTER` and no `bernstein.yaml` used to report success while the orchestrator logged `FATAL: no adapter configured` and the recovery watchdog relaunched it every ~5 seconds, leaving a task server and watchdog running behind a run that could never start. It now prints the same message and exits `1` before any of that is started. If the orchestrator subprocess still hits a missing or unresolvable adapter through another launch path, it tells the watchdog to stand down rather than be respawned, and the next run clears that marker (#6126).

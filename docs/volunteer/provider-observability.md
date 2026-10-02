@@ -50,7 +50,7 @@ The network topology of the coordination layer — how tasks are discovered and 
 
 **What they are:** Adapters that connect to local models (Ollama, llama.cpp, vLLM) or self-hosted OpenAI-compatible endpoints. No third-party provider involved.
 
-**What the provider observes:** Nothing. No external network call is made. All execution is donor-local or self-hosted.
+**What the provider observes:** Nothing, provided the agent is actually pointed at the local or self-hosted endpoint. No third-party provider is in the loop. All execution is donor-local or self-hosted.
 
 **Examples:** `local` tier adapters certified via `bernstein.core.endpoints`, any adapter pointed at `http://localhost:*` or a donor-controlled endpoint.
 
@@ -58,7 +58,9 @@ The network topology of the coordination layer — how tasks are discovered and 
 
 ## Default Posture: Local-First
 
-When no adapter is explicitly chosen and a certified local endpoint exists for the needed role, volunteer mode selects the local endpoint. This eliminates provider observability entirely.
+When no adapter is explicitly chosen and a certified local endpoint exists for the needed role, volunteer mode selects the registered local adapter (`ollama`, whose contract pins `auth.basis: local`). The endpoint comes from `OPENAI_BASE_URL`, must be a local host (loopback, private range, `*.internal`, `*.local`, `*.svc`), and its certification receipt is read from the donor's project root, where `bernstein doctor --endpoint` writes it.
+
+The selection names the adapter id that the auth-basis gate evaluates, before any claim comment is posted. It does not itself change what is launched: the agent process is still the one the caller's `agent_argv` builder returns, and the run record does not yet include the selected adapter or endpoint. Whether a run makes external network calls therefore depends on that builder pointing at the local endpoint.
 
 If no local endpoint is available and no adapter was chosen, volunteer mode falls back to the donor's configured default adapter with a logged warning naming the trade-off:
 
@@ -82,7 +84,9 @@ This ensures the donor makes an informed decision: they can configure a local en
 
 2. **Direct HTTP adapters expose User-Agent.** If Bernstein sets a User-Agent header identifying itself, that is observable to the provider. Donors concerned about this should use local/self-hosted adapters.
 
-3. **Local endpoints eliminate provider observability.** A donor running tasks with a local model (Ollama, llama.cpp, self-hosted vLLM) makes no external network calls to LLM providers. The provider-observability question does not apply.
+3. **Local endpoints remove the provider from the loop.** A donor running tasks with a local model (Ollama, llama.cpp, self-hosted vLLM) makes no calls to LLM providers. The provider-observability question does not apply, as long as the agent is configured to use that endpoint.
+
+4. **The endpoint probe is credentialed.** `OPENAI_API_KEY` is sent to the `/models` probe only for a local host; a hosted or public host is neither probed nor sent the key.
 
 ## References
 

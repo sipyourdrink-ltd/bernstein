@@ -157,6 +157,10 @@ protocol-neutral envelope containing an issuer, issuer key id, content hash,
 claimed subject, trust class, format, and payload hash.  It preserves the
 foreign trust class and reports a structurally valid envelope as
 `unverifiable` until an issuer- and format-specific verifier is available.
+The trust class must be an outsider class (`third_party` or `public`): a
+foreign claim of `first_party`, `workspace` or `operator` trust asserts
+Bernstein's own authority, so it is `malformed` and fails closed at `public`,
+with or without a valid issuer signature.
 
 `unverifiable` does not mean Bernstein rejected the foreign claim, and it
 does not mean Bernstein verified it.  A malformed envelope fails closed at

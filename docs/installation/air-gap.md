@@ -294,6 +294,7 @@ Representative entries today:
 | Devin Terminal | `src/bernstein/adapters/devin_terminal.py` | `api.devin.ai:443`, `cli.devin.ai:443` |
 | AWS Q Developer | `src/bernstein/adapters/q_dev.py` | `*.amazonaws.com:443`, `*.aws.dev:443` |
 | Junie | `src/bernstein/adapters/junie.py` | depends on configured BYOK provider |
+| gpt-researcher, Tongyi DeepResearch | `src/bernstein/adapters/deep_research.py` | the configured gateway plus the agent's search/fetch hosts, derived per spawn ([deep-research](../adapters/deep-research.md#network-egress-policy)) |
 
 Adapters that do not declare `external_endpoints` (Aider against a
 local Ollama, the IaC Terraform/Pulumi wrapper, the generic adapter,

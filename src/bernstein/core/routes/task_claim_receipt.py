@@ -36,6 +36,7 @@ from bernstein.core.protocols.mcp.claim_receipt import (
 )
 from bernstein.core.routes.task_crud import _get_sse_bus
 from bernstein.core.security.audit_chain import AuditChainStore, record_task_claim_receipt
+from bernstein.core.security.auth_middleware import agent_task_scope
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.server import ClaimReceiptRequest  # noqa: TC001  (FastAPI resolves the body model at runtime)
 from bernstein.core.tasks.claim import Backlog, ClaimFilter, claim_next_entry
@@ -110,12 +111,17 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
         raise HTTPException(status_code=503, detail="Server is draining -- no new claims accepted")
 
     backlog_path = _get_claim_backlog_path(request)
+    # The server picks the row, so there is no id for the path gate to check:
+    # a task-scoped agent token is limited to its own ids in the claim filter
+    # instead, and a row outside its scope is never chosen.  The scope is part
+    # of the filter digest, so the receipt records what it was granted under.
     claim_filter = ClaimFilter(
         project=body.project,
         role=body.role,
         capability=body.capability,
         completed_ids=frozenset(body.completed_ids),
         max_attempts=body.max_attempts,
+        task_ids=agent_task_scope(request),
     )
     fingerprint = body.claimer_card_fingerprint or "unregistered"
 

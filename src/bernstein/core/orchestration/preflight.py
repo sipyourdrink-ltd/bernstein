@@ -42,6 +42,22 @@ def _safe_symbol(unicode_char: str, ascii_fallback: str) -> str:
 _CHECK = _safe_symbol("✓", "+")
 _ARROW = _safe_symbol("↳", "->")
 
+#: What an operator is told when no adapter resolves. Every flag it names has to
+#: be a flag of the ``bernstein`` command, because that is what the reader typed
+#: and what they will check against ``bernstein --help``. The orchestrator
+#: subprocess's own ``--adapter`` argparse flag is not reachable from there;
+#: naming it sent readers looking for an option that does not exist (#3526).
+#: ``tests/unit/test_adapter_fatal_message.py`` resolves each flag here against
+#: the registered CLI, so the text cannot drift back.
+#:
+#: Defined here rather than in ``orchestrator`` so the pre-flight check can print
+#: it without importing the orchestrator module. The orchestrator re-exports it.
+NO_ADAPTER_CONFIGURED = (
+    "FATAL: no adapter configured. Bernstein does not default to Claude - "
+    "pass --cli (e.g. --cli codex), set BERNSTEIN_ADAPTER, or set 'cli' in bernstein.yaml. "
+    "Run 'bernstein integrations list --installed' to see which adapters resolve here."
+)
+
 # Binary install hints for each supported CLI adapter.
 _CLI_INSTALL_HINT: dict[str, str] = {
     "claude": "https://claude.ai/code",
@@ -447,6 +463,53 @@ def preflight_checks(
         _check_binary(cli, env=env)
         _check_api_key(cli, env=env)
     _check_port_free(port)
+
+
+def check_adapter_configured(
+    cli: str | None,
+    workdir: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    """Refuse to start a run whose orchestrator is certain to exit for want of an adapter.
+
+    The orchestrator subprocess resolves its adapter from the ``--adapter`` flag
+    (which ``bootstrap`` only passes for a concrete ``cli``), then
+    ``BERNSTEIN_ADAPTER``, then the ``cli`` key of the seed file. It never
+    defaults to Claude. When none of the three is present it exits ``1`` on every
+    launch, and the recovery watchdog then respawns it every poll while the
+    foreground command reports success. Nothing about the next launch differs
+    from this one, so there is nothing to retry: say so now, before the task
+    server, the watchdog or any workspace state exists to be left behind.
+
+    The check only fires when failure is certain. A seed file that exists is
+    left to the orchestrator to parse, because whether its ``cli`` resolves is
+    the orchestrator's decision to make.
+
+    Args:
+        cli: The ``cli`` the caller resolved; ``None``, ``""`` and ``"auto"`` mean
+            no concrete adapter was chosen.
+        workdir: Project root, used to locate the seed file the orchestrator
+            will read.
+        env: Optional environment mapping (defaults to ``os.environ``).
+
+    Raises:
+        SystemExit: With status 1 and :data:`NO_ADAPTER_CONFIGURED` printed, when
+            no adapter can resolve.
+    """
+    environ = os.environ if env is None else env
+    if cli not in (None, "", "auto"):
+        return
+    if environ.get("BERNSTEIN_ADAPTER", "").strip():
+        return
+
+    from bernstein.core.config.seed import resolve_seed_path
+
+    if resolve_seed_path(workdir).exists():
+        return
+
+    console.print(NO_ADAPTER_CONFIGURED, style="bold red", markup=False, highlight=False)
+    raise SystemExit(1)
 
 
 def _routing_note(agent_count: int) -> str:

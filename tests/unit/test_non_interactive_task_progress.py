@@ -91,6 +91,22 @@ def test_tracker_emits_unknown_for_unrecorded_routing() -> None:
     assert 'task t-1 planned adapter=unknown model=unknown title="No routing"' in lines
 
 
+def test_tracker_falls_back_to_the_run_level_adapter_and_model() -> None:
+    """Task rows carry no adapter; the run's resolved adapter and model label them."""
+    con = Console(record=True, force_terminal=True, width=160)
+    tracker = TaskStateProgressTracker(console=con, default_adapter="claude", default_model="claude-sonnet-5-5")
+
+    lines = tracker.update_tasks(
+        [
+            {"id": "t-1", "title": "Run routing", "status": "open"},
+            {"id": "t-2", "title": "Own routing", "status": "open", "adapter": "codex", "model": "o3"},
+        ]
+    )
+
+    assert 'task t-1 planned adapter=claude model=claude-sonnet-5-5 title="Run routing"' in lines
+    assert 'task t-2 planned adapter=codex model=o3 title="Own routing"' in lines
+
+
 def test_tracker_does_not_emit_planned_for_terminal_first_state() -> None:
     """A task already terminal at first observation must not claim it was planned this run."""
     con = Console(record=True, force_terminal=True, width=160)

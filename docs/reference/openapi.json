@@ -6196,7 +6196,7 @@
           "approvals"
         ],
         "summary": "Approve Task",
-        "description": "Approve a pending approval request.\n\nWrites a .approved decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Approve a pending approval request.\n\nWrites a signed ``.approved`` decision record (source ``web``, attributed\nto the authenticated principal, bound to the open request's nonce) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "approve_task_approvals__task_id__approve_post",
         "parameters": [
           {
@@ -6237,8 +6237,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -6259,7 +6265,7 @@
           "approvals"
         ],
         "summary": "Reject Task",
-        "description": "Reject a pending approval request.\n\nWrites a .rejected decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Reject a pending approval request.\n\nWrites a signed ``.rejected`` decision record (source ``web``) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "reject_task_approvals__task_id__reject_post",
         "parameters": [
           {
@@ -6300,8 +6306,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -15473,7 +15485,7 @@
           "approvals"
         ],
         "summary": "Approve Task",
-        "description": "Approve a pending approval request.\n\nWrites a .approved decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Approve a pending approval request.\n\nWrites a signed ``.approved`` decision record (source ``web``, attributed\nto the authenticated principal, bound to the open request's nonce) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "approve_task_api_v1_approvals__task_id__approve_post",
         "parameters": [
           {
@@ -15514,8 +15526,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -15536,7 +15554,7 @@
           "approvals"
         ],
         "summary": "Reject Task",
-        "description": "Reject a pending approval request.\n\nWrites a .rejected decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Reject a pending approval request.\n\nWrites a signed ``.rejected`` decision record (source ``web``) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "reject_task_api_v1_approvals__task_id__reject_post",
         "parameters": [
           {
@@ -15577,8 +15595,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",

@@ -42,16 +42,21 @@ to a list of blessed URLs, so it holds wherever that identity arrives from:
 * **Indirectly resolved.**  Handlers that reach a task through some other
   key - an ACP run, a plan, a cluster steal decision - call the same
   function with the ids they resolved, before mutating them.
+* **Server-chosen.**  The claim routes where the server picks the row
+  (``GET /tasks/next/{role}``, ``POST /tasks/claim-receipt``) carry no id
+  at all, so their handlers pass :func:`agent_task_scope` into the
+  candidate query and a task outside the caller's scope is never chosen.
 
 Only the registered ``/tasks/`` collection routes are exempt from the path
 gate, because they address the collection rather than one task.  That
 exemption is keyed on the route a path resolves to
 (:func:`task_collection_route_patterns`), not on the text of its first
 segment, so a task whose id equals a collection segment name cannot borrow
-the exemption.  A token without a task scope (``task_ids == []``) is treated
-as unrestricted (manager / orchestrator tokens), and non-agent credentials
-(SSO users, the legacy operator bearer, the cluster secret) never reach this
-check at all.
+the exemption.  A token without a task scope (``task_ids == []``) is
+unrestricted only when its role is in :data:`UNSCOPED_AGENT_ROLES` (the
+run-root manager the orchestrator mints); for any other role an empty list is
+an empty scope and reaches no task.  Non-agent credentials (SSO users, the
+legacy operator bearer, the cluster secret) never reach this check at all.
 
 Route permission enforcement
 ----------------------------
@@ -65,7 +70,8 @@ does not hold:
 Credential                 Checked against
 =========================  ===========================================
 SSO user JWT               the RBAC role's permissions
-Agent identity token       the signed permission set the token pins,
+Agent identity token       the permission set on the authenticated
+                           identity record the orchestrator minted,
                            plus :data:`_AGENT_PERMISSION_EQUIVALENTS`
 Cluster worker secret      :data:`_CLUSTER_SECRET_PERMISSIONS`, a fixed
                            set - one string serves the whole fleet, so
@@ -76,6 +82,12 @@ Legacy static bearer       nothing; it is the operator credential
 Agent grants use a narrower vocabulary than the route map, so the one
 authority the two spell differently is resolved through
 :data:`_AGENT_PERMISSION_EQUIVALENTS`; nothing else is implied.
+
+For an agent token the role, permissions and task scope never come from the
+token's claims.  ``AgentIdentityStore.authenticate`` returns the identity
+record, which it accepts only when the record carries a MAC under a key held
+outside the workdir; a token whose claims differ from that record - a scope
+the record does not grant included - does not authenticate at all.
 
 The gate covers reads as well as writes, because a read route's declared
 permission is what keeps one agent's log and stream output out of another
@@ -150,6 +162,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from bernstein.core.identity.agent_jwt import task_allowlist
 from bernstein.core.routes.route_table import iter_route_paths, route_path_templates
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import (
@@ -284,7 +297,10 @@ TASK_BODY_SCOPED_SEGMENTS: Final[frozenset[str]] = frozenset(
 #   archive, counts, graph, search  - read-only collection queries
 #   next                            - ``GET /tasks/next/{role}`` claim-next;
 #                                     the server picks the row, the caller
-#                                     cannot name one
+#                                     cannot name one.  Still a claim: the
+#                                     handler limits the candidate query to
+#                                     the caller's scope, see
+#                                     :func:`agent_task_scope`
 #   batch                           - creates NEW tasks, so no existing id
 #                                     can be in scope yet
 #   batch-ops, claim-batch,         - name existing ids in the body; scoped
@@ -292,7 +308,8 @@ TASK_BODY_SCOPED_SEGMENTS: Final[frozenset[str]] = frozenset(
 #                                     ``TASK_BODY_SCOPED_SEGMENTS`` above
 #   claim-receipt                   - claims the next eligible backlog row
 #                                     for the caller; like ``next``, the
-#                                     caller cannot name a task
+#                                     caller cannot name a task, and the
+#                                     claim filter carries the caller's scope
 #
 # Membership here is necessary but not sufficient: the exemption applies to
 # the registered collection ROUTES these segments name, not to the segment
@@ -503,8 +520,13 @@ _ROUTE_PERMISSIONS: dict[str, str] = {
     # derivation below turns this into ``scim:read`` for GET, which keeps
     # ``/scim/v2/Users`` out of reach of a plain ``status:read`` viewer.
     "/scim": _PERM_SCIM_WRITE,
-    "/api/v1/scim": _PERM_SCIM_WRITE,
 }
+
+# The versioned mount prefix the app mirrors its routes under
+# (``/api/v1/...``).  Stripped before the permission lookup so a mirror and
+# its root route resolve to the same entry; only a whole leading segment is
+# stripped, so ``/api/v1x`` is left as it is.
+_API_VERSION_PREFIX_RE = re.compile(r"^/api/v\d+(?=/|$)")
 
 
 def _normalise_expected_resource(raw: _ExpectedResourceConfig) -> tuple[str, ...]:
@@ -665,8 +687,16 @@ def auth_disabled_via_opt_out() -> bool:
 def _get_required_permission(path: str, method: str) -> str | None:
     """Determine the required permission for a request.
 
+    The ``/api/v<n>`` mount prefix is stripped first.  The app serves the
+    same handler at the root and under that mirror, so both must require
+    the same permission; matching the raw path let a mirror miss the prefix
+    its root route matched and fall through to a weaker default (reads to
+    ``status:read``, ``/api/v1/drain/cancel`` to the ``/cancel`` heuristic).
+
     Returns None if no specific permission is needed (public/read).
     """
+    path = _API_VERSION_PREFIX_RE.sub("", path, count=1) or "/"
+
     # Check specific path patterns first (before prefix matching)
     if "/kill" in path:
         return "agents:read" if method in _READ_METHODS else "agents:kill"
@@ -702,10 +732,12 @@ def _get_required_permission(path: str, method: str) -> str | None:
 def _agent_holds_permission(agent_identity: Any, permission: str) -> bool:
     """Return True when an agent identity holds *permission* for a route.
 
-    Applies the identity's own signed permission set first.  The set is
-    pinned to the presented token - ``AgentIdentityStore.authenticate``
-    refuses a JWT whose ``scopes`` claim differs from the stored grant - so
-    it is authenticated state rather than request input.
+    Applies the identity's own permission set first.  It is read from the
+    identity record the orchestrator minted, which the store accepts only
+    with a valid record MAC, and ``AgentIdentityStore.authenticate`` refuses
+    a JWT whose ``scopes`` claim differs from that grant - so it is
+    authenticated server-side state rather than request input, and a scope
+    the token asserts beyond the record is never consulted.
 
     When the route names a permission the agent vocabulary spells
     differently, the grants listed for it in
@@ -1188,13 +1220,16 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
             )
 
         # Zero-trust: enforce task scope for mutating task operations.
-        # Agents with a non-empty task_ids list may only act on their assigned
-        # tasks.  Agents with task_ids=[] are unrestricted (manager role).
-        if agent_identity.task_ids and request.method not in _READ_METHODS:
+        # Agents may only act on the tasks in their ``task_ids``.  An empty
+        # list is unrestricted only for ``UNSCOPED_AGENT_ROLES`` (the run-root
+        # manager); for any other role it is an empty scope and every
+        # task-addressed write is refused.
+        allowed_task_ids = _agent_task_allowlist(agent_identity)
+        if allowed_task_ids is not None and request.method not in _READ_METHODS:
             app = request.scope.get("app")
             task_scope_error = _check_agent_task_scope(
                 path,
-                agent_identity.task_ids,
+                allowed_task_ids,
                 task_id_route_patterns(app),
                 task_collection_route_patterns(app),
                 request.method,
@@ -1455,7 +1490,10 @@ def _check_agent_task_scope(
 
     Args:
         path: Request URL path.
-        allowed_task_ids: Task IDs the agent token is scoped to.
+        allowed_task_ids: Task IDs the agent token is scoped to.  Empty is
+            an empty scope that admits no task (see
+            :func:`_agent_task_allowlist`); unrestricted tokens never reach
+            this function.
         route_patterns: Per-task route matchers for prefixes other than
             ``/tasks/``, from :func:`task_id_route_patterns`.  Defaults to
             empty so the ``/tasks/`` surface can be checked without an app.
@@ -1474,8 +1512,11 @@ def _check_agent_task_scope(
     # exact POST surface to ``routes.task_mailbox``, which has the message body,
     # authenticated AgentIdentity, and referenced chain entries needed to make
     # the narrower protocol-aware decision.  Every other task route continues
-    # through the generic destination allowlist below.
-    if method == "POST" and re.fullmatch(r"(?:/api/v\d+)?/tasks/[^/]+/messages", path):
+    # through the generic destination allowlist below.  An agent whose scope
+    # is empty has no task to act from, so it is not deferred: the handler
+    # reads an empty list as "unrestricted", and the generic check below
+    # refuses it instead.
+    if method == "POST" and allowed_task_ids and re.fullmatch(r"(?:/api/v\d+)?/tasks/[^/]+/messages", path):
         return None
 
     task_id = _addressed_task_id(path, route_patterns, collection_patterns, method)
@@ -1487,24 +1528,27 @@ def _check_agent_task_scope(
 
 
 def check_agent_task_scope_ids(
-    allowed_task_ids: Sequence[str],
+    allowed_task_ids: Sequence[str] | None,
     requested_task_ids: Iterable[str],
 ) -> str | None:
     """Return an error message if any requested task id is out of scope.
 
     The body-carried counterpart of :func:`_check_agent_task_scope`, applying
     the same rule to ids a caller names in a request body instead of in the
-    path.  An empty ``allowed_task_ids`` means an unrestricted (manager)
-    token and permits everything, exactly as the path-level gate does.
+    path.  ``None`` means an unrestricted token and permits everything; an
+    empty sequence is an empty scope and permits nothing, exactly as the
+    path-level gate does.  Resolve which one a token carries with
+    :func:`_agent_task_allowlist`.
 
     Args:
-        allowed_task_ids: Task IDs the agent token is scoped to.
+        allowed_task_ids: Task IDs the agent token is scoped to, or None
+            for an unrestricted token.
         requested_task_ids: Task IDs the request is about to act on.
 
     Returns:
         Error message string if access should be denied, None otherwise.
     """
-    if not allowed_task_ids:
+    if allowed_task_ids is None:
         return None
     allowed = set(allowed_task_ids)
     out_of_scope = sorted({task_id for task_id in requested_task_ids if task_id not in allowed})
@@ -1535,9 +1579,11 @@ def enforce_agent_task_scope_for_ids(request: Request, requested_task_ids: Itera
     indirectly resolved value would let that step carry an id past the check.
 
     No-op for every credential that is not a task-scoped agent identity:
-    operator bearer tokens, SSO users, the cluster secret, unscoped manager
-    agent tokens (``task_ids == []``), and requests served with auth disabled
-    never set (or never populate) ``request.state.agent_identity``.
+    operator bearer tokens, SSO users, the cluster secret and requests served
+    with auth disabled never set ``request.state.agent_identity``, and an
+    unscoped manager token (``task_ids == []`` on a role in
+    :data:`UNSCOPED_AGENT_ROLES`) is unrestricted.  Any other agent token
+    with an empty list reaches no task.
 
     Args:
         request: The active request, carrying the resolved agent identity.
@@ -1549,7 +1595,7 @@ def enforce_agent_task_scope_for_ids(request: Request, requested_task_ids: Itera
     identity = getattr(request.state, "agent_identity", None)
     if identity is None:
         return
-    error = check_agent_task_scope_ids(getattr(identity, "task_ids", None) or [], requested_task_ids)
+    error = check_agent_task_scope_ids(_agent_task_allowlist(identity), requested_task_ids)
     if error is None:
         return
     from fastapi import HTTPException
@@ -1561,3 +1607,46 @@ def enforce_agent_task_scope_for_ids(request: Request, requested_task_ids: Itera
         sanitize_log(error),
     )
     raise HTTPException(status_code=403, detail=error)
+
+
+def agent_task_scope(request: Request) -> frozenset[str] | None:
+    """Return the task ids a server-chosen claim may hand this caller.
+
+    For the claim routes where the server picks the row - ``GET
+    /tasks/next/{role}`` and ``POST /tasks/claim-receipt`` - there is no id
+    in the request for the path gate or :func:`enforce_agent_task_scope_for_ids`
+    to check.  Those handlers pass this value into the candidate query
+    instead, so a task-scoped token is only ever offered a task inside its
+    own scope.
+
+    Args:
+        request: The active request, carrying the resolved agent identity.
+
+    Returns:
+        The caller's task scope, or None when the caller is not limited to a
+        task set: every non-agent credential, and an unscoped manager token.
+        An agent token of any other role with an empty ``task_ids`` gets an
+        empty set, so nothing is claimable for it.
+    """
+    identity = getattr(request.state, "agent_identity", None)
+    if identity is None:
+        return None
+    allowed = _agent_task_allowlist(identity)
+    return None if allowed is None else frozenset(allowed)
+
+
+def _agent_task_allowlist(identity: Any) -> list[str] | None:
+    """Return the task ids an agent identity may act on, or None for all.
+
+    ``None`` only for an identity whose ``task_ids`` is empty and whose role
+    is in :data:`UNSCOPED_AGENT_ROLES`.  Every other identity gets its list,
+    and an empty list means it may act on no task: a worker-role token with
+    no scope fails closed instead of being read as unrestricted.
+
+    Args:
+        identity: The authenticated ``AgentIdentity``.
+
+    Returns:
+        The allowed task ids, or None when the identity is unrestricted.
+    """
+    return task_allowlist(getattr(identity, "role", None), getattr(identity, "task_ids", None))

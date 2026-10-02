@@ -120,7 +120,7 @@ def _read_only_profile() -> PermissionProfile:
         default="deny",
         allow_tools=("fs.read", "fs.stat", "fs.list", "git.diff", "git.log", "git.status"),
         allow_paths=("**",),
-        deny_paths=(".env*", "**/.git/objects/**", "**/.sdd/runtime/**", "**/secrets/**"),
+        deny_paths=(".env*", "**/.git/objects/**", "**/.sdd/runtime/**", "**/.sdd/auth/**", "**/secrets/**"),
         allow_hosts=(),
         shell_allowlist=(),
     )
@@ -145,7 +145,7 @@ def _builder_profile() -> PermissionProfile:
             "git.commit",
         ),
         allow_paths=("src/**", "tests/**", "docs/**", "scripts/**", "*.md", "*.toml", "*.yaml", "*.yml"),
-        deny_paths=(".env*", "**/.git/**", "**/.sdd/runtime/**", "**/secrets/**", "**/credentials*"),
+        deny_paths=(".env*", "**/.git/**", "**/.sdd/runtime/**", "**/.sdd/auth/**", "**/secrets/**", "**/credentials*"),
         allow_hosts=("api.anthropic.com", "api.openai.com", "api.github.com"),
         shell_allowlist=("uv", "pytest", "ruff", "git", "python", "python3", "node", "npm", "pnpm"),
     )
@@ -158,7 +158,7 @@ def _reviewer_profile() -> PermissionProfile:
         default="deny",
         allow_tools=("fs.read", "fs.stat", "fs.list", "git.diff", "git.log", "git.status", "git.show"),
         allow_paths=("**",),
-        deny_paths=(".env*", "**/.git/objects/**", "**/.sdd/runtime/**", "**/secrets/**"),
+        deny_paths=(".env*", "**/.git/objects/**", "**/.sdd/runtime/**", "**/.sdd/auth/**", "**/secrets/**"),
         allow_hosts=(),
         shell_allowlist=(),
     )

@@ -8,6 +8,10 @@ own adapter module; this one holds what they share:
   ``BERNSTEIN_<AGENT>_OPENAI_BASE_URL``, ``BERNSTEIN_<AGENT>_OPENAI_API_KEY``
   and ``BERNSTEIN_<AGENT>_MODEL``. One agent's key never serves another, and
   error messages name the missing variables, never their values;
+* the egress check - the gateway and every tool host the agent will dial are
+  checked against the active network policy before anything is written or
+  started, so a deny-all policy refuses the spawn instead of launching a
+  runner whose whole job is outbound calls;
 * the spawn path - the agent runs a standalone runner script with its own
   interpreter, so the agent's dependencies never enter bernstein's
   environment;
@@ -24,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
+from urllib.parse import urlsplit
 
 from bernstein.adapters import deep_research_artifact as artifact
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
@@ -96,6 +101,23 @@ def require_env(name: str, environ: Mapping[str, str], why: str) -> str:
     return value
 
 
+def url_endpoint(url: str, *, source: str) -> tuple[str, int]:
+    """The ``(host, port)`` an http(s) URL dials; fails closed on anything else.
+
+    ``source`` names the variable the URL came from, never its value. A URL
+    whose destination cannot be read cannot be checked against the egress
+    policy, so it is refused rather than waved through.
+    """
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except ValueError:
+        raise GatewayConfigError(f"{source} must be an absolute http(s) URL") from None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise GatewayConfigError(f"{source} must be an absolute http(s) URL")
+    return parts.hostname, port or (443 if parts.scheme == "https" else 80)
+
+
 @dataclass(frozen=True)
 class ResearchRun:
     """A run artifact as read back and verified."""
@@ -157,6 +179,39 @@ class DeepResearchAdapter(CLIAdapter):
     def run_dir(self, workdir: Path, session_id: str) -> Path:
         return workdir / ".sdd" / self.slug / session_id
 
+    def tool_endpoints(self, environ: Mapping[str, str]) -> list[tuple[str, int]]:
+        """Hosts the agent's search and fetch tools dial, beyond the gateway.
+
+        Called only under a restrictive policy. Raise
+        :class:`~bernstein.core.security.network_policy.NetworkPolicyDenied`
+        for a tool whose destination cannot be determined: an unplaceable
+        destination cannot be allowed.
+        """
+        return []
+
+    def egress_endpoints(self, environ: Mapping[str, str]) -> list[tuple[str, int]]:
+        """Every destination one run dials: the gateway, then the agent's tools."""
+        base_name = gateway_env_names(self.slug)[0]
+        gateway = url_endpoint(read_gateway(self.slug, environ).base_url, source=base_name)
+        return [gateway, *self.tool_endpoints(environ)]
+
+    def enforce_egress(self, environ: Mapping[str, str]) -> None:
+        """Refuse to spawn when the network policy denies any destination of a run.
+
+        The same policy every other adapter consults
+        (:meth:`CLIAdapter.enforce_network_policy`), but the destinations are
+        known per spawn - the gateway is operator configuration - rather than
+        declared on the class. Deny-all and the air-gap profile therefore
+        refuse here, before a runner whose job is outbound calls is started.
+        """
+        from bernstein.core.security.network_policy import policy_from_env
+
+        policy = policy_from_env()
+        if policy.allow_any:
+            return
+        for host, port in self.egress_endpoints(environ):
+            policy.check(host, port, source=f"adapter:{self.name()}")
+
     def spawn(
         self,
         *,
@@ -174,11 +229,14 @@ class DeepResearchAdapter(CLIAdapter):
         self.refuse_multimodal_if_needed(multimodal_context)
         environ = dict(os.environ)
         run_dir = self.run_dir(workdir, session_id)
-        run_dir.mkdir(parents=True, exist_ok=True)
         prompt_file = run_dir / "prompt.txt"
-        prompt_file.write_text(prompt + (f"\n\n{system_addendum}" if system_addendum else ""), encoding="utf-8")
+        # Everything that can refuse the spawn - missing configuration and the
+        # egress policy - runs before the first file is written.
         cmd = self.build_command(prompt_file, run_dir, environ)
         env = self.build_env(environ)
+        self.enforce_egress(environ)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text(prompt + (f"\n\n{system_addendum}" if system_addendum else ""), encoding="utf-8")
 
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
