@@ -193,6 +193,21 @@ _EXPECTED_ABORT_REASONS: frozenset[AbortReason] = frozenset(
 )
 
 
+def _is_adapter_failure_exit(session: AgentSession, abort_reason: AbortReason) -> bool:
+    """Return True when a dead agent's exit should start the adapter spawn cooldown.
+
+    The per-adapter spawn cooldown exists to stop respawning onto an adapter
+    that just crashed. ``_handle_dead_agent`` also runs for agents that
+    finished their task and exited cleanly, so it must not cool those down.
+    Only a known, non-zero exit that is not a deliberate stop counts: exit
+    code 0, an unknown exit status (liveness fallbacks that never see one)
+    and user/shutdown/cascaded aborts do not.
+    """
+    if session.exit_code is None or session.exit_code == 0:
+        return False
+    return abort_reason not in _EXPECTED_ABORT_REASONS
+
+
 def _capture_agent_crash(
     session: AgentSession,
     abort_reason: AbortReason,
@@ -391,7 +406,7 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     )
     _capture_agent_crash(session, abort_reason, abort_detail)
     _propagate_abort_to_children(orch, session.id)
-    if session.role:
+    if session.role and _is_adapter_failure_exit(session, abort_reason):
         adapter_name = getattr(session, "endpoint_adapter_name", "") or "unknown"
         orch._agent_failure_timestamps[adapter_name] = time.time()
 
