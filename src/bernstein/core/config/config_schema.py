@@ -15,10 +15,19 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    create_model,
+    field_validator,
+    model_validator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -901,6 +910,27 @@ class ArchConformanceSchema(BaseModel):
     )
 
 
+#: Effort levels the routing layer and adapters understand (``max`` > ``high``
+#: > ``medium``/``normal`` > ``low``); mirrors the claude adapter's effort map.
+EffortLevel = Literal["max", "high", "medium", "normal", "low"]
+
+
+def _validate_cli_selection(value: str) -> str:
+    """Accept any selectable adapter registry name or the ``auto`` sentinel.
+
+    Delegates to :func:`bernstein.core.config.seed_parser.valid_cli_selections`
+    (the live adapter registry) so the schema, the seed parser and ``--cli``
+    share one source of truth. Imported lazily to keep this module free of an
+    import cycle with the seed parser and the adapters package.
+    """
+    from bernstein.core.config.seed_parser import valid_cli_selections
+
+    valid = valid_cli_selections()
+    if value not in valid:
+        raise ValueError(f"cli must be one of {sorted(valid)}, got: {value!r}")
+    return value
+
+
 class BernsteinConfig(BaseModel):
     """Top-level Pydantic model for bernstein.yaml.
 
@@ -920,12 +950,12 @@ class BernsteinConfig(BaseModel):
     goal: str = Field(..., min_length=1, description="High-level project objective.")
 
     # --- Core settings ---
-    cli: Literal["claude", "codex", "gemini", "qwen", "auto"] = Field(
+    cli: Annotated[str, AfterValidator(_validate_cli_selection)] = Field(
         default="auto",
-        description="CLI agent backend.",
+        description="CLI agent backend: a selectable adapter registry name or 'auto'.",
     )
     max_agents: int = Field(default=6, ge=1, description="Maximum concurrent agents.")
-    effort: Literal["max", "medium", "low"] | None = Field(
+    effort: EffortLevel | None = Field(
         default=None,
         description="Default effort level for reasoning models.",
     )
