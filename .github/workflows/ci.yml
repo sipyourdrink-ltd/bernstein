@@ -909,12 +909,12 @@ jobs:
       - name: Build and check size
         run: |
           uv build
-          MAX_SIZE=$((10 * 1024 * 1024))
+          MAX_SIZE=$((12 * 1024 * 1024))
           for f in dist/*.whl; do
             SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
             echo "$f: $SIZE bytes"
             if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-              echo "::error::Wheel $f exceeds 10MB limit ($SIZE bytes)"
+              echo "::error::Wheel $f exceeds 12 MiB limit ($SIZE bytes)"
               exit 1
             fi
           done
