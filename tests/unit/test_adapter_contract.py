@@ -292,8 +292,8 @@ class TestAdapterContract:
 
 # 680 after restoring five adapters plus the guard test on current upstream main;
 # 707 with the two deep-research adapters (gpt_researcher, tongyi_deepresearch);
-# 720 with paper_qa.
-_EXPECTED_COLLECTED = 720
+# 720 with paper_qa; 733 with openclaw.
+_EXPECTED_COLLECTED = 733
 
 
 def test_module_collected_case_count() -> None:

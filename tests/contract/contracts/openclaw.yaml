@@ -1,0 +1,25 @@
+# Contract for the OpenClaw CLI (adapter: openclaw).
+#
+# Always-passed surface from src/bernstein/adapters/openclaw.py::build_command:
+# ``openclaw agent exec --message-file <f> --cwd <dir> --json --timeout <s>``,
+# plus ``--config <f> --auth-env-only --model <provider/model>`` when the
+# gateway is set. ``agent exec`` is the embedded, Gateway-free headless path
+# (https://docs.openclaw.ai/cli/agent). The gateway key reaches OpenClaw only
+# as BERNSTEIN_OPENCLAW_OPENAI_API_KEY in the environment, interpolated by its
+# config loader; it is never on argv or on disk.
+adapter: openclaw
+binary: openclaw
+install:
+  method: npm
+  spec: "openclaw@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "BERNSTEIN_OPENCLAW_OPENAI_API_KEY"
+  basis: api_key
+required_flags: []
+required_subcommands:
+  - "agent"
+expected_models:
+  command: []
+  required_present: []

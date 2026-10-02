@@ -54,6 +54,7 @@ from bernstein.adapters.muse import MuseAdapter
 from bernstein.adapters.ollama import OllamaAdapter
 from bernstein.adapters.open_interpreter import OpenInterpreterAdapter
 from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
+from bernstein.adapters.openclaw import OpenClawAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.openhands import OpenHandsAdapter
 from bernstein.adapters.paper_qa import PaperQAAdapter
@@ -140,6 +141,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "ollama": OllamaAdapter,
     "open_interpreter": OpenInterpreterAdapter,
     "openai_agents": OpenAIAgentsAdapter,
+    "openclaw": OpenClawAdapter,
     "opencode": OpenCodeAdapter,
     "openhands": OpenHandsAdapter,
     "paper_qa": PaperQAAdapter,

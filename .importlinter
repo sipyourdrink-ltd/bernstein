@@ -79,6 +79,7 @@ modules =
     bernstein.adapters.ollama
     bernstein.adapters.open_interpreter
     bernstein.adapters.openai_agents
+    bernstein.adapters.openclaw
     bernstein.adapters.opencode
     bernstein.adapters.openhands
     bernstein.adapters.paper_qa
