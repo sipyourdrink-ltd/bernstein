@@ -1,4 +1,4 @@
-"""Kilo CLI adapter (Stackblitz)."""
+"""Kilo CLI adapter (Kilo Code)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderTyp
 
 
 class KiloAdapter(CLIAdapter):
-    """Spawn and monitor Kilo CLI sessions (Stackblitz).
+    """Spawn and monitor Kilo CLI sessions (Kilo Code).
 
     Kilo supports headless mode, ACP/MCP protocols, and session management.
     CLI invocation: ``kilo run --prompt "<task>" --model <provider/model>``

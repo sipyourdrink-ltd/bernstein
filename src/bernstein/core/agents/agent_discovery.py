@@ -474,7 +474,7 @@ def _detect_cursor() -> tuple[AgentCapabilities | None, list[str]]:
 
 
 def _detect_kilo() -> tuple[AgentCapabilities | None, list[str]]:
-    """Detect Kilo CLI (Stackblitz)."""
+    """Detect Kilo CLI (Kilo Code)."""
     warnings: list[str] = []
     binary = shutil.which("kilo")
     if binary is None:

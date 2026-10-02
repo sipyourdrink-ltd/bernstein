@@ -158,7 +158,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `http_429_classifier.py`        | Data-driven classifier for HTTP 429 responses |
 | `iac.py`                        | Infrastructure-as-Code (Terraform/Pulumi) adapter for Bernstein |
 | `junie.py`                      | JetBrains Junie CLI adapter |
-| `kilo.py`                       | Kilo CLI adapter (Stackblitz) |
+| `kilo.py`                       | Kilo CLI adapter (Kilo Code) |
 | `kimchi.py`                     | Kimchi CLI adapter (#3100) |
 | `kimi.py`                       | Kimi CLI adapter |
 | `kiro.py`                       | Kiro CLI adapter |
