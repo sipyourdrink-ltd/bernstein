@@ -101,45 +101,70 @@ def registry_cmd(at_timestamp: str | None, as_json: bool) -> None:
                 click.echo()
 
 
+def _parse_model_ref(raw: str) -> tuple[str, str, str | None]:
+    """Split ``provider/model[@version]`` into ``(provider, model, version)``.
+
+    This is the key ``model registry`` prints. The provider is everything up to
+    the first ``/`` (a provider never contains one) and the version is
+    everything after the last ``@``; the model name in between may itself
+    contain ``/``. ``@*`` and no ``@`` both mean "any snapshot" and return a
+    version of ``None``.
+
+    Raises:
+        ValueError: When the reference has no provider or no model.
+    """
+    body, sep, version = raw.rpartition("@")
+    if not sep:
+        body, version = raw, ""
+    provider, slash, model = body.partition("/")
+    if not provider or not slash or not model:
+        raise ValueError("MODEL_REF must be provider/model or provider/model@version")
+    return provider, model, (None if version in ("", "*") else version)
+
+
 @model_group.command("impact")
 @click.argument("model_ref", required=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def impact_cmd(model_ref: str, as_json: bool) -> None:
     """List artefacts produced by a model.
 
-    MODEL_REF is provider/model format, e.g., anthropic/opus or openai/gpt-4.
+    MODEL_REF is provider/model or provider/model@version, the key
+    ``bernstein model registry`` prints, e.g. anthropic/opus or
+    openrouter/meta-llama/Llama-3@2026-01. Without a version, every snapshot
+    matches.
 
     This command joins the model registry to the lineage ledger's model_ref
     field to show which artefacts were produced by a given model, enabling
-    impact analysis when a model is withdrawn.
+    impact analysis when a model is withdrawn. Only lineage entries written
+    with a model reference can match; the command says so when the ledger holds
+    none.
 
     Examples:
         bernstein model impact anthropic/opus
-        bernstein model impact openai/gpt-4 --json
+        bernstein model impact openai/gpt-4@2026-01 --json
     """
+    from bernstein.core.lineage.entry import entry_hash
     from bernstein.core.lineage.store import LineageStore
 
     if not LINEAGE_DIR.is_dir():
         click.echo("✗ Lineage directory not found: .sdd/lineage", err=True)
         raise SystemExit(1)
 
-    # Parse model_ref: provider/model or provider/model/version
-    parts = model_ref.split("/")
-    if len(parts) < 2:
-        click.echo("✗ MODEL_REF must be provider/model or provider/model/version", err=True)
-        raise SystemExit(1)
-
-    provider = parts[0]
-    model = parts[1]
-    version = parts[2] if len(parts) > 2 else None
+    try:
+        provider, model, version = _parse_model_ref(model_ref)
+    except ValueError as exc:
+        click.echo(f"✗ {exc}", err=True)
+        raise SystemExit(1) from exc
 
     # Load lineage entries and filter by model_ref
     store = LineageStore(LINEAGE_DIR)
     matching = []
+    with_model_ref = 0
 
     for entry, _jws in store.read_log():
         if entry.model_ref is None:
             continue
+        with_model_ref += 1
         ref = entry.model_ref
         if ref.provider != provider:
             continue
@@ -156,11 +181,13 @@ def impact_cmd(model_ref: str, as_json: bool) -> None:
         output = {
             "model_ref": model_ref,
             "count": len(matching),
+            "entries_with_model_ref": with_model_ref,
             "artefacts": [
                 {
-                    "entry_hmac": e.entry_hmac,
-                    "task_id": e.task_id,
+                    "entry_hash": entry_hash(e),
                     "artefact_path": e.artefact_path,
+                    "agent_id": e.agent_id,
+                    "tool_call_id": e.tool_call_id,
                     "provider": e.model_ref.provider if e.model_ref else None,
                     "model_requested": e.model_ref.model_requested if e.model_ref else None,
                     "model_reported": e.model_ref.model_reported if e.model_ref else None,
@@ -172,19 +199,21 @@ def impact_cmd(model_ref: str, as_json: bool) -> None:
         click.echo(json.dumps(output, indent=2))
     else:
         if not matching:
-            click.echo(f"No artefacts found for {model_ref}")
+            if with_model_ref == 0:
+                click.echo(
+                    "No lineage entry records a model reference, so this ledger cannot say "
+                    f"which artefacts {model_ref} produced."
+                )
+            else:
+                click.echo(f"No artefacts found for {model_ref}")
             raise SystemExit(1)
-        else:
-            click.echo(f"Found {len(matching)} artefact(s) produced by {model_ref}:\n")
-            for entry in matching:
-                click.echo(f"  {entry.entry_hmac[:12]} — {entry.artefact_path}")
-                if entry.task_id:
-                    click.echo(f"    Task: {entry.task_id}")
-                if (
-                    entry.model_ref
-                    and entry.model_ref.model_reported
-                    and entry.model_ref.model_reported != entry.model_ref.model_requested
-                ):
-                    click.echo(
-                        f"    (requested {entry.model_ref.model_requested}, got {entry.model_ref.model_reported})"
-                    )
+        click.echo(f"Found {len(matching)} artefact(s) produced by {model_ref}:\n")
+        for entry in matching:
+            click.echo(f"  {entry_hash(entry)[7:19]} — {entry.artefact_path}")
+            click.echo(f"    Agent: {entry.agent_id}")
+            if (
+                entry.model_ref
+                and entry.model_ref.model_reported
+                and entry.model_ref.model_reported != entry.model_ref.model_requested
+            ):
+                click.echo(f"    (requested {entry.model_ref.model_requested}, got {entry.model_ref.model_reported})")
