@@ -992,7 +992,7 @@ class EvolutionLoop:
             logger.warning("Proposal %s application failed - attempting rollback", proposal.id)
             # Asked BEFORE the rollback, which writes `rolled_back` to history
             # and would flip the answer.
-            changed_something = self._executor.was_applied(proposal.id)
+            changed_something = self._executor.was_applied(proposal)
             try:
                 self._executor.rollback_upgrade(proposal)
             except RollbackError:
