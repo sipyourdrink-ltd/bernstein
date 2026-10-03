@@ -2129,6 +2129,8 @@ class ClusterConfig:
     min_disk_free_mb: int = 512
     max_mem_used_pct: float = 95.0
     max_mesh_rtt_ms: float = 5000.0
+    shard_id: str | None = None
+    shards: tuple[tuple[str, str], ...] = ()
 
     @property
     def is_mesh(self) -> bool:
