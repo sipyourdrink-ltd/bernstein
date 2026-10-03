@@ -332,7 +332,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein events query/verify`](../events/grammar.md) | Full | 3 | Query the unified event feed and verify its chain projection |
 | `bernstein endpoints certify/verify` | Full | 3 | Conformance-certify a local-model endpoint and verify its certification |
 | `bernstein ledger verify/anchor/fetch` | Full | 3 | Verify, anchor, and fetch work-ledger segments |
-| `bernstein seal publish/verify` | Full | 3 | Anchor a run's sealed journal head to an RFC 3161 timestamping authority and re-check the anchor offline against pinned TSA roots |
+| `bernstein seal publish/verify` | Full | 3 | Anchor a run's sealed journal head to an RFC 3161 timestamping authority and re-check stored anchors offline: TSA tokens against pinned roots, or a `transparency-log` inclusion proof against an operator-pinned log public key |
 | `bernstein mission define/status/verify` | Full | 3 | Define multi-phase missions and verify mission status (`mission digest verify` for digests) |
 | `bernstein model registry` | Full | 3 | Project the model registry from the audit chain, optionally as of a past instant |
 | `bernstein model impact` | Partial | 2 | List artefacts whose lineage entry names a model (`provider/model[@version]`). The command and the ledger read-back work, but no write path in the orchestrator records a model reference yet, so on ordinary runs it reports that the ledger holds none |

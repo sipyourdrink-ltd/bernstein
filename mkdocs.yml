@@ -347,6 +347,7 @@ nav:
           - Schedule: operations/schedule.md
           - Resume: operations/resume.md
           - Replay: operations/replay.md
+          - Seal anchors: operations/seal.md
           - Fork from step: operations/fork-from-step.md
           - Simulate: operations/simulate.md
           - Compare: operations/compare.md

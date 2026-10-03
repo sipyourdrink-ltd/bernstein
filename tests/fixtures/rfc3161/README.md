@@ -12,6 +12,7 @@ genuine RFC 3161 chain instead of a hand-rolled fixture.
 | `freetsa_token_with_certs.tsr` | TSA response (DER `TimeStampResp`) for the payload, requested with `-cert` so embedded TSA cert + root are present. |
 | `freetsa_tsa.crt`             | FreeTSA leaf signing cert (also embedded inside the token). |
 | `freetsa_cacert.pem`          | FreeTSA root CA — the trust anchor.            |
+| `seal_anchor.json`            | v3.19.2 on-disk RFC 3161 anchor over that token. Used by `test_existing_rfc3161_anchor_files_still_load`. |
 
 To refresh the fixtures (e.g. after the TSA rotates its key), run:
 

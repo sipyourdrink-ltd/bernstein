@@ -365,6 +365,22 @@ def _merkle_root_and_path(
     return level[0], path
 
 
+def _root_from_inclusion(leaf_hash: str, audit_path: list[dict[str, Any]]) -> str:
+    """Fold an inclusion proof from leaf up to root.
+
+    ``audit_path`` is the on-disk shape written by
+    :func:`_build_transparency_receipt`: ``{"hash": sibling, "left": bool}``.
+    Hashing is :func:`_combine_internal` — the same domain-separated pair
+    as the tree builder. The standalone receipt verifier copies this walk;
+    callers must import it rather than write a third copy.
+    """
+    node = leaf_hash
+    for step in audit_path:
+        sibling = str(step.get("hash", ""))
+        node = _combine_internal(sibling, node) if step.get("left") else _combine_internal(node, sibling)
+    return node
+
+
 def _build_transparency_receipt(
     *,
     rebuilt_events: list[dict[str, Any]],
