@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
@@ -458,6 +458,7 @@ dependencies = [
     { name = "starlette" },
     { name = "terminaltexteffects" },
     { name = "textual" },
+    { name = "tzdata" },
     { name = "uvicorn" },
     { name = "watchdog" },
     { name = "websockets" },
@@ -735,6 +736,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20260724" },
     { name = "types-qrcode", marker = "extra == 'dev'", specifier = ">=8.2.0.20260518" },
     { name = "types-reportlab", marker = "extra == 'dev'", specifier = ">=4.5.1.20260724" },
+    { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "watchdog", specifier = ">=4.0" },
     { name = "websockets", specifier = ">=14.0" },
