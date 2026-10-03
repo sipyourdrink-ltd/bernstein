@@ -431,11 +431,35 @@ class TaskBlockRequest(BaseModel):
 
 
 class TaskPatchRequest(BaseModel):
-    """Body for PATCH /tasks/{task_id} - manager corrections."""
+    """Body for PATCH /tasks/{task_id} - manager corrections.
+
+    ``meta_messages``, ``metadata``, and ``cli`` carry an evidence-gated
+    escalation hop (issue #4855): the context line, the persisted ladder
+    step, and the step's adapter. ``model`` is the step's model id,
+    unmodified.
+    """
 
     role: str | None = None
     priority: int | None = None
     model: str | None = None
+    cli: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    meta_messages: list[str] | None = Field(default=None, max_length=_MAX_LIST_LEN)
+    metadata: dict[str, Any] | None = None
+
+    @field_validator("meta_messages")
+    @classmethod
+    def _cap_meta_messages(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        for msg in value:
+            if len(msg) > _MAX_META_MESSAGE_LEN:
+                raise ValueError(f"meta_messages entry exceeds {_MAX_META_MESSAGE_LEN} chars")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def _cap_metadata(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _enforce_dict_size(value, field_name="metadata")
 
 
 class TaskProgressRequest(BaseModel):

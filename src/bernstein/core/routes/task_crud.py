@@ -2380,7 +2380,15 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
-        task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
+        task = await store.update(
+            task_id,
+            role=body.role,
+            priority=body.priority,
+            model=body.model,
+            cli=body.cli,
+            meta_messages=body.meta_messages,
+            metadata=body.metadata,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))

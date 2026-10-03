@@ -22601,11 +22601,50 @@
               }
             ],
             "title": "Model"
+          },
+          "cli": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cli"
+          },
+          "meta_messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta Messages"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
           }
         },
         "type": "object",
         "title": "TaskPatchRequest",
-        "description": "Body for PATCH /tasks/{task_id} - manager corrections."
+        "description": "Body for PATCH /tasks/{task_id} - manager corrections.\n\n``meta_messages``, ``metadata``, and ``cli`` carry an evidence-gated\nescalation hop (issue #4855): the context line, the persisted ladder\nstep, and the step's adapter. ``model`` is the step's model id,\nunmodified."
       },
       "TaskProgressRequest": {
         "properties": {

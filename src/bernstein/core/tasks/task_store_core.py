@@ -3360,17 +3360,28 @@ class TaskStore:
         role: str | None,
         priority: int | None,
         model: str | None = None,
+        cli: str | None = None,
+        meta_messages: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Task:
         """Update mutable task fields (role, priority, model) - manager corrections.
 
         Only open or failed tasks can be reassigned; claimed/in-progress tasks
         are left to finish before the new assignment takes effect.
 
+        ``cli``, ``meta_messages``, and ``metadata`` persist an escalation
+        hop onto the retry task (issue #4855). Metadata is merged, not
+        replaced, so unrelated keys survive.
+
         Args:
             task_id: Task identifier.
             role: New role if provided.
             priority: New priority if provided.
-            model: New model hint if provided (e.g. "haiku", "sonnet", "opus").
+            model: New model id if provided. Stored unmodified.
+            cli: Adapter name for the new model, when the ladder step names one.
+            meta_messages: Replacement operational nudges, including the
+                escalation-context line.
+            metadata: Keys merged into the task metadata (ladder step, attempts).
 
         Returns:
             The updated Task.
@@ -3398,6 +3409,12 @@ class TaskStore:
                 self._index_add(task)
             if model is not None:
                 task.model = model
+            if cli is not None:
+                task.cli = cli
+            if meta_messages is not None:
+                task.meta_messages = list(meta_messages)
+            if metadata is not None:
+                task.metadata.update(metadata)
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             return task

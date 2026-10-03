@@ -776,6 +776,7 @@ def _try_compact_and_retry(
     # Patch the newly created retry task with compacted description and meta-message.
     # The retry task is the latest open task with the same title prefix.
     # We inject the compaction meta-message via the task server PATCH endpoint.
+    _policy = _retry_escalation_context(orch).get("role_model_policy")
     _patch_retry_with_compaction(
         client=orch._client,
         server_url=orch._config.server_url,
@@ -783,6 +784,9 @@ def _try_compact_and_retry(
         compacted_description=result.compacted_text,
         fallback_model=fallback_model,
         effective_remaining=effective_remaining,
+        role_model_policy=_policy if isinstance(_policy, dict) else None,
+        workdir=getattr(orch, "_workdir", None),
+        run_id=str(getattr(orch, "_run_id", "") or ""),
     )
 
     # WAL entry for audit trail
@@ -977,6 +981,29 @@ def _record_reactive_compaction_receipt(
         logger.debug("Reactive compaction metric write failed for %s: %s", task_id, exc)
 
 
+def _task_spend_usd(task: Task) -> float:
+    """Per-task spend already recorded on the task, or zero when unknown."""
+    raw = task.metadata.get("spend_usd") if isinstance(task.metadata, dict) else None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 0.0
+    return float(raw)
+
+
+def _estimate_model_usd(task: Task, model: str, workdir: Path | None) -> float:
+    """Consult the spawn cost surface for one ladder step. Failures quote zero."""
+    try:
+        from dataclasses import replace
+
+        from bernstein.core.cost.cost_estimation import estimate_spawn_cost
+
+        metrics = workdir / ".sdd" / "metrics" if workdir is not None else None
+        estimate = estimate_spawn_cost(replace(task, model=model), metrics_dir=metrics)
+        return float(estimate.estimated_cost_usd)
+    except Exception as exc:
+        logger.debug("Ladder step cost estimate failed for model %s: %s", model, exc)
+        return 0.0
+
+
 def _patch_retry_with_compaction(
     *,
     client: httpx.Client,
@@ -985,6 +1012,9 @@ def _patch_retry_with_compaction(
     compacted_description: str,
     fallback_model: str | None,
     effective_remaining: int | None = None,
+    role_model_policy: dict[str, Any] | None = None,
+    workdir: Path | None = None,
+    run_id: str = "",
 ) -> None:
     """Patch the retry task created by ``retry_or_fail_task`` with compacted context.
 
@@ -1002,9 +1032,16 @@ def _patch_retry_with_compaction(
         server_url: Task server base URL.
         original_task: The original (failed) task.
         compacted_description: The compacted description text.
-        fallback_model: Optional model to set on the retry task.
+        fallback_model: Cascade fallback applied only when the role has no
+            escalation ladder. A configured ladder ignores this one-hop and
+            reads :func:`plan_retry_model_patch` instead.
         effective_remaining: Effective remaining token budget after accounting
             for pre-compaction spend.  ``None`` means unknown / skip injection.
+        role_model_policy: Spawner role-policy snapshot. A non-dict (a test
+            double, for example) is treated as unset.
+        workdir: Run directory. When set, the ladder decision is recorded on
+            the audit chain under ``.sdd/audit``.
+        run_id: Run id stamped on the ladder chain event.
     """
     try:
         resp = client.get(f"{server_url}/tasks", params={"status": "open"})
@@ -1056,11 +1093,56 @@ def _patch_retry_with_compaction(
         "description": compacted_description,
         "meta_messages": new_meta,
     }
-    if fallback_model:
-        patch_body["model"] = fallback_model
+    from bernstein.core.routing.escalation_ladder import (
+        RetryModelPatch,
+        apply_retry_ladder_to_patch,
+        plan_retry_model_patch,
+        record_ladder_decision,
+    )
+
+    try:
+        plan = plan_retry_model_patch(
+            role=original_task.role,
+            role_model_policy=role_model_policy,
+            task_model=original_task.model,
+            task_metadata=original_task.metadata,
+            legacy_fallback_model=fallback_model,
+            spend_usd=_task_spend_usd(original_task),
+            estimate_model_usd=lambda model: _estimate_model_usd(original_task, model, workdir),
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Escalation ladder refused for task %s (%s); compaction patch will not stamp a model",
+            original_task.id,
+            exc,
+        )
+        plan = RetryModelPatch(
+            model=None,
+            cli=None,
+            escalation_context=None,
+            metadata_updates={},
+            decision=None,
+        )
+    patch_body = apply_retry_ladder_to_patch(
+        patch_body=patch_body,
+        plan=plan,
+        base_metadata=original_task.metadata,
+    )
 
     try:
         client.patch(f"{server_url}/tasks/{retry_task_id}", json=patch_body).raise_for_status()
+        if plan.decision is not None and workdir is not None:
+            try:
+                from bernstein.core.security.audit_chain import AuditChainStore
+
+                record_ladder_decision(
+                    chain=AuditChainStore(Path(workdir) / ".sdd" / "audit"),
+                    run_id=run_id,
+                    task_id=original_task.id,
+                    decision=plan.decision,
+                )
+            except Exception as exc:
+                logger.warning("Escalation ladder record failed for %s: %s", original_task.id, exc)
         logger.info(
             "Patched retry task %s with compacted description (%d chars) and %s meta-message",
             retry_task_id,

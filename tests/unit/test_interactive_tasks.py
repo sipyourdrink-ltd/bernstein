@@ -176,6 +176,30 @@ async def test_patch_task_priority(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_patch_task_persists_escalation_context(client: AsyncClient) -> None:
+    """A ladder hop's model, adapter, context line, and step survive the patch."""
+    task = await _create_task(client, model="qwen2.5-coder-7b")
+    context = "ESCALATION: step 0->1; attempts=1; evidence=verification_failure"
+
+    resp = await client.patch(
+        f"/tasks/{task['id']}",
+        json={
+            "model": "qwen2.5-coder-32b",
+            "cli": "qwen",
+            "meta_messages": [context],
+            "metadata": {"escalation_ladder_step": 1, "note": "kept"},
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model"] == "qwen2.5-coder-32b"
+    assert data["cli"] == "qwen"
+    assert context in data["meta_messages"]
+    assert data["metadata"]["escalation_ladder_step"] == 1
+    assert data["metadata"]["note"] == "kept"
+
+
+@pytest.mark.anyio
 async def test_patch_task_unknown_returns_404(client: AsyncClient) -> None:
     resp = await client.patch("/tasks/nonexistent", json={"model": "haiku"})
     assert resp.status_code == 404
