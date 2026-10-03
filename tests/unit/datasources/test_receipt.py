@@ -99,6 +99,93 @@ def test_receipt_id_is_the_chain_anchor(tmp_path: Path, keypair, operator_key) -
     assert receipt.receipt_id.startswith("sha256:")
 
 
+# --- Issue #5859: agent ids carrying ':' must not become directory names ---
+
+
+def test_a_colon_in_agent_id_does_not_reach_the_filesystem(tmp_path: Path, keypair, operator_key) -> None:
+    """Load-bearing: the fixture's own ``agent:datasource-1`` agent id must never
+    become a literal directory component -- ``:`` is illegal in a Windows path.
+    """
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    store = _store(tmp_path, keypair, operator_key)
+    _record(tmp_path, store, db)
+
+    identity_dir = tmp_path / "datasources" / "identity"
+    assert identity_dir.is_dir()
+    for child in identity_dir.iterdir():
+        assert ":" not in child.name, f"agent id leaked a literal ':' into directory name {child.name!r}"
+
+
+def test_card_round_trips_and_verifies_despite_the_encoded_directory_name(
+    tmp_path: Path, keypair, operator_key
+) -> None:
+    """The card written under the encoded directory name still verifies a real receipt."""
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    store = _store(tmp_path, keypair, operator_key)
+    _, receipt = _record(tmp_path, store, db)
+
+    outcome = store.verify(receipt.receipt_id)
+    assert outcome.ok, outcome.failures
+    assert outcome.checks["signature"] is True
+
+
+def test_card_is_persisted_before_the_lineage_entry_is_sealed(
+    tmp_path: Path, keypair, operator_key, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A card-write failure must not leave an orphaned, unverifiable lineage entry behind it.
+
+    Simulated by asserting the card already exists on disk partway through
+    ``record`` -- specifically, before ``seal_write`` (the lineage append)
+    is ever called.
+    """
+    from bernstein.core.datasources import receipt as receipt_module
+
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    store = _store(tmp_path, keypair, operator_key)
+    card, _priv = keypair
+    card_dir = tmp_path / "datasources" / "identity" / receipt_module._safe_identity_dirname(card.agent_id)
+
+    original_seal_write = receipt_module.seal_write
+    seen_card_before_seal = {"value": False}
+
+    def _spying_seal_write(*args: object, **kwargs: object):
+        seen_card_before_seal["value"] = (card_dir / "card.json").exists()
+        return original_seal_write(*args, **kwargs)
+
+    monkeypatch.setattr(receipt_module, "seal_write", _spying_seal_write)
+    _record(tmp_path, store, db)
+
+    assert seen_card_before_seal["value"] is True
+
+
+def test_verify_succeeds_for_card_written_at_legacy_posix_path(tmp_path: Path, keypair, operator_key) -> None:
+    """POSIX stores created before #5859 wrote the raw agent_id as the directory
+    name (e.g. ``identity/agent:foo/``).  A verify-only auditor holding such a
+    store must still pass, because _load_card falls back to the legacy path
+    read-only when the encoded path is absent.
+    """
+    from bernstein.core.datasources import receipt as receipt_module
+
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    store = _store(tmp_path, keypair, operator_key)
+    _, receipt = _record(tmp_path, store, db)
+
+    # Simulate a pre-#5859 POSIX store: move the card from the encoded
+    # directory to the legacy raw-id directory and remove the encoded one.
+    card, _priv = keypair
+    encoded_dir = tmp_path / "datasources" / "identity" / receipt_module._safe_identity_dirname(card.agent_id)
+    legacy_dir = tmp_path / "datasources" / "identity" / card.agent_id
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "card.json").write_bytes((encoded_dir / "card.json").read_bytes())
+    import shutil
+
+    shutil.rmtree(encoded_dir)
+
+    outcome = store.verify(receipt.receipt_id)
+    assert outcome.ok, outcome.failures
+    assert outcome.checks["signature"] is True
+
+
 # --- AC2 tamper: stored result copy ----------------------------------------
 
 
