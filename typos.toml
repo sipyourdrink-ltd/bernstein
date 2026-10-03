@@ -148,6 +148,15 @@ extend-exclude = [
     # token "confidental" to verify unknown tokens are dropped rather than
     # coerced to a default class (fail-closed behavior).
     "tests/unit/lineage/test_sensitivity_sources.py",
+    # Vendored CycloneDX schemas (tag 1.7.2) - verbatim upstream artifacts kept
+    # byte-identical so the digests recorded in the fixture README stay true.
+    # The scanner reads upstream spellings as misspellings: the SPDX licence
+    # identifiers ("cve-tou", "iMatix", "Unicode-TOU") and the schema's own
+    # "referencable". "Correcting" any of them would falsify a real licence id
+    # and break the provenance the digest pin asserts, so the schemas are
+    # path-excluded. The human-authored siblings (README.md, __init__.py)
+    # stay in scope; see tests/unit/test_cyclonedx_fixture_spellcheck_scope.py.
+    "tests/fixtures/cyclonedx/*.schema.json",
     # Auditor conformance fixtures are deterministic base64-encoded
     # Ed25519 public keys, signatures, and receipts. The base64
     # content contains dictionary near-misses like "Ahd" inside

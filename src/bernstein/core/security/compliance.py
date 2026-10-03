@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -333,8 +334,18 @@ def ai_label_for_file(filepath: Path, label_text: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# SBOM generation (CycloneDX stub)
+# SBOM generation (CycloneDX)
 # ---------------------------------------------------------------------------
+
+#: CycloneDX spec version emitted here. Pinned, and kept in step with the
+#: AI-BOM encoder (``core/compliance/ai_bom_encoders/cyclonedx.py``): one
+#: release should not emit two different specification versions.
+_CYCLONEDX_SPEC_VERSION = "1.7"
+
+#: CycloneDX constrains ``serialNumber`` to a UUID URN. Deriving it from the
+#: run id keeps the serial stable per run; the readable run id is carried in
+#: ``metadata.properties`` instead of being pasted into the URN.
+_SERIAL_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://bernstein.run/compliance/sbom/v1")
 
 
 @dataclass(frozen=True)
@@ -364,12 +375,13 @@ def generate_sbom(
     output_dir.mkdir(parents=True, exist_ok=True)
     sbom = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
-        "serialNumber": f"urn:uuid:{run_id}",
+        "specVersion": _CYCLONEDX_SPEC_VERSION,
+        "serialNumber": f"urn:uuid:{uuid.uuid5(_SERIAL_NAMESPACE, run_id)}",
         "version": 1,
         "metadata": {
             "timestamp": time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
             "tools": [{"vendor": "Bernstein", "name": "bernstein", "version": "1.0.0"}],
+            "properties": [{"name": "bernstein:run_id", "value": run_id}],
         },
         "components": [
             {

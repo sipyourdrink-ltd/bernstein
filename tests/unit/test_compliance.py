@@ -275,10 +275,17 @@ class TestSBOM:
         assert result.exists()
         data = json.loads(result.read_text())
         assert data["bomFormat"] == "CycloneDX"
-        assert data["specVersion"] == "1.5"
+        assert data["specVersion"] == "1.7"
         assert len(data["components"]) == 2
         assert data["components"][0]["name"] == "requests"
         assert data["components"][0]["purl"] == "pkg:pypi/requests@2.31.0"
+
+        # The document is legal CycloneDX 1.7, and still names the run.
+        from tests.fixtures.cyclonedx import validate_cyclonedx
+
+        assert validate_cyclonedx(data) == []
+        properties = {p["name"]: p["value"] for p in data["metadata"]["properties"]}
+        assert properties["bernstein:run_id"] == "run-001"
 
     def test_empty_components(self, tmp_path: Path) -> None:
         result = generate_sbom([], "run-002", tmp_path)

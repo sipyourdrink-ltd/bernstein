@@ -508,7 +508,7 @@ class TestEncoders:
         bom = generate_bom(_full_snapshot())
         decoded = json.loads(encode_bom(bom, fmt="cyclonedx"))
         assert decoded["bomFormat"] == "CycloneDX"
-        assert decoded["specVersion"] == "1.5"
+        assert decoded["specVersion"] == "1.7"
         assert "components" in decoded
         assert any(c["type"] == "machine-learning-model" for c in decoded["components"])
 
@@ -611,9 +611,11 @@ class TestCycloneDXSnapshot:
 
         # Top-level frame
         assert decoded["bomFormat"] == "CycloneDX"
-        assert decoded["specVersion"] == "1.5"
+        assert decoded["specVersion"] == "1.7"
         assert decoded["version"] == 1
-        assert decoded["serialNumber"] == "urn:uuid:bernstein-ai-bom:fixture-run-001"
+        # uuid5 over the run id, so the serial is schema-legal (a UUID URN),
+        # stable per run, and one-to-one with it.
+        assert decoded["serialNumber"] == "urn:uuid:6b033e52-d3db-53d3-9cd9-2fc2426ea6a3"
 
         # metadata.tools points at bernstein
         assert decoded["metadata"]["tools"][0]["name"] == "bernstein"
@@ -627,6 +629,8 @@ class TestCycloneDXSnapshot:
         model_comp = next(c for c in decoded["components"] if c["type"] == "machine-learning-model")
         assert model_comp["publisher"] == "acme"
         assert model_comp["version"] == "v1"
+        # The ML-BOM model card projects the recorded identifier.
+        assert model_comp["modelCard"] == {"modelParameters": {"modelArchitecture": "model-x"}}
 
 
 # ---------------------------------------------------------------------------
