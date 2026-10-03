@@ -134,9 +134,12 @@ _STATUS_FAIL = "fail"
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
+def canonical_bytes(payload: dict[str, Any]) -> bytes:
     """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+_canonical_bytes = canonical_bytes  # deprecated: back-compat alias; use canonical_bytes
 
 
 def _sha256_bytes(data: bytes) -> str:
