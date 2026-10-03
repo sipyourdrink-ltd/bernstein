@@ -416,3 +416,55 @@ admission webhook: a workload is never blocked from starting.
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+## Running at scale
+
+### 1. SQLite WAL store and JSON migration
+
+At 2000 nodes, JSON file rewrites become a bottleneck, occurring approximately 33 times per second. With the SQLite WAL (Write-Ahead Logging) store, each heartbeat translates to a single UPSERT operation, eliminating full file rewrites and significantly improving performance. The `NodeRegistry` automatically detects an existing `.json` file and migrates the data to a `.db` file. The database path can be configured using the `BERNSTEIN_CLUSTER_DB_PATH` environment variable.
+
+### 2. Health telemetry fields
+
+New fields have been added to `NodeCapacity` and `NodeInfo` for enhanced health telemetry:
+
+-   **`NodeCapacity` fields**:
+    -   `disk_free_mb` (int): Free disk space in megabytes.
+    -   `mem_used_pct` (float): Percentage of memory used.
+    -   `mesh_rtt_ms` (float): Mesh round-trip time in milliseconds.
+    -   `platform` (str): Operating system and architecture information.
+-   **`NodeInfo` fields**:
+    -   `health` (str: `ok`/`degraded`/`critical`): Overall health status of the node.
+    -   `unhealthy_since` (float timestamp): Timestamp when the node's health status changed to `degraded` or `critical`.
+
+The `HealthThresholds` dataclass in `cluster.py` defines the criteria used to evaluate these health metrics. The `batch_assign()` function marks nodes based on these defined thresholds.
+
+### 3. Batch heartbeat endpoint
+
+A new `POST /cluster/nodes/heartbeats` endpoint has been introduced to accept `NodeHeartbeatBatchRequest` for efficient processing of multiple heartbeats.
+
+-   **Maximum heartbeats**: The endpoint accepts a maximum of 500 heartbeats per request.
+-   **Response structure**: The response includes:
+    -   `accepted`: A list of node IDs for successfully processed heartbeats.
+    -   `unknown`: A list of node IDs that are not recognized by the cluster, signaling that these nodes may need to re-register.
+    -   `misdirected`: A dictionary mapping shard IDs to lists of node IDs that belong to other shards.
+
+### 4. Sharding configuration
+
+The cluster now supports sharding for improved scalability and distribution of nodes.
+
+-   `ClusterConfig.shard_id`: Identifies the current shard.
+-   `ClusterConfig.shards`: A tuple of `(id, url)` pairs, defining all shards in the cluster.
+-   **Environment variables**:
+    -   `BERNSTEIN_CLUSTER_SHARD_ID`: Sets the ID of the current shard.
+    -   `BERNSTEIN_CLUSTER_SHARDS`: A JSON string representing the `(id, url)` pairs of all shards.
+-   **Hash-based routing**: Nodes are routed to their owning shard using `sha256(node_id)[:8]` interpreted as a `uint64`.
+-   **Misdirected nodes**: The `POST /cluster/nodes` endpoint returns a `421` HTTP status code if a node attempting to register belongs to another shard.
+
+### 5. Edge relay
+
+An edge relay component has been introduced to optimize heartbeat processing and routing.
+
+-   **Location**: `edge/relay/` (implemented with ES modules, no npm dependencies).
+-   **Routing**: Routes heartbeats by `node_id` to the owning shard using the same hash ring logic as the sharding configuration.
+-   **Batching**: Buffers heartbeats and flushes them in batches via the `POST /cluster/nodes/heartbeats` endpoint.
+-   **Deployment**: Designed for deployment as Cloudflare Workers + Durable Objects for global distribution and low-latency access.
