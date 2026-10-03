@@ -688,6 +688,22 @@ def test_verify_manifest_anchor_dispatches_transparency_log():
     assert unpinned_errors and all(err.startswith("transparency-log:") for err in unpinned_errors)
     assert not any("output_hash" in err for err in unpinned_errors)
 
+    # A float tree_size equal to the int one, signed by the pinned key, must
+    # still fail: equality is not a type check.
+    float_sth = {"root_hash": root, "tree_size": 5.0}
+    float_sig = key.sign(
+        json.dumps(float_sth, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    float_record = {
+        **record,
+        "signed_tree_head": {
+            **float_sth,
+            "signature_b64": base64.b64encode(float_sig).decode("ascii"),
+        },
+    }
+    float_errors = _verify_manifest_anchor(float_record, trusted_log_keys=pinned)
+    assert any("not a positive integer" in err for err in float_errors)
+
     other = Ed25519PrivateKey.from_private_bytes(bytes.fromhex("22" * 32))
     forged_errors = _verify_manifest_anchor(
         record,

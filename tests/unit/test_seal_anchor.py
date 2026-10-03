@@ -303,6 +303,56 @@ def test_inclusion_proof_recomputes_the_signed_tree_head() -> None:
     assert result.gen_time is None
 
 
+def _resigned_tree_head(anchor: SealAnchor, tree_size: object) -> dict[str, object]:
+    """Re-sign the anchor's tree head over *tree_size* with the pinned log key."""
+    assert anchor.signed_tree_head is not None
+    sth = {"root_hash": anchor.signed_tree_head["root_hash"], "tree_size": tree_size}
+    signature = _log_key().sign(json.dumps(sth, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    return {**sth, "signature_b64": base64.b64encode(signature).decode("ascii")}
+
+
+@pytest.mark.parametrize(
+    "bad_size",
+    ["5", 5.0, True, 0, -1],
+    ids=["str", "float", "bool", "zero", "negative"],
+)
+def test_non_integer_tree_size_is_refused_even_when_both_sides_agree(bad_size: object) -> None:
+    """A tree_size that is not a positive int fails, even signed and matching on both sides."""
+    sealed_head, anchor = _five_leaf_transparency_anchor()
+    tampered = replace(anchor, tree_size=bad_size, signed_tree_head=_resigned_tree_head(anchor, bad_size))
+
+    result = verify_anchor(
+        tampered,
+        sealed_head=sealed_head,
+        trusted_tsa_certs=[],
+        trusted_log_keys=_pinned(),
+    )
+
+    assert result.status is AnchorStatus.INVALID
+    assert result.tree_size is None
+    assert any("tree_size must be a positive integer" in err for err in result.errors)
+
+
+def test_building_an_anchor_with_a_string_tree_size_is_refused() -> None:
+    """The builder rejects a non-int tree_size with SealAnchorError, not a TypeError."""
+    sealed_head, anchor = _five_leaf_transparency_anchor()
+    assert anchor.leaf_hash is not None
+    assert anchor.audit_path is not None
+    assert anchor.signed_tree_head is not None
+    assert anchor.log_public_key is not None
+
+    with pytest.raises(SealAnchorError, match="positive integer"):
+        build_transparency_log_anchor(
+            run_id="run-log",
+            head_sha256=sealed_head,
+            leaf_hash=anchor.leaf_hash,
+            tree_size="5",  # type: ignore[arg-type]
+            audit_path=anchor.audit_path,
+            signed_tree_head=anchor.signed_tree_head,
+            log_public_key=anchor.log_public_key,
+        )
+
+
 def test_tampered_sealed_head_fails_inclusion() -> None:
     """Changing the stored head without rebuilding the proof is a loud failure."""
     sealed_head, anchor = _five_leaf_transparency_anchor()

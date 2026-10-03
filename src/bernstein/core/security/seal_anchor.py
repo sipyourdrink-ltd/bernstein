@@ -62,7 +62,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -260,6 +260,11 @@ def _normalize_log_key(value: str) -> str:
     return value.strip().lower()
 
 
+def _is_positive_int(value: object) -> TypeGuard[int]:
+    """True for a real ``int`` >= 1; ``bool``, ``float`` and ``str`` never qualify."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
 def _select_pinned_log_key(hint: str | None, pinned: Sequence[str]) -> str | None:
     """Pick the operator-pinned key that will verify the tree-head signature.
 
@@ -349,7 +354,7 @@ def build_transparency_log_anchor(
     if leaf != expected_leaf:
         msg = f"leaf_hash {leaf} does not match the sealed head {head}"
         raise SealAnchorError(msg)
-    if tree_size < 1:
+    if not _is_positive_int(tree_size):
         msg = f"tree_size must be a positive integer, got {tree_size!r}"
         raise SealAnchorError(msg)
     if not isinstance(audit_path, list):
@@ -429,8 +434,8 @@ def _load_rfc3161_anchor(path: Path, raw: dict[str, Any]) -> SealAnchor:
 def _load_transparency_log_anchor(path: Path, raw: dict[str, Any]) -> SealAnchor:
     """Load a transparency-log record. TSA fields are not required."""
     tree_size = raw.get("tree_size")
-    if not isinstance(tree_size, int) or isinstance(tree_size, bool):
-        msg = f"anchor record at {path} is missing an integer tree_size"
+    if not _is_positive_int(tree_size):
+        msg = f"anchor record at {path} is missing a positive integer tree_size"
         raise SealAnchorError(msg)
     audit_path = raw.get("audit_path")
     if not isinstance(audit_path, list):
@@ -589,6 +594,14 @@ def _verify_transparency_log_anchor(
         return AnchorVerification(
             status=AnchorStatus.INVALID,
             errors=["signed_tree_head is missing root_hash or signature_b64"],
+        )
+    if not _is_positive_int(anchor.tree_size) or not _is_positive_int(sth_size):
+        return AnchorVerification(
+            status=AnchorStatus.INVALID,
+            errors=[
+                f"tree_size must be a positive integer in both the anchor ({anchor.tree_size!r}) "
+                f"and the signed tree head ({sth_size!r})",
+            ],
         )
     if computed_root != sth_root:
         errors.append(f"inclusion proof recomputes root {computed_root}, signed tree head has {sth_root}")

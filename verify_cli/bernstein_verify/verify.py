@@ -143,6 +143,11 @@ def _canonical_sth_bytes(signed_tree_head: dict[str, Any]) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _is_positive_int(value: object) -> bool:
+    """True for a real ``int`` >= 1; ``bool``, ``float`` and ``str`` never qualify."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
 def _select_pinned_log_key(hint: object, pinned: tuple[str, ...] | list[str]) -> str | None:
     """Pick an operator-pinned key; the artefact key is only a hint."""
     unique = list(dict.fromkeys(key.strip().lower() for key in pinned if key.strip()))
@@ -639,10 +644,8 @@ def _verify_transparency_log_anchor(
     log_public_key = record.get("log_public_key")
     if not isinstance(head, str):
         return ["transparency-log: missing head_sha256"]
-    if not isinstance(leaf_hash, str) or not isinstance(tree_size, int):
-        return ["transparency-log: missing leaf_hash or tree_size"]
-    if isinstance(tree_size, bool):
-        return ["transparency-log: missing leaf_hash or tree_size"]
+    if not isinstance(leaf_hash, str) or not _is_positive_int(tree_size):
+        return ["transparency-log: missing leaf_hash or a positive integer tree_size"]
     if not isinstance(audit_path, list) or not isinstance(sth, dict):
         return ["transparency-log: missing audit_path or signed_tree_head"]
 
@@ -667,6 +670,10 @@ def _verify_transparency_log_anchor(
     signature_b64 = sth.get("signature_b64")
     if not isinstance(sth_root, str) or not isinstance(signature_b64, str):
         return ["transparency-log: signed_tree_head is missing root_hash or signature_b64"]
+    if not _is_positive_int(sth_size):
+        return [
+            f"transparency-log: signed tree head tree_size {sth_size!r} is not a positive integer"
+        ]
     if computed_root != sth_root:
         errors.append(
             "transparency-log: inclusion proof recomputes root "
