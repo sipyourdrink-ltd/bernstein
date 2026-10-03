@@ -2126,6 +2126,9 @@ class ClusterConfig:
     claim_lease_ttl_s: int = 300
     claim_journal_path: str | None = None
     gossip_peer_keys: tuple[MeshPeerKey, ...] = ()
+    min_disk_free_mb: int = 512
+    max_mem_used_pct: float = 95.0
+    max_mesh_rtt_ms: float = 5000.0
 
     @property
     def is_mesh(self) -> bool:

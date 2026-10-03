@@ -14,6 +14,8 @@ from bernstein.core.server import (
     ClaimGossipResponse,
     ClaimGossipResult,
     ClusterStatusResponse,
+    NodeHeartbeatBatchRequest,
+    NodeHeartbeatBatchResponse,
     NodeHeartbeatRequest,
     NodeRegisterRequest,
     NodeResponse,
@@ -137,11 +139,51 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -
             active_agents=body.capacity.active_agents,
             gpu_available=body.capacity.gpu_available,
             supported_models=body.capacity.supported_models,
+            disk_free_mb=body.capacity.disk_free_mb,
+            mem_used_pct=body.capacity.mem_used_pct,
+            mesh_rtt_ms=body.capacity.mesh_rtt_ms,
+            platform=body.capacity.platform,
         )
     node = node_registry.heartbeat(node_id, capacity)
     if node is None:
         raise HTTPException(status_code=404, detail=f"Node '{node_id}' not registered")
     return node_to_response(node)
+
+@router.post(
+    "/cluster/nodes/heartbeats",
+    responses=_AUTH_RESPONSES | {422: {"description": "Too many heartbeats (max 500)"}},
+)
+def batch_node_heartbeat(body: NodeHeartbeatBatchRequest, request: Request) -> NodeHeartbeatBatchResponse:
+    """Record heartbeats from multiple cluster nodes."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_HEARTBEAT
+
+    if len(body.heartbeats) > 500:
+        raise HTTPException(status_code=422, detail="Maximum 500 heartbeats per request")
+    _verify_cluster_auth(request, SCOPE_NODE_HEARTBEAT)
+    node_registry = _get_node_registry(request)
+    accepted: list[str] = []
+    unknown: list[str] = []
+    for heartbeat in body.heartbeats:
+        capacity: NodeCapacity | None = None
+        if heartbeat.capacity is not None:
+            capacity = NodeCapacity(
+                max_agents=heartbeat.capacity.max_agents,
+                available_slots=heartbeat.capacity.available_slots,
+                active_agents=heartbeat.capacity.active_agents,
+                gpu_available=heartbeat.capacity.gpu_available,
+                supported_models=heartbeat.capacity.supported_models,
+                disk_free_mb=heartbeat.capacity.disk_free_mb,
+                mem_used_pct=heartbeat.capacity.mem_used_pct,
+                mesh_rtt_ms=heartbeat.capacity.mesh_rtt_ms,
+                platform=heartbeat.capacity.platform,
+            )
+        node = node_registry.heartbeat(heartbeat.node_id, capacity)
+        if node is not None:
+            accepted.append(heartbeat.node_id)
+        else:
+            unknown.append(heartbeat.node_id)
+    return NodeHeartbeatBatchResponse(accepted=accepted, unknown=unknown)
+
 
 
 @router.delete("/cluster/nodes/{node_id}", status_code=204, responses=_AUTH_404_RESPONSES)
