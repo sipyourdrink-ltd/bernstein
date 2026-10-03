@@ -64,12 +64,17 @@ def _row_to_node(row: sqlite3.Row) -> NodeInfo:
             active_agents=row["active_agents"],
             gpu_available=bool(row["gpu_available"]),
             supported_models=json.loads(row["models_json"]),
+            disk_free_mb=row["disk_free_mb"],
+            mem_used_pct=row["mem_used_pct"],
+            mesh_rtt_ms=row["mesh_rtt_ms"],
         ),
         status=NodeStatus(row["status"]),
         last_heartbeat=row["last_heartbeat"],
         registered_at=row["registered_at"],
         labels=json.loads(row["labels_json"]),
         cell_ids=json.loads(row["cell_ids_json"]),
+        health=row["health"],
+        unhealthy_since=row["unhealthy_since"],
     )
 
 
@@ -146,14 +151,18 @@ class SQLiteNodeStore:
             """\
             INSERT INTO nodes (id, name, url, status, max_agents, available_slots,
                                active_agents, gpu_available, models_json, labels_json,
-                               cell_ids_json, last_heartbeat, registered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               cell_ids_json, last_heartbeat, registered_at,
+                               disk_free_mb, mem_used_pct, mesh_rtt_ms, health, unhealthy_since)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, url=excluded.url, status=excluded.status,
                 max_agents=excluded.max_agents, available_slots=excluded.available_slots,
                 active_agents=excluded.active_agents, gpu_available=excluded.gpu_available,
                 models_json=excluded.models_json, labels_json=excluded.labels_json,
-                cell_ids_json=excluded.cell_ids_json, last_heartbeat=excluded.last_heartbeat
+                cell_ids_json=excluded.cell_ids_json, last_heartbeat=excluded.last_heartbeat,
+                disk_free_mb=excluded.disk_free_mb, mem_used_pct=excluded.mem_used_pct,
+                mesh_rtt_ms=excluded.mesh_rtt_ms, health=excluded.health,
+                unhealthy_since=excluded.unhealthy_since
             """,
             (
                 node.id, node.name, node.url, node.status.value,
@@ -162,6 +171,8 @@ class SQLiteNodeStore:
                 json.dumps(node.capacity.supported_models),
                 json.dumps(node.labels), json.dumps(node.cell_ids),
                 node.last_heartbeat, node.registered_at,
+                node.capacity.disk_free_mb, node.capacity.mem_used_pct,
+                node.capacity.mesh_rtt_ms, node.health, node.unhealthy_since,
             ),
         )
         conn.commit()

@@ -11,7 +11,6 @@ server.
 
 from __future__ import annotations
 
-import json
 import logging
 import operator
 import socket
@@ -19,7 +18,7 @@ import threading
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path  # noqa: TC003 - used at runtime in _load_persisted/_save
+from pathlib import Path  # noqa: TC003 - used at runtime
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -36,6 +35,7 @@ from bernstein.core.protocols.cluster.cluster_tls import (
     TLSConfig,
     build_httpx_client_kwargs,
 )
+from bernstein.core.protocols.cluster.sqlite_node_store import SQLiteNodeStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -56,61 +56,59 @@ class NodeRegistry:
         self._nodes: dict[str, NodeInfo] = {}
         self._config = config
         self._persist_path = persist_path
+        self._store: SQLiteNodeStore | None = None
         if persist_path is not None:
+            self._open_store(persist_path)
             self._load_persisted()
 
     @property
     def config(self) -> ClusterConfig:
         return self._config
 
+    def _open_store(self, persist_path: Path) -> None:
+        legacy: Path | None = None
+        db_path = persist_path
+        if persist_path.suffix == ".json":
+            legacy = persist_path
+            db_path = persist_path.with_suffix(".db")
+        try:
+            self._store = SQLiteNodeStore(db_path)
+            if legacy is not None and legacy.exists() and self._store.count() == 0:
+                self._store.migrate_from_json(legacy)
+        except Exception as exc:
+            logger.warning("Failed to open node store: %s", exc)
+            self._store = None
+
     def _load_persisted(self) -> None:
-        """Load nodes from disk, marking all as OFFLINE until heartbeat."""
-        if self._persist_path is None or not self._persist_path.exists():
+        """Load nodes from the store; operator-set statuses survive, the rest start OFFLINE."""
+        if self._store is None:
             return
         try:
-            data = json.loads(self._persist_path.read_text())
-            for entry in data:
-                node = NodeInfo(
-                    id=entry["id"],
-                    name=entry.get("name", ""),
-                    url=entry.get("url", ""),
-                    capacity=NodeCapacity(
-                        max_agents=entry.get("max_agents", 6),
-                        supported_models=entry.get("supported_models", ["sonnet", "opus", "haiku"]),
-                    ),
-                    status=NodeStatus.OFFLINE,  # Always start offline
-                    last_heartbeat=0.0,
-                    registered_at=entry.get("registered_at", 0.0),
-                    labels=entry.get("labels", {}),
-                    cell_ids=entry.get("cell_ids", []),
-                )
+            for node in self._store.list_nodes():
+                if node.status not in _OPERATOR_INTENT_STATUSES:
+                    node.status = NodeStatus.OFFLINE
+                node.last_heartbeat = 0.0
                 self._nodes[node.id] = node
-            logger.info("Loaded %d persisted nodes (all marked OFFLINE)", len(self._nodes))
+            logger.info("Loaded %d persisted nodes", len(self._nodes))
         except Exception as exc:
             logger.warning("Failed to load persisted nodes: %s", exc)
 
-    def _save(self) -> None:
-        """Persist current node registry to disk."""
-        if self._persist_path is None:
+    def _persist(self, node: NodeInfo) -> None:
+        """Write one node row."""
+        if self._store is None:
             return
         try:
-            data: list[dict[str, Any]] = [
-                {
-                    "id": node.id,
-                    "name": node.name,
-                    "url": node.url,
-                    "max_agents": node.capacity.max_agents,
-                    "supported_models": node.capacity.supported_models,
-                    "registered_at": node.registered_at,
-                    "labels": node.labels,
-                    "cell_ids": node.cell_ids,
-                }
-                for node in self._nodes.values()
-            ]
-            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-            self._persist_path.write_text(json.dumps(data, indent=2))
+            self._store.upsert(node)
         except Exception as exc:
-            logger.warning("Failed to persist node registry: %s", exc)
+            logger.warning("Failed to persist node %s: %s", node.id, exc)
+
+    def _persist_delete(self, node_id: str) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.delete(node_id)
+        except Exception as exc:
+            logger.warning("Failed to delete node %s: %s", node_id, exc)
 
     def register(self, node: NodeInfo) -> NodeInfo:
         """Register or re-register a node.
@@ -132,7 +130,7 @@ class NodeRegistry:
             existing.labels = node.labels or existing.labels
             existing.cell_ids = node.cell_ids or existing.cell_ids
             logger.info("Re-registered node %s (%s)", node.id, node.name)
-            self._save()
+            self._persist(existing)
             self._sync_node_count_metrics()
             return existing
 
@@ -141,7 +139,7 @@ class NodeRegistry:
         node.status = NodeStatus.ONLINE
         self._nodes[node.id] = node
         logger.info("Registered new node %s (%s) at %s", node.id, node.name, node.url)
-        self._save()
+        self._persist(node)
         self._sync_node_count_metrics()
         _audit.record_node_registered(
             node.id,
@@ -151,20 +149,51 @@ class NodeRegistry:
         )
         return node
 
-    def heartbeat(self, node_id: str, capacity: NodeCapacity | None = None) -> NodeInfo | None:
+    def heartbeat(
+        self,
+        node_id: str,
+        capacity: NodeCapacity | None = None,
+        *,
+        disk_free_mb: int | None = None,
+        mem_used_pct: float | None = None,
+        mesh_rtt_ms: float | None = None,
+        platform: str | None = None,
+    ) -> NodeInfo | None:
         """Record a heartbeat from a node. Returns None if node is unknown."""
         node = self._nodes.get(node_id)
         if node is None:
             _metrics.record_heartbeat("rejected_unknown_node")
             return None
         node.last_heartbeat = time.time()
+        status_flipped = False
         # Don't override CORDONED/DRAINING status
         if node.status == NodeStatus.OFFLINE:
             node.status = NodeStatus.ONLINE
-            self._save()
-            self._sync_node_count_metrics()
+            status_flipped = True
         if capacity is not None:
             node.capacity = capacity
+        cap = node.capacity
+        if disk_free_mb is not None:
+            cap.disk_free_mb = disk_free_mb
+        if mem_used_pct is not None:
+            cap.mem_used_pct = mem_used_pct
+        if mesh_rtt_ms is not None:
+            cap.mesh_rtt_ms = mesh_rtt_ms
+        if platform is not None:
+            cap.platform = platform
+        verdict = health_verdict(
+            disk_free_mb=cap.disk_free_mb,
+            mem_used_pct=cap.mem_used_pct,
+            mesh_rtt_ms=cap.mesh_rtt_ms,
+        )
+        if verdict != "ok" and node.health == "ok":
+            node.unhealthy_since = node.last_heartbeat
+        elif verdict == "ok":
+            node.unhealthy_since = None
+        node.health = verdict
+        self._persist(node)
+        if status_flipped:
+            self._sync_node_count_metrics()
         _metrics.record_heartbeat("accepted")
         return node
 
@@ -172,7 +201,7 @@ class NodeRegistry:
         """Remove a node from the registry."""
         removed = self._nodes.pop(node_id, None) is not None
         if removed:
-            self._save()
+            self._persist_delete(node_id)
             self._sync_node_count_metrics()
             _audit.record_node_left(node_id, reason="unregistered")
         return removed
@@ -184,7 +213,7 @@ class NodeRegistry:
             return None
         node.status = NodeStatus.CORDONED
         logger.info("Cordoned node %s (%s)", node.id, node.name)
-        self._save()
+        self._persist(node)
         self._sync_node_count_metrics()
         _audit.record_node_cordoned(node.id)
         return node
@@ -197,7 +226,8 @@ class NodeRegistry:
         if node.status in (NodeStatus.CORDONED, NodeStatus.DRAINING):
             node.status = NodeStatus.ONLINE
             logger.info("Uncordoned node %s (%s)", node.id, node.name)
-            self._save()
+            self._persist(node)
+            self._sync_node_count_metrics()
         return node
 
     def start_drain(self, node_id: str) -> NodeInfo | None:
@@ -207,7 +237,7 @@ class NodeRegistry:
             return None
         node.status = NodeStatus.DRAINING
         logger.info("Started draining node %s (%s)", node.id, node.name)
-        self._save()
+        self._persist(node)
         self._sync_node_count_metrics()
         _audit.record_node_drained(node.id)
         return node
@@ -252,6 +282,7 @@ class NodeRegistry:
                 stale.append(node)
                 logger.warning("Node %s (%s) marked offline - no heartbeat for %ds", node.id, node.name, timeout)
                 _audit.record_node_left(node.id, reason="timeout")
+                self._persist(node)
         if stale:
             self._sync_node_count_metrics()
         return stale
@@ -293,7 +324,9 @@ class NodeRegistry:
         5. Among remaining, pick the one with most available slots
         """
         candidates = [
-            n for n in self._nodes.values() if n.status == NodeStatus.ONLINE and n.capacity.available_slots > 0
+            n
+            for n in self._nodes.values()
+            if n.status == NodeStatus.ONLINE and n.health == "ok" and n.capacity.available_slots > 0
         ]
         if not candidates:
             return None
@@ -312,8 +345,7 @@ class NodeRegistry:
                 affinity = sum(1 for k, v in preferred_labels.items() if node.labels.get(k) == v)
             return (affinity, node.capacity.available_slots)
 
-        candidates.sort(key=score, reverse=True)
-        return candidates[0]
+        return max(candidates, key=score)
 
     def cluster_summary(self) -> dict[str, Any]:
         """Build a summary of the cluster state."""
