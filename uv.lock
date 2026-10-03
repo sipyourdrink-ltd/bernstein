@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
@@ -24,7 +24,7 @@ overrides = [{ name = "pyjwt", specifier = ">=2.14" }]
 
 [[package]]
 name = "agentrust-trace"
-version = "0.10.0"
+version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -34,9 +34,9 @@ dependencies = [
     { name = "rfc3986-validator" },
     { name = "rfc8785" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/f1/ed0c602fbbcbf20a01ce5547ab8bf5cc72c0bcd99fd3baf45e2a29b1af32/agentrust_trace-0.10.0.tar.gz", hash = "sha256:e3ef4438ecb8eb9cbbf1aed13d2d409673ef46afe424c8dc579b8ecce79f2b46", size = 492665, upload-time = "2026-09-06T04:34:52.418Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/16/4347e0c4a9091c8e4649fd9903e3b99157cb9bd47e7bb60215a5d39b679f/agentrust_trace-0.11.0.tar.gz", hash = "sha256:8b76de58ec74fad57417093bf7977fe826ce6ade5859b4d5be8ce3938f9fcb35", size = 791437, upload-time = "2026-09-25T23:30:02.218Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/99/b7975665d7b9a54b7274f0b4885e488c67be37d289a9b4554ffd71ed6361/agentrust_trace-0.10.0-py3-none-any.whl", hash = "sha256:a82900c426c92f71ec244a13123611953771d232eb02137fec72927225ab472b", size = 64503, upload-time = "2026-09-06T04:34:50.775Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/56/25d6b23d3626293589df7560cf725edbe199f6379351e0596c2ef96403bd/agentrust_trace-0.11.0-py3-none-any.whl", hash = "sha256:7de621eaf795449e365d04967a82a551a18d75c99d248b4a0923f6d593bdb09e", size = 88765, upload-time = "2026-09-25T23:30:00.913Z" },
 ]
 
 [[package]]
@@ -634,7 +634,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.10,<0.11" },
+    { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.11,<0.12" },
     { name = "agentrust-trace-tests", marker = "extra == 'dev'", specifier = ">=0.5,<0.6" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9" },
     { name = "aiohttp", marker = "extra == 'teams'", specifier = ">=3.9" },
