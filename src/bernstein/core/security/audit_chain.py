@@ -1042,6 +1042,10 @@ EVENT_ODATA_WRITEBACK = "odata.writeback_receipt"
 #: after the attestation record was durable.
 EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
 EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
+#: Issue #6270 -- written after the connector returns.  Binds the observed
+#: effect to the same intent digest as the pre-dispatch pair.  Absence is
+#: "effect unobserved", never success.  Slice 1 is the writer only.
+EVENT_TOOLCALL_EFFECT = "toolcall.effect"
 EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
 #: Issue #5031 -- session revocation propagation
@@ -7498,6 +7502,66 @@ def record_automation_action(
     )
 
 
+_TOOLCALL_EFFECT_OUTCOMES = frozenset({"ok", "error", "timeout", "partial"})
+
+
+def record_toolcall_effect(
+    *,
+    chain: AuditChainStore,
+    intent_digest: str,
+    effect_digest: str,
+    outcome: str,
+    duration_ms: float,
+    attestation_ref: str,
+    dispatch_ref: str,
+    actor: str = "bernstein.toolcall-interlock",
+    resource_id: str = "",
+) -> AuditEvent:
+    """Append a ``toolcall.effect`` event into *chain* (#6270 slice 1).
+
+    Follows :func:`record_automation_action`: the executed effect is itself a
+    chain event, referencing the dispatch marker that admitted the call and the
+    attestation that authorised it.  The ``intent_digest`` is the same digest
+    the pre-dispatch pair already bound.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        intent_digest: Host-derived ``sha256:`` digest of the tool-call intent.
+        effect_digest: ``sha256:`` of the canonical response or patch.
+        outcome: One of ``ok``, ``error``, ``timeout``, ``partial``.
+        duration_ms: Connector wall time in milliseconds.
+        attestation_ref: Opaque handle of the preceding attestation.
+        dispatch_ref: Opaque handle of the preceding dispatch marker.
+        actor: Recorded actor; defaults to ``"bernstein.toolcall-interlock"``.
+        resource_id: Scope the event is stored under. The live native path
+            passes ``intent.scope_id``; when omitted, the fallback is
+            *intent_digest*.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    if outcome not in _TOOLCALL_EFFECT_OUTCOMES:
+        raise ValueError(f"unsupported tool-call effect outcome: {outcome}")
+    if not intent_digest.strip() or not effect_digest.strip():
+        raise ValueError("tool-call effect requires intent_digest and effect_digest")
+    if not attestation_ref.strip() or not dispatch_ref.strip():
+        raise ValueError("tool-call effect requires attestation_ref and dispatch_ref")
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_EFFECT,
+        actor=actor,
+        resource_type="toolcall_scope",
+        resource_id=resource_id or intent_digest,
+        details={
+            "intent_digest": intent_digest,
+            "effect_digest": effect_digest,
+            "outcome": outcome,
+            "duration_ms": duration_ms,
+            "attestation_ref": attestation_ref,
+            "dispatch_ref": dispatch_ref,
+        },
+    )
+
+
 def record_expectation_expired(
     *,
     chain: AuditChainStore,
@@ -10096,6 +10160,7 @@ __all__ = [
     "record_task_tier_decision",
     "record_thread_approval",
     "record_token_binding_refusal",
+    "record_toolcall_effect",
     "record_tournament_selection",
     "record_tracker_pipeline_sweep",
     "record_trajectory_receipt",

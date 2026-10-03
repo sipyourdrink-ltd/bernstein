@@ -70,3 +70,30 @@ exception = false
 source = "https://github.com/sipyourdrink-ltd/bernstein/discussions/5524#discussioncomment-18302859"
 since = "2026-09-05"
 note = "asked to see the draft wording before publication, to verify attribution and technical details"
+
+[[contributor]]
+login = "saketh-bandi"
+opt_in = true
+recommendation = true
+review_before_publish = false
+exception = false
+source = "email BRNSTN-PR-LNKD 2026-09-26"
+since = "2026-09-26"
+
+[[contributor]]
+login = "aeoess"
+opt_in = true
+recommendation = false
+review_before_publish = false
+exception = false
+source = "email BRNSTN-PR-LNKD 2026-09-26"
+since = "2026-09-26"
+
+[[contributor]]
+login = "tanishbhandari11t"
+opt_in = true
+recommendation = true
+review_before_publish = false
+exception = false
+source = "email BRNSTN-PR-LNKD 2026-09-27"
+since = "2026-09-27"

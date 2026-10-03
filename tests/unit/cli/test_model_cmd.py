@@ -100,13 +100,91 @@ def test_model_registry_without_at_shows_current_state(project: Path) -> None:
     assert "sonnet" in result.output
 
 
-def test_model_impact_lists_artefacts_by_model_ref(project: Path) -> None:
-    """Test ``bernstein model impact <ref>`` lists artefacts."""
-    # For now, verify the command exists and handles the ref parameter
-    # This will work once lineage entries with model_ref exist
-    result = _run("impact", "anthropic/opus")
+def _append_lineage(
+    project: Path,
+    artefact_path: str,
+    model_ref: object | None,
+) -> str:
+    """Append one real lineage entry under ``.sdd/lineage`` and return its hash."""
+    from bernstein.core.lineage.entry import LineageEntry
+    from bernstein.core.lineage.store import LineageStore
 
-    # Should not crash; exit 1 for no artefacts found is acceptable
-    assert result.exit_code in (0, 1)
-    if result.exit_code == 1:
-        assert "No artefacts found" in result.output or "not found" in result.output
+    entry = LineageEntry(
+        v=1,
+        artefact_path=artefact_path,
+        artefact_kind="file",
+        content_hash="sha256:" + "a" * 64,
+        parent_hashes=[],
+        agent_id="agent:worker-1",
+        agent_card_kid="key-001",
+        tool_call_id="tc-1",
+        span_id="00f067aa0ba902b7",
+        ts_ns=1_715_600_000_000_000_000,
+        operator_hmac="deadbeef" * 8,
+        model_ref=model_ref,  # type: ignore[arg-type]
+    )
+    return LineageStore(project / ".sdd" / "lineage").append(entry, jws="jws")
+
+
+def test_model_impact_lists_artefacts_by_model_ref(project: Path) -> None:
+    """``impact`` returns the artefacts whose lineage entry names the model."""
+    import json
+
+    from bernstein.core.lineage.entry import ModelRef
+
+    h_hit = _append_lineage(project, "src/a.py", ModelRef(provider="anthropic", model_requested="opus"))
+    _append_lineage(project, "src/b.py", ModelRef(provider="openai", model_requested="gpt-4"))
+    _append_lineage(project, "src/c.py", None)
+
+    result = _run("impact", "anthropic/opus", "--json")
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["count"] == 1
+    assert payload["artefacts"][0]["artefact_path"] == "src/a.py"
+    assert payload["artefacts"][0]["entry_hash"] == h_hit
+
+    text = _run("impact", "anthropic/opus")
+    assert text.exit_code == 0, text.output
+    assert "src/a.py" in text.output
+    assert "src/b.py" not in text.output
+
+
+def test_model_impact_accepts_registry_key_with_slashed_model(project: Path) -> None:
+    """The key ``model registry`` prints (``provider/model@version``) must work,
+    including model names that contain ``/``."""
+    import json
+
+    from bernstein.core.lineage.entry import ModelRef
+
+    _append_lineage(
+        project,
+        "src/llama.py",
+        ModelRef(provider="openrouter", model_requested="meta-llama/Llama-3", version="2026-01"),
+    )
+    _append_lineage(
+        project,
+        "src/other.py",
+        ModelRef(provider="openrouter", model_requested="meta-llama/Llama-3", version="2025-01"),
+    )
+
+    pinned = json.loads(_run("impact", "openrouter/meta-llama/Llama-3@2026-01", "--json").output)
+    assert [a["artefact_path"] for a in pinned["artefacts"]] == ["src/llama.py"]
+
+    unpinned = json.loads(_run("impact", "openrouter/meta-llama/Llama-3@*", "--json").output)
+    assert unpinned["count"] == 2
+
+
+def test_model_impact_says_when_no_entry_records_a_model(project: Path) -> None:
+    """An empty answer from a ledger that never records models must not read
+    as "this model produced nothing"."""
+    _append_lineage(project, "src/a.py", None)
+
+    result = _run("impact", "anthropic/opus")
+    assert result.exit_code == 1
+    assert "no lineage entry records a model" in result.output.lower()
+
+
+def test_model_impact_no_lineage_dir_fails_clearly(project: Path) -> None:
+    result = _run("impact", "anthropic/opus")
+    assert result.exit_code == 1
+    assert "Lineage directory not found" in result.output

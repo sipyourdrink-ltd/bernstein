@@ -74,14 +74,12 @@ def _make_repo(tmp_path: Path, files: list[str]) -> Path:
     return tmp_path
 
 
-def test_suspended_chunk_respawns(tmp_path: Path, fake_server: _FakeServer) -> None:
-    """A chunk parked in SUSPENDED must respawn, not be reused forever (#4541).
+def test_cooperative_suspended_chunk_is_reused(tmp_path: Path, fake_server: _FakeServer) -> None:
+    """A cooperative SUSPENDED chunk remains live and must not be duplicated.
 
-    SUSPENDED has no outgoing transition, so a task in it will never move again
-    - but it is in neither dependency-classification set, so a terminal set
-    built from those two alone reports it active on every re-run and the chunk
-    is stranded behind a dead id. This is the same class of bug as #4624 seen
-    from the other side, and it fails against the two-set union.
+    Rendezvous suspension retains the worker claim and has explicit resume and
+    cancel transitions. Re-running a migration while it waits must therefore
+    reuse its task id rather than assign the same files to a second worker.
     """
     repo = _make_repo(tmp_path, ["src/a.py", "src/b.py"])
     plan = MigrationPlan(id="suspended", glob="src/*.py", transform_prompt="convert", chunk_size=1)
@@ -90,13 +88,14 @@ def test_suspended_chunk_respawns(tmp_path: Path, fake_server: _FakeServer) -> N
     first_ids = spawn_swarm(plan, store, repo)
     assert len(first_ids) == 2
 
-    # Chunk 0 is suspended - it will never move again. Chunk 1 keeps running.
+    # Chunk 0 is cooperatively suspended with its live claim retained. Chunk 1
+    # keeps running normally.
     fake_server.statuses[first_ids[0]] = TaskStatus.SUSPENDED.value
     second_ids = spawn_swarm(plan, store, repo)
 
-    assert second_ids[0] != first_ids[0], "a suspended chunk can never move again and must respawn"
+    assert second_ids[0] == first_ids[0], "a resumable suspended chunk must retain its existing owner"
     assert second_ids[1] == first_ids[1], "a running chunk is still reused"
-    assert len(fake_server.created) == 3, "exactly one respawn"
+    assert len(fake_server.created) == 2, "no duplicate worker was spawned"
 
 
 def test_in_flight_chunk_is_still_reused(tmp_path: Path, fake_server: _FakeServer) -> None:

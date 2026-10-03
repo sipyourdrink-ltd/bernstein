@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la couche de gouvernance open source pour agents IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:784b8ab7cf99" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -38,17 +38,17 @@
 
 > **Statut : bêta.** Maintenu par une seule personne, en développement actif. Le numéro de version compte les releases, pas la maturité — les versions mineures peuvent modifier les interfaces. Épinglez la version pour tout usage critique ; les régressions sont corrigées rapidement, [signalez-les](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein est la couche de gouvernance open source pour agents IA. Il fonctionne en policy as code : vous écrivez la politique - qui a le droit de faire quoi, ce qui exige une approbation, ce qui doit être consigné - et Bernstein l'applique et produit l'enregistrement vérifiable. Un ordonnanceur déterministe - aucun modèle dans la boucle de coordination - exécute les agents en parallèle, filtre ce qu'ils produisent derrière des gates et consigne chaque étape, si bien qu'une exécution se vérifie après coup, hors ligne, à partir des seuls artefacts. Les agents CLI de code fonctionnent d'emblée (Claude Code, Codex, Gemini CLI et 52+ autres), et la même couche gouverne toute charge agentique : le livrable peut être un diff, un rapport de recherche, un dataset ou un dossier de preuves d'audit. Profil d'installation air-gap inclus. Apache-2.0.
+Bernstein est la couche de gouvernance open source pour agents IA. Il fonctionne en policy as code : vous écrivez la politique - qui a le droit de faire quoi, ce qui exige une approbation, ce qui doit être consigné - et Bernstein l'applique et produit l'enregistrement vérifiable. Un ordonnanceur déterministe - aucun modèle dans la boucle de coordination - exécute les agents en parallèle, filtre ce qu'ils produisent derrière des gates et consigne chaque étape, si bien qu'une exécution se vérifie après coup, hors ligne, à partir des seuls artefacts. Les agents CLI de code fonctionnent d'emblée (Claude Code, Codex, Gemini CLI et 50+ autres), et la même couche gouverne toute charge agentique : le livrable peut être un diff, un rapport de recherche, un dataset ou un dossier de preuves d'audit. Profil d'installation air-gap inclus. Apache-2.0.
 
 ### en un coup d'œil
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
 
 Quatre éléments le distinguent ; le reste n'est que détail.
 
 - **Aucun LLM dans la boucle de coordination.** L'ordonnancement est en pur Python, garantissant une reproductibilité de bout en bout. Rejouez le plan d'hier et obtenez exactement le graphe de tâches d'hier.
 - **Vérifiable a posteriori.** Le journal de relecture enregistre chaque exécution, et la colonne vertébrale de lignage (lineage spine) toujours active enregistre chaque étape productrice de lignage ; le journal d'audit optionnel chaîné par HMAC (`BERNSTEIN_AUDIT=1`) ajoute des reçus vérifiables hors ligne. Le non-déterminisme apparaît sous forme de non-concordance de hachage à l'étape exacte, plutôt que par un nouvel essai instable. Les livrables autres que le code reçoivent le même traitement : une tâche peut déclarer un contrat d'artefact (rapport, jeu de données, journal d'actions, résultat d'exploitation) et se conclut par un reçu de lignage signé plutôt que par un commit git.
 - **Isolé par conception.** Chaque tâche de codage obtient son propre git worktree protégé par des barrières de fusion ; les tâches en mode artefact obtiennent un répertoire de travail sous `.sdd/workspaces/`. Les agents ne partagent aucun espace de travail modifiable par défaut ; le seul état partagé est le backlog de tâches, réservé de manière atomique. Un contrôle plus strict du système de fichiers est optionnel via les [backends de sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Désactivez les worktrees et chaque tâche s'exécute dans l'espace partagé.
-- **Large et local.** Plus de 52 adaptateurs d'agents CLI plus un wrapper générique `--prompt`, état basé sur fichiers, sans dépendance SaaS, sans plan de données tiers.
+- **Large et local.** Plus de 53 adaptateurs d'agents CLI plus un wrapper générique `--prompt`, état basé sur fichiers, sans dépendance SaaS, sans plan de données tiers.
 
 La liste complète figure sur la [page des capacités](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) ; la [matrice des fonctionnalités](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) en est l'index exhaustif.
 
@@ -230,7 +230,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Combinez différents agents au cours d'une même session : modèles locaux économiques pour le code générique, modèles cloud plus robustes pour l'architecture. `bernstein integrations list --installed` indique les outils disponibles sur votre machine.
 
 ### calcul bénévole
-<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
 
 Un projet peut marquer des tickets comme ouverts aux bénévoles, et n'importe qui peut en exécuter un sur sa propre machine, sans compte ni coordinateur. Le projet déclare ce qu'une tâche a le droit de faire dans un manifeste `volunteer.json` - backend de bac à sable, liste réseau autorisée, plafonds de temps et de mémoire - et les limites propres au donateur ne peuvent que le restreindre, jamais l'élargir. Le reçu produit par une tâche terminée lie le résultat à la décision de confinement sous laquelle elle a tourné, si bien qu'un mainteneur peut vérifier des mois plus tard ce que le travail avait réellement le droit de toucher.
 
@@ -239,7 +239,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-Le [guide du donateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) couvre l'exécution d'un worker et le budget que vous fixez, le [guide du projet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) couvre la déclaration d'un manifeste, et le [modèle de menaces](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indique ce que chaque frontière protège et ne protège pas. Le lanceur en une seule commande n'est pas encore livré : aujourd'hui `verify`, `browse` et `hub` sont les sous-commandes qui fonctionnent.
+Le [guide du donateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) couvre l'exécution d'un worker et le budget que vous fixez, le [guide du projet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) couvre la déclaration d'un manifeste, et le [modèle de menaces](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indique ce que chaque frontière protège et ne protège pas. Le lanceur en une seule commande n'est pas encore livré : aujourd'hui `verify`, `browse`, `budget`, `verify-bundle` et `hub` sont les sous-commandes qui fonctionnent.
 
 ### au-delà de la page d'accueil
 <!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->

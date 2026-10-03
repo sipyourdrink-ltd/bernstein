@@ -84,8 +84,15 @@ def golden_suite() -> BenchSuite:
 
 
 def _make_bundle(suite: BenchSuite, adapter: MockReplayAdapter, cfg: dict | None = None) -> SubmissionBundle:
+    """A bundle as the CLI produces one: run, then signed.
+
+    Stub-signed, because `BenchRunner.run()` returns an UNSIGNED bundle -- signing is the caller's
+    step, and `bench run --stub-signer` is the stub path. The verifier now checks the signature by
+    default (#5856), so a helper that skipped signing was building an artefact no real command
+    emits, and every test over it was exercising a shape that cannot reach a verifier in practice.
+    """
     runner = BenchRunner(suite=suite, adapter=adapter, scheduler_config=cfg or {})
-    return runner.run()
+    return StubSigner().sign(runner.run())
 
 
 # ===========================================================================
@@ -240,7 +247,7 @@ class TestVerifierMatch:
 
     def test_honest_bundle_passes_verification(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
         bundle = _make_bundle(simple_suite, adapter)
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(bundle)
         assert result.status == VerificationStatus.MATCH
         assert result.passed
@@ -254,26 +261,26 @@ class TestVerifierMatch:
             path = Path(tmp) / "bundle.json"
             bundle.save(path)
             loaded = SubmissionBundle.load(path)
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(loaded)
         assert result.passed
 
     def test_verify_names_each_task(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
         """Report must include a per-task result for every task."""
         bundle = _make_bundle(simple_suite, adapter)
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(bundle)
         ids = {tr.task_id for tr in result.task_results}
         assert ids == {t.id for t in simple_suite.tasks}
 
     def test_golden_suite_verifies(self, golden_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
         bundle = _make_bundle(golden_suite, adapter)
-        verifier = BenchVerifier(suite=golden_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=golden_suite, adapter=adapter, allow_stub_signature=True)
         assert verifier.verify(bundle).passed
 
     def test_report_string_contains_match(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
         bundle = _make_bundle(simple_suite, adapter)
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         report = verifier.verify(bundle).report()
         assert "MATCH" in report
 
@@ -302,7 +309,7 @@ class TestVerifierFabricatedScore:
             scheduler_config=bundle.scheduler_config,
             submitted_at=bundle.submitted_at,
         )
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(bad_bundle)
         assert not result.passed
         fabricated = [tr for tr in result.task_results if tr.status == VerificationStatus.FABRICATED_SCORE]
@@ -318,7 +325,7 @@ class TestVerifierFabricatedScore:
             scheduler_config=bundle.scheduler_config,
             submitted_at=bundle.submitted_at,
         )
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(forged)
         assert result.status == VerificationStatus.HASH_MISMATCH
 
@@ -350,7 +357,7 @@ class TestVerifierReceiptIntegrity:
             scheduler_config=bundle.scheduler_config,
             submitted_at=bundle.submitted_at,
         )
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(bad)
         assert not result.passed
         missing = [tr for tr in result.task_results if tr.status == VerificationStatus.MISSING_RECEIPT]
@@ -391,7 +398,7 @@ class TestVerifierReceiptIntegrity:
             submitted_at=bundle.submitted_at,
         )
 
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(bad)
 
         assert not result.passed, "Corrupted receipt must not pass verification"
@@ -417,7 +424,7 @@ class TestVerifierReceiptIntegrity:
             scheduler_config=bundle.scheduler_config,
             submitted_at=bundle.submitted_at,
         )
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         result = verifier.verify(bad)
         assert result.status != VerificationStatus.MATCH
 
@@ -432,7 +439,7 @@ class TestLeaderboard:
 
     def test_only_verified_bundles_appear(self, simple_suite: BenchSuite, adapter: MockReplayAdapter) -> None:
         bundle = _make_bundle(simple_suite, adapter)
-        verifier = BenchVerifier(suite=simple_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=simple_suite, adapter=adapter, allow_stub_signature=True)
         assert verifier.verify(bundle).passed  # guard
 
         lb = Leaderboard(suite_hash=simple_suite.suite_hash, suite_version="test-v1")
@@ -543,14 +550,42 @@ class TestCLI:
         from bernstein.eval.bench.bench_cli import bench_group
 
         bundle = _make_bundle(simple_suite, adapter)
-        signed = StubSigner().sign(bundle)
         suite_path = tmp_path / "suite.json"
         simple_suite.save(suite_path)
         bundle_path = tmp_path / "bundle.json"
-        signed.save(bundle_path)
+        bundle.save(bundle_path)
         runner = CliRunner()
-        result = runner.invoke(bench_group, ["verify", str(bundle_path), "--suite", str(suite_path)])
+        # `--stub-signer`, because the stub key is a public constant: a bundle signed with it
+        # proves nothing about its origin, so `bench verify` refuses one unless the caller says
+        # it is verifying stub output (#5856).
+        result = runner.invoke(
+            bench_group,
+            ["verify", str(bundle_path), "--suite", str(suite_path), "--stub-signer"],
+        )
         assert result.exit_code == 0, result.output
+
+    def test_cmd_verify_refuses_a_stub_bundle_without_the_flag(
+        self, tmp_path: Path, simple_suite: BenchSuite, adapter: MockReplayAdapter
+    ) -> None:
+        """The default is the point: a stub signature is not an attestation.
+
+        Anyone can produce it -- the key is a public constant in bench/signer.py -- so accepting
+        one silently is the same as accepting an unsigned bundle, which is what this closes.
+        """
+        from click.testing import CliRunner
+
+        from bernstein.eval.bench.bench_cli import bench_group
+
+        bundle = _make_bundle(simple_suite, adapter)
+        suite_path = tmp_path / "suite.json"
+        simple_suite.save(suite_path)
+        bundle_path = tmp_path / "bundle.json"
+        bundle.save(bundle_path)
+
+        result = CliRunner().invoke(bench_group, ["verify", str(bundle_path), "--suite", str(suite_path)])
+
+        assert result.exit_code == 1
+        assert "STUB" in result.output
 
     def test_cmd_verify_fails_on_fabricated_bundle(
         self, tmp_path: Path, simple_suite: BenchSuite, adapter: MockReplayAdapter

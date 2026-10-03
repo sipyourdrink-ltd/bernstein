@@ -10,9 +10,12 @@ worktree and (optionally) a pre-started MCP process - sit idle until a
 task arrives, at which point the spawner claims a slot instead of
 provisioning from scratch.
 
-If you only have time for one sentence: **set `warm_pool.max_slots: 3`
-and the spawner will skip 5–15 s of cold-start on hot paths**. The rest
-of this page explains lifecycle, sizing, and when to disable.
+If you only have time for one sentence: **the pool tracks pre-provisioned
+worktree slots that the spawner can claim instead of running
+`git worktree add`, but today the orchestrator sizes it itself and no code
+fills it with real worktrees, so spawns take the cold path**. The rest of
+this page explains the slot lifecycle, the configuration surface, and the
+current wiring.
 
 ---
 
@@ -24,9 +27,9 @@ process) reserved for the next agent spawn. Each slot is a `PoolSlot`
 object with its own `slot_id`, a target role, a `worktree_path` on
 disk, and a `ready → claimed → expired` lifecycle. When a task
 arrives, the spawner claims a ready slot and skips the 5–15 s
-`git worktree add` cold-start; the pool then provisions a replacement
-slot in the background. `warm_pool.max_slots` caps how many slots sit
-idle at once.
+`git worktree add` cold-start. `WarmPoolConfig.max_slots` caps the total
+number of slots ever added to the pool (ready, claimed and expired all
+count, and slots are never removed), not the number idle at once.
 
 Worktree slots are about spawn latency. They are distinct from the
 concurrency slots that adaptive parallelism manages (how many agents
@@ -65,12 +68,15 @@ agent run itself.
 - A `created_at` timestamp (for TTL expiry).
 - A status: `ready` → `claimed` → `expired`.
 
-When `Spawner._spawn_one()` needs a worktree it calls
-`self._warm_pool.claim_slot(role)` first. On a hit, the pre-built
+When `AgentSpawner._spawn_for_tasks_internal()` needs a worktree it calls
+`self._warm_pool.claim_slot(role)` first (skipped on fresh-context retries). On a hit, the pre-built
 worktree path is reused and the slow `git worktree add` is skipped:
 
 ```python
-warm_entry = self._warm_pool.claim_slot(role) if self._warm_pool is not None else None
+warm_entry = warm_pool.claim_slot(role) if warm_pool is not None and not fresh_restart_on_retry else None
+if warm_pool is not None and warm_entry is not None and not warm_entry.worktree_path:
+    warm_pool.release_slot(warm_entry.slot_id)  # unprovisioned slot: go cold
+    warm_entry = None
 if warm_entry is not None:
     spawn_cwd = Path(warm_entry.worktree_path)
     self._worktree_paths[session_id] = spawn_cwd
@@ -92,16 +98,18 @@ On a miss, the spawner falls back to the cold path (`worktree_mgr.create`)
 and the agent eats the 5–15 s - but the cold path remains the safe
 default, so the warm pool only ever speeds things up.
 
-Slot fill is **external** to the pool itself: a background task or the
-spawner refills the pool by calling `pool.add_slot(slot)` after creating
-a fresh worktree off the hot path. The pool just claims, releases, and
-expires.
+Slot fill is **external** to the pool itself: the pool just claims,
+releases, and expires. The only caller of `pool.add_slot(slot)` today is
+`prepare_speculative_warm_pool` (`core/tasks/task_lifecycle.py`), which adds
+slots with `worktree_path=""`; the spawner treats a slot without a
+worktree as unprovisioned, releases it, and takes the cold path.
 
 ---
 
 ## Pool sizing
 
-Configured under the `warm_pool:` section of `bernstein.yaml`:
+`WarmPoolConfig` and `load_warm_pool_config()` read a `warm_pool:` section
+of `bernstein.yaml` in this shape:
 
 ```yaml
 warm_pool:
@@ -114,13 +122,14 @@ warm_pool:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `max_slots` | `3` | Hard cap on simultaneously-living slots. The pool silently rejects `add_slot` calls that would exceed this (`warm_pool.py`). |
-| `slot_ttl_seconds` | `300.0` | A `ready` slot older than this is moved to `expired` by `expire_stale()` so the worktree can be reaped (`warm_pool.py`). |
-| `roles` | `[]` | Roles to pre-provision. The spawner only finds a hit if `claim_slot(role)` matches one of these. |
+| `max_slots` | `3` | Cap on the total number of slots ever added (ready, claimed and expired all count; slots are never removed). The pool silently rejects `add_slot` calls that would exceed this |
+| `slot_ttl_seconds` | `300.0` | A `ready` slot older than this is moved to `expired` by `expire_stale()` so the worktree can be reaped |
+| `roles` | `[]` | Parsed but not used: claims match the role stored on each slot. |
 
-Source: `WarmPoolConfig` at `warm_pool.py`; loader at
-`warm_pool.py`. Defaults are conservative - three slots covers
-most projects without doubling your worktree footprint.
+Source: `WarmPoolConfig` and `load_warm_pool_config` in `warm_pool.py`.
+Nothing calls the loader yet: the orchestrator builds the pool with
+`WarmPoolConfig(max_slots=max(1, min(2, seed.max_agents)))` and default TTL
+and roles, so the `warm_pool:` section has no effect on a run today.
 
 Rule of thumb: `max_slots ≈ peak concurrent spawns of one role`.
 Over-provisioning costs disk and inodes; under-provisioning means hot
@@ -147,20 +156,21 @@ paths fall back to cold spawns.
 The transitions are the methods on `WarmPool`:
 
 - **`add_slot(slot)`** - append a freshly-built `PoolSlot` to the pool.
-  Beyond `max_slots`, additions are silently ignored
-  (`warm_pool.py`).
+  Beyond `max_slots`, additions are silently ignored.
 - **`claim_slot(role)`** - return the oldest `ready` slot matching
   `role`, marking it `claimed`. Returns `None` if no match exists; the
-  spawner falls back to the cold path (`warm_pool.py`).
+  spawner falls back to the cold path.
 - **`release_slot(slot_id)`** - mark a slot `expired` once the agent
-  releases its worktree. Called from `Spawner._release_warm_pool_slot`
-  during agent reaping (`spawner_core.py`).
+  releases its worktree. Called from `AgentSpawner._release_warm_pool_slot`
+  (delegating to `release_warm_pool_slot` in `spawner_worktree.py`)
+  during agent reaping.
 - **`expire_stale(now=None)`** - sweep ready slots older than
-  `slot_ttl_seconds` and move them to `expired`. Run periodically by the
-  spawner on its tick loop (`warm_pool.py`).
+  `slot_ttl_seconds` and move them to `expired`. Nothing calls it on a
+  schedule yet.
 
-The pool itself never **creates** slots - that's the spawner / refiller
-agent's job. The pool just tracks state and serves claims FIFO. This
+The pool itself never **creates** slots - they are added externally; today
+only `prepare_speculative_warm_pool` does so, with unprovisioned slots.
+The pool just tracks state and serves claims FIFO. This
 keeps `WarmPool` synchronous, lock-free, and easy to test (every state
 transition produces a new immutable `PoolSlot`).
 
@@ -178,11 +188,12 @@ Spawn proceeds on the cold path. There is no blocking, no retry, no
   optimization, not an error.
 - **Bursts erode the pool fast.** Five steps in one stage with `roles:
   [backend]` and `max_slots: 3` will hit the pool twice and then cold-spawn
-  three. Refill happens in the background between ticks.
+  three. Nothing refills the pool with real worktrees today.
 
-If you see consistent miss rates in logs (`logger.info("Using warm pool
-slot %s...")` versus `worktree_mgr.create()` calls), bump `max_slots`
-**and** add the missing roles to `warm_pool.roles`.
+Miss rates show in the logs (`logger.info("Using warm pool slot %s...")`
+versus `worktree_mgr.create()` calls), but tuning does not help yet: the
+`warm_pool:` section is not loaded, so `max_slots` and `warm_pool.roles`
+from `bernstein.yaml` have no effect.
 
 ---
 
@@ -209,8 +220,9 @@ default sweet spot.
 
 ## When to disable
 
-The pool is opt-in. Skip the `warm_pool:` config block (or set
-`max_slots: 0`) when:
+The pool is always constructed by the orchestrator and the `warm_pool:`
+config block is not consulted yet, so there is no switch to turn it off.
+If loading that block is wired in, skip it (or set `max_slots: 0`) when:
 
 - **Every spawn already eats hours.** The 5–15 s saving is rounding
   error in long agentic runs.
@@ -224,7 +236,6 @@ The pool is opt-in. Skip the `warm_pool:` config block (or set
   `warm_pool.roles`, the pool will sit empty anyway. Either expand the
   role list or disable.
 
-Re-enabling is just adding the config section back; no migration cost.
 
 ---
 
@@ -235,9 +246,10 @@ Re-enabling is just adding the config section back; no migration cost.
 | Pool data structures + state machine | `src/bernstein/core/agents/warm_pool.py` |
 | YAML config loader | `src/bernstein/core/agents/warm_pool.py` (`load_warm_pool_config`) |
 | Spawner integration (claim) | `src/bernstein/core/agents/spawner_core.py` |
-| Spawner integration (release) | `src/bernstein/core/agents/spawner_core.py` |
-| Routing helper that picks model tier per slot | `src/bernstein/core/agents/spawner_warm_pool.py` |
-| Merge / reap path | `src/bernstein/core/agents/spawner_merge.py...` |
+| Spawner integration (release) | `src/bernstein/core/agents/spawner_worktree.py` (`release_warm_pool_slot`) |
+| Speculative slot preparation | `src/bernstein/core/tasks/task_lifecycle.py` (`prepare_speculative_warm_pool`) |
+| Model-routing and tool-allowlist helpers on the spawn path | `src/bernstein/core/agents/spawner_warm_pool.py` |
+| Merge / reap path | `src/bernstein/core/agents/spawner_merge.py` |
 
 See also: [`state-persistence.md`](state-persistence.md) for the
 `.sdd/worktrees/` layout each slot writes into;

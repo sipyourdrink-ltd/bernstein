@@ -373,3 +373,34 @@ def test_recovery_from_partial_tip_write(tmp_path: Path) -> None:
     store.reindex()
     payload = json.loads(tip_path.read_text(encoding="utf-8"))
     assert payload == {"open": [h1], "merged": []}
+
+
+# ---------------------------------------------------------------------------
+# Optional fields survive a write -> read round trip
+# ---------------------------------------------------------------------------
+
+
+def test_read_log_round_trips_model_ref_and_activity_source(tmp_path: Path) -> None:
+    """``model_ref`` and ``activity_source`` are in the log line, so reading
+    must return them -- otherwise the rebuilt entry hashes differently from the
+    one that was written and nothing can query by model."""
+    from dataclasses import replace
+
+    from bernstein.core.lineage.entry import ACTIVITY_SOURCES, ModelRef
+
+    store = LineageStore(tmp_path / "lineage")
+    ref = ModelRef(
+        provider="anthropic",
+        model_requested="opus",
+        model_reported="opus-4-1",
+        version="2026-01",
+        routing_decision_hash="sha256:" + "b" * 64,
+    )
+    entry = replace(_make_entry(), model_ref=ref, activity_source=sorted(ACTIVITY_SOURCES)[0])
+    written = store.append(entry, jws="jws")
+
+    ((read_entry, _jws),) = list(store.read_log())
+
+    assert read_entry.model_ref == ref
+    assert read_entry.activity_source == entry.activity_source
+    assert entry_hash(read_entry) == written

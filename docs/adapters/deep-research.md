@@ -11,6 +11,12 @@ not a commit.
 
 ## The run artifact
 
+A deep-research adapter's product is the report in this run directory, not
+a commit and not a task's declared artifact: the adapters do not publish the
+report to a task's `artifact_spec.output_path`, so they do not declare the
+`artifact` output mode. A task that declares an artifact kind and runs on
+one of them will not complete through the artifact path.
+
 Each run writes three files to `.sdd/<agent>/<session>/` in the task's
 working directory:
 
@@ -72,6 +78,32 @@ the agent's own, so the endpoint must speak the Serper and Jina Reader
 protocols. A value that is not an absolute http(s) URL fails the run with
 exit 2.
 
+## Network egress policy
+
+These agents exist to make outbound calls, so a spawn consults the active
+network policy (`--allow-network`, `--profile airgap`) before anything is
+written or started, the same way the other adapters do. A denied destination
+refuses the spawn with `network egress denied by policy: <host>:<port>`.
+
+The destinations are known per spawn, not declared on the class:
+
+| Adapter | Checked |
+|---|---|
+| both | the gateway from `BERNSTEIN_<AGENT>_OPENAI_BASE_URL` |
+| `gpt_researcher` | the host of every retriever in `RETRIEVER` (default `tavily`; `searx` uses `SEARX_URL`), and the scraper's service for `tavily_extract` / `firecrawl` |
+| `tongyi_deepresearch` | the Serper and Jina bases (the `..._SERPER_BASE_URL` / `..._JINA_BASE_URL` override, else `google.serper.dev` / `r.jina.ai`), and each `SANDBOX_FUSION_ENDPOINT` |
+
+A URL without a readable host, and a retriever or scraper that is not in the
+table above (`custom`, `mcp`), cannot be placed and so is refused under a
+restrictive policy. Under the default unrestricted policy nothing changes.
+
+Under deny-all, allow the gateway and the tool hosts to run an agent, for
+example `--allow-network localhost --allow-network searx.internal:8443`.
+A host allow-list bounds these services, not the pages the agent fetches
+from search results: those hosts are only known to the search, and the
+policy is not enforced inside the agent's own process. Point the agents at
+a gateway or reader you control if page fetches must be bounded.
+
 ## How the agent runs
 
 The adapter launches a runner script shipped with bernstein
@@ -101,6 +133,7 @@ nothing on the host.
 | Symptom | Cause |
 |---|---|
 | `set BERNSTEIN_<AGENT>_...` at spawn | a gateway variable or the checkout path is unset |
+| `network egress denied by policy` at spawn | the policy denies the gateway or a tool host (see above) |
 | runner exit 2 | the agent is not installed in `BERNSTEIN_<AGENT>_PYTHON`, the checkout has no `inference/react_agent.py`, or a Tongyi tool base URL is not http(s) |
 | state `driver_failure`, `detail` set | the agent raised; `detail` holds the exception |
 | state `inconclusive` | empty report, or Tongyi stopped without an answer (`detail` says why) |

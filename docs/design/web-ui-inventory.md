@@ -110,13 +110,14 @@ Shared easing, two durations. `web/src/lib/motion.ts` holds the helpers.
 
 | Family | Location | Contents |
 |---|---|---|
-| Shell | `web/src/components/` | `AppShell`, `CommandPalette`, `ThemeProvider`, `SteeringControls`, `PlaceholderScreen` |
+| Shell | `web/src/components/` | `AppShell`, `BrandMark`, `CommandPalette`, `ThemeProvider`, `SteeringControls`, `PlaceholderScreen` |
 | Artifacts | `components/artifacts/` | `ArtifactCard`, `ProgressStrip`, `TaskArtifactsPanel`, plus its own `types.ts` and data hook |
 | Dependencies | `components/deps/` | `TaskDepsPanel` |
 | Diff | `components/diff/` | `DiffFileList`, `DiffFileView`, `DiffHeader`, `DiffLine`, `DiffStates`, `TaskDiffPanel`, `highlight.ts` |
 | Gates | `components/gates/` | `TaskGatesPanel`, `GateRow`, `GateFilters`, `GateCountsHeader`, `GateStatusIcon`, `TaskLifecyclePill`, `buckets.ts`, `time.ts` |
-| Logs | `components/logs/` | `TaskLogsPanel` plus twelve presentational parts (`LogLine`, `LogList`, `LogToolbar`, filters, follow/pause controls, keyboard help) and `ansi.ts`, `parseLine.ts`, four hooks |
+| Logs | `components/logs/` | `TaskLogsPanel` plus eleven presentational parts (`LogLine`, `LogList`, `LogToolbar`, filters, follow/pause controls, keyboard help) and `ansi.ts`, `parseLine.ts`, four hooks |
 | Trace | `components/trace/` | `TaskTracePanel`, `TraceEventCard`, `TraceFilters` |
+| Steer | `components/steer/` | `SteerPanel` |
 
 The convention each family follows: a `Panel` component as the entry point,
 narrow presentational children beside it, `types.ts` for the shape it renders,

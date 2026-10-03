@@ -50,21 +50,10 @@ the issue number. Cadence is a goal, not a promise the workflow makes.
   the registry has an `exception` flag for the maintainer's answer.
 - **Order:** alphabetical by login, case-insensitive, everywhere a list of
   people appears. Never by volume.
-- **Mentions:** the periodic comment @mentions everyone above the gate, everyone
-  who opted in, and everyone with a merge in the last 30 days; the rest are
-  linked without an @, so an old one-off pull request does not earn a
-  notification. Past 50 mentions only the gate and the opt-ins are pinged
-  (`MENTION_CAP`).
-- **Metric source:** one GitHub GraphQL search per 10-day slice of the
-  90-day window (`is:pr is:merged merged:<from>..<to>`, 50 per page), which
-  returns each pull request's author, base branch, `additions` and its first
-  100 files inline: about fifty requests for the whole window, under two
-  minutes. A slice matching more than 1,000 pull requests (the search cap)
-  fails closed instead of truncating. For a pull request with more than 100
-  changed files, the additions beyond the listed files count as
-  non-generated. A merged pull request's files never change, so
-  `collect --cache` keeps the per-PR count between runs and is written after
-  every slice; an interrupted run keeps what it counted.
+- **Metric source:** the REST API only (`pulls`, `pulls/{n}/files`). A merged
+  pull request's file list never changes, so `collect --cache` keeps the
+  per-PR count between local runs. The workflow runs uncached; a weekly run
+  costs a few hundred requests.
 
 What the script does not do: write a sentence about anyone (the LinkedIn
 draft lists each person's pull requests and leaves the sentence to the

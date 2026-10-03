@@ -169,6 +169,35 @@ DEFERRED: list[str] = [
 ]
 
 
+def control_titles() -> dict[str, str]:
+    """Map each AST id to its canonical short name.
+
+    Every ``requirement`` above opens with the control's short name followed
+    by a colon, so the name is read back out of the same string an auditor
+    sees rather than restated in a second literal that can drift away from
+    it. Anything that needs to *label* an AST id -- the cross-framework
+    references in ``compliance.controls``, for one -- resolves it here, so
+    there is exactly one place in the tree that says what ``AST04`` means.
+    """
+    return {str(c["control_id"]): str(c["requirement"]).split(":", 1)[0].strip() for c in CONTROLS}
+
+
+def reference_label(control_id: str) -> str:
+    """Return ``"<id> - <canonical short name>"`` for use in a crosswalk.
+
+    Raises ``KeyError`` on an id this map does not define. A crosswalk that
+    cites an AST control that does not exist therefore fails at import
+    time instead of shipping a compliance claim an auditor cannot look up.
+    """
+    titles = control_titles()
+    if control_id not in titles:
+        raise KeyError(
+            f"{control_id!r} is not an OWASP Agentic Skills control defined by this map; "
+            f"known ids: {', '.join(sorted(titles))}"
+        )
+    return f"{control_id} - {titles[control_id]}"
+
+
 def control_map() -> dict[str, Any]:
     """Return the OWASP AST control-map block in ``_STANDARD_MAPS`` shape.
 
@@ -188,4 +217,6 @@ __all__ = [
     "REGULATION",
     "STANDARD_ID",
     "control_map",
+    "control_titles",
+    "reference_label",
 ]

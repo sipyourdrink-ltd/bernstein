@@ -110,6 +110,63 @@ def test_symbol_called_from_a_production_module_passes(check_module: ModuleType,
     assert _run(check_module, tree) == 0
 
 
+def test_unrelated_object_attribute_does_not_reach_a_control(
+    check_module: ModuleType, tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An SDK method with the same name is not a caller of a security function."""
+    _write(
+        tree / "src/bernstein/core/security/policy.py",
+        """
+        def create_context() -> None:
+            pass
+        """,
+    )
+    _write(
+        tree / "src/bernstein/core/orchestration/runner.py",
+        """
+        def run(sandbox: object) -> None:
+            sandbox.create_context()
+        """,
+    )
+
+    assert _run(check_module, tree) == 1
+    assert "policy.py::create_context" in capsys.readouterr().err
+
+    _write(
+        tree / "unreachable_controls_allowlist.txt",
+        """
+        src/bernstein/core/security/policy.py::create_context  # no production caller
+        """,
+    )
+    assert _run(check_module, tree) == 0
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "import bernstein.core.security.policy as policy\npolicy.create_context()",
+        "from bernstein.core.security import policy\npolicy.create_context()",
+        "from ..security import policy\npolicy.create_context()",
+        "from bernstein.core.security.policy import create_context as make_context\nmake_context()",
+    ],
+)
+def test_imported_control_aliases_reach_the_right_module(check_module: ModuleType, tree: Path, caller: str) -> None:
+    """Qualified and aliased imports still reach the actual tracked function."""
+    _write(
+        tree / "src/bernstein/core/security/policy.py",
+        """
+        def create_context() -> None:
+            pass
+        """,
+    )
+    _write(
+        tree / "src/bernstein/core/orchestration/runner.py",
+        f"def run() -> None:\n{textwrap.indent(caller, '    ')}\n",
+    )
+
+    assert _run(check_module, tree) == 0
+
+
 def test_symbol_called_only_from_tests_is_reported(
     check_module: ModuleType, tree: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

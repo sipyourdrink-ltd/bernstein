@@ -40,7 +40,7 @@ feature-complete adapter: agent definitions, subagent spawning,
 CLAUDE.md injection, cache-control blocks, hooks, session persistence,
 stream-JSON parsing.  Best general-purpose executor.
 
-**`codex`** wraps the OpenAI Codex CLI (`codex exec --full-auto`).
+**`codex`** wraps the OpenAI Codex CLI (`codex exec --sandbox workspace-write --json`).
 Thin spawner: passes a prompt, reads JSON from a last-message file,
 reports cost.  Cheap, predictable, no sandbox abstraction.
 
@@ -51,7 +51,7 @@ context windows and first-party Google tooling.
 subprocess that constructs `agents.Agent(...)` + `Runner.run_sync(...)`
 and emits structured events.  The SDK brings sandboxed execution,
 first-class tool-use, and pluggable sandbox providers (unix_local,
-docker, E2B, Modal, Daytona, Cloudflare, Vercel, Runloop, Blaxel).
+docker, E2B, Modal).
 
 ---
 
@@ -64,7 +64,7 @@ docker, E2B, Modal, Daytona, Cloudflare, Vercel, Runloop, Blaxel).
 | **Extra install** | `npm install -g @anthropic-ai/claude-code` | `npm install -g @openai/codex` | `npm install -g @google/gemini-cli` | `pip install 'bernstein[openai]'` |
 | **Structured output** | JSON schema enforced | `--json` | `--output-format json` | JSONL event stream |
 | **MCP support** | First-class | No | No | Via runner manifest (Bernstein-managed servers) |
-| **Sandboxing** | CLI permission model | Full-auto only | CLI permission model | Pluggable: unix_local / docker / e2b / modal |
+| **Sandboxing** | CLI permission model | Vendor sandbox (`--sandbox workspace-write`) | CLI permission model | Pluggable: unix_local / docker / e2b / modal |
 | **Rate-limit detection** | Yes (probe + cached cooldown) | Yes (fast-exit probe) | Yes | Yes (SDK exception classes + fast-exit) |
 | **Cache tiers** | Cache read / write | No | Implicit context caching | No explicit cache API |
 | **Streaming** | Stream-JSON | Line-by-line | Line-by-line | JSONL events |
@@ -138,10 +138,10 @@ model: gpt-5.4-mini
 # After
 cli: openai_agents
 model: gpt-5-mini
-sandbox_provider: unix_local
 ```
 
-The `sandbox_provider` field is optional and defaults to `unix_local`.
+The sandbox provider defaults to `unix_local`; override it with the
+`sandbox_provider` key of the per-spawn `mcp_config`.
 Model names roughly map: `gpt-5.4` → `gpt-5`, `gpt-5.4-mini` →
 `gpt-5-mini`, `o4-mini` stays as-is (both adapters accept it).
 
