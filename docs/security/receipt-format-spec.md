@@ -211,6 +211,54 @@ reads an unrecognised `hash_profile` value fails closed (`status:
 - Under legacy schema `1.0.0`, only `audit_range_head_sha256` is bound. Legacy
   receipts verify with a warning (`"audit window unbound in schema 1.0.0"`).
 
+#### COSE_Sign1 sidecar: `run-receipt.cose`
+
+A run receipt is also written as a COSE_Sign1 envelope beside the JSON, so an
+evidence pipeline that speaks COSE — a transparency service registering signed
+statements, a generic COSE verifier, an HSM that only signs COSE — can ingest a
+run receipt and not only an audit receipt. The JSON envelope, its binding and
+its signature are unchanged; the `.cose` is purely additive, and absent when no
+signing key is configured.
+
+| | `run-receipt.json` | `run-receipt.cose` |
+|---|---|---|
+| Envelope | detached Ed25519 signature | COSE_Sign1, RFC 9052 tag 18 |
+| Signed over | `pae(payload_type, binding_bytes)` (DSSE PAE) | the RFC 9052 `Sig_structure` |
+| Payload | the binding block, as the document's own fields | the **same binding bytes**, embedded |
+| `content_type` / `kid` | `signing.payload_type` / `signing.key_id` | protected header labels `3` / `4` |
+
+The payload is the *binding bytes themselves*, not a digest of them — unlike the
+audit receipt's COSE, whose payload is the raw 32-byte `head_sha256`. That makes
+a third-party statement about `run-receipt.cose` a statement about the journal
+head and the spine head rather than about a filename: edit one journal event
+after the fact and the registered statement no longer matches what the artefacts
+recompute to, with no Bernstein code in the verifying loop. The JSON's
+`subject.digest.sha256` is `sha256(binding_bytes)`, so the two can be checked
+against each other without parsing CBOR.
+
+**Embedded, not detached.** A `nil`-payload envelope would keep one copy of the
+binding, but it cannot be registered with a transparency service on its own.
+The cost of embedding is that two copies of the binding exist, so they are
+compared rather than trusted: `verify_run_receipt(..., cose_bytes=...)` fails
+with `status: "tampered"` when the envelope's payload differs from the
+recomputed subject binding, when its `content_type` is not the run-receipt type,
+or when its signature does not verify under the receipt's own key.
+
+`cose_bytes` is passed in as bytes rather than discovered next to the JSON:
+`verify_run_receipt` verifies from its inputs alone — no `.sdd/`, no HMAC key,
+no filesystem — and is not given a path to search. The CLI holds the path and
+reads the sidecar. The result's `cose_verified` is therefore tri-state: `True`
+when an envelope was supplied and agreed, `None` when none was supplied. A
+JSON-only pass must not be readable as "the COSE envelope checked out".
+
+The wire encoding is shared with the audit receipt
+(`bernstein.core.security.cose`), so there is one implementation of the RFC and
+one deterministic-CBOR call. `tests/fixtures/receipt-vectors/cose-vector-run-receipt.{json,cose}`
+is a committed vector: CI re-mints it from a fixed seed and requires byte
+equality, so a change to the headers, the CBOR mode or the binding
+canonicalization fails the build rather than silently invalidating a receipt
+already handed to an auditor.
+
 ## Signing key
 
 Every format signs with the same Ed25519 key, embedded in the receipt as an
