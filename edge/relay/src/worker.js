@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { HashRing } from "./ring.js";
 
 const SHARD_VIRTUAL_NODES = 100;
@@ -21,10 +22,13 @@ export default {
     if (url.pathname === "/cluster/nodes" && request.method === "POST") {
       try {
         const requestBody = await request.json(); // Read body once
-        const nodeId = requestBody.id;
-        if (!nodeId) {
-          return new Response("Bad Request: Node ID missing in body", { status: 400 });
+        if (!requestBody.name || !requestBody.url) {
+          return new Response("Bad Request: name and url required", { status: 400 });
         }
+        const nodeId = createHash("sha256")
+          .update(`${requestBody.name}|${requestBody.url}`, "utf8")
+          .digest("hex")
+          .slice(0, 12);
         const targetShardId = hashRing.lookup(nodeId);
         const targetShard = shardMap.find((shard) => shard.id === targetShardId);
 

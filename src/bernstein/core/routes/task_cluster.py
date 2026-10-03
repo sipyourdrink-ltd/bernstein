@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from bernstein.core.models import NodeCapacity, NodeInfo, NodeStatus
 from bernstein.core.protocols.cluster.cluster import (
+    SHARD_VNODES,
     _compute_node_id_sharded,
     _find_owner_shard,
     _get_shard_url,
@@ -130,17 +131,14 @@ def register_node(body: NodeRegisterRequest, request: Request):
     owner_shard = _find_owner_shard(node.id, node_registry.config.shards)
     if owner_shard is not None and owner_shard != node_registry.config.shard_id:
         owner_url = _get_shard_url(owner_shard, node_registry.config.shards) or ""
-        return JSONResponse(
-            status_code=421,
-            content={"shard_id": owner_shard, "url": owner_url}
-        )
+        return JSONResponse(status_code=421, content={"shard_id": owner_shard, "url": owner_url})
 
     registered = node_registry.register(node)
     response = node_to_response(registered)
     return JSONResponse(
-        status_code=201,
-        content=response.model_dump() if hasattr(response, 'model_dump') else response.dict()
+        status_code=201, content=response.model_dump() if hasattr(response, "model_dump") else response.dict()
     )
+
 
 @router.post(
     "/cluster/nodes/{node_id}/heartbeat",
@@ -160,10 +158,7 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request):
     owner_shard = _find_owner_shard(node_id, node_registry.config.shards)
     if owner_shard is not None and owner_shard != node_registry.config.shard_id:
         owner_url = _get_shard_url(owner_shard, node_registry.config.shards) or ""
-        return JSONResponse(
-            status_code=421,
-            content={"shard_id": owner_shard, "url": owner_url}
-        )
+        return JSONResponse(status_code=421, content={"shard_id": owner_shard, "url": owner_url})
 
     capacity: NodeCapacity | None = None
     if body.capacity is not None:
@@ -183,6 +178,7 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request):
         raise HTTPException(status_code=404, detail=f"Node '{node_id}' not registered")
     return node_to_response(node)
 
+
 @router.post(
     "/cluster/nodes/heartbeats",
     responses=_AUTH_RESPONSES | {422: {"description": "Too many heartbeats (max 500)"}},
@@ -198,6 +194,7 @@ def batch_node_heartbeat(body: NodeHeartbeatBatchRequest, request: Request) -> N
     accepted: list[str] = []
     unknown: list[str] = []
     misdirected: dict[str, str] = {}
+    pending: list[tuple[str, NodeCapacity | None]] = []
     for heartbeat in body.heartbeats:
         owner_shard = _find_owner_shard(heartbeat.node_id, node_registry.config.shards)
         if owner_shard is not None and owner_shard != node_registry.config.shard_id:
@@ -218,13 +215,13 @@ def batch_node_heartbeat(body: NodeHeartbeatBatchRequest, request: Request) -> N
                 mesh_rtt_ms=heartbeat.capacity.mesh_rtt_ms,
                 platform=heartbeat.capacity.platform,
             )
-        node = node_registry.heartbeat(heartbeat.node_id, capacity)
+        pending.append((heartbeat.node_id, capacity))
+    for (node_id, _), node in zip(pending, node_registry.heartbeat_batch(pending), strict=True):
         if node is not None:
-            accepted.append(heartbeat.node_id)
+            accepted.append(node_id)
         else:
-            unknown.append(heartbeat.node_id)
+            unknown.append(node_id)
     return NodeHeartbeatBatchResponse(accepted=accepted, unknown=unknown, misdirected=misdirected)
-
 
 
 @router.delete("/cluster/nodes/{node_id}", status_code=204, responses=_AUTH_404_RESPONSES)
@@ -295,8 +292,6 @@ def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse
     return [node_to_response(n) for n in node_registry.list_nodes(node_status)]
 
 
-
-
 @router.get("/cluster/shard-map")
 def get_shard_map(request: Request) -> ShardMapResponse:
     """Get shard topology map."""
@@ -310,7 +305,8 @@ def get_shard_map(request: Request) -> ShardMapResponse:
         raise HTTPException(status_code=404, detail="Cluster is not sharded")
 
     shard_nodes = [ShardNodeInfo(id=sid, url=url) for sid, url in config.shards]
-    return ShardMapResponse(shard_id=config.shard_id, vnodes=1, shards=shard_nodes)
+    return ShardMapResponse(shard_id=config.shard_id, vnodes=SHARD_VNODES, shards=shard_nodes)
+
 
 @router.get("/cluster/status")
 def cluster_status(request: Request) -> ClusterStatusResponse:

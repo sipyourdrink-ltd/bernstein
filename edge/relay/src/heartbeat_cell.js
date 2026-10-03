@@ -8,6 +8,8 @@ export class HeartbeatCell {
     this.flushing = false; 
     this.backoff_delay = 1000; // Initial backoff delay for retries
     this.max_backoff_delay = 60000; // Max backoff delay
+    this.max_batch = 500;
+    this.max_buffer = 10000;
   }
 
   async fetch(request) {
@@ -61,37 +63,47 @@ export class HeartbeatCell {
     }
 
     this.flushing = true;
-    const heartbeatsToFlush = [...this.buffer];
-    this.buffer = []; // Clear buffer immediately
-    
+    const heartbeatsToFlush = this.buffer.splice(0, this.max_batch);
+    const headers = { "Content-Type": "application/json" };
+    if (this.env.CLUSTER_TOKEN) {
+      headers.Authorization = `Bearer ${this.env.CLUSTER_TOKEN}`;
+    }
+
+    let retry = false;
     try {
       const response = await fetch(`${this.env.SHARD_URL}/cluster/nodes/heartbeats`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({ heartbeats: heartbeatsToFlush }),
       });
 
       if (response.ok) {
-        this.backoff_delay = 1000; // Reset backoff on success
+        this.backoff_delay = 1000;
         const result = await response.json();
         if (result.unknown && result.unknown.length > 0) {
           result.unknown.forEach((id) => this.unknown_ids.add(id));
         }
-      } else {
+      } else if (response.status >= 500 || response.status === 429 || response.status === 408) {
         console.error("Failed to flush heartbeats:", response.status, response.statusText);
-        // Re-add to buffer and retry with exponential backoff
-        this.buffer.unshift(...heartbeatsToFlush); // Add back to front of buffer
-        this.scheduleRetry();
+        retry = true;
+      } else {
+        console.error("Dropping heartbeat batch, central rejected it:", response.status);
       }
     } catch (error) {
       console.error("Error flushing heartbeats:", error);
-      // Re-add to buffer and retry with exponential backoff
-      this.buffer.unshift(...heartbeatsToFlush); // Add back to front of buffer
-      this.scheduleRetry();
+      retry = true;
     } finally {
       this.flushing = false;
+    }
+
+    if (retry) {
+      this.buffer.unshift(...heartbeatsToFlush);
+      if (this.buffer.length > this.max_buffer) {
+        this.buffer.splice(0, this.buffer.length - this.max_buffer);
+      }
+      this.scheduleRetry();
+    } else if (this.buffer.length > 0) {
+      await this.flush();
     }
   }
 

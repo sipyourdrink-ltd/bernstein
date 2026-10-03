@@ -109,9 +109,7 @@ def test_batch_heartbeat_max_500_items(cluster_app):
     """Batch with >500 items returns 422."""
     client = TestClient(cluster_app)
 
-    heartbeats = [
-        {"node_id": f"node-{i}"} for i in range(501)
-    ]
+    heartbeats = [{"node_id": f"node-{i}"} for i in range(501)]
     batch_resp = client.post(
         "/cluster/nodes/heartbeats",
         json={"heartbeats": heartbeats},

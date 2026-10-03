@@ -10,7 +10,6 @@ default. CI runs them via ``.github/workflows/cluster-e2e.yml``.
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 

@@ -90,9 +90,7 @@ class TestHashRing:
         max_tolerance_pct = expected_pct + 5
         actual_pct = moved / num_nodes * 100
 
-        assert actual_pct <= max_tolerance_pct, (
-            f"Moved {actual_pct}% of keys, expected <= {max_tolerance_pct}%"
-        )
+        assert actual_pct <= max_tolerance_pct, f"Moved {actual_pct}% of keys, expected <= {max_tolerance_pct}%"
 
     def test_deterministic_across_instances(self) -> None:
         """Same shard_ids and vnodes should produce identical lookups."""
@@ -192,12 +190,8 @@ class TestShardedNodeRegistry:
         shard_ids = ("shard-0", "shard-1", "shard-2")
         ring = HashRing(shard_ids=shard_ids, vnodes=128)
 
-        node1 = NodeInfo(
-            id="node-1", name="n1", url="http://n1", capacity=NodeCapacity(), status=NodeStatus.ONLINE
-        )
-        node2 = NodeInfo(
-            id="node-2", name="n2", url="http://n2", capacity=NodeCapacity(), status=NodeStatus.ONLINE
-        )
+        node1 = NodeInfo(id="node-1", name="n1", url="http://n1", capacity=NodeCapacity(), status=NodeStatus.ONLINE)
+        node2 = NodeInfo(id="node-2", name="n2", url="http://n2", capacity=NodeCapacity(), status=NodeStatus.ONLINE)
 
         mock_regs = {
             "shard-0": self._make_mock_registry(),
@@ -310,6 +304,5 @@ class TestShardRingVectors:
             for key, expected_shard in vector["expected_assignments"].items():
                 actual_shard = ring.lookup(key)
                 assert actual_shard == expected_shard, (
-                    f"Vector {vector.get('id', 'unknown')}: "
-                    f"key {key} expected {expected_shard}, got {actual_shard}"
+                    f"Vector {vector.get('id', 'unknown')}: key {key} expected {expected_shard}, got {actual_shard}"
                 )

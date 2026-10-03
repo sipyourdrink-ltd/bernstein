@@ -6,7 +6,7 @@ This service acts as an edge relay, buffering and routing cluster requests to th
 
 - **Consistent Hashing**: Implements a consistent hash ring with virtual nodes to ensure an even distribution of requests across shards and minimize key reassignments during shard additions or removals.
 - **Request Routing**: Routes `GET` and `POST` requests for `/cluster/nodes/*` endpoints to the owning shard.
-- **Node Registration**: For `POST /cluster/nodes`, it extracts the node ID from the request body to determine the owner shard.
+- **Node Registration**: For `POST /cluster/nodes`, it derives the node ID as `sha256(name|url)[:12]` from the request body, the same way the central server does, and routes by that ID.
 - **Header Forwarding**: Forwards `Authorization` and `Content-Type` headers to the target shard.
 - **421 Response Handling**: Passes through `421 Misdirected Request` responses from shards, allowing the client to be aware of redirection.
 
@@ -28,3 +28,12 @@ To run tests:
 ```bash
 node --test edge/relay/test/
 ```
+
+## Configuration
+
+- `SHARD_MAP`: JSON array of `{id, url}` shards.
+- `SHARD_URL`: central URL the heartbeat cell flushes to.
+- `CLUSTER_TOKEN`: bearer token the heartbeat cell sends when flushing (required if central enforces auth).
+- `FLUSH_MS`: flush window in milliseconds (default 2000).
+
+The cell flushes at most 500 heartbeats per request, keeps at most 10000 buffered, retries 5xx/429/408 with backoff and drops batches rejected with other 4xx.

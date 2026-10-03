@@ -91,9 +91,7 @@ def test_register_misdirected(sharded_app):
         test_name = f"worker-{i}"
         test_url = "http://test:9000"
         test_id = _compute_node_id_sharded(test_name, test_url)
-        test_owner = _find_owner_shard(
-            test_id, sharded_app.state.node_registry.config.shards
-        )
+        test_owner = _find_owner_shard(test_id, sharded_app.state.node_registry.config.shards)
         if test_owner == "shard-1":
             node_name = test_name
             node_url = test_url
@@ -158,9 +156,7 @@ def test_batch_heartbeat_misdirected(sharded_app):
     shard1_id = None
     for i in range(100):
         test_id = _compute_node_id_sharded(f"w-{i}", "http://w:9000")
-        owner = _find_owner_shard(
-            test_id, sharded_app.state.node_registry.config.shards
-        )
+        owner = _find_owner_shard(test_id, sharded_app.state.node_registry.config.shards)
         if owner == "shard-0" and shard0_id is None:
             shard0_id = test_id
         if owner == "shard-1" and shard1_id is None:
@@ -190,9 +186,7 @@ def test_heartbeat_misdirected(sharded_app):
     shard1_id = None
     for i in range(100):
         test_id = _compute_node_id_sharded(f"w-{i}", "http://w:9000")
-        owner = _find_owner_shard(
-            test_id, sharded_app.state.node_registry.config.shards
-        )
+        owner = _find_owner_shard(test_id, sharded_app.state.node_registry.config.shards)
         if owner == "shard-1":
             shard1_id = test_id
             break
@@ -244,3 +238,38 @@ def test_heartbeat_client_retry_on_421():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_owner_matches_hash_ring_and_accepts_non_hex_ids() -> None:
+    from bernstein.core.protocols.cluster.cluster import SHARD_VNODES, _find_owner_shard
+    from bernstein.core.protocols.cluster.shard_ring import HashRing
+
+    shards = (("a", "http://a"), ("b", "http://b"), ("c", "http://c"))
+    ring = HashRing(("a", "b", "c"), SHARD_VNODES)
+    for key in ("0123456789ab", "ffffffffffff", "not-hex", "node-7"):
+        assert _find_owner_shard(key, shards) == ring.lookup(key)
+
+
+def test_batch_heartbeat_persists_in_one_pass(tmp_path) -> None:
+    from bernstein.core.models import ClusterConfig, NodeInfo
+
+    from bernstein.core.protocols.cluster.cluster import NodeRegistry
+
+    reg = NodeRegistry(ClusterConfig(), persist_path=tmp_path / "nodes.db")
+    for i in range(3):
+        reg.register(NodeInfo(id=f"n{i}", name=f"w{i}", url=f"http://w{i}"))
+    results = reg.heartbeat_batch([("n0", None), ("n1", None), ("missing", None)])
+    assert [r is not None for r in results] == [True, True, False]
+
+
+def test_legacy_json_migrates_when_db_path_given(tmp_path) -> None:
+    import json
+
+    from bernstein.core.models import ClusterConfig
+
+    from bernstein.core.protocols.cluster.cluster import NodeRegistry
+
+    rows = [{"id": "x1", "name": "w", "url": "http://w"}]
+    (tmp_path / "nodes.json").write_text(json.dumps(rows))
+    reg = NodeRegistry(ClusterConfig(), persist_path=tmp_path / "nodes.db")
+    assert reg.get("x1") is not None

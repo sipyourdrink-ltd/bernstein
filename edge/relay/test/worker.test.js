@@ -4,6 +4,15 @@ import worker from "../src/worker.js";
 import { HashRing } from "../src/ring.js";
 
 // Mock environment variables
+import { createHash } from "node:crypto";
+import { HashRing as RefRing } from "../src/ring.js";
+
+function expectedShardUrl(name, url) {
+  const id = createHash("sha256").update(`${name}|${url}`, "utf8").digest("hex").slice(0, 12);
+  const shardId = new RefRing(["shard1", "shard2"], 100).lookup(id);
+  return MOCK_SHARD_MAP.find((sh) => sh.id === shardId).url;
+}
+
 const MOCK_SHARD_MAP = [
   { id: "shard1", url: "http://shard1.example.com" },
   { id: "shard2", url: "http://shard2.example.com" },
@@ -33,16 +42,7 @@ const mockFetch = mock.fn(async (request) => {
     }
   } else if (url.pathname === "/cluster/nodes" && request.method === "POST") {
     const requestBody = JSON.parse(await request.clone().text());
-    const registeringNodeId = requestBody.id;
-    if (registeringNodeId === "node_to_register_on_shard1") {
-      if (url.origin === MOCK_SHARD_MAP[0].url) {
-        return new Response(JSON.stringify({ id: registeringNodeId, status: "registered" }), { status: 201 });
-      }
-    } else if (registeringNodeId === "node_to_register_on_shard2") {
-      if (url.origin === MOCK_SHARD_MAP[1].url) {
-        return new Response(JSON.stringify({ id: registeringNodeId, status: "registered" }), { status: 201 });
-      }
-    }
+    return new Response(JSON.stringify({ name: requestBody.name, status: "registered" }), { status: 201 });
   }
 
   return new Response("Not Found in Mock", { status: 404 });
@@ -86,24 +86,24 @@ describe("worker.js fetch handler", () => {
     const request1 = new Request("http://example.com/cluster/nodes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: "node_to_register_on_shard1", name: "test-node-1", url: "http://test1.example.com" }),
+      body: JSON.stringify({ name: "test-node-1", url: "http://test1.example.com" }),
     });
     const response1 = await worker.fetch(request1, env);
     assert.strictEqual(response1.status, 201);
     const responseBody1 = await response1.json();
-    assert.strictEqual(responseBody1.id, "node_to_register_on_shard1");
-    assert.strictEqual(mockFetch.mock.calls[0].arguments[0].url, "http://shard1.example.com/cluster/nodes");
+    assert.strictEqual(responseBody1.name, "test-node-1");
+    assert.strictEqual(mockFetch.mock.calls[0].arguments[0].url, `${expectedShardUrl("test-node-1", "http://test1.example.com")}/cluster/nodes`);
 
     const request2 = new Request("http://example.com/cluster/nodes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: "node_to_register_on_shard2", name: "test-node-2", url: "http://test2.example.com" }),
+      body: JSON.stringify({ name: "test-node-2", url: "http://test2.example.com" }),
     });
     const response2 = await worker.fetch(request2, env);
     assert.strictEqual(response2.status, 201);
     const responseBody2 = await response2.json();
-    assert.strictEqual(responseBody2.id, "node_to_register_on_shard2");
-    assert.strictEqual(mockFetch.mock.calls[1].arguments[0].url, "http://shard2.example.com/cluster/nodes");
+    assert.strictEqual(responseBody2.name, "test-node-2");
+    assert.strictEqual(mockFetch.mock.calls[1].arguments[0].url, `${expectedShardUrl("test-node-2", "http://test2.example.com")}/cluster/nodes`);
   });
 
   it("should pass through 421 (Misdirected) responses", async () => {

@@ -11,6 +11,7 @@ server.
 
 from __future__ import annotations
 
+import functools
 import logging
 import operator
 import socket
@@ -35,6 +36,7 @@ from bernstein.core.protocols.cluster.cluster_tls import (
     TLSConfig,
     build_httpx_client_kwargs,
 )
+from bernstein.core.protocols.cluster.shard_ring import HashRing
 from bernstein.core.protocols.cluster.sqlite_node_store import SQLiteNodeStore
 
 if TYPE_CHECKING:
@@ -46,11 +48,17 @@ logger = logging.getLogger(__name__)
 # Shard routing — deterministic node assignment for scale-out.
 # ---------------------------------------------------------------------------
 
+
 def _compute_node_id_sharded(name: str, url: str) -> str:
     """Compute deterministic node ID from name and url when sharded."""
     import hashlib
+
     identity = f"{name}|{url}"
     return hashlib.sha256(identity.encode()).hexdigest()[:12]
+
+
+SHARD_VNODES = 100
+_HEARTBEAT_PERSIST_INTERVAL_S = 30.0
 
 
 def _find_owner_shard(node_id: str, shards: tuple[tuple[str, str], ...]) -> str | None:
@@ -60,8 +68,12 @@ def _find_owner_shard(node_id: str, shards: tuple[tuple[str, str], ...]) -> str 
     """
     if not shards:
         return None
-    idx = int(node_id, 16) % len(shards)
-    return shards[idx][0]
+    return _ring_for(tuple(sid for sid, _ in shards)).lookup(node_id)
+
+
+@functools.lru_cache(maxsize=8)
+def _ring_for(shard_ids: tuple[str, ...]) -> HashRing:
+    return HashRing(shard_ids, SHARD_VNODES)
 
 
 def _get_shard_url(shard_id: str, shards: tuple[tuple[str, str], ...]) -> str | None:
@@ -86,6 +98,8 @@ class NodeRegistry:
         self._config = config
         self._persist_path = persist_path
         self._store: SQLiteNodeStore | None = None
+        self._last_persisted: dict[str, float] = {}
+        self._heartbeat_seen: set[str] = set()
         if persist_path is not None:
             self._open_store(persist_path)
             self._load_persisted()
@@ -95,14 +109,11 @@ class NodeRegistry:
         return self._config
 
     def _open_store(self, persist_path: Path) -> None:
-        legacy: Path | None = None
-        db_path = persist_path
-        if persist_path.suffix == ".json":
-            legacy = persist_path
-            db_path = persist_path.with_suffix(".db")
+        db_path = persist_path.with_suffix(".db") if persist_path.suffix == ".json" else persist_path
+        legacy = db_path.with_suffix(".json")
         try:
             self._store = SQLiteNodeStore(db_path)
-            if legacy is not None and legacy.exists() and self._store.count() == 0:
+            if legacy.exists() and self._store.count() == 0:
                 self._store.migrate_from_json(legacy)
         except Exception as exc:
             logger.warning("Failed to open node store: %s", exc)
@@ -128,6 +139,7 @@ class NodeRegistry:
             return
         try:
             self._store.upsert(node)
+            self._last_persisted[node.id] = time.time()
         except Exception as exc:
             logger.warning("Failed to persist node %s: %s", node.id, exc)
 
@@ -187,8 +199,14 @@ class NodeRegistry:
         mem_used_pct: float | None = None,
         mesh_rtt_ms: float | None = None,
         platform: str | None = None,
+        persist: bool = True,
     ) -> NodeInfo | None:
-        """Record a heartbeat from a node. Returns None if node is unknown."""
+        """Record a heartbeat from a node. Returns None if node is unknown.
+
+        The row is rewritten only when status or health changed, or the last
+        write is older than ``_HEARTBEAT_PERSIST_INTERVAL_S``. With
+        ``persist=False`` the caller writes the row itself.
+        """
         node = self._nodes.get(node_id)
         if node is None:
             _metrics.record_heartbeat("rejected_unknown_node")
@@ -215,16 +233,42 @@ class NodeRegistry:
             mem_used_pct=cap.mem_used_pct,
             mesh_rtt_ms=cap.mesh_rtt_ms,
         )
+        health_changed = verdict != node.health
         if verdict != "ok" and node.health == "ok":
             node.unhealthy_since = node.last_heartbeat
         elif verdict == "ok":
             node.unhealthy_since = None
         node.health = verdict
-        self._persist(node)
+        first_beat = node.id not in self._heartbeat_seen
+        self._heartbeat_seen.add(node.id)
+        if persist and (
+            first_beat
+            or status_flipped
+            or health_changed
+            or node.last_heartbeat - self._last_persisted.get(node.id, 0.0) >= _HEARTBEAT_PERSIST_INTERVAL_S
+        ):
+            self._persist(node)
         if status_flipped:
             self._sync_node_count_metrics()
         _metrics.record_heartbeat("accepted")
         return node
+
+    def heartbeat_batch(self, items: list[tuple[str, NodeCapacity | None]]) -> list[NodeInfo | None]:
+        """Record several heartbeats and write the touched rows in one transaction."""
+        results = [self.heartbeat(node_id, capacity, persist=False) for node_id, capacity in items]
+        self._persist_many([n for n in results if n is not None])
+        return results
+
+    def _persist_many(self, nodes: list[NodeInfo]) -> None:
+        if self._store is None or not nodes:
+            return
+        try:
+            self._store.upsert_many(nodes)
+            now = time.time()
+            for node in nodes:
+                self._last_persisted[node.id] = now
+        except Exception as exc:
+            logger.warning("Failed to persist %d nodes: %s", len(nodes), exc)
 
     def unregister(self, node_id: str) -> bool:
         """Remove a node from the registry."""
@@ -297,13 +341,13 @@ class NodeRegistry:
             nodes = [n for n in nodes if n.status == status]
         return nodes
 
-    def mark_stale(self) -> list[NodeInfo]:
+    def mark_stale(self, timeout_s: float | None = None) -> list[NodeInfo]:
         """Mark nodes that haven't heartbeated within timeout as offline.
 
         Returns the list of nodes that were marked offline.
         """
         time.time()
-        timeout = self._config.node_timeout_s
+        timeout = self._config.node_timeout_s if timeout_s is None else timeout_s
         stale: list[NodeInfo] = []
         for node in self._nodes.values():
             if node.status == NodeStatus.ONLINE and not node.is_alive(timeout):
@@ -311,7 +355,7 @@ class NodeRegistry:
                 stale.append(node)
                 logger.warning("Node %s (%s) marked offline - no heartbeat for %ds", node.id, node.name, timeout)
                 _audit.record_node_left(node.id, reason="timeout")
-                self._persist(node)
+        self._persist_many(stale)
         if stale:
             self._sync_node_count_metrics()
         return stale
@@ -759,9 +803,11 @@ class NodeHeartbeatClient:
 # Health verdict — evaluates worker-reported telemetry against thresholds.
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HealthThresholds:
     """Configurable thresholds for worker health evaluation."""
+
     min_disk_free_mb: int = 512
     max_mem_used_pct: float = 95.0
     max_mesh_rtt_ms: float = 5000.0
@@ -809,10 +855,7 @@ def batch_assign(
     """
     import random
 
-    online = [
-        n for n in registry.list_nodes(NodeStatus.ONLINE)
-        if n.capacity.available_slots > 0 and n.health == "ok"
-    ]
+    online = [n for n in registry.list_nodes(NodeStatus.ONLINE) if n.capacity.available_slots > 0 and n.health == "ok"]
     if not online:
         return [(t, None) for t in tasks]
 
@@ -826,7 +869,8 @@ def batch_assign(
         req_gpu = task.get("require_gpu", False)
 
         candidates = [
-            nid for nid, slots in remaining.items()
+            nid
+            for nid, slots in remaining.items()
             if slots > 0
             and (not req_model or req_model in node_map[nid].capacity.supported_models)
             and (not req_gpu or node_map[nid].capacity.gpu_available)

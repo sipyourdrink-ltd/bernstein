@@ -148,19 +148,20 @@ class ShardedNodeRegistry:
         }
 
     def cluster_summary(self) -> dict[str, Any]:
-        result = {
-            "shards": {},
-            "total_online": 0,
-            "total_capacity": self.total_capacity(),
-        }
+        shards: dict[str, Any] = {}
+        total_online = 0
         for shard_id in self._shard_ids:
             registry = self._get_registry(shard_id)
-            result["shards"][shard_id] = registry.cluster_summary()
-            result["total_online"] += registry.online_count()
-        return result
+            shards[shard_id] = registry.cluster_summary()
+            total_online += registry.online_count()
+        return {
+            "shards": shards,
+            "total_online": total_online,
+            "total_capacity": self.total_capacity(),
+        }
 
     def mark_stale(self, timeout_s: float) -> list[str]:
-        result = []
+        result: list[str] = []
         for shard_id in self._shard_ids:
             registry = self._get_registry(shard_id)
             stale_nodes = registry.mark_stale(timeout_s)
@@ -190,9 +191,7 @@ class ShardedNodeRegistry:
 
         for shard_id in self._shard_ids:
             registry = self._get_registry(shard_id)
-            shard_best = registry.best_node_for_task(
-                task, health_ok_only, labels_required
-            )
+            shard_best = registry.best_node_for_task(task, health_ok_only, labels_required)
             if shard_best is None:
                 continue
 
