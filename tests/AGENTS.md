@@ -1,9 +1,9 @@
 # Test suite
 
-Layered pytest suite. `unit/` is the big one (2400+ files, no network);
-`integration/` needs a running server; `contract/` holds the adapter
-capability contracts; plus `property/`, `snapshot/`, `golden/`,
-`perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`.
+Layered pytest suite. `unit/` is the big one (2700+ files, no network);
+`conformance/` holds offline auditor conformance vectors; `integration/`
+needs a running server; `contract/` holds adapter capability contracts;
+plus `property/`, `snapshot/`, `golden/`, `perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`.
 
 ## How to run
 
@@ -37,4 +37,4 @@ uv run python scripts/run_tests.py tests/unit/test_foo.py[::test_name]  # one fi
 - Live adapter conformance tests are opt-in via the `--live` flag
   registered in `conftest.py`.
 
-<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-09-07 against this subtree; the notes above still hold. -->
