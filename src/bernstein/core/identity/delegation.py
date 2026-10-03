@@ -66,7 +66,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from bernstein.core.identity.delegation_scope import (
     AuthorityReport,
@@ -78,6 +78,7 @@ from bernstein.core.identity.delegation_scope import (
     verify_authority,
 )
 from bernstein.core.identity.principal import AgentPrincipal, principal_ref
+from bernstein.core.persistence.atomic_write import write_atomic_json
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -104,6 +105,11 @@ __all__ = [
     "verify_run",
     "verify_run_chain",
 ]
+
+#: Filename written by :meth:`DelegationLedger.record_chain_head` beside the
+#: delegation JSONL to declare the final hop count and head HMAC.  Its presence
+#: enables tail-truncation detection in :func:`verify_run_chain`.
+_HEAD_SUFFIX: Final[str] = ".head.json"
 
 #: Genesis linkage value for the first hop of a run (matches the audit-chain
 #: convention of a fixed 64-hex-zero anchor).
@@ -234,6 +240,17 @@ class ChainResult:
     authority: AuthorityReport = field(default_factory=lambda: AuthorityReport())
     #: Graded pass / fail / unproven reading of the same receipts (#2554).
     verdict: ChainVerdict = field(default_factory=ChainVerdict)
+    #: True when the chain was sealed with :meth:`DelegationLedger.record_chain_head`
+    #: and the reconstructed chain matches the declared hop count, head HMAC, and seal.
+    #: False when the sidecar exists but disagrees (tail truncation detected) or is
+    #: missing a valid seal.
+    #: None when no sidecar was written (pre-seal chains; no completeness claim).
+    #:
+    #: ``valid`` carries no completeness claim: it is True for an intact unsealed
+    #: chain, so a caller that requires proof the tail was not removed must pass
+    #: ``require_sealed=True`` to :func:`verify_run_chain`` or assert
+    #: ``sealed is True`` itself. A deleted sidecar reports ``None``, not ``False``.
+    sealed: bool | None = None
 
     @property
     def violations(self) -> list[ScopeViolation]:
@@ -266,6 +283,17 @@ class DelegationLedger:
         """Return the JSONL path backing ``run_id``'s receipts."""
         safe = run_id.replace("/", "_").replace("\\", "_")
         return self._dir / f"{safe}.jsonl"
+
+    def head_path(self, run_id: str) -> Path:
+        """Return the chain-head sidecar path for ``run_id``.
+
+        Derives from :meth:`receipt_path` so the writer and
+        :func:`verify_run_chain` can never disagree on the filename - the
+        two previously built it independently, and a divergence (e.g. an
+        empty ``run_id``) would silently stop the sidecar from being read.
+        """
+        receipt = self.receipt_path(run_id)
+        return receipt.with_name(receipt.stem + _HEAD_SUFFIX)
 
     @contextlib.contextmanager
     def _append_lock(self, run_id: str) -> Iterator[None]:
@@ -398,6 +426,44 @@ class DelegationLedger:
                 fh.write(json.dumps(entry, sort_keys=True) + "\n")
         return DelegationReceipt(**entry)
 
+    def record_chain_head(self, run_id: str) -> None:
+        """Seal a completed chain by writing a chain-head sidecar file.
+
+        Reads the current tail of ``run_id``'s delegation file and writes
+        a small JSON document alongside it::
+
+            <root>/delegation/<run_id>.head.json
+            {"run_id": "<id>", "hop_count": 3, "head_hmac": "<hex>", "seal": "<hex>"}
+
+        ``seal`` is an HMAC over the declared fields under ``self._key``, the
+        same key the receipts chain on, so the sidecar cannot be re-minted
+        from the truncated file alone: an attacker with write access to the
+        directory can still delete or edit it, but cannot produce a seal that
+        passes without the key.
+
+        :func:`verify_run_chain` reads this file when it exists and fails
+        the result if the reconstructed chain's hop count, head HMAC, or seal
+        does not match -- detecting tail truncation that ``prev_hmac``
+        linkage cannot catch, and naive edits of the sidecar itself.
+
+        This detects truncation and naive edits, not a deliberate cover-up by
+        someone with write access to the ledger directory (they can delete
+        the sidecar entirely, which ``sealed`` reports as ``None``).
+
+        Idempotent: writing the sidecar again after additional hops updates
+        the count, because the full JSONL file is always the authority; the
+        sidecar is checked against whatever the JSONL actually contains.
+
+        Args:
+            run_id: Run whose chain to seal.
+        """
+        with self._append_lock(run_id):
+            prev_hmac, hop_count = self._tail(run_id)
+            sidecar = self.head_path(run_id)
+            body = {"run_id": run_id, "hop_count": hop_count, "head_hmac": prev_hmac}
+            seal = _compute_hmac(self._key, "", body)
+            write_atomic_json(sidecar, {**body, "seal": seal}, indent=None, sort_keys=True)
+
 
 def verify_run_chain(
     *,
@@ -406,6 +472,7 @@ def verify_run_chain(
     key: bytes,
     scope_resolver: Callable[[str], DelegationScope | None] | None = None,
     root_issuers: frozenset[str] = frozenset(),
+    require_sealed: bool = False,
 ) -> ChainResult:
     """Reconstruct and verify a run's delegation chain offline.
 
@@ -421,6 +488,10 @@ def verify_run_chain(
         key: The HMAC key (install audit key) the receipts were written with.
         scope_resolver: Optional lookup for receipts that carry only a
             content-addressed ``scope_ref`` rather than an inline scope body.
+        require_sealed: When True, a missing sidecar (``sealed is None``) is
+            treated as an error rather than as "never sealed". An auditor asks
+            for this to demand a completeness claim; default False keeps
+            pre-seal chains verifying exactly as before.
         root_issuers: Identities the run declared as chain roots, supplied from
             outside the receipts (the run manifest). A hop issued by one of them
             may be a root without being first, which is what lets several agents
@@ -484,6 +555,56 @@ def verify_run_chain(
             break
         prev_hmac = stored_hmac
 
+    # Check for a chain-head sidecar written by DelegationLedger.record_chain_head.
+    # When present, the declared hop count and head HMAC are compared against the
+    # reconstructed chain; a mismatch means the tail was removed after sealing.
+    sidecar_path = path.with_name(path.stem + _HEAD_SUFFIX)
+    sealed: bool | None = None
+    if sidecar_path.is_file():
+        head: Any
+        try:
+            head = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        except (TypeError, ValueError) as exc:
+            errors.append(f"chain-head sidecar is malformed: {exc}")
+            sealed = False
+        else:
+            if not isinstance(head, dict):
+                errors.append("chain-head sidecar is malformed: not a JSON object")
+                sealed = False
+            else:
+                head_obj = cast(dict[str, Any], head)
+                try:
+                    declared_count: int = int(head_obj["hop_count"])
+                    declared_hmac: str = str(head_obj["head_hmac"])
+                    declared_seal: str = str(head_obj["seal"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    errors.append(f"chain-head sidecar is malformed: {exc}")
+                    sealed = False
+                else:
+                    body = {"run_id": run_id, "hop_count": declared_count, "head_hmac": declared_hmac}
+                    expected_seal = _compute_hmac(key, "", body)
+                    if not _hmac.compare_digest(expected_seal, declared_seal):
+                        errors.append("chain-head sidecar seal mismatch (tampered or wrong key)")
+                        sealed = False
+                    elif len(receipts) != declared_count or prev_hmac != declared_hmac:
+                        if len(receipts) < declared_count:
+                            direction = "tail truncation detected"
+                        elif len(receipts) > declared_count:
+                            direction = "chain grew after sealing"
+                        else:
+                            direction = "head HMAC mismatch"
+                        errors.append(
+                            f"chain head mismatch: sidecar declares {declared_count} hop(s) "
+                            f"with head HMAC {declared_hmac[:16]}…, "
+                            f"but {len(receipts)} hop(s) were reconstructed "
+                            f"({direction})"
+                        )
+                        sealed = False
+                    else:
+                        sealed = True
+    elif require_sealed:
+        errors.append("chain-head sidecar is missing (sealed required by caller)")
+
     chain_ok = not errors and len(receipts) > 0
     authority = verify_authority(receipts, scope_resolver=scope_resolver, genesis=GENESIS_HMAC)
     verdict = grade_chain(
@@ -494,13 +615,14 @@ def verify_run_chain(
         root_issuers=root_issuers,
     )
     return ChainResult(
-        valid=chain_ok and authority.ok,
+        valid=chain_ok and authority.ok and sealed is not False,
         hops=len(receipts),
         receipts=receipts,
         errors=errors,
         chain_ok=chain_ok,
         authority=authority,
         verdict=verdict,
+        sealed=sealed,
     )
 
 
