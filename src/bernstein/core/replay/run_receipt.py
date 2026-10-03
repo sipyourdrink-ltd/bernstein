@@ -64,6 +64,11 @@ from bernstein.core.replay.journal import (
     run_journal_path,
     verify_events,
 )
+from bernstein.core.security.cose import (
+    CoseError,
+    build_cose_sign1_bytes,
+    decode_cose_sign1,
+)
 from bernstein.core.security.key_derivation import (
     DOMAIN_LINEAGE,
     SCHEME_V1,
@@ -93,6 +98,10 @@ RUN_RECEIPT_PAYLOAD_TYPE: str = "application/vnd.bernstein.run-receipt+json"
 
 #: Receipt filename inside ``.sdd/runs/<run_id>/`` (next to the journal).
 RUN_RECEIPT_FILENAME: str = "run-receipt.json"
+
+#: COSE_Sign1 projection of the same receipt, written beside the JSON (#6207).
+#: Additive: the JSON envelope, its binding and its signature are unchanged.
+RUN_RECEIPT_COSE_FILENAME: str = "run-receipt.cose"
 
 #: Env var naming an Ed25519 private key *file* (PEM PKCS#8 or raw 32-byte
 #: seed) used to sign run receipts at finalization.
@@ -158,6 +167,9 @@ class RunReceipt:
         receipt: The serialisable receipt dict.
         receipt_bytes: Canonical JSON bytes (byte-deterministic).
         receipt_path: On-disk path when written, else ``None``.
+        cose_bytes: COSE_Sign1 (RFC 9052) projection of the same binding
+            block, embedded payload, byte-deterministic (#6207).
+        cose_path: On-disk path of the ``.cose`` when written, else ``None``.
     """
 
     run_id: str
@@ -168,6 +180,8 @@ class RunReceipt:
     receipt_bytes: bytes
     receipt_path: Path | None = field(default=None)
     extension_set_digest: str | None = field(default=None)
+    cose_bytes: bytes | None = field(default=None)
+    cose_path: Path | None = field(default=None)
 
     @property
     def sha256(self) -> str:
@@ -197,6 +211,11 @@ class RunReceiptVerifyResult:
             as its string value), else ``None``.
         binding_version: Schema version of the subject binding block used
             to verify the receipt (e.g. ``"1.1.0"`` or ``"1.0.0"``).
+        cose_verified: ``True`` when a COSE_Sign1 envelope was supplied and
+            both its signature and its payload agreed with the JSON receipt;
+            ``None`` when none was supplied. Tri-state on purpose: a
+            JSON-only pass must not be readable as "the COSE envelope
+            checked out".
         warnings: Non-fatal advisory notices (e.g. legacy unbound audit
             window under schema 1.0.0).
         errors: Human-readable explanations, first failure first.
@@ -210,6 +229,7 @@ class RunReceiptVerifyResult:
     divergent_step: int | None = None
     key_verdict: str | None = None
     binding_version: str | None = None
+    cose_verified: bool | None = None
     warnings: list[str] = field(default_factory=list[str])
     errors: list[str] = field(default_factory=list[str])
 
@@ -731,11 +751,25 @@ def build_run_receipt(
         receipt["hash_profile"] = hash_profile
     receipt_bytes = _canonical_json_bytes(receipt) + b"\n"
 
+    # The same binding block, projected into COSE_Sign1 (#6207). The payload is
+    # embedded rather than detached so the file is registerable on its own with
+    # a transparency service; the price is a second copy of the binding, which
+    # verify_run_receipt compares rather than trusts.
+    cose_bytes = build_cose_sign1_bytes(
+        payload=binding_bytes,
+        content_type=RUN_RECEIPT_PAYLOAD_TYPE,
+        key_id=key_id,
+        kms_adapter=kms_adapter,
+    )
+
     receipt_path: Path | None = None
+    cose_path: Path | None = None
     if write:
         receipt_path = output_path or (journal_path.parent / RUN_RECEIPT_FILENAME)
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
         receipt_path.write_bytes(receipt_bytes)
+        cose_path = receipt_path.parent / RUN_RECEIPT_COSE_FILENAME
+        cose_path.write_bytes(cose_bytes)
         logger.info(
             "Run receipt written run=%s journal_events=%d spine_entries=%d path=%s",
             run_id,
@@ -753,6 +787,8 @@ def build_run_receipt(
         receipt_bytes=receipt_bytes,
         receipt_path=receipt_path,
         extension_set_digest=extension_set_digest,
+        cose_bytes=cose_bytes,
+        cose_path=cose_path,
     )
 
 
@@ -788,6 +824,7 @@ def verify_run_receipt(
     public_key_pem: bytes | None = None,
     key_chain_bytes: bytes | None = None,
     attested_signed_at: str | None = None,
+    cose_bytes: bytes | None = None,
 ) -> RunReceiptVerifyResult:
     """Verify a run receipt using only its own bytes (and an optional pin).
 
@@ -812,6 +849,11 @@ def verify_run_receipt(
 
     Args:
         receipt_bytes: The receipt file contents.
+        cose_bytes: Optional ``run-receipt.cose`` contents. When given, its
+            signature is checked under the same key and its payload must equal
+            the recomputed subject binding; a disagreement is a failure, not a
+            warning. Bytes rather than a path, so this function keeps verifying
+            from its inputs alone.
         public_key_pem: Optional PEM Ed25519 public key to pin. Without
             ``key_chain_bytes`` the embedded JWK must encode the same key,
             otherwise the receipt is rejected even when its content
@@ -1042,6 +1084,41 @@ def verify_run_receipt(
     except InvalidSignature:
         return _tampered(["Ed25519 signature does not verify over the recomputed subject binding"])
 
+    # 5b. The COSE_Sign1 projection, when the caller supplies it (#6207).
+    #
+    # Supplied as bytes rather than found on disk on purpose: this function's
+    # contract is to verify "using only its own bytes (and an optional pin)",
+    # so it never learns where the JSON came from and must not start guessing.
+    # The CLI holds the path and reads the sibling.
+    #
+    # An embedded payload means two copies of the binding exist, so the point
+    # here is to compare them rather than trust either: a .cose whose payload
+    # drifted attests a different run than the JSON describes, and a third
+    # party registering it would be registering that other run.
+    cose_verified: bool | None = None
+    if cose_bytes is not None:
+        try:
+            cose = decode_cose_sign1(cose_bytes)
+        except CoseError as exc:
+            return _malformed(
+                f"cose envelope is malformed: {exc}",
+                run_id=run_id,
+                binding_version=schema_version,
+            )
+        if cose.payload != binding_bytes:
+            return _tampered(
+                ["cose envelope payload differs from the recomputed subject binding the JSON receipt signs"]
+            )
+        if cose.content_type is not None and cose.content_type != RUN_RECEIPT_PAYLOAD_TYPE:
+            return _tampered(
+                [f"cose envelope content type is {cose.content_type!r}, expected {RUN_RECEIPT_PAYLOAD_TYPE!r}"]
+            )
+        try:
+            public_key.verify(cose.signature, cose.signing_input)
+        except InvalidSignature:
+            return _tampered(["cose envelope signature does not verify under the receipt's signing key"])
+        cose_verified = True
+
     # 6. Key lifecycle: the signature is authentic, but is the key trusted?
     key_verdict: str | None = None
     if key_chain_bytes is not None:
@@ -1096,6 +1173,7 @@ def verify_run_receipt(
         spine_entries=len(entries),
         key_verdict=key_verdict,
         binding_version=schema_version,
+        cose_verified=cose_verified,
         warnings=warnings,
     )
 
