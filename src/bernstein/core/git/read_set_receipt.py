@@ -98,14 +98,27 @@ class ReadSetRefusalReceipt:
     signer_public_key_pem: str = ""
     signature: str = ""
 
-    def to_canonical_dict(self) -> dict[str, Any]:
+    def to_canonical_dict(self, *, legacy_order: bool = False) -> dict[str, Any]:
         """Return the deterministic signed body (excludes signature + clock).
 
         ``timestamp`` and the signature are intentionally excluded so the
         canonical bytes -- and thus ``receipt_hash`` -- are a pure function of
         the refusal's content. Two operators refusing the same read-set against
-        the same baseline derive the same receipt hash.
+        the same baseline derive the same receipt hash. ``changed_paths`` is
+        emitted sorted by ``(path, old_commit, new_commit)`` because
+        ``sort_keys`` orders dict keys but not list items, so input order
+        (e.g. set iteration under differing ``PYTHONHASHSEED``) must not leak
+        into the bytes.
+
+        ``legacy_order=True`` keeps ``changed_paths`` in the as-stored order.
+        That is the form receipts minted before #6298 were signed and anchored
+        over; it is used only as a verification fallback, never for minting.
         """
+        paths = (
+            list(self.changed_paths)
+            if legacy_order
+            else sorted(self.changed_paths, key=lambda c: (c.path, c.old_commit, c.new_commit))
+        )
         return {
             "v": self.v,
             "task_id": self.task_id,
@@ -117,27 +130,27 @@ class ReadSetRefusalReceipt:
                     "old_commit": p.old_commit,
                     "new_commit": p.new_commit,
                 }
-                for p in self.changed_paths
+                for p in paths
             ],
         }
 
-    def canonical_bytes(self) -> bytes:
+    def canonical_bytes(self, *, legacy_order: bool = False) -> bytes:
         """RFC 8785-style canonical bytes of the signed body."""
         return json.dumps(
-            self.to_canonical_dict(),
+            self.to_canonical_dict(legacy_order=legacy_order),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
             allow_nan=False,
         ).encode("utf-8")
 
-    def receipt_hash(self) -> str:
+    def receipt_hash(self, *, legacy_order: bool = False) -> str:
         """``sha256:`` content hash of the canonical body (the chain anchor)."""
-        return "sha256:" + hashlib.sha256(self.canonical_bytes()).hexdigest()
+        return "sha256:" + hashlib.sha256(self.canonical_bytes(legacy_order=legacy_order)).hexdigest()
 
-    def signing_input(self) -> bytes:
+    def signing_input(self, *, legacy_order: bool = False) -> bytes:
         """Domain-separated preimage that the detached JWS is computed over."""
-        return READ_SET_REFUSAL_DOMAIN + self.canonical_bytes()
+        return READ_SET_REFUSAL_DOMAIN + self.canonical_bytes(legacy_order=legacy_order)
 
     def to_dict(self) -> dict[str, Any]:
         """Full on-disk record (signed body + signature + clock + hash)."""
@@ -255,7 +268,13 @@ def verify_refusal_receipt(receipt: ReadSetRefusalReceipt) -> bool:
         kid=READ_SET_REFUSAL_KID,
         public_key_pem=receipt.signer_public_key_pem,
     )
-    return verify_detached(receipt.signing_input(), receipt.signature, card)
+    if verify_detached(receipt.signing_input(), receipt.signature, card):
+        return True
+    # Records minted before #6298 were signed over the as-stored changed_paths
+    # order. Fall back to it only when it differs from the sorted form.
+    if receipt.canonical_bytes(legacy_order=True) == receipt.canonical_bytes():
+        return False
+    return verify_detached(receipt.signing_input(legacy_order=True), receipt.signature, card)
 
 
 # ---------------------------------------------------------------------------
@@ -356,11 +375,12 @@ def verify_receipt_offline(receipt_bytes: bytes, chain_path: str) -> bool:
     # Step 4: Verify the receipt is anchored in the chain
     from bernstein.core.security.audit_chain import EVENT_READ_SET_REFUSAL
 
-    recomputed = receipt.receipt_hash()
+    # Sorted form first; as-stored order covers receipts anchored before #6298.
+    recomputed = {receipt.receipt_hash(), receipt.receipt_hash(legacy_order=True)}
     matches = [
         e.details.get("receipt_hash", "")
         for e in chain.query(event_type=EVENT_READ_SET_REFUSAL)
-        if str(e.details.get("receipt_hash", "")) == recomputed
+        if str(e.details.get("receipt_hash", "")) in recomputed
     ]
     return bool(matches)
 
