@@ -18,6 +18,7 @@ import socket
 import threading
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003 - used at runtime in _load_persisted/_save
 from typing import TYPE_CHECKING, Any
 
@@ -584,7 +585,7 @@ class NodeHeartbeatClient:
             return False
 
         capacity = self._capacity_fn() if self._capacity_fn else self._capacity
-        payload = {
+        payload: dict[str, Any] = {
             "capacity": {
                 "max_agents": capacity.max_agents,
                 "available_slots": capacity.available_slots,
@@ -593,6 +594,14 @@ class NodeHeartbeatClient:
                 "supported_models": capacity.supported_models,
             },
         }
+        if capacity.disk_free_mb is not None:
+            payload["disk_free_mb"] = capacity.disk_free_mb
+        if capacity.mem_used_pct is not None:
+            payload["mem_used_pct"] = capacity.mem_used_pct
+        if capacity.mesh_rtt_ms is not None:
+            payload["mesh_rtt_ms"] = capacity.mesh_rtt_ms
+        if capacity.platform is not None:
+            payload["platform"] = capacity.platform
         try:
             resp = client.post(
                 f"{self._server_url}/cluster/nodes/{self._node_id}/heartbeat",
@@ -664,3 +673,97 @@ class NodeHeartbeatClient:
     def update_capacity(self, capacity: NodeCapacity) -> None:
         """Update the locally cached capacity (sent on next heartbeat)."""
         self._capacity = capacity
+
+
+# ---------------------------------------------------------------------------
+# Health verdict — evaluates worker-reported telemetry against thresholds.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class HealthThresholds:
+    """Configurable thresholds for worker health evaluation."""
+    min_disk_free_mb: int = 512
+    max_mem_used_pct: float = 95.0
+    max_mesh_rtt_ms: float = 5000.0
+
+
+def health_verdict(
+    *,
+    disk_free_mb: int | None = None,
+    mem_used_pct: float | None = None,
+    mesh_rtt_ms: float | None = None,
+    thresholds: HealthThresholds | None = None,
+) -> str:
+    """Return ``"ok"`` or ``"unhealthy:<reason>[,<reason>]"``."""
+    t = thresholds or HealthThresholds()
+    reasons: list[str] = []
+    if disk_free_mb is not None and disk_free_mb < t.min_disk_free_mb:
+        reasons.append("disk")
+    if mem_used_pct is not None and mem_used_pct > t.max_mem_used_pct:
+        reasons.append("memory")
+    if mesh_rtt_ms is not None and mesh_rtt_ms > t.max_mesh_rtt_ms:
+        reasons.append("mesh-rtt")
+    return "ok" if not reasons else "unhealthy:" + ",".join(reasons)
+
+
+# ---------------------------------------------------------------------------
+# Batch task assignment — assign N tasks to the best N workers in one call.
+# ---------------------------------------------------------------------------
+
+
+def batch_assign(
+    registry: NodeRegistry,
+    tasks: list[dict[str, Any]],
+    *,
+    preferred_labels: dict[str, str] | None = None,
+) -> list[tuple[dict[str, Any], NodeInfo | None]]:
+    """Assign a batch of tasks to available workers.
+
+    Each task dict may carry ``required_model`` and ``require_gpu``.
+    Returns ``(task, assigned_node_or_None)`` pairs. Slots are
+    decremented in-memory between picks so the same node is not
+    over-assigned within a single batch.
+
+    Uses power-of-two-choices when the pool is large enough:
+    pick two random candidates and assign to the one with more slots.
+    """
+    import random
+
+    online = [
+        n for n in registry.list_nodes(NodeStatus.ONLINE)
+        if n.capacity.available_slots > 0 and n.health == "ok"
+    ]
+    if not online:
+        return [(t, None) for t in tasks]
+
+    # Track remaining slots to avoid over-assignment
+    remaining: dict[str, int] = {n.id: n.capacity.available_slots for n in online}
+    node_map: dict[str, NodeInfo] = {n.id: n for n in online}
+
+    results: list[tuple[dict[str, Any], NodeInfo | None]] = []
+    for task in tasks:
+        req_model = task.get("required_model")
+        req_gpu = task.get("require_gpu", False)
+
+        candidates = [
+            nid for nid, slots in remaining.items()
+            if slots > 0
+            and (not req_model or req_model in node_map[nid].capacity.supported_models)
+            and (not req_gpu or node_map[nid].capacity.gpu_available)
+        ]
+
+        if not candidates:
+            results.append((task, None))
+            continue
+
+        # Power-of-two-choices
+        if len(candidates) >= 2:
+            a, b = random.sample(candidates, 2)
+            pick = a if remaining[a] >= remaining[b] else b
+        else:
+            pick = candidates[0]
+
+        remaining[pick] -= 1
+        results.append((task, node_map[pick]))
+
+    return results

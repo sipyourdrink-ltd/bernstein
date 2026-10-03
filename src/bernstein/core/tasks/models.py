@@ -1932,6 +1932,10 @@ class NodeCapacity:
     active_agents: int = 0
     gpu_available: bool = False
     supported_models: list[str] = field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+    disk_free_mb: int | None = None
+    mem_used_pct: float | None = None
+    mesh_rtt_ms: float | None = None
+    platform: str | None = None
 
 
 @dataclass
@@ -1947,10 +1951,24 @@ class NodeInfo:
     registered_at: float = field(default_factory=time.time)
     labels: dict[str, str] = field(default_factory=dict[str, str])  # e.g. {"gpu": "true", "region": "us-east"}
     cell_ids: list[str] = field(default_factory=list[str])  # Cells running on this node
+    health: str = "ok"
+    unhealthy_since: float | None = None
 
     def is_alive(self, timeout_s: float = 60.0) -> bool:
         """Check if the node has sent a heartbeat within timeout."""
         return time.time() - self.last_heartbeat < timeout_s
+
+    @property
+    def is_healthy(self) -> bool:
+        return self.health == "ok"
+
+    @property
+    def is_schedulable(self) -> bool:
+        return (
+            self.status == NodeStatus.ONLINE
+            and self.health == "ok"
+            and self.capacity.available_slots > 0
+        )
 
 
 @dataclass(frozen=True)
