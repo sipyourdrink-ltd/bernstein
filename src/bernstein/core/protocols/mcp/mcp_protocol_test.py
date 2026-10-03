@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from jsonschema import Draft202012Validator
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 
 from bernstein.core.protocols.mcp_registry import MCPServerEntry, load_catalog_entries
 
@@ -105,8 +105,8 @@ def validate_tool_contracts(tools: Sequence[Tool]) -> tuple[tuple[ToolValidation
             failures.append(f"Duplicate tool name returned by server: {tool.name}")
         seen_names.add(tool.name)
 
-        required_arguments = _required_arguments(tool.inputSchema)
-        input_schema_error = _schema_error(tool.inputSchema)
+        required_arguments = _required_arguments(tool.input_schema)
+        input_schema_error = _schema_error(tool.input_schema)
         output_schema_error = _schema_error(tool.outputSchema) if tool.outputSchema is not None else None
 
         if input_schema_error is not None:
@@ -239,7 +239,7 @@ def _required_arguments(schema: dict[str, Any]) -> tuple[str, ...]:
 def _first_tool_with_required_arguments(tools: Sequence[Tool]) -> Tool | None:
     """Return the first tool whose input schema has required fields."""
     for tool in tools:
-        if _required_arguments(tool.inputSchema):
+        if _required_arguments(tool.input_schema):
             return tool
     return None
 
@@ -247,7 +247,7 @@ def _first_tool_with_required_arguments(tools: Sequence[Tool]) -> Tool | None:
 def _first_tool_without_required_arguments(tools: Sequence[Tool]) -> Tool | None:
     """Return the first tool whose input schema can be called with ``{}``."""
     for tool in tools:
-        if not _required_arguments(tool.inputSchema):
+        if not _required_arguments(tool.input_schema):
             return tool
     return None
 
@@ -260,7 +260,7 @@ async def _call_rejected(
     """Return True when a tool call is rejected via MCP error or ``isError`` result."""
     try:
         result = await session.call_tool(tool_name, arguments)
-    except McpError as exc:
+    except MCPError as exc:
         return True, exc.error.message
     if result.isError:
         return True, _tool_result_text(result)
@@ -275,7 +275,7 @@ async def _call_succeeds(
     """Return True when a tool call succeeds without protocol-level error."""
     try:
         result = await session.call_tool(tool_name, arguments)
-    except McpError as exc:
+    except MCPError as exc:
         return False, exc.error.message
     if result.isError:
         return False, _tool_result_text(result)

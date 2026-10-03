@@ -384,7 +384,7 @@ def _project_task_helper(data: dict[str, Any]) -> Any:
             status_message = "Task was cancelled"
 
     created_at_ts = data.get("created_at")
-    created_at = datetime.fromtimestamp(created_at_ts, tz=UTC) if created_at_ts else datetime.now(UTC)
+    created_at = datetime.fromtimestamp(created_at_ts, tz=UTC).isoformat() if created_at_ts else datetime.now(UTC).isoformat()
 
     # Derive lastUpdatedAt from the task's newest recorded transition
     # (created -> claimed -> completed -> closed) so two reads of an unchanged
@@ -399,16 +399,16 @@ def _project_task_helper(data: dict[str, Any]) -> Any:
         data.get("closed_at"),
     )
     newest_ts = max((t for t in transition_ts if t is not None), default=None)
-    last_updated = datetime.fromtimestamp(newest_ts, tz=UTC) if newest_ts is not None else datetime.now(UTC)
+    last_updated = datetime.fromtimestamp(newest_ts, tz=UTC).isoformat() if newest_ts is not None else datetime.now(UTC).isoformat()
 
     return Task(
-        taskId=mcp_task_id,
+        task_id=mcp_task_id,
         status=mcp_status,  # type: ignore[arg-type]
-        statusMessage=status_message,
-        createdAt=created_at,
-        lastUpdatedAt=last_updated,
+        status_message=status_message,
+        created_at=created_at,
+        last_updated_at=last_updated,
         ttl=_TASK_TTL_MS,
-        pollInterval=5000,
+        poll_interval=5000,
     )
 
 
@@ -2239,7 +2239,7 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
     )
 
     async def get_task_handler(ctx: ServerRequestContext[None], params: GetTaskRequestParams) -> GetTaskResult:
-        parts = params.taskId.split(":", 1)
+        parts = params.task_id.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
@@ -2247,19 +2247,19 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             data = resp.json()
         task_obj = _project_task_helper(data)
         return GetTaskResult(
-            taskId=task_obj.taskId,
+            task_id=task_obj.task_id,
             status=task_obj.status,
-            statusMessage=task_obj.statusMessage,
-            createdAt=task_obj.createdAt,
-            lastUpdatedAt=task_obj.lastUpdatedAt,
+            status_message=task_obj.status_message,
+            created_at=task_obj.created_at,
+            last_updated_at=task_obj.last_updated_at,
             ttl=_TASK_TTL_MS,
-            pollInterval=5000,
+            poll_interval=5000,
         )
 
     async def get_task_result_handler(
         ctx: ServerRequestContext[None], params: GetTaskPayloadRequestParams
     ) -> CallToolResult:
-        parts = params.taskId.split(":", 1)
+        parts = params.task_id.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.get(f"{server_url}/tasks/{task_id}", headers=_auth_headers())
@@ -2309,7 +2309,7 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
         return ListTasksResult(tasks=mcp_tasks, nextCursor=next_cursor)
 
     async def cancel_task_handler(ctx: ServerRequestContext[None], params: CancelTaskRequestParams) -> CancelTaskResult:
-        parts = params.taskId.split(":", 1)
+        parts = params.task_id.split(":", 1)
         task_id = parts[0]
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.post(f"{server_url}/tasks/{task_id}/cancel", headers=_auth_headers())
@@ -2317,13 +2317,13 @@ def _register_tasks_extension(mcp: FastMCP[None], server_url: str) -> None:
             data = resp.json()
         task_obj = _project_task_helper(data)
         return CancelTaskResult(
-            taskId=task_obj.taskId,
+            task_id=task_obj.task_id,
             status=task_obj.status,
-            statusMessage=task_obj.statusMessage,
-            createdAt=task_obj.createdAt,
-            lastUpdatedAt=task_obj.lastUpdatedAt,
+            status_message=task_obj.status_message,
+            created_at=task_obj.created_at,
+            last_updated_at=task_obj.last_updated_at,
             ttl=_TASK_TTL_MS,
-            pollInterval=5000,
+            poll_interval=5000,
         )
 
     # Register handlers on the low-level server

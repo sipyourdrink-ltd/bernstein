@@ -208,7 +208,7 @@ def validate_tool_schema(schema: dict[str, Any]) -> list[SchemaValidationError]:
     - ``items`` (for arrays) is a dict with a ``type`` field
 
     Args:
-        schema: The tool's ``inputSchema`` or parameter schema dict.
+        schema: The tool's ``input_schema`` or parameter schema dict.
 
     Returns:
         List of validation errors (empty if schema is valid).

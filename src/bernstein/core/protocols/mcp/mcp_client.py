@@ -438,7 +438,7 @@ class MCPClientSession:
                 self.mark_degraded("tools/list entry missing required 'name' field")
                 raise MCPSchemaViolation(f"Server '{self._config.name}' returned a tool entry without a name")
             tool_data = cast("dict[str, Any]", entry)
-            input_schema = tool_data.get("inputSchema", {})
+            input_schema = tool_data.get("input_schema", {})
             tool = RemoteTool(
                 name=str(tool_data.get("name", "")),
                 description=str(tool_data.get("description", "")),
@@ -1244,7 +1244,7 @@ class MCPClientManager:
         ``(server, name)`` to guarantee stable ordering across calls.
         """
         canonical = [
-            {"server": server, "name": name, "description": desc, "inputSchema": schema}
+            {"server": server, "name": name, "description": desc, "input_schema": schema}
             for server, name, desc, schema in sorted(merged_tools, key=lambda x: (x[0], x[1]))
         ]
         return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -1259,7 +1259,7 @@ class MCPClientManager:
         The canonical form is a JSON array of objects sorted by tool name.
         """
         canonical = [
-            {"name": name, "description": desc, "inputSchema": schema}
+            {"name": name, "description": desc, "input_schema": schema}
             for name, desc, schema in sorted(tools, key=lambda x: x[0])
         ]
         return hashlib.sha256(
