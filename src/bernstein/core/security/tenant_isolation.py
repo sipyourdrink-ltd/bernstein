@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.anchored_write import mkdir_anchored
 from bernstein.core.security.tenanting import (
-    DEFAULT_TENANT_ID,
+    UNSPECIFIED_TENANT,
     TenantRegistry,
     ensure_tenant_layout,
     normalize_tenant_id,
@@ -200,7 +200,9 @@ class TenantIsolationManager:
             Filtered dict containing only the tenant's tasks.
         """
         normalized = normalize_tenant_id(tenant_id)
-        return {tid: task for tid, task in tasks.items() if getattr(task, "tenant_id", DEFAULT_TENANT_ID) == normalized}
+        return {
+            tid: task for tid, task in tasks.items() if getattr(task, "tenant_id", UNSPECIFIED_TENANT) == normalized
+        }
 
     def check_quota(self, tenant_id: str, current_task_count: int) -> tuple[bool, str]:
         """Check whether a tenant can create another task.

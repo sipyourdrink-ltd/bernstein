@@ -154,6 +154,7 @@ from bernstein.core.routes.route_table import iter_route_paths, route_path_templ
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import (
     DEFAULT_TENANT_ID,
+    InvalidTenantIdError,
     bind_request_tenant,
     requested_tenant_override,
 )
@@ -1139,7 +1140,14 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         # An agent works one tenant's tasks - the tenant its token was issued
         # for - whichever tenant it names in a header.
         credential = getattr(agent_identity, "credential", None)
-        bind_request_tenant(request, getattr(credential, "tenant_id", None))
+        try:
+            bind_request_tenant(request, getattr(credential, "tenant_id", None))
+        except InvalidTenantIdError:
+            # A credential minted without a tenant carries the unspecified
+            # sentinel, which names no tenant (#5028).  Refuse it as an auth
+            # failure rather than letting the raise surface as a 500.
+            logger.warning("Agent %s denied: credential names no tenant", sanitize_log(agent_identity.id))
+            return JSONResponse(status_code=401, content={"detail": "Invalid or expired authentication token"})
 
         required_permission = _get_required_permission(path, request.method)
 

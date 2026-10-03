@@ -28,7 +28,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from bernstein.core.security.tenanting import DEFAULT_TENANT_ID, normalize_tenant_id
+from bernstein.core.security.tenanting import (
+    DEFAULT_TENANT_ID,
+    UNSPECIFIED_TENANT,
+    normalize_tenant_id,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -320,7 +324,8 @@ def principal_from_agent_identity(identity: AgentIdentity) -> AgentPrincipal:
                 algorithm=credential.algorithm if is_jwt else "",
             ),
         )
-        tenant_id = credential.tenant_id
+        if credential.tenant_id is not UNSPECIFIED_TENANT and credential.tenant_id != "<unspecified>":
+            tenant_id = credential.tenant_id
     return AgentPrincipal(
         id=identity.id,
         role=identity.role,

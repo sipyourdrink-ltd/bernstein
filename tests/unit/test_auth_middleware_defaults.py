@@ -587,7 +587,7 @@ def test_agent_jwt_token_accepted_under_default_on_auth(monkeypatch: pytest.Monk
     from bernstein.core.identity.agent_jwt import AgentIdentityStore
 
     store = AgentIdentityStore(tmp_path)
-    _, token = store.create_identity("agent-1", "backend", task_ids=[])
+    _, token = store.create_identity("agent-1", "backend", task_ids=[], metadata={"tenant_id": "default"})
 
     app = FastAPI()
     app.add_middleware(SSOAuthMiddleware, agent_identity_store=store)

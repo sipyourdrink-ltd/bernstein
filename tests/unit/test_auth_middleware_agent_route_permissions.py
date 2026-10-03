@@ -90,6 +90,7 @@ def _agent_headers(
         role,
         task_ids=task_ids,
         extra_permissions=extra_permissions,
+        metadata={"tenant_id": "default"},
     )
     return {"Authorization": f"Bearer {token}"}
 
