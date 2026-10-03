@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 #: project's standard truthy words.
 ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH = "BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH"
 
+#: Env var an operator sets to keep a run entirely local: the merge still
+#: happens, the push after it does not. ``safe_push`` fetches, may rebase, and
+#: writes to ``origin``, so on a repository that has a remote a local-only or
+#: offline run published agent commits nobody had reviewed -- and there was no
+#: way to ask it not to short of removing the remote. Accepts the project's
+#: standard truthy words.
+ENV_LOCAL_ONLY = "BERNSTEIN_LOCAL_ONLY"
+
 _TRUTHY_ALLOW = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
 
 
@@ -48,6 +56,20 @@ def _allow_merge_to_default_branch(env: dict[str, str] | None = None) -> bool:
 
     source = os.environ if env is None else env
     raw = source.get(ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH)
+    return raw is not None and raw.strip().lower() in _TRUTHY_ALLOW
+
+
+def _local_only(env: dict[str, str] | None = None) -> bool:
+    """Return ``True`` when this run must not touch a git remote.
+
+    Read at the push site rather than passed down: the two merge entry points
+    and the queue path all reach the same `safe_push`, and threading a flag
+    through each of them is how one of them ends up missing it.
+    """
+    import os
+
+    source = os.environ if env is None else env
+    raw = source.get(ENV_LOCAL_ONLY)
     return raw is not None and raw.strip().lower() in _TRUTHY_ALLOW
 
 
@@ -644,11 +666,23 @@ def _run_merge_and_push(
         # ``target_branch`` is None only on detached HEAD; fall back to the
         # resolved default there.
         push_branch = target_branch or resolve_default_branch(worktree_root)
-        push_result = safe_push(worktree_root, push_branch)
-        if push_result.ok:
-            logger.info("Pushed merged work from %s to origin/%s", session.id, push_branch)
+        if _local_only():
+            # Skipped outright, not attempted-and-ignored: `safe_push` fetches
+            # and may rebase before it writes, so "try and swallow the error"
+            # still performs remote I/O, which is the thing an offline run
+            # cannot do and a local-only run does not want (#5961).
+            logger.info(
+                "%s set: keeping merged work from %s local, not pushing %s",
+                ENV_LOCAL_ONLY,
+                session.id,
+                push_branch,
+            )
         else:
-            logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
+            push_result = safe_push(worktree_root, push_branch)
+            if push_result.ok:
+                logger.info("Pushed merged work from %s to origin/%s", session.id, push_branch)
+            else:
+                logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
 
     return merge_result
 
@@ -887,6 +921,13 @@ def retry_pending_pushes(workdir: Path) -> int:
     Returns:
         Number of pushes successfully retried.
     """
+    if _local_only():
+        # The queue is left intact: these are pushes a previous run recorded,
+        # and a local-only run declining to send them is not the same as
+        # deciding they are never wanted (#5961).
+        logger.info("%s set: not retrying pending pushes", ENV_LOCAL_ONLY)
+        return 0
+
     path = pending_pushes_path(workdir)
     if not path.exists():
         return 0
