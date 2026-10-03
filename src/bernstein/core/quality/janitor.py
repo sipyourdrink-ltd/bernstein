@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import httpx
 
 from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
+from bernstein.core import defaults as _defaults
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.guardrails import GuardrailsConfig, run_guardrails
 from bernstein.core.llm import call_llm
@@ -49,6 +50,11 @@ if TYPE_CHECKING:
     from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
+
+# Env var overriding the ``test_passes`` completion-signal command timeout
+# (issue #6119). Checked first, ahead of ``tuning.quality.test_timeout_s`` in
+# bernstein.yaml; see :func:`_resolve_test_timeout_s`.
+TEST_TIMEOUT_ENV_VAR = "BERNSTEIN_TEST_TIMEOUT_S"
 
 # --- Judge constants ---
 
@@ -324,8 +330,7 @@ def evaluate_signal(
         case "test_passes":
             command = _resolve_branch_check_command(signal.value, workdir)
             command = _resolve_test_path_command(command, workdir)
-            ok = _check_test_passes(command, workdir)
-            return ok, "exit 0" if ok else "non-zero exit"
+            return _check_test_passes(command, workdir)
         case "file_contains":
             ok = _check_file_contains(signal.value, workdir)
             if ok:
@@ -2266,7 +2271,39 @@ def _resolve_test_path_command(command: str, workdir: Path) -> str:
     return resolved_command
 
 
-def _check_test_passes(command: str, workdir: Path) -> bool:
+def _resolve_test_timeout_s() -> float:
+    """Resolve the ``test_passes`` command timeout, in seconds.
+
+    Precedence: ``BERNSTEIN_TEST_TIMEOUT_S`` env var > ``tuning.quality.
+    test_timeout_s`` in bernstein.yaml (:class:`bernstein.core.defaults.
+    QualityDefaults`) > the shipped ``120`` default. Resolved fresh on every
+    call -- read via the ``_defaults`` module rather than a value imported at
+    module load, so a ``tuning.quality`` override applied by
+    ``core.defaults.override`` after this module is imported still takes
+    effect (issue #6119).
+    """
+    raw_env = os.environ.get(TEST_TIMEOUT_ENV_VAR)
+    if raw_env is not None and raw_env.strip():
+        try:
+            env_value = float(raw_env)
+        except ValueError:
+            logger.warning(
+                "%s=%r is not a valid float; falling back to config/default test timeout",
+                TEST_TIMEOUT_ENV_VAR,
+                raw_env,
+            )
+        else:
+            if env_value > 0:
+                return env_value
+            logger.warning(
+                "%s=%r is not positive; falling back to config/default test timeout",
+                TEST_TIMEOUT_ENV_VAR,
+                raw_env,
+            )
+    return float(_defaults.QUALITY.test_timeout_s)
+
+
+def _check_test_passes(command: str, workdir: Path) -> tuple[bool, str]:
     """Run a shell command and check for exit code 0.
 
     Args:
@@ -2274,8 +2311,12 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
         workdir: Working directory for the subprocess.
 
     Returns:
-        True if exit code is 0.
+        Tuple of (passed, detail). ``detail`` distinguishes a timeout from an
+        ordinary non-zero exit so the janitor's verdict log and completion-
+        signal report never read a killed process as a failing test
+        (issue #6119).
     """
+    timeout_s = _resolve_test_timeout_s()
     try:
         # SECURITY: shell=True required because janitor commands are internally
         # constructed test invocations (e.g. "pytest tests/...") that may use shell
@@ -2285,7 +2326,7 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
             shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             cwd=workdir,
             capture_output=True,
-            timeout=120,
+            timeout=timeout_s,
         )
         if result.returncode != 0:
             logger.info(
@@ -2296,15 +2337,17 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
                 result.stderr.decode("utf-8", errors="replace")[-2000:],
                 result.stdout.decode("utf-8", errors="replace")[-2000:],
             )
-        return result.returncode == 0
+            return False, "non-zero exit"
+        return True, "exit 0"
     except subprocess.TimeoutExpired as exc:
         logger.warning(
-            "janitor test_passes TIMEOUT: command=%r cwd=%s timeout=120s exc=%s",
+            "janitor test_passes TIMEOUT: command=%r cwd=%s timed out after %ss exc=%s",
             command,
             workdir,
+            timeout_s,
             exc,
         )
-        return False
+        return False, f"timed out after {timeout_s}s"
     except OSError as exc:
         logger.warning(
             "janitor test_passes ERROR: command=%r cwd=%s exc=%s",
@@ -2312,7 +2355,7 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
             workdir,
             exc,
         )
-        return False
+        return False, f"error: {exc}"
 
 
 def _check_file_contains(spec: str, workdir: Path) -> bool:
