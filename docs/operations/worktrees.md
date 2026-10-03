@@ -166,6 +166,41 @@ bernstein audit verify-hmac                       # exits non-zero on any tamper
 bernstein audit query --event-type worktree.reap  # list reap events
 ```
 
+## Run helpers (not yet captured by gc)
+
+`bernstein.core.worktrees.run_helpers` can save the scripts an agent
+wrote and executed in a worktree before that worktree is destroyed.
+`bernstein worktrees gc` does not call it yet: no adapter emits the
+journal rows it reads, and nothing maps a reaped worktree to its run id.
+Until both land, `gc` deletes helper scripts along with the worktree.
+
+What it does when called for a run:
+
+- **Classification** reads only the run journal. A path is a helper when
+  a `file_create` row is followed by at least one `file_execute` row. A
+  file that was created but never executed is scaffolding and is ignored.
+  An execute with no earlier create (a pre-existing tool) is ignored.
+  Absolute, drive-qualified, `~` and `..` paths are refused.
+- **Exit codes.** A helper that exited non-zero still counts, because a
+  reproduction harness is meant to fail. An execution with no exit code
+  is recorded as `null` (unknown), never as `0`.
+- **Capture** stores the file bytes in `.sdd/cas`. A symlink or path
+  that resolves outside the worktree is skipped. A failure on one helper
+  is logged and the others are still captured.
+- **Record.** Each capture appends one row to
+  `.sdd/runs/<run_id>/run_helpers.jsonl`: path, origin step (journal
+  index of the first create), execution count, exit codes, trust class
+  `agent_authored`, content hash, and the journal head it was classified
+  from. The record is also stored in `.sdd/cas` under its own SHA-256, so
+  two helpers with identical bytes keep separate records.
+- **The run journal is never written.** A finalized run has sealed its
+  journal head, and appending to it would make `bernstein seal` refuse
+  the run.
+
+`bernstein runs helpers <run-id>` lists a run's records (`--json` for
+machine-readable rows). It leaves out any row whose record hash no
+longer recomputes.
+
 ## TUI integration
 
 The TUI's `WorktreeListPanel` refreshes the same classifier output

@@ -352,6 +352,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein wrap-up` | End-of-session summary. | `cli/wrap_up_cmd.py` |
 | `bernstein history` | Show run history. | `cli/maintenance_cmd.py:history_cmd` |
 | `bernstein runs report` | Finished runs with a classified outcome. | `cli/commands/runs_cmd.py` |
+| `bernstein runs helpers RUN_ID` | Agent-written helpers captured for a run. | `cli/commands/runs_cmd.py` |
 | `bernstein report commits` | Per-run git diff stats. | `cli/commands/status_cmd.py:1232` |
 | `bernstein report` | Build a custom report (group). | `cli/report_cmd.py` |
 | `bernstein slo` | SLO dashboard. | `cli/slo_cmd.py:191` |
@@ -444,6 +445,20 @@ carries the outcome class and the one line of evidence it was classified from:
 run), `no-changes` (zero commits over base), `infra-error` (adapter or transport
 death, or no wrap-up was ever recorded), and `wedged` (the run ended with open
 tasks nothing could spawn).
+
+##### `bernstein runs helpers`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `RUN_ID` | required | Run whose helpers to list (positional). |
+| `--workdir PATH` | `.` | Project root. |
+| `--json` | off | Emit stable machine-readable rows instead of the table. |
+
+Lists `.sdd/runs/<run_id>/run_helpers.jsonl`: each executed, agent-created
+file with its origin step, execution count, exit codes (`?` for unknown) and
+content hash. A row whose record hash no longer recomputes is left out.
+`worktrees gc` does not capture helpers yet; see
+[worktrees](../operations/worktrees.md#run-helpers-not-yet-captured-by-gc).
 
 #### `bernstein watch`
 
