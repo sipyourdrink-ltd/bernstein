@@ -207,6 +207,29 @@ def seal_publish(
     )
 
 
+def _validate_log_public_keys(
+    ctx: click.Context,
+    param: click.Parameter,
+    value: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Reject a malformed ``--log-public-key`` before any anchor is read."""
+    normalized: list[str] = []
+    for raw in value:
+        key = raw.strip().lower()
+        try:
+            key_bytes = bytes.fromhex(key)
+        except ValueError:
+            key_bytes = b""
+        if len(key_bytes) != 32:
+            raise click.BadParameter(
+                f"{raw!r}: expected 64 hex characters (raw 32-byte Ed25519 key)",
+                ctx=ctx,
+                param=param,
+            )
+        normalized.append(key)
+    return tuple(normalized)
+
+
 @seal_group.command("verify")
 @click.argument("run_id")
 @click.option("--sdd-dir", "sdd_dir", default=".sdd", show_default=True, help="Path to the .sdd directory.")
@@ -222,6 +245,7 @@ def seal_publish(
     "log_public_keys",
     multiple=True,
     default=(),
+    callback=_validate_log_public_keys,
     help=(
         "Ed25519 log public key you accept, lowercase hex of the raw 32-byte "
         "key. Repeatable. The key inside the anchor is only a hint to pick "
