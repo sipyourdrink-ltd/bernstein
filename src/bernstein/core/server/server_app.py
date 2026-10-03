@@ -1035,7 +1035,7 @@ def create_app(
     _runtime_dir = jsonl_path.parent
     _nodes_persist: Path | None = None
     if _runtime_dir.name == "runtime" and _runtime_dir.parent.name == ".sdd":
-        _nodes_persist = _runtime_dir / "nodes.json"
+        _nodes_persist = _runtime_dir / "nodes.db"
     node_registry = NodeRegistry(effective_cluster, persist_path=_nodes_persist)
 
     # Cluster JWT authentication. Constructed below, once the API legacy

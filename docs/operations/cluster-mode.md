@@ -416,3 +416,65 @@ admission webhook: a workload is never blocked from starting.
 | Fleet aggregator                 | `src/bernstein/core/fleet/aggregator.py`                                        |
 | Workload governance inventory    | `src/bernstein/core/govern/cluster_inventory.py`                                |
 | Models / data classes            | `src/bernstein/core/models.py` - `NodeInfo`, `NodeCapacity`, `NodeStatus`, `ClusterConfig` |
+
+## Running at scale
+
+### 1. SQLite WAL store and JSON migration
+
+At 2000 nodes, JSON file rewrites become a bottleneck, occurring approximately 33 times per second. With the SQLite WAL (Write-Ahead Logging) store, each heartbeat translates to a single UPSERT operation, eliminating full file rewrites and significantly improving performance. The registry stores nodes in `.sdd/runtime/nodes.db`. If a `nodes.json` sits next to it and the database is empty, its nodes are imported on first start. Heartbeats rewrite a row only when status or health changes or every 30 seconds; batch heartbeats and stale sweeps write in one transaction.
+
+### 2. Health telemetry fields
+
+New fields have been added to `NodeCapacity` and `NodeInfo` for enhanced health telemetry:
+
+-   **`NodeCapacity` fields**:
+    -   `disk_free_mb` (int): Free disk space in megabytes.
+    -   `mem_used_pct` (float): Percentage of memory used.
+    -   `mesh_rtt_ms` (float): Mesh round-trip time in milliseconds.
+    -   `platform` (str): Operating system and architecture information.
+-   **`NodeInfo` fields**:
+    -   `health` (str: `ok`/`degraded`/`critical`): Overall health status of the node.
+    -   `unhealthy_since` (float timestamp): Timestamp when the node's health status changed to `degraded` or `critical`.
+
+The `HealthThresholds` dataclass in `cluster.py` defines the criteria used to evaluate these health metrics. The `batch_assign()` function marks nodes based on these defined thresholds.
+
+### 3. Batch heartbeat endpoint
+
+A new `POST /cluster/nodes/heartbeats` endpoint has been introduced to accept `NodeHeartbeatBatchRequest` for efficient processing of multiple heartbeats.
+
+-   **Maximum heartbeats**: The endpoint accepts a maximum of 500 heartbeats per request.
+-   **Response structure**: The response includes:
+    -   `accepted`: A list of node IDs for successfully processed heartbeats.
+    -   `unknown`: A list of node IDs that are not recognized by the cluster, signaling that these nodes may need to re-register.
+    -   `misdirected`: A dictionary mapping node IDs to the URL of the shard that owns them.
+
+### 4. Sharding configuration
+
+The cluster now supports sharding for improved scalability and distribution of nodes.
+
+-   `cluster.shard_id` (`ClusterConfig.shard_id`): Identifies the current shard.
+-   `cluster.shards` (`ClusterConfig.shards`): List of `{id, url}` entries defining all shards. `shard_id` must be one of them.
+-   **Seed example**:
+
+    ```yaml
+    cluster:
+      enabled: true
+      shard_id: a
+      shards:
+        - {id: a, url: "https://central-a.example.com"}
+        - {id: b, url: "https://central-b.example.com"}
+    ```
+
+-   **Node ID**: with shards configured, a new node gets `sha256(name|url)[:12]`.
+-   **Routing**: ownership comes from a consistent hash ring over the shard ids (SHA-256 of `<shard_id>#<i>`, first 8 bytes big-endian, 100 virtual nodes per shard). The edge relay uses the same ring.
+-   **Misdirected requests**: registration, heartbeat and batch heartbeat for a node owned by another shard return `421` with `{shard_id, url}` (batch: listed under `misdirected`).
+-   **`GET /cluster/shard-map`**: returns this shard's id, the virtual node count and all `{id, url}` shards; `404` when the cluster is not sharded.
+
+### 5. Edge relay
+
+An edge relay component has been introduced to optimize heartbeat processing and routing.
+
+-   **Location**: `edge/relay/` (implemented with ES modules, no npm dependencies).
+-   **Routing**: Routes node requests by `node_id` to the owning shard using the same hash ring logic as the sharding configuration.
+-   **Batching**: Buffers heartbeats and flushes them in batches of at most 500 via `POST /cluster/nodes/heartbeats`, sending `CLUSTER_TOKEN` as a bearer token.
+-   **Deployment**: Designed for deployment as Cloudflare Workers + Durable Objects for global distribution and low-latency access.

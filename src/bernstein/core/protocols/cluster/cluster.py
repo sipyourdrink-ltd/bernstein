@@ -11,14 +11,15 @@ server.
 
 from __future__ import annotations
 
-import json
+import functools
 import logging
 import operator
 import socket
 import threading
 import time
 from contextlib import suppress
-from pathlib import Path  # noqa: TC003 - used at runtime in _load_persisted/_save
+from dataclasses import dataclass
+from pathlib import Path  # noqa: TC003 - used at runtime
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -35,11 +36,52 @@ from bernstein.core.protocols.cluster.cluster_tls import (
     TLSConfig,
     build_httpx_client_kwargs,
 )
+from bernstein.core.protocols.cluster.shard_ring import HashRing
+from bernstein.core.protocols.cluster.sqlite_node_store import SQLiteNodeStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Shard routing — deterministic node assignment for scale-out.
+# ---------------------------------------------------------------------------
+
+
+def _compute_node_id_sharded(name: str, url: str) -> str:
+    """Compute deterministic node ID from name and url when sharded."""
+    import hashlib
+
+    identity = f"{name}|{url}"
+    return hashlib.sha256(identity.encode()).hexdigest()[:12]
+
+
+SHARD_VNODES = 100
+_HEARTBEAT_PERSIST_INTERVAL_S = 30.0
+
+
+def _find_owner_shard(node_id: str, shards: tuple[tuple[str, str], ...]) -> str | None:
+    """Find owner shard using consistent hashing.
+
+    Returns shard_id of the owner, or None if no shards configured.
+    """
+    if not shards:
+        return None
+    return _ring_for(tuple(sid for sid, _ in shards)).lookup(node_id)
+
+
+@functools.lru_cache(maxsize=8)
+def _ring_for(shard_ids: tuple[str, ...]) -> HashRing:
+    return HashRing(shard_ids, SHARD_VNODES)
+
+
+def _get_shard_url(shard_id: str, shards: tuple[tuple[str, str], ...]) -> str | None:
+    """Lookup the URL for a shard ID."""
+    for sid, url in shards:
+        if sid == shard_id:
+            return url
+    return None
 
 
 class NodeRegistry:
@@ -55,61 +97,59 @@ class NodeRegistry:
         self._nodes: dict[str, NodeInfo] = {}
         self._config = config
         self._persist_path = persist_path
+        self._store: SQLiteNodeStore | None = None
+        self._last_persisted: dict[str, float] = {}
+        self._heartbeat_seen: set[str] = set()
         if persist_path is not None:
+            self._open_store(persist_path)
             self._load_persisted()
 
     @property
     def config(self) -> ClusterConfig:
         return self._config
 
+    def _open_store(self, persist_path: Path) -> None:
+        db_path = persist_path.with_suffix(".db") if persist_path.suffix == ".json" else persist_path
+        legacy = db_path.with_suffix(".json")
+        try:
+            self._store = SQLiteNodeStore(db_path)
+            if legacy.exists() and self._store.count() == 0:
+                self._store.migrate_from_json(legacy)
+        except Exception as exc:
+            logger.warning("Failed to open node store: %s", exc)
+            self._store = None
+
     def _load_persisted(self) -> None:
-        """Load nodes from disk, marking all as OFFLINE until heartbeat."""
-        if self._persist_path is None or not self._persist_path.exists():
+        """Load nodes from the store; operator-set statuses survive, the rest start OFFLINE."""
+        if self._store is None:
             return
         try:
-            data = json.loads(self._persist_path.read_text())
-            for entry in data:
-                node = NodeInfo(
-                    id=entry["id"],
-                    name=entry.get("name", ""),
-                    url=entry.get("url", ""),
-                    capacity=NodeCapacity(
-                        max_agents=entry.get("max_agents", 6),
-                        supported_models=entry.get("supported_models", ["sonnet", "opus", "haiku"]),
-                    ),
-                    status=NodeStatus.OFFLINE,  # Always start offline
-                    last_heartbeat=0.0,
-                    registered_at=entry.get("registered_at", 0.0),
-                    labels=entry.get("labels", {}),
-                    cell_ids=entry.get("cell_ids", []),
-                )
+            for node in self._store.list_nodes():
+                if node.status not in _OPERATOR_INTENT_STATUSES:
+                    node.status = NodeStatus.OFFLINE
+                node.last_heartbeat = 0.0
                 self._nodes[node.id] = node
-            logger.info("Loaded %d persisted nodes (all marked OFFLINE)", len(self._nodes))
+            logger.info("Loaded %d persisted nodes", len(self._nodes))
         except Exception as exc:
             logger.warning("Failed to load persisted nodes: %s", exc)
 
-    def _save(self) -> None:
-        """Persist current node registry to disk."""
-        if self._persist_path is None:
+    def _persist(self, node: NodeInfo) -> None:
+        """Write one node row."""
+        if self._store is None:
             return
         try:
-            data: list[dict[str, Any]] = [
-                {
-                    "id": node.id,
-                    "name": node.name,
-                    "url": node.url,
-                    "max_agents": node.capacity.max_agents,
-                    "supported_models": node.capacity.supported_models,
-                    "registered_at": node.registered_at,
-                    "labels": node.labels,
-                    "cell_ids": node.cell_ids,
-                }
-                for node in self._nodes.values()
-            ]
-            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-            self._persist_path.write_text(json.dumps(data, indent=2))
+            self._store.upsert(node)
+            self._last_persisted[node.id] = time.time()
         except Exception as exc:
-            logger.warning("Failed to persist node registry: %s", exc)
+            logger.warning("Failed to persist node %s: %s", node.id, exc)
+
+    def _persist_delete(self, node_id: str) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.delete(node_id)
+        except Exception as exc:
+            logger.warning("Failed to delete node %s: %s", node_id, exc)
 
     def register(self, node: NodeInfo) -> NodeInfo:
         """Register or re-register a node.
@@ -131,7 +171,7 @@ class NodeRegistry:
             existing.labels = node.labels or existing.labels
             existing.cell_ids = node.cell_ids or existing.cell_ids
             logger.info("Re-registered node %s (%s)", node.id, node.name)
-            self._save()
+            self._persist(existing)
             self._sync_node_count_metrics()
             return existing
 
@@ -140,7 +180,7 @@ class NodeRegistry:
         node.status = NodeStatus.ONLINE
         self._nodes[node.id] = node
         logger.info("Registered new node %s (%s) at %s", node.id, node.name, node.url)
-        self._save()
+        self._persist(node)
         self._sync_node_count_metrics()
         _audit.record_node_registered(
             node.id,
@@ -150,28 +190,91 @@ class NodeRegistry:
         )
         return node
 
-    def heartbeat(self, node_id: str, capacity: NodeCapacity | None = None) -> NodeInfo | None:
-        """Record a heartbeat from a node. Returns None if node is unknown."""
+    def heartbeat(
+        self,
+        node_id: str,
+        capacity: NodeCapacity | None = None,
+        *,
+        disk_free_mb: int | None = None,
+        mem_used_pct: float | None = None,
+        mesh_rtt_ms: float | None = None,
+        platform: str | None = None,
+        persist: bool = True,
+    ) -> NodeInfo | None:
+        """Record a heartbeat from a node. Returns None if node is unknown.
+
+        The row is rewritten only when status or health changed, or the last
+        write is older than ``_HEARTBEAT_PERSIST_INTERVAL_S``. With
+        ``persist=False`` the caller writes the row itself.
+        """
         node = self._nodes.get(node_id)
         if node is None:
             _metrics.record_heartbeat("rejected_unknown_node")
             return None
         node.last_heartbeat = time.time()
+        status_flipped = False
         # Don't override CORDONED/DRAINING status
         if node.status == NodeStatus.OFFLINE:
             node.status = NodeStatus.ONLINE
-            self._save()
-            self._sync_node_count_metrics()
+            status_flipped = True
         if capacity is not None:
             node.capacity = capacity
+        cap = node.capacity
+        if disk_free_mb is not None:
+            cap.disk_free_mb = disk_free_mb
+        if mem_used_pct is not None:
+            cap.mem_used_pct = mem_used_pct
+        if mesh_rtt_ms is not None:
+            cap.mesh_rtt_ms = mesh_rtt_ms
+        if platform is not None:
+            cap.platform = platform
+        verdict = health_verdict(
+            disk_free_mb=cap.disk_free_mb,
+            mem_used_pct=cap.mem_used_pct,
+            mesh_rtt_ms=cap.mesh_rtt_ms,
+        )
+        health_changed = verdict != node.health
+        if verdict != "ok" and node.health == "ok":
+            node.unhealthy_since = node.last_heartbeat
+        elif verdict == "ok":
+            node.unhealthy_since = None
+        node.health = verdict
+        first_beat = node.id not in self._heartbeat_seen
+        self._heartbeat_seen.add(node.id)
+        if persist and (
+            first_beat
+            or status_flipped
+            or health_changed
+            or node.last_heartbeat - self._last_persisted.get(node.id, 0.0) >= _HEARTBEAT_PERSIST_INTERVAL_S
+        ):
+            self._persist(node)
+        if status_flipped:
+            self._sync_node_count_metrics()
         _metrics.record_heartbeat("accepted")
         return node
+
+    def heartbeat_batch(self, items: list[tuple[str, NodeCapacity | None]]) -> list[NodeInfo | None]:
+        """Record several heartbeats and write the touched rows in one transaction."""
+        results = [self.heartbeat(node_id, capacity, persist=False) for node_id, capacity in items]
+        self._persist_many([n for n in results if n is not None])
+        return results
+
+    def _persist_many(self, nodes: list[NodeInfo]) -> None:
+        if self._store is None or not nodes:
+            return
+        try:
+            self._store.upsert_many(nodes)
+            now = time.time()
+            for node in nodes:
+                self._last_persisted[node.id] = now
+        except Exception as exc:
+            logger.warning("Failed to persist %d nodes: %s", len(nodes), exc)
 
     def unregister(self, node_id: str) -> bool:
         """Remove a node from the registry."""
         removed = self._nodes.pop(node_id, None) is not None
         if removed:
-            self._save()
+            self._persist_delete(node_id)
             self._sync_node_count_metrics()
             _audit.record_node_left(node_id, reason="unregistered")
         return removed
@@ -183,7 +286,7 @@ class NodeRegistry:
             return None
         node.status = NodeStatus.CORDONED
         logger.info("Cordoned node %s (%s)", node.id, node.name)
-        self._save()
+        self._persist(node)
         self._sync_node_count_metrics()
         _audit.record_node_cordoned(node.id)
         return node
@@ -196,7 +299,8 @@ class NodeRegistry:
         if node.status in (NodeStatus.CORDONED, NodeStatus.DRAINING):
             node.status = NodeStatus.ONLINE
             logger.info("Uncordoned node %s (%s)", node.id, node.name)
-            self._save()
+            self._persist(node)
+            self._sync_node_count_metrics()
         return node
 
     def start_drain(self, node_id: str) -> NodeInfo | None:
@@ -206,7 +310,7 @@ class NodeRegistry:
             return None
         node.status = NodeStatus.DRAINING
         logger.info("Started draining node %s (%s)", node.id, node.name)
-        self._save()
+        self._persist(node)
         self._sync_node_count_metrics()
         _audit.record_node_drained(node.id)
         return node
@@ -237,13 +341,13 @@ class NodeRegistry:
             nodes = [n for n in nodes if n.status == status]
         return nodes
 
-    def mark_stale(self) -> list[NodeInfo]:
+    def mark_stale(self, timeout_s: float | None = None) -> list[NodeInfo]:
         """Mark nodes that haven't heartbeated within timeout as offline.
 
         Returns the list of nodes that were marked offline.
         """
         time.time()
-        timeout = self._config.node_timeout_s
+        timeout = self._config.node_timeout_s if timeout_s is None else timeout_s
         stale: list[NodeInfo] = []
         for node in self._nodes.values():
             if node.status == NodeStatus.ONLINE and not node.is_alive(timeout):
@@ -251,6 +355,7 @@ class NodeRegistry:
                 stale.append(node)
                 logger.warning("Node %s (%s) marked offline - no heartbeat for %ds", node.id, node.name, timeout)
                 _audit.record_node_left(node.id, reason="timeout")
+        self._persist_many(stale)
         if stale:
             self._sync_node_count_metrics()
         return stale
@@ -292,7 +397,9 @@ class NodeRegistry:
         5. Among remaining, pick the one with most available slots
         """
         candidates = [
-            n for n in self._nodes.values() if n.status == NodeStatus.ONLINE and n.capacity.available_slots > 0
+            n
+            for n in self._nodes.values()
+            if n.status == NodeStatus.ONLINE and n.health == "ok" and n.capacity.available_slots > 0
         ]
         if not candidates:
             return None
@@ -311,8 +418,7 @@ class NodeRegistry:
                 affinity = sum(1 for k, v in preferred_labels.items() if node.labels.get(k) == v)
             return (affinity, node.capacity.available_slots)
 
-        candidates.sort(key=score, reverse=True)
-        return candidates[0]
+        return max(candidates, key=score)
 
     def cluster_summary(self) -> dict[str, Any]:
         """Build a summary of the cluster state."""
@@ -573,6 +679,16 @@ class NodeHeartbeatClient:
                 self._registered.set()
                 logger.info("Registered as node %s with central server %s", self._node_id, self._server_url)
                 return True
+            if resp.status_code == 421:
+                try:
+                    data = resp.json()
+                    new_url = data.get("url", "")
+                    if new_url and new_url != self._server_url:
+                        self._server_url = new_url
+                        logger.info("Misdirected to shard %s; retrying registration", data.get("shard_id", "?"))
+                        return self._register(client)
+                except (ValueError, KeyError):
+                    pass
             logger.warning("Node registration failed: %d %s", resp.status_code, resp.text[:200])
         except httpx.HTTPError as exc:
             logger.warning("Node registration error: %s", exc)
@@ -584,7 +700,7 @@ class NodeHeartbeatClient:
             return False
 
         capacity = self._capacity_fn() if self._capacity_fn else self._capacity
-        payload = {
+        payload: dict[str, Any] = {
             "capacity": {
                 "max_agents": capacity.max_agents,
                 "available_slots": capacity.available_slots,
@@ -593,6 +709,14 @@ class NodeHeartbeatClient:
                 "supported_models": capacity.supported_models,
             },
         }
+        if capacity.disk_free_mb is not None:
+            payload["disk_free_mb"] = capacity.disk_free_mb
+        if capacity.mem_used_pct is not None:
+            payload["mem_used_pct"] = capacity.mem_used_pct
+        if capacity.mesh_rtt_ms is not None:
+            payload["mesh_rtt_ms"] = capacity.mesh_rtt_ms
+        if capacity.platform is not None:
+            payload["platform"] = capacity.platform
         try:
             resp = client.post(
                 f"{self._server_url}/cluster/nodes/{self._node_id}/heartbeat",
@@ -603,11 +727,20 @@ class NodeHeartbeatClient:
             if resp.status_code == 200:
                 return True
             if resp.status_code == 404:
-                # Node was evicted; re-register on next cycle
                 logger.warning("Node %s not found on server; will re-register", self._node_id)
                 self._node_id = None
                 self._registered.clear()
                 return False
+            if resp.status_code == 421:
+                try:
+                    data = resp.json()
+                    new_url = data.get("url", "")
+                    if new_url and new_url != self._server_url:
+                        self._server_url = new_url
+                        logger.info("Misdirected to shard %s; retrying heartbeat", data.get("shard_id", "?"))
+                        return self._send_heartbeat(client)
+                except (ValueError, KeyError):
+                    pass
             logger.warning("Heartbeat failed: %d %s", resp.status_code, resp.text[:200])
         except httpx.HTTPError as exc:
             logger.warning("Heartbeat error: %s", exc)
@@ -664,3 +797,97 @@ class NodeHeartbeatClient:
     def update_capacity(self, capacity: NodeCapacity) -> None:
         """Update the locally cached capacity (sent on next heartbeat)."""
         self._capacity = capacity
+
+
+# ---------------------------------------------------------------------------
+# Health verdict — evaluates worker-reported telemetry against thresholds.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HealthThresholds:
+    """Configurable thresholds for worker health evaluation."""
+
+    min_disk_free_mb: int = 512
+    max_mem_used_pct: float = 95.0
+    max_mesh_rtt_ms: float = 5000.0
+
+
+def health_verdict(
+    *,
+    disk_free_mb: int | None = None,
+    mem_used_pct: float | None = None,
+    mesh_rtt_ms: float | None = None,
+    thresholds: HealthThresholds | None = None,
+) -> str:
+    """Return ``"ok"`` or ``"unhealthy:<reason>[,<reason>]"``."""
+    t = thresholds or HealthThresholds()
+    reasons: list[str] = []
+    if disk_free_mb is not None and disk_free_mb < t.min_disk_free_mb:
+        reasons.append("disk")
+    if mem_used_pct is not None and mem_used_pct > t.max_mem_used_pct:
+        reasons.append("memory")
+    if mesh_rtt_ms is not None and mesh_rtt_ms > t.max_mesh_rtt_ms:
+        reasons.append("mesh-rtt")
+    return "ok" if not reasons else "unhealthy:" + ",".join(reasons)
+
+
+# ---------------------------------------------------------------------------
+# Batch task assignment — assign N tasks to the best N workers in one call.
+# ---------------------------------------------------------------------------
+
+
+def batch_assign(
+    registry: NodeRegistry,
+    tasks: list[dict[str, Any]],
+    *,
+    preferred_labels: dict[str, str] | None = None,
+) -> list[tuple[dict[str, Any], NodeInfo | None]]:
+    """Assign a batch of tasks to available workers.
+
+    Each task dict may carry ``required_model`` and ``require_gpu``.
+    Returns ``(task, assigned_node_or_None)`` pairs. Slots are
+    decremented in-memory between picks so the same node is not
+    over-assigned within a single batch.
+
+    Uses power-of-two-choices when the pool is large enough:
+    pick two random candidates and assign to the one with more slots.
+    """
+    import random
+
+    online = [n for n in registry.list_nodes(NodeStatus.ONLINE) if n.capacity.available_slots > 0 and n.health == "ok"]
+    if not online:
+        return [(t, None) for t in tasks]
+
+    # Track remaining slots to avoid over-assignment
+    remaining: dict[str, int] = {n.id: n.capacity.available_slots for n in online}
+    node_map: dict[str, NodeInfo] = {n.id: n for n in online}
+
+    results: list[tuple[dict[str, Any], NodeInfo | None]] = []
+    for task in tasks:
+        req_model = task.get("required_model")
+        req_gpu = task.get("require_gpu", False)
+
+        candidates = [
+            nid
+            for nid, slots in remaining.items()
+            if slots > 0
+            and (not req_model or req_model in node_map[nid].capacity.supported_models)
+            and (not req_gpu or node_map[nid].capacity.gpu_available)
+        ]
+
+        if not candidates:
+            results.append((task, None))
+            continue
+
+        # Power-of-two-choices
+        if len(candidates) >= 2:
+            a, b = random.sample(candidates, 2)
+            pick = a if remaining[a] >= remaining[b] else b
+        else:
+            pick = candidates[0]
+
+        remaining[pick] -= 1
+        results.append((task, node_map[pick]))
+
+    return results
