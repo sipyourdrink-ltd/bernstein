@@ -1031,7 +1031,7 @@ async def _call_stop_tool(workdir: str) -> dict[str, Any]:
 
     mcp = create_mcp_server(server_url="http://localhost:8052")
     result = await mcp.call_tool("bernstein_shutdown_orchestrator", {"workdir": workdir})
-    parsed: dict[str, Any] = json.loads(result[0][0].text)  # type: ignore[index, union-attr]
+    parsed: dict[str, Any] = json.loads(result.content[0].text)  # type: ignore[index, union-attr]
     inner = parsed.get("result") if "_meter" in parsed else parsed
     assert isinstance(inner, dict)
     return inner

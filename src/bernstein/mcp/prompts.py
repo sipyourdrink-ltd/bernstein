@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from bernstein.core.protocols.mcp.tool_tiers import TOOL_TIERS
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 
 def _tool(name: str) -> str:

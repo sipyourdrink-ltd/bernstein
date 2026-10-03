@@ -170,7 +170,7 @@ class TestClientStatelessMeta:
         for _ in range(2):
             client = _RecordingClient(
                 [
-                    _jsonrpc_response({"tools": [{"name": "echo", "inputSchema": {}}]}),
+                    _jsonrpc_response({"tools": [{"name": "echo", "input_schema": {}}]}),
                     _jsonrpc_response({"content": [{"type": "text", "text": "hi"}]}, request_id=2),
                 ]
             )
@@ -216,7 +216,7 @@ class TestClientStatelessMeta:
 
         client = _RecordingClient(
             [
-                _jsonrpc_response({"tools": [{"name": "echo", "inputSchema": {}}]}),
+                _jsonrpc_response({"tools": [{"name": "echo", "input_schema": {}}]}),
                 _jsonrpc_response({"content": [{"type": "text", "text": "a"}]}, request_id=2),
                 _jsonrpc_response({"content": [{"type": "text", "text": "b"}]}, request_id=3),
             ]

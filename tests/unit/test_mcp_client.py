@@ -209,7 +209,7 @@ class TestMCPClientSession:
                             {
                                 "name": "echo",
                                 "description": "Echo input",
-                                "inputSchema": {"type": "object"},
+                                "input_schema": {"type": "object"},
                             }
                         ]
                     },
@@ -242,7 +242,7 @@ class TestMCPClientSession:
             return _make_jsonrpc_response(
                 {
                     "tools": [
-                        {"name": "a", "description": "Tool A", "inputSchema": {"type": "object"}},
+                        {"name": "a", "description": "Tool A", "input_schema": {"type": "object"}},
                         {"name": "b", "description": "Tool B"},
                     ]
                 },

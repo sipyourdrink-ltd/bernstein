@@ -298,7 +298,7 @@ class McpFakeLab:
             text: str = result.content[0].text  # type: ignore[union-attr]
         else:
             # FastMCP returns a list of lists of content objects
-            text = result[0][0].text  # type: ignore[index]
+            text = result.content[0].text  # type: ignore[index]
         # Strip the MCP cost-meter envelope (#1696) so tests assert
         # the tool's inner contract, not the cross-cutting meter. The
         # envelope shape is {"result": <payload>, "_meter": {...}}.

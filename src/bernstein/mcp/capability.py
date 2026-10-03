@@ -36,7 +36,7 @@ from bernstein.mcp.cost_meter import COST_METER_ENV, cost_meter_enabled
 from bernstein.mcp.tool_surface import ServerManifest, evaluate_tool_surface_risk
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 #: MCP spec revision the Bernstein server targets. Kept in one place so the
 #: card and the HTTP ``initialize`` response cannot drift apart.

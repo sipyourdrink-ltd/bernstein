@@ -20,7 +20,8 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer as FastMCP
+from mcp.types import CallToolResult
 
 from bernstein.core.lineage.identity import AgentCard, generate_keypair
 from bernstein.core.lineage.signed_write import SignedLineageLog
@@ -139,7 +140,6 @@ def test_verify_chain_ok(seeded_store: tuple[Path, LineageStore]) -> None:
     register_lineage_resources(mcp, lineage_root=root)
 
     result = _run(mcp.call_tool("bernstein_verify_lineage", {"artefact_path": "src/foo.py"}))
-    # FastMCP.call_tool returns (contents, structuredOutput) on newer versions.
     payload = _payload_from_tool_result(result)
     assert payload["ok"] is True
     assert payload.get("reason") in (None, "")
@@ -197,19 +197,31 @@ def test_register_returns_falsey_when_disabled(seeded_store: tuple[Path, Lineage
 
 
 def _payload_from_tool_result(result: object) -> dict[str, object]:
-    """FastMCP.call_tool returns one of:
+    """Extract JSON payload from mcp 2.x CallToolResult.
 
-    * an iterable of TextContent
-    * a tuple ``(contents, structuredOutput_dict)``
-
-    Different mcp SDK versions ship different shapes; this picks the JSON
-    payload regardless of which one we got.
+    mcp 2.x returns CallToolResult with:
+    - content: list[TextContent] - the text representation
+    - structured_content: dict | None - the structured output if the tool returns a dict
     """
-    # New API: (contents, structured)
+    if isinstance(result, CallToolResult):
+        # New mcp 2.x: prefer structured_content if present
+        if result.structured_content is not None:
+            sc = result.structured_content
+            if isinstance(sc, dict):
+                # FastMCP may wrap the dict under a "result" key (stringified JSON)
+                if "result" in sc and isinstance(sc["result"], str):
+                    return json.loads(sc["result"])
+                if "ok" in sc:
+                    return sc
+                if "result" in sc and isinstance(sc["result"], dict):
+                    return sc["result"]
+                return sc
+        # Fall back to content
+        return _payload_from_contents(result.content)
+    # Legacy tuple format (mcp 1.x)
     if isinstance(result, tuple) and len(result) == 2:
         contents, structured = result
         if isinstance(structured, dict):
-            # FastMCP may wrap the dict under a "result" key.
             if "ok" in structured:
                 return structured
             if "result" in structured and isinstance(structured["result"], dict):

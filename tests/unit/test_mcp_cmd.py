@@ -18,7 +18,7 @@ def _write_stdio_fixture_server(path: Path) -> None:
             """
             from __future__ import annotations
 
-            from mcp.server.fastmcp import FastMCP
+            from mcp.server.mcpserver import MCPServer as FastMCP
 
             mcp = FastMCP("fixture")
 
