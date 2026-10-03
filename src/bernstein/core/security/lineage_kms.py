@@ -23,6 +23,7 @@ from bernstein.core.security.key_custody import (
     HSMKMSAdapter,
     KMSAdapter,
     kms_adapter_from_config,
+    public_key_jwk_for,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "HSMKMSAdapter",
     "KMSAdapter",
     "kms_adapter_from_config",
+    "public_key_jwk_for",
 ]
