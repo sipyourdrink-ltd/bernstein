@@ -6,8 +6,14 @@ import time
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from bernstein.core.models import NodeCapacity, NodeInfo, NodeStatus
+from bernstein.core.protocols.cluster.cluster import (
+    _compute_node_id_sharded,
+    _find_owner_shard,
+    _get_shard_url,
+)
 from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
 from bernstein.core.server import (
     ClaimGossipRequest,
@@ -19,6 +25,8 @@ from bernstein.core.server import (
     NodeHeartbeatRequest,
     NodeRegisterRequest,
     NodeResponse,
+    ShardMapResponse,
+    ShardNodeInfo,
     TaskStealAction,
     TaskStealRequest,
     TaskStealResponse,
@@ -85,8 +93,15 @@ def _verify_cluster_auth(request: Request, required_scope: str) -> None:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
-@router.post("/cluster/nodes", status_code=201, responses=_AUTH_RESPONSES)
-def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
+@router.post(
+    "/cluster/nodes",
+    responses=_AUTH_RESPONSES
+    | {
+        201: {"description": "Node registered"},
+        421: {"description": "Node misdirected to another shard"},
+    },
+)
+def register_node(body: NodeRegisterRequest, request: Request):
     """Register a node, or update the entry of one that is re-registering."""
     from bernstein.core.cluster_auth import SCOPE_NODE_REGISTER
 
@@ -99,14 +114,6 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
         gpu_available=body.capacity.gpu_available,
         supported_models=body.capacity.supported_models,
     )
-    # Re-registration is keyed on the node's operator-visible identity
-    # (name + url), not on a per-call id -- the same rule the gRPC
-    # RegisterNode handler follows (grpc_server.py). A worker that restarts
-    # has no memory of the id the server gave it, so minting a fresh NodeInfo
-    # per call left the old entry behind: the registry carried one row per
-    # restart, and cluster_summary counted that worker's capacity once per
-    # row. The request already carries the whole identity, so this is a
-    # lookup before the register call rather than a schema change.
     existing = node_registry.find_by_identity(body.name, body.url)
     node = NodeInfo(
         name=body.name,
@@ -117,20 +124,47 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
     )
     if existing is not None:
         node.id = existing.id
-    registered = node_registry.register(node)
-    return node_to_response(registered)
+    elif node_registry.config.shards:
+        node.id = _compute_node_id_sharded(body.name, body.url)
 
+    owner_shard = _find_owner_shard(node.id, node_registry.config.shards)
+    if owner_shard is not None and owner_shard != node_registry.config.shard_id:
+        owner_url = _get_shard_url(owner_shard, node_registry.config.shards) or ""
+        return JSONResponse(
+            status_code=421,
+            content={"shard_id": owner_shard, "url": owner_url}
+        )
+
+    registered = node_registry.register(node)
+    response = node_to_response(registered)
+    return JSONResponse(
+        status_code=201,
+        content=response.model_dump() if hasattr(response, 'model_dump') else response.dict()
+    )
 
 @router.post(
     "/cluster/nodes/{node_id}/heartbeat",
-    responses=_AUTH_RESPONSES | {404: {"description": "Node not registered"}},
+    responses=_AUTH_RESPONSES
+    | {
+        404: {"description": "Node not registered"},
+        421: {"description": "Node misdirected to another shard"},
+    },
 )
-def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
+def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request):
     """Record a heartbeat from a cluster node."""
     from bernstein.core.cluster_auth import SCOPE_NODE_HEARTBEAT
 
     _verify_cluster_auth(request, SCOPE_NODE_HEARTBEAT)
     node_registry = _get_node_registry(request)
+
+    owner_shard = _find_owner_shard(node_id, node_registry.config.shards)
+    if owner_shard is not None and owner_shard != node_registry.config.shard_id:
+        owner_url = _get_shard_url(owner_shard, node_registry.config.shards) or ""
+        return JSONResponse(
+            status_code=421,
+            content={"shard_id": owner_shard, "url": owner_url}
+        )
+
     capacity: NodeCapacity | None = None
     if body.capacity is not None:
         capacity = NodeCapacity(
@@ -163,7 +197,14 @@ def batch_node_heartbeat(body: NodeHeartbeatBatchRequest, request: Request) -> N
     node_registry = _get_node_registry(request)
     accepted: list[str] = []
     unknown: list[str] = []
+    misdirected: dict[str, str] = {}
     for heartbeat in body.heartbeats:
+        owner_shard = _find_owner_shard(heartbeat.node_id, node_registry.config.shards)
+        if owner_shard is not None and owner_shard != node_registry.config.shard_id:
+            owner_url = _get_shard_url(owner_shard, node_registry.config.shards) or ""
+            misdirected[heartbeat.node_id] = owner_url
+            continue
+
         capacity: NodeCapacity | None = None
         if heartbeat.capacity is not None:
             capacity = NodeCapacity(
@@ -182,7 +223,7 @@ def batch_node_heartbeat(body: NodeHeartbeatBatchRequest, request: Request) -> N
             accepted.append(heartbeat.node_id)
         else:
             unknown.append(heartbeat.node_id)
-    return NodeHeartbeatBatchResponse(accepted=accepted, unknown=unknown)
+    return NodeHeartbeatBatchResponse(accepted=accepted, unknown=unknown, misdirected=misdirected)
 
 
 
@@ -253,6 +294,23 @@ def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse
             raise HTTPException(status_code=400, detail=f"Invalid node status: {status}") from None
     return [node_to_response(n) for n in node_registry.list_nodes(node_status)]
 
+
+
+
+@router.get("/cluster/shard-map")
+def get_shard_map(request: Request) -> ShardMapResponse:
+    """Get shard topology map."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_HEARTBEAT
+
+    _verify_cluster_auth(request, SCOPE_NODE_HEARTBEAT)
+    registry = _get_node_registry(request)
+    config = registry.config
+
+    if not config.shards or not config.shard_id:
+        raise HTTPException(status_code=404, detail="Cluster is not sharded")
+
+    shard_nodes = [ShardNodeInfo(id=sid, url=url) for sid, url in config.shards]
+    return ShardMapResponse(shard_id=config.shard_id, vnodes=1, shards=shard_nodes)
 
 @router.get("/cluster/status")
 def cluster_status(request: Request) -> ClusterStatusResponse:

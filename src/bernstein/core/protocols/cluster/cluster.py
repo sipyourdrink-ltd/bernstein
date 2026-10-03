@@ -42,6 +42,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Shard routing — deterministic node assignment for scale-out.
+# ---------------------------------------------------------------------------
+
+def _compute_node_id_sharded(name: str, url: str) -> str:
+    """Compute deterministic node ID from name and url when sharded."""
+    import hashlib
+    identity = f"{name}|{url}"
+    return hashlib.sha256(identity.encode()).hexdigest()[:12]
+
+
+def _find_owner_shard(node_id: str, shards: tuple[tuple[str, str], ...]) -> str | None:
+    """Find owner shard using consistent hashing.
+
+    Returns shard_id of the owner, or None if no shards configured.
+    """
+    if not shards:
+        return None
+    idx = int(node_id, 16) % len(shards)
+    return shards[idx][0]
+
+
+def _get_shard_url(shard_id: str, shards: tuple[tuple[str, str], ...]) -> str | None:
+    """Lookup the URL for a shard ID."""
+    for sid, url in shards:
+        if sid == shard_id:
+            return url
+    return None
+
 
 class NodeRegistry:
     """Registry of cluster nodes with optional disk persistence.
@@ -606,6 +635,16 @@ class NodeHeartbeatClient:
                 self._registered.set()
                 logger.info("Registered as node %s with central server %s", self._node_id, self._server_url)
                 return True
+            if resp.status_code == 421:
+                try:
+                    data = resp.json()
+                    new_url = data.get("url", "")
+                    if new_url and new_url != self._server_url:
+                        self._server_url = new_url
+                        logger.info("Misdirected to shard %s; retrying registration", data.get("shard_id", "?"))
+                        return self._register(client)
+                except (ValueError, KeyError):
+                    pass
             logger.warning("Node registration failed: %d %s", resp.status_code, resp.text[:200])
         except httpx.HTTPError as exc:
             logger.warning("Node registration error: %s", exc)
@@ -644,11 +683,20 @@ class NodeHeartbeatClient:
             if resp.status_code == 200:
                 return True
             if resp.status_code == 404:
-                # Node was evicted; re-register on next cycle
                 logger.warning("Node %s not found on server; will re-register", self._node_id)
                 self._node_id = None
                 self._registered.clear()
                 return False
+            if resp.status_code == 421:
+                try:
+                    data = resp.json()
+                    new_url = data.get("url", "")
+                    if new_url and new_url != self._server_url:
+                        self._server_url = new_url
+                        logger.info("Misdirected to shard %s; retrying heartbeat", data.get("shard_id", "?"))
+                        return self._send_heartbeat(client)
+                except (ValueError, KeyError):
+                    pass
             logger.warning("Heartbeat failed: %d %s", resp.status_code, resp.text[:200])
         except httpx.HTTPError as exc:
             logger.warning("Heartbeat error: %s", exc)

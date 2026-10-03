@@ -817,6 +817,7 @@ class NodeHeartbeatBatchResponse(BaseModel):
 
     accepted: list[str]
     unknown: list[str]
+    misdirected: dict[str, str] = Field(default_factory=dict)
 
 
 class NodeResponse(BaseModel):
@@ -845,6 +846,25 @@ class ClusterStatusResponse(BaseModel):
     active_agents: int
     nodes: list[NodeResponse]
 
+
+
+class ShardNodeInfo(BaseModel):
+    """Shard endpoint in shard map."""
+    id: str
+    url: str
+
+
+class ShardMapResponse(BaseModel):
+    """Response for GET /cluster/shard-map."""
+    shard_id: str
+    vnodes: int = 1
+    shards: list[ShardNodeInfo]
+
+
+class MisdirectedResponse(BaseModel):
+    """Response for 421 Misdirected Request."""
+    shard_id: str
+    url: str
 
 class ClaimGossipRequest(BaseModel):
     """Body for POST /cluster/claims/gossip - push signed claim receipts to a peer.
