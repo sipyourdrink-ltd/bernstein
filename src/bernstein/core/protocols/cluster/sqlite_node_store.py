@@ -115,29 +115,27 @@ class SQLiteNodeStore:
         conn = self._conn()
         if status is None:
             return conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
-        return conn.execute(
-            "SELECT COUNT(*) FROM nodes WHERE status = ?", (status.value,)
-        ).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM nodes WHERE status = ?", (status.value,)).fetchone()[0]
 
     def get(self, node_id: str) -> NodeInfo | None:
-        row = self._conn().execute(
-            "SELECT * FROM nodes WHERE id = ?", (node_id,)
-        ).fetchone()
+        row = self._conn().execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         return _row_to_node(row) if row else None
 
     def get_health(self, node_id: str) -> dict[str, Any] | None:
-        row = self._conn().execute(
-            "SELECT disk_free_mb, mem_used_pct, mesh_rtt_ms, health, unhealthy_since FROM nodes WHERE id = ?",
-            (node_id,),
-        ).fetchone()
+        row = (
+            self._conn()
+            .execute(
+                "SELECT disk_free_mb, mem_used_pct, mesh_rtt_ms, health, unhealthy_since FROM nodes WHERE id = ?",
+                (node_id,),
+            )
+            .fetchone()
+        )
         return _health_from_row(row) if row else None
 
     def find_by_identity(self, name: str, url: str) -> NodeInfo | None:
         if not name or not url:
             return None
-        row = self._conn().execute(
-            "SELECT * FROM nodes WHERE name = ? AND url = ?", (name, url)
-        ).fetchone()
+        row = self._conn().execute("SELECT * FROM nodes WHERE name = ? AND url = ?", (name, url)).fetchone()
         return _row_to_node(row) if row else None
 
     def upsert(self, node: NodeInfo) -> None:
@@ -156,12 +154,19 @@ class SQLiteNodeStore:
                 cell_ids_json=excluded.cell_ids_json, last_heartbeat=excluded.last_heartbeat
             """,
             (
-                node.id, node.name, node.url, node.status.value,
-                node.capacity.max_agents, node.capacity.available_slots,
-                node.capacity.active_agents, int(node.capacity.gpu_available),
+                node.id,
+                node.name,
+                node.url,
+                node.status.value,
+                node.capacity.max_agents,
+                node.capacity.available_slots,
+                node.capacity.active_agents,
+                int(node.capacity.gpu_available),
                 json.dumps(node.capacity.supported_models),
-                json.dumps(node.labels), json.dumps(node.cell_ids),
-                node.last_heartbeat, node.registered_at,
+                json.dumps(node.labels),
+                json.dumps(node.cell_ids),
+                node.last_heartbeat,
+                node.registered_at,
             ),
         )
         conn.commit()
@@ -190,11 +195,18 @@ class SQLiteNodeStore:
                 WHERE id=?
                 """,
                 (
-                    now, capacity.max_agents, capacity.available_slots,
-                    capacity.active_agents, int(capacity.gpu_available),
+                    now,
+                    capacity.max_agents,
+                    capacity.available_slots,
+                    capacity.active_agents,
+                    int(capacity.gpu_available),
                     json.dumps(capacity.supported_models),
-                    disk_free_mb, mem_used_pct, mesh_rtt_ms, health,
-                    health, now,
+                    disk_free_mb,
+                    mem_used_pct,
+                    mesh_rtt_ms,
+                    health,
+                    health,
+                    now,
                     node_id,
                 ),
             )
@@ -212,9 +224,7 @@ class SQLiteNodeStore:
         conn.commit()
         return r.rowcount > 0
 
-    def batch_heartbeat(
-        self, heartbeats: list[dict[str, Any]]
-    ) -> dict[str, bool]:
+    def batch_heartbeat(self, heartbeats: list[dict[str, Any]]) -> dict[str, bool]:
         """Process multiple heartbeats in a single transaction."""
         conn = self._conn()
         results: dict[str, bool] = {}
@@ -232,9 +242,12 @@ class SQLiteNodeStore:
                     """,
                     (
                         now,
-                        hb.get("disk_free_mb"), hb.get("mem_used_pct"),
-                        hb.get("mesh_rtt_ms"), hb.get("health", "ok"),
-                        hb.get("health", "ok"), now,
+                        hb.get("disk_free_mb"),
+                        hb.get("mem_used_pct"),
+                        hb.get("mesh_rtt_ms"),
+                        hb.get("health", "ok"),
+                        hb.get("health", "ok"),
+                        now,
                         nid,
                     ),
                 )
@@ -279,17 +292,13 @@ class SQLiteNodeStore:
         if status is None:
             rows = conn.execute("SELECT * FROM nodes").fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM nodes WHERE status = ?", (status.value,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM nodes WHERE status = ?", (status.value,)).fetchall()
         return [_row_to_node(r) for r in rows]
 
     def status_counts(self) -> dict[str, int]:
         """Per-status node counts without loading all rows."""
         conn = self._conn()
-        rows = conn.execute(
-            "SELECT status, COUNT(*) as cnt FROM nodes GROUP BY status"
-        ).fetchall()
+        rows = conn.execute("SELECT status, COUNT(*) as cnt FROM nodes GROUP BY status").fetchall()
         counts = {s.value: 0 for s in NodeStatus}
         for r in rows:
             counts[r["status"]] = r["cnt"]

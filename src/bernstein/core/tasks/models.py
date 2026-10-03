@@ -1964,11 +1964,7 @@ class NodeInfo:
 
     @property
     def is_schedulable(self) -> bool:
-        return (
-            self.status == NodeStatus.ONLINE
-            and self.health == "ok"
-            and self.capacity.available_slots > 0
-        )
+        return self.status == NodeStatus.ONLINE and self.health == "ok" and self.capacity.available_slots > 0
 
 
 @dataclass(frozen=True)

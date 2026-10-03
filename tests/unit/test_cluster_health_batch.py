@@ -99,10 +99,7 @@ class TestBatchAssign:
         assert results[0][1] is None
 
     def test_distributes_across_nodes(self) -> None:
-        nodes = [
-            NodeInfo(id=f"n{i}", capacity=NodeCapacity(available_slots=10))
-            for i in range(10)
-        ]
+        nodes = [NodeInfo(id=f"n{i}", capacity=NodeCapacity(available_slots=10)) for i in range(10)]
         reg = self._make_registry(nodes)
         tasks = [{"title": f"t{i}"} for i in range(100)]
         results = batch_assign(reg, tasks)

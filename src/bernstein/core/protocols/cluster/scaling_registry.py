@@ -170,7 +170,6 @@ class ScalingBackendRegistry:
             KubernetesHPABackend,
             NoOpBackend,
         )
-
         from bernstein.core.protocols.cluster.http_scaling_backend import (
             HTTPScalingBackend,
         )

@@ -112,9 +112,7 @@ class TestHeartbeat:
     def test_batch_heartbeat(self, store: SQLiteNodeStore) -> None:
         for i in range(10):
             store.upsert(NodeInfo(id=f"b{i}"))
-        results = store.batch_heartbeat([
-            {"node_id": f"b{i}", "disk_free_mb": 500 + i} for i in range(10)
-        ])
+        results = store.batch_heartbeat([{"node_id": f"b{i}", "disk_free_mb": 500 + i} for i in range(10)])
         assert all(results.values())
         assert len(results) == 10
         results_ghost = store.batch_heartbeat([{"node_id": "ghost"}])
@@ -157,26 +155,21 @@ class TestListAndFilter:
 
 class TestBestNodes:
     def test_basic_selection(self, store: SQLiteNodeStore) -> None:
-        store.upsert(NodeInfo(id="a", status=NodeStatus.ONLINE,
-                              capacity=NodeCapacity(available_slots=2)))
-        store.upsert(NodeInfo(id="b", status=NodeStatus.ONLINE,
-                              capacity=NodeCapacity(available_slots=5)))
+        store.upsert(NodeInfo(id="a", status=NodeStatus.ONLINE, capacity=NodeCapacity(available_slots=2)))
+        store.upsert(NodeInfo(id="b", status=NodeStatus.ONLINE, capacity=NodeCapacity(available_slots=5)))
         best = store.best_nodes_for_task()
         assert len(best) == 1
         assert best[0].id == "b"
 
     def test_model_filter(self, store: SQLiteNodeStore) -> None:
-        store.upsert(NodeInfo(id="a", status=NodeStatus.ONLINE,
-                              capacity=NodeCapacity(supported_models=["sonnet"])))
-        store.upsert(NodeInfo(id="b", status=NodeStatus.ONLINE,
-                              capacity=NodeCapacity(supported_models=["opus"])))
+        store.upsert(NodeInfo(id="a", status=NodeStatus.ONLINE, capacity=NodeCapacity(supported_models=["sonnet"])))
+        store.upsert(NodeInfo(id="b", status=NodeStatus.ONLINE, capacity=NodeCapacity(supported_models=["opus"])))
         best = store.best_nodes_for_task(required_model="opus")
         assert len(best) == 1
         assert best[0].id == "b"
 
     def test_skips_unhealthy(self, store: SQLiteNodeStore) -> None:
-        store.upsert(NodeInfo(id="sick", status=NodeStatus.ONLINE,
-                              capacity=NodeCapacity(available_slots=10)))
+        store.upsert(NodeInfo(id="sick", status=NodeStatus.ONLINE, capacity=NodeCapacity(available_slots=10)))
         store.update_heartbeat("sick", health="unhealthy:disk")
         best = store.best_nodes_for_task()
         assert len(best) == 0
@@ -185,10 +178,14 @@ class TestBestNodes:
 class TestMigration:
     def test_migrate_from_json(self, store: SQLiteNodeStore, tmp_path: Path) -> None:
         json_path = tmp_path / "nodes.json"
-        json_path.write_text(json.dumps([
-            {"id": "m1", "name": "w1", "max_agents": 4, "labels": {"zone": "a"}},
-            {"id": "m2", "name": "w2", "registered_at": 1000.0},
-        ]))
+        json_path.write_text(
+            json.dumps(
+                [
+                    {"id": "m1", "name": "w1", "max_agents": 4, "labels": {"zone": "a"}},
+                    {"id": "m2", "name": "w2", "registered_at": 1000.0},
+                ]
+            )
+        )
         count = store.migrate_from_json(json_path)
         assert count == 2
         assert store.get("m1") is not None
@@ -203,20 +200,21 @@ class TestScale:
 
     def test_2000_nodes(self, store: SQLiteNodeStore) -> None:
         for i in range(2000):
-            store.upsert(NodeInfo(
-                id=f"w{i:04d}",
-                name=f"worker-{i}",
-                url=f"http://10.0.{i // 256}.{i % 256}:8080",
-                status=NodeStatus.ONLINE,
-                capacity=NodeCapacity(max_agents=6, available_slots=3),
-            ))
+            store.upsert(
+                NodeInfo(
+                    id=f"w{i:04d}",
+                    name=f"worker-{i}",
+                    url=f"http://10.0.{i // 256}.{i % 256}:8080",
+                    status=NodeStatus.ONLINE,
+                    capacity=NodeCapacity(max_agents=6, available_slots=3),
+                )
+            )
         assert store.count() == 2000
         assert store.count(NodeStatus.ONLINE) == 2000
 
-        results = store.batch_heartbeat([
-            {"node_id": f"w{i:04d}", "disk_free_mb": 1000, "mem_used_pct": 50.0}
-            for i in range(2000)
-        ])
+        results = store.batch_heartbeat(
+            [{"node_id": f"w{i:04d}", "disk_free_mb": 1000, "mem_used_pct": 50.0} for i in range(2000)]
+        )
         assert sum(results.values()) == 2000
 
         best = store.best_nodes_for_task(limit=10)

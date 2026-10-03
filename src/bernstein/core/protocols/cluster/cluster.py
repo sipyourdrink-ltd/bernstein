@@ -679,9 +679,11 @@ class NodeHeartbeatClient:
 # Health verdict — evaluates worker-reported telemetry against thresholds.
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HealthThresholds:
     """Configurable thresholds for worker health evaluation."""
+
     min_disk_free_mb: int = 512
     max_mem_used_pct: float = 95.0
     max_mesh_rtt_ms: float = 5000.0
@@ -729,10 +731,7 @@ def batch_assign(
     """
     import random
 
-    online = [
-        n for n in registry.list_nodes(NodeStatus.ONLINE)
-        if n.capacity.available_slots > 0 and n.health == "ok"
-    ]
+    online = [n for n in registry.list_nodes(NodeStatus.ONLINE) if n.capacity.available_slots > 0 and n.health == "ok"]
     if not online:
         return [(t, None) for t in tasks]
 
@@ -746,7 +745,8 @@ def batch_assign(
         req_gpu = task.get("require_gpu", False)
 
         candidates = [
-            nid for nid, slots in remaining.items()
+            nid
+            for nid, slots in remaining.items()
             if slots > 0
             and (not req_model or req_model in node_map[nid].capacity.supported_models)
             and (not req_gpu or node_map[nid].capacity.gpu_available)
