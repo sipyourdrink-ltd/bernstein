@@ -81,6 +81,7 @@ modules =
     bernstein.adapters.openai_agents
     bernstein.adapters.opencode
     bernstein.adapters.openhands
+    bernstein.adapters.paper_qa
     bernstein.adapters.pi
     bernstein.adapters.plandex
     bernstein.adapters.python_runtime

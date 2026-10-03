@@ -1,0 +1,26 @@
+# Contract for the PaperQA2 adapter (adapter: paper_qa).
+#
+# The adapter runs paper_qa_runner.py, a standalone script shipped with
+# bernstein, under the interpreter PaperQA2 is installed in, against an
+# operator-provided directory of papers; the runner's own command line is the
+# surface asserted here.
+adapter: paper_qa
+binary: python3
+install:
+  method: none
+  spec: ""
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: ""
+  basis: unknown
+required_flags:
+  - "--prompt-file"
+  - "--out-dir"
+  - "--papers-dir"
+  - "--model"
+  - "--embedding"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
