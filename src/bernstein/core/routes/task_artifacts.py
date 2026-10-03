@@ -30,6 +30,7 @@ from bernstein.core.evidence.run_artifacts import (
     read_artifact_rows,
     verify_run_artifacts,
 )
+from bernstein.core.log_safe import for_log
 from bernstein.core.routes.task_crud import _get_sse_bus, _get_store, _require_task_access
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.server import (
@@ -204,7 +205,7 @@ def post_task_artifact(task_id: str, body: TaskArtifactPost, request: Request) -
     _publish_progress(request, task_id)
     logger.info(
         "task.artifact posted: task_id=%s key=%s type=%s version=%d",
-        sanitize_log(task_id),
+        for_log(task_id),
         sanitize_log(record.key),
         sanitize_log(record.artifact_type),
         record.version,

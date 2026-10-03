@@ -83,8 +83,7 @@ A minimal `bernstein.yaml` looks like:
 
 ```yaml
 internal_llm_provider: claude   # or codex / gemini / aider - whatever you set up
-budget:
-  per_run_max_cost_usd: 5.00    # hard stop if a run blows past $5
+budget: "$5"                    # spending cap for the run (accepts "$5", 5, or 5.0)
 ```
 
 ---
@@ -132,12 +131,15 @@ bernstein recap
 ```
 
 ```
-Run summary - 1 task completed in 1m 47s
-
-  ✓ backend-abc12345  Add hello() to greeting.py     $0.03  1m 47s
-
-Total: $0.03 · 1 merged · 0 failed
+  Metric        Value
+  Total tasks   1
+  Completed     1
+  Failed        0
+  Success rate  100.0%
 ```
+
+`bernstein recap` prints that recap table, then a git diff summary, quality
+scores, and a per-model cost breakdown. The exact numbers depend on the run.
 
 The summary card also reports a **Model routing savings** number when the
 cascade router downgraded any task off Opus - see
@@ -149,7 +151,7 @@ Inspect a specific task:
 ```bash
 bernstein diff <task-id>     # the git diff the agent produced
 bernstein trace <task-id>    # which decisions fired and why
-bernstein logs tail -a <task-id>  # full agent stdout
+bernstein logs tail -a <session-id>  # agent stdout for one session
 ```
 
 ---
@@ -161,7 +163,7 @@ Flask app with 4 intentional bugs and runs **mock** agents to fix them - no prov
 no spend.
 
 ```bash
-bernstein demo            # mock agents (~30 seconds)
+bernstein demo            # mock agents (about a minute or two)
 bernstein demo --dry-run  # preview the plan without spawning
 bernstein demo --real     # use real agents (requires API key, ~$0.15)
 ```
@@ -197,7 +199,7 @@ Another Bernstein session is still running, or the port is taken:
 
 ```bash
 bernstein stop --force                   # kill stuck session
-BERNSTEIN_PORT=8053 bernstein -g "..."   # use a different port
+bernstein run --goal "..." --port 8053   # use a different port
 ```
 
 ### `bernstein init fails - not a git repository`

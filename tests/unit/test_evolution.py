@@ -520,21 +520,40 @@ class TestFileUpgradeExecutor:
         executor._apply_policy_update = original_method  # type: ignore[method-assign]
 
     def test_rollback_upgrade(self, tmp_path: Path) -> None:
-        executor = FileUpgradeExecutor(tmp_path)
+        """Restores the file, and is asserted on the CONTENT (#5408).
 
-        # Create a backup file
-        config_file = tmp_path / "config" / "test.yaml"
-        config_file.parent.mkdir(exist_ok=True)
-        config_file.write_text("original content")
+        This used to seed `executor._backup_files` directly, pass a
+        `MagicMock()` as the proposal, and assert `result is True` under the
+        comment "(or at least attempted)". Every one of those was load-bearing
+        for the bug: the map was process-local, the proposal was ignored, and
+        an empty map returned `True` having restored nothing -- so accepting
+        "attempted" is what let a rollback that did nothing look like one that
+        worked.
+        """
+        proposal = UpgradeProposal(
+            id="rollback-001",
+            title="Test rollback",
+            category=UpgradeCategory.POLICY_UPDATE,
+            description="Test",
+            current_state="Current",
+            proposed_change="Change",
+            benefits=["Benefit"],
+            risk_assessment=RiskAssessment(),
+            rollback_plan=MagicMock(),
+            cost_estimate_usd=0.0,
+            expected_improvement="Improvement",
+            confidence=0.9,
+        )
+        applying = FileUpgradeExecutor(tmp_path)
+        config_file = applying.config_dir / "test.yaml"
+        config_file.write_text("original content", encoding="utf-8")
+        applying._backup_file("test.yaml", proposal.id)
+        config_file.write_text("changed content", encoding="utf-8")
+        applying._record_history(proposal, "applied")
 
-        backup_file = tmp_path / "upgrades" / "backup_test.yaml_12345"
-        backup_file.write_text("backup content")
-        executor._backup_files["test.yaml"] = backup_file
-
-        result = executor.rollback_upgrade(MagicMock())
-
-        # Backup should be restored (or at least attempted)
-        assert result is True
+        # A FRESH executor, so this cannot pass through an in-memory map.
+        assert FileUpgradeExecutor(tmp_path).rollback_upgrade(proposal) is True
+        assert config_file.read_text(encoding="utf-8") == "original content"
 
 
 # --- EvolutionCoordinator ---

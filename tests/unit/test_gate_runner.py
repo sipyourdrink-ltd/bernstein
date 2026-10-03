@@ -462,3 +462,184 @@ def test_dead_code_gate_runs_to_completion_instead_of_crashing(tmp_path: Path) -
     assert report.gates_run == ["dead_code"]
     (result,) = report.results
     assert result.status in ("pass", "fail", "warn")
+
+
+def test_every_valid_gate_name_is_dispatchable(tmp_path: Path) -> None:
+    """General invariant behind #6156: every name in ``VALID_GATE_NAMES``
+    must resolve to a real handler in ``GateRunner._execute_gate`` and never
+    fall through to the plugin-registry fallback, which raises
+    ``ValueError: Unsupported gate name`` for any built-in name (plugin
+    registration refuses names that collide with ``VALID_GATE_NAMES``).
+
+    Each handler is stubbed so this test isolates *dispatch* (did routing
+    find a handler) from gate *behaviour* (did the gate's own logic pass or
+    fail). Exercising every gate's real logic here would mean spinning up
+    subprocesses (ruff/mypy/pytest/bandit/mutmut) and -- per #6156's own
+    report -- risking a real network call for ``intent_verification``
+    (``OPENROUTER_API_KEY_PAID``). That is exactly the flakiness this
+    regression test must not introduce.
+    """
+    from bernstein.core.gate_runner import GateResult
+
+    from bernstein.core.quality.gate_pipeline import VALID_GATE_NAMES
+
+    config = QualityGatesConfig(cache_enabled=False)
+    runner = GateRunner(config, tmp_path)
+    task = _make_task()
+
+    stub_result = GateResult(
+        name="stub",
+        status="pass",
+        required=False,
+        blocked=False,
+        cached=False,
+        duration_ms=0,
+        details="stubbed for dispatch test",
+        metadata={},
+    )
+
+    def _sync_stub(*_args: object, **_kwargs: object) -> GateResult:
+        return stub_result
+
+    async def _async_stub(*_args: object, **_kwargs: object) -> GateResult:
+        return stub_result
+
+    # Every handler name referenced by GateRunner._execute_gate's dispatch
+    # tables (`_sync_cf_gates` / `_sync_no_cf_gates` / `_async_gates`).
+    # Instance-attribute assignment shadows the bound method, and the
+    # dispatch dicts look up `self.<name>` fresh on every call, so this
+    # reaches the exact same routing code the real run does.
+    sync_handler_names = [
+        "_run_auto_format_gate_sync",
+        "_run_complexity_gate_sync",
+        "_run_dead_code_gate_sync",
+        "_run_comment_quality_gate_sync",
+        "_run_import_cycle_gate_sync",
+        "_run_coverage_delta_gate_sync",
+        "_run_merge_conflict_gate_sync",
+        "_run_large_file_gate_sync",
+        "_run_run_config_gate_sync",
+        "_run_benchmark_gate_sync",
+        "_run_migration_reversibility_gate_sync",
+        "_run_test_expansion_gate_sync",
+    ]
+    async_handler_names = [
+        "_execute_lint_gate",
+        "_execute_type_check_gate",
+        "_run_tests_gate",
+        "_execute_security_scan_gate",
+        "_execute_scan_gate",
+        "_execute_mutation_gate",
+        "_execute_intent_gate",
+        "_execute_dep_audit_gate",
+        "_run_integration_test_gen_gate",
+        "_run_review_rubric_gate",
+        "_run_behavior_probe_gate",
+    ]
+    for name in sync_handler_names:
+        setattr(runner, name, _sync_stub)
+    for name in async_handler_names:
+        setattr(runner, name, _async_stub)
+
+    for name in sorted(VALID_GATE_NAMES):
+        step = GatePipelineStep(name=name, required=False, condition="always")
+        result = asyncio.run(runner.run_gate(step, task, tmp_path, []))
+        assert result is stub_result, f"{name}: did not reach a stubbed dispatch handler"
+
+
+def _dead_code_report(tmp_path: Path, *, output: str, exit_code: int, required: bool = False):
+    """Run the dead-code gate with one scripted command result."""
+    src = tmp_path / "src"
+    src.mkdir(exist_ok=True)
+    (src / "module.py").write_text("def f() -> int:\n    return 1\n", encoding="utf-8")
+
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="dead_code", required=required, condition="python_changed")],
+        cache_enabled=False,
+    )
+    runner = GateRunner(config, tmp_path)
+    task = _make_task(owned_files=["src/module.py"])
+
+    def fake_run(_command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str, int]:
+        return exit_code == 0, output, exit_code
+
+    with patch("bernstein.core.quality.quality_gates._run_command", side_effect=fake_run):
+        return asyncio.run(runner.run_all(task, tmp_path))
+
+
+def test_dead_code_gate_reports_a_missing_tool_as_command_not_found(tmp_path: Path) -> None:
+    """Regression for #5869: an absent vulture is not a finding about the code.
+
+    The gate handed the command's ``(ok, output)`` straight to ``_build_dead_code_result``, so a
+    missing tool produced ``status="fail"`` -- the same verdict as "dead code found". vulture is
+    not a project dependency, so that is the state of a fresh checkout rather than an edge case,
+    and anything counting gate failures as findings counted an uninstalled tool as a catch.
+    """
+    report = _dead_code_report(
+        tmp_path,
+        output="python.exe: No module named vulture",
+        # `python -m <missing>` exits 1, NOT 127 -- which is why the exit-code rule the lint,
+        # import-cycle and complexity gates already use never matched here.
+        exit_code=1,
+    )
+
+    (result,) = report.results
+    assert result.status == "command_not_found"
+    assert result.status != "fail"
+
+
+def test_the_missing_tool_verdict_names_the_tool(tmp_path: Path) -> None:
+    """An operator reading this has to be sent to `pip install`, not to their own code."""
+    report = _dead_code_report(
+        tmp_path,
+        output="python.exe: No module named vulture",
+        exit_code=1,
+    )
+
+    (result,) = report.results
+    assert "vulture" in result.details
+
+
+def test_a_shell_reporting_127_is_recognised_too(tmp_path: Path) -> None:
+    """The other shape: a bare executable the shell cannot find."""
+    report = _dead_code_report(tmp_path, output="vulture: command not found", exit_code=127)
+
+    assert report.results[0].status == "command_not_found"
+
+
+def test_a_required_dead_code_gate_that_could_not_run_still_blocks(tmp_path: Path) -> None:
+    """The status changes; the safety does not.
+
+    A gate that never ran has cleared nothing, so a required one must still block. What #5869 is
+    about is the REASON an operator is shown, not whether the task proceeds.
+    """
+    report = _dead_code_report(
+        tmp_path,
+        output="python.exe: No module named vulture",
+        exit_code=1,
+        required=True,
+    )
+
+    (result,) = report.results
+    assert result.status == "command_not_found"
+    assert result.blocked is True
+
+
+def test_a_real_vulture_finding_is_still_a_failure(tmp_path: Path) -> None:
+    """The guard that keeps the fix from swallowing the gate.
+
+    An exemption keyed on the message must not fire on output that merely mentions a module.
+    """
+    report = _dead_code_report(
+        tmp_path,
+        output="src/module.py:1: unused function 'f' (60% confidence)",
+        exit_code=1,
+    )
+
+    assert report.results[0].status != "command_not_found"
+
+
+def test_a_clean_run_is_still_a_pass(tmp_path: Path) -> None:
+    report = _dead_code_report(tmp_path, output="(no output)", exit_code=0)
+
+    assert report.results[0].status in ("pass", "warn")

@@ -18,9 +18,20 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 _REPO = Path(__file__).resolve().parents[2]
 FORMULA = _REPO / "packaging" / "homebrew" / "bernstein.rb"
 PUBLISH_WORKFLOW = _REPO / ".github" / "workflows" / "publish-homebrew.yml"
+
+
+def _publish_steps() -> list[object]:
+    """The steps of publish-homebrew.yml's only job, for per-step assertions."""
+    yaml = pytest.importorskip("yaml", reason="pyyaml is required to read the workflow")
+    doc = yaml.safe_load(PUBLISH_WORKFLOW.read_text(encoding="utf-8"))
+    steps = doc["jobs"]["update-formula"]["steps"]
+    assert isinstance(steps, list)
+    return list(steps)
 
 
 def _code(body: str) -> str:
@@ -215,6 +226,14 @@ def test_a_skipped_version_stops_the_publishing_steps() -> None:
     code = _code(body)
 
     assert 'echo "skip=true" >> "$GITHUB_OUTPUT"' in code, "the skip path must record itself as an output"
-    assert code.count("steps.meta.outputs.skip != 'true'") == 2, (
-        "both the formula generation and the tap push must be guarded on the skip output"
-    )
+
+    # Asserted per STEP rather than as a count of the guard. A count says "exactly two steps are
+    # guarded", which is not the property -- the property is that no step after `meta` runs on a
+    # skipped version. Counting made adding a third guarded step (the credential preflight, #5826)
+    # fail a test whose subject it satisfies, and would equally have passed if the two guards had
+    # both landed on the wrong steps.
+    guarded = {str(step.get("name", "")): step.get("if") for step in _publish_steps() if isinstance(step, dict)}
+    for name in ("Generate formula", "Push to homebrew-tap repo"):
+        assert guarded.get(name) == "steps.meta.outputs.skip != 'true'", (
+            f"{name!r} must be guarded on the skip output, or it runs with an empty version"
+        )

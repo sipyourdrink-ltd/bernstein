@@ -857,6 +857,17 @@ EVENT_APPROVAL_CARD_RESOLVED = "chat.approval_card.resolved"
 #: alone, that a stale or tampered decision was contained and never executed.
 EVENT_APPROVAL_CARD_REFUSED = "chat.approval_card.refused"
 
+#: Issue #5474 -- emitted when an operator with install-audit-key access
+#: releases a card the gate had settled terminally as refused (or otherwise
+#: terminal-deny). The release is not a settlement: it is a recorded operator
+#: decision that the terminal outcome is superseded, bound to the operator's
+#: identity, cause, and the chain head at release time, and it closes the gap
+#: where a denied approval card was terminal with no authorized release path
+#: and the only reachable halt was a chat keyword that recorded nothing. The
+#: released state is final -- a card can be released at most once, and a card
+#: already released refuses further resolve and further release attempts.
+EVENT_APPROVAL_CARD_RELEASED = "chat.approval_card.released"
+
 #: Issue #2545 -- emitted whenever an input boundary (schedule fire, recipe
 #: launch, MCP ``bernstein_run`` / ``bernstein_scenario`` call, or task-server
 #: claim) refuses a parameter that fails its declared contract. The event binds
@@ -1031,6 +1042,10 @@ EVENT_ODATA_WRITEBACK = "odata.writeback_receipt"
 #: after the attestation record was durable.
 EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
 EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
+#: Issue #6270 -- written after the connector returns.  Binds the observed
+#: effect to the same intent digest as the pre-dispatch pair.  Absence is
+#: "effect unobserved", never success.  Slice 1 is the writer only.
+EVENT_TOOLCALL_EFFECT = "toolcall.effect"
 EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
 #: Issue #5031 -- session revocation propagation
@@ -7487,6 +7502,66 @@ def record_automation_action(
     )
 
 
+_TOOLCALL_EFFECT_OUTCOMES = frozenset({"ok", "error", "timeout", "partial"})
+
+
+def record_toolcall_effect(
+    *,
+    chain: AuditChainStore,
+    intent_digest: str,
+    effect_digest: str,
+    outcome: str,
+    duration_ms: float,
+    attestation_ref: str,
+    dispatch_ref: str,
+    actor: str = "bernstein.toolcall-interlock",
+    resource_id: str = "",
+) -> AuditEvent:
+    """Append a ``toolcall.effect`` event into *chain* (#6270 slice 1).
+
+    Follows :func:`record_automation_action`: the executed effect is itself a
+    chain event, referencing the dispatch marker that admitted the call and the
+    attestation that authorised it.  The ``intent_digest`` is the same digest
+    the pre-dispatch pair already bound.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        intent_digest: Host-derived ``sha256:`` digest of the tool-call intent.
+        effect_digest: ``sha256:`` of the canonical response or patch.
+        outcome: One of ``ok``, ``error``, ``timeout``, ``partial``.
+        duration_ms: Connector wall time in milliseconds.
+        attestation_ref: Opaque handle of the preceding attestation.
+        dispatch_ref: Opaque handle of the preceding dispatch marker.
+        actor: Recorded actor; defaults to ``"bernstein.toolcall-interlock"``.
+        resource_id: Scope the event is stored under. The live native path
+            passes ``intent.scope_id``; when omitted, the fallback is
+            *intent_digest*.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    if outcome not in _TOOLCALL_EFFECT_OUTCOMES:
+        raise ValueError(f"unsupported tool-call effect outcome: {outcome}")
+    if not intent_digest.strip() or not effect_digest.strip():
+        raise ValueError("tool-call effect requires intent_digest and effect_digest")
+    if not attestation_ref.strip() or not dispatch_ref.strip():
+        raise ValueError("tool-call effect requires attestation_ref and dispatch_ref")
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_EFFECT,
+        actor=actor,
+        resource_type="toolcall_scope",
+        resource_id=resource_id or intent_digest,
+        details={
+            "intent_digest": intent_digest,
+            "effect_digest": effect_digest,
+            "outcome": outcome,
+            "duration_ms": duration_ms,
+            "attestation_ref": attestation_ref,
+            "dispatch_ref": dispatch_ref,
+        },
+    )
+
+
 def record_expectation_expired(
     *,
     chain: AuditChainStore,
@@ -9298,6 +9373,13 @@ EVENT_MODEL_ADMITTED = "model.admitted"
 #: stays reconstructible.
 EVENT_MODEL_WITHDRAWN = "model.withdrawn"
 
+#: Issue #5038 -- emitted when a routing path refuses a model reference that
+#: has no live admission in the chain-projected model registry. A silent
+#: decline is as opaque as a silent permit, so the refusal is itself a chained
+#: event naming the presented identities, the task class, and the projected
+#: instant.
+EVENT_MODEL_REFUSED = "model.refused"
+
 #: Issue #4975 -- emitted whenever an MCP server's advertised capability set
 #: changes between connections. The event carries the run id, the server name,
 #: previous capability digest (None for first contact), the current capability
@@ -9735,6 +9817,49 @@ def record_model_drift_observation(
     )
 
 
+def record_model_refusal(
+    chain: AuditChainStore,
+    *,
+    model_key: str,
+    provider: str,
+    model_requested: str,
+    model_reported: str | None,
+    version: str | None,
+    task_class: str,
+    at: str,
+    routing_path: str,
+    reason: str,
+    run_id: str = "",
+    task_id: str = "",
+    actor: str = "route_decision",
+) -> AuditEvent:
+    """Append a ``model.refused`` event into *chain*.
+
+    Routing paths record the negative decision instead of dropping it, so a
+    later reader can prove the installation refused a model that was not
+    admitted rather than never having consulted the registry at all.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_MODEL_REFUSED,
+        actor=actor,
+        resource_type="model_refusal",
+        resource_id=model_key,
+        details={
+            "model_key": model_key,
+            "provider": provider,
+            "model_requested": model_requested,
+            "model_reported": model_reported,
+            "version": version,
+            "task_class": task_class,
+            "at": at,
+            "routing_path": routing_path,
+            "reason": reason,
+            "run_id": run_id,
+            "task_id": task_id,
+        },
+    )
+
+
 __all__ = [
     "AGENT_FRESH_RESTART_ON_RETRY",
     "EVENT_A2A_MESSAGE_RECEIPT",
@@ -9748,6 +9873,7 @@ __all__ = [
     "EVENT_ADAPTER_VERSION_POSTURE",
     "EVENT_APPROVAL_CARD_ISSUED",
     "EVENT_APPROVAL_CARD_REFUSED",
+    "EVENT_APPROVAL_CARD_RELEASED",
     "EVENT_APPROVAL_CARD_RESOLVED",
     "EVENT_AUDIT_RECEIPT_EXPORT",
     "EVENT_AUTOMATION_ACTION",
@@ -9809,6 +9935,7 @@ __all__ = [
     "EVENT_MISSION_DIGEST_RECEIPT",
     "EVENT_MISSION_PHASE_RECEIPT",
     "EVENT_MODEL_DRIFT_OBSERVATION",
+    "EVENT_MODEL_REFUSED",
     "EVENT_MULTIMODAL_ATTACH",
     "EVENT_ODATA_WRITEBACK",
     "EVENT_OTEL_PROJECTION",
@@ -9969,6 +10096,7 @@ __all__ = [
     "record_mission_digest_receipt",
     "record_mission_phase_receipt",
     "record_model_drift_observation",
+    "record_model_refusal",
     "record_multimodal_attach",
     "record_odata_writeback",
     "record_otel_projection",
@@ -10032,6 +10160,7 @@ __all__ = [
     "record_task_tier_decision",
     "record_thread_approval",
     "record_token_binding_refusal",
+    "record_toolcall_effect",
     "record_tournament_selection",
     "record_tracker_pipeline_sweep",
     "record_trajectory_receipt",

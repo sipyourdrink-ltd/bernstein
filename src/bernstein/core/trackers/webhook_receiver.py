@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.trackers.contract import RateLimited, RoutingHint, Ticket
 from bernstein.core.trackers.event_catalogue import (
@@ -353,7 +354,7 @@ class WebhookReceiver:
             # lines via the parser-failure path.
             logger.debug(
                 "Parser raised for adapter=%s: %s",
-                sanitize_log(adapter),
+                for_log(adapter),
                 sanitize_log(str(exc)),
             )
             return ReceiveResult(status="bad_payload", delivery_id=delivery_id)

@@ -46,6 +46,8 @@ _VECTOR_NAMES: tuple[str, ...] = (
     "delegated-parent-trust-record.json",
     "delegated-child-trust-record.json",
     "aggregate-trust-record.json",
+    "supplementary-plane-parent-trust-record.json",
+    "supplementary-plane-child-trust-record.json",
 )
 
 #: Frozen fixture clock in ``_build_trust_record_vectors.py`` starts at this

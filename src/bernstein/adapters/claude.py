@@ -277,6 +277,7 @@ class ClaudeCodeAdapter(CLIAdapter):
     # ``_infer_adapter_name_for_provider`` (via the registry's
     # provider-alias table). Unchanged from the old substring branch.
     provides = ("claude", "anthropic")
+    model_vendor = "anthropic"
 
     external_endpoints = (("api.anthropic.com", 443),)
     # Surface the upstream provider on the ``bernstein status``
@@ -524,7 +525,18 @@ class ClaudeCodeAdapter(CLIAdapter):
         cmd.extend(["--json-schema", _RESULT_SCHEMA])
 
         if mcp_config:
-            cmd.extend(["--mcp-config", json.dumps(mcp_config)])
+            # `--strict-mcp-config` beside it, always: "only use MCP servers from
+            # --mcp-config, ignoring all other MCP configurations". Without it Claude
+            # Code merges its OWN discovered servers on top of this payload -- ones
+            # registered with `claude mcp add` at user or local scope, a repo's
+            # `.mcp.json`, plugin-provided servers and account connectors -- so a
+            # spawned agent started servers bernstein never chose (#5965).
+            #
+            # This payload is still whatever the caller built, which includes
+            # `~/.claude/mcp.json`: bernstein's own loader reads that file (the claude
+            # CLI does not), so its servers still reach the agent, as do the task's
+            # `mcp_servers` and the bernstein bridge.
+            cmd.extend(["--mcp-config", json.dumps(mcp_config), "--strict-mcp-config"])
 
         if system_addendum:
             cmd.extend(["--append-system-prompt", system_addendum])

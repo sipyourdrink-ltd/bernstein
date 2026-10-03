@@ -15,8 +15,8 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.orchestration.holds import acquire_hold, get_hold, list_active_holds, release_hold, renew_hold
-from bernstein.core.security.sanitize import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class HoldListResponse(BaseModel):
 @router.post("", response_model=HoldResponse, responses={200: {"description": "Hold acquired"}})
 def create_hold(body: HoldCreateRequest) -> HoldResponse:
     """Acquire a new hold, preventing orchestrator self-stop while active."""
-    logger.info("POST /orchestrator/holds: reason=%r ttl_seconds=%r", sanitize_log(body.reason), body.ttl_seconds)
+    logger.info("POST /orchestrator/holds: reason=%r ttl_seconds=%r", for_log(body.reason), body.ttl_seconds)
     if body.ttl_seconds is not None:
         hold = acquire_hold(body.reason, ttl_seconds=body.ttl_seconds)
     else:
@@ -90,7 +90,7 @@ def create_hold(body: HoldCreateRequest) -> HoldResponse:
 )
 def delete_hold(hold_id: str) -> dict[str, bool]:
     """Release a hold by id."""
-    logger.info("DELETE /orchestrator/holds/%s", sanitize_log(hold_id))
+    logger.info("DELETE /orchestrator/holds/%s", for_log(hold_id))
     released = release_hold(hold_id)
     if not released:
         raise HTTPException(status_code=404, detail=f"Hold {hold_id} not found")
@@ -104,21 +104,19 @@ def delete_hold(hold_id: str) -> dict[str, bool]:
 )
 def renew_hold_endpoint(hold_id: str) -> HoldResponse:
     """Heartbeat-renew a hold, extending its expiry by another grace window."""
-    logger.info("POST /orchestrator/holds/%s/renew", sanitize_log(hold_id))
+    logger.info("POST /orchestrator/holds/%s/renew", for_log(hold_id))
     renewed = renew_hold(hold_id)
     if not renewed:
-        logger.warning("POST /orchestrator/holds/%s/renew: not found or already expired", sanitize_log(hold_id))
+        logger.warning("POST /orchestrator/holds/%s/renew: not found or already expired", for_log(hold_id))
         raise HTTPException(status_code=404, detail=f"Hold {hold_id} not found")
     hold = get_hold(hold_id)
     if hold is None:
         # Should not happen (renew() just succeeded), but guard defensively.
-        logger.error(
-            "POST /orchestrator/holds/%s/renew: renew succeeded but get_hold returned None", sanitize_log(hold_id)
-        )
+        logger.error("POST /orchestrator/holds/%s/renew: renew succeeded but get_hold returned None", for_log(hold_id))
         raise HTTPException(status_code=404, detail=f"Hold {hold_id} not found")
     logger.info(
         "POST /orchestrator/holds/%s/renew: success, new expires_at=%.1f",
-        sanitize_log(hold_id),
+        for_log(hold_id),
         hold.expires_at,
     )
     return HoldResponse(**hold.to_dict())  # type: ignore[arg-type]

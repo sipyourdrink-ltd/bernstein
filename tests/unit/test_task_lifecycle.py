@@ -31,6 +31,7 @@ from bernstein.core.task_lifecycle import (
     _has_llm_judge_signal,
     _move_backlog_ticket,
     _record_ab_test_outcome,
+    _record_bandit_outcome,
     _verify_against_merge_preview,
     _verify_via_janitor,
     claim_and_spawn_batches,
@@ -1585,3 +1586,34 @@ def test_ab_test_outcome_defaults_files_changed_when_no_heartbeat(
     assert len(records) == 1, "expected exactly one A/B outcome record"
     assert records[0].files_changed == 0
     assert records[0].status == "failed"
+
+
+def test_bandit_outcome_records_the_effort_the_session_actually_ran_at(
+    tmp_path: Path,
+    make_task: Any,
+) -> None:
+    """The effort bandit must see the real effort level, not a stale default.
+
+    ``AgentSession`` has no ``effort`` attribute -- the effort level lives on
+    ``session.model_config.effort``. Feeding the bandit the wrong (always
+    empty) value means ``EffortBandit.update`` silently discards every
+    outcome, since "" is never one of its arms, and the bandit never learns
+    which effort level performs best for a task type.
+    """
+    task = make_task(id="T-bandit-effort", title="Tune the router")
+    session = _session_for(task.id, exit_code=0)
+    assert session.model_config is not None
+    assert session.model_config.effort == "high"
+
+    bandit = MagicMock()
+    orch = SimpleNamespace(
+        _bandit_router=bandit,
+        _workdir=tmp_path,
+        _config=SimpleNamespace(budget_usd=10.0),
+    )
+
+    _record_bandit_outcome(orch, task, session, janitor_passed=True)
+
+    bandit.record_outcome.assert_called_once()
+    _, kwargs = bandit.record_outcome.call_args
+    assert kwargs["effort"] == "high"

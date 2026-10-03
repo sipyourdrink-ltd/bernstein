@@ -31,6 +31,13 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      # The environment this job's secrets are read from, named so the preflight
+      # below can say WHERE to define a missing one. Kept in step with the
+      # `environment:` key above by tests/unit/test_publish_homebrew_workflow_yaml.py --
+      # a preflight that named the wrong environment would send an operator to
+      # define the secret somewhere this job will never read it.
+      RELEASE_ENVIRONMENT: release-channels
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -100,6 +107,33 @@ jobs:
             sleep 30
           done
 
+      # Preflight, before the formula is rendered (#5826).
+      #
+      # v3.19.2 failed at the LAST step -- the cross-repo push -- with
+      # "HOMEBREW_TAP_TOKEN secret not set", after the version was resolved, the
+      # sdist was hashed and the formula was written. Everything before that step
+      # was wasted, and the error named the secret without naming the one thing an
+      # operator needed: WHICH environment to define it on.
+      #
+      # That is the whole defect. #5819 moved this job from `pypi` to
+      # `release-channels`, and an environment secret does not follow a job across
+      # environments -- the value still exists on `pypi`, so the secret "is set"
+      # from every angle except the one that matters here.
+      - name: Check the tap credential is defined on this environment
+        # After `meta`, so a pre-release version still takes its deliberate skip
+        # path instead of being turned into a credential failure.
+        if: steps.meta.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${GH_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is defined on ${RELEASE_ENVIRONMENT}"
+            exit 0
+          fi
+          echo "::error::HOMEBREW_TAP_TOKEN is not defined on the '${RELEASE_ENVIRONMENT}' environment, which is the one this job reads. A value defined on another environment is not visible here. Define it with: gh secret set HOMEBREW_TAP_TOKEN --env ${RELEASE_ENVIRONMENT} -R ${GITHUB_REPOSITORY}"
+          exit 1
+
       - name: Generate formula
         if: steps.meta.outputs.skip != 'true'
         env:
@@ -137,8 +171,11 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           META_VERSION: ${{ steps.meta.outputs.version }}
         run: |
+          # Kept as a backstop: the preflight above is what should catch this,
+          # and this step must still refuse rather than push anonymously if it
+          # is ever reached (a dry run promoted to a real one, a reordering).
           if [ -z "$GH_TOKEN" ]; then
-            echo "::error::HOMEBREW_TAP_TOKEN secret not set. Add a PAT with repo scope for chernistry/homebrew-tap."
+            echo "::error::HOMEBREW_TAP_TOKEN is not defined on the '${RELEASE_ENVIRONMENT}' environment. It needs a PAT with repo scope for chernistry/homebrew-tap."
             exit 1
           fi
 

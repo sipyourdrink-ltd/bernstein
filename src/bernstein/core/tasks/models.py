@@ -1191,6 +1191,11 @@ class AgentSession:
     exit_code: int | None = None  # Process exit code once known; None while still running
     cell_id: str | None = None  # Which cell this agent belongs to
     provider: str | None = None  # Provider selected by TierAwareRouter
+    #: Model vendor declared by the adapter that fronts the models it runs
+    #: (e.g. ``"anthropic"``, ``"openai"``). Distinct from ``provider``,
+    #: which is the CLI/adapter identifier. Empty means the adapter declares
+    #: no single vendor; the trust-record exporter then refuses this hop.
+    model_vendor: str = ""
     agent_source: str = "built-in"  # "catalog", "agency", or "built-in"
     timeout_s: int | None = None  # Per-agent wall-clock timeout; None = use OrchestratorConfig default
     timeout_timer: Any | None = None  # Armed watchdog timer, stashed at spawn for re-arm on extension (#4571)

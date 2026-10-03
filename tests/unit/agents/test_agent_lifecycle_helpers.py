@@ -561,3 +561,107 @@ def test_long_lived_clean_exit_auto_complete_does_not_warn(
         )
     assert success is True
     assert not any("SUSPICIOUS auto-complete" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# adapter-keyed failure tracking (issue #5875)
+# ---------------------------------------------------------------------------
+
+
+def test_capture_agent_crash_tags_the_real_adapter_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Crash telemetry tags the session's actual adapter, not a dead field.
+
+    ``AgentSession`` has no ``adapter`` attribute -- the field is
+    ``endpoint_adapter_name`` (#4908) -- so the old ``getattr(session,
+    "adapter", "unknown")`` always fell back to the literal ``"unknown"``.
+    """
+    import bernstein.core.agents.agent_lifecycle as al
+    from bernstein.core.observability import error_capture
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        error_capture,
+        "capture_message",
+        lambda message, category, tags, extra: captured.update(tags=tags),
+    )
+    session = _session(sid="A-1")
+    session.endpoint_adapter_name = "claude_code"
+
+    al._capture_agent_crash(session, AbortReason.TIMEOUT, "timed out")
+
+    assert captured["tags"]["adapter"] == "claude_code"  # type: ignore[index]
+
+
+def _run_handle_dead_agent(monkeypatch: pytest.MonkeyPatch, *, exit_code: int | None) -> SimpleNamespace:
+    """Run ``_handle_dead_agent`` for a claude_code session that exited with *exit_code*.
+
+    Every side effect other than the failure-timestamp bookkeeping is stubbed so
+    the tests below stay unit tests of the per-adapter spawn cooldown.
+    """
+    import bernstein.core.agents.agent_lifecycle as al
+
+    monkeypatch.setattr(al, "transition_agent", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_capture_agent_crash", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_propagate_abort_to_children", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_release_file_ownership", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_release_task_to_session", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_preserve_runner_logs", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_write_retry_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_maybe_preserve_worktree", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_handle_orphaned_task_guarded", lambda *a, **k: None)
+    monkeypatch.setattr(al, "_save_partial_work", lambda *a, **k: False)
+
+    session = _session(sid="A-1", exit_code=exit_code)
+    session.endpoint_adapter_name = "claude_code"
+    orch = SimpleNamespace(
+        _agent_failure_timestamps={},
+        _crash_counts={},
+        _rate_limit_tracker=None,
+        _spawner=SimpleNamespace(
+            get_worktree_path=lambda sid: None,
+            cleanup_worktree=lambda sid: None,
+        ),
+        _signal_mgr=SimpleNamespace(clear_signals=lambda sid: None),
+    )
+
+    al._handle_dead_agent(orch, session, {"open": [], "claimed": [], "in_progress": [], "done": []})
+    return orch
+
+
+@pytest.mark.parametrize("exit_code", [1, 2, 124, 126, 137])
+def test_failed_agent_exit_records_failure_timestamp_under_the_real_adapter_name(
+    monkeypatch: pytest.MonkeyPatch, exit_code: int
+) -> None:
+    """A crash cools the adapter down, keyed by the session's real adapter.
+
+    The per-adapter spawn cooldown looks the adapter up by its real name, so
+    the failure timestamp must be recorded under that name (never the
+    literal ``"unknown"``).
+    """
+    orch = _run_handle_dead_agent(monkeypatch, exit_code=exit_code)
+
+    assert "claude_code" in orch._agent_failure_timestamps
+    assert "unknown" not in orch._agent_failure_timestamps
+
+
+@pytest.mark.parametrize(
+    "exit_code",
+    [
+        0,  # clean exit after the task finished
+        None,  # exit status unknown: not proof of a failure
+        -2,  # SIGINT / user interrupt
+        -15,  # SIGTERM / orchestrator or shutdown stop
+    ],
+)
+def test_normal_or_deliberate_agent_exit_does_not_cool_the_adapter_down(
+    monkeypatch: pytest.MonkeyPatch, exit_code: int | None
+) -> None:
+    """Only a genuine failure blocks the adapter; a normal exit must not.
+
+    ``refresh_agent_states`` marks an agent dead as soon as its process is
+    gone, including right after it finished its task cleanly. Stamping the
+    adapter then would refuse every spawn on it for the cooldown window.
+    """
+    orch = _run_handle_dead_agent(monkeypatch, exit_code=exit_code)
+
+    assert orch._agent_failure_timestamps == {}

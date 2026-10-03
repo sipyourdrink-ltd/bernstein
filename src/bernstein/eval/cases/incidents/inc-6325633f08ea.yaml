@@ -1,0 +1,14 @@
+id: inc-6325633f08ea
+severity: P2
+source_incident: "dlq:a1144be7d0f14e8b"
+owner: backend
+created_at: 1789807365.819
+expected_outcome: "Agent should complete the task; flake-tolerant retry is acceptable. (root cause: max_retries_exceeded)"
+tags:
+  - max_retries_exceeded
+prompt: |
+  Reproduce and resolve the following terminal failure (role=backend).
+  Task: [GATE-REPAIR] Add OSCAL export code and vendor schema
+  Failure reason: max_retries_exceeded
+  Last error (trimmed):
+  Agent backend-e3d0b997 died; deferred death judgment re-evaluated and no liveness signal advanced past the pid-exit snapshot

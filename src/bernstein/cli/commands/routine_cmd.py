@@ -17,12 +17,13 @@ from typing import TYPE_CHECKING
 import click
 
 from bernstein.core.planning.routine_bridge import RoutineBridge
+from bernstein.core.planning.scenario_library import packaged_scenarios_dir
 
 if TYPE_CHECKING:
     from bernstein.core.planning.scenario_library import ScenarioRecipe
 
 # Default scenarios directory shipped with the package.
-_DEFAULT_SCENARIOS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "templates" / "scenarios"
+_DEFAULT_SCENARIOS_DIR = packaged_scenarios_dir()
 
 
 def _resolve_state_dir(workdir: Path) -> Path:
@@ -64,8 +65,16 @@ def routine_scenarios(scenarios_dir: Path | None) -> None:
     table.add_column("name")
     table.add_column("tasks", justify="right")
     table.add_column("tags", style="dim")
+    table.add_column("source", style="green")
     for s in sorted(scenarios, key=lambda r: r.scenario_id):
-        table.add_row(s.scenario_id, s.name, str(len(s.tasks)), ", ".join(s.tags))
+        source_color = "green" if s.source_root == "workspace" else "blue"
+        table.add_row(
+            s.scenario_id,
+            s.name,
+            str(len(s.tasks)),
+            ", ".join(s.tags),
+            f"[{source_color}]{s.source_root}[/{source_color}]",
+        )
     console.print(table)
 
 

@@ -37,6 +37,7 @@ from bernstein.adapters.garak import GarakAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.goose import GooseAdapter
+from bernstein.adapters.gpt_researcher import GPTResearcherAdapter
 from bernstein.adapters.gptme import GptmeAdapter
 from bernstein.adapters.hermes import HermesAdapter
 from bernstein.adapters.holmesgpt import HolmesGPTAdapter
@@ -63,6 +64,7 @@ from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.ralphex import RalphexAdapter
 from bernstein.adapters.rovo import RovoAdapter
 from bernstein.adapters.skyvern import SkyvernAdapter
+from bernstein.adapters.tongyi_deepresearch import TongyiDeepResearchAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +124,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "goose": GooseAdapter,
     "gptme": GptmeAdapter,
     "hermes": HermesAdapter,
+    "gpt_researcher": GPTResearcherAdapter,
     "holmesgpt": HolmesGPTAdapter,
     "iac": IaCAdapter,
     "junie": JunieAdapter,
@@ -146,6 +149,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "ralphex": RalphexAdapter,
     "rovo": RovoAdapter,
     "skyvern": SkyvernAdapter,
+    "tongyi_deepresearch": TongyiDeepResearchAdapter,
 }
 
 # Agents tracked as declarative capability profiles rather than as

@@ -182,7 +182,7 @@ async def shutdown_server(request: Request) -> JSONResponse:
             reason = str(body_d.get("reason", reason))
 
     logger = logging.getLogger("bernstein.server")
-    from bernstein.core.sanitize import sanitize_log
+    from bernstein.core.security.sanitize import sanitize_log
 
     logger.info("Shutdown requested via /shutdown endpoint (reason=%s)", sanitize_log(reason))
 

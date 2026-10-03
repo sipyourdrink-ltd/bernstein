@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 # lists are alias-resolved at write time, so a change to alias discovery makes
 # every existing entry potentially short of edges even though its file hashes
 # still match.
-_ANALYZER_CACHE_VERSION = "4"
-_COMPAT_CACHE_VERSION = "5"
+_ANALYZER_CACHE_VERSION = "5"
+_COMPAT_CACHE_VERSION = "6"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
 
 # Upper bound on a harvested path literal. Long strings in a test are prose,
@@ -141,8 +141,54 @@ def _normalize_mapping_list(raw: object) -> dict[str, list[str]]:
     return normalized
 
 
-def _collect_imports_from_node(node: ast.AST, package_prefixes: set[str]) -> set[str]:
-    """Collect project-scoped import names from a single AST node."""
+def _resolve_relative_import(
+    *,
+    current_module: str,
+    is_package_init: bool,
+    level: int,
+    module: str | None,
+) -> str | None:
+    """Resolve a relative ``from`` import to its absolute dotted module name.
+
+    Mirrors Python's own resolution: a package's ``__init__.py`` counts as the
+    package itself for ``__package__`` purposes, so ``level=1`` there refers to
+    the package's own directory rather than its parent. Returns ``None`` when
+    the import climbs to or above the project root (as many ``.``s as, or more
+    than, the current module has parent segments) -- undecidable, so the
+    caller drops the edge exactly as it already does for a module it cannot
+    resolve at all. This also covers a bare top-level module (``package_parts``
+    empty even before stripping): Python has no package for it to import
+    relative to, so *every* relative import there is invalid, not only ones
+    that climb further.
+    """
+    package_parts = current_module.split(".") if current_module else []
+    if not is_package_init:
+        package_parts = package_parts[:-1]
+    strip = level - 1
+    if strip >= len(package_parts):
+        return None
+    if strip:
+        package_parts = package_parts[: len(package_parts) - strip]
+    if module:
+        return ".".join([*package_parts, module]) if package_parts else module
+    return ".".join(package_parts) if package_parts else None
+
+
+def _collect_imports_from_node(
+    node: ast.AST,
+    package_prefixes: set[str],
+    *,
+    current_module: str | None = None,
+    is_package_init: bool = False,
+) -> set[str]:
+    """Collect project-scoped import names from a single AST node.
+
+    ``current_module`` (the dotted name of the file being parsed) resolves a
+    relative ``from .sibling import x`` / ``from ..pkg import x`` to the
+    absolute module it names. Without it, a relative import's edge is
+    silently dropped: ``node.module`` on a relative import never carries the
+    package prefix, so the plain prefix check below cannot see it either way.
+    """
     imports: set[str] = set()
     if isinstance(node, ast.Import):
         for alias in node.names:
@@ -151,23 +197,50 @@ def _collect_imports_from_node(node: ast.AST, package_prefixes: set[str]) -> set
                 imports.add(alias.name)
     elif isinstance(node, ast.ImportFrom):
         module = node.module or ""
-        if module:
+        if node.level and current_module:
+            resolved = _resolve_relative_import(
+                current_module=current_module,
+                is_package_init=is_package_init,
+                level=node.level,
+                module=module or None,
+            )
+            if resolved:
+                top = resolved.split(".", 1)[0]
+                if top in package_prefixes:
+                    imports.add(resolved)
+        elif module:
             top = module.split(".", 1)[0]
             if top in package_prefixes:
                 imports.add(module)
     return imports
 
 
-def extract_project_imports(path: Path, package_prefixes: set[str]) -> set[str]:
-    """Extract imported project module names from a Python file."""
+def extract_project_imports(path: Path, package_prefixes: set[str], *, current_module: str | None = None) -> set[str]:
+    """Extract imported project module names from a Python file.
+
+    ``current_module`` is the dotted module name ``path`` corresponds to
+    (e.g. from :func:`_path_to_module`); passing it lets a relative import be
+    resolved to the absolute module it names. Omitting it (the default)
+    preserves the prior behaviour of dropping relative-import edges, for
+    callers -- test files, the legacy CLI wrapper -- that have no module name
+    to resolve against.
+    """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return set()
 
+    is_package_init = path.name == "__init__.py"
     imports: set[str] = set()
     for node in ast.walk(tree):
-        imports.update(_collect_imports_from_node(node, package_prefixes))
+        imports.update(
+            _collect_imports_from_node(
+                node,
+                package_prefixes,
+                current_module=current_module,
+                is_package_init=is_package_init,
+            )
+        )
     return imports
 
 
@@ -399,7 +472,9 @@ def build_compat_dep_map(
                 continue
             source_imports[module] = {
                 "hash": _file_hash(src_file),
-                "imports": sorted(resolve_module_aliases(extract_project_imports(src_file, prefixes), aliases)),
+                "imports": sorted(
+                    resolve_module_aliases(extract_project_imports(src_file, prefixes, current_module=module), aliases)
+                ),
                 "paths": sorted(extract_path_literals(src_file)),
             }
 
@@ -987,19 +1062,44 @@ class TestImpactAnalyzer:
             tests.extend(sorted(path for path in test_dir.rglob("test_*.py") if path.is_file()))
         return tests
 
-    def _resolved_imports(self, path: Path) -> set[str]:
+    def _resolved_imports(self, path: Path, *, current_module: str | None = None) -> set[str]:
         """Parse project imports from ``path`` with legacy aliases resolved."""
         if self._aliases is None:
             self._aliases = discover_module_aliases(self._src_root)
-        return resolve_module_aliases(extract_project_imports(path, self._package_prefixes), self._aliases)
+        imports = extract_project_imports(path, self._package_prefixes, current_module=current_module)
+        return resolve_module_aliases(imports, self._aliases)
 
     def _parse_test_imports(self, test_file: Path) -> set[str]:
-        """Parse source dependencies imported by a test file."""
+        """Parse source dependencies imported by a test file.
+
+        Deliberately does not pass ``current_module`` -- a choice, not an
+        impossibility. Test directories are configured separately from
+        ``self._src_root`` (see ``self._test_dirs``) and are not usually
+        importable packages rooted the same way, so a test file has no
+        settled dotted module name to resolve a relative import against the
+        way :meth:`_parse_source_imports` does for source files. A test
+        helper imported relatively (``from .helpers import make_store``)
+        therefore still contributes no edge; that gap is real, but widening
+        this fix to cover it is out of scope here -- the source side is
+        where a relatively-imported facade silently drops selection edges
+        with nothing failing, which is the damage this fix addresses. If a
+        test tree ever gains a dotted root of its own (an ``__init__.py``
+        chain up to a known base), the same ``_path_to_module`` +
+        ``current_module`` technique would apply unchanged.
+        """
         return self._resolved_imports(test_file)
 
     def _parse_source_imports(self, source_file: Path) -> set[str]:
-        """Parse project imports used by a source file."""
-        return self._resolved_imports(source_file)
+        """Parse project imports used by a source file.
+
+        Passes the file's own dotted module name so a relative
+        ``from .sibling import x`` resolves to the absolute module it names --
+        without it, a re-export written with a relative import has no edge to
+        its real definition, and a change there silently misses the tests that
+        import only the re-exporting module.
+        """
+        module = _path_to_module(source_file, self._src_root)
+        return self._resolved_imports(source_file, current_module=module or None)
 
     def _name_based_mapping(self, source_rel: str) -> list[str]:
         """Map a source file to likely test files by naming convention."""

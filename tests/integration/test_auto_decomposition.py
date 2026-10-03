@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-async def test_auto_decomposition(test_client: TestClient, orchestrator_factory, integration_sdd: Path):
+async def test_auto_decomposition(
+    test_client: TestClient, orchestrator_factory, integration_sdd: Path, monkeypatch: pytest.MonkeyPatch
+):
     # 1. Create a large task
     test_client.post(
         "/tasks",

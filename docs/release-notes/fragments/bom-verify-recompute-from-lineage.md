@@ -1,0 +1,5 @@
+## `bernstein bom verify --from-lineage` recomputes the BOM instead of resolving hashes
+
+`verify_bom_against_spine` only checked that each listed `sha256` equalled *some* verifying entry hash on the spine, plus the run id and head anchor. A document with a swapped hash, an inflated `invocation_count`, a dropped, renamed or fabricated component, or a spine with a middle entry deleted all passed. It now walks the whole chain (`LineageSpine.verify`, including `prev_hash` linkage; tampered, empty and seal-only runs fail), recomputes the BOM from the spine, and compares it with the document field by field: top-level run id, window and head, the component set, and every component field. Components the spine cannot derive (prompts, adapters, tools, data sources) fail rather than pass unchecked.
+
+`bom verify --run` and `--workdir` were silently ignored without `--from-lineage`, so a forged BOM printed PASS. They are now rejected with exit 2, and the structural-only PASS says it did not consult the lineage spine. A BOM emitted from a hand-written `--snapshot` no longer verifies against lineage.

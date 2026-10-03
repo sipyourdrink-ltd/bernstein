@@ -24,8 +24,7 @@ from bernstein.cli.commands.delegation_cmd import delegation_group
 from bernstein.core.identity import delegation
 from bernstein.core.identity.agent_jwt import AgentIdentityStore, DelegationWriteError
 from bernstein.core.identity.delegation_scope import (
-    REASON_COMPARISON_AXIS_UNSUPPORTED,
-    VERDICT_UNPROVEN,
+    VERDICT_PASS,
     grade_chain,
 )
 
@@ -103,22 +102,17 @@ def test_narrowing_grades_from_the_receipt_with_the_store_deleted(store, tmp_pat
 
     The identity store directory is deleted before grading, so the test cannot
     reach it even by accident, and ``grade_chain`` is called with no
-    ``scope_resolver``: the receipts are the only input.  ``task_ids`` narrowing
-    is proven from those receipts alone; the file scope is recorded and not
-    graded, which is what the chain verdict says.
+    ``scope_resolver``: the receipts are the only input.  ``task_ids`` and
+    ``allowed_files`` narrowing are both proven from those receipts alone
+    (#5418 made the file-scope axis gradable, via
+    :func:`~bernstein.core.security.capability_tokens.glob_narrows` --
+    ``src/**`` subsumes ``src/core`` over the pattern grammar, not by treating
+    ``src/**`` as a path-prefix ancestor of ``src/core``).  The helper that
+    decides ``path_prefixes`` is deliberately not named here:
+    tests/unit/test_security_controls_are_wired.py greps bare identifiers
+    across tests/, and naming it would retire an unrelated security exemption.
     """
     parent = _mint_orchestrator(store)
-    # ``allowed_files`` rides on the receipt verbatim and is deliberately not
-    # graded: it is a glob field, and a glob is not a path prefix, so it cannot
-    # be decided by the ancestry primitive ``path_prefixes`` uses.  The hop
-    # grades ``unproven`` on that axis with a named reason rather than reporting
-    # a narrowing nothing checked (#5351; the grading primitive is #5418).  The
-    # helper that decides ``path_prefixes`` is deliberately not named here:
-    # tests/unit/test_security_controls_are_wired.py greps bare identifiers
-    # across tests/, and naming it would retire an unrelated security exemption.
-    # The parent scope is the tree ``src/**`` because the mint-time check reads
-    # these patterns the way the merge gate does, where ``src`` admits the path
-    # ``src`` and nothing under it.
     child = _mint_child(store, "child-1", parent, task_ids=["t1", "t2"], allowed_files=["src/**"])
     _mint_child(store, "grand-1", child, task_ids=["t1"], allowed_files=["src/core"])
 
@@ -136,11 +130,10 @@ def test_narrowing_grades_from_the_receipt_with_the_store_deleted(store, tmp_pat
     assert receipts[1].scope["path_prefixes"] is None
 
     verdict = grade_chain(receipts)
-    assert verdict.verdict == VERDICT_UNPROVEN, verdict.reasons
-    assert verdict.unproven_hops == 2
+    assert verdict.verdict == VERDICT_PASS, verdict.reasons
+    assert verdict.unproven_hops == 0
     rows = {row.hop_index: row for row in verdict.hops}
-    assert rows[1].axes == ("allowed_files",)
-    assert REASON_COMPARISON_AXIS_UNSUPPORTED in rows[1].reasons
+    assert rows[1].axes == ()
 
 
 def test_removing_the_tail_receipt_yields_valid_true_and_one_fewer_hop(store, audit_root):
@@ -233,9 +226,7 @@ def test_cli_verify_exits_zero_and_prints_the_hop_count(store, audit_root, monke
     monkeypatch.setattr(delegation, "_audit_key", lambda: KEY)
     parent = _mint_orchestrator(store)
     # The production shape: the spawner mints with ``task_ids`` and no file
-    # scope, and every axis on that receipt is one the comparator reads.  A
-    # recorded ``allowed_files`` is graded unproven and exits 3, which is
-    # pinned separately below rather than folded into this criterion.
+    # scope, and every axis on that receipt is one the comparator reads.
     _mint_child(store, "child-0", parent, task_ids=["t0"])
 
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
@@ -243,14 +234,15 @@ def test_cli_verify_exits_zero_and_prints_the_hop_count(store, audit_root, monke
     assert "1 hop(s)" in result.output
 
 
-def test_a_recorded_file_scope_is_unproven_and_the_cli_exits_three(store, audit_root, monkeypatch):
-    """A recorded ``allowed_files`` is not graded, so the chain is unproven.
+def test_a_recorded_file_scope_that_narrows_grades_pass(store, audit_root, monkeypatch):
+    """A lone root recording ``allowed_files`` reads pass, structural only.
 
-    The axis is carried verbatim and grades ``comparison_axis_unsupported``: a
-    glob is not a path prefix, and no primitive here decides whether one glob
-    contains another (#5351, follow-up #5418).  The CLI's exit map is the one it
-    already had - 0 pass, 1 fail, 3 unproven - so a chain that records a file
-    scope reports 3 until that axis can be graded.
+    Before #5418, any recorded ``allowed_files`` graded
+    ``comparison_axis_unsupported`` regardless of what it said, because no
+    primitive decided glob containment. #5418 added
+    :func:`~bernstein.core.security.capability_tokens.glob_narrows`, so the
+    axis is now a recognized, gradable one -- a root hop has nothing to narrow
+    against and reads pass the same way every other recognized axis does.
     """
     monkeypatch.setattr(delegation, "_audit_key", lambda: KEY)
     parent = _mint_orchestrator(store)
@@ -260,14 +252,22 @@ def test_a_recorded_file_scope_is_unproven_and_the_cli_exits_three(store, audit_
     assert receipts[0].scope["allowed_files"] == ["src/**"]
 
     verdict = grade_chain(receipts)
-    assert verdict.verdict == VERDICT_UNPROVEN
-    assert verdict.unproven_hops == 1
-    assert verdict.hops[0].axes == ("allowed_files",)
-    assert REASON_COMPARISON_AXIS_UNSUPPORTED in verdict.hops[0].reasons
+    assert verdict.verdict == VERDICT_PASS
+    assert verdict.unproven_hops == 0
+    assert verdict.hops[0].axes == ()
 
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(audit_root)])
-    assert result.exit_code == 3, result.output
-    assert "comparison_axis_unsupported" in result.output
+    assert result.exit_code == 0, result.output
+
+    # Note: a child minted with NO file scope under a parent that HAS one is
+    # refused at mint time (agent_jwt.py's own subset check -- "an empty
+    # child scope under a restricted parent is the widening direction"), so
+    # that genuine widening can never reach this store's own receipts. The
+    # FAIL-path coverage for that case lives in
+    # tests/unit/identity/test_delegation_scope_allowed_files.py, which
+    # builds receipts directly rather than through the mint path -- exactly
+    # the scenario grade_chain's receipt-only grading exists for: a receipt
+    # that did not come from this store's own enforcement.
 
 
 def test_siblings_grade_when_the_manifest_declares_the_run_root(store, tmp_path, audit_root, monkeypatch):

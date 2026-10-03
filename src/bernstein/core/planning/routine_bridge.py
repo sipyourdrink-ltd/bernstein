@@ -32,7 +32,8 @@ from bernstein.core.planning.routine_provisioner import (
 )
 from bernstein.core.planning.scenario_library import (
     ScenarioRecipe,
-    load_scenario_library,
+    load_layered_scenario_library,
+    packaged_scenarios_dir,
 )
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.planning.scenario_library import ScenarioLibrary
+    from bernstein.core.tasks.artifacts import ArtifactSpec
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,7 @@ class ScenarioTaskPayload:
         complexity: ``low`` | ``medium`` | ``high``.
         scenario_id: Source scenario, propagated for traceability.
         orchestration_id: Shared id grouping all tasks of one scenario run.
+        artifact_spec: The artifact specification for the task output.
     """
 
     title: str
@@ -87,10 +90,13 @@ class ScenarioTaskPayload:
     complexity: str
     scenario_id: str
     orchestration_id: str
+    artifact_spec: ArtifactSpec
 
     def as_server_payload(self) -> dict[str, Any]:
         """Return a dict suitable for ``POST /tasks``."""
-        return {
+        from bernstein.core.tasks.artifacts import ArtifactSpec
+
+        payload = {
             "title": self.title,
             "description": self.description,
             "role": self.role,
@@ -102,6 +108,9 @@ class ScenarioTaskPayload:
                 "orchestration_id": self.orchestration_id,
             },
         }
+        if self.artifact_spec and self.artifact_spec != ArtifactSpec():
+            payload["artifact_spec"] = self.artifact_spec.to_dict()
+        return payload
 
 
 @dataclass(frozen=True)
@@ -177,6 +186,8 @@ def build_task_payloads(
         A list of payloads - one per scenario task template, in scenario
         order. Empty when the scenario has no tasks.
     """
+    from bernstein.core.tasks.artifacts import ArtifactSpec
+
     orch_id = orchestration_id or f"scn-{uuid.uuid4().hex[:12]}"
     context_block = _build_context_block(context, pr_number, branch)
     out: list[ScenarioTaskPayload] = []
@@ -192,6 +203,7 @@ def build_task_payloads(
                 complexity=_COMPLEXITY_NORMALISE.get(tpl.complexity.lower(), "medium"),
                 scenario_id=scenario.scenario_id,
                 orchestration_id=orch_id,
+                artifact_spec=tpl.artifact_spec if tpl.artifact_spec else ArtifactSpec(),
             )
         )
     return out
@@ -254,16 +266,19 @@ class RoutineBridge:
         """Construct a bridge by loading a scenario library from disk.
 
         Args:
-            scenarios_dir: Directory of scenario YAML files.
-            state_dir: Directory for the binding registry. Created on demand.
+            scenarios_dir: Directory of scenario YAML files (workspace scenarios).
+            state_dir: Directory for the binding registry. Created when the first
+                binding is saved, so read-only commands leave no trace.
             bernstein_url: Default Bernstein task server URL.
 
         Returns:
             A configured :class:`RoutineBridge`.
         """
-        library = load_scenario_library(scenarios_dir)
+        # Load layered library with workspace scenarios taking precedence over packaged
+        workspace_root = scenarios_dir
+        packaged_root = packaged_scenarios_dir()
+        library = load_layered_scenario_library(workspace_root, packaged_root)
         provisioner = RoutineProvisioner(library=library, bernstein_url=bernstein_url)
-        state_dir.mkdir(parents=True, exist_ok=True)
         return cls(library=library, provisioner=provisioner, state_dir=state_dir)
 
     # ------------------------------------------------------------------ A

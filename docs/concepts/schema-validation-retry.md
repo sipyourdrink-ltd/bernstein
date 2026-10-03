@@ -74,7 +74,7 @@ prior validation failure, not just the most recent.
 | Knob | Default | Controls |
 |---|--:|---|
 | `defaults.SCHEMA_RETRY_MAX_ATTEMPTS` | `3` | Per-decode retry budget. |
-| `schema_retry_attempts_total{outcome}` | metric | `success` / `retry` / `exhausted` outcomes; scrape for cost-tracking the retry loop. |
+| `schema_retry_attempts_total{outcome}` | metric | `success` / `recovered` / `retry` / `exhausted` outcomes; scrape for cost-tracking the retry loop. |
 
 ## Limitations
 

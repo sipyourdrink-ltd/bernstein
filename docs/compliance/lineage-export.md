@@ -49,7 +49,7 @@ attribution), `regulatory_class` (operator-supplied filter, below),
 and `customer_signature` (detached Ed25519 signature a regulator can
 verify without Bernstein).
 
-Source: `src/bernstein/core/persistence/lineage.py:96`.
+Source: `LineageRecord` in `src/bernstein/core/persistence/lineage.py`.
 
 ---
 
@@ -66,7 +66,7 @@ order:
    `tuning.lineage.regulatory_class_default` for the whole run; the
    `LineageWriter` falls back to this when a record has no explicit
    class
-   (`src/bernstein/core/persistence/lineage.py:374`).
+   (`LineageWriter` in `src/bernstein/core/persistence/lineage.py`).
 3. **Unset (`null`)** - the record is still written; the export shows
    `-` (HTML) or an empty cell (CSV).
 
@@ -182,17 +182,21 @@ bernstein lineage verify <run_id> [--workdir .] \
                          [--public-key /path/to/customer-pub.pem]
 ```
 
-Source: `src/bernstein/cli/commands/lineage_verify_cmd.py`. Walks
-every record for the run, re-checks the WAL hash chain, and (when
-`--public-key` is supplied) re-verifies every `customer_signature`.
+Source: `src/bernstein/cli/commands/lineage_verify_cmd.py`. Walks the
+run's lineage spine (`.sdd/lineage/<run_id>/spine.jsonl`), recomputing the
+Merkle hash chain and every HMAC tag. When no spine exists for the run it
+falls back to the legacy WAL chain, where it re-checks the WAL hash chain
+and (when `--public-key` is supplied) re-verifies every
+`customer_signature`. `--key-path` names the audit HMAC key file.
 
 Exit codes:
 
-| Code | Meaning                                                                |
-| ---- | ---------------------------------------------------------------------- |
-| `0`  | Chain intact and (if `--public-key`) every signature validated.        |
-| `1`  | `.sdd/` not found at the given workdir, or supplied public key is bad. |
-| `2`  | Tamper detected: WAL chain broken, or one or more signatures invalid.  |
+| Code | Meaning                                                                            |
+| ---- | ---------------------------------------------------------------------------------- |
+| `0`  | Chain intact (and, on the legacy chain with `--public-key`, every signature valid). |
+| `1`  | No entries, seal-only spine, `.sdd/` not found, or supplied public key is bad.      |
+| `2`  | Tamper detected: chain broken, or one or more signatures invalid.                   |
+| `3`  | Cannot verify: audit key missing.                                                   |
 
 The command prints a per-error list capped at 50 entries; the rest are
 summarised. Pipe to a file for the full set on a noisy chain.
@@ -225,13 +229,13 @@ for rec in reader.iter_records(run_id="r-2026-05-05"):
 ### Tamper-loud detection in the janitor
 
 The janitor's compaction step runs the same `verify_run_chain()` on
-every cycle. On verification failure it (a) emits an `audit.jsonl`
+every cycle. On verification failure it (a) emits an audit-chain
 entry of type `lineage_tamper_detected`, (b) increments the
 `bernstein_lineage_tamper_total{run_id=...}` Prometheus counter, and
 (c) POSTs to the configured SIEM webhook with exponential back-off on
 5xx. The janitor never blocks on a bad webhook - it records the event
 and lets the operator decide response policy. Source:
-`src/bernstein/core/quality/janitor.py:187`. Webhook configuration:
+`verify_lineage_chains` in `src/bernstein/core/quality/janitor.py`. Webhook configuration:
 [Regulator-class lineage § SIEM webhook](regulatory-lineage.md#configuring-the-siem-webhook).
 
 ---
@@ -304,9 +308,9 @@ janitor's retention policy:
 
 | Knob                         | Default | Source                                                       |
 | ---------------------------- | ------: | ------------------------------------------------------------ |
-| `disk.run_retention_count`   |     20  | `core/defaults.py:419`. Last 20 runs kept; older are pruned. |
-| `disk.wal_retention_count`   |     50  | `core/defaults.py:421`. Last 50 WAL files per run kept.      |
-| `lineage.compaction.enabled` |  `true` | Janitor gzips rotated WAL files in place.                    |
+| `tuning.janitor.run_retention_count` |     20  | `JanitorDefaults` in `core/defaults.py`. Last 20 runs kept; older are pruned. |
+| `tuning.janitor.wal_retention_count` |     50  | `JanitorDefaults` in `core/defaults.py`. Last 50 WAL files per run kept.      |
+| (no knob)                     | not scheduled | `compact_lineage_logs` gzips rotated `<run_id>.wal.jsonl.<N>` segments when invoked; the janitor cycle does not call it yet. |
 
 Two operational rules:
 
@@ -314,8 +318,8 @@ Two operational rules:
    while writes are still happening - a live verifier never races the
    compactor.
 2. Rotated `<run_id>.wal.jsonl.<N>` segments are gzipped to `<...>.gz`
-   on the next janitor cycle. The reader handles both forms
-   transparently.
+   when `compact_lineage_logs` is invoked (the janitor cycle does not
+   call it yet). The reader handles both forms transparently.
 
 For an auditor handover, snapshot `.sdd/runtime/wal/` for the run
 *before* the next janitor cycle and ship the snapshot alongside the
@@ -374,7 +378,7 @@ bernstein lineage export r-2026-05-05 --format html \
   --output /pack/r-2026-05-05.html
 ```
 
-Pair the export with `security/AUDIT.md` (HMAC-chained audit log) for
+Pair the export with `docs/security/AUDIT.md` (HMAC-chained audit log) for
 change-management integrity. SOC 2 evidence is generally satisfied by
 the audit log alone; lineage adds per-artefact provenance when an
 auditor asks "which prompt produced this rule?"

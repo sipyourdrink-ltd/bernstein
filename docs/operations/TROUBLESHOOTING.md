@@ -338,6 +338,12 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 - Check that `${VAR}` references in MCP server configs resolve to actual env vars (the adapter calls `_resolve_env_vars()` recursively).
 - Not all adapters support runtime MCP injection. Claude, Cursor, and Kilo support `--mcp-config`/`--add-mcp`/`--mcp` flags; others (Kiro, OpenCode, Continue, Tabby, Cody) ignore the `mcp_config` parameter.
 
+**Symptom:** A server you use in an interactive Claude Code session is missing from a spawned `claude` agent, with no error.
+
+**Cause:** Spawned `claude` agents run with `--strict-mcp-config`, so they get only the servers bernstein passes. Servers Claude Code discovers on its own (`claude mcp add` at user or local scope, a repo's `.mcp.json`, plugins, connectors) are not added.
+
+**Resolution:** Declare the server in `bernstein.yaml` `mcp_servers`, or in `~/.claude/mcp.json`. Both are read by bernstein and passed to every spawned `claude` agent.
+
 ---
 
 ## 12. Agent Timeout (Watchdog Kill)

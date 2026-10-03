@@ -563,6 +563,13 @@ def plugins_cmd(workdir: str, trust_details: bool) -> None:
     default=False,
     help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
 )
+@click.option(
+    "--unattended",
+    "unattended",
+    is_flag=True,
+    default=False,
+    help="Execute probes through the unattended spawner environment.",
+)
 @click.pass_context
 def doctor(
     ctx: click.Context,
@@ -576,6 +583,7 @@ def doctor(
     endpoint_timeout: float,
     roles: tuple[str, ...],
     failover_drill: bool,
+    unattended: bool = False,
 ) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
@@ -636,7 +644,7 @@ def doctor(
     # the trailing hint to keep the exit code unchanged.
     exit_code = 0
     try:
-        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix)
+        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix, unattended=unattended)
     except SystemExit as exc:  # NOSONAR python:S5754 - captured to add a hint, re-raised below
         exit_code = int(exc.code or 0)
 
@@ -1195,6 +1203,35 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
     _trace_show_task(task_id, traces_dir=traces_dir, as_json=as_json)
 
 
+def _ledger_entries_for_entity(sdd_dir: Path, entity_id: str) -> list[tuple[str, Any]]:
+    """Return ``(run_id, LedgerEntry)`` pairs from every run ledger referencing ``entity_id``.
+
+    A work ledger is scoped per run, under ``<sdd_dir>/runtime/ledger/<run_id>/``.
+    ``entity_id`` may name the run itself (the ledger directory) or a task
+    inside it (``LedgerEntry.task_id``), so both are checked. Deliberately
+    reads the ledger root path directly rather than going through
+    :func:`bernstein.core.persistence.work_ledger.default_ledger_root`, which
+    creates it on first use -- a read-only ``follow`` must not create a
+    ``.sdd/runtime/ledger/`` directory as a side effect of a query that finds
+    nothing.
+    """
+    from bernstein.core.persistence.work_ledger import LedgerReader
+
+    ledger_root = sdd_dir / "runtime" / "ledger"
+    if not ledger_root.is_dir():
+        return []
+    found: list[tuple[str, Any]] = []
+    for run_dir in sorted(p for p in ledger_root.iterdir() if p.is_dir()):
+        reader = LedgerReader(run_dir)
+        if not reader.exists():
+            continue
+        run_matches = run_dir.name == entity_id
+        for entry in reader.entries():
+            if run_matches or entry.task_id == entity_id:
+                found.append((run_dir.name, entry))
+    return found
+
+
 @trace_cmd.command("follow")
 @click.argument("entity_id")
 @click.option(
@@ -1206,13 +1243,15 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
 )
 @click.pass_context
 def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
-    """Show every trace entry that references ENTITY_ID, oldest first.
+    """Show every trace or ledger entry that references ENTITY_ID, oldest first.
 
     `trace show` globs filenames for one task id and prints whichever file
     matches, once. An entity id -- a task, a run, a grant -- appears across
-    several traces, and following it meant exporting and grepping.
+    several journals, and following it meant exporting and grepping each one
+    separately. This joins two of them by that id: the trace store and the
+    work ledger.
 
-    Ordering is by start time, and ties break on trace id, so a finished run
+    Ordering is by timestamp, with a total tie-break, so a finished run
     prints byte-identically on every invocation.
     """
     from bernstein.core.observability.trace_store import ContentAddressedTraceStore
@@ -1232,37 +1271,78 @@ def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
     # same finished run print differently after a rebuild.
     matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
 
-    if not matches:
+    ledger_entries = _ledger_entries_for_entity(traces_path.parent, entity_id)
+
+    if not matches and not ledger_entries:
         console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
         raise SystemExit(1)
 
     if as_json:
-        console.print_json(json.dumps([entry.to_dict() for entry in matches]))
+        rows: list[tuple[float, str, dict[str, Any]]] = [
+            (entry.started_at, f"trace:{entry.trace_id}", {**entry.to_dict(), "source": "trace"}) for entry in matches
+        ]
+        rows.extend(
+            (entry.ts, f"ledger:{run_id}:{entry.seq}", {**entry.to_dict(), "source": "ledger", "run_id": run_id})
+            for run_id, entry in ledger_entries
+        )
+        rows.sort(key=lambda row: (row[0], row[1]))
+        console.print_json(json.dumps([row[2] for row in rows]))
         return
 
     from rich.table import Table
 
-    table = Table(
-        title=f"Traces referencing {entity_id}",
-        show_header=True,
-        header_style="bold cyan",
-    )
-    table.add_column("Started")
-    table.add_column("Trace")
-    table.add_column("Task")
-    table.add_column("Model")
-    table.add_column("Bytes", justify="right")
-    for entry in matches:
-        table.add_row(
-            _trace_timestamp(entry.started_at),
-            entry.trace_id,
-            entry.task_id or "-",
-            entry.model or "-",
-            str(entry.byte_size),
+    if matches:
+        table = Table(
+            title=f"Traces referencing {entity_id}",
+            show_header=True,
+            header_style="bold cyan",
         )
-    console.print(table)
-    suffix = "y" if len(matches) == 1 else "ies"
-    console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
+        table.add_column("Started")
+        table.add_column("Trace")
+        table.add_column("Task")
+        table.add_column("Model")
+        table.add_column("Bytes", justify="right")
+        for entry in matches:
+            table.add_row(
+                _trace_timestamp(entry.started_at),
+                entry.trace_id,
+                entry.task_id or "-",
+                entry.model or "-",
+                str(entry.byte_size),
+            )
+        console.print(table)
+
+    if ledger_entries:
+        ledger_entries_sorted = sorted(ledger_entries, key=lambda pair: (pair[1].ts, pair[0], pair[1].seq))
+        ledger_table = Table(
+            title=f"Ledger entries referencing {entity_id}",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        ledger_table.add_column("Time")
+        ledger_table.add_column("Run")
+        ledger_table.add_column("Seq", justify="right")
+        ledger_table.add_column("Kind")
+        ledger_table.add_column("Task")
+        for run_id, entry in ledger_entries_sorted:
+            ledger_table.add_row(
+                _trace_timestamp(entry.ts),
+                run_id,
+                str(entry.seq),
+                entry.kind,
+                entry.task_id or "-",
+            )
+        console.print(ledger_table)
+
+    if ledger_entries:
+        trace_suffix = "y" if len(matches) == 1 else "ies"
+        ledger_suffix = "y" if len(ledger_entries) == 1 else "ies"
+        console.print(
+            f"[dim]{len(matches)} trace entr{trace_suffix}, {len(ledger_entries)} ledger entr{ledger_suffix}[/dim]"
+        )
+    else:
+        suffix = "y" if len(matches) == 1 else "ies"
+        console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
 
 
 def _trace_timestamp(epoch: float) -> str:
@@ -1467,12 +1547,20 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     default=None,
     help="Path to .sdd/ directory.",
 )
+@click.option(
+    "--out-dir",
+    "out_dir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Write one record per worker hop (<exec_id>.json) and the run-level aggregate.json into DIR.",
+)
 def trace_export_cmd(
     run_id: str | None,
     output: str | None,
     as_json: bool,
     latest: bool,
     sdd_dir: str | None,
+    out_dir: str | None,
 ) -> None:
     """Export ``RUN_ID``'s execution evidence as a TRACE 0.2 Trust Record.
 
@@ -1487,8 +1575,14 @@ def trace_export_cmd(
     --last: find the newest finished run in .sdd/runs/ (a directory with
             a non-empty journal.jsonl), sorted by modification time.
     --out: write the canonical JSON string to a file. Default is stdout.
+    --out-dir: write one file per worker hop (<exec_id>.json) plus the
+            run-level aggregate.json into DIR.
     --json: emit the canonical JSON form (identical to the default).
     --sdd-dir: explicit .sdd/ path; defaults to ./.sdd/ or ./.
+
+    A multi-worker run (more than one agent_spawned event) without --out-dir
+    writes only the run-level aggregate to --out/stdout; the per-hop member
+    records require --out-dir.
 
     Exit codes: 0 = exported, 1 = run not found / chain broken / emit error.
     """
@@ -1559,26 +1653,43 @@ def trace_export_cmd(
         console.print(f"[red]Journal chain does not verify:[/red] {target_run_id}")
         raise SystemExit(1)
 
-    # Emit the trust record
+    # Emit the trust record(s)
     from bernstein.core.observability.trust_record import TrustRecordEmitter
 
     emitter = TrustRecordEmitter()
     try:
-        trust_record_json = emitter.emit_trust_record(
-            journal_path=journal_path,
-            run_id=target_run_id,
-            exec_id=target_run_id,
-        )
+        hop_result = emitter.emit_hop_records(journal_path, target_run_id)
     except Exception as e:
         console.print(f"[red]Failed to emit trust record:[/red] {e}")
         raise SystemExit(1) from e
 
+    multi_hop = len(hop_result.records) > 1
+
     # Output
-    if output:
-        Path(output).write_text(trust_record_json, encoding="utf-8")
-        console.print(f"[green]Exported trace to:[/green] {output}")
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        for hop in hop_result.records:
+            (out_path / f"{hop.exec_id}.json").write_text(hop.record, encoding="utf-8")
+        (out_path / "aggregate.json").write_text(hop_result.aggregate, encoding="utf-8")
+        console.print(f"[green]Exported {len(hop_result.records)} hop record(s) to:[/green] {out_path}")
+    elif multi_hop:
+        # One decision: write the aggregate only; member records need --out-dir.
+        if output:
+            Path(output).write_text(hop_result.aggregate, encoding="utf-8")
+            console.print(f"[green]Exported aggregate to:[/green] {output}")
+        else:
+            click.echo(hop_result.aggregate)
+        sys.stderr.write(
+            "Multi-worker run: per-hop records need --out-dir DIR.\n",
+        )
     else:
-        click.echo(trust_record_json)
+        trust_record_json = hop_result.records[0].record
+        if output:
+            Path(output).write_text(trust_record_json, encoding="utf-8")
+            console.print(f"[green]Exported trace to:[/green] {output}")
+        else:
+            click.echo(trust_record_json)
 
 
 @trace_cmd.command("verify-projection")
@@ -1824,8 +1935,8 @@ def _wait_for_replay_completion(
     poll_interval_s: float = 1.0,
 ) -> dict[str, Any] | None:
     """Poll the task server until a replayed task reaches a terminal state."""
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         task = server_get(f"/tasks/{task_id}")
         if task is None:
             return None
@@ -2844,6 +2955,7 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
         console.print("[dim]No quarantined tasks.[/dim]")
         return
 
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(show_header=True, header_style="bold red")
@@ -2855,12 +2967,13 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
 
     for entry in entries:
         fail_style = "bold red" if entry.fail_count >= QUARANTINE_THRESHOLD else "yellow"
+        # Rich parses cells as markup; titles and reasons are free text.
         table.add_row(
-            entry.task_title,
+            escape(entry.task_title),
             f"[{fail_style}]{entry.fail_count}[/{fail_style}]",
             entry.last_failure,
             entry.action,
-            entry.reason,
+            escape(entry.reason),
         )
 
     console.print(table)

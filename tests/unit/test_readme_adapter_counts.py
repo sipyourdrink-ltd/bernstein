@@ -166,6 +166,29 @@ def test_readme_selectable_adapter_count_matches_the_registry() -> None:
     assert _claimed(_SELECTABLE_CLAIM_RE) == len(selectable_adapter_names())
 
 
+def test_readme_lower_bound_claims_do_not_overtake_the_registry() -> None:
+    """The header and at-a-glance bullet state floors, never exact counts.
+
+    Exact counts live in the supported-agents paragraph, where the tests above
+    own them. Elsewhere the README says "and 50+ more" and "More than 50
+    selectable CLI agent adapters", which stay true as adapters are added; this
+    fails only when a floor is raised above what the registry can back.
+    """
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    text = README.read_text(encoding="utf-8")
+    selectable = len(selectable_adapter_names())
+
+    more = re.findall(r"Gemini CLI, and (\d+)\+ more", text)
+    assert len(more) == 1, f"expected exactly one 'and N+ more' header claim, got {more}"
+    # Three agents are named before the floor.
+    assert 3 + int(more[0]) <= selectable
+
+    more_than = re.findall(r"More than (\d+) selectable CLI agent adapters", text)
+    assert len(more_than) == 1, f"expected exactly one 'More than N selectable' claim, got {more_than}"
+    assert int(more_than[0]) < selectable
+
+
 def test_install_matrix_is_a_subset_claim_not_a_full_one() -> None:
     """The matrix must stay smaller than or equal to the enumerated set.
 

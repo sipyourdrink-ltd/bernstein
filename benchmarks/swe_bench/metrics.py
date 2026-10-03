@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import statistics
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Literal
@@ -10,7 +12,15 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from pathlib import Path
 
-InstanceStatus = Literal["resolved", "failed", "error", "skipped"]
+logger = logging.getLogger(__name__)
+
+#: What one instance did.
+#:
+#: ``abstained`` is not a flavour of ``failed``. A run that declines a task it
+#: cannot verify, and says why, told the truth; a run that submits a wrong patch
+#: did not. Scoring them the same rewards guessing, because a guess can only
+#: raise the resolve rate and an abstention can only lower it (#5567).
+InstanceStatus = Literal["resolved", "failed", "error", "skipped", "abstained"]
 SummarySourceType = Literal["mock", "eval"]
 
 
@@ -41,14 +51,24 @@ class InstanceResult:
     agent_traces: list[AgentTrace] = field(default_factory=list)
     error_message: str = ""
     patch: str = ""  # Final unified diff applied to the repo
+    #: Why the run declined, for `status == "abstained"` only.
+    #:
+    #: An abstention scores above a wrong answer, so it must cost something to
+    #: claim: a reason makes the decision reviewable, and an unreasoned
+    #: abstention is not one. Separate from `error_message`, which says the
+    #: HARNESS broke; this says the run worked and declined to answer.
+    abstention_reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> InstanceResult:
-        traces = [AgentTrace(**t) for t in data.pop("agent_traces", [])]  # type: ignore[arg-type]
-        return cls(**data, agent_traces=traces)  # type: ignore[arg-type]
+        payload = dict(data)
+        traces = [AgentTrace(**t) for t in payload.pop("agent_traces", [])]  # type: ignore[arg-type]
+        # Results written before #5567 have no abstention field.
+        payload.setdefault("abstention_reason", "")
+        return cls(**payload, agent_traces=traces)  # type: ignore[arg-type]
 
 
 @dataclass
@@ -61,12 +81,21 @@ class ScenarioSummary:
     failed: int
     errors: int
     skipped: int
-    resolve_rate: float  # resolved / (total_instances - skipped)
+    resolve_rate: float  # resolved / attempted, where attempted excludes skipped AND abstained
     mean_wall_time_s: float
     median_wall_time_s: float
     total_cost_usd: float
     mean_cost_per_instance_usd: float
     mean_tokens_per_instance: float
+    #: Instances the run declined with a stated reason.
+    abstained: int = 0
+    #: abstained / taken_on -- how often the run said it could not tell.
+    abstain_rate: float = 0.0
+    #: wrong / (wrong + resolved): of the answers actually GIVEN, how many were
+    #: wrong. The number an operator needs and the resolve rate cannot express,
+    #: because a run can raise its resolve rate by guessing and this rate is what
+    #: that costs.
+    confident_error_rate: float = 0.0
     verified: bool = False
     source_type: SummarySourceType = "mock"
     dataset: str = "princeton-nlp/SWE-bench_Lite"
@@ -82,7 +111,18 @@ class ScenarioSummary:
 
     @property
     def attempted_instances(self) -> int:
-        """Return the number of non-skipped instances."""
+        """Instances the run gave an ANSWER for: not skipped, not abstained.
+
+        An abstention is not an attempt at the task, it is a declared refusal to
+        answer it, so counting it in the denominator would make declining look
+        exactly like failing. Old summaries carry ``abstained: 0``, so this is
+        the number it has always been for them.
+        """
+        return self.total_instances - self.skipped - self.abstained
+
+    @property
+    def taken_on_instances(self) -> int:
+        """Instances the run did not skip -- attempts plus abstentions."""
         return self.total_instances - self.skipped
 
     @property
@@ -97,6 +137,11 @@ class ScenarioSummary:
         scenario_name = str(payload.get("scenario_name", ""))
         total_instances = _coerce_int(payload.get("total_instances", 0))
 
+        # A bundle written before #5567 has no abstentions, so these defaults are
+        # not merely safe, they are the correct values for it.
+        payload.setdefault("abstained", 0)
+        payload.setdefault("abstain_rate", 0.0)
+        payload.setdefault("confident_error_rate", 0.0)
         payload.setdefault("verified", False)
         payload.setdefault("source_type", "mock")
         payload.setdefault("dataset", "princeton-nlp/SWE-bench_Lite")
@@ -140,9 +185,23 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
     failed = sum(1 for r in results if r.status == "failed" and not r.resolved)
     errors = sum(1 for r in results if r.status == "error")
     skipped = sum(1 for r in results if r.status == "skipped")
-    attempted = total - skipped
+    abstained = sum(1 for r in results if r.status == "abstained" and not r.resolved)
+    # An abstention is not an attempt: the run declined to answer, so it belongs
+    # in neither half of the resolve rate. Counting it in the denominator alone
+    # is what made declining score below guessing (#5567). For a run with no
+    # abstentions -- every bundle written before this -- the number is unchanged.
+    taken_on = total - skipped
+    attempted = taken_on - abstained
 
     resolve_rate = resolved / attempted if attempted > 0 else 0.0
+    abstain_rate = abstained / taken_on if taken_on > 0 else 0.0
+    # Of the answers actually GIVEN, how many were wrong. `errors` is excluded on
+    # both sides: a harness crash is not the run being confidently wrong, and
+    # counting it as one would move this number for reasons the run did not
+    # cause. Guessing on a task the run cannot verify raises `resolve_rate` at
+    # best and raises THIS at worst, which is the trade the rate exists to show.
+    answered = failed + resolved
+    confident_error_rate = failed / answered if answered > 0 else 0.0
 
     wall_times = [r.wall_time_s for r in results if r.status not in ("skipped", "error")]
     mean_wall = statistics.mean(wall_times) if wall_times else 0.0
@@ -164,6 +223,9 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         errors=errors,
         skipped=skipped,
         resolve_rate=resolve_rate,
+        abstained=abstained,
+        abstain_rate=abstain_rate,
+        confident_error_rate=confident_error_rate,
         mean_wall_time_s=mean_wall,
         median_wall_time_s=median_wall,
         total_cost_usd=total_cost,
@@ -172,6 +234,53 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         sample_size=total,
         scenarios=[scenario_name],
     )
+
+
+def _repair_torn_tail(path: Path) -> None:
+    """Make the file end on a line boundary before anything is appended to it.
+
+    Every complete write ends in ``\\n``, so a file whose last byte is anything
+    else was cut off mid-append. Appending straight after that fuses the
+    fragment and the new result into one invalid line. ``load`` then drops the
+    result the resumed run just paid for, and the append after that pushes the
+    bad line into the middle of the file, where ``load`` raises on every read.
+
+    Two cases, decided the way ``load`` decides them. A tail that parses is a
+    whole result that lost only its newline, and ``load`` already counts it, so
+    it gets the newline. A tail that does not parse is the fragment ``load``
+    already dropped, so it is cut back to the last newline. Either way the
+    bytes on disk now say what the reader was already reporting.
+    """
+    if not path.exists():
+        return
+    with path.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        if f.tell() == 0:
+            return
+        f.seek(-1, os.SEEK_END)
+        if f.read(1) == b"\n":
+            return
+        f.seek(0)
+        data = f.read()
+    keep = data.rfind(b"\n") + 1
+    tail = data[keep:]
+    try:
+        json.loads(tail)
+    except ValueError:
+        with path.open("r+b") as f:
+            f.truncate(keep)
+            f.flush()
+            os.fsync(f.fileno())
+        logger.warning(
+            "%s: removed a torn final line (%d bytes) before appending, left by an interrupted append.",
+            path,
+            len(tail),
+        )
+        return
+    with path.open("ab") as f:
+        f.write(b"\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
 class ResultStore:
@@ -185,22 +294,78 @@ class ResultStore:
         return self.results_dir / f"{scenario_name}.jsonl"
 
     def append(self, result: InstanceResult) -> None:
-        """Append one result to the scenario's JSONL file."""
+        """Append one result to the scenario's JSONL file, durably.
+
+        ``fsync`` because this file IS the resume point. Without it a finished
+        instance can sit in the OS page cache when the process dies, and the
+        next run re-evaluates it - which on SWE-Bench is a real model call and
+        real money, paid again for work that was already done.
+        """
         path = self._path_for(result.scenario_name)
+        _repair_torn_tail(path)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(result.to_dict()) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def load(self, scenario_name: str) -> list[InstanceResult]:
-        """Load all results for a scenario."""
+        """Load all results for a scenario.
+
+        A torn FINAL line is dropped; a malformed line anywhere else raises.
+
+        The distinction is the whole point. Appending is not atomic, so a
+        process killed mid-write leaves a partial last line - and a bare
+        ``json.loads`` over every line made that one fragment poison the file:
+        ``already_evaluated`` raised, so a crashed benchmark run could not
+        resume, and every instance it HAD completed was re-evaluated. That is
+        the opposite of what this file is for.
+
+        Skipping every unparseable line would trade that for something worse -
+        silent data loss in the middle of a file, where corruption means
+        something went wrong that nobody will now hear about. Only the last
+        line can be torn by an interrupted append, so only the last line is
+        forgiven.
+
+        No tear can parse as an incomplete result: a proper prefix of a JSON
+        object is never valid JSON, so a final line that parses is complete.
+
+        ``load`` only reads. The torn bytes stay on disk until the next
+        ``append`` removes them, which is what keeps the first resumed result
+        from being written onto the end of the fragment.
+        """
         path = self._path_for(scenario_name)
         if not path.exists():
             return []
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            # Every line this store writes is ASCII (``json.dumps`` escapes the
+            # rest), so a tear cannot split a character. Bytes that do not
+            # decode are corruption, and get the same contract as any other.
+            raise ValueError(f"{path}: not valid UTF-8, so it is corrupt rather than torn.") from exc
+        lines = [line.strip() for line in text.splitlines()]
+        populated = [(index, line) for index, line in enumerate(lines) if line]
         results: list[InstanceResult] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
+        for position, (index, line) in enumerate(populated):
+            try:
                 data: dict[str, object] = json.loads(line)
-                results.append(InstanceResult.from_dict(data))
+            except ValueError as exc:
+                is_last = position == len(populated) - 1
+                if not is_last:
+                    raise ValueError(
+                        f"{path}: line {index + 1} is not valid JSON, and it is not the last line. "
+                        "A torn final line is a crash artefact; one in the middle is corruption, "
+                        "and dropping it would lose a completed result silently."
+                    ) from exc
+                logger.warning(
+                    "%s: dropping a torn final line (%d chars) - an append was interrupted. "
+                    "The %d complete result(s) before it are intact.",
+                    path,
+                    len(line),
+                    len(results),
+                )
+                break
+            results.append(InstanceResult.from_dict(data))
         return results
 
     def load_all(self) -> dict[str, list[InstanceResult]]:

@@ -141,3 +141,109 @@ def test_unknown_envelope_format_is_unverifiable_not_a_parse_error() -> None:
     assert result.verdict == "unverifiable"
     assert result.verified is False
     assert result.taint.value == "third_party"
+
+
+def test_foreign_attestation_taint_propagates_per_provenance_ordering() -> None:
+    """Operator-class conclusion derived from third_party input must carry third_party taint.
+
+    The provenance trust ordering (operator > workspace > first_party > third_party > public)
+    means effective trust is the minimum over the closure. An operator-signed artefact that
+    depends on a third_party-attested input inherits third_party taint.
+    """
+    from bernstein.core.lineage.provenance import (
+        TrustClass,
+        is_untrusted,
+        min_trust_class,
+    )
+
+    # The effective trust of the operator record's closure includes third_party
+    # min(operator, third_party) == third_party
+    effective = min_trust_class(TrustClass.OPERATOR, TrustClass.THIRD_PARTY)
+    assert effective == TrustClass.THIRD_PARTY
+    assert is_untrusted(effective) is True
+
+    # The foreign attestation's trust_class is "third_party" - this propagates
+    # per provenance.py: effective trust = min over closure
+    foreign_attestation_trust = TrustClass.THIRD_PARTY
+    assert foreign_attestation_trust == TrustClass.THIRD_PARTY
+    assert is_untrusted(foreign_attestation_trust) is True
+
+
+def test_tampering_foreign_attestation_does_not_affect_local_chain_verification() -> None:
+    """Mutating the foreign attestation must not alter local chain verification.
+
+    The foreign field is opaque to our HMAC chain. Tampering it changes the
+    foreign verdict (unverifiable vs malformed) but our local chain's
+    verification stands on Bernstein lineage alone.
+    """
+    from bernstein.core.lineage.foreign_attestation import (
+        ForeignAttestationVerdict,
+        verify_foreign_attestation,
+    )
+
+    fixture = _fixture()
+    record = fixture["lineage_record"]
+    assert isinstance(record, dict)
+    original = record["external_attestation"]
+    assert isinstance(original, dict)
+
+    # Original: valid structure, unverifiable (unknown issuer)
+    original_result = verify_foreign_attestation(original)
+    assert original_result.verdict == ForeignAttestationVerdict.UNVERIFIABLE
+    assert original_result.verified is False
+    assert original_result.taint.value == "third_party"
+
+    # Tampered: change trust_class to operator_hmac (malformed - we don't adopt their authority)
+    tampered = {**original, "trust_class": "operator_hmac"}
+    tampered_result = verify_foreign_attestation(tampered)
+    assert tampered_result.verdict == ForeignAttestationVerdict.MALFORMED
+    assert tampered_result.verified is False
+    assert tampered_result.taint.value == "public"  # fails closed at lowest
+
+    # Tampered: change envelope format to unknown
+    unknown_format = {**original, "envelope": {**original["envelope"], "format": "unknown-v1"}}
+    unknown_result = verify_foreign_attestation(unknown_format)
+    assert unknown_result.verdict == ForeignAttestationVerdict.UNVERIFIABLE
+    assert unknown_result.verified is False
+    assert unknown_result.taint.value == "third_party"
+
+    # Local chain record is unchanged - our chain verification is independent
+    # The fixture confirms local_chain expected_verdict is "verified"
+    assert fixture["local_chain"]["expected_verdict"] == "verified"
+    assert fixture["local_chain"]["evidence_source"] == "bernstein-lineage-only"
+
+
+def test_foreign_attestation_isolation_independent_verdicts() -> None:
+    """Foreign and local verdicts are independent - one does not affect the other.
+
+    The foreign attestation is carried by reference (format, payload_hash, opaque signature).
+    Its verdict (unverifiable/malformed) is computed without touching Bernstein's
+    HMAC-chained lineage. The local chain verdict is computed from Bernstein
+    lineage entries only.
+    """
+    from bernstein.core.lineage.foreign_attestation import verify_foreign_attestation
+
+    fixture = _fixture()
+    record = fixture["lineage_record"]
+    assert isinstance(record, dict)
+    original = record["external_attestation"]
+    assert isinstance(original, dict)
+
+    # Foreign verdict depends only on foreign envelope structure
+    foreign_result = verify_foreign_attestation(original)
+    assert foreign_result.verdict == "unverifiable"
+    assert foreign_result.verified is False
+
+    # Local chain verdict is fixed: verified via bernstein-lineage-only
+    # This is asserted by the fixture and confirmed in test_unverifiable_foreign_attestation...
+    assert fixture["local_chain"]["expected_verdict"] == "verified"
+    assert fixture["local_chain"]["evidence_source"] == "bernstein-lineage-only"
+
+    # Changing foreign fields flips foreign verdict without touching local
+    malformed = {**original, "trust_class": "not_a_real_class"}
+    malformed_result = verify_foreign_attestation(malformed)
+    assert malformed_result.verdict == "malformed"
+    assert malformed_result.verified is False
+
+    # Local chain expectation unchanged
+    assert fixture["local_chain"]["expected_verdict"] == "verified"

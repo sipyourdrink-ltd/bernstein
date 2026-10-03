@@ -23,10 +23,17 @@ The shape is generalised here along four axes:
   releases whatever the process still holds -- logging, never raising, because
   a failed release must not turn a clean shutdown into a traceback.
 
-Staleness follows ``lock_gc``'s precedent exactly: a payload that is missing or
-mid-write is *not* stale, so a lease another process created between its
-``O_EXCL`` and its write is never stolen. A holder's pid is only consulted when
-the lease was taken on this host.
+Staleness is only ever *proven*: a payload that is missing or mid-write is not
+stale, so a lease another process created between its ``O_EXCL`` and its write
+is never stolen. A file whose payload stays unreadable for longer than
+:data:`PAYLOAD_WRITE_GRACE_S` is the leftover of a holder that died between the
+two, and is reclaimable. A holder's pid is only consulted when the lease was
+taken on this host.
+
+Reclaiming a stale lease, keepalive and release all take a short advisory lock
+(``flock``; a no-op where ``fcntl`` is unavailable) so that the "is it still the
+stale file I judged?" check and the unlink cannot interleave with another
+claimant's reclaim: two racing reclaimers resolve to exactly one holder.
 """
 
 from __future__ import annotations
@@ -44,6 +51,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+try:  # POSIX only; Windows degrades to unguarded reclaim, as elsewhere in the tree
+    import fcntl
+except ImportError:  # pragma: no cover - exercised on Windows only
+    fcntl = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
 
@@ -55,6 +67,11 @@ DEFAULT_LEASE_TTL_S = 900.0
 
 #: Directory, relative to the store root, holding one file per active lease.
 LEASE_DIR_RELNAME = "leases"
+
+#: How long a lease file may stay empty or unparseable before it is judged the
+#: leftover of a holder that died between ``O_EXCL`` and the payload write. A
+#: live holder writes the payload within microseconds of creating the file.
+PAYLOAD_WRITE_GRACE_S = 30.0
 
 #: Wire-format version stamped into every lease file.
 LEASE_SCHEMA_VERSION = 1
@@ -185,6 +202,28 @@ def default_owner() -> str:
     return _session_identity() or f"pid-{os.getpid()}"
 
 
+@contextlib.contextmanager
+def _reclaim_guard(path: Path) -> Generator[None]:
+    """Serialise reclaim / keepalive / release of the lease at *path*.
+
+    Held only for the few syscalls between judging a lease and replacing it, so
+    no claimant waits on it for any meaningful time. The guard is a sibling
+    file that is never deleted, so every process locks the same inode.
+    """
+    if fcntl is None:  # pragma: no cover - Windows
+        yield
+        return
+    guard = path.with_name(f"{path.name}.guard")
+    fd = os.open(str(guard), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def _hostname() -> str:
     try:
         return socket.gethostname()
@@ -218,16 +257,26 @@ def _holder_process_alive(meta: dict[str, Any]) -> bool:
     return is_process_alive(pid)
 
 
-def _lease_is_stale(meta: dict[str, Any] | None) -> bool:
-    """True when a recorded lease may be reclaimed by another claimant.
+def _payload_overdue(path: Path) -> bool:
+    """True when *path* has been present longer than a payload write can take."""
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return False
+    return age > PAYLOAD_WRITE_GRACE_S
 
-    An unreadable / mid-write payload is NOT stale, mirroring ``lock_gc``: a
+
+def _lease_is_stale(meta: dict[str, Any] | None, path: Path) -> bool:
+    """True when the lease at *path* may be reclaimed by another claimant.
+
+    An unreadable / mid-write payload is NOT stale while the file is young: a
     lease another process just created, between its ``O_EXCL`` and its write, is
-    never stolen. A fully written payload is stale when its TTL has passed or
-    when its holder process is gone.
+    never stolen. Once the file is older than :data:`PAYLOAD_WRITE_GRACE_S` the
+    writer is gone and the leftover is reclaimable. A fully written payload is
+    stale when its TTL has passed or when its holder process is gone.
     """
     if not isinstance(meta, dict):
-        return False
+        return _payload_overdue(path)
     expires_at = meta.get("expires_at")
     if isinstance(expires_at, (int, float)) and time.time() > float(expires_at):
         return True
@@ -291,16 +340,17 @@ class Lease:
         """
         if self.released:
             raise LeaseConflictError(f"lease on {self.resource_id!r} was already released", name=self.resource_id)
-        recorded = _read_lease(self.path)
-        if recorded is None or recorded.get("lease_id") != self.lease_id:
-            raise LeaseConflictError(
-                f"lease on {self.resource_id!r} is no longer held by this process",
-                name=self.resource_id,
-                holder=recorded,
-            )
-        self.ttl_s = float(ttl_s) if ttl_s is not None else self.ttl_s
-        self.expires_at = time.time() + self.ttl_s
-        self._write()
+        with _reclaim_guard(self.path):
+            recorded = _read_lease(self.path)
+            if recorded is None or recorded.get("lease_id") != self.lease_id:
+                raise LeaseConflictError(
+                    f"lease on {self.resource_id!r} is no longer held by this process",
+                    name=self.resource_id,
+                    holder=recorded,
+                )
+            self.ttl_s = float(ttl_s) if ttl_s is not None else self.ttl_s
+            self.expires_at = time.time() + self.ttl_s
+            self._write()
         return self.expires_at
 
     def release(self) -> None:
@@ -314,14 +364,18 @@ class Lease:
             return
         self.released = True
         _forget_lease(self)
-        recorded = _read_lease(self.path)
-        if recorded is not None and recorded.get("lease_id") != self.lease_id:
-            logger.debug("lease release: %s already reclaimed by another holder", self.path)
-            return
         try:
-            self.path.unlink()
+            with _reclaim_guard(self.path):
+                recorded = _read_lease(self.path)
+                if recorded is not None and recorded.get("lease_id") != self.lease_id:
+                    logger.debug("lease release: %s already reclaimed by another holder", self.path)
+                    return
+                try:
+                    self.path.unlink()
+                except OSError:
+                    logger.debug("lease release: %s already removed", self.path)
         except OSError:
-            logger.debug("lease release: %s already removed", self.path)
+            logger.debug("lease release: guard unavailable for %s", self.path, exc_info=True)
 
     def __enter__(self) -> Lease:
         return self
@@ -401,28 +455,40 @@ class LeaseStore:
         rows = [meta for path in entries if (meta := _read_lease(path)) is not None]
         return sorted(rows, key=lambda m: str(m.get("resource_id", "")))
 
+    @staticmethod
+    def _create(path: Path) -> int:
+        return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+
     def _open_exclusive(self, name: str, path: Path) -> int:
-        """``O_EXCL`` open of *path*, reclaiming a provably stale lease once."""
+        """``O_EXCL`` open of *path*, reclaiming a provably stale lease once.
+
+        The reclaim runs under :func:`_reclaim_guard` and re-reads the file
+        inside it: of several claimants that all judged the same lease stale,
+        the first replaces it and every later one sees a live lease and
+        conflicts, instead of unlinking the winner's fresh file.
+        """
         try:
-            return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            return self._create(path)
         except FileExistsError as exc:
             meta = _read_lease(path)
-            if not _lease_is_stale(meta):
-                owner = f" held by {meta['owner']}" if isinstance(meta, dict) and meta.get("owner") else ""
-                raise LeaseConflictError(
-                    f"resource {name!r} is already leased ({path}{owner})", name=name, holder=meta
-                ) from exc
+            if not _lease_is_stale(meta, path):
+                raise self._conflict(name, path, meta) from exc
+        with _reclaim_guard(path):
+            meta = _read_lease(path)
+            if not _lease_is_stale(meta, path):
+                raise self._conflict(name, path, meta)
             logger.warning("Reclaiming expired lease %s (previous holder gone or TTL passed): %s", path, meta)
-            # A competing claimant may win the race and re-create the lease;
-            # the retry below resolves that case.
-            with contextlib.suppress(OSError):
+            with contextlib.suppress(FileNotFoundError):
                 path.unlink()
             try:
-                return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                return self._create(path)
             except FileExistsError as retry_exc:
-                raise LeaseConflictError(
-                    f"resource {name!r} is already leased ({path})", name=name, holder=_read_lease(path)
-                ) from retry_exc
+                raise self._conflict(name, path, _read_lease(path)) from retry_exc
+
+    @staticmethod
+    def _conflict(name: str, path: Path, meta: dict[str, Any] | None) -> LeaseConflictError:
+        owner = f" held by {meta['owner']}" if isinstance(meta, dict) and meta.get("owner") else ""
+        return LeaseConflictError(f"resource {name!r} is already leased ({path}{owner})", name=name, holder=meta)
 
     def acquire(self, name: str, *, owner: str | None = None, ttl_s: float = DEFAULT_LEASE_TTL_S) -> Lease:
         """Take a lease on *name*, or raise :class:`LeaseConflictError`.
@@ -526,6 +592,7 @@ def named_lock(
 __all__ = [
     "DEFAULT_LEASE_TTL_S",
     "LEASE_SCHEMA_VERSION",
+    "PAYLOAD_WRITE_GRACE_S",
     "Lease",
     "LeaseConflictError",
     "LeaseStore",

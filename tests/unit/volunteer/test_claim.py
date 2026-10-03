@@ -334,7 +334,7 @@ def test_a_missing_gh_binary_does_not_raise_out_of_fetch_state(monkeypatch: Any)
 
 
 def _task(repo_url: str) -> ClaimedTask:
-    return ClaimedTask(repo_url=repo_url, issue_number=NUMBER, issue_title="t", issue_body="b")
+    return ClaimedTask(repo_url=repo_url, issue_number=NUMBER, issue_title="t", issue_body="b", role="backend")
 
 
 def _donor() -> DonorLimits:
@@ -474,3 +474,127 @@ def test_resolved_own_claim_is_not_reused_even_if_fresh(tmp_path: Path) -> None:
     assert isinstance(outcome, TaskRefusal)
     assert len(runner.posts) == 1
     assert runner.patches[0]["url"].endswith("/issues/comments/555")
+
+
+# --------------------------------------------------------------------------
+# Adapter selection happens before any public side effect
+# --------------------------------------------------------------------------
+
+_ENDPOINT_URL = "http://127.0.0.1:11434/v1"
+_ENDPOINT_MODEL = "tiny-coder"
+
+
+def _certify_endpoint(project_root: Path) -> None:
+    """Write a real signed receipt, the way ``doctor --endpoint`` does."""
+    from bernstein.core.endpoints.certification import build_endpoint_certification, load_or_create_endpoint_identity
+    from bernstein.core.endpoints.conformance import evaluate_roles, run_conformance
+    from tests.unit.endpoints.stub_endpoint import FakeTransport
+
+    transcript = run_conformance(base_url=_ENDPOINT_URL, model=_ENDPOINT_MODEL, transport=FakeTransport())
+    private_pem, public_pem = load_or_create_endpoint_identity(project_root / ".sdd" / "identity")
+    build_endpoint_certification(
+        workdir=project_root,
+        lineage_root=project_root / ".sdd" / "lineage",
+        hmac_key=b"0" * 32,
+        private_key_pem=private_pem,
+        public_key_pem=public_pem,
+        transcript=transcript,
+        verdicts=evaluate_roles(transcript, ("backend",)),
+        engine="stub",
+        timestamp=1000,
+    )
+
+
+def _models_transport(method: str, url: str, headers: Any, body: Any, timeout: float) -> tuple[int, bytes]:
+    return 200, json.dumps({"data": [{"id": _ENDPOINT_MODEL}]}).encode()
+
+
+def test_a_refused_adapter_posts_no_claim(tmp_path: Path) -> None:
+    # The auth-basis gate is evaluated before the claim comment, so a task this
+    # host refuses anyway leaves nothing public behind.
+    runner = FakeRunner()
+
+    outcome = run_claimed_task(
+        _task(_UNREACHABLE_REPO_URL),
+        _manifest(),
+        donor=_donor(),
+        workspace=tmp_path / "run",
+        agent_argv=_no_agent,
+        sanitize=lambda text: text,
+        claim=ClaimClient(runner=runner),
+        now=lambda: NOW,
+        adapter_id="copilot",  # subscription_oauth
+    )
+
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.reason == "provider_terms_unavailable"
+    assert runner.posts == []
+    assert runner.patches == []
+
+
+def test_a_certified_local_endpoint_is_found_in_the_project_root_and_passes_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The receipt lives under the donor's project root; the per-task workspace
+    # is a different directory.  Selection must look in the project root, and
+    # the selected adapter must clear the auth-basis gate (so the run proceeds
+    # to the clone, which fails here because nothing listens on the port).
+    project = tmp_path / "donor-project"
+    project.mkdir()
+    _certify_endpoint(project)
+    monkeypatch.setenv("OPENAI_BASE_URL", _ENDPOINT_URL)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-local")
+    monkeypatch.setattr("bernstein.core.endpoints.conformance._default_transport", _models_transport)
+    runner = FakeRunner()
+
+    outcome = run_claimed_task(
+        _task(_UNREACHABLE_REPO_URL),
+        _manifest(),
+        donor=_donor(),
+        workspace=tmp_path / "run",
+        agent_argv=_no_agent,
+        sanitize=lambda text: text,
+        claim=ClaimClient(runner=runner),
+        claim_fingerprint="wk-local",
+        now=lambda: NOW,
+        project_root=project,
+    )
+
+    assert isinstance(outcome, TaskRefusal)
+    assert outcome.reason != "provider_terms_unavailable"
+    assert outcome.stage == RefusalStage.REPO_URL  # reached the clone: gate passed
+    assert len(runner.posts) == 1
+
+
+def test_receipts_are_not_looked_up_in_the_task_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A receipt that exists only under the scratch workspace must not certify
+    # anything: that directory is the runner's, not the donor's.
+    workspace = tmp_path / "run"
+    workspace.mkdir()
+    _certify_endpoint(workspace)
+    monkeypatch.setenv("OPENAI_BASE_URL", _ENDPOINT_URL)
+    monkeypatch.setattr("bernstein.core.endpoints.conformance._default_transport", _models_transport)
+    seen: list[Path] = []
+    from bernstein.core.volunteer import adapter_selection
+
+    real = adapter_selection.certified_roles_for_endpoint
+
+    def spy(workdir: Path, base_url: str, model: str) -> frozenset[str]:
+        seen.append(workdir)
+        return real(workdir, base_url, model)
+
+    monkeypatch.setattr(adapter_selection, "certified_roles_for_endpoint", spy)
+    project = tmp_path / "donor-project"
+    project.mkdir()
+
+    run_claimed_task(
+        _task(_UNREACHABLE_REPO_URL),
+        _manifest(),
+        donor=_donor(),
+        workspace=workspace,
+        agent_argv=_no_agent,
+        sanitize=lambda text: text,
+        project_root=project,
+    )
+
+    assert seen == [project]

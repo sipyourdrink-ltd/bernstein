@@ -205,6 +205,7 @@ class GeminiAdapter(CLIAdapter):
     # ``_infer_adapter_name_for_provider`` (via the registry's
     # provider-alias table). Unchanged from the old substring branch.
     provides = ("gemini", "google")
+    model_vendor = "google"
 
     external_endpoints = (("generativelanguage.googleapis.com", 443),)
     # Google Generative Language returns HTTP 429 with status

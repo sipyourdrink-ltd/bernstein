@@ -121,7 +121,12 @@ def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
     comment at its declaration saying what its unit of work is instead.
     """
     non_git_diff = {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF}
-    assert non_git_diff == {"computer_use", "garak", "holmesgpt", "skyvern"}
+    assert non_git_diff == {
+        "computer_use",
+        "garak",
+        "holmesgpt",
+        "skyvern",
+    }
 
 
 def test_computer_use_declares_artifact_output_mode() -> None:

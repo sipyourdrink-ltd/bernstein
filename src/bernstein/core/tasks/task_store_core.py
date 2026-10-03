@@ -22,6 +22,7 @@ from typing_extensions import TypedDict
 
 from bernstein.core.defaults import TASK as _TASK_DEFAULTS
 from bernstein.core.hook_events import HookEvent
+from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
@@ -73,6 +74,9 @@ CLAIM_HELD_STATUSES: frozenset[TaskStatus] = frozenset(
         TaskStatus.WAITING_FOR_SUBTASKS,
         TaskStatus.BLOCKED,
         TaskStatus.ORPHANED,
+        # Cooperative mailbox waits retain the worker, process, sandbox and
+        # claim; SUSPENDED is not a surrender in this path.
+        TaskStatus.SUSPENDED,
     }
 )
 
@@ -864,7 +868,7 @@ class TaskStore:
             logger.info(
                 "reopen_tasks_for_node: reset %d task(s) for departed node %s",
                 reset_count,
-                sanitize_log(node_id),
+                for_log(node_id),
             )
         return reset_count
 
@@ -2360,7 +2364,7 @@ class TaskStore:
                 )
                 logger.warning(
                     "Planning task %s completed without creating child tasks; marked FAILED (%s).",
-                    sanitize_log(task_id),
+                    for_log(task_id),
                     _ZERO_YIELD_PLANNING_REASON,
                 )
                 return task
@@ -2645,7 +2649,7 @@ class TaskStore:
                 details=details,
             )
         except OSError as exc:
-            logger.warning("Contract audit event write failed for %s: %s", sanitize_log(task_id), exc)
+            logger.warning("Contract audit event write failed for %s: %s", for_log(task_id), exc)
 
     async def reopen(self, task_id: str, reason: str) -> Task:
         """Reopen a done task that failed janitor verification.
@@ -2687,9 +2691,9 @@ class TaskStore:
             self._record_release_receipt(task, snapshot, release_path="reopen", reason=reason)
             logger.info(
                 "task.reopen: task_id=%s reopen_count=%d reason=%s",
-                sanitize_log(task_id),
+                for_log(task_id),
                 reopen_count,
-                sanitize_log(reason),
+                for_log(reason),
             )
             return task
 
@@ -2752,8 +2756,8 @@ class TaskStore:
             )
             logger.info(
                 "task.release: task_id=%s reason=%s",
-                sanitize_log(task_id),
-                sanitize_log(reason or "released_to_pool"),
+                for_log(task_id),
+                for_log(reason or "released_to_pool"),
             )
             return task
 
@@ -2910,6 +2914,113 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             return task
 
+    async def suspend_for_rendezvous(self, task_id: str, open_entry_hash: str) -> TaskStatus:
+        """Persist cooperative suspension and return the state to restore.
+
+        This is deliberately smaller than :func:`park_task`: the worker,
+        process and sandbox remain allocated.  The referenced mailbox open
+        entry is the durable reason for the state change.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            resume_status = task.status
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"task {task_id!r} cannot ask while {resume_status.value}")
+            self._index_remove(task)
+            transition_task(
+                task,
+                TaskStatus.SUSPENDED,
+                actor="mailbox_rendezvous",
+                reason=open_entry_hash,
+            )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return resume_status
+
+    async def resume_from_rendezvous(
+        self,
+        task_id: str,
+        *,
+        resume_status: TaskStatus,
+        close_entry_hash: str,
+    ) -> Task:
+        """Persist cooperative resumption after a mailbox close is observed."""
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status != TaskStatus.SUSPENDED:
+                raise ValueError(f"task {task_id!r} is not suspended")
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"invalid rendezvous resume status {resume_status.value!r}")
+            self._index_remove(task)
+            if resume_status == TaskStatus.CLAIMED:
+                transition_task(
+                    task,
+                    TaskStatus.CLAIMED,
+                    actor="mailbox_rendezvous",
+                    reason=close_entry_hash,
+                )
+            elif resume_status == TaskStatus.IN_PROGRESS:
+                transition_task(
+                    task,
+                    TaskStatus.IN_PROGRESS,
+                    actor="mailbox_rendezvous",
+                    reason=close_entry_hash,
+                )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return task
+
+    async def recover_rendezvous_wait(
+        self,
+        task_id: str,
+        *,
+        resume_status: TaskStatus,
+        open_entry_hash: str,
+    ) -> Task:
+        """Restore a cooperative waiter after its live wait exits abnormally.
+
+        No mailbox close is invented here.  The referenced open remains
+        unresolved in the authoritative mailbox chain; this transition only
+        prevents a cancelled or locally failed request from retaining the
+        task's live claim in ``SUSPENDED`` forever.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status != TaskStatus.SUSPENDED:
+                raise ValueError(f"task {task_id!r} is not suspended")
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"invalid rendezvous recovery status {resume_status.value!r}")
+            self._index_remove(task)
+            if resume_status == TaskStatus.CLAIMED:
+                transition_task(
+                    task,
+                    TaskStatus.CLAIMED,
+                    actor="mailbox_rendezvous_recovery",
+                    reason=open_entry_hash,
+                )
+            elif resume_status == TaskStatus.IN_PROGRESS:
+                transition_task(
+                    task,
+                    TaskStatus.IN_PROGRESS,
+                    actor="mailbox_rendezvous_recovery",
+                    reason=open_entry_hash,
+                )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return task
+
     async def _complete_parent_if_ready(self, parent_task_id: str | None) -> None:
         """Complete a waiting ancestor chain when all descendant subtasks are done.
 
@@ -3064,6 +3175,7 @@ class TaskStore:
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.BLOCKED,
                 TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.SUSPENDED,
                 TaskStatus.PLANNED,
             }
             if task.status not in _cancellable:
@@ -3198,6 +3310,7 @@ class TaskStore:
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.BLOCKED,
                 TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.SUSPENDED,
                 TaskStatus.PLANNED,
             }
             for tid in to_cancel:
@@ -3564,9 +3677,9 @@ class TaskStore:
                 except IllegalTransitionError:
                     logger.warning(
                         "Ignoring illegal heartbeat transition %s -> %s for %s",
-                        sanitize_log(str(agent.status)),
-                        sanitize_log(str(status)),
-                        sanitize_log(agent_id),
+                        for_log(str(agent.status)),
+                        for_log(str(status)),
+                        for_log(agent_id),
                     )
         else:
             self._agents[agent_id] = AgentSession(

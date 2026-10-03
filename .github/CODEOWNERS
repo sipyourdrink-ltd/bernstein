@@ -1,19 +1,30 @@
 # Review ownership. The rules these encode are written out in
 # docs/governance/review-charter.md; this file is how GitHub enforces them.
 #
-# Later entries win, so the default sits at the top and the paths the charter
-# reserves to the maintainer sit below it.
+# There is no catch-all line on purpose. The approval counts the charter
+# asks for (s2) are checked by scripts/quorum_check.py against
+# .github/quorum-roster.toml, and the reviews a change still needs are
+# requested from the roster by the hourly sweep, so a catch-all here would
+# only route every pull request to every core reviewer at once.
+#
+# Later entries win. The entries below are the paths the charter protects
+# (s4). A line that names several people is satisfied by any one of them:
+# that is how GitHub reads it and how scripts/quorum_check.py counts it.
 
-# Every change needs an approving review from a core reviewer (charter, s2).
-# Any one of them satisfies the requirement.
-* @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e
-
-# Paths the charter reserves to the maintainer (s4): these need the
-# maintainer's approval in addition to the usual quorum.
+# Paths the charter protects (s4): these need a code owner's approval in
+# addition to the usual quorum. On most of them the owner is the maintainer.
 /.github/ @chernistry
-/src/bernstein/core/ @chernistry
+# The core package and the adapters are shared with the core reviewers: any
+# one of the people named supplies the owner's approval. The four
+# subpackages listed right after core/ are the exception and stay with the
+# maintainer; they come later in the file, so they win.
+/src/bernstein/core/ @chernistry @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e @Chirag6722
+/src/bernstein/core/security/ @chernistry
+/src/bernstein/core/identity/ @chernistry
+/src/bernstein/core/sandbox/ @chernistry
+/src/bernstein/core/tokens/ @chernistry
 /src/bernstein/evolution/ @chernistry
-/src/bernstein/adapters/ @chernistry
+/src/bernstein/adapters/ @chernistry @vaibhav8a @thegoodengineer @tenequm @Phoenix1504e @Chirag6722
 /schemas/ @chernistry
 /proto/ @chernistry
 /pyproject.toml @chernistry
@@ -24,6 +35,44 @@
 /AGENTS.md @chernistry
 /docs/governance/ @chernistry
 /docs/decisions/ @chernistry
+
+# Manifests and lockfiles outside the root, for the same reason as
+# /pyproject.toml and /uv.lock above (charter, s4).
+/sdk/python/pyproject.toml @chernistry
+/sdk/python/uv.lock @chernistry
+/sdk/typescript/package-lock.json @chernistry
+/web/package-lock.json @chernistry
+/packages/vscode/package-lock.json @chernistry
+
+# Agent configuration files at the repository root (charter, s4).
+#
+# CLAUDE.md, CONVENTIONS.md, .goosehints and .cursor/rules/*.mdc are written
+# by `bernstein agents-md sync`, which pr-policy.yml runs on every pull
+# request and pushes back onto the branch. So a change to the canonical
+# source under .sdd/agents-md/, or to the src/bernstein/ package layout it
+# derives from, regenerates them and picks up this requirement. That is
+# intended - the charter reserves these files whoever or whatever wrote
+# them - but it means a pull request can acquire the requirement without
+# naming any of these paths itself.
+/CLAUDE.md @chernistry
+/CONVENTIONS.md @chernistry
+/.aider.conf.yml @chernistry
+/.goosehints @chernistry
+/.mcp.json @chernistry
+/mcp.json @chernistry
+/.cursor/ @chernistry
+/.qwen/ @chernistry
+
+# The two published images, `bernstein:latest` and `bernstein:sandbox`, are
+# in scope in SECURITY.md (charter, s4), and the researcher sandbox is where
+# SECURITY.md promises egress blocking and an ephemeral filesystem - so the
+# files that build it are reserved too. The rigs under docker/demo/,
+# docker/volunteer-hub/ and docker/volunteer-rig/ publish no image and carry
+# no such promise; they stay on the normal quorum.
+/Dockerfile @chernistry
+/docker-compose.yaml @chernistry
+/docker/sandbox/ @chernistry
+/scripts/researcher_sandbox.sh @chernistry
 
 # The review roster and the two scripts that enforce this file and the
 # charter. `.github/` above already covers the roster; these are the pieces

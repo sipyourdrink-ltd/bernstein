@@ -65,9 +65,34 @@ this install cannot vouch for.
 bernstein bom verify ./bom.json
 ```
 
-`verify` is structural: it checks the schema version, that every element
-carries a well-formed `sha256:` value, and that the deterministic ordering has
-not been edited. Verifying the chain itself is `bernstein lineage verify <run>`.
+`verify` without `--from-lineage` is structural only: it checks the schema
+version, that every element carries a well-formed `sha256:` value, and that the
+deterministic ordering has not been edited. It never reads the lineage spine,
+so it cannot tell a faithful document from an edited one, and it says so on
+PASS. `--run` and `--workdir` are rejected (exit 2) when `--from-lineage` is
+not given.
+
+To confirm the document is a faithful projection of what actually ran, pass
+`--from-lineage` with the run id:
+
+```bash
+bernstein bom verify ./bom.json --from-lineage --run 20260101-104501
+```
+
+This recomputes the BOM offline from `.sdd/lineage/<run>/` and compares it with
+the document field by field. It fails closed when:
+
+- the chain does not verify (a tampered, deleted or reordered entry, a bad
+  HMAC tag, an empty or seal-only run);
+- `run_id`, the run window or `lineage_root_hash` differ from the chain;
+- a component is missing, extra or renamed;
+- a component's `sha256`, `invocation_count` or any other field differs;
+- the document lists prompts, adapters, tools or data sources, which the spine
+  does not record and so cannot be compared with.
+
+Each failure names the offending line item. A BOM emitted from a hand-written
+`--snapshot` therefore does not verify against lineage. The audit key the chain
+was written under is loaded read-only and never minted.
 
 ## Determinism
 

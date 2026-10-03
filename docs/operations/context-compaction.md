@@ -118,11 +118,18 @@ The table shows, per receipt: timestamp, trigger, tokens before/after,
 validator results, retry count, gate action, the truncated pre/post
 SHA-256 pair, and the correlation id.
 
+JSON output also carries `policy_version`. A non-empty value identifies the
+versioned compaction policy that produced the receipt; legacy receipts and
+unversioned compaction paths are represented as the empty string, including
+historical events that predate this field.
+
 `--verify` walks each per-agent replay journal, cross-checks its
 compaction steps against the chain receipts, and exits non-zero when any
 journaled compaction step lacks a chain-verifiable receipt or when the
-receipt hashes disagree with the journal. This is the same check the
-run's audit verification applies.
+receipt hashes or policy version disagree with the journal. Missing
+`policy_version` keys on both sides of a legacy record are normalized to the
+empty string and remain verifiable. This is the same check the run's audit
+verification applies.
 
 ## Related
 

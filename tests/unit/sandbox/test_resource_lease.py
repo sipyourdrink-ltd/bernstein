@@ -299,3 +299,136 @@ def test_named_lock_serialises_unregistered_resources(store: LeaseStore) -> None
 
     assert not errors
     assert not store.path_for("catalogue-rebuild").exists()
+
+
+# ---------------------------------------------------------------------------
+# Staleness is provable, never inferred from an empty or half-written file
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_empty_lease_file_is_a_holder_mid_write_not_stale(store: LeaseStore) -> None:
+    """A lease created between ``O_EXCL`` and the payload write is never stolen."""
+    path = store.path_for("gpu-0")
+    path.parent.mkdir(parents=True)
+    path.write_text("")  # holder created the file, has not written the payload yet
+
+    with pytest.raises(LeaseConflictError):
+        store.acquire("gpu-0")
+
+    assert path.exists()
+    assert path.read_text() == ""
+
+
+def test_old_empty_lease_file_from_a_crashed_holder_is_reclaimed(store: LeaseStore) -> None:
+    """An empty file that outlives any plausible write is a crashed holder, not a live one."""
+    path = store.path_for("gpu-0")
+    path.parent.mkdir(parents=True)
+    path.write_text("")
+    long_ago = time.time() - 3600
+    os.utime(path, (long_ago, long_ago))
+
+    lease = store.acquire("gpu-0")
+
+    assert lease.pid == os.getpid()
+    assert json.loads(path.read_text())["lease_id"] == lease.lease_id
+
+
+def test_old_malformed_lease_file_is_reclaimed_but_a_fresh_one_is_not(store: LeaseStore) -> None:
+    path = store.path_for("gpu-0")
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json")
+    with pytest.raises(LeaseConflictError):
+        store.acquire("gpu-0")
+
+    long_ago = time.time() - 3600
+    os.utime(path, (long_ago, long_ago))
+    assert store.acquire("gpu-0").resource_id == "gpu-0"
+
+
+def _seed_expired_lease(store: LeaseStore, name: str) -> None:
+    path = store.path_for(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "resource_id": name,
+                "lease_id": "dead",
+                "owner": "gone",
+                "pid": os.getpid(),
+                "host": "",
+                "acquired_at": 0.0,
+                "expires_at": 1.0,
+            }
+        )
+    )
+
+
+def test_racing_reclaimers_of_one_expired_lease_yield_exactly_one_holder(store: LeaseStore) -> None:
+    """Several claimants find the same expired lease; only one may take it over.
+
+    A steal that is ``unlink`` then retry lets a second claimant delete the
+    first one's freshly created lease and hold the resource as well.
+    """
+    claimants = 8
+    for round_no in range(40):
+        name = f"gpu-{round_no}"
+        _seed_expired_lease(store, name)
+        barrier = threading.Barrier(claimants)
+        won: list[object] = []
+        lost: list[BaseException] = []
+
+        def contend(
+            name: str = name,
+            barrier: threading.Barrier = barrier,
+            won: list[object] = won,
+            lost: list[BaseException] = lost,
+        ) -> None:
+            barrier.wait(timeout=5)
+            try:
+                won.append(store.acquire(name))
+            except LeaseConflictError as exc:
+                lost.append(exc)
+
+        threads = [threading.Thread(target=contend) for _ in range(claimants)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert len(won) == 1, f"round {round_no}: {len(won)} holders for {name}"
+        assert len(lost) == claimants - 1
+
+
+_COUNTER_WORKER = """
+import sys, time
+from pathlib import Path
+from bernstein.core.sandbox.resource_lease import LeaseConflictError, LeaseStore, named_lock
+
+root, counter, rounds = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+store = LeaseStore(root)
+done = 0
+while done < rounds:
+    try:
+        with named_lock(store, "counter"):
+            value = int(counter.read_text())
+            time.sleep(0.001)  # widen the read-modify-write window
+            counter.write_text(str(value + 1))
+        done += 1
+    except LeaseConflictError:
+        time.sleep(0.001)
+"""
+
+
+def test_named_lock_gives_processes_mutual_exclusion(store: LeaseStore, tmp_path: Path) -> None:
+    """Separate processes incrementing a shared counter under one lock lose no update."""
+    counter = tmp_path / "counter.txt"
+    counter.write_text("0")
+    procs = [
+        subprocess.Popen([sys.executable, "-c", _COUNTER_WORKER, str(store.root), str(counter), "15"]) for _ in range(4)
+    ]
+    for proc in procs:
+        assert proc.wait(timeout=60) == 0
+
+    assert int(counter.read_text()) == 4 * 15
+    assert not store.path_for("counter").exists()

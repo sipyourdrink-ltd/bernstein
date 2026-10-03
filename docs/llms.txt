@@ -22,17 +22,18 @@ running on whichever CLI agents you already trust. Enable `--audit` for an
 HMAC-signed audit trail on top.
 
 ## Core Documentation
-- [Getting Started](https://bernstein.readthedocs.io/getting-started/install/): Install, configure, run first orchestration in 60 seconds
-- [Architecture & Concepts](https://bernstein.readthedocs.io/architecture/ARCHITECTURE/): Task server, agent spawner, janitor verification, worktree isolation
-- [Adapter Reference](https://bernstein.readthedocs.io/adapters/): 40+ supported agents - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
-- [API Reference](https://bernstein.readthedocs.io/reference/openapi-reference/): 120+ REST endpoints for tasks, agents, cost tracking, quality gates
+- [Getting Started](https://docs.bernstein.run/getting-started/install/): Install, configure, run first orchestration in 60 seconds
+- [Architecture & Concepts](https://docs.bernstein.run/architecture/ARCHITECTURE/): Task server, agent spawner, janitor verification, worktree isolation
+- [Adapter Reference](https://docs.bernstein.run/adapters/): 40+ supported agents - Claude Code, Codex, OpenAI Agents SDK v2, Gemini CLI, Cursor, Aider, Devin Terminal, CLM gateway, and more
+- [API Reference](https://docs.bernstein.run/reference/openapi-reference/): 120+ REST endpoints for tasks, agents, cost tracking, quality gates
 
 ## Guides
-- [Benchmarks](https://bernstein.readthedocs.io/benchmarks/BENCHMARKS/): SWE-Bench Lite results for solo agents and orchestrated multi-agent runs
-- [Known Limitations](https://bernstein.readthedocs.io/reference/KNOWN_LIMITATIONS/): Honest constraints and workarounds
+- [Benchmarks](https://docs.bernstein.run/benchmarks/BENCHMARKS/): SWE-Bench Lite results for solo agents and orchestrated multi-agent runs
+- [Known Limitations](https://docs.bernstein.run/reference/KNOWN_LIMITATIONS/): Honest constraints and workarounds
 
 ## Resources
 - [GitHub Repository](https://github.com/sipyourdrink-ltd/bernstein): Source code, issues, discussions
 - [PyPI Package](https://pypi.org/project/bernstein/): pip install bernstein
-- [Blog](https://bernstein.readthedocs.io/blog/ten-agents-one-release/): Engineering articles on multi-agent orchestration patterns
+- [Hosted MCP endpoint](https://mcp.bernstein.run/mcp): Read-only, no install - verify run receipts and list presets/adapters over Streamable HTTP
+- [Blog](https://docs.bernstein.run/blog/ten-agents-one-release/): Engineering articles on multi-agent orchestration patterns
 - [Author](https://alexchernysh.com): Built by Alex Chernysh ([@alex_chernysh on X](https://x.com/alex_chernysh))

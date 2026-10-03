@@ -49,6 +49,24 @@ Drift remediation paths used by the rows below:
 | `CHANGELOG.md` | Pointer document; release history lives in `docs/release-notes/` and release tags are cut by `.github/workflows/auto-release.yml` | The release-notes location moves, or the tag-cutting workflow changes | `manual-prose` |
 | `CONTRIBUTORS.md` | None (hand-curated list of named contributors) | New contributor merged a PR | `static` |
 
+### Governance
+
+`check_docs_drift.py` compares no content. Per row it asserts that each
+recognised source exists, that the doc exists, and it fails a pull request
+that deletes a recognised source. So editing a threshold in
+`scripts/quorum_check.py`, or adding a name to `.github/quorum-roster.toml`,
+leaves every file in place and reports clean. The drift signals below are
+the cue for the reviewer of that change, not something CI detects. "Any new
+top-level directory" on the `.github/CODEOWNERS` row has no detector at all
+- it is a standing instruction to decide ownership when one appears.
+
+| Doc | Source of truth | Drift signal | Remediation |
+|-----|-----------------|--------------|-------------|
+| `GOVERNANCE.md` | `docs/governance/`, `.github/CODEOWNERS`, `./MAINTAINERS.md` | Maintainer model changes, protected-path ownership changes, or the committer/maintainer roster changes | `manual-prose` |
+| `docs/governance/review-charter.md` | `.github/CODEOWNERS`, `.github/quorum-roster.toml`, `scripts/quorum_check.py`, `scripts/queue_hygiene.py` | Ownership rules, the quorum roster, or the queue/quorum automation change without a matching charter update | `manual-prose` |
+| `.github/CODEOWNERS` | `./SECURITY.md`, `docs/governance/review-charter.md`, and any new top-level directory | The security scope changes, the charter's protected-paths list changes, or a new top-level directory needs an ownership decision | `manual-prose` |
+| `docs/CODE_REVIEW.md` | `docs/governance/review-charter.md`, `.github/quorum-roster.toml`, `scripts/quorum_check.py` | The charter's approval counts, size thresholds or protected-path list change without the checklist following | `manual-prose` |
+
 ### `docs/` top-level
 
 | Doc | Source of truth | Drift signal | Remediation |
@@ -58,7 +76,6 @@ Drift remediation paths used by the rows below:
 | `docs/agents-md.md` | `src/bernstein/cli/commands/agents_md_cmd.py`, `src/bernstein/core/knowledge/agents_md_bridge.py`, `src/bernstein/core/knowledge/agents_md_generator.py` | New target format added to the canonical IR, sync command options change | `manual-prose` |
 | `docs/playbooks/readme-l10n.md` | `src/bernstein/core/knowledge/readme_l10n.py`, `src/bernstein/cli/commands/readme_l10n_cmd.py`, `pyproject.toml` (`[tool.bernstein.readme-l10n]`) | Binding format change, verify/sync surface change, language config change | `manual-prose` |
 | `docs/CHANGELOG.md` | Pointer document for mkdocs; release history lives in `docs/release-notes/` | The release-notes location moves | `manual-prose` |
-| `docs/CODE_REVIEW.md` | `src/bernstein/core/quality/`, `src/bernstein/core/review/`, `src/bernstein/core/review_responder/` | Review pipeline stage added, reviewer-role policy change | `manual-prose` |
 | `docs/ENTERPRISE.md` | `src/bernstein/core/compliance/`, `src/bernstein/core/security/`, audit / lineage / air-gap surface | New regulator mapping, new compliance pack target, audit export schema change | `manual-prose` |
 | `docs/lineage.md` | `src/bernstein/core/lineage/`, `src/bernstein/core/persistence/lineage.py`, `src/bernstein/cli/commands/lineage_cmd.py` | Lineage record schema change, signature algorithm change, new verify CLI subcommand | `manual-prose` |
 | `docs/llm-citation-surface.md` | None (positioning note about how the project surfaces in LLM citations) | External citation pattern audited | `static` |

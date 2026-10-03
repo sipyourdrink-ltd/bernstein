@@ -22,7 +22,7 @@ import httpx
 import pytest
 from bernstein.core.task_lifecycle import maybe_retry_task, retry_or_fail_task
 
-from bernstein.core.tasks.models import Complexity, Scope, Task, TaskStatus, TaskType
+from bernstein.core.tasks.models import CompletionSignal, Complexity, Scope, Task, TaskStatus, TaskType
 
 _RETRY_PREFIX_RE = re.compile(r"\[RETRY\s+\d+\]|\[retry:\d+\]")
 
@@ -217,6 +217,128 @@ def test_maybe_retry_ignores_legacy_title_prefix_when_typed_field_disagrees():
     # retry_count derived from the typed field (0) -> next attempt = 1,
     # NOT 3 as the legacy prefix would suggest.
     assert posted[0]["retry_count"] == 1
+
+
+def test_maybe_retry_preserves_completion_signals_owned_files_and_depends_on(tmp_path):
+    """#6145: the tick-loop retry path must carry the same three fields
+    forward as retry_or_fail_task's reap path does, so a task's verification
+    signal and file/dependency lineage aren't dropped by whichever retry
+    path happens to fire.
+    """
+    task = _build_task(retry_count=0)
+    task.completion_signals = [CompletionSignal(type="test_passes", value="pytest tests/test_widget.py")]
+    task.owned_files = ["src/widget.py"]
+    task.depends_on = ["T-PARENT"]
+    client, posted = _capture_client()
+
+    created = maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=client,
+        server_url="http://server",
+        quarantine=MagicMock(),
+        workdir=tmp_path,
+        session_id=None,
+    )
+
+    assert created is True
+    body = posted[0]
+    assert body["completion_signals"] == [{"type": "test_passes", "value": "pytest tests/test_widget.py"}]
+    assert body["owned_files"] == ["src/widget.py"]
+    assert body["depends_on"] == ["T-PARENT"]
+
+
+def test_maybe_retry_omits_completion_signals_when_task_has_none(tmp_path):
+    """Mirrors retry_or_fail_task: an empty list is dropped, not posted."""
+    task = _build_task(retry_count=0)
+    assert task.completion_signals == []
+    client, posted = _capture_client()
+
+    maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=client,
+        server_url="http://server",
+        quarantine=MagicMock(),
+        workdir=tmp_path,
+        session_id=None,
+    )
+
+    assert "completion_signals" not in posted[0]
+    assert posted[0]["owned_files"] == []
+    assert posted[0]["depends_on"] == []
+
+
+# The fields both retry bodies must carry forward VERBATIM from the source
+# task, regardless of whatever else legitimately differs between the two
+# paths (effort/model escalation tiers, backoff timing, task_type: those
+# are retry-policy decisions each path makes independently and on purpose,
+# not lineage). #6145 was three of these five silently missing from
+# maybe_retry_task's body; the other two (role, priority) already agreed
+# and are pinned here so a future edit can't quietly drop them too.
+_RETRY_BODY_LINEAGE_FIELDS = ("role", "priority", "owned_files", "depends_on")
+
+
+def test_retry_bodies_agree_on_lineage_fields(tmp_path):
+    """Both retry-body constructions must keep carrying the same task
+    lineage forward, field for field.
+
+    #6145 was exactly this: completion_signals/owned_files/depends_on were
+    present in retry_or_fail_task's body and silently absent from
+    maybe_retry_task's, with nothing catching the drift until someone
+    noticed the missing lineage in production. This pins "these two bodies
+    carry the same lineage" as a property CI holds rather than a
+    coincidence a reviewer happens to catch.
+    """
+    task = _build_task(retry_count=0)
+    task.completion_signals = [CompletionSignal(type="test_passes", value="pytest tests/test_widget.py")]
+    task.owned_files = ["src/widget.py"]
+    task.depends_on = ["T-PARENT"]
+
+    tick_client, tick_posted = _capture_client()
+    maybe_retry_task(
+        task,
+        retried_task_ids=set(),
+        max_task_retries=3,
+        client=tick_client,
+        server_url="http://server",
+        quarantine=MagicMock(),
+        workdir=tmp_path,
+        session_id=None,
+    )
+    tick_body = tick_posted[0]
+
+    reap_client, reap_posted = _capture_client()
+    retry_or_fail_task(
+        task.id,
+        "agent died",
+        client=reap_client,
+        server_url="http://server",
+        max_task_retries=3,
+        retried_task_ids=set(),
+        tasks_snapshot={"failed": [task]},
+        workdir=tmp_path,
+    )
+    reap_body = reap_posted[0]
+
+    for field in _RETRY_BODY_LINEAGE_FIELDS:
+        assert field in tick_body, f"maybe_retry_task dropped {field!r}"
+        assert field in reap_body, f"retry_or_fail_task dropped {field!r}"
+        assert tick_body[field] == reap_body[field] == getattr(task, field), (
+            f"{field!r} diverges: tick={tick_body[field]!r} reap={reap_body[field]!r} task={getattr(task, field)!r}"
+        )
+
+    # completion_signals is the odd one out: both paths omit it entirely
+    # (rather than posting an empty list) when the task has none, so "in
+    # the body" is itself the carried-forward signal, checked and pinned by
+    # test_maybe_retry_preserves_completion_signals_owned_files_and_depends_on.
+    # Here both are non-empty.
+    expected_signals = [{"type": "test_passes", "value": "pytest tests/test_widget.py"}]
+    assert tick_body["completion_signals"] == reap_body["completion_signals"] == expected_signals
+
+    assert tick_body["metadata"]["retry_of"] == reap_body["metadata"]["retry_of"] == task.id
 
 
 # ---------------------------------------------------------------------------

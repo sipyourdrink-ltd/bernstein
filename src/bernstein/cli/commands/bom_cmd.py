@@ -195,28 +195,97 @@ def _write_bom(snapshot: dict[str, Any], *, fmt: str, out_path: str | None) -> N
     type=click.Path(dir_okay=False, exists=True, resolve_path=True),
 )
 @click.option(
+    "--from-lineage",
+    "from_lineage",
+    is_flag=True,
+    default=False,
+    help="Re-derive the BOM from .sdd/lineage/<run>/ and fail on any difference from the document.",
+)
+@click.option(
+    "--run",
+    "run_id",
+    default=None,
+    help="Run identifier used to resolve the lineage spine. Only valid with --from-lineage, where it is required.",
+)
+@click.option(
+    "--workdir",
+    default=None,
+    help="Project root used to resolve .sdd/lineage (default: the current directory). Only valid with --from-lineage.",
+)
+@click.option(
     "--quiet",
     is_flag=True,
     default=False,
     help="Only emit exit code; suppress the verification report.",
 )
-def verify_cmd(bom_path: str, quiet: bool) -> None:
-    """Verify a previously emitted AI-BOM."""
-    from bernstein.core.compliance.ai_bom import verify_bom
+def verify_cmd(bom_path: str, from_lineage: bool, run_id: str | None, workdir: str | None, quiet: bool) -> None:
+    """Verify a previously emitted AI-BOM.
+
+    Without ``--from-lineage`` the check is structural only: it does not look
+    at the run's lineage spine, so it cannot tell a faithful BOM from a
+    hand-edited one. With ``--from-lineage --run <id>`` the BOM is recomputed
+    from the run's lineage spine and compared field by field; any difference
+    (a missing, extra or renamed component, a different hash or count, a
+    different head anchor) or a chain that does not verify fails the check.
+    """
+    from bernstein.core.compliance.ai_bom import BOMError, verify_bom
 
     raw = Path(bom_path).read_bytes()
-    report = verify_bom(raw)
+
+    if not from_lineage and (run_id is not None or workdir is not None):
+        click.echo(
+            "error: --run and --workdir only apply with --from-lineage; "
+            "without it the check is structural and never reads the lineage spine",
+            err=True,
+        )
+        raise SystemExit(2)
+
+    if from_lineage:
+        if not run_id:
+            click.echo("error: --from-lineage requires --run", err=True)
+            raise SystemExit(2)
+        try:
+            report = _verify_against_spine(raw, run_id=run_id, workdir=workdir or ".")
+        except BOMError as exc:
+            click.echo(f"error: {exc}", err=True)
+            raise SystemExit(1) from None
+    else:
+        report = verify_bom(raw)
 
     if quiet:
         raise SystemExit(0 if report.ok else 1)
 
     if report.ok:
-        click.echo(f"PASS: checked {report.checked_count} element(s)")
+        scope = "" if from_lineage else " (structural only; not compared with the lineage spine)"
+        click.echo(f"PASS{scope}: checked {report.checked_count} element(s)")
     else:
         click.echo(f"FAIL: {len(report.errors)} error(s); checked {report.checked_count} element(s)")
         for err in report.errors:
             click.echo(f"  - {err}")
     raise SystemExit(0 if report.ok else 1)
+
+
+def _verify_against_spine(raw: bytes, *, run_id: str, workdir: str) -> Any:
+    """Resolve ``raw`` BOM bytes against the run's lineage spine."""
+    from bernstein.core.compliance.ai_bom import BOMError, verify_bom_against_spine
+    from bernstein.core.lineage.spine import LineageSpine, SpineRunIdError
+    from bernstein.core.security.audit import (
+        AuditKeyMissingError,
+        AuditKeyPermissionError,
+        load_audit_key,
+    )
+
+    try:
+        hmac_key = load_audit_key()
+    except (AuditKeyMissingError, AuditKeyPermissionError) as exc:
+        raise BOMError(f"cannot read the audit key the lineage chain was written under: {exc}") from None
+
+    try:
+        spine = LineageSpine(Path(workdir).resolve() / ".sdd" / "lineage", run_id=run_id, hmac_key=hmac_key)
+    except SpineRunIdError as exc:
+        raise BOMError(f"invalid run id: {exc}") from None
+
+    return verify_bom_against_spine(raw, spine=spine, hmac_key=hmac_key)
 
 
 # Optional helper for tests / other callers: serialise a snapshot dict into

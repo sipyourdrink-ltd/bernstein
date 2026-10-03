@@ -12,15 +12,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args
 
+from bernstein.core.log_safe import for_log
 from bernstein.core.path_scope import (
     ScopePatternError,
     paths_outside_scope,
+    pattern_subsumes,
     validate_repo_relative_pattern,
 )
 from bernstein.core.security.auth import create_jwt, verify_jwt
@@ -35,6 +38,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: Identity ids are a single filename component under ``agent_identities/``.
+#: They are minted as ``<role>-<hex>`` / ``run-root-<run_id>`` but reach
+#: ``_load`` from request path parameters and JWT ``sub`` claims, so the
+#: alphabet excludes path separators and ``..`` (CodeQL path-injection).
+_IDENTITY_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +206,13 @@ def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
     child scoped to ``src/secret.py`` -- a file the parent's own scope never
     admitted.  ``src/**`` is how a tree is admitted.
 
-    A child that is itself a glob is covered only when the parent declared that
-    same glob.  Whether one glob is contained in another is not a question this
-    check guesses at, and refusing is the direction that cannot widen a scope.
+    A child that is itself a glob is covered when some parent pattern subsumes
+    it -- when no path exists that the child admits and the parent does not.
+    :func:`~bernstein.core.path_scope.pattern_subsumes` decides that against the
+    same pattern language, so a parent scoped to ``src/**`` can mint a child
+    scoped to ``src/core/**`` while one scoped to ``src`` still cannot mint
+    ``src/core``.  A child no *single* parent pattern subsumes is refused, which
+    is the direction that cannot widen a scope.
 
     Deliberately not the prefix-coverage helper in
     :mod:`bernstein.core.security.capability_tokens`: that one answers this
@@ -211,7 +224,7 @@ def _pattern_covered_by(child: str, parent_patterns: tuple[str, ...]) -> bool:
     if child in parent_patterns:
         return True
     if any(wildcard in child for wildcard in "*?"):
-        return False
+        return any(pattern_subsumes(parent, child) for parent in parent_patterns)
     return not paths_outside_scope((child,), parent_patterns)
 
 
@@ -636,6 +649,13 @@ class AgentIdentityStore:
     # -- persistence --------------------------------------------------------
 
     def _identity_path(self, identity_id: str) -> Path:
+        """Build the identity record path, refusing ids that are not a
+        single filename component.  ``identity_id`` reaches this method from
+        request path parameters and JWT ``sub`` claims, so a value that names
+        a directory or escapes the identities directory is rejected before any
+        filesystem access (CodeQL path-injection)."""
+        if not _IDENTITY_ID_RE.fullmatch(identity_id):
+            raise ValueError(f"invalid identity id {identity_id!r}")
         return self._identities_dir / f"{identity_id}.json"
 
     def _save(self, identity: AgentIdentity) -> None:
@@ -667,12 +687,15 @@ class AgentIdentityStore:
                 raise TypeError(msg)
             return AgentIdentity.from_dict(cast("dict[str, Any]", data))
         except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
-            logger.warning("Skipping corrupt identity file: %s", sanitize_log(str(path)))
+            logger.warning("Skipping corrupt identity file: %s", for_log(path))
             return None
 
     def _load(self, identity_id: str) -> AgentIdentity | None:
         """Read one identity by id, or None when it is missing or unusable."""
-        path = self._identity_path(identity_id)
+        try:
+            path = self._identity_path(identity_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         return self._read_identity(path)
@@ -1242,8 +1265,8 @@ class AgentIdentityStore:
         )
         logger.info(
             "Revoked agent identity %s: %s",
-            sanitize_log(identity_id),
-            sanitize_log(reason),
+            for_log(identity_id),
+            for_log(reason),
         )
         return True
 

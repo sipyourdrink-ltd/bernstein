@@ -46,6 +46,15 @@ on:
       - ".goosehints"
       - "README.md"
       - "CONTRIBUTING.md"
+      # Sources the playbook's governance rows name. Without these the
+      # deleted-source gate never starts for a change that removes one.
+      - "GOVERNANCE.md"
+      - "MAINTAINERS.md"
+      - "SECURITY.md"
+      - ".github/CODEOWNERS"
+      - ".github/quorum-roster.toml"
+      - "scripts/quorum_check.py"
+      - "scripts/queue_hygiene.py"
   push:
     branches: [main]
     paths:
@@ -63,6 +72,15 @@ on:
       - ".goosehints"
       - "README.md"
       - "CONTRIBUTING.md"
+      # Sources the playbook's governance rows name. Without these the
+      # deleted-source gate never starts for a change that removes one.
+      - "GOVERNANCE.md"
+      - "MAINTAINERS.md"
+      - "SECURITY.md"
+      - ".github/CODEOWNERS"
+      - ".github/quorum-roster.toml"
+      - "scripts/quorum_check.py"
+      - "scripts/queue_hygiene.py"
   schedule:
     # Weekly strict data-freshness sweep. Time-stamped markers drift purely
     # with the calendar, so the hard-threshold check runs on this cadence and

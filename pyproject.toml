@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "3.19.2"
+version = "3.20.0"
 description = "The open-source governance layer for AI agents. No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically, and run receipts are byte-identical across independent builds. Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline, without rerunning it. Runs Claude Code, Codex, Gemini CLI, and 40+ CLI agents; governs any deliverable from code to research to audit evidence packs. Cluster mode, air-gap deploy."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -137,7 +137,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://bernstein.run"
-Documentation = "https://bernstein.readthedocs.io"
+Documentation = "https://docs.bernstein.run"
 Repository = "https://github.com/sipyourdrink-ltd/bernstein"
 Source = "https://github.com/sipyourdrink-ltd/bernstein"
 Issues = "https://github.com/sipyourdrink-ltd/bernstein/issues"
@@ -193,7 +193,7 @@ dev = [
     "pytest-xflaky>=1.0.3",
     "pytest-json-report>=1.5",
     # TRACE 0.2 Trust Record emitter tests.
-    "agentrust-trace-tests>=0.5,<0.6",
+    "agentrust-trace-tests>=0.6,<0.7",
     # Error-telemetry SDK for the operator-managed Sentry-protocol-compatible
     # error sink. Imported lazily in src/bernstein/cli/main.py and only
     # initialised when BERNSTEIN_TELEMETRY_DSN is set. Kept in dev so the
@@ -336,7 +336,7 @@ research-render = [
 # TRACE 0.2 Trust Record emitter (src/bernstein/core/observability/trust_record.py).
 # Optional so minimal installs stay dependency-free. Enable with:
 #   pip install 'bernstein[trace]'
-trace = ["agentrust-trace>=0.9,<0.10"]
+trace = ["agentrust-trace>=0.11,<0.12"]
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"
@@ -459,6 +459,8 @@ artifacts = [
     # firewall loads them at startup to validate every incoming MCP tool
     # call. Loader: bernstein.mcp.input_validation.load_registry.
     "src/bernstein/mcp/tool_schemas/*.json",
+    # OSCAL v1.1.0 assessment-results schema for compliance exports.
+    "src/bernstein/compliance/oscal_schema/*.json",
     # Doctor doc-suggestion seed list. Curated list of common documentation
     # gaps surfaced by `bernstein doctor --suggest-docs`. Operator refreshes
     # it on each release. Loader:
@@ -511,6 +513,11 @@ artifacts = [
 # Built-in team manifests (#2248) so `team_manifest: python` and the
 # `bernstein team` commands resolve right after pip install.
 "templates/teams" = "bernstein/_default_templates/teams"
+# Packaged scenario library for `bernstein scenario list|run` and
+# `bernstein routine ...`. Resolved by
+# bernstein.core.planning.scenario_library.packaged_scenarios_dir; without
+# this entry the commands see an empty library on every pip install.
+"templates/scenarios" = "bernstein/_default_templates/scenarios"
 # Adapter admission evidence (#3547). The verdict `bernstein adapters
 # verify --seal` derives is a projection of the pinned contract's bytes and
 # the golden-transcript replay, so both have to be resolvable off a pip
@@ -562,6 +569,9 @@ extend-exclude = [
     # security-pentest eval scenario. Linting it makes no sense; the
     # files exist so the security role can find seeded findings.
     "tests/fixtures/eval/security_pentest/**",
+    # Gate-evasion corpus fixtures containing intentional syntax errors,
+    # broken code, and mock patterns used to evaluate quality gates.
+    "src/bernstein/eval/cases/gate_evasion/**",
     # Cookiecutter source templates with Jinja-interpolated identifiers
     # ({{cookiecutter.X}}) that ruff cannot parse as Python.
     "templates/**",
@@ -769,7 +779,7 @@ languages = ["zh-Hans", "zh-TW", "ja", "ko", "hi", "bn", "ru", "es", "pt", "de",
 # standing obligation. Handing a language over is a one-line change to
 # this table, made by the person taking it on.
 [tool.bernstein.readme-l10n.owners]
-"zh-Hans" = "@chernistry"
+"zh-Hans" = "@7487"
 "zh-TW" = "@chernistry"
 "ja" = "@chernistry"
 "ko" = "@Bhumika-1432006"
@@ -937,6 +947,17 @@ dev = [
     "playwright>=1.62.0",
 ]
 
+# Documentation toolchain (mkdocs.yml): MkDocs Material, the `social` card
+# plugin's imaging extra, and the `redirects` / `minify` plugins declared in
+# mkdocs.yml. Floors mirror docs/requirements.in so `uv run --group docs
+# mkdocs build --strict` resolves the same toolchain the docs pin file does.
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.7,<10",
+    "mkdocs-redirects>=1.2,<1.2.3",
+    "mkdocs-minify-plugin>=0.8,<1",
+]
+
 [tool.uv]
 # The checked-in gRPC gencode under src/bernstein/core/grpc_gen/ carries
 # `Protobuf Python Version: 7.35.1` and calls ValidateProtobufRuntimeVersion()
@@ -955,6 +976,11 @@ dev = [
 # dependency-update run rather than just the two extras that actually clash
 # (#4088).
 conflicts = [[{ extra = "grpc" }, { extra = "modal" }], [{ extra = "otel" }, { extra = "modal" }]]
+# spiffe 0.3.1 caps pyjwt below 2.14, but pyjwt 2.13 carries ten published
+# advisories fixed in 2.14.0 and nothing in the spiffe extra depends on the
+# behaviour that cap guards. The override lets the universal lock resolve
+# pyjwt to a patched release; drop it once spiffe lifts its cap.
+override-dependencies = ["pyjwt>=2.14"]
 
 [tool.mutmut]
 # Lineage v1 mutation testing - see scripts/mutmut_lineage.py for the
