@@ -41,7 +41,7 @@ wheels = [
 
 [[package]]
 name = "agentrust-trace-tests"
-version = "0.5.1"
+version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -49,9 +49,9 @@ dependencies = [
     { name = "jsonschema" },
     { name = "rfc8785" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e8/ea/316b440c5b50b07e01cc5ed0257dbaefad5cb5f25a299a533d1228a1eaef/agentrust_trace_tests-0.5.1.tar.gz", hash = "sha256:79e9d98a7106ae1c47b8378c8808be26f1fa34a62779e9f7b0e954cf40a2a19c", size = 132419, upload-time = "2026-08-23T20:49:54.368Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/73/30/a9ae3091c710822af35198b6571cad480f2f0901976b00bb09b8d14951eb/agentrust_trace_tests-0.6.1.tar.gz", hash = "sha256:0cf53e700a7d4070c53eac1f04f5246adc0d1b5f2dc80cc9dc7f39721dba3c34", size = 265968, upload-time = "2026-09-26T21:35:17.159Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/54/804f21e6dda302b5012e9391f677ce1f047f1cff76e03b0b6ce59fcd1a1e/agentrust_trace_tests-0.5.1-py3-none-any.whl", hash = "sha256:5c13421d41357a5b2e096eced457f5dee65d4921b253b25dac53684b3d31eeeb", size = 28494, upload-time = "2026-08-23T20:49:53.11Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/c1/294f5339c7649af4e195a064ad2d0ff3db24cbf9e034546e647a27153c1a/agentrust_trace_tests-0.6.1-py3-none-any.whl", hash = "sha256:f7e7c994ab1d43a56e8a29febfc75cdfbb1ab78f35df0b5d17ee606a12eb3c34", size = 56183, upload-time = "2026-09-26T21:35:15.867Z" },
 ]
 
 [[package]]
@@ -635,7 +635,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "agentrust-trace", marker = "extra == 'trace'", specifier = ">=0.11,<0.12" },
-    { name = "agentrust-trace-tests", marker = "extra == 'dev'", specifier = ">=0.5,<0.6" },
+    { name = "agentrust-trace-tests", marker = "extra == 'dev'", specifier = ">=0.6,<0.7" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9" },
     { name = "aiohttp", marker = "extra == 'teams'", specifier = ">=3.9" },
     { name = "asn1crypto", specifier = ">=1.5" },
