@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -337,6 +338,30 @@ class TestPreSpawnGate:
 
         assert _run_g1(tmp_path, "T-web-rej", audit_log, during_wait=_operator) == "rejected"
         assert _resolved_details(tmp_path)["decision_source"] == "web"
+
+    def test_web_route_answers_503_and_writes_nothing_when_the_decision_key_is_unloadable(
+        self, tmp_path: Path, audit_log: AuditLog, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An audit key readable by other users is a hard error at load time.
+
+        The route must surface it as 503 and leave the decision slot empty, so
+        the gate falls through to its timeout policy instead of reading an
+        unsigned or partial record.
+        """
+        client = _web_client(tmp_path, monkeypatch)
+        key_path = Path(os.environ["BERNSTEIN_AUDIT_KEY_PATH"])
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_bytes(b"k" * 64)
+        key_path.chmod(0o644)
+
+        def _operator() -> None:
+            resp = client.post("/approvals/T-web-503/approve", json={"reason": "looks fine"})
+            assert resp.status_code == 503, resp.text
+            assert resp.json()["detail"] == "Decision key unavailable"
+
+        assert _run_g1(tmp_path, "T-web-503", audit_log, during_wait=_operator) == "timeout"
+        assert not (tmp_path / _APPROVALS / "T-web-503.approved").exists()
+        assert _resolved_details(tmp_path)["decision_source"] == "timeout-default"
 
     def test_no_decision_file_keeps_the_timeout_policy(self, tmp_path: Path, audit_log: AuditLog) -> None:
         spec = ApprovalSpec(prompt="ship?", timeout_seconds=3, default_action="approve")

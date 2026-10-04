@@ -229,7 +229,9 @@ def _write_web_decision(
             nonce=nonce,
             reason=reason,
         )
-    except Exception as exc:
+    # RuntimeError: AuditKeyPermissionError (key readable by others); OSError:
+    # the key file cannot be read or created; ValueError: unnamed principal.
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.error("Approval routes: cannot sign decision record: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Decision key unavailable") from exc
     write_decision_record(decision_path, record)

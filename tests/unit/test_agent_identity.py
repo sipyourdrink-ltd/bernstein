@@ -1098,9 +1098,9 @@ class TestChildScopeMustNarrowTheParents:
         assert child.task_ids == []
 
     def test_is_task_allowed_reads_an_empty_scope_by_role(self, store: AgentIdentityStore) -> None:
-        manager, _ = store.create_identity("mgr", "manager", task_ids=[])
-        worker, _ = store.create_identity("wrk", "backend", task_ids=[])
-        scoped, _ = store.create_identity("scp", "backend", task_ids=["t-1"])
+        manager, _ = store.create_identity("manager-1", "manager", task_ids=[])
+        worker, _ = store.create_identity("worker-1", "backend", task_ids=[])
+        scoped, _ = store.create_identity("scoped-1", "backend", task_ids=["t-1"])
         assert manager.is_task_allowed("t-1") is True
         assert worker.is_task_allowed("t-1") is False
         assert scoped.is_task_allowed("t-1") is True
