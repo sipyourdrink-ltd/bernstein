@@ -23,8 +23,8 @@ import pytest
 from bernstein.core.models import TaskStatus
 from fastapi.testclient import TestClient
 
-from bernstein.core.identity.agent_jwt import AGENT_ROLE_PERMISSIONS
-from bernstein.core.security.auth_middleware import UNSCOPED_AGENT_ROLES, check_agent_task_scope_ids
+from bernstein.core.identity.agent_jwt import AGENT_ROLE_PERMISSIONS, UNSCOPED_AGENT_ROLES
+from bernstein.core.security.auth_middleware import check_agent_task_scope_ids
 
 if TYPE_CHECKING:
     from pathlib import Path

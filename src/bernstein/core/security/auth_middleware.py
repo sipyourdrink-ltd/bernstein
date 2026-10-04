@@ -162,6 +162,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from bernstein.core.identity.agent_jwt import task_allowlist
 from bernstein.core.routes.route_table import iter_route_paths, route_path_templates
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.security.tenanting import (
@@ -356,18 +357,6 @@ _TASK_COLLECTION_TEMPLATE_RE = re.compile(r"^(?:/api/v\d+)?/tasks/(?P<segment>[^
 # Where the compiled matchers are memoised on ``app.state``.
 _TASK_ROUTE_PATTERNS_ATTR: Final[str] = "_agent_task_scope_route_patterns"
 _TASK_COLLECTION_ROUTE_PATTERNS_ATTR: Final[str] = "_agent_task_scope_collection_route_patterns"
-
-# Agent roles for which an empty ``task_ids`` claim means "every task".
-#
-# Exactly one identity is minted without a task list on purpose: the
-# run-root identity the orchestrator creates per run, with the ``manager``
-# role (``AGENT_ROLE_PERMISSIONS["manager"]`` in ``identity/agent_jwt.py``).
-# The spawner always mints a worker with the ids of the tasks it was spawned
-# for.  A token of any other role whose list is empty is therefore a worker
-# with an empty scope, and it reaches no task rather than every task: the
-# empty list fails closed.  A ``manager`` token that does carry a list is held
-# to it like any other.
-UNSCOPED_AGENT_ROLES: Final[frozenset[str]] = frozenset({"manager"})
 
 # ---------------------------------------------------------------------------
 # Public and HMAC-authenticated paths
@@ -1660,9 +1649,4 @@ def _agent_task_allowlist(identity: Any) -> list[str] | None:
     Returns:
         The allowed task ids, or None when the identity is unrestricted.
     """
-    task_ids = list(getattr(identity, "task_ids", None) or [])
-    if task_ids:
-        return task_ids
-    if getattr(identity, "role", None) in UNSCOPED_AGENT_ROLES:
-        return None
-    return []
+    return task_allowlist(getattr(identity, "role", None), getattr(identity, "task_ids", None))

@@ -1084,6 +1084,28 @@ class TestChildScopeMustNarrowTheParents:
         child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=[])
         assert child.task_ids == []
 
+    def test_a_worker_parent_with_an_empty_scope_may_not_mint_a_task(self, store: AgentIdentityStore) -> None:
+        """An empty list on a worker role is an empty scope, not unrestricted.
+
+        The same rule the task server applies (``task_allowlist``): only an
+        unscoped role reads an empty list as every task, so a worker whose own
+        scope is empty cannot hand a child a task it does not hold.
+        """
+        parent, _ = store.create_identity("parent-1", "backend", task_ids=[])
+        with pytest.raises(ValueError, match=r"child task_ids \['t-1'\] are not a subset of parent task_ids \[\]"):
+            store.create_identity("child-1", "backend", parent_identity_id=parent.id, task_ids=["t-1"])
+        child, _ = store.create_identity("child-2", "backend", parent_identity_id=parent.id, task_ids=[])
+        assert child.task_ids == []
+
+    def test_is_task_allowed_reads_an_empty_scope_by_role(self, store: AgentIdentityStore) -> None:
+        manager, _ = store.create_identity("mgr", "manager", task_ids=[])
+        worker, _ = store.create_identity("wrk", "backend", task_ids=[])
+        scoped, _ = store.create_identity("scp", "backend", task_ids=["t-1"])
+        assert manager.is_task_allowed("t-1") is True
+        assert worker.is_task_allowed("t-1") is False
+        assert scoped.is_task_allowed("t-1") is True
+        assert scoped.is_task_allowed("t-2") is False
+
     # -- allowed_files ----------------------------------------------------
 
     def test_a_file_the_parent_does_not_hold_is_refused(self, store: AgentIdentityStore) -> None:

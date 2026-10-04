@@ -52,7 +52,7 @@ from bernstein.core.security.tenanting import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -186,6 +186,34 @@ _DEFAULT_PERMISSIONS: frozenset[str] = frozenset(
 def permissions_for_role(role: str) -> frozenset[str]:
     """Return the default permission set for an agent role."""
     return AGENT_ROLE_PERMISSIONS.get(role, _DEFAULT_PERMISSIONS)
+
+
+# Agent roles for which an empty ``task_ids`` means "every task".
+#
+# Exactly one identity is minted without a task list on purpose: the run-root
+# identity the orchestrator creates per run, with the ``manager`` role.  The
+# spawner always mints a worker with the ids of the tasks it was spawned for.
+# A token of any other role whose list is empty is therefore a worker with an
+# empty scope, and it reaches no task rather than every task: the empty list
+# fails closed.  A ``manager`` token that does carry a list is held to it like
+# any other.  Every reader of ``task_ids`` resolves it through
+# :func:`task_allowlist` so the rule has one home.
+UNSCOPED_AGENT_ROLES: Final[frozenset[str]] = frozenset({"manager"})
+
+
+def task_allowlist(role: str | None, task_ids: Iterable[str] | None) -> list[str] | None:
+    """Return the task ids an identity may act on, or None for every task.
+
+    ``None`` only for an empty ``task_ids`` on a role in
+    :data:`UNSCOPED_AGENT_ROLES`.  Every other identity gets its list, and an
+    empty list means it may act on no task.
+    """
+    ids = list(task_ids or [])
+    if ids:
+        return ids
+    if role in UNSCOPED_AGENT_ROLES:
+        return None
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -534,8 +562,13 @@ class AgentIdentity:
         return self.is_active and permission in self.permissions
 
     def is_task_allowed(self, task_id: str) -> bool:
-        """Return True if this identity is scoped to *task_id* (or has no scope)."""
-        return not self.task_ids or task_id in self.task_ids
+        """Return True if this identity may act on *task_id*.
+
+        Resolved through :func:`task_allowlist`: an empty ``task_ids`` is
+        every task only for :data:`UNSCOPED_AGENT_ROLES`, and no task otherwise.
+        """
+        allowed = task_allowlist(self.role, self.task_ids)
+        return allowed is None or task_id in allowed
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1038,16 +1071,19 @@ class AgentIdentityStore:
                 msg = f"parent identity {parent_identity_id} not found"
                 raise ValueError(msg)
 
-            # task_ids is an allowlist: an empty parent list means unrestricted,
-            # so the child may name anything; otherwise the child must be a
-            # subset, and an empty child narrows to nothing.  This is set
-            # containment, the same relation
+            # task_ids is an allowlist, read through ``task_allowlist``: an
+            # unrestricted parent (empty list on an unscoped role) may name
+            # anything; otherwise the child must be a subset, and an empty
+            # child narrows to nothing.  A parent whose own scope is empty
+            # (empty list on a worker role) can only mint an empty child.  This
+            # is set containment, the same relation
             # ``bernstein.core.security.capability_tokens.allowlist_narrows``
             # states for two present sets; it is spelled out here rather than
             # imported because that module imports this one.
-            if parent_identity.task_ids:
+            parent_allowed = task_allowlist(parent_identity.role, parent_identity.task_ids)
+            if parent_allowed is not None:
                 child_ids = set(scoped_task_ids)
-                parent_ids = set(parent_identity.task_ids)
+                parent_ids = set(parent_allowed)
                 if not child_ids <= parent_ids:
                     raise ValueError(
                         f"child task_ids {sorted(child_ids)} are not a subset of parent task_ids {sorted(parent_ids)}"
