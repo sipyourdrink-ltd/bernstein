@@ -93,6 +93,15 @@ order, and only a call none of these settle reaches the operator:
 | Always-allow list | A matching tool+args pattern proceeds without asking. |
 | Otherwise | Enqueued as a pending approval; the hook blocks. |
 
+The classifier deny-list covers shell writes into the control plane
+(`.sdd/`, `.bernstein/`): redirects (`>`, `>>`, `>|`, `&>`, `N>`) and
+file-writing tools (`cp`, `mv`, `tee`, `install`, `rsync`, `sed -i`, ...)
+are denied whether the target is relative, `./`-prefixed, absolute or quoted.
+A redirect or write target containing a `..` segment is denied as well: an
+agent works in a worktree under `.sdd/worktrees/<session>/`, so a path that
+climbs out of it reaches the control plane without naming it, and the
+classifier has no working directory to prove otherwise.
+
 While a call is pending it is visible to all three resolution surfaces, which
 share one queue under `.sdd/runtime/approvals`:
 
