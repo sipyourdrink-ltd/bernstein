@@ -1522,15 +1522,29 @@ _TRACE_EXPORT_FORMATS = ("trust-record", "ocsf")
 
 
 def _resolve_latest_run(sdd_path: Path) -> str | None:
-    """Newest run directory under ``<sdd>/runs`` holding a non-empty journal."""
+    """Newest run directory under ``<sdd>/runs`` holding a non-empty journal.
+
+    Every journal path goes through ``contained_run_journal`` rather than being
+    joined by hand. Iterating the runs root yields a name that cannot carry
+    ``..``, but that covers only half the threat: a directory entry with a
+    perfectly ordinary name can be a **symlink** pointing outside the root, and
+    iteration says nothing about what it resolves to. The barrier re-derives
+    through containment and returns ``None`` for an escaping entry, so the
+    sweep skips it and keeps going.
+    """
+    from bernstein.core.replay.journal import JOURNAL_FILENAME, contained_run_journal
+
     runs_root = sdd_path / "runs"
     if not runs_root.is_dir():
         return None
-    candidates = []
+    candidates: list[tuple[int, str]] = []
     for entry in runs_root.iterdir():
-        journal = entry / "journal.jsonl"
-        if entry.is_dir() and journal.is_file() and journal.stat().st_size > 0:
-            candidates.append((journal.stat().st_mtime, entry.name))
+        if not entry.is_dir():
+            continue
+        journal = contained_run_journal(runs_root, entry.name, JOURNAL_FILENAME)
+        if journal is None or not journal.is_file() or journal.stat().st_size == 0:
+            continue
+        candidates.append((journal.stat().st_mtime_ns, entry.name))
     if not candidates:
         return None
     return max(candidates)[1]
