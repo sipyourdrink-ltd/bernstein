@@ -226,6 +226,13 @@ class TestNoDefaultEndpoint:
             assert client.is_allowed("anything") is True
         assert calls == []
 
+    @pytest.mark.asyncio
+    async def test_no_api_url_means_no_poller(self, tmp_path: Path) -> None:
+        client = PolicyLimitsClient(cache_dir=tmp_path)
+        await client.initialize()
+        client.start_background_polling()
+        assert client._poll_task is None
+
 
 class TestPolicyLimitsClient:
     def test_is_allowed_fail_open_before_init(self) -> None:

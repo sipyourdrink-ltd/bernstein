@@ -331,6 +331,9 @@ class PolicyLimitsClient:
         """
         if self._poll_task is not None and not self._poll_task.done():
             return
+        if not self._api_url:
+            logger.debug("No policy limits endpoint configured; not polling")
+            return
 
         try:
             loop = asyncio.get_running_loop()
