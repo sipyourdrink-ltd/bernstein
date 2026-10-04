@@ -65,7 +65,8 @@ does not hold:
 Credential                 Checked against
 =========================  ===========================================
 SSO user JWT               the RBAC role's permissions
-Agent identity token       the signed permission set the token pins,
+Agent identity token       the permission set on the authenticated
+                           identity record the orchestrator minted,
                            plus :data:`_AGENT_PERMISSION_EQUIVALENTS`
 Cluster worker secret      :data:`_CLUSTER_SECRET_PERMISSIONS`, a fixed
                            set - one string serves the whole fleet, so
@@ -76,6 +77,12 @@ Legacy static bearer       nothing; it is the operator credential
 Agent grants use a narrower vocabulary than the route map, so the one
 authority the two spell differently is resolved through
 :data:`_AGENT_PERMISSION_EQUIVALENTS`; nothing else is implied.
+
+For an agent token the role, permissions and task scope never come from the
+token's claims.  ``AgentIdentityStore.authenticate`` returns the identity
+record, which it accepts only when the record carries a MAC under a key held
+outside the workdir; a token whose claims differ from that record - a scope
+the record does not grant included - does not authenticate at all.
 
 The gate covers reads as well as writes, because a read route's declared
 permission is what keeps one agent's log and stream output out of another
@@ -702,10 +709,12 @@ def _get_required_permission(path: str, method: str) -> str | None:
 def _agent_holds_permission(agent_identity: Any, permission: str) -> bool:
     """Return True when an agent identity holds *permission* for a route.
 
-    Applies the identity's own signed permission set first.  The set is
-    pinned to the presented token - ``AgentIdentityStore.authenticate``
-    refuses a JWT whose ``scopes`` claim differs from the stored grant - so
-    it is authenticated state rather than request input.
+    Applies the identity's own permission set first.  It is read from the
+    identity record the orchestrator minted, which the store accepts only
+    with a valid record MAC, and ``AgentIdentityStore.authenticate`` refuses
+    a JWT whose ``scopes`` claim differs from that grant - so it is
+    authenticated server-side state rather than request input, and a scope
+    the token asserts beyond the record is never consulted.
 
     When the route names a permission the agent vocabulary spells
     differently, the grants listed for it in

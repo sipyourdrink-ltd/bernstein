@@ -18,6 +18,7 @@ from bernstein.core.identity.agent_jwt import (
     _hash_token,
     permissions_for_role,
 )
+from tests.unit._identity_record_helpers import seal
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -442,7 +443,7 @@ class TestAgentCredentialTenantDeserialization:
         payload["id"] = "session-corrupt"
         payload["session_id"] = "session-corrupt"
         payload["credential"]["tenant_id"] = 42
-        corrupt.write_text(json.dumps(payload))
+        corrupt.write_text(json.dumps(seal(payload)))
 
         listed = {found.id for found in store.list_identities()}
 
@@ -509,7 +510,7 @@ class TestAgentCredentialTokenTypeDeserialization:
         payload = json.loads(path.read_text())
         assert payload["credential"]["token_type"] == "jwt"
         payload["credential"]["token_type"] = "anything"
-        path.write_text(json.dumps(payload))
+        path.write_text(json.dumps(seal(payload)))
 
         assert store.authenticate(token) is None
         assert [found.id for found in store.list_identities()] == []
@@ -584,7 +585,7 @@ class TestCorruptIdentityDoesNotBreakAuthentication:
         path = identities_dir / f"{identity_id}.json"
         payload = json.loads(path.read_text())
         payload["credential"]["tenant_id"] = 42
-        path.write_text(json.dumps(payload))
+        path.write_text(json.dumps(seal(payload)))
 
     def test_jwt_authentication_returns_none_for_a_corrupt_record(self, tmp_path: Path) -> None:
         store = AgentIdentityStore(tmp_path)
@@ -613,7 +614,7 @@ class TestCorruptIdentityDoesNotBreakAuthentication:
         payload = json.loads(path.read_text())
         payload["credential"]["token_type"] = "opaque"
         payload["credential"]["token_hash"] = _hash_token(opaque_token)
-        path.write_text(json.dumps(payload))
+        path.write_text(json.dumps(seal(payload)))
         assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is not None, (
             "precondition: the opaque token authenticates before corruption"
         )
@@ -636,7 +637,7 @@ class TestCorruptIdentityDoesNotBreakAuthentication:
         payload["session_id"] = "session-corrupt"
         payload["credential"]["token_hash"] = _hash_token("some-other-token")
         payload["credential"]["tenant_id"] = 42
-        corrupt.write_text(json.dumps(payload))
+        corrupt.write_text(json.dumps(seal(payload)))
 
         reloaded = AgentIdentityStore(tmp_path)
 
@@ -704,7 +705,7 @@ class TestIdentityReadersSkipCorruptFilesIdentically:
         payload["id"] = "session-broken"
         payload["session_id"] = "session-broken"
         payload[field] = value
-        (identities_dir / "session-broken.json").write_text(json.dumps(payload))
+        (identities_dir / "session-broken.json").write_text(json.dumps(seal(payload)))
 
         listed = {found.id for found in AgentIdentityStore(tmp_path).list_identities()}
 
@@ -738,7 +739,7 @@ class TestExplicitNullTenantIsRefused:
         path = tmp_path / "agent_identities" / f"{identity.id}.json"
         payload = json.loads(path.read_text())
         payload["credential"]["tenant_id"] = None
-        path.write_text(json.dumps(payload))
+        path.write_text(json.dumps(seal(payload)))
 
         assert AgentIdentityStore(tmp_path).authenticate(token) is None
 
@@ -808,7 +809,7 @@ class TestPersistedScopeCollectionsAreValidated:
         # An empty mapping would deserialise to [] - "no task restriction".
         payload["credential"]["task_ids"] = {}
         payload["task_ids"] = {}
-        path.write_text(json.dumps(payload))
+        path.write_text(json.dumps(seal(payload)))
 
         assert AgentIdentityStore(tmp_path).authenticate(token) is None
 
@@ -861,7 +862,7 @@ class TestPersistedScopeCollectionsAreValidated:
         payload = json.loads(path.read_text())
         payload["task_ids"] = [7]
         payload["credential"]["task_ids"] = [7]
-        path.write_text(json.dumps(payload))
+        path.write_text(json.dumps(seal(payload)))
 
         reloaded = AgentIdentityStore(tmp_path)
 
@@ -946,7 +947,7 @@ class TestIdentityAndCredentialScopeMustAgree:
         # The credential stays scoped; the identity copy is widened to
         # "unrestricted", which is what the request middleware reads.
         payload["task_ids"] = []
-        path.write_text(json.dumps(payload))
+        path.write_text(json.dumps(seal(payload)))
 
         assert AgentIdentityStore(tmp_path).authenticate(opaque_token) is None
 

@@ -32,6 +32,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 __all__ = [
+    "DOMAIN_AGENT_IDENTITY_JWT",
+    "DOMAIN_AGENT_IDENTITY_RECORD",
     "DOMAIN_AUDIT",
     "DOMAIN_LINEAGE",
     "SCHEME_V1",
@@ -45,6 +47,16 @@ DOMAIN_LINEAGE: Final[str] = "lineage"
 
 #: Domain tag for the audit chain store.
 DOMAIN_AUDIT: Final[str] = "audit"
+
+#: Domain tag for the key that authenticates persisted agent identity records
+#: (``bernstein.core.identity.agent_jwt``).  Records under ``.sdd/auth/`` are
+#: writable by every process that can write the workdir, so the store accepts
+#: only records carrying a MAC under this key.
+DOMAIN_AGENT_IDENTITY_RECORD: Final[str] = "agent-identity-record"
+
+#: Domain tag for the default HS256 secret that signs agent identity tokens
+#: when ``BERNSTEIN_AUTH_JWT_SECRET`` is not set.
+DOMAIN_AGENT_IDENTITY_JWT: Final[str] = "agent-identity-jwt"
 
 #: Legacy scheme: raw master key, no domain tag in the hash preimage.
 SCHEME_V1: Final[int] = 1
