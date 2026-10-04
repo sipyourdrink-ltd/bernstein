@@ -186,10 +186,11 @@ def test_worker_with_empty_scope_claims_nothing_through_claim_next(app: FastAPI)
 
 
 def test_manager_with_empty_scope_claims_through_claim_next(app: FastAPI) -> None:
-    target = _create_task(app, "target")
+    # A claim is bound to the token's role, so the manager claims a manager task.
+    target = _create_task(app, "target", role="manager")
     headers = _agent_headers(app, "manager-root", "manager", [])
 
-    response = _client(app).get("/tasks/next/backend", headers=headers)
+    response = _client(app).get("/tasks/next/manager", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.json()["id"] == target

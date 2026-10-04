@@ -76,11 +76,11 @@ def _agent_headers(application: FastAPI, session: str, role: str, task_ids: list
     return {"Authorization": f"Bearer {token}"}
 
 
-def _create_task(application: FastAPI, title: str, priority: int) -> str:
+def _create_task(application: FastAPI, title: str, priority: int, role: str = "backend") -> str:
     response = _client(application).post(
         "/tasks",
         headers=_operator_headers(),
-        json={"title": title, "description": title, "role": "backend", "priority": priority},
+        json={"title": title, "description": title, "role": role, "priority": priority},
     )
     assert response.status_code == 201, response.text
     return str(response.json()["id"])
@@ -142,11 +142,12 @@ def test_out_of_scope_tasks_stay_claimable_by_their_owner(app: FastAPI) -> None:
 
 
 def test_manager_token_claim_next_is_unrestricted(app: FastAPI) -> None:
-    peer = _create_task(app, "peer task", priority=1)
-    _create_task(app, "own task", priority=3)
+    # A claim is bound to the token's role, so the manager claims manager tasks.
+    peer = _create_task(app, "peer task", priority=1, role="manager")
+    _create_task(app, "own task", priority=3, role="manager")
     headers = _agent_headers(app, "manager-root", "manager", [])
 
-    response = _client(app).get("/tasks/next/backend", headers=headers)
+    response = _client(app).get("/tasks/next/manager", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.json()["id"] == peer

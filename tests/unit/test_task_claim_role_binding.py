@@ -49,10 +49,15 @@ def _operator() -> dict[str, str]:
     return {"Authorization": f"Bearer {_OPERATOR_TOKEN}"}
 
 
-def _agent(application: FastAPI, role: str) -> dict[str, str]:
-    """Mint an unscoped agent identity token for *role*."""
+def _agent(application: FastAPI, role: str, task_id: str) -> dict[str, str]:
+    """Mint an agent identity token for *role* scoped to *task_id*.
+
+    The token is in scope for the task on purpose: these tests exercise the
+    role binding, and an out-of-scope token is refused by the task-scope gate
+    before the role is ever compared.
+    """
     store: Any = application.state.identity_store
-    _, token = store.create_identity(f"session-{role}-{next(_peer)}", role, task_ids=[])
+    _, token = store.create_identity(f"session-{role}-{next(_peer)}", role, task_ids=[task_id])
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -80,7 +85,7 @@ def _task(application: FastAPI, task_id: str) -> Any:
 def test_agent_cannot_claim_task_of_another_role(app: FastAPI) -> None:
     task_id = _create_task(app, "backend")
 
-    response = _client(app).post(f"/tasks/{task_id}/claim", headers=_agent(app, "qa"))
+    response = _client(app).post(f"/tasks/{task_id}/claim", headers=_agent(app, "qa", task_id))
 
     assert response.status_code == 403, response.text
     assert "role" in response.json()["detail"]
@@ -90,7 +95,7 @@ def test_agent_cannot_claim_task_of_another_role(app: FastAPI) -> None:
 def test_agent_claims_task_of_its_own_role(app: FastAPI) -> None:
     task_id = _create_task(app, "backend")
 
-    response = _client(app).post(f"/tasks/{task_id}/claim", headers=_agent(app, "backend"))
+    response = _client(app).post(f"/tasks/{task_id}/claim", headers=_agent(app, "backend", task_id))
 
     assert response.status_code == 200, response.text
     assert _task(app, task_id).status.value == "claimed"
@@ -112,7 +117,7 @@ def test_operator_claim_is_not_role_bound(app: FastAPI) -> None:
 def test_agent_cannot_relabel_task_into_its_own_role(app: FastAPI) -> None:
     task_id = _create_task(app, "backend")
 
-    response = _client(app).patch(f"/tasks/{task_id}", headers=_agent(app, "qa"), json={"role": "qa"})
+    response = _client(app).patch(f"/tasks/{task_id}", headers=_agent(app, "qa", task_id), json={"role": "qa"})
 
     assert response.status_code == 403, response.text
     assert _task(app, task_id).role == "backend"
@@ -121,7 +126,7 @@ def test_agent_cannot_relabel_task_into_its_own_role(app: FastAPI) -> None:
 def test_agent_cannot_set_a_role_other_than_its_own(app: FastAPI) -> None:
     task_id = _create_task(app, "backend")
 
-    response = _client(app).patch(f"/tasks/{task_id}", headers=_agent(app, "backend"), json={"role": "qa"})
+    response = _client(app).patch(f"/tasks/{task_id}", headers=_agent(app, "backend", task_id), json={"role": "qa"})
 
     assert response.status_code == 403, response.text
     assert _task(app, task_id).role == "backend"
@@ -129,7 +134,7 @@ def test_agent_cannot_set_a_role_other_than_its_own(app: FastAPI) -> None:
 
 def test_relabel_then_claim_is_refused_end_to_end(app: FastAPI) -> None:
     task_id = _create_task(app, "backend")
-    qa = _agent(app, "qa")
+    qa = _agent(app, "qa", task_id)
 
     _client(app).patch(f"/tasks/{task_id}", headers=qa, json={"role": "qa"})
     response = _client(app).post(f"/tasks/{task_id}/claim", headers=qa)
@@ -141,7 +146,7 @@ def test_relabel_then_claim_is_refused_end_to_end(app: FastAPI) -> None:
 def test_agent_patch_without_role_still_allowed(app: FastAPI) -> None:
     task_id = _create_task(app, "backend")
 
-    response = _client(app).patch(f"/tasks/{task_id}", headers=_agent(app, "qa"), json={"priority": 1})
+    response = _client(app).patch(f"/tasks/{task_id}", headers=_agent(app, "qa", task_id), json={"priority": 1})
 
     assert response.status_code == 200, response.text
     assert _task(app, task_id).priority == 1
@@ -166,7 +171,7 @@ def test_agent_claim_batch_skips_tasks_of_another_role(app: FastAPI) -> None:
 
     response = _client(app).post(
         "/tasks/claim-batch",
-        headers=_agent(app, "qa"),
+        headers=_agent(app, "qa", task_id),
         json={"task_ids": [task_id], "agent_id": "qa-agent"},
     )
 
@@ -178,7 +183,7 @@ def test_agent_claim_batch_skips_tasks_of_another_role(app: FastAPI) -> None:
 def test_agent_cannot_claim_next_for_another_role(app: FastAPI) -> None:
     task_id = _create_task(app, "backend")
 
-    response = _client(app).get("/tasks/next/backend", headers=_agent(app, "qa"))
+    response = _client(app).get("/tasks/next/backend", headers=_agent(app, "qa", task_id))
 
     assert response.status_code == 403, response.text
     assert _task(app, task_id).status.value == "open"
@@ -197,7 +202,7 @@ def test_agent_cannot_auto_claim_open_task_of_another_role(app: FastAPI, action:
     """``/complete`` and ``/fail`` re-claim a task that reverted to open; that claim is role-bound too."""
     task_id = _create_task(app, "backend")
 
-    response = _client(app).post(f"/tasks/{task_id}/{action}", headers=_agent(app, "qa"), json=body)
+    response = _client(app).post(f"/tasks/{task_id}/{action}", headers=_agent(app, "qa", task_id), json=body)
 
     assert response.status_code == 403, response.text
     assert "role" in response.json()["detail"]
@@ -213,7 +218,7 @@ def test_agent_finishes_reverted_task_of_its_own_role(
 ) -> None:
     task_id = _create_task(app, "backend")
 
-    response = _client(app).post(f"/tasks/{task_id}/{action}", headers=_agent(app, "backend"), json=body)
+    response = _client(app).post(f"/tasks/{task_id}/{action}", headers=_agent(app, "backend", task_id), json=body)
 
     assert response.status_code == 200, response.text
     assert _task(app, task_id).status.value == final
