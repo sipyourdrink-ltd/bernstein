@@ -42,6 +42,10 @@ to a list of blessed URLs, so it holds wherever that identity arrives from:
 * **Indirectly resolved.**  Handlers that reach a task through some other
   key - an ACP run, a plan, a cluster steal decision - call the same
   function with the ids they resolved, before mutating them.
+* **Server-chosen.**  The claim routes where the server picks the row
+  (``GET /tasks/next/{role}``, ``POST /tasks/claim-receipt``) carry no id
+  at all, so their handlers pass :func:`agent_task_scope` into the
+  candidate query and a task outside the caller's scope is never chosen.
 
 Only the registered ``/tasks/`` collection routes are exempt from the path
 gate, because they address the collection rather than one task.  That
@@ -284,7 +288,10 @@ TASK_BODY_SCOPED_SEGMENTS: Final[frozenset[str]] = frozenset(
 #   archive, counts, graph, search  - read-only collection queries
 #   next                            - ``GET /tasks/next/{role}`` claim-next;
 #                                     the server picks the row, the caller
-#                                     cannot name one
+#                                     cannot name one.  Still a claim: the
+#                                     handler limits the candidate query to
+#                                     the caller's scope, see
+#                                     :func:`agent_task_scope`
 #   batch                           - creates NEW tasks, so no existing id
 #                                     can be in scope yet
 #   batch-ops, claim-batch,         - name existing ids in the body; scoped
@@ -292,7 +299,8 @@ TASK_BODY_SCOPED_SEGMENTS: Final[frozenset[str]] = frozenset(
 #                                     ``TASK_BODY_SCOPED_SEGMENTS`` above
 #   claim-receipt                   - claims the next eligible backlog row
 #                                     for the caller; like ``next``, the
-#                                     caller cannot name a task
+#                                     caller cannot name a task, and the
+#                                     claim filter carries the caller's scope
 #
 # Membership here is necessary but not sufficient: the exemption applies to
 # the registered collection ROUTES these segments name, not to the segment
@@ -1561,3 +1569,30 @@ def enforce_agent_task_scope_for_ids(request: Request, requested_task_ids: Itera
         sanitize_log(error),
     )
     raise HTTPException(status_code=403, detail=error)
+
+
+def agent_task_scope(request: Request) -> frozenset[str] | None:
+    """Return the task ids a server-chosen claim may hand this caller.
+
+    For the claim routes where the server picks the row - ``GET
+    /tasks/next/{role}`` and ``POST /tasks/claim-receipt`` - there is no id
+    in the request for the path gate or :func:`enforce_agent_task_scope_for_ids`
+    to check.  Those handlers pass this value into the candidate query
+    instead, so a task-scoped token is only ever offered a task inside its
+    own scope.
+
+    Args:
+        request: The active request, carrying the resolved agent identity.
+
+    Returns:
+        The caller's task scope, or None when the caller is not limited to a
+        task set: every non-agent credential, and an agent token whose
+        ``task_ids`` is empty.
+    """
+    identity = getattr(request.state, "agent_identity", None)
+    if identity is None:
+        return None
+    task_ids = getattr(identity, "task_ids", None) or []
+    if not task_ids:
+        return None
+    return frozenset(task_ids)

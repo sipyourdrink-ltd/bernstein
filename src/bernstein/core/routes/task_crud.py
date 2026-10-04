@@ -31,7 +31,7 @@ from bernstein.core.log_safe import for_log
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
 from bernstein.core.routes._sse import SSE_RESPONSES
-from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
+from bernstein.core.security.auth_middleware import agent_task_scope, enforce_agent_task_scope_for_ids
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_subpath,
@@ -1278,11 +1278,15 @@ async def next_task(
         )
     claimed_by_session = _checked_claim_session(claimed_by_session)
     store = _get_store(request)
+    # The caller names no task, so the path gate has nothing to check; a
+    # task-scoped agent token is instead limited to its own tasks in the
+    # candidate query, so a task outside its scope is never chosen.
     task = await store.claim_next(
         role,
         tenant_id=_resolve_request_tenant_scope(request),
         claimed_by_session=claimed_by_session,
         parent_session_id=parent_session_id,
+        task_ids=agent_task_scope(request),
     )
     if task is None:
         logger.info(

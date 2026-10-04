@@ -152,12 +152,14 @@ enforced on an arbitrary subset, so all of them are covered:
 | ids in a request body on a `/tasks/` collection route (`batch-ops`, `claim-batch`, `self-create`) | `enforce_agent_task_scope_for_ids` in the handler |
 | a body-carried id outside `/tasks/` (`POST /a2a/message`) | `enforce_agent_task_scope_for_ids` in the handler |
 | an id the handler resolves from another key (the task behind an ACP run, the tasks a plan decision transitions, the tasks a cluster steal reassigns) | `enforce_agent_task_scope_for_ids` on the resolved ids, before the mutation |
+| no id at all: the server picks the row (`GET /tasks/next/{role}` and its `/api/v<n>` mirror, `POST /tasks/claim-receipt`) | the handler passes `agent_task_scope` into the candidate query, so only tasks in the token's `task_ids` are candidates; a scoped token with nothing claimable in scope gets a 404 (claim-next) or a signed refusal receipt (claim-receipt), never another task |
 
-The only exemptions are the collection routes under `/tasks/`
-(`TASK_COLLECTION_SEGMENTS` in `auth_middleware.py`), which address the
-collection rather than one task, and the claim-next routes
-(`GET /tasks/next/{role}`, `POST /tasks/claim-receipt`), where the server
-picks the row and the caller cannot name a task. A token with an empty
+The only exemptions from the path gate are the collection routes under
+`/tasks/` (`TASK_COLLECTION_SEGMENTS` in `auth_middleware.py`), which address
+the collection rather than one task. The two server-chosen claim routes are
+among them, and are scoped in their handlers as the table above describes.
+A claim receipt granted to a scoped token carries that scope in its
+`filter_digest`; an unscoped claim hashes exactly as before. A token with an empty
 `task_ids` claim is an unrestricted manager token, and non-agent
 credentials never reach the check at all.
 
