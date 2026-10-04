@@ -1168,6 +1168,11 @@ cli.add_command(self_group, "self")
 cli.add_command(scenario_group, "scenario")
 
 cli.add_command(undo_cmd, "undo")
+# `bernstein trust`: the one sanctioned way to write the workspace trust
+# record that script hooks, plugin hooks and workflow command nodes require.
+from bernstein.cli.commands.trust_cmd import trust_cmd  # noqa: E402
+
+cli.add_command(trust_cmd, "trust")
 cli.add_command(worker, "worker")
 cli.add_command(worktrees_group, "worktrees")
 # `bernstein worktrees graph <fanout-id>`: a fan-out's branches *are*

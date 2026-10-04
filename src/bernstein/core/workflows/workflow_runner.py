@@ -86,7 +86,7 @@ class UntrustedWorkspaceError(WorkflowRunError):
     def __init__(self, workdir: Path) -> None:
         super().__init__(
             f"workspace {workdir} is not trusted; refusing to run manifest shell commands. "
-            "Grant trust (writes .sdd/runtime/workspace_trust.json) before running this workflow."
+            "Run `bernstein trust` there (writes .sdd/runtime/workspace_trust.json) before running this workflow."
         )
         self.workdir = workdir
 

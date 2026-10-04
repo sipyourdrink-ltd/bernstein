@@ -316,7 +316,7 @@ class UntrustedWorkspaceError(HookFailure):
         super().__init__(event, hook, stderr="workspace not trusted")
         self.args = (
             f"workspace {workdir} is not trusted; refusing to run {hook} for {event.value}. "
-            "Grant trust (writes .sdd/runtime/workspace_trust.json) to enable script hooks.",
+            "Run `bernstein trust` there (writes .sdd/runtime/workspace_trust.json) to enable script hooks.",
         )
         self.workdir = workdir
 

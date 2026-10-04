@@ -956,6 +956,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein mandate` | Verifiable spending mandates as journal-anchored consent receipts (group): `emit` / `verify` / `revoke`. | `cli/commands/mandate_cmd.py` |
 | `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
+| `bernstein trust` | Grant, show (`--status`) or revoke (`--revoke`) workspace trust: script hooks, plugin hooks and workflow command nodes run only in a trusted workspace. | `cli/commands/trust_cmd.py:trust_cmd` |
 | `bernstein approve-tool` | Approve a tool-call request (alias; flag form `approve --tool <id>`). | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request (alias; flag form `reject --tool <id>`). | `cli/commands/approval_cmd.py:reject_tool_cmd` |
 | `bernstein review-receipt` | Attested PR review receipts binding issue / plan / tool calls / diff (group): `emit` / `verify`. | `cli/commands/review_receipt_cmd.py` |
