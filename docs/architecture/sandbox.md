@@ -94,7 +94,7 @@ Object-store mount entries (`S3Mount`, `GCSMount`, `AzureBlobMount`,
 | Backend | Ships in | `capabilities`                                  | Notes |
 |---------|----------|--------------------------------------------------|-------|
 | `worktree` | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | Wraps the existing `WorktreeManager`. Zero behaviour change. Default. |
-| `docker`   | core     | `FILE_RW`, `EXEC`, `NETWORK`                     | Launches a container per session via the `docker` Python SDK. Needs `pip install bernstein[docker]`. |
+| `docker`   | core     | `FILE_RW`, `EXEC`, `NETWORK`                     | Launches a container per session via the `docker` Python SDK. Mounts only the repository's git dir, read-only; see [What a `docker` session can see](#what-a-docker-session-can-see). Needs `pip install bernstein[docker]`. |
 | `e2b`      | `[e2b]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`     | Runs in E2B Firecracker microVMs. Needs `pip install bernstein[e2b]` plus `E2B_API_KEY`. |
 | `modal`    | `[modal]` extra | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`, `GPU` | Serverless containers with optional GPU. Needs `pip install bernstein[modal]` plus `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. |
 | `microvm`  | core     | `FILE_RW`, `EXEC`, `NETWORK`, `SNAPSHOT`         | microVM per session — isolates kernel / network / PID namespace at a hardware boundary. Snapshots are **content-addressed** (the snapshot id *is* the SHA-256 of the image bytes in CAS). Two adapters: **libkrun** boots a real guest on Linux/KVM and macOS/arm64 (opt in with `BERNSTEIN_MICROVM_MONITOR=libkrun`; see [MicroVM on libkrun](../operations/microvm-libkrun.md)), **Firecracker** is the default and still refuses to boot. Opt-in: not a free backend, so the heuristic path never auto-selects it; an explicit `--sandbox microvm` on an unsupported host fails loudly rather than degrading isolation. |
@@ -115,6 +115,55 @@ Object-store mount entries (`S3Mount`, `GCSMount`, `AzureBlobMount`,
   only `modal` exposes GPU today.
 - **Supported exec semantics.** Every first-party backend handles
   argv-based exec with exit-code, stdout, and stderr capture.
+
+### What a `docker` session can see
+
+Each `docker` session is one container started from the configured image
+(`BERNSTEIN_CONTAINER_IMAGE`, default `bernstein-agent:latest`).
+
+| Surface | Visible inside the container |
+|---|---|
+| Host repository | Only its git dir, bind-mounted read-only at `/host-repo/.git` |
+| Working copy | A fresh `git clone /host-repo` at `manifest.root` (default `/workspace`), on the requested branch |
+| Host working tree | Not mounted: no `.sdd/` (identity, tokens, approvals, runtime state), no untracked or ignored files, no uncommitted edits |
+| Linux capabilities | None (`cap_drop=["ALL"]`) |
+| Privilege escalation | Blocked (`no-new-privileges:true`) |
+| Container user | The image's `USER` (`bernstein`, uid 1000, in the project image); override with the `user` backend option |
+
+How the git dir is chosen:
+
+- `<repo>/.git` is a directory: that directory is mounted.
+- `<repo>/.git` is a file (a linked worktree): the main repository's git dir
+  (its `commondir`) is mounted. The clone then checks out the requested
+  branch by name. A worktree on a detached `HEAD` gets the main repository's
+  `HEAD` instead.
+- `<repo>/.git` is a file without `commondir` (a submodule): the git dir it
+  points at is mounted.
+- No `.git`, an unreadable gitfile, or a git dir that would contain the
+  working tree: session creation fails before any container starts. The
+  backend never falls back to mounting the working tree.
+
+What the git dir still exposes:
+
+- Everything in `.git`, including `.git/config`. A remote URL with embedded
+  credentials there is readable by the agent. Keep credentials in a
+  credential helper, not in the URL.
+- All branches and their history: the clone fetches every ref, not only the
+  requested branch.
+
+Without capabilities, a process running as root inside the container is still
+bound by file modes on the mount. It cannot override them. Tools that need a
+capability inside the container stop working, for example `apt-get install`
+(it switches to the `_apt` user) or an agent's own user-namespace sandbox. Bake
+such packages into the image. Declare the container as host isolation (see
+below) so the agent's own sandbox is dropped.
+
+`--network host` is the default so agents reach the task server on
+`127.0.0.1`. See [Security considerations](#security-considerations) for
+`network_disabled`.
+
+- Backend: `src/bernstein/core/sandbox/backends/docker.py`
+- Tests: `tests/unit/sandbox/test_docker_backend_unit.py`
 
 ### Declared host isolation
 
