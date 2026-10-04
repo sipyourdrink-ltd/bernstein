@@ -246,21 +246,62 @@ to implement the flag's plumbing and leave it unexercised until #2918 lands.
 
 ---
 
-## What the first slice would be
+## Status
 
-Once the scope above is settled:
+The scope questions above are settled (#6393 review) and the encoder has
+landed: `bernstein trace export --format ocsf`.
 
-1. `docs/observability/ocsf-export.md` — this table, as agreed.
-2. A vendored `1.9.0` schema subset plus a test-only validator
-   (`jsonschema`, dev dependency — requirement: no new runtime dependency).
-3. `core/observability/ocsf_projection.py`, built in the shape of
-   `openlineage_export.py`: `build_ocsf_events()` → `render_ocsf_jsonl()` →
-   `export_ocsf()`, pure functions over a loaded range.
-4. `bernstein export ocsf --run <id>`. Note there is **no top-level `export`
-   group** today — `trace export` and `lineage export` are subcommands of their
-   own groups. Either a new group, or `trace export --format ocsf` beside the
-   existing OpenLineage `--format`. The latter matches what is there; say which
-   you prefer.
-5. Tests: a fixture with an allow, a deny, and a decision with no outcome;
-   byte-identical output across two runs; every event valid against the pinned
-   schema; the no-outcome case asserted as `status_id = 0`.
+| Decided | Answer |
+|---|---|
+| scope | **journal + audit chain** (option B) |
+| digests | RFC 8785 SHA-256 over all parameters, command strings included |
+| CLI | `trace export --format ocsf`, beside the existing `--format` conventions — not a new top-level group |
+| #1760 fields | behind `--include-proposed`, default off |
+
+## Using it
+
+```bash
+bernstein trace export <RUN_ID> --format ocsf                 # JSONL to stdout
+bernstein trace export <RUN_ID> --format ocsf --out run.jsonl
+bernstein trace export --last --format ocsf                   # newest finished run
+bernstein trace export <RUN_ID> --format ocsf --no-audit      # journal only
+bernstein trace export <RUN_ID> --format ocsf --include-proposed
+```
+
+Needs no `trace` extra and no signing key: this is a projection of records
+already on disk, not a new attestation. The audit chain is read without its
+HMAC key — verifying the chain itself remains `verify-audit-receipt`'s job.
+
+`--no-audit` gives the journal-only shape, and loses every security decision
+with it. That is the whole reason the default reads both stores.
+
+## What the implementation does with the gaps
+
+- An **unmapped journal kind** exports as `class_uid 6003`, `activity_id 0`,
+  with `unmapped.unmapped_kind` naming it, and the CLI prints a count. There is
+  no central registry of journal event kinds, so the table is a snapshot and an
+  unknown kind has to be a recorded omission rather than a crash or a drop.
+- An **unmapped audit kind** is omitted entirely rather than degraded.
+  Inventing a decision for an unrecognised *security* record is worse than
+  leaving it out, so the two stores deliberately differ here.
+- **Excluded** kinds (`tick_start`, `plan.graph`, `plan.graph.full`,
+  `provider_state_capability`) are counted on the result rather than dropped
+  silently.
+- The journal digest excludes `ts` and `elapsed_s`, the same two fields the run
+  receipt's projection drops, so the same logical row digests identically.
+
+## Still open
+
+- **Budget refusals** and **containment stops** remain unmapped: neither has a
+  source. #2918 is open and there is no containment event kind. The
+  `--include-proposed` flag is therefore wired but carries nothing yet, since
+  #1760's two objects are exactly those two gaps.
+- `status_id` is `0` for every audit event, because no audit entry records the
+  effect. #6270 tracks closing the decision → dispatch → effect triple; when it
+  lands, the effect record is what would raise these to `1`/`2`.
+- Full JSON-schema validation against a vendored OCSF 1.9.0 subset. The test
+  suite currently asserts structural conformance — required base fields, enum
+  membership, `class_uid = category*1000 + uid`, and
+  `type_uid = class_uid*100 + activity_id` — which catches encoder drift
+  without vendoring several megabytes of schema. Worth doing properly if you
+  want the literal "validates against the pinned schema in CI".

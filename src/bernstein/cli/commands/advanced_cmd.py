@@ -1516,6 +1516,83 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     )
 
 
+#: ``trace export`` output formats. ``trust-record`` is the historical
+#: behaviour and stays the default; ``ocsf`` is the SIEM projection (#6037).
+_TRACE_EXPORT_FORMATS = ("trust-record", "ocsf")
+
+
+def _resolve_latest_run(sdd_path: Path) -> str | None:
+    """Newest run directory under ``<sdd>/runs`` holding a non-empty journal."""
+    runs_root = sdd_path / "runs"
+    if not runs_root.is_dir():
+        return None
+    candidates = []
+    for entry in runs_root.iterdir():
+        journal = entry / "journal.jsonl"
+        if entry.is_dir() and journal.is_file() and journal.stat().st_size > 0:
+            candidates.append((journal.stat().st_mtime, entry.name))
+    if not candidates:
+        return None
+    return max(candidates)[1]
+
+
+def _trace_export_ocsf(
+    *,
+    run_id: str | None,
+    output: str | None,
+    latest: bool,
+    sdd_dir: str | None,
+    include_proposed: bool,
+    include_audit: bool,
+) -> None:
+    """``bernstein trace export --format ocsf`` (#6037).
+
+    Separate from the trust-record path on purpose: this needs no ``trace``
+    extra and no signing key, because it is a projection of records that are
+    already on disk rather than a new attestation.
+    """
+    from bernstein.core.observability.ocsf_projection import (
+        OCSF_SCHEMA_VERSION,
+        export_ocsf,
+    )
+
+    sdd_path = Path(sdd_dir) if sdd_dir else (Path(".sdd") if Path(".sdd").is_dir() else Path("."))
+    if latest and not run_id:
+        run_id = _resolve_latest_run(sdd_path)
+        if not run_id:
+            console.print("[red]No finished run found under[/red] " + str(sdd_path / "runs"))
+            raise SystemExit(1)
+    if not run_id:
+        console.print("[red]Usage:[/red] bernstein trace export <RUN_ID> --format ocsf [--last]")
+        raise SystemExit(1)
+
+    result = export_ocsf(
+        sdd_path,
+        run_id,
+        include_proposed=include_proposed,
+        include_audit=include_audit,
+    )
+    if not result.events:
+        console.print(f"[red]No journal or audit records found for run[/red] {run_id}")
+        raise SystemExit(1)
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(result.jsonl)
+        console.print(f"Wrote {result.event_count} OCSF {OCSF_SCHEMA_VERSION} event(s) to {out_path}")
+    else:
+        sys.stdout.write(result.jsonl.decode("utf-8"))
+
+    # An unmapped kind is a recorded omission, not a silent drop: the journal
+    # has no central registry of event kinds, so the table is a snapshot.
+    if result.unmapped_kinds:
+        console.print(
+            f"[yellow]{len(result.unmapped_kinds)} journal kind(s) had no mapping "
+            f"and were exported as activity_id=0:[/yellow] " + ", ".join(result.unmapped_kinds)
+        )
+
+
 @trace_cmd.command("export")
 @click.argument("run_id", required=False)
 @click.option(
@@ -1554,6 +1631,31 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     default=None,
     help="Write one record per worker hop (<exec_id>.json) and the run-level aggregate.json into DIR.",
 )
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(_TRACE_EXPORT_FORMATS, case_sensitive=False),
+    default="trust-record",
+    show_default=True,
+    help="Output format. 'ocsf' projects the run journal and audit chain as OCSF events for a SIEM.",
+)
+@click.option(
+    "--include-proposed",
+    "include_proposed",
+    is_flag=True,
+    default=False,
+    help=(
+        "OCSF only: mark fields from the open proposal ocsf/ocsf-schema#1760. "
+        "Off by default so output validates against stock OCSF."
+    ),
+)
+@click.option(
+    "--no-audit",
+    "no_audit",
+    is_flag=True,
+    default=False,
+    help="OCSF only: project the run journal alone, omitting the audit chain (and so the security decisions).",
+)
 def trace_export_cmd(
     run_id: str | None,
     output: str | None,
@@ -1561,6 +1663,9 @@ def trace_export_cmd(
     latest: bool,
     sdd_dir: str | None,
     out_dir: str | None,
+    fmt: str,
+    include_proposed: bool,
+    no_audit: bool,
 ) -> None:
     """Export ``RUN_ID``'s execution evidence as a TRACE 0.2 Trust Record.
 
@@ -1584,8 +1689,27 @@ def trace_export_cmd(
     writes only the run-level aggregate to --out/stdout; the per-hop member
     records require --out-dir.
 
+    \b
+    --format ocsf: project the run journal AND the HMAC audit chain into OCSF
+            1.9.0 events as JSONL, for a SIEM or security data lake. The
+            security decisions (denied tool calls, admission and capability
+            refusals) live in the audit chain, not the journal, so both are
+            read. See docs/observability/ocsf-export.md for the mapping.
+            Needs no trace extra and no signing key.
+
     Exit codes: 0 = exported, 1 = run not found / chain broken / emit error.
     """
+    if fmt.lower() == "ocsf":
+        _trace_export_ocsf(
+            run_id=run_id,
+            output=output,
+            latest=latest,
+            sdd_dir=sdd_dir,
+            include_proposed=include_proposed,
+            include_audit=not no_audit,
+        )
+        return
+
     # Gate on trace extra
     try:
         import agentrust_trace as _trace_lib  # type: ignore[import-untyped, unused-ignore, import-not-found]
