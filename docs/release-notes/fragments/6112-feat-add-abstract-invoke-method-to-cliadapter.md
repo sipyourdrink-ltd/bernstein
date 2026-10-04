@@ -1,1 +1,0 @@
-Add an `invoke` method to the `CLIAdapter` base class for direct model invocation without spawning a full agent process. It is a concrete method whose default returns an empty string, not an abstract one: adapters that support direct invocation override it, and the rest are not forced to.
