@@ -454,6 +454,27 @@ class _ScaffoldManifestData(TypedDict):
     assets: list[str]
 
 
+def _skill_dir_in_root(dest_root: Path, dirname: str, *, skill_name: str) -> Path:
+    """Return ``dest_root / dirname`` once it is shown to be a direct child of *dest_root*.
+
+    Every path this module writes, replaces or deletes under a skills root
+    is built from a skill name, and that name can arrive from a catalog
+    entry, a lock file or the CLI. The candidate is resolved (following any
+    symlink already sitting at it) and must land directly inside the
+    resolved root, so no name can reach a sibling, a parent, or a tree a
+    planted symlink points at.
+
+    Raises:
+        SkillLifecycleError: If the path would fall outside *dest_root*.
+    """
+    candidate = dest_root / dirname
+    if not dirname or candidate.resolve().parent != dest_root.resolve():
+        raise SkillLifecycleError(
+            f"{skill_name!r}: skill path {candidate} resolves outside the skills root {dest_root}"
+        )
+    return candidate
+
+
 def _detect_skill_name(source: Path) -> str:
     """Derive the canonical name for a local source.
 
@@ -669,12 +690,14 @@ def install_local(
 
     name = override_name or _detect_skill_name(source)
     dest_root = scope_root(scope, workdir=workdir, home=home)
-    install_dir = dest_root / name
-    dest_root.mkdir(parents=True, exist_ok=True)
+    # Both targets are checked before anything is created, replaced or
+    # deleted: a name is only a directory name, never a path.
+    install_dir = _skill_dir_in_root(dest_root, name, skill_name=name)
     # Stage into a sibling temp directory first so a previously working
     # install is preserved if validation or copy fails. The final swap is
     # atomic via Path.replace.
-    staging_dir = dest_root / f".{name}.tmp"
+    staging_dir = _skill_dir_in_root(dest_root, f".{name}.tmp", skill_name=name)
+    dest_root.mkdir(parents=True, exist_ok=True)
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
     staging_dir.mkdir(parents=True)
@@ -1148,8 +1171,11 @@ def remove_skill(
 
     Returns:
         ``True`` if the skill was removed; ``False`` if nothing was there.
+
+    Raises:
+        SkillLifecycleError: If *name* resolves outside the scope root.
     """
-    install_dir = scope_root(scope, workdir=workdir, home=home) / name
+    install_dir = _skill_dir_in_root(scope_root(scope, workdir=workdir, home=home), name, skill_name=name)
     if not install_dir.exists():
         return False
     shutil.rmtree(install_dir)

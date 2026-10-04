@@ -69,7 +69,7 @@ def test_verifier_script_valid_json() -> None:
 def test_auditor_script_returns_success_for_valid_receipt() -> None:
     """The standalone verifier returns 0 for a valid receipt."""
     result = subprocess.run(
-        [sys.executable, str(_VERIFIER_SCRIPT), "--receipt", str(_VALID_RECEIPT)],
+        [sys.executable, str(_VERIFIER_SCRIPT), "--receipt", str(_VALID_RECEIPT), "--allow-unpinned-key"],
         capture_output=True,
         text=True,
         check=False,
@@ -164,16 +164,16 @@ def test_verifier_script_execution_handles_explicit_key_pin() -> None:
     assert result.returncode == 0, f"expected 0 but got {result.returncode}; stderr: {result.stderr}"
 
 
-def test_auditor_script_execution_without_pin_still_passes() -> None:
-    """Unpinned verification (TOFU) should still pass for valid receipts."""
+def test_auditor_script_execution_without_pin_fails() -> None:
+    """Unpinned verification (TOFU) is not a pass unless explicitly allowed."""
     result = subprocess.run(
         [sys.executable, str(_VERIFIER_SCRIPT), "--receipt", str(_VALID_RECEIPT)],
         capture_output=True,
         text=True,
         check=False,
     )
-    # TOFU verification should succeed for a valid receipt
-    assert result.returncode == 0, f"expected 0 but got {result.returncode}; stderr: {result.stderr}"
+    assert result.returncode == 1, f"expected 1 but got {result.returncode}; stdout: {result.stdout}"
+    assert "trust-on-first-use" in result.stdout
 
 
 def test_audit_receipt_verifier_module_has_expected_structure() -> None:

@@ -26,7 +26,15 @@ from bernstein.core.lifecycle.hooks import (
 from bernstein.core.lifecycle.pluggy_bridge import (
     apply_hooks_to_existing_system,
 )
+from bernstein.core.persistence.workspace import grant_workspace_trust
 from bernstein.plugins import hookimpl
+
+
+@pytest.fixture(autouse=True)
+def _trusted_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Script hooks only run in a trusted workspace; trust each test's tmp dir."""
+    grant_workspace_trust(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
 
 def _write_script(path: Path, body: str) -> Path:

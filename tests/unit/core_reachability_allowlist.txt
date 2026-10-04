@@ -158,7 +158,6 @@ bernstein.core.persistence.insights: #4526 audit in flight
 bernstein.core.persistence.migrations.v001_baseline: #4526 audit in flight
 bernstein.core.persistence.migrations.v002_stamp_runtime_state: #4526 audit in flight
 bernstein.core.persistence.session_continuity: #4526 audit in flight
-bernstein.core.persistence.store: #4526 audit in flight
 bernstein.core.persistence.store_factory: #4526 audit in flight
 bernstein.core.persistence.store_postgres: #4526 audit in flight
 bernstein.core.persistence.store_redis: #4526 audit in flight

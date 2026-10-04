@@ -1043,6 +1043,17 @@ class WorktreeManager:
     # Public API
     # ------------------------------------------------------------------
 
+    def _require_inside_base_dir(self, worktree_path: Path) -> None:
+        """Raise unless *worktree_path* resolves to a direct child of the base dir.
+
+        Raises:
+            WorktreeError: If the resolved path is outside the base directory.
+        """
+        base = self._base_dir.resolve()
+        resolved = worktree_path.resolve()
+        if resolved.parent != base:
+            raise WorktreeError(f"Worktree path '{worktree_path}' resolves outside the worktree base '{base}'")
+
     def create(self, session_id: str) -> Path:
         """Create a git worktree for *session_id* and return its path.
 
@@ -1058,13 +1069,21 @@ class WorktreeManager:
             Path to the newly-created worktree directory.
 
         Raises:
-            WorktreeError: If the worktree or branch already exists, or if
+            WorktreeError: If *session_id* is not a valid worktree slug, if
+                the resulting path would fall outside the worktree base
+                directory, if the worktree or branch already exists, or if
                 the ``git worktree add`` command fails for any other reason.
         """
         if self._shutdown_event is not None and self._shutdown_event.is_set():
             raise WorktreeError("Orchestrator shutting down - refusing new worktree")
 
+        # The id becomes a directory name and part of a branch name: validate
+        # it as a slug, then confirm the resolved path stays under the base
+        # directory (a symlink planted at the target would otherwise redirect
+        # the worktree) before anything touches the filesystem.
+        validate_worktree_slug(session_id)
         worktree_path = self._base_dir / session_id
+        self._require_inside_base_dir(worktree_path)
         branch_name = f"agent/{session_id}"
 
         if worktree_path.exists():

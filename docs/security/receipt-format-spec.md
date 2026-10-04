@@ -556,15 +556,17 @@ verification tiers:
 
 | Tier | How reached | What it proves |
 |---|---|---|
-| **Integrity-only** (trust-on-first-use) | No pin supplied; the embedded `signing.public_key_jwk` is used as-is. | The bytes were signed by the embedded key — internal self-consistency. It does **not** prove the signer is a known, trusted party. A forged receipt+key pair verifies against itself. |
+| **Integrity-only** (trust-on-first-use) | No pin supplied and `--allow-unpinned-key` given; the embedded `signing.public_key_jwk` is used as-is. Without the flag an unpinned receipt fails. | The bytes were signed by the embedded key — internal self-consistency. It does **not** prove the signer is a known, trusted party. A forged receipt+key pair verifies against itself. |
 | **Provenance** | A trusted key is pinned out-of-band via `--jwk` or `--public-key`; the embedded key must match it. | The bytes were signed by a known, trusted key. This is the regulator-grade property: the auditor supplies the key, so a forged embedded key cannot pass. |
 
 Pinning is what stops a swapped-key attack. Without a pin, verification
-establishes integrity only; with a pin, it establishes provenance. The
-verifier names the tier it reached on the `public_key` line (`pinned-pem`,
-`pinned-jwk`, or `trust-on-first-use`), so a caller gating on provenance
-supplies the pin and reads that line rather than inferring it from the exit
-code (see [Exit-code contract](#exit-code-contract)).
+establishes integrity only; with a pin, it establishes provenance. An
+unpinned receipt therefore fails by default: the `public_key` check reports
+`FAIL - trust-on-first-use` and the exit code is `1`. A caller that wants the
+integrity-only tier opts in with `--allow-unpinned-key`, and the overall line
+then reads `OVERALL: PASS (unpinned key: integrity only)`. The verifier always
+names the tier it reached on the `public_key` line (`pinned-pem`,
+`pinned-jwk`, or `trust-on-first-use`), with or without `--verbose`.
 
 ## Exit-code contract
 
@@ -574,8 +576,8 @@ surface and the auditor's standalone surface share one contract:
 
 | Code | Meaning |
 |---|---|
-| `0` | **Verified** — every enabled check passed (either tier). |
-| `1` | **Failed** — a check failed: unreadable or unparseable receipt body, missing or invalid signing key, embedded key that does not match the pin, recomputed head that does not match the signed subject, a signature that does not verify, a Merkle root or inclusion proof mismatch, or no recognised format present. |
+| `0` | **Verified** — every enabled check passed, with a pinned key, or unpinned with `--allow-unpinned-key`. |
+| `1` | **Failed** — a check failed: unreadable or unparseable receipt body, missing or invalid signing key, no pinned key without `--allow-unpinned-key`, embedded key that does not match the pin, recomputed head that does not match the signed subject, a signature that does not verify, a Merkle root or inclusion proof mismatch, or no recognised format present. |
 | `2` | **Bad arguments** — a path argument is missing or unreadable, or `--jwk` is not a JSON object. |
 
 > **Not the run-receipt command.** `bernstein verify receipt <path>` verifies a
