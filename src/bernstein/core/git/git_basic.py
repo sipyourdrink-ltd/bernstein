@@ -342,7 +342,7 @@ def conventional_commit(
     footer_parts: list[str] = []
     if task_id:
         footer_parts.append(f"Refs: #{task_id}")
-    footer_parts.append("Co-Authored-By: bernstein[bot] <noreply@bernstein.dev>")
+    footer_parts.append("Co-Authored-By: bernstein[bot] <noreply@bernstein.run>")
 
     # Assemble
     parts = [subject]

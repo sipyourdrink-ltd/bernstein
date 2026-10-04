@@ -1,4 +1,4 @@
-# Demo deployment for demo.bernstein.dev
+# Demo deployment for demo.bernstein.run
 #
 # Architecture:
 #   bernstein-server   - task API + dashboard (internal only, not exposed to internet)
@@ -8,10 +8,10 @@
 # Setup:
 #   1. cp docker/demo/.env.demo.example docker/demo/.env.demo
 #   2. Fill in ANTHROPIC_API_KEY (or OPENAI_API_KEY)
-#   3. Point demo.bernstein.dev DNS at this server
+#   3. Point demo.bernstein.run DNS at this server
 #   4. docker compose -f docker/demo/docker-compose.yaml --env-file docker/demo/.env.demo up -d
 #
-# The dashboard is served at https://demo.bernstein.dev/dashboard
+# The dashboard is served at https://demo.bernstein.run/dashboard
 # Real agents run tasks on a Flask sample project and restart every 15 minutes.
 
 services:

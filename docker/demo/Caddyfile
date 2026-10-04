@@ -1,13 +1,13 @@
-# Caddy reverse proxy for demo.bernstein.dev
+# Caddy reverse proxy for demo.bernstein.run
 #
 # - Auto-TLS via Let's Encrypt (just point DNS at this server)
 # - Only read-only paths are exposed to the public internet
 # - Write methods (POST/PUT/PATCH/DELETE) are rejected at the proxy layer
 #   before they reach bernstein-server; the server's ReadOnlyMiddleware
 #   provides a second layer of protection
-# - Replace "demo.bernstein.dev" with your actual domain or IP
+# - Replace "demo.bernstein.run" with your actual domain or IP
 
-demo.bernstein.dev {
+demo.bernstein.run {
     # Block all write methods at the proxy — return a friendly message
     @write method POST PUT PATCH DELETE
     handle @write {
