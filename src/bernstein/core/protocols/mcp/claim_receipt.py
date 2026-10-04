@@ -115,8 +115,8 @@ def filter_digest(claim_filter: ClaimFilter) -> str:
     """Return the content-addressed digest of a claim filter's predicates.
 
     The digest covers exactly the eligibility inputs (project, role,
-    capability, the sorted completed dependency set, and the attempt
-    ceiling), so two receipts granted under the same filter carry the same
+    capability, the sorted completed dependency set, the attempt ceiling,
+    and - only when one is set - the sorted task scope), so two receipts granted under the same filter carry the same
     ``filter_digest`` and a client can prove which eligibility policy a claim
     was granted under.
 
@@ -127,13 +127,18 @@ def filter_digest(claim_filter: ClaimFilter) -> str:
     Returns:
         A ``sha256:`` prefixed hex digest of the filter predicates.
     """
-    preimage = {
+    preimage: dict[str, object] = {
         "project": claim_filter.project,
         "role": claim_filter.role,
         "capability": claim_filter.capability,
         "completed_ids": sorted(claim_filter.completed_ids),
         "max_attempts": claim_filter.max_attempts,
     }
+    # A task-scoped claim records the scope it was granted under.  The key is
+    # added only when a scope is set, so an unscoped filter hashes exactly as
+    # it did before the field existed and earlier receipts keep verifying.
+    if claim_filter.task_ids is not None:
+        preimage["task_ids"] = sorted(claim_filter.task_ids)
     return "sha256:" + hashlib.sha256(_canonical(preimage)).hexdigest()
 
 

@@ -5,15 +5,32 @@ Each agent session gets a unique identity with scoped permissions and a full
 audit trail, following NIST AI Agent Standards for autonomous agent identities.
 
 Identities are stored as JSON files in ``.sdd/auth/agent_identities/``.
+
+Record authentication
+---------------------
+A spawned agent runs as the same OS user as the orchestrator, with its working
+directory under ``.sdd/worktrees/``, so it can read every file under ``.sdd/``
+and write new ones there.  A record's presence on disk is therefore not
+evidence that the orchestrator minted it.  Every record is written with a MAC
+(``record_mac``) under a key derived from the install audit key, which lives
+outside the workdir (see :func:`bernstein.core.security.audit.load_or_create_audit_key`),
+and every reader refuses a record whose MAC is missing or does not verify.
+Role, permissions, task scope and file scope are read only from authenticated
+records; the token's own claims must match them and never add to them.
+
+The default token-signing secret is derived from the same out-of-tree key, so
+nothing under ``.sdd/`` signs a token either.  ``BERNSTEIN_AUTH_JWT_SECRET``
+still overrides the signing secret; it does not affect record authentication.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
-import secrets
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -35,6 +52,7 @@ from bernstein.core.security.tenanting import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -168,6 +186,34 @@ _DEFAULT_PERMISSIONS: frozenset[str] = frozenset(
 def permissions_for_role(role: str) -> frozenset[str]:
     """Return the default permission set for an agent role."""
     return AGENT_ROLE_PERMISSIONS.get(role, _DEFAULT_PERMISSIONS)
+
+
+# Agent roles for which an empty ``task_ids`` means "every task".
+#
+# Exactly one identity is minted without a task list on purpose: the run-root
+# identity the orchestrator creates per run, with the ``manager`` role.  The
+# spawner always mints a worker with the ids of the tasks it was spawned for.
+# A token of any other role whose list is empty is therefore a worker with an
+# empty scope, and it reaches no task rather than every task: the empty list
+# fails closed.  A ``manager`` token that does carry a list is held to it like
+# any other.  Every reader of ``task_ids`` resolves it through
+# :func:`task_allowlist` so the rule has one home.
+UNSCOPED_AGENT_ROLES: Final[frozenset[str]] = frozenset({"manager"})
+
+
+def task_allowlist(role: str | None, task_ids: Iterable[str] | None) -> list[str] | None:
+    """Return the task ids an identity may act on, or None for every task.
+
+    ``None`` only for an empty ``task_ids`` on a role in
+    :data:`UNSCOPED_AGENT_ROLES`.  Every other identity gets its list, and an
+    empty list means it may act on no task.
+    """
+    ids = list(task_ids or [])
+    if ids:
+        return ids
+    if role in UNSCOPED_AGENT_ROLES:
+        return None
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -516,8 +562,13 @@ class AgentIdentity:
         return self.is_active and permission in self.permissions
 
     def is_task_allowed(self, task_id: str) -> bool:
-        """Return True if this identity is scoped to *task_id* (or has no scope)."""
-        return not self.task_ids or task_id in self.task_ids
+        """Return True if this identity may act on *task_id*.
+
+        Resolved through :func:`task_allowlist`: an empty ``task_ids`` is
+        every task only for :data:`UNSCOPED_AGENT_ROLES`, and no task otherwise.
+        """
+        allowed = task_allowlist(self.role, self.task_ids)
+        return allowed is None or task_id in allowed
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -596,37 +647,114 @@ class IdentityAuditEvent:
 
 def _hash_token(token: str) -> str:
     """SHA-256 hash of a bearer token."""
-    import hashlib
-
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _load_or_create_jwt_secret(base_dir: Path) -> str:
-    """Return the agent-identity JWT secret, preferring the shared auth env var.
+#: Field holding the record MAC.  Excluded from the MAC preimage.
+_RECORD_MAC_FIELD: Final[str] = "record_mac"
 
-    When a new secret must be generated and persisted to disk, the file is
-    created with mode 0600 (owner read/write only) to prevent other users or
-    processes on the same host from reading the key material.
+#: Version prefix on the stored MAC, so the preimage can change later without
+#: a stored value from one scheme verifying under another.
+_RECORD_MAC_VERSION: Final[str] = "v1"
+
+#: Domain separation prefixed into the MAC preimage.
+_RECORD_MAC_DOMAIN: Final[bytes] = b"bernstein:agent-identity-record:v1\n"
+
+#: File name of the HS256 secret earlier versions kept beside the records.
+_LEGACY_JWT_SECRET_NAME: Final[str] = "agent_identity_jwt_secret"
+
+#: Bounded wait for a concurrent first boot to finish writing the install key.
+_KEY_READ_ATTEMPTS: Final[int] = 20
+_KEY_READ_BACKOFF_S: Final[float] = 0.05
+
+
+class IdentityKeyError(RuntimeError):
+    """The install key that authenticates identity records is unusable."""
+
+
+def _load_identity_master_key() -> bytes:
+    """Return the install audit key that anchors identity records.
+
+    The key lives outside the workdir (``$BERNSTEIN_AUDIT_KEY_PATH``, else the
+    XDG state directory) and is refused when its mode is wider than ``0600``.
+    It is the same install key the delegation ledger already chains to, so the
+    processes that mint and verify identities (orchestrator, spawner, task
+    server, CLI) all agree on it without any new setup.
+
+    A key file another process has created but not yet written reads empty;
+    that is retried briefly rather than turned into a key, because a key
+    derived from nothing would authenticate records nobody else can verify.
+
+    Raises:
+        IdentityKeyError: The key stays empty.
+        AuditKeyPermissionError: The key file is readable by other users.
+    """
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    for _ in range(_KEY_READ_ATTEMPTS):
+        key = load_or_create_audit_key()
+        if key:
+            return key
+        time.sleep(_KEY_READ_BACKOFF_S)
+    msg = "install audit key is empty; refusing to authenticate agent identity records with it"
+    raise IdentityKeyError(msg)
+
+
+def _resolve_jwt_secret(master_key: bytes) -> str:
+    """Return the agent-identity JWT secret.
+
+    ``BERNSTEIN_AUTH_JWT_SECRET`` wins when set.  Otherwise the secret is
+    derived from the out-of-tree install key, so no file under ``.sdd/`` can
+    sign an agent token.  The secret only authenticates the token; what the
+    token is allowed to do comes from the authenticated record.
     """
     env_secret = os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip()
     if env_secret:
         return env_secret
+    from bernstein.core.security.key_derivation import DOMAIN_AGENT_IDENTITY_JWT, derive_store_key
 
-    secret_path = base_dir / "agent_identity_jwt_secret"
-    if secret_path.exists():
-        secret = secret_path.read_text(encoding="utf-8").strip()
-        if secret:
-            return secret
+    return derive_store_key(master_key, DOMAIN_AGENT_IDENTITY_JWT).hex()
 
-    secret = secrets.token_urlsafe(32)
 
-    fd = os.open(str(secret_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+def _retire_legacy_jwt_secret(base_dir: Path) -> None:
+    """Remove the in-tree HS256 secret earlier versions wrote.
+
+    Nothing reads it any more: tokens it signed belong to records without a
+    MAC, which are refused regardless.  Left in place it is key material any
+    agent can read, so it is removed.  Best-effort.
+    """
+    legacy = base_dir / _LEGACY_JWT_SECRET_NAME
     try:
-        os.write(fd, secret.encode("utf-8"))
-    finally:
-        os.close(fd)
+        legacy.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        logger.warning("Could not remove retired agent JWT secret %s: %s", for_log(legacy), type(exc).__name__)
+        return
+    logger.info("Removed retired agent JWT secret %s; agent tokens are now signed with an out-of-tree key", legacy)
 
-    return secret
+
+def _record_mac_preimage(record: Mapping[str, Any]) -> bytes:
+    """Canonical bytes of a record, without its MAC field."""
+    body = {key: value for key, value in record.items() if key != _RECORD_MAC_FIELD}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return _RECORD_MAC_DOMAIN + canonical.encode("utf-8")
+
+
+def _record_mac(key: bytes, record: Mapping[str, Any]) -> str:
+    digest = hmac.new(key, _record_mac_preimage(record), hashlib.sha256).hexdigest()
+    return f"{_RECORD_MAC_VERSION}:{digest}"
+
+
+def _record_mac_valid(key: bytes, record: Mapping[str, Any]) -> bool:
+    stored = record.get(_RECORD_MAC_FIELD)
+    if not isinstance(stored, str):
+        return False
+    try:
+        expected = _record_mac(key, record)
+    except (TypeError, ValueError):
+        return False
+    return hmac.compare_digest(stored, expected)
 
 
 class AgentIdentityStore:
@@ -634,14 +762,24 @@ class AgentIdentityStore:
 
     Identities are stored as JSON files in ``<base_dir>/agent_identities/``.
     Audit events are appended to ``<base_dir>/agent_identity_audit.jsonl``.
+
+    Each record carries a MAC under a key derived from the out-of-tree install
+    key; a record without a valid one is ignored by every reader, so a file
+    written into the directory by anything other than this store - including
+    a spawned agent - is never an identity.  See the module docstring.
     """
 
     def __init__(self, base_dir: Path) -> None:
+        from bernstein.core.security.key_derivation import DOMAIN_AGENT_IDENTITY_RECORD, derive_store_key
+
         self._base_dir = base_dir
         self._identities_dir = base_dir / "agent_identities"
         self._identities_dir.mkdir(parents=True, exist_ok=True)
         self._audit_path = base_dir / "agent_identity_audit.jsonl"
-        self._jwt_secret = _load_or_create_jwt_secret(base_dir)
+        master_key = _load_identity_master_key()
+        self._record_key = derive_store_key(master_key, DOMAIN_AGENT_IDENTITY_RECORD)
+        self._jwt_secret = _resolve_jwt_secret(master_key)
+        _retire_legacy_jwt_secret(base_dir)
         # In-memory index keyed by token_hash → identity_id for fast auth.
         self._token_index: dict[str, str] = {}
         self._rebuild_token_index()
@@ -659,8 +797,18 @@ class AgentIdentityStore:
         return self._identities_dir / f"{identity_id}.json"
 
     def _save(self, identity: AgentIdentity) -> None:
+        """Persist *identity* with a MAC over the whole record.
+
+        Written to a sibling temp file and renamed into place, so a reader in
+        another process never sees a half-written record (which would fail its
+        MAC and read as an unauthenticated one).
+        """
         path = self._identity_path(identity.id)
-        path.write_text(json.dumps(identity.to_dict(), indent=2), encoding="utf-8")
+        record = identity.to_dict()
+        record[_RECORD_MAC_FIELD] = _record_mac(self._record_key, record)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+        tmp.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
     def _read_identity(self, path: Path) -> AgentIdentity | None:
         """Deserialise one persisted identity file, or None when unusable.
@@ -679,16 +827,33 @@ class AgentIdentityStore:
         filesystem errors of reading the file at all.  All of them mean the
         same thing to a caller - there is no identity here - so all of them
         produce ``None`` rather than an exception the caller cannot act on.
+
+        Before any field is interpreted, the record's MAC is checked against
+        this store's record key, and the record's ``id`` must name the file
+        it was read from.  A record that fails either was not minted here -
+        written by hand, by an older version, or by a process that can write
+        ``.sdd/`` but does not hold the key - and is ignored with a warning,
+        never authenticated.
         """
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 msg = f"identity record must be a JSON object, got {type(data).__name__}"
                 raise TypeError(msg)
-            return AgentIdentity.from_dict(cast("dict[str, Any]", data))
+            record = cast("dict[str, Any]", data)
+            if not _record_mac_valid(self._record_key, record):
+                logger.warning(
+                    "Ignoring unauthenticated identity record (not minted by this install): %s", for_log(path)
+                )
+                return None
+            identity = AgentIdentity.from_dict(record)
         except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
             logger.warning("Skipping corrupt identity file: %s", for_log(path))
             return None
+        if identity.id != path.stem:
+            logger.warning("Ignoring identity record whose id does not match its file name: %s", for_log(path))
+            return None
+        return identity
 
     def _load(self, identity_id: str) -> AgentIdentity | None:
         """Read one identity by id, or None when it is missing or unusable."""
@@ -906,16 +1071,19 @@ class AgentIdentityStore:
                 msg = f"parent identity {parent_identity_id} not found"
                 raise ValueError(msg)
 
-            # task_ids is an allowlist: an empty parent list means unrestricted,
-            # so the child may name anything; otherwise the child must be a
-            # subset, and an empty child narrows to nothing.  This is set
-            # containment, the same relation
+            # task_ids is an allowlist, read through ``task_allowlist``: an
+            # unrestricted parent (empty list on an unscoped role) may name
+            # anything; otherwise the child must be a subset, and an empty
+            # child narrows to nothing.  A parent whose own scope is empty
+            # (empty list on a worker role) can only mint an empty child.  This
+            # is set containment, the same relation
             # ``bernstein.core.security.capability_tokens.allowlist_narrows``
             # states for two present sets; it is spelled out here rather than
             # imported because that module imports this one.
-            if parent_identity.task_ids:
+            parent_allowed = task_allowlist(parent_identity.role, parent_identity.task_ids)
+            if parent_allowed is not None:
                 child_ids = set(scoped_task_ids)
-                parent_ids = set(parent_identity.task_ids)
+                parent_ids = set(parent_allowed)
                 if not child_ids <= parent_ids:
                     raise ValueError(
                         f"child task_ids {sorted(child_ids)} are not a subset of parent task_ids {sorted(parent_ids)}"
@@ -1054,6 +1222,13 @@ class AgentIdentityStore:
 
         identity = self._load(identity_id)
         if identity is None:
+            return None
+
+        # The hash lookup is for opaque credentials only.  A JWT credential
+        # that reaches here failed its claim check above, and its hash being
+        # indexed must not authenticate it by a second route.
+        cred = identity.credential
+        if cred is None or cred.token_type != "opaque" or not hmac.compare_digest(cred.token_hash, token_hash):
             return None
 
         if not identity.is_active:

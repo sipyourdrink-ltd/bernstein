@@ -4,11 +4,18 @@ Provides :func:`wait_for_approval`, the runtime half of the explicit
 approval gate that ships with :class:`bernstein.core.models.ApprovalSpec`.
 On entry the gate writes a ``<task_id>.pending`` JSON sentinel under
 ``.sdd/runtime/approvals/`` and emits an ``approval_pending`` event into
-the HMAC-chained audit log. Operator decisions arrive as plain
-``<task_id>.approved`` / ``<task_id>.rejected`` files written by the
-``bernstein approve`` / ``bernstein reject`` CLI commands (the same files
-the post-completion review gate already uses, so a single sentinel
-directory backs both gates without filename collisions).
+the HMAC-chained audit log. Operator decisions arrive as
+``<task_id>.approved`` / ``<task_id>.rejected`` decision records written by
+``bernstein approve`` / ``bernstein reject``, the task server's approval
+routes, or the chat bridge (the same files the post-completion review gate
+uses).
+
+A decision file is honoured only when it is an authentic decision record
+(:mod:`bernstein.core.security.approval_decision`): its MAC verifies under
+the install's decision key, it names this task, it sits in the slot matching
+its outcome, and it carries the nonce this gate published in the ``.pending``
+sentinel when it opened the request. Anything else in a decision slot
+resolves the gate to rejected with ``decision_source="unverified-file"``.
 
 The gate is intentionally synchronous: the orchestrator tick path is
 file-driven and runs outside an asyncio loop, so polling with
@@ -33,6 +40,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from bernstein.core.security.approval_decision import (
+    DecisionCheck,
+    DecisionSource,
+    build_decision_record,
+    check_decision_file,
+    inspect_decisions,
+    new_request_nonce,
+    quarantine_decision_file,
+    write_decision_record,
+)
 from bernstein.core.security.path_containment import PathContainmentError, contained_path
 
 if TYPE_CHECKING:
@@ -44,8 +61,8 @@ logger = logging.getLogger(__name__)
 #: Outcome of a :func:`wait_for_approval` call.
 ApprovalOutcome = Literal["approved", "rejected", "timeout"]
 
-#: Source of the resolution recorded in the audit chain.
-DecisionSource = Literal["cli", "tui", "timeout-default"]
+#: Name of this gate on its audit events (the review gate uses its own).
+_GATE_NAME = "pre-spawn"
 
 #: Default poll interval. Short enough to feel snappy in foreground, long
 #: enough to keep filesystem load negligible in background runs.
@@ -241,6 +258,11 @@ def _emit_audit(
         )
 
 
+#: Public name for the audit helper, shared with the post-completion review
+#: gate in :mod:`bernstein.core.security.approval`.
+emit_approval_audit = _emit_audit
+
+
 def _publish_actor_event(
     *,
     session_id: str | None,
@@ -302,6 +324,7 @@ def write_pending_sentinel(
     spec: ApprovalSpec,
     *,
     now: float | None = None,
+    nonce: str | None = None,
 ) -> Path:
     """Write the ``.pending`` sentinel for *task_id* and return its path.
 
@@ -313,8 +336,14 @@ def write_pending_sentinel(
           "prompt": "...",
           "timeout_at_iso": "...",
           "created_iso": "...",
-          "default_action": "reject"
+          "default_action": "reject",
+          "nonce": "<hex>"
         }
+
+    ``nonce`` identifies this approval request. Decision writers copy it
+    into the signed decision record; the gate compares against the copy it
+    holds in memory, so a record made for an earlier request does not
+    resolve this one.
 
     This is the canonical hand-off between the orchestrator and the CLI:
     ``bernstein pending`` reads the sentinel to render the prompt while
@@ -327,6 +356,7 @@ def write_pending_sentinel(
         task_id: Identifier whose gate is being entered.
         spec: Approval specification governing this gate.
         now: Optional injected timestamp for deterministic tests.
+        nonce: The request nonce; a fresh one is generated when omitted.
 
     Returns:
         Absolute path to the sentinel that was written.
@@ -341,10 +371,68 @@ def write_pending_sentinel(
         "created_iso": created.isoformat(),
         "default_action": spec.default_action,
         "timeout_seconds": spec.timeout_seconds,
+        "nonce": nonce if nonce is not None else new_request_nonce(),
     }
     path = _pending_path(workdir, task_id)
     _atomic_write_json(path, payload)
     return path
+
+
+def request_pending_paths(workdir: Path, task_id: str) -> list[Path]:
+    """Return the pending files that can carry *task_id*'s open request nonce.
+
+    The pre-spawn gate publishes ``approvals/<id>.pending``; the review gate
+    publishes ``pending_approvals/<id>.json``. Both names are derived from a
+    validated id and contained in their directory.
+
+    Raises:
+        UnsafeApprovalIdError: The id is unsafe.
+    """
+    paths = [_pending_path(workdir, task_id)]
+    review_dir = workdir / ".sdd" / "runtime" / "pending_approvals"
+    if review_dir.is_dir():
+        paths.append(approval_path_in(review_dir, task_id, ".json"))
+    return paths
+
+
+def record_decision(
+    workdir: Path,
+    task_id: str,
+    outcome: Literal["approved", "rejected"],
+    *,
+    source: DecisionSource,
+    principal: dict[str, str],
+    reason: str = "",
+) -> tuple[Path, bool, str]:
+    """Write a signed decision record for *task_id* answering its open request.
+
+    The single writer used by ``bernstein approve`` / ``reject`` and the chat
+    bridge. The record is bound to the nonce of the currently open request
+    (``""`` when none is open, in which case no gate will honour it).
+
+    Returns:
+        ``(path, created, nonce)`` -- the decision file, whether it was newly
+        created, and the request nonce the record was bound to.
+
+    Raises:
+        UnsafeApprovalIdError: The id is unsafe.
+        Exception: The decision key could not be loaded (the record is not
+            written).
+    """
+    from bernstein.core.security.approval_decision import read_request_nonce
+
+    path = approval_path(workdir, task_id, f".{outcome}")
+    nonce = read_request_nonce(request_pending_paths(workdir, task_id))
+    record = build_decision_record(
+        task_id=task_id,
+        outcome=outcome,
+        source=source,
+        principal=principal,
+        nonce=nonce,
+        reason=reason,
+    )
+    created = write_decision_record(path, record)
+    return path, created, nonce
 
 
 def _resolve_default_action(action: Literal["reject", "approve", "fail"]) -> ApprovalOutcome:
@@ -360,20 +448,98 @@ def _resolve_default_action(action: Literal["reject", "approve", "fail"]) -> App
     return "rejected"
 
 
-def _classify_decision_files(approved: Path, rejected: Path) -> tuple[ApprovalOutcome, DecisionSource] | None:
-    """Return the resolved outcome if a decision file exists, else ``None``.
+def settle_prior_decisions(
+    approved: Path,
+    rejected: Path,
+    *,
+    task_id: str,
+    gate: str,
+    audit_log: AuditLog | None = None,
+) -> DecisionCheck | None:
+    """Clear decision slots left over from earlier requests before a new one opens.
 
-    Both files are checked because a misbehaving operator could land
-    either; the first one to materialise wins. Approval files take
-    precedence on the (defensive) chance that both arrive in the same
-    poll tick - better to honour an explicit approve than to swallow
-    operator intent.
+    Called by both task gates *before* they publish a new request nonce, so
+    nothing in a slot at this point can answer the request about to open.
+
+    * A genuine record (MAC and task binding hold) is an earlier decision for
+      this task -- for example the pre-spawn approval of a task now at its
+      review gate, or the decision on an earlier attempt. It is removed and an
+      ``approval_decision_superseded`` audit event records what it was; it is
+      not applied to the new request.
+    * Anything else is not a decision anyone made through a decision path.
+      It is returned so the caller resolves the new request as rejected with
+      ``decision_source="unverified-file"`` (fail closed).
+
+    Returns:
+        The first unverified slot, or ``None`` when every present slot held a
+        genuine earlier record (or no slot was occupied).
     """
-    if approved.exists():
-        return "approved", "cli"
-    if rejected.exists():
-        return "rejected", "cli"
-    return None
+    unverified: DecisionCheck | None = None
+    for slot_path, slot in ((approved, "approved"), (rejected, "rejected")):
+        if not slot_path.exists() and not slot_path.is_symlink():
+            continue
+        check = check_decision_file(
+            slot_path,
+            slot=slot,  # type: ignore[arg-type]
+            task_id=task_id,
+            expected_nonce=None,
+        )
+        if not check.verified:
+            unverified = unverified or check
+            continue
+        with contextlib.suppress(FileNotFoundError):
+            slot_path.unlink()
+        details: dict[str, object] = {"gate": gate, **check.audit_details()}
+        if check.record is not None:
+            details["superseded_outcome"] = check.record.get("outcome", "")
+            details["superseded_request_nonce"] = check.record.get("nonce", "")
+        _emit_audit(audit_log, event_type="approval_decision_superseded", task_id=task_id, details=details)
+    return unverified
+
+
+def resolution_details(check: DecisionCheck, *, gate: str, request_nonce: str) -> dict[str, object]:
+    """Return the ``approval_resolved`` audit details for a decision-file check.
+
+    An unverified slot is quarantined (moved aside as ``<name>.unverified``)
+    so it is kept as evidence without occupying the slot for the next request.
+    """
+    if not check.verified:
+        quarantine_decision_file(check.path)
+    return {
+        "outcome": check.outcome,
+        "gate": gate,
+        "request_nonce": request_nonce,
+        **check.audit_details(),
+    }
+
+
+def _write_timeout_record(
+    path: Path, *, task_id: str, outcome: ApprovalOutcome, nonce: str, default_action: str
+) -> None:
+    """Persist the timeout-default resolution as a signed decision record.
+
+    Best-effort: if the record cannot be signed or written, nothing is left
+    in the slot rather than an unsigned file the next request would treat as
+    unverified.
+    """
+    from bernstein.core.approval.models import internal_principal
+
+    try:
+        record = build_decision_record(
+            task_id=task_id,
+            outcome="approved" if outcome == "approved" else "rejected",
+            source="timeout-default",
+            principal=internal_principal("approval-gate/timeout").to_dict(),
+            nonce=nonce,
+            reason=f"timeout-default:{default_action}",
+        )
+        write_decision_record(path, record)
+    except Exception as exc:
+        logger.warning(
+            "approval gate: could not persist timeout decision for task %s: %s",
+            task_id,
+            exc,
+        )
 
 
 def _cleanup_pending(workdir: Path, task_id: str) -> None:
@@ -434,6 +600,13 @@ def wait_for_approval(
     level. The CLI commands also detect already-resolved tasks and emit
     a "already resolved" message instead of re-resolving.
 
+    Each call opens a new request with a fresh nonce. A decision file is
+    honoured only when it is an authentic decision record for this task
+    and this request (see :mod:`bernstein.core.security.approval_decision`);
+    a genuine record from an earlier request is superseded when the request
+    opens, and anything else in a decision slot resolves the gate to
+    ``"rejected"`` with ``decision_source="unverified-file"``.
+
     Args:
         task_id: Identifier of the task being gated; appears in audit
             events and on-disk sentinels.
@@ -477,45 +650,14 @@ def wait_for_approval(
     approved = _approved_path(root, task_id)
     rejected = _rejected_path(root, task_id)
 
-    # Honour decisions that arrived before we even started waiting (CLI
-    # may run while the orchestrator was busy in a previous tick).
-    early = _classify_decision_files(approved, rejected)
-    if early is not None:
-        outcome, source = early
-        write_pending_sentinel(root, task_id, spec, now=now)
-        _emit_audit(
-            audit_log,
-            event_type="approval_pending",
-            task_id=task_id,
-            details={
-                "prompt": spec.prompt,
-                "timeout_seconds": spec.timeout_seconds,
-                "default_action": spec.default_action,
-            },
-        )
-        _publish_actor_event(
-            session_id=session_id,
-            kind="approval_requested",
-            task_id=task_id,
-            extras={"prompt": spec.prompt},
-        )
-        _emit_audit(
-            audit_log,
-            event_type="approval_resolved",
-            task_id=task_id,
-            details={"outcome": outcome, "decision_source": source},
-        )
-        _publish_actor_event(
-            session_id=session_id,
-            kind="approval_granted" if outcome == "approved" else "approval_denied",
-            task_id=task_id,
-            extras={"decision_source": source},
-        )
-        _cleanup_pending(root, task_id)
-        return outcome
+    # Anything already in a decision slot predates this request. A genuine
+    # earlier record is superseded; anything else fails the gate closed.
+    prior_unverified = settle_prior_decisions(approved, rejected, task_id=task_id, gate=_GATE_NAME, audit_log=audit_log)
 
-    # No decision yet - write sentinel + emit pending event, then poll.
-    write_pending_sentinel(root, task_id, spec, now=now)
+    # Open the request: the nonce stays in memory and is published in the
+    # sentinel for decision writers to bind their record to.
+    nonce = new_request_nonce()
+    write_pending_sentinel(root, task_id, spec, now=now, nonce=nonce)
     _emit_audit(
         audit_log,
         event_type="approval_pending",
@@ -524,6 +666,8 @@ def wait_for_approval(
             "prompt": spec.prompt,
             "timeout_seconds": spec.timeout_seconds,
             "default_action": spec.default_action,
+            "gate": _GATE_NAME,
+            "request_nonce": nonce,
         },
     )
     _publish_actor_event(
@@ -533,39 +677,46 @@ def wait_for_approval(
         extras={"prompt": spec.prompt},
     )
 
+    def _resolve(check: DecisionCheck) -> ApprovalOutcome:
+        details = resolution_details(check, gate=_GATE_NAME, request_nonce=nonce)
+        if not check.verified:
+            logger.warning(
+                "approval gate: task %s decision file %s is not an authentic decision record (%s) -- rejecting",
+                task_id,
+                check.path.name,
+                check.failure,
+            )
+        _emit_audit(audit_log, event_type="approval_resolved", task_id=task_id, details=details)
+        _publish_actor_event(
+            session_id=session_id,
+            kind="approval_granted" if check.outcome == "approved" else "approval_denied",
+            task_id=task_id,
+            extras={"decision_source": check.source},
+        )
+        _cleanup_pending(root, task_id)
+        return check.outcome
+
+    if prior_unverified is not None:
+        return _resolve(prior_unverified)
+
     deadline = monotonic_clock() + float(spec.timeout_seconds)  # type: ignore[operator]
     while True:
-        decision = _classify_decision_files(approved, rejected)
+        decision = inspect_decisions(approved, rejected, task_id=task_id, expected_nonce=nonce)
         if decision is not None:
-            outcome, source = decision
-            _emit_audit(
-                audit_log,
-                event_type="approval_resolved",
-                task_id=task_id,
-                details={"outcome": outcome, "decision_source": source},
-            )
-            _publish_actor_event(
-                session_id=session_id,
-                kind="approval_granted" if outcome == "approved" else "approval_denied",
-                task_id=task_id,
-                extras={"decision_source": source},
-            )
-            _cleanup_pending(root, task_id)
-            return outcome
+            return _resolve(decision)
 
         remaining = deadline - monotonic_clock()  # type: ignore[operator]
         if remaining <= 0:
             outcome = _resolve_default_action(spec.default_action)
-            # Persist a decision file so future readers see a terminal state.
-            terminal_path = approved if outcome == "approved" else rejected
-            try:
-                terminal_path.write_text(f"timeout-default:{spec.default_action}\n", encoding="utf-8")
-            except OSError as exc:
-                logger.warning(
-                    "approval gate: could not persist timeout decision for task %s: %s",
-                    task_id,
-                    exc,
-                )
+            # Persist a signed decision record so future readers see a
+            # terminal state attributed to the timeout policy.
+            _write_timeout_record(
+                approved if outcome == "approved" else rejected,
+                task_id=task_id,
+                outcome=outcome,
+                nonce=nonce,
+                default_action=spec.default_action,
+            )
             _emit_audit(
                 audit_log,
                 event_type="approval_resolved",
@@ -575,6 +726,8 @@ def wait_for_approval(
                     "decision_source": "timeout-default",
                     "default_action": spec.default_action,
                     "applied_outcome": outcome,
+                    "gate": _GATE_NAME,
+                    "request_nonce": nonce,
                 },
             )
             _publish_actor_event(
@@ -595,7 +748,12 @@ def wait_for_approval(
 __all__ = [
     "ApprovalOutcome",
     "DecisionSource",
+    "emit_approval_audit",
     "list_pending_approvals",
+    "record_decision",
+    "request_pending_paths",
+    "resolution_details",
+    "settle_prior_decisions",
     "wait_for_approval",
     "write_pending_sentinel",
 ]

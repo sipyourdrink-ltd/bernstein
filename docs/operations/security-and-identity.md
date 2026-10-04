@@ -110,6 +110,13 @@ and it is the only thing that bounds a read at all: the separate
 operator-only (`admin:manage`) refusal that agent tokens and the cluster
 secret have always carried runs on non-read methods only.
 
+The `/api/v<n>` mirror of a route requires exactly what the root route
+requires: `_get_required_permission` strips the version prefix before the
+lookup, so `POST /api/v1/drain/cancel` needs `admin:manage` like
+`POST /drain/cancel`, and `GET /api/v1/agents/{id}/logs` needs `agents:read`
+like its root route. `tests/unit/test_auth_middleware_versioned_mirror_permissions.py`
+pins this for every route registered on both mounts.
+
 *Agent identities.* Agent grants use a narrower vocabulary than the route
 map, and spell the per-task write authority `tasks:claim` where the route
 map says `tasks:write`. The two names denote the same authority and are
@@ -152,14 +159,22 @@ enforced on an arbitrary subset, so all of them are covered:
 | ids in a request body on a `/tasks/` collection route (`batch-ops`, `claim-batch`, `self-create`) | `enforce_agent_task_scope_for_ids` in the handler |
 | a body-carried id outside `/tasks/` (`POST /a2a/message`) | `enforce_agent_task_scope_for_ids` in the handler |
 | an id the handler resolves from another key (the task behind an ACP run, the tasks a plan decision transitions, the tasks a cluster steal reassigns) | `enforce_agent_task_scope_for_ids` on the resolved ids, before the mutation |
+| no id at all: the server picks the row (`GET /tasks/next/{role}` and its `/api/v<n>` mirror, `POST /tasks/claim-receipt`) | the handler passes `agent_task_scope` into the candidate query, so only tasks in the token's `task_ids` are candidates; a scoped token with nothing claimable in scope gets a 404 (claim-next) or a signed refusal receipt (claim-receipt), never another task |
 
-The only exemptions are the collection routes under `/tasks/`
-(`TASK_COLLECTION_SEGMENTS` in `auth_middleware.py`), which address the
-collection rather than one task, and the claim-next routes
-(`GET /tasks/next/{role}`, `POST /tasks/claim-receipt`), where the server
-picks the row and the caller cannot name a task. A token with an empty
-`task_ids` claim is an unrestricted manager token, and non-agent
-credentials never reach the check at all.
+The only exemptions from the path gate are the collection routes under
+`/tasks/` (`TASK_COLLECTION_SEGMENTS` in `auth_middleware.py`), which address
+the collection rather than one task. The two server-chosen claim routes are
+among them, and are scoped in their handlers as the table above describes.
+A claim receipt granted to a scoped token carries that scope in its
+`filter_digest`; an unscoped claim hashes exactly as before.
+
+An empty `task_ids` claim is unrestricted only for the roles in
+`UNSCOPED_AGENT_ROLES` (`manager`, the role of the run-root identity the
+orchestrator mints per run). Workers are always minted with the ids of the
+tasks they were spawned for, so a token of any other role with an empty list
+is an empty scope and fails closed: every task-addressed write, body-addressed
+id and mailbox post is refused with `403`, and claim-next offers it nothing.
+Reads are unaffected. Non-agent credentials never reach the check at all.
 
 **Revocation.**
 
@@ -345,6 +360,19 @@ Backing store: `core/identity/agent_jwt.py` (`AgentIdentityStore`) under
 (`routes/identities.py:17-27`). Credentials are stored hashed; the API
 strips them before responses (`:82`).
 
+### Authenticated identity records
+
+Every record the store writes carries a `record_mac` under a key derived from
+the install audit key, which lives outside the workdir. Every reader - token
+lookup, `GET /identities`, authorization, the merge file-scope gate - ignores a
+record whose MAC is missing or does not verify, or whose `id` does not match
+its file name, and logs `Ignoring unauthenticated identity record (not minted
+by this install): <path>`. A file placed in `.sdd/auth/agent_identities/` by
+anything other than the store is therefore never an identity, including after
+a restart; role, permissions and scope come only from authenticated records.
+Key location, operator consequences and residual risk:
+[Manager auth - signing key and identity records](../security/manager-auth.md#signing-key-and-identity-records).
+
 ### Unreadable identity records
 
 A credential's persisted `tenant_id` is read back as the scope every request
@@ -393,7 +421,9 @@ rather than authenticated under whichever is read first. `create_identity`
 writes the same list to both, so a mismatch means the record was hand-edited or
 written by something else.
 
-A corrupt record is skipped, never fatal: `GET /identities` leaves it out, the
+The shape checks above run on records that already passed the MAC check, so
+they guard against a store-written record that is wrong, not against one
+written by something else. A corrupt record is skipped, never fatal: `GET /identities` leaves it out, the
 startup token-index scan skips it instead of failing to boot, and a request
 presenting its token is answered `401` like any other unrecognised token —
 not `500`. The same applies to a file that is not valid JSON, is not a JSON
@@ -407,22 +437,9 @@ skip. `create_identity()` applies the same check to its `task_ids` and
 at the call rather than becoming a credential nobody can load. It cannot repair
 records already on disk — for those, use the repair below.
 
-Operator repair, for a record hand-edited or written by an external tool:
-
-1. Find the path in the warning, under `.sdd/auth/agent_identities/`.
-2. Set `credential.tenant_id` to the tenant the agent belongs to, or delete the
-   key to place it in `default`.
-3. Make `permissions`, `task_ids` and `allowed_files` JSON arrays of strings, or
-   delete the keys to read as empty. Where `task_ids` and `allowed_files` appear
-   both on the identity and on `credential`, make the two copies match; take the
-   credential's copy as authoritative, since that is the one the issued token
-   was signed with.
-4. No restart is needed — the store reads each record on demand — but a running
-   server keeps a token index built at startup, so restart it if the repaired
-   identity uses an opaque token.
-
-Revoking and re-spawning the agent is always a valid alternative: identities are
-per-session and cheap to reissue.
+Operator repair: records cannot be repaired by hand. Editing a record
+invalidates its MAC, so the store ignores it from then on. Revoke the identity
+and re-spawn the agent; identities are per-session and cheap to reissue.
 
 ### `allowed_files` contains, it does not prevent
 

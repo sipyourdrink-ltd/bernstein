@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 import tarfile
 import time
 from io import BytesIO
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.sandbox.backend import (
@@ -42,9 +43,89 @@ _DEFAULT_IMAGE = "python:3.13-slim"
 _DEFAULT_MEMORY_MB = 2048
 _DEFAULT_CPU_QUOTA = 200000  # 2 CPUs when period=100000
 
+# The in-container clone source. Only the host repository's git dir is
+# mounted under it (at ``/host-repo/.git``); the host working tree - and
+# with it ``.sdd/`` runtime state, credentials and untracked files - is
+# never visible inside the container.
+_HOST_REPO_MOUNT = "/host-repo"
+_HOST_GIT_MOUNT = f"{_HOST_REPO_MOUNT}/.git"
+
+# The mounted git dir keeps its host owner, which is usually not the
+# container user (root images, or a uid that differs from the operator's),
+# and git refuses to read a repository owned by another user unless the path
+# is listed under ``safe.directory`` in protected (system/global) config.
+# ``git -c`` does not reach a local clone: git strips ``GIT_CONFIG_PARAMETERS``
+# before it spawns ``upload-pack`` for the source. So the clone runs with its
+# own global config file inside the container, holding only the two mount
+# paths (the refusal names the git dir on some git versions and the
+# repository root on others). The image user's real git config is untouched.
+_CLONE_GIT_CONFIG = "/tmp/bernstein-clone.gitconfig"
+_CLONE_SAFE_DIRECTORIES = (_HOST_REPO_MOUNT, _HOST_GIT_MOUNT)
+
 
 class DockerUnavailableError(RuntimeError):
     """Raised when the ``docker`` Python SDK or daemon is unreachable."""
+
+
+def _resolve_host_git_dir(src_path: str) -> str:
+    """Return the host git directory to mount for the repo at *src_path*.
+
+    ``git clone /host-repo`` needs only the repository's git dir, so that
+    is all the backend mounts. Three layouts are handled:
+
+    * ``<src>/.git`` is a directory: mount it.
+    * ``<src>/.git`` is a gitfile (``gitdir: <path>``) whose target has a
+      ``commondir`` file - a linked worktree: mount the common git dir,
+      which holds the objects and refs the clone reads.
+    * a gitfile without ``commondir`` (e.g. a submodule): mount the target.
+
+    Anything else is refused rather than falling back to mounting the
+    working tree.
+
+    Args:
+        src_path: Host path of the repository checkout.
+
+    Returns:
+        The real (symlink-resolved) path of the git dir to bind-mount.
+
+    Raises:
+        RuntimeError: No usable git dir, or the resolved git dir would
+            expose the working tree itself.
+    """
+    workdir = Path(os.path.realpath(src_path))
+    dot_git = workdir / ".git"
+    if dot_git.is_dir():
+        return os.path.realpath(dot_git)
+    if not dot_git.is_file():
+        raise RuntimeError(
+            f"{src_path} has no .git directory; the docker sandbox mounts only the repository's "
+            "git dir and never the working tree"
+        )
+
+    content = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+    if not content.startswith("gitdir:"):
+        raise RuntimeError(f"{dot_git} is a file without a 'gitdir:' line; cannot locate the git dir to mount")
+    git_dir = Path(content[len("gitdir:") :].strip())
+    if not git_dir.is_absolute():
+        git_dir = workdir / git_dir
+    if not git_dir.is_dir():
+        raise RuntimeError(f"{dot_git} points at gitdir {git_dir}, which is not a directory")
+
+    commondir_file = git_dir / "commondir"
+    if commondir_file.is_file():
+        common = Path(commondir_file.read_text(encoding="utf-8", errors="replace").strip())
+        if not common.is_absolute():
+            common = git_dir / common
+        if not common.is_dir():
+            raise RuntimeError(f"gitdir {git_dir} names common dir {common}, which is not a directory")
+        git_dir = common
+
+    resolved = Path(os.path.realpath(git_dir))
+    if resolved == workdir or resolved in workdir.parents:
+        raise RuntimeError(
+            f"{dot_git} resolves to gitdir {resolved}, which contains the working tree; refusing to mount it"
+        )
+    return str(resolved)
 
 
 def _import_docker() -> Any:
@@ -408,6 +489,14 @@ class DockerSandboxBackend:
           the container with ``--network=none``.
         - ``session_id``: Explicit container name suffix.
         - ``labels``: Extra labels to attach for discovery.
+
+        When the manifest carries a repo, only the repository's git dir
+        is mounted (read-only); the host working tree is not visible
+        inside the container.
+
+        Raises:
+            RuntimeError: The repo path has no usable git dir. Raised
+                before any container is started.
         """
         opts = dict(options or {})
         image = opts.get("image", _DEFAULT_IMAGE)
@@ -428,13 +517,16 @@ class DockerSandboxBackend:
 
         client = self._get_client()
 
-        # When the manifest carries a repo entry, bind-mount the host
-        # checkout read-only rather than handing the container write
-        # access to it directly - the container clones its own working
-        # copy under ``manifest.root`` below, so host-side git state
-        # (index, HEAD, uncommitted changes) is never touched by the
-        # sandboxed agent.
-        volumes = {manifest.repo.src_path: {"bind": "/host-repo", "mode": "ro"}} if manifest.repo else None
+        # When the manifest carries a repo entry, bind-mount only the
+        # host repository's git dir, read-only, at ``/host-repo/.git``.
+        # The container clones its own working copy under
+        # ``manifest.root`` from it, so the clone sees tracked content
+        # only, host-side git state is never written, and the host
+        # working tree (``.sdd/`` state, untracked files) is not mounted.
+        volumes: dict[str, dict[str, str]] | None = None
+        if manifest.repo is not None:
+            host_git_dir = _resolve_host_git_dir(manifest.repo.src_path)
+            volumes = {host_git_dir: {"bind": _HOST_GIT_MOUNT, "mode": "ro"}}
 
         def _spawn_container() -> Any:
             run_kwargs: dict[str, Any] = {
@@ -464,13 +556,25 @@ class DockerSandboxBackend:
             try:
                 if manifest.repo is not None:
                     # Give the container its own writable git checkout cloned
-                    # from the read-only host bind-mount, then check out the
+                    # from the read-only host git-dir mount, then check out the
                     # requested branch so the sandboxed agent's commits land
                     # in the container, not on the host working tree.
-                    clone = container.exec_run(["git", "clone", "/host-repo", manifest.root])
+                    for safe_dir in _CLONE_SAFE_DIRECTORIES:
+                        marked = container.exec_run(
+                            ["git", "config", "-f", _CLONE_GIT_CONFIG, "--add", "safe.directory", safe_dir]
+                        )
+                        if marked.exit_code != 0:
+                            raise RuntimeError(
+                                f"git config safe.directory {safe_dir} failed in container: "
+                                f"{marked.output.decode('utf-8', 'replace')}"
+                            )
+                    clone = container.exec_run(
+                        ["git", "clone", _HOST_REPO_MOUNT, manifest.root],
+                        environment={"GIT_CONFIG_GLOBAL": _CLONE_GIT_CONFIG},
+                    )
                     if clone.exit_code != 0:
                         raise RuntimeError(
-                            f"git clone /host-repo {manifest.root} failed in container: "
+                            f"git clone {_HOST_REPO_MOUNT} {manifest.root} failed in container: "
                             f"{clone.output.decode('utf-8', 'replace')}"
                         )
                     checkout = container.exec_run(["git", "checkout", manifest.repo.branch], workdir=manifest.root)

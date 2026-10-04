@@ -114,6 +114,12 @@ receipt hash, so the approval record and the resume receipt reference each
 other. This makes approval checkpoints usable mid-session, not only at the
 pre-spawn and post-completion boundaries.
 
+The decision file must be an authentic decision record (see
+[decision records](../reference/cli/task-lifecycle.md#decision-records)): its
+MAC must verify and it must name this task. A parked task has no open request
+nonce, so the nonce is not checked here. Any other file in the slot does not
+count as an approval, and the resume stays refused.
+
 ## Verifying continuity offline
 
 `bernstein audit verify-suspension <task-id>` proves, from a copied chain and
