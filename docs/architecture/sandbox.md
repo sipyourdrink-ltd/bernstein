@@ -141,6 +141,14 @@ How the git dir is chosen:
   working tree: session creation fails before any container starts. The
   backend never falls back to mounting the working tree.
 
+The mount keeps its host owner. Git refuses a repository owned by another
+user unless its path is listed under `safe.directory` in system or global
+config, and `git -c` does not reach the `upload-pack` a local clone spawns, so
+the clone runs with a container-local global config
+(`/tmp/bernstein-clone.gitconfig`) that lists `/host-repo` and
+`/host-repo/.git`. The image user's own git config is not written. Checked on
+a Linux host with a root image and with a uid 1000 image.
+
 What the git dir still exposes:
 
 - Everything in `.git`, including `.git/config`. A remote URL with embedded

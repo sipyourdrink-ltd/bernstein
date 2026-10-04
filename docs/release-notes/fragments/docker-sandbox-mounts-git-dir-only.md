@@ -12,6 +12,14 @@ mounted and the requested branch is checked out by name. A repo path without a
 usable git dir now fails session creation before a container starts, instead
 of failing at `git clone` inside it.
 
+The clone now also works when the container user is not the owner of the
+mounted git dir (a root image, or a uid other than the operator's): git used to
+refuse the source as owned by another user, so on Linux hosts a repo session
+only worked when the image's uid matched the host's. The clone runs with a
+container-local git config (`/tmp/bernstein-clone.gitconfig`) that lists the
+two mount paths under `safe.directory`; the image user's own git config is not
+touched.
+
 **Behaviour changes.**
 
 - Untracked files in the host checkout were never part of the clone, and that

@@ -50,6 +50,18 @@ _DEFAULT_CPU_QUOTA = 200000  # 2 CPUs when period=100000
 _HOST_REPO_MOUNT = "/host-repo"
 _HOST_GIT_MOUNT = f"{_HOST_REPO_MOUNT}/.git"
 
+# The mounted git dir keeps its host owner, which is usually not the
+# container user (root images, or a uid that differs from the operator's),
+# and git refuses to read a repository owned by another user unless the path
+# is listed under ``safe.directory`` in protected (system/global) config.
+# ``git -c`` does not reach a local clone: git strips ``GIT_CONFIG_PARAMETERS``
+# before it spawns ``upload-pack`` for the source. So the clone runs with its
+# own global config file inside the container, holding only the two mount
+# paths (the refusal names the git dir on some git versions and the
+# repository root on others). The image user's real git config is untouched.
+_CLONE_GIT_CONFIG = "/tmp/bernstein-clone.gitconfig"
+_CLONE_SAFE_DIRECTORIES = (_HOST_REPO_MOUNT, _HOST_GIT_MOUNT)
+
 
 class DockerUnavailableError(RuntimeError):
     """Raised when the ``docker`` Python SDK or daemon is unreachable."""
@@ -547,7 +559,19 @@ class DockerSandboxBackend:
                     # from the read-only host git-dir mount, then check out the
                     # requested branch so the sandboxed agent's commits land
                     # in the container, not on the host working tree.
-                    clone = container.exec_run(["git", "clone", _HOST_REPO_MOUNT, manifest.root])
+                    for safe_dir in _CLONE_SAFE_DIRECTORIES:
+                        marked = container.exec_run(
+                            ["git", "config", "-f", _CLONE_GIT_CONFIG, "--add", "safe.directory", safe_dir]
+                        )
+                        if marked.exit_code != 0:
+                            raise RuntimeError(
+                                f"git config safe.directory {safe_dir} failed in container: "
+                                f"{marked.output.decode('utf-8', 'replace')}"
+                            )
+                    clone = container.exec_run(
+                        ["git", "clone", _HOST_REPO_MOUNT, manifest.root],
+                        environment={"GIT_CONFIG_GLOBAL": _CLONE_GIT_CONFIG},
+                    )
                     if clone.exit_code != 0:
                         raise RuntimeError(
                             f"git clone {_HOST_REPO_MOUNT} {manifest.root} failed in container: "

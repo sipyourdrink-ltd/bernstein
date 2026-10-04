@@ -117,7 +117,14 @@ def test_repo_session_mounts_only_the_git_dir_read_only(tmp_path: Path) -> None:
 
 
 def test_repo_session_still_clones_from_host_repo(tmp_path: Path) -> None:
-    """The in-container clone keeps reading ``/host-repo`` and checks out the branch."""
+    """The in-container clone keeps reading ``/host-repo`` and checks out the branch.
+
+    The mount keeps its host owner, so the clone runs with a container-local
+    global config that lists the mount as safe: without that, git refuses the
+    source when the container user differs from the operator (seen with a
+    root image on a Linux host), and ``git -c`` never reaches the local
+    ``upload-pack``.
+    """
     workdir = _make_workdir(tmp_path)
     client = _make_client()
     backend = DockerSandboxBackend(client=client)
@@ -125,8 +132,14 @@ def test_repo_session_still_clones_from_host_repo(tmp_path: Path) -> None:
     asyncio.run(backend.create(_repo_manifest(workdir, branch="feature")))
 
     container = client.containers.run.return_value
-    argvs = [c.args[0] for c in container.exec_run.call_args_list]
-    assert ["git", "clone", "/host-repo", "/workspace"] in argvs
+    calls = container.exec_run.call_args_list
+    argvs = [c.args[0] for c in calls]
+    config_file = "/tmp/bernstein-clone.gitconfig"
+    for safe_dir in ("/host-repo", "/host-repo/.git"):
+        assert ["git", "config", "-f", config_file, "--add", "safe.directory", safe_dir] in argvs
+    clone = next(c for c in calls if c.args[0][:2] == ["git", "clone"])
+    assert clone.args[0] == ["git", "clone", "/host-repo", "/workspace"]
+    assert clone.kwargs["environment"] == {"GIT_CONFIG_GLOBAL": config_file}
     assert ["git", "checkout", "feature"] in argvs
 
 
