@@ -375,15 +375,25 @@ _DENY_PATTERNS: Final[list[str]] = [
     r">\s*~/\.ssh/",
     r">\s*/root/",
     # Writing to Bernstein control-plane state (no agent should mutate these
-    # via raw shell - they are the orchestrator's source of truth)
-    r">\s*\.bernstein/",
-    r">\s*\.sdd/",
-    r">>\s*\.bernstein/",
-    r">>\s*\.sdd/",
-    # Any invocation of cp/mv/touch/mkdir/sed-inplace targeting control-plane
-    # or system credential paths, regardless of argument order.
-    r"\b(cp|mv|touch|mkdir|ln)\b\s+.*(?:\.bernstein/|\.sdd/|/etc/|/usr/|/bin/|/sbin/|/lib/|/var/|/root/|~/\.ssh/|~/\.aws/)",
+    # via raw shell - they are the orchestrator's source of truth).  The
+    # target is matched however it is spelled: relative (``> .sdd/x``),
+    # absolute (``> /repo/.sdd/x``), ``./``-prefixed, quoted, or behind a
+    # variable that normalisation has flattened (``> $PWD/.sdd/x``).  A bare
+    # ``>`` also covers ``>>``, ``>|``, ``&>`` and ``N>``.
+    r">\|?\s*[\"']?(?:[^\s;&|<>\"']*/)?\.(?:sdd|bernstein)(?:/|[\"']?(?:\s|$))",
+    # Redirection through a parent-directory segment.  An agent's working
+    # directory is a worktree under ``.sdd/worktrees/<session>/``, so a target
+    # that climbs out of it (``> ../../auth/...``) lands in the control plane
+    # without ever naming it, and the classifier has no cwd to show otherwise.
+    r">\|?\s*[\"']?(?:[^\s;&|<>\"']*/)?\.\.(?:/|[\"']?(?:\s|$))",
+    # Any invocation of a file-writing tool targeting control-plane or system
+    # credential paths, regardless of argument order.
+    r"\b(cp|mv|touch|mkdir|ln|tee|install|rsync)\b\s+.*(?:\.bernstein/|\.sdd/|/etc/|/usr/|/bin/|/sbin/|/lib/|/var/|/root/|~/\.ssh/|~/\.aws/)",
     r"\bsed\s+-i\b.*(?:\.bernstein/|\.sdd/|/etc/|/usr/|/bin/|/sbin/|/lib/|/var/|/root/|~/\.ssh/|~/\.aws/)",
+    # The same tools with a parent-directory operand, for the reason given on
+    # the redirect rule above.
+    r"\b(cp|mv|touch|mkdir|ln|tee|install|rsync)\b[^;&|]*[\s\"'=/]\.\.(?:/|[\"']?(?:\s|$))",
+    r"\bsed\s+-i\b[^;&|]*[\s\"'=/]\.\.(?:/|[\"']?(?:\s|$))",
     # Reading sensitive credentials from disk (bare cat/head/tail/less/more)
     r"\b(cat|head|tail|less|more|bat)\b\s+.*(/etc/passwd|/etc/shadow|/etc/sudoers|/etc/gshadow)",
     r"\b(cat|head|tail|less|more|bat)\b\s+.*~/\.ssh/",
