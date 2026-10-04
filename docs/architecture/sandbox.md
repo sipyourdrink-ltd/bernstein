@@ -126,9 +126,7 @@ Each `docker` session is one container started from the configured image
 | Host repository | Only its git dir, bind-mounted read-only at `/host-repo/.git` |
 | Working copy | A fresh `git clone /host-repo` at `manifest.root` (default `/workspace`), on the requested branch |
 | Host working tree | Not mounted: no `.sdd/` (identity, tokens, approvals, runtime state), no untracked or ignored files, no uncommitted edits |
-| Linux capabilities | None (`cap_drop=["ALL"]`) |
-| Privilege escalation | Blocked (`no-new-privileges:true`) |
-| Container user | The image's `USER` (`bernstein`, uid 1000, in the project image); override with the `user` backend option |
+| Container user | The image's `USER` (`bernstein`, uid 1000, in the project image) |
 
 How the git dir is chosen:
 
@@ -150,13 +148,6 @@ What the git dir still exposes:
   credential helper, not in the URL.
 - All branches and their history: the clone fetches every ref, not only the
   requested branch.
-
-Without capabilities, a process running as root inside the container is still
-bound by file modes on the mount. It cannot override them. Tools that need a
-capability inside the container stop working, for example `apt-get install`
-(it switches to the `_apt` user) or an agent's own user-namespace sandbox. Bake
-such packages into the image. Declare the container as host isolation (see
-below) so the agent's own sandbox is dropped.
 
 `--network host` is the default so agents reach the task server on
 `127.0.0.1`. See [Security considerations](#security-considerations) for

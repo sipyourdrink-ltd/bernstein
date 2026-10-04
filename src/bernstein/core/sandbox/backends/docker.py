@@ -50,12 +50,6 @@ _DEFAULT_CPU_QUOTA = 200000  # 2 CPUs when period=100000
 _HOST_REPO_MOUNT = "/host-repo"
 _HOST_GIT_MOUNT = f"{_HOST_REPO_MOUNT}/.git"
 
-# Applied to every session container. Dropping all capabilities also takes
-# away CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH, so even an image that runs as
-# root inside the container is bound by host file modes on bind mounts.
-_CAP_DROP = ("ALL",)
-_SECURITY_OPT = ("no-new-privileges:true",)
-
 
 class DockerUnavailableError(RuntimeError):
     """Raised when the ``docker`` Python SDK or daemon is unreachable."""
@@ -483,14 +477,10 @@ class DockerSandboxBackend:
           the container with ``--network=none``.
         - ``session_id``: Explicit container name suffix.
         - ``labels``: Extra labels to attach for discovery.
-        - ``user``: Container user (``"uid:gid"`` or a name). Default:
-          the image's own ``USER``. ``manifest.root`` must be writable
-          by that user for the in-container clone to succeed.
 
-        Every container runs with ``cap_drop=["ALL"]`` and
-        ``no-new-privileges``. When the manifest carries a repo, only
-        the repository's git dir is mounted (read-only); the host
-        working tree is not visible inside the container.
+        When the manifest carries a repo, only the repository's git dir
+        is mounted (read-only); the host working tree is not visible
+        inside the container.
 
         Raises:
             RuntimeError: The repo path has no usable git dir. Raised
@@ -525,7 +515,6 @@ class DockerSandboxBackend:
         if manifest.repo is not None:
             host_git_dir = _resolve_host_git_dir(manifest.repo.src_path)
             volumes = {host_git_dir: {"bind": _HOST_GIT_MOUNT, "mode": "ro"}}
-        user = opts.get("user")
 
         def _spawn_container() -> Any:
             run_kwargs: dict[str, Any] = {
@@ -541,11 +530,7 @@ class DockerSandboxBackend:
                 "cpu_quota": cpu_quota,
                 "labels": labels,
                 "volumes": volumes,
-                "cap_drop": list(_CAP_DROP),
-                "security_opt": list(_SECURITY_OPT),
             }
-            if user:
-                run_kwargs["user"] = str(user)
             if network_disabled:
                 run_kwargs["network_disabled"] = True
             else:

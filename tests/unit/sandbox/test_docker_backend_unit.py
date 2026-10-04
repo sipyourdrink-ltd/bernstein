@@ -130,40 +130,6 @@ def test_repo_session_still_clones_from_host_repo(tmp_path: Path) -> None:
     assert ["git", "checkout", "feature"] in argvs
 
 
-@pytest.mark.parametrize("with_repo", [True, False])
-def test_container_drops_capabilities_and_privilege_escalation(tmp_path: Path, with_repo: bool) -> None:
-    """Every session container runs with no capabilities and no-new-privileges."""
-    client = _make_client()
-    backend = DockerSandboxBackend(client=client)
-    manifest = _repo_manifest(_make_workdir(tmp_path)) if with_repo else WorkspaceManifest(root="/workspace")
-
-    asyncio.run(backend.create(manifest))
-
-    kwargs = _run_kwargs(client)
-    assert kwargs["cap_drop"] == ["ALL"]
-    assert kwargs["security_opt"] == ["no-new-privileges:true"]
-
-
-def test_container_user_defaults_to_the_image_user() -> None:
-    """Without an explicit ``user`` option the image's own USER applies."""
-    client = _make_client()
-    backend = DockerSandboxBackend(client=client)
-
-    asyncio.run(backend.create(WorkspaceManifest(root="/workspace")))
-
-    assert "user" not in _run_kwargs(client)
-
-
-def test_container_user_option_is_passed_through() -> None:
-    """An explicit ``user`` option sets the container user."""
-    client = _make_client()
-    backend = DockerSandboxBackend(client=client)
-
-    asyncio.run(backend.create(WorkspaceManifest(root="/workspace"), options={"user": "1000:1000"}))
-
-    assert _run_kwargs(client)["user"] == "1000:1000"
-
-
 def test_gitfile_without_commondir_mounts_the_referenced_git_dir(tmp_path: Path) -> None:
     """A ``.git`` file (e.g. a submodule) mounts the git dir it points at."""
     real_git = tmp_path / "modules" / "sub"
