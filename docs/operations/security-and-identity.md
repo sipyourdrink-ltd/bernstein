@@ -110,6 +110,13 @@ and it is the only thing that bounds a read at all: the separate
 operator-only (`admin:manage`) refusal that agent tokens and the cluster
 secret have always carried runs on non-read methods only.
 
+The `/api/v<n>` mirror of a route requires exactly what the root route
+requires: `_get_required_permission` strips the version prefix before the
+lookup, so `POST /api/v1/drain/cancel` needs `admin:manage` like
+`POST /drain/cancel`, and `GET /api/v1/agents/{id}/logs` needs `agents:read`
+like its root route. `tests/unit/test_auth_middleware_versioned_mirror_permissions.py`
+pins this for every route registered on both mounts.
+
 *Agent identities.* Agent grants use a narrower vocabulary than the route
 map, and spell the per-task write authority `tasks:claim` where the route
 map says `tasks:write`. The two names denote the same authority and are
@@ -152,14 +159,22 @@ enforced on an arbitrary subset, so all of them are covered:
 | ids in a request body on a `/tasks/` collection route (`batch-ops`, `claim-batch`, `self-create`) | `enforce_agent_task_scope_for_ids` in the handler |
 | a body-carried id outside `/tasks/` (`POST /a2a/message`) | `enforce_agent_task_scope_for_ids` in the handler |
 | an id the handler resolves from another key (the task behind an ACP run, the tasks a plan decision transitions, the tasks a cluster steal reassigns) | `enforce_agent_task_scope_for_ids` on the resolved ids, before the mutation |
+| no id at all: the server picks the row (`GET /tasks/next/{role}` and its `/api/v<n>` mirror, `POST /tasks/claim-receipt`) | the handler passes `agent_task_scope` into the candidate query, so only tasks in the token's `task_ids` are candidates; a scoped token with nothing claimable in scope gets a 404 (claim-next) or a signed refusal receipt (claim-receipt), never another task |
 
-The only exemptions are the collection routes under `/tasks/`
-(`TASK_COLLECTION_SEGMENTS` in `auth_middleware.py`), which address the
-collection rather than one task, and the claim-next routes
-(`GET /tasks/next/{role}`, `POST /tasks/claim-receipt`), where the server
-picks the row and the caller cannot name a task. A token with an empty
-`task_ids` claim is an unrestricted manager token, and non-agent
-credentials never reach the check at all.
+The only exemptions from the path gate are the collection routes under
+`/tasks/` (`TASK_COLLECTION_SEGMENTS` in `auth_middleware.py`), which address
+the collection rather than one task. The two server-chosen claim routes are
+among them, and are scoped in their handlers as the table above describes.
+A claim receipt granted to a scoped token carries that scope in its
+`filter_digest`; an unscoped claim hashes exactly as before.
+
+An empty `task_ids` claim is unrestricted only for the roles in
+`UNSCOPED_AGENT_ROLES` (`manager`, the role of the run-root identity the
+orchestrator mints per run). Workers are always minted with the ids of the
+tasks they were spawned for, so a token of any other role with an empty list
+is an empty scope and fails closed: every task-addressed write, body-addressed
+id and mailbox post is refused with `403`, and claim-next offers it nothing.
+Reads are unaffected. Non-agent credentials never reach the check at all.
 
 **Revocation.**
 

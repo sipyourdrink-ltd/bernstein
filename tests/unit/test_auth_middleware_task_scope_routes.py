@@ -380,9 +380,9 @@ def test_body_scoped_routes_allow_the_agents_own_task(authed_app: FastAPI) -> No
 
 
 def test_body_scoped_routes_allow_an_unscoped_manager_token(authed_app: FastAPI) -> None:
-    """A token with ``task_ids == []`` stays unrestricted, as on the path gate."""
+    """A manager token with ``task_ids == []`` stays unrestricted, as on the path gate."""
     store: Any = authed_app.state.identity_store
-    _, token = store.create_identity("session-manager", "backend", task_ids=[])
+    _, token = store.create_identity("session-manager", "manager", task_ids=[])
 
     for index, segment in enumerate(sorted(TASK_BODY_SCOPED_SEGMENTS)):
         # A task the manager token was never scoped to, fresh per segment so
