@@ -15,7 +15,9 @@ Three gaps in how the task server bounds a task-scoped agent token are closed:
   the invariant for every route registered on both mounts.
 - An empty `task_ids` claim is unrestricted only for the `manager` role (the
   run-root identity). A token of any other role with an empty list now reaches
-  no task instead of every task.
+  no task instead of every task. The identity store applies the same reading
+  when a child identity is minted under a parent: a non-manager parent with an
+  empty list can only mint a child with an empty list.
 
 Operator-visible: tokens minted through the orchestrator are unaffected. A
 hand-minted non-manager agent token with no task list, previously usable on
