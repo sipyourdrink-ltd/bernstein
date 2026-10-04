@@ -107,7 +107,9 @@ def app(tmp_path: Path) -> FastAPI:
 
 def _agent_headers(application: FastAPI, *, task_ids: list[str]) -> dict[str, str]:
     store: Any = application.state.identity_store
-    _, token = store.create_identity("session-log-injection-probe", "backend", task_ids=task_ids)
+    _, token = store.create_identity(
+        "session-log-injection-probe", "backend", task_ids=task_ids, metadata={"tenant_id": "default"}
+    )
     return {"Authorization": f"Bearer {token}"}
 
 

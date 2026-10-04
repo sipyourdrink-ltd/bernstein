@@ -94,7 +94,7 @@ def _operator_headers() -> dict[str, str]:
 def _agent_headers(application: FastAPI, session: str, task_ids: list[str]) -> dict[str, str]:
     """Mint an agent identity token scoped to *task_ids*."""
     identity_store: Any = application.state.identity_store
-    _, token = identity_store.create_identity(session, "backend", task_ids=task_ids)
+    _, token = identity_store.create_identity(session, "backend", task_ids=task_ids, metadata={"tenant_id": "default"})
     return {"Authorization": f"Bearer {token}"}
 
 

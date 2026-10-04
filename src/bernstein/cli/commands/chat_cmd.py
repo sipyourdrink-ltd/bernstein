@@ -32,6 +32,7 @@ from bernstein.core.chat import (
     load_allow_list,
     load_driver,
 )
+from bernstein.core.security.tenanting import UNSPECIFIED_TENANT
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -536,7 +537,7 @@ class _ChatTaskRequest:
     estimated_minutes: int | None = None
     parent_task_id: str | None = None
     depends_on_repo: str | None = None
-    tenant_id: str = "default"
+    tenant_id: str | Any = UNSPECIFIED_TENANT
     cell_id: str | None = None
     repo: str | None = None
     model: str | None = None
