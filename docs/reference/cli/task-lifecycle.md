@@ -137,7 +137,42 @@ bernstein reject  TASK_ID [--workdir .]
 | `TASK_ID` | required | Task ID, positional. |
 | `--workdir` | `.` | Project root. |
 
-Both commands are file-only: they write `.sdd/runtime/approvals/<id>.approved` or `.rejected`. The orchestrator's next tick picks the file up, transitions the task (merge on approve, cleanup on reject), and removes the file. **Approval and rejection are both idempotent** - the orchestrator scrubs duplicates.
+Both commands are file-only: they write `.sdd/runtime/approvals/<id>.approved` or `.rejected`. The orchestrator's next poll picks the file up and transitions the task (merge or spawn on approve, cleanup on reject). **Approval and rejection are both idempotent**: a second call for the same open request reports `Already approved` / `Already resolved` and changes nothing.
+
+### Decision records
+
+The file each command writes is a signed **decision record**, not a marker. The same applies to the task server's `POST /approvals/{id}/approve` and `/reject` routes and to `/approve` / `/reject` in `bernstein chat`.
+
+| Field | Meaning |
+|---|---|
+| `task_id` | The task the decision applies to. |
+| `outcome` | `approved` or `rejected`; must match the file suffix. |
+| `source` | Decision path: `cli`, `web`, `chat`, or `timeout-default` (written by the gate itself when nobody decided). |
+| `principal` | Who decided: `os-user:<name>` (`local-shell`) for the CLI, the authenticated principal for the web routes (`dashboard-operator` / `loopback` when no scoped tokens are configured), `chat:<platform>:<user>` for chat. |
+| `nonce` | The nonce of the approval request being answered. Each gate writes a fresh one into its pending file (`approvals/<id>.pending` for the pre-spawn gate, `pending_approvals/<id>.json` for the review gate) when it opens a request. |
+| `decided_at`, `reason` | Decision time and the optional reason. |
+| `mac` | HMAC-SHA256 over the other fields, keyed from the install's audit key. |
+
+The MAC key is derived from the audit key at `$BERNSTEIN_AUDIT_KEY_PATH` (default `$XDG_STATE_HOME/bernstein/audit.key`, mode `0600`), outside the project directory. `bernstein approve` / `reject`, the task server, and the orchestrator must resolve the **same** audit key. If they do not, the gate cannot verify the record and rejects the task.
+
+**Fail-closed rule.** Both gates (pre-spawn `ApprovalSpec` gate and post-completion review gate) honour a decision file only if all of these hold:
+
+- the MAC verifies;
+- `task_id` is the gated task;
+- `outcome` matches the file name;
+- `nonce` equals the nonce of the request the gate has open.
+
+Anything else in a decision slot resolves the gate to **rejected**: an empty or plain-text file, a record copied from another task, or a record answering an earlier request. The audit event `approval_resolved` then carries `decision_source: "unverified-file"`, `verified: false`, and a `verification_failure` reason (`not-a-record`, `bad-signature`, `task-mismatch`, `outcome-mismatch`, `nonce-mismatch`, ...). The rejected file is moved aside to `<id>.<outcome>.unverified` and kept as evidence.
+
+With no decision file, nothing changes: the gate waits and then applies its timeout policy (`decision_source: "timeout-default"`).
+
+A verified decision produces an `approval_resolved` event naming the real decision path (`decision_source`) and the principal (`principal`, `principal_auth_method`, `principal_kind`, `principal_grant`). The `gate` field says which gate resolved it: `pre-spawn` or `post-completion-review`.
+
+**Leftover decisions.** When a gate opens a new request, an authentic record left by an earlier request for the same task is removed and logged as `approval_decision_superseded`. Example: the pre-spawn approval of a task that has now reached its review gate. Such a record never answers the new request; the operator decides again.
+
+**No open request.** If no request is open for the task when you run `bernstein approve`, the command says so. The record it writes binds no request nonce, so a gate opened later will not accept it. The exception is a task parked with `--until approval`, which checks the signature and task binding only (see [durable suspend/resume](../../operations/durable-suspend-resume.md#wake-on-approval)).
+
+**What this protects against.** Anything that can only create, copy, or overwrite files under `.sdd/` cannot produce a record a gate accepts. That covers an agent's ordinary file-writing tools. A process running as the same OS user can still read the audit key and sign a record on purpose. Run agents under a separate OS user or in a sandbox if that boundary matters for your deployment.
 
 > **Not the same as `bernstein approve-tool` / `bernstein reject-tool`.** Those resolve **tool-call** approvals (a single tool invocation by a running agent) and are also reachable as `bernstein approve --tool <id>` / `bernstein reject --tool <id>`. The lifecycle approve/reject above resolves a **whole task's verification** review. See `cli/commands/approval_cmd.py` for the tool-call variants.
 

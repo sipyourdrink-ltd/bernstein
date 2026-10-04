@@ -34,6 +34,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 __all__ = [
     "DOMAIN_AGENT_IDENTITY_JWT",
     "DOMAIN_AGENT_IDENTITY_RECORD",
+    "DOMAIN_APPROVAL_DECISION",
     "DOMAIN_AUDIT",
     "DOMAIN_LINEAGE",
     "SCHEME_V1",
@@ -57,6 +58,10 @@ DOMAIN_AGENT_IDENTITY_RECORD: Final[str] = "agent-identity-record"
 #: Domain tag for the default HS256 secret that signs agent identity tokens
 #: when ``BERNSTEIN_AUTH_JWT_SECRET`` is not set.
 DOMAIN_AGENT_IDENTITY_JWT: Final[str] = "agent-identity-jwt"
+
+#: Domain tag for operator decision records read by the task approval gates
+#: (``bernstein.core.security.approval_decision``).
+DOMAIN_APPROVAL_DECISION: Final[str] = "approval-decision"
 
 #: Legacy scheme: raw master key, no domain tag in the hash preimage.
 SCHEME_V1: Final[int] = 1
