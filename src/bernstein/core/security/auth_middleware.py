@@ -511,8 +511,13 @@ _ROUTE_PERMISSIONS: dict[str, str] = {
     # derivation below turns this into ``scim:read`` for GET, which keeps
     # ``/scim/v2/Users`` out of reach of a plain ``status:read`` viewer.
     "/scim": _PERM_SCIM_WRITE,
-    "/api/v1/scim": _PERM_SCIM_WRITE,
 }
+
+# The versioned mount prefix the app mirrors its routes under
+# (``/api/v1/...``).  Stripped before the permission lookup so a mirror and
+# its root route resolve to the same entry; only a whole leading segment is
+# stripped, so ``/api/v1x`` is left as it is.
+_API_VERSION_PREFIX_RE = re.compile(r"^/api/v\d+(?=/|$)")
 
 
 def _normalise_expected_resource(raw: _ExpectedResourceConfig) -> tuple[str, ...]:
@@ -673,8 +678,16 @@ def auth_disabled_via_opt_out() -> bool:
 def _get_required_permission(path: str, method: str) -> str | None:
     """Determine the required permission for a request.
 
+    The ``/api/v<n>`` mount prefix is stripped first.  The app serves the
+    same handler at the root and under that mirror, so both must require
+    the same permission; matching the raw path let a mirror miss the prefix
+    its root route matched and fall through to a weaker default (reads to
+    ``status:read``, ``/api/v1/drain/cancel`` to the ``/cancel`` heuristic).
+
     Returns None if no specific permission is needed (public/read).
     """
+    path = _API_VERSION_PREFIX_RE.sub("", path, count=1) or "/"
+
     # Check specific path patterns first (before prefix matching)
     if "/kill" in path:
         return "agents:read" if method in _READ_METHODS else "agents:kill"

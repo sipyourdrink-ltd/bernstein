@@ -110,6 +110,13 @@ and it is the only thing that bounds a read at all: the separate
 operator-only (`admin:manage`) refusal that agent tokens and the cluster
 secret have always carried runs on non-read methods only.
 
+The `/api/v<n>` mirror of a route requires exactly what the root route
+requires: `_get_required_permission` strips the version prefix before the
+lookup, so `POST /api/v1/drain/cancel` needs `admin:manage` like
+`POST /drain/cancel`, and `GET /api/v1/agents/{id}/logs` needs `agents:read`
+like its root route. `tests/unit/test_auth_middleware_versioned_mirror_permissions.py`
+pins this for every route registered on both mounts.
+
 *Agent identities.* Agent grants use a narrower vocabulary than the route
 map, and spell the per-task write authority `tasks:claim` where the route
 map says `tasks:write`. The two names denote the same authority and are
