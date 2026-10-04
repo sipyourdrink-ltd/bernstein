@@ -99,6 +99,10 @@ Source pointers (read these if you need to debug from code):
 - **Format**: HS256 JWT signed with the secret from `.sdd/auth/jwt_secret`
   (auto-generated on first run; persisted across restarts).
 - **Claims**: `sub=session_id`, `role`, `task_ids=[…]`, `iat`, `exp`, `jti`.
+- **Task scope**: the server limits every task write, and every claim it
+  picks for the caller, to `task_ids`. An empty list means "all tasks" only
+  for the `manager` role (the run-root identity); a token of any other role
+  with an empty list reaches no task.
 - **Expiry**: 4 h for task-scoped tokens (default 14400 s); 24 h
   for unrestricted (manager / orchestrator) tokens.
 - **Revocation**: deleted from disk and revoked in `AgentIdentityStore` when

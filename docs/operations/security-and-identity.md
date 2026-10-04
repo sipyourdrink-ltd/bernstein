@@ -166,9 +166,15 @@ The only exemptions from the path gate are the collection routes under
 the collection rather than one task. The two server-chosen claim routes are
 among them, and are scoped in their handlers as the table above describes.
 A claim receipt granted to a scoped token carries that scope in its
-`filter_digest`; an unscoped claim hashes exactly as before. A token with an empty
-`task_ids` claim is an unrestricted manager token, and non-agent
-credentials never reach the check at all.
+`filter_digest`; an unscoped claim hashes exactly as before.
+
+An empty `task_ids` claim is unrestricted only for the roles in
+`UNSCOPED_AGENT_ROLES` (`manager`, the role of the run-root identity the
+orchestrator mints per run). Workers are always minted with the ids of the
+tasks they were spawned for, so a token of any other role with an empty list
+is an empty scope and fails closed: every task-addressed write, body-addressed
+id and mailbox post is refused with `403`, and claim-next offers it nothing.
+Reads are unaffected. Non-agent credentials never reach the check at all.
 
 **Revocation.**
 
