@@ -216,8 +216,8 @@ def test_registry_ambiguous_alias_raises_at_registration_time() -> None:
 
 def test_registry_same_alias_same_adapter_is_not_a_collision() -> None:
     """Re-registering the identical (alias, adapter_name) pair is a no-op,
-    not a collision -- this is what makes the dual-binary gemini/antigravity
-    registration (same class under two ``_ADAPTERS`` keys) safe."""
+    not a collision -- this is what makes the agy/antigravity registration
+    (same class under two ``_ADAPTERS`` keys) safe."""
     test_alias = "__pr1_idempotent_test_alias__"
     try:
         registry._register_provider_alias(test_alias, "adapter-a")

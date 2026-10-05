@@ -13,10 +13,10 @@ adapter that is not registered at all -- a test double, a third-party adapter
 -- did not merely lose its identity, it failed the spawn.
 
 The resolution is by identity (``registry_name_for``), never by folding a
-display name back to a key. ``AgyAdapter`` displays as "Antigravity" while
-``antigravity`` is a registry alias for ``GeminiAdapter``, so a name-string
-fold silently lands an ``agy`` spawn on the Gemini adapter -- a different
-vendor CLI, a different binary, a different contract.
+display name back to a key. ``AgyAdapter`` displays as "Antigravity" and is
+registered under two keys (``agy`` and ``antigravity``), so a name-string fold
+cannot tell which key a run selected; display names and registry keys are
+separate namespaces.
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from unittest.mock import MagicMock
 from bernstein.core.spawner import AgentSpawner
 
 from bernstein.adapters.agy import AgyAdapter
-from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.registry import get_adapter, registry_name_for
 
 
@@ -74,19 +73,18 @@ def test_unregistered_injected_adapter_is_still_reachable(tmp_path: Path) -> Non
     assert spawner._get_adapter_by_name("Third Party Agent") is adapter
 
 
-def test_agy_display_name_collides_with_the_antigravity_registry_key() -> None:
-    """The collision that makes any display-name-to-key string fold unsound.
+def test_agy_resolves_by_identity_under_both_registry_keys() -> None:
+    """``agy`` and ``antigravity`` are two keys for one adapter class.
 
-    ``agy``'s display name is exactly another adapter's registry key. Folding
-    the string "Antigravity" to a key resolves ``antigravity`` -> the Gemini
-    adapter, so an ``agy`` spawn would receive a different vendor's CLI.
-    Identity resolution is what keeps the two apart; this test fails the moment
-    someone reintroduces a name-string map.
+    The display name "Antigravity" matches neither key exactly, and the class
+    sits under two keys, so only identity says which key a run selected: an
+    unstamped instance resolves to its declared ``agy`` key, a stamped one to
+    the key it was fetched by.
     """
     agy = AgyAdapter()
     assert agy.name() == "Antigravity"
-    assert isinstance(get_adapter("antigravity"), GeminiAdapter)
-    assert not isinstance(get_adapter("antigravity"), AgyAdapter)
-
-    # Identity, not the name string, is what resolves the key.
     assert registry_name_for(agy) == "agy"
+
+    antigravity = get_adapter("antigravity")
+    assert isinstance(antigravity, AgyAdapter)
+    assert registry_name_for(antigravity) == "antigravity"

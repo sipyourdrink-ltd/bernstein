@@ -182,15 +182,15 @@ npm install -g @google/gemini-cli
 
 **Best for:** Free tier users (generous free quota). Cost-effective for medium-complexity tasks. Good as a tertiary provider for rate-limit resilience.
 
-**Lane split:** the `gemini` key also resolves the `antigravity` binary; the same adapter discovers `antigravity` first on PATH and falls back to `gemini`. The `gemini`/`antigravity` keys cover the enterprise / API-key lane; consumer-lane operators should route through the separate `agy` adapter (see [agy.md](agy.md)).
+**Lane split:** the `gemini` key covers the enterprise / API-key lane; consumer-lane operators should route through the separate `agy` adapter (see [agy.md](agy.md)), which is also registered as `antigravity`.
 
 ---
 
 ### agy (Google Antigravity successor CLI)
 
 Successor CLI for the discontinued non-enterprise hosted Gemini backend. A
-separate registry entry from `gemini`/`antigravity`, which stay on the
-dual-binary enterprise / API-key lane. See [agy.md](agy.md) for the full
+separate adapter from `gemini`, which stays on the enterprise / API-key
+lane. The `antigravity` registry key is an alias of `agy`. See [agy.md](agy.md) for the full
 split and configuration knobs.
 
 ---

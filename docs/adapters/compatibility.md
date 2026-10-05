@@ -19,7 +19,7 @@ Last updated: 2026-07-16
 | `claude` | Anthropic | JSON schema enforced | Yes |
 | `codex` | OpenAI | JSON (`--json`) | No |
 | `gemini` | Google | JSON (`--output-format json`) | No |
-| `antigravity` | Google (alias of `gemini`, enterprise / API-key lane) | JSON (`--output-format json`) | No |
+| `antigravity` | Google (alias of `agy`, consumer lane) | No (plain-text print mode) | No |
 | `agy` | Google (Antigravity successor CLI, consumer lane) | No (plain-text print mode) | No |
 | `openai_agents` | OpenAI (Agents SDK v2) | JSONL event stream | Yes (Bernstein-bridged) |
 | `clm` | Customer-side NIM / vLLM gateway | No | No |

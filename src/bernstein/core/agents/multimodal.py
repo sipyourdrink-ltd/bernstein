@@ -232,7 +232,6 @@ def primary_modality(inputs: Sequence[MultiModalInput]) -> ModalityType:
 
 _MULTIMODAL_ADAPTERS: frozenset[str] = frozenset(
     {
-        "antigravity",
         "claude",
         "gemini",
     }

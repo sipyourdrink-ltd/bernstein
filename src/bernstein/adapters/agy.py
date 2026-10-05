@@ -6,11 +6,12 @@ was discontinued for non-enterprise users in June 2026. The gemini
 adapter remains registered for enterprise and API-key operators, so the
 two lanes stay separate:
 
-* ``agy`` -- this adapter. Single closed-source binary, headless
+* ``agy`` -- this adapter, also registered as ``antigravity`` (the
+  product name). Single closed-source binary, headless
   ``-p``/``--print`` invocation, terminal sandbox pinned, permission
   prompts auto-approved for unattended runs.
-* ``gemini`` -- the dual-binary adapter for the legacy ``gemini`` /
-  transitional ``antigravity`` binaries (enterprise / API-key lane).
+* ``gemini`` -- the adapter for the legacy ``gemini`` binary
+  (enterprise / API-key lane).
 
 Verified against Antigravity CLI 1.0.0. The upstream surface the adapter
 relies on (and that the conformance contract pins):

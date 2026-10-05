@@ -15,15 +15,15 @@ Two adapters, two lanes -- pick by how you authenticate:
 
 | Lane | Adapter | Binary | Who |
 |---|---|---|---|
-| Consumer / default | `agy` | `agy` | Free, AI Pro, Ultra subscribers (keyring / OAuth sign-in) |
-| Enterprise / API key | `gemini` | `gemini` or `antigravity` | Enterprise licenses and paid API-key operators |
+| Consumer / default | `agy` (alias: `antigravity`) | `agy` | Free, AI Pro, Ultra subscribers (keyring / OAuth sign-in) |
+| Enterprise / API key | `gemini` | `gemini` | Enterprise licenses and paid API-key operators |
 
-The `gemini` adapter (see `docs/adapters/gemini.md` and
-`docs/adapters/antigravity.md`) remains fully supported for the
-enterprise and API-key paths, including its dual-binary discovery
-cascade. The `agy` adapter is a separate registry entry with its own
-binary, contract, and conformance coverage, so the two lanes never
-share discovery state.
+The `gemini` adapter (see `docs/adapters/gemini.md`) remains fully
+supported for the enterprise and API-key paths. The `agy` adapter is a
+separate adapter with its own binary, contract, and conformance
+coverage, so the two lanes never share discovery state. The
+`antigravity` registry key resolves to this adapter (see
+`docs/adapters/antigravity.md`).
 
 ```bash
 # consumer lane

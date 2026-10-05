@@ -1709,9 +1709,9 @@ class AgentSpawner:
         # (test doubles, third-party adapters) fails the spawn outright.
         #
         # Keyed by identity, never by folding a display name back to a key:
-        # ``AgyAdapter`` displays as "Antigravity" while ``antigravity`` is a
-        # registry alias for ``GeminiAdapter``, so any name-string fold lands
-        # an agy spawn on the Gemini adapter.
+        # display names and registry keys are separate namespaces, and a
+        # name-string fold silently picks whichever adapter happens to own
+        # the folded string.
         self._adapter_cache[self._adapter.name()] = self._adapter
         if self._adapter_registry_name is not None:
             self._adapter_cache[self._adapter_registry_name] = self._adapter

@@ -1,44 +1,33 @@
 # Contract for the ``antigravity`` registry key (adapter: antigravity).
 #
-# This key is an alias of the Gemini adapter: it spawns GeminiAdapter with
-# a binary cascade that prefers a binary named ``antigravity`` and falls
-# back to ``gemini``. The flags below mirror ``gemini.yaml`` because the
-# adapter passes the same command line.
+# ``antigravity`` is the product name of the Antigravity CLI and a second
+# registry key for the agy adapter (src/bernstein/adapters/agy.py). The
+# binary is ``agy``; there is no binary named ``antigravity``. The surface
+# below mirrors ``agy.yaml`` because both keys spawn the same command line:
+# ``agy -p <prompt> --sandbox --dangerously-skip-permissions
+# [--print-timeout <N>s]``.
 #
-# The Antigravity CLI itself is NOT a rename of the Gemini CLI. It is a
-# distinct, closed-source tool shipped as the ``agy`` binary, with its own
-# flag set, hook events (``.agents/hooks.json``: PreToolUse, PostToolUse,
-# PreInvocation, PostInvocation, Stop; no compaction event), plugin layout
-# (``plugin.json`` + skills/, agents/, rules/, hooks.json) and config dir
-# (``~/.gemini/config/``). Vendor docs: https://antigravity.google/docs
-# It is covered by the ``agy`` adapter (contracts/agy.yaml, docs/adapters/agy.md).
-#
-# Flags checked 2026-10-05 against ``agy --help`` (agy 1.2.11): ``-p`` and
-# ``--output-format`` exist; ``-m`` and ``--yolo`` do not (agy uses
-# ``--model`` and ``--dangerously-skip-permissions``). The flag list below
-# therefore describes the Gemini command line, not agy.
-adapter: antigravity).
-#
-# Antigravity is the upstream rename of the Gemini CLI binary. The legacy
-# ``gemini`` binary stops serving free / AI Pro / Ultra subscribers on
-# 2026-06-18; ``antigravity`` carries the same model set and the same
-# ``--output-format`` semantics forward. The flags below mirror
-# ``gemini.yaml`` because the adapter passes the same command line.
+# See docs/adapters/antigravity.md and docs/adapters/agy.md.
 adapter: antigravity
-binary: antigravity
+binary: agy
 install:
-  method: shell
-  spec: "antigravity (Go binary; install via the upstream installer documented in docs/adapters/antigravity.md)"
+  method: manual
+  spec: ""
 auth:
   required_for_help: false
   required_for_models: false
-  secret_env: "GEMINI_API_KEY"
-  basis: api_key
+  # Keyring / OAuth is the default; API keys are optional overrides.
+  secret_env:
+    - "GOOGLE_API_KEY"
+    - "GEMINI_API_KEY"
+  basis: subscription_oauth
 required_flags:
   - "-p"
-  - "-m"
-  - "--output-format"
-  - "--yolo"
+  - "--print"
+  - "--sandbox"
+  - "--dangerously-skip-permissions"
+  - "--print-timeout"
+  - "--conversation"
 required_subcommands: []
 expected_models:
   command: []

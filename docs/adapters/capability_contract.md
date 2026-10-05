@@ -133,7 +133,7 @@ in `conformance.py` builds the per-adapter strategy table for the live registry.
 | `aichat` | unsupported | unsupported | text-signals |
 | `aider` | unsupported | unsupported | text-signals |
 | `amp` | unsupported | unsupported | text-signals |
-| `antigravity` | unsupported | cli-flag | stream-json |
+| `antigravity` | unsupported | cli-flag | text-signals |
 | `auggie` | unsupported | unsupported | text-signals |
 | `autohand` | unsupported | unsupported | text-signals |
 | `charm` | unsupported | cli-flag | text-signals |

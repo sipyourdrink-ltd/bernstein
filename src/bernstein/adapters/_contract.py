@@ -684,15 +684,6 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.STREAM_JSON,
     ),
-    # "antigravity" is a registry alias of GeminiAdapter (it only changes
-    # which binary name the discovery cascade prefers), so it shares the
-    # gemini strategy on every axis. The Antigravity CLI itself (``agy``)
-    # is a distinct tool with its own flags and is the "agy" entry below.
-    "antigravity": AdapterStrategy(
-        resume=ResumeStrategy.UNSUPPORTED,
-        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
-        event_channel=EventChannel.STREAM_JSON,
-    ),
     # agy is the successor CLI for the discontinued non-enterprise hosted
     # gemini backend; separate adapter (single binary, print mode, sandbox
     # pinned) -- see docs/adapters/agy.md. Dangerous mode is
@@ -701,6 +692,14 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # has --conversation <id> resume, but native reattach is not wired
     # yet, so resume stays declared unsupported (fresh-session fallback).
     "agy": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
+    # "antigravity" is the product name of the same CLI and a second
+    # registry key for AgyAdapter, so it shares the agy strategy on every
+    # axis.
+    "antigravity": AdapterStrategy(
         resume=ResumeStrategy.UNSUPPORTED,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.TEXT_SIGNALS,
@@ -1242,10 +1241,6 @@ _SYSTEM_PROMPT_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
 #: model. The base ``CLIAdapter.spawn`` contract permits this fallback.
 _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
     {
-        # "antigravity" is a registry alias of GeminiAdapter and shares its
-        # spawn() body verbatim -- see the twin AdapterStrategy declarations
-        # above -- so it carries the same system_addendum channel.
-        "antigravity",
         "codex",
         "devin_terminal",
         "gemini",
