@@ -684,10 +684,10 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.STREAM_JSON,
     ),
-    # Antigravity is the upstream rename of the Gemini CLI binary
-    # (transition deadline 2026-06-18 for free / Pro / Ultra). Same
-    # strategy on every axis - it is the same adapter, only the
-    # discovered binary name differs.
+    # "antigravity" is a registry alias of GeminiAdapter (it only changes
+    # which binary name the discovery cascade prefers), so it shares the
+    # gemini strategy on every axis. The Antigravity CLI itself (``agy``)
+    # is a distinct tool with its own flags and is the "agy" entry below.
     "antigravity": AdapterStrategy(
         resume=ResumeStrategy.UNSUPPORTED,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
@@ -1242,10 +1242,9 @@ _SYSTEM_PROMPT_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
 #: model. The base ``CLIAdapter.spawn`` contract permits this fallback.
 _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
     {
-        # "antigravity" is the upstream rename of the "gemini" CLI binary and
-        # shares GeminiAdapter's spawn() body verbatim -- see the twin
-        # AdapterStrategy declarations above -- so it carries the same
-        # system_addendum channel.
+        # "antigravity" is a registry alias of GeminiAdapter and shares its
+        # spawn() body verbatim -- see the twin AdapterStrategy declarations
+        # above -- so it carries the same system_addendum channel.
         "antigravity",
         "codex",
         "devin_terminal",
