@@ -1,10 +1,10 @@
 """Google Gemini / Antigravity CLI adapter.
 
-The upstream CLI is changing binary names ahead of a deprecation date:
-the legacy ``gemini`` binary stops serving free / AI Pro / Ultra
-subscribers on 2026-06-18; the replacement ``antigravity`` binary uses
-the same model set and the same ``--output-format`` semantics.
-Enterprise customers retain the legacy binary via paid API keys.
+The legacy ``gemini`` binary stops serving free / AI Pro / Ultra
+subscribers on 2026-06-18; Enterprise customers retain it via paid API
+keys. The consumer successor, the Antigravity CLI (``agy``), is a
+distinct tool with its own flags, hooks and config layout, not a rename;
+it has its own adapter in :mod:`bernstein.adapters.agy`.
 
 The adapter is dual-binary aware. At spawn time it discovers which
 binary is on ``PATH`` using a deterministic cascade defined by
@@ -66,7 +66,8 @@ logger = logging.getLogger(__name__)
 #: rely on ``PATH`` ordering.
 BINARY_ENV_VAR: str = "BERNSTEIN_GEMINI_BINARY"
 
-#: Replacement binary shipped by the upstream CLI rename.
+#: Binary name preferred by the discovery cascade. The command line passed
+#: is the Gemini one; the Antigravity CLI binary is ``agy`` (see agy.py).
 ANTIGRAVITY_BINARY: str = "antigravity"
 
 #: Legacy binary name, retained for operators still on the deprecated

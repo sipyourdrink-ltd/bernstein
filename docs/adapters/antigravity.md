@@ -1,12 +1,16 @@
 # `antigravity` / `gemini` adapter - Google CLI (dual-binary)
 
-Bernstein's adapter for the Google CLI. The upstream CLI is changing
-binary names ahead of a deprecation date: the legacy `gemini` binary
-stops serving free / AI Pro / Ultra subscribers on **2026-06-18**, and
-the replacement `antigravity` binary carries the same model set and
-the same `--output-format` semantics forward. Enterprise customers on
-Standard or Enterprise licenses retain the legacy binary via paid
-Gemini Enterprise Agent Platform API keys.
+Bernstein's adapter for the Google Gemini CLI. The legacy `gemini`
+binary stops serving free / AI Pro / Ultra subscribers on
+**2026-06-18**; Enterprise customers on Standard or Enterprise licenses
+retain it via paid Gemini Enterprise Agent Platform API keys.
+
+> **Antigravity CLI is a separate tool.** The consumer successor, the
+> Antigravity CLI (`agy`), is not a rename of the Gemini CLI: it is a
+> distinct closed-source binary with its own flags, hook events,
+> plugin layout and config directory (`~/.gemini/config/`). Use the
+> [`agy` adapter](agy.md) for it. Vendor docs:
+> <https://antigravity.google/docs>.
 
 The adapter is **dual-binary aware**. At spawn time it discovers which
 binary is on `PATH` and uses whichever the operator has installed. The
