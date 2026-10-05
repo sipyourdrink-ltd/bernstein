@@ -3,30 +3,30 @@
     "registered": 56,
     "selectable": 54
   },
-  "commits_main_7d": 70,
-  "days_since_last_commit": 1,
-  "distinct_outside_authors": 84,
-  "generated_at": "2026-09-28",
+  "commits_main_7d": 147,
+  "days_since_last_commit": 0,
+  "distinct_outside_authors": 88,
+  "generated_at": "2026-10-05",
   "grabbable": {
-    "good_first_issue_open": 5,
-    "good_first_issue_unassigned": 5,
-    "up_for_grabs_open": 7,
-    "up_for_grabs_unassigned": 6
+    "good_first_issue_open": 4,
+    "good_first_issue_unassigned": 4,
+    "up_for_grabs_open": 4,
+    "up_for_grabs_unassigned": 4
   },
-  "issue_close_lag_hours_median": 77.7,
-  "issues_closed_count": 413,
+  "issue_close_lag_hours_median": 200.6,
+  "issues_closed_count": 275,
   "latest_release": {
-    "date": "2026-09-20",
-    "tag": "v3.20.0"
+    "date": "2026-10-05",
+    "tag": "v3.21.0"
   },
   "merged_prs_by_author_class": {
-    "automation": 182,
-    "maintainer": 352,
-    "outside": 250
+    "automation": 104,
+    "maintainer": 214,
+    "outside": 237
   },
-  "pr_merge_lag_hours_median": 4.7,
-  "pr_merged_count": 784,
-  "pr_merged_within_24h_pct": 77.7,
+  "pr_merge_lag_hours_median": 10.5,
+  "pr_merged_count": 555,
+  "pr_merged_within_24h_pct": 59.5,
   "readme_translations": {
     "in_sync": 23,
     "stale": 0,
