@@ -36,31 +36,47 @@ class TestLocalOnlyFlag:
 
 
 class TestRetryPendingPushesRespectsLocalOnly:
+    """The retry queue is a second path to the remote, and it is guarded too.
+
+    Each test seeds a real entry with `record_pending_push` for a repo root that
+    passes `validate_pending_push_entry`, so without the guard the queue would
+    be drained and `safe_push` called. The flag-unset test proves that.
+    """
+
+    @staticmethod
+    def _seed(workdir: Path) -> Path:
+        (workdir / ".git").mkdir()
+        spawner_merge.record_pending_push(workdir, "agent-1", "feature", workdir)
+        return spawner_merge.pending_pushes_path(workdir)
+
     def test_no_remote_io_when_local_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The retry queue is a second path to the remote, and it is guarded too."""
+        queue = self._seed(tmp_path)
+        before = queue.read_bytes()
         monkeypatch.setenv(ENV_LOCAL_ONLY, "1")
-        push = MagicMock()
+        push = MagicMock(return_value=MagicMock(ok=True, stderr=""))
 
         with patch("bernstein.core.git_ops.safe_push", push):
             retried = spawner_merge.retry_pending_pushes(tmp_path)
 
         assert retried == 0
         push.assert_not_called()
+        # Declining to send a queued push is not deciding it is never wanted:
+        # a local-only run must not consume the entry, or turning the flag off
+        # would silently have lost it.
+        assert queue.read_bytes() == before
 
-    def test_the_queue_is_left_intact(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Declining to send a queued push is not deciding it is never wanted.
+    def test_queue_is_retried_when_flag_unset(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without the flag the same entry is pushed and drained, as before."""
+        queue = self._seed(tmp_path)
+        monkeypatch.delenv(ENV_LOCAL_ONLY, raising=False)
+        push = MagicMock(return_value=MagicMock(ok=True, stderr=""))
 
-        These entries were recorded by an earlier run; a local-only run must not
-        consume them, or turning the flag off would silently have lost them.
-        """
-        queue = spawner_merge.pending_pushes_path(tmp_path)
-        queue.parent.mkdir(parents=True, exist_ok=True)
-        queue.write_text(f"{tmp_path}|main|agent-1\n", encoding="utf-8")
-        monkeypatch.setenv(ENV_LOCAL_ONLY, "1")
+        with patch("bernstein.core.git_ops.safe_push", push):
+            retried = spawner_merge.retry_pending_pushes(tmp_path)
 
-        spawner_merge.retry_pending_pushes(tmp_path)
-
-        assert queue.read_text(encoding="utf-8") == f"{tmp_path}|main|agent-1\n"
+        assert retried == 1
+        push.assert_called_once_with(tmp_path.resolve(), "feature")
+        assert not queue.exists()
 
 
 class TestMergePushRespectsLocalOnly:
