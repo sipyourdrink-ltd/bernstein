@@ -57,7 +57,7 @@ class _PartialSinkExecutor(FileUpgradeExecutor):
     """A sink shaped like a real one: back up, write one file, fail on the next."""
 
     def _apply_policy_update(self, proposal: UpgradeProposal) -> bool:
-        self._backup_file("policies.yaml", proposal.id)
+        self._backup_file("policies.yaml", proposal.storage_key)
         self._atomic_write(self.config_dir / "policies.yaml", {"policies": {"max_retries": 99}})
         raise OSError("disk full")
 
@@ -117,7 +117,7 @@ def test_shipped_apply_path_changes_nothing_and_leaves_the_breaker_closed(
 
     assert loop._apply_proposal(proposal, MagicMock()) is False
     assert not (tmp_path / "upgrades" / "backups").exists()
-    assert loop._executor.was_applied(proposal.id) is False
+    assert loop._executor.was_applied(proposal) is False
     assert loop._breaker.state == CircuitState.CLOSED
     assert loop._breaker.recent_rollbacks == []
 
@@ -146,14 +146,14 @@ def test_a_prior_rollback_does_not_mask_a_later_backup_under_the_same_id(tmp_pat
     target.write_text(ORIGINAL, encoding="utf-8")
     proposal = _proposal("UPG-0001")
 
-    executor._backup_file("policies.yaml", proposal.id)
+    executor._backup_file("policies.yaml", proposal.storage_key)
     target.write_text("half-written", encoding="utf-8")
     executor.rollback_upgrade(proposal)
-    assert executor.was_applied(proposal.id) is False
+    assert executor.was_applied(proposal) is False
 
-    executor._backup_file("policies.yaml", proposal.id)
+    executor._backup_file("policies.yaml", proposal.storage_key)
     target.write_text("half-written again", encoding="utf-8")
-    assert executor.was_applied(proposal.id) is True
+    assert executor.was_applied(proposal) is True
     executor.rollback_upgrade(proposal)
     assert target.read_text(encoding="utf-8") == ORIGINAL
 
@@ -203,7 +203,7 @@ def test_repeat_rollback_keeps_the_receipt_of_the_one_that_restored(tmp_path: Pa
     executor = FileUpgradeExecutor(tmp_path)
     (executor.config_dir / "policies.yaml").write_text(ORIGINAL, encoding="utf-8")
     proposal = _proposal()
-    executor._backup_file("policies.yaml", proposal.id)
+    executor._backup_file("policies.yaml", proposal.storage_key)
     assert executor.rollback_upgrade(proposal) is True
     assert executor.rollback_upgrade(proposal) is True
 
@@ -218,18 +218,18 @@ def test_manifest_entries_cannot_escape_the_state_directory(tmp_path: Path) -> N
     state = tmp_path / "state"
     executor = FileUpgradeExecutor(state)
     proposal = _proposal("p-escape")
-    backup_dir = executor._backup_dir(proposal.id)
+    backup_dir = executor._backup_dir(proposal.storage_key)
     backup_dir.mkdir(parents=True)
     (backup_dir / "payload").write_text("owned", encoding="utf-8")
     manifest = {"../../escaped.yaml": f"backups/{proposal.id}/payload"}
-    executor._backup_manifest_path(proposal.id).write_text(json.dumps(manifest), encoding="utf-8")
+    executor._backup_manifest_path(proposal.storage_key).write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(RollbackError, match="outside"):
         executor.rollback_upgrade(proposal)
     assert not (tmp_path / "escaped.yaml").exists()
 
     manifest = {"policies.yaml": "../../../etc/hosts"}
-    executor._backup_manifest_path(proposal.id).write_text(json.dumps(manifest), encoding="utf-8")
+    executor._backup_manifest_path(proposal.storage_key).write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(RollbackError, match="outside"):
         executor.rollback_upgrade(proposal)
 
@@ -275,7 +275,7 @@ def test_was_applied_is_false_again_once_rolled_back(tmp_path: Path) -> None:
     executor = FileUpgradeExecutor(tmp_path)
     (executor.config_dir / "policies.yaml").write_text(ORIGINAL, encoding="utf-8")
     proposal = _proposal()
-    executor._backup_file("policies.yaml", proposal.id)
-    assert executor.was_applied(proposal.id) is True
+    executor._backup_file("policies.yaml", proposal.storage_key)
+    assert executor.was_applied(proposal) is True
     executor.rollback_upgrade(proposal)
-    assert executor.was_applied(proposal.id) is False
+    assert executor.was_applied(proposal) is False
