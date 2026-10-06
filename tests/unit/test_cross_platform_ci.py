@@ -212,6 +212,54 @@ class TestCIWorkflowExists:
         assert "uv run python scripts/run_tests.py" in run_script
         assert "--parallel 6" in run_script
 
+    def test_merge_queue_planner_resolves_the_batch_root_once(self) -> None:
+        """The queue selects against the batch root, resolved in the one planner job (#5793).
+
+        Not per shard: the queue lands the exact commit it tested, so a
+        merge-base taken after an entry ahead has landed returns that entry's
+        commit, and shards either side of a landing would select from two
+        lists. Not ``merge_group.base_sha`` either: for entry k of a stacked
+        group that is entry k-1's merge commit.
+        """
+        data = _load_ci_workflow()
+        jobs = cast("dict[str, Any]", data["jobs"])
+        planner = cast("dict[str, Any]", jobs["plan-affected-tests"])
+        steps = cast("list[dict[str, Any]]", planner["steps"])
+        by_name = {step.get("name"): step for step in steps}
+
+        root = by_name["Resolve the merge-queue batch root"]
+        assert root.get("if") == "github.event_name == 'merge_group'"
+        script = root.get("run", "")
+        assert "git merge-base" in script
+        assert "refs/remotes/origin/pr-base" in script
+        assert "resolved=true" in script
+        assert "merge_group.base_sha" not in yaml.safe_dump(root)
+
+        checkout = next(step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@"))
+        assert "merge_group" in checkout.get("if", ""), "the planner needs the queue head checked out"
+        assert (checkout.get("with") or {}).get("fetch-depth") == 0, "merge-base needs history"
+
+        plan = by_name["Compute affected-test plan"]
+        assert plan.get("if") == "github.event_name == 'pull_request' || steps.queue_root.outputs.resolved == 'true'"
+        assert "planned=true" in plan.get("run", "")
+        assert planner["outputs"]["planned"] == "${{ steps.plan.outputs.planned }}"
+
+    def test_merge_queue_test_job_keys_on_the_plan_not_the_event(self) -> None:
+        """Shards select whenever a plan exists, and run the full list when one does not."""
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        by_name = {step.get("name"): step for step in steps}
+        planned = "needs.plan-affected-tests.outputs.planned == 'true'"
+
+        assert by_name["Download affected-test plan"].get("if") == f"{planned} && runner.os != 'Windows'"
+        assert by_name["Select affected-test shard"].get("if") == f"{planned} && runner.os != 'Windows'"
+        run = by_name["Run isolated test suite (Linux/macOS)"]
+        assert "needs.plan-affected-tests.outputs.planned != 'true'" in run.get("if", "")
+        assert (run.get("env") or {}).get("PLANNED") == "${{ needs.plan-affected-tests.outputs.planned }}"
+        script = run.get("run", "")
+        assert '[ "${PLANNED}" = "true" ]' in script
+        assert '--shard "${SHARD}/${SHARD_COUNT}"' in script, "no plan still runs the full list, sharded"
+
     def test_coverage_reporting_only_runs_on_push(self) -> None:
         data = _load_ci_workflow()
         steps = _ci_test_steps(data)

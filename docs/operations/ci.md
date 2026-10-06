@@ -30,7 +30,8 @@ Every test file must be reachable from a CI lane. The mapping:
 | Directory | Lane | Events | Selection |
 |---|---|---|---|
 | `tests/unit/**` | `test` (4 shards x os x python) | pull_request | impacted slice from the shared affected-test plan |
-| `tests/unit/**` | `test` (8 ubuntu / 4 windows shards x python) | merge_group, workflow_dispatch, release push | whole directory |
+| `tests/unit/**` | `test` (8 ubuntu shards) | merge_group | impacted slice against the queue batch root; whole directory if the root does not resolve |
+| `tests/unit/**` | `test` (8 ubuntu / 4 windows shards x python) | workflow_dispatch, release push | whole directory |
 | `tests/integration/**` | `test` (4 shards x os x python) | pull_request | impacted slice from the shared affected-test plan |
 | `tests/integration/**` | `integration-tests` | all | whole directory |
 | `tests/property/**` | `property-tests` | all | whole directory |
@@ -48,9 +49,15 @@ Two things this table is deliberately explicit about:
   against the event's pinned base SHA and uploads it as an artifact. Every Linux
   and macOS shard downloads that same plan, so delayed cells cannot select
   different lists. The artifact digest is a planner output, and reruns reuse
-  the run-scoped artifact. The whole `tests/unit/**` directory runs in the merge
-  queue and on full workflow dispatches (plus immediate release pushes), not on
-  a PR or an ordinary post-merge push. A file that no lane other than the
+  the run-scoped artifact. On `merge_group` the same planner selects against
+  the batch root, the merge-base of the default branch and the queue head,
+  resolved once in the planner (#5793). It does not use
+  `merge_group.base_sha`, which for entry k of a stacked group is entry k-1's
+  merge commit. Every entry of the group is inside that diff, so the slice covers
+  each entry's change against the others. If the root does not resolve, no
+  plan is uploaded and every shard runs the whole list. The whole
+  `tests/unit/**` directory runs on full workflow dispatches (the post-merge
+  cadence) and immediate release pushes. A file that no lane other than the
   affected slice covers is therefore not guaranteed to run before a merge.
 - An empty affected set is a named `Nothing affected` planner step that prints
   the base and head SHAs. Empty individual shards also have a named step.
