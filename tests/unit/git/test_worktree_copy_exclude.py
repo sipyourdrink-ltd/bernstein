@@ -1,15 +1,23 @@
 """Files copied into an agent worktree must not be committable from it.
 
-`copy_files` gives each worktree its own copy of untracked per-checkout inputs
-(`.env` and friends). Nothing kept them out of the index, so an agent running
-`git add -A` committed them to its branch, and the merge back into the parent
-repository failed with an untracked-overwrite error naming a file the agent was
-never asked to touch -- the same file, sitting untracked in the destination
-work tree (#5966).
+`copy_files` gives each worktree its own copy of untracked per-checkout inputs.
+Names in `_MERGE_DENY_EXACT` (`.env` and friends) were already excluded by the
+worktree-local excludes file, but any other name -- `secrets.env`,
+`config/local.toml` -- was stageable: an agent running `git add -A` committed it
+to its branch, and the merge back into the parent repository failed with an
+untracked-overwrite error naming a file the agent was never asked to touch
+(#5966).
 
-Real repositories and a real linked worktree here: the whole question is what
-`git` does with these paths, and a mocked `git` cannot answer it.
+The exclusion is scoped to the one worktree through the same per-worktree
+`core.excludesFile` that #3017 uses, never the shared `info/exclude`, so the
+operator's own checkout and every other worktree of the clone are unaffected.
+
+Real repositories and real linked worktrees, created through
+`WorktreeManager.create` as in production: the whole question is what `git`
+does with these paths, and a mocked `git` cannot answer it.
 """
+
+# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -17,21 +25,34 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from bernstein.core.worktree import WorktreeSetupConfig, setup_worktree_env
 
-from bernstein.core.git.local_exclude import resolve_info_exclude_path
+from bernstein.core.git.git_pr import _MERGE_DENY_EXACT
+from bernstein.core.git.worktree import (
+    WorktreeManager,
+    WorktreeSetupConfig,
+    _copy_files_exclude_entries,
+)
 
 
-def _git(cwd: Path, *args: str) -> str:
-    result = subprocess.run(
+def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ["git", *args],
         cwd=cwd,
-        check=True,
+        check=check,
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
-    return result.stdout
+
+
+def _ignored(cwd: Path, rel: str) -> bool:
+    """True when git in *cwd* would ignore *rel*."""
+    return _git(cwd, "check-ignore", "-q", "--no-index", rel, check=False).returncode == 0
+
+
+def _staged(cwd: Path) -> list[str]:
+    _git(cwd, "add", "-A")
+    return _git(cwd, "diff", "--cached", "--name-only").stdout.split()
 
 
 @pytest.fixture
@@ -42,83 +63,101 @@ def repo(tmp_path: Path) -> Path:
     _git(root, "config", "user.name", "Bernstein Tests")
     _git(root, "config", "user.email", "tests@example.com")
     (root / "app.py").write_text("x = 1\n", encoding="utf-8")
-    _git(root, "add", "app.py")
+    (root / "config").mkdir()
+    (root / "config" / "tracked.env").write_text("TRACKED=1\n", encoding="utf-8")
+    _git(root, "add", "app.py", "config/tracked.env")
     _git(root, "commit", "-m", "base")
-    # The per-checkout input: untracked in the parent, which is exactly why a
-    # copy of it arriving through a merge cannot be written.
-    (root / ".env").write_text("TOKEN=parent\n", encoding="utf-8")
+    # The per-checkout inputs: untracked in the parent, which is exactly why a
+    # copy of one arriving through a merge cannot be written. Neither name is
+    # in the merge guard's deny list, so neither was excluded before.
+    (root / "secrets.env").write_text("TOKEN=parent\n", encoding="utf-8")
+    (root / "config" / "local.toml").write_text("k = 1\n", encoding="utf-8")
     return root
 
 
-def _worktree(repo_root: Path, name: str = "agent") -> Path:
-    path = repo_root / ".sdd" / "worktrees" / name
-    _git(repo_root, "worktree", "add", "-b", f"agent/{name}", str(path))
-    return path
+def _create(repo_root: Path, *copy: str, session: str = "agent") -> Path:
+    manager = WorktreeManager(repo_root=repo_root, setup_config=WorktreeSetupConfig(copy_files=copy))
+    return manager.create(session)
 
 
-def test_copy_files_appended_to_git_exclude(repo: Path) -> None:
-    """The copied name reaches the exclude file that applies to the worktree."""
-    worktree = _worktree(repo)
-
-    setup_worktree_env(repo, worktree, WorktreeSetupConfig(copy_files=(".env",)))
-
-    assert (worktree / ".env").is_file(), "the copy itself must still happen"
-    exclude_path = resolve_info_exclude_path(worktree)
-    assert exclude_path is not None
-    assert "/.env" in exclude_path.read_text(encoding="utf-8").splitlines()
+def test_names_are_outside_the_existing_deny_list() -> None:
+    """Guards the premise: `.env` was already excluded, these were not."""
+    assert "secrets.env" not in _MERGE_DENY_EXACT
+    assert "config/local.toml" not in _MERGE_DENY_EXACT
 
 
-def test_a_copied_file_is_not_staged_by_git_add_all(repo: Path) -> None:
-    """The behaviour the exclude exists for, asserted through git itself."""
-    worktree = _worktree(repo)
+def test_copied_inputs_are_not_staged_by_add_all(repo: Path) -> None:
+    """The agent's `git add -A` leaves the copied inputs out of the index."""
+    wt = _create(repo, "secrets.env", "config/local.toml")
+    assert (wt / "secrets.env").is_file(), "the copy itself still happens"
+    (wt / "feature.py").write_text("y = 2\n", encoding="utf-8")
 
-    setup_worktree_env(repo, worktree, WorktreeSetupConfig(copy_files=(".env",)))
-    (worktree / "feature.py").write_text("y = 2\n", encoding="utf-8")
-    _git(worktree, "add", "-A")
+    staged = _staged(wt)
 
-    staged = _git(worktree, "diff", "--cached", "--name-only").split()
-    assert "feature.py" in staged, "the agent's real work must still be staged"
-    assert ".env" not in staged
-
-
-def test_entries_are_anchored_to_the_repository_root(repo: Path) -> None:
-    """`/.env` and not `.env`, so a tracked `config/.env` is not hidden too."""
-    worktree = _worktree(repo)
-    (worktree / "config").mkdir()
-    (worktree / "config" / ".env").write_text("TOKEN=tracked\n", encoding="utf-8")
-
-    setup_worktree_env(repo, worktree, WorktreeSetupConfig(copy_files=(".env",)))
-    _git(worktree, "add", "-A")
-
-    staged = _git(worktree, "diff", "--cached", "--name-only").split()
-    assert "config/.env" in staged
-    assert ".env" not in staged
+    assert "feature.py" in staged
+    assert "secrets.env" not in staged
+    assert "config/local.toml" not in staged
 
 
-def test_a_file_already_present_in_the_worktree_is_excluded_too(repo: Path) -> None:
-    """`_copy_files` skips an existing target; the exclude must not skip with it.
+def test_operator_checkout_is_unaffected(repo: Path) -> None:
+    """Nothing reaches the shared git dir: the parent still sees its own files."""
+    _create(repo, "secrets.env", "config/local.toml")
 
-    That is the reported case: the file is in both trees already, which is what
-    makes the merge fail.
+    assert not _ignored(repo, "secrets.env")
+    assert not _ignored(repo, "config/local.toml")
+    info_exclude = repo / ".git" / "info" / "exclude"
+    if info_exclude.exists():
+        assert "secrets.env" not in info_exclude.read_text(encoding="utf-8")
+
+
+def test_other_worktrees_are_unaffected(repo: Path) -> None:
+    """A second worktree created without `copy_files` can still stage the name."""
+    _create(repo, "secrets.env", session="with-copy")
+    other = WorktreeManager(repo_root=repo, setup_config=None).create("without-copy")
+    (other / "secrets.env").write_text("TOKEN=other\n", encoding="utf-8")
+
+    assert "secrets.env" in _staged(other)
+
+
+def test_entries_are_anchored(repo: Path) -> None:
+    """`/secrets.env` must not hide a same-named file the project keeps elsewhere."""
+    wt = _create(repo, "secrets.env")
+    (wt / "config" / "secrets.env").write_text("nested\n", encoding="utf-8")
+
+    assert "config/secrets.env" in _staged(wt)
+
+
+def test_every_configured_name_is_excluded_not_only_fresh_copies(repo: Path) -> None:
+    """A name whose source is missing at create time is still excluded.
+
+    `_copy_files` skips it, but the agent (or a setup command) can create the
+    file later, and it is just as stageable then.
     """
-    worktree = _worktree(repo)
-    (worktree / ".env").write_text("TOKEN=preexisting\n", encoding="utf-8")
+    wt = _create(repo, "later.env")
+    (wt / "later.env").write_text("x\n", encoding="utf-8")
 
-    setup_worktree_env(repo, worktree, WorktreeSetupConfig(copy_files=(".env",)))
-    _git(worktree, "add", "-A")
-
-    assert (worktree / ".env").read_text(encoding="utf-8") == "TOKEN=preexisting\n"
-    assert ".env" not in _git(worktree, "diff", "--cached", "--name-only").split()
+    assert "later.env" not in _staged(wt)
 
 
-def test_no_copy_files_writes_no_exclude_entries(repo: Path) -> None:
-    """A config that copies nothing leaves the exclude file alone."""
-    worktree = _worktree(repo)
-    exclude_path = resolve_info_exclude_path(worktree)
-    assert exclude_path is not None
-    before = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+class TestEntryBuilder:
+    def test_metacharacters_are_literal(self, tmp_path: Path) -> None:
+        entries = _copy_files_exclude_entries(tmp_path, ["a[1].env", "b*.env", "#c.env", "!d.env"])
+        assert entries == ("/a\\[1].env", "/b\\*.env", "/#c.env", "/!d.env")
 
-    setup_worktree_env(repo, worktree, WorktreeSetupConfig(copy_files=()))
+    def test_bracketed_name_matches_only_itself(self, repo: Path) -> None:
+        (repo / "a[1].env").write_text("x\n", encoding="utf-8")
+        wt = _create(repo, "a[1].env")
+        (wt / "a1.env").write_text("deliverable\n", encoding="utf-8")
 
-    after = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
-    assert after == before
+        staged = _staged(wt)
+
+        assert "a[1].env" not in staged
+        assert "a1.env" in staged
+
+    def test_directories_and_escapes_are_skipped(self, repo: Path) -> None:
+        """An anchored `/config` would hide every new file the agent writes there."""
+        entries = _copy_files_exclude_entries(repo, ["config", "../outside.env", "", "secrets.env"])
+        assert entries == ("/secrets.env",)
+
+    def test_paths_are_normalised_to_posix(self, repo: Path) -> None:
+        assert _copy_files_exclude_entries(repo, ["./config/../config/local.toml"]) == ("/config/local.toml",)

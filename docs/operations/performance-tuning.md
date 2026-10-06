@@ -219,6 +219,15 @@ worktree_setup:
   setup_command: null   # e.g., "npm install" or "uv sync"
 ```
 
+`copy_files` entries are copied into each new worktree, and each one is also
+excluded from git **in that worktree only**, so an agent's `git add -A` cannot
+commit its copy and break the merge back. The exclusion lives in the
+worktree's own git dir (a per-worktree `core.excludesFile`), never in the
+shared `.git/info/exclude`, so your own checkout and other worktrees still see
+the file. Entries are anchored to the repository root, so `secrets.env` does
+not hide a tracked `config/secrets.env`. List files, not directories: a
+directory entry is not copied and not excluded.
+
 **Disk estimate:** `worktree_size ≈ repo_size × (1 - symlink_ratio)`. For a 500 MB repo with `.venv` and `node_modules` symlinked, expect 50–100 MB per worktree.
 
 ### Branch-only isolation (no worktree)

@@ -278,43 +278,60 @@ def _copy_files(repo_root: Path, worktree_path: Path, files: Sequence[str]) -> N
             logger.warning("Failed to copy %r into worktree: %s", file_name, exc)
 
 
-def _exclude_copied_files(worktree_path: Path, files: Sequence[str]) -> None:
-    """Keep per-checkout inputs copied in here out of the agent's commits.
+#: Characters that gitignore reads as pattern syntax rather than literal text.
+#: A configured name is a path, never a pattern, so each one is escaped.
+_GITIGNORE_GLOB_CHARS = frozenset("\\*?[")
 
-    The files in ``copy_files`` are untracked inputs -- ``.env`` and friends --
-    that each worktree gets its own copy of. Nothing stopped them entering the
-    index: an agent running ``git add -A`` stages them, commits them to its
-    branch, and the merge back into the parent repository then fails with an
-    untracked-overwrite error, because the *same* files are sitting in the
-    destination working tree. The run ends on a git error that names a file
-    nobody asked the agent to touch (#5966).
 
-    Registered in ``info/exclude`` rather than ``.gitignore``, for the reason
-    :mod:`bernstein.core.git.local_exclude` gives: ``.gitignore`` is itself a
-    tracked file, so writing the exclusion into the work tree would swap one
-    leaked file for another.
+def _escape_gitignore_path(rel: str) -> str:
+    """Return *rel* as gitignore pattern text that matches exactly that path.
 
-    Every configured name is registered, not only the ones this run copied. A
-    file already present at the target is skipped by ``_copy_files`` and is
-    just as stageable, so excluding only fresh copies would leave the case that
-    reported this unfixed.
-
-    Best-effort, like everything else in this setup path: ``register_run_excludes``
-    reports failure by returning nothing, and a worktree without the exclude is
-    still a usable worktree.
+    A leading ``#`` or ``!`` needs no escape: every caller anchors the entry
+    with ``/``, so neither is ever the first character of the line.
     """
-    if not files:
-        return
+    escaped = "".join(f"\\{ch}" if ch in _GITIGNORE_GLOB_CHARS else ch for ch in rel)
+    # Trailing spaces are stripped by git unless escaped.
+    stripped = escaped.rstrip(" ")
+    return stripped + "\\ " * (len(escaped) - len(stripped))
 
-    from bernstein.core.git.local_exclude import register_run_excludes
 
-    # Anchored to the repository root, matching RUN_EXCLUDE_ENTRIES: an
-    # unanchored `.env` would also hide a `config/.env` the project tracks
-    # deliberately.
-    entries = tuple(f"/{file_name.lstrip('/')}" for file_name in files if file_name.strip())
-    added = register_run_excludes(worktree_path, entries)
-    if added:
-        logger.info("Excluded copied worktree inputs from git: %s", ", ".join(added))
+def _copy_files_exclude_entries(repo_root: Path, files: Sequence[str]) -> tuple[str, ...]:
+    """Build worktree-local exclude entries for the names in ``copy_files``.
+
+    ``copy_files`` gives each worktree its own copy of untracked per-checkout
+    inputs. Names in :data:`_MERGE_DENY_EXACT` (``.env`` and friends) are
+    already excluded by :func:`_derive_local_exclude_entries`; any other name
+    (``secrets.env``, ``config/local.toml``) was stageable, so an agent's
+    ``git add -A`` committed it and the merge back failed with an
+    untracked-overwrite error on a file nobody asked the agent to touch (#5966).
+
+    Every configured name is included, not only the ones this run copied: a
+    file already present at the target is skipped by :func:`_copy_files` and is
+    just as stageable.
+
+    Each entry is the name's resolved path relative to the repository root, in
+    POSIX form, anchored with a leading ``/`` so it cannot hide a same-named
+    file the project tracks elsewhere, and with gitignore metacharacters
+    escaped so ``a[1].env`` matches that file and nothing else. Names that
+    resolve outside the repository, or to a directory, are skipped:
+    :func:`_copy_files` only copies files, and an anchored directory entry
+    would hide every new file the agent writes under it.
+    """
+    root = repo_root.resolve()
+    entries: list[str] = []
+    for file_name in files:
+        if not file_name.strip():
+            continue
+        candidate = (root / file_name).resolve()
+        try:
+            rel = candidate.relative_to(root)
+        except ValueError:
+            logger.warning("Not excluding copy_files entry %r: it resolves outside the repository", file_name)
+            continue
+        if not rel.parts or candidate.is_dir():
+            continue
+        entries.append("/" + _escape_gitignore_path(rel.as_posix()))
+    return tuple(entries)
 
 
 def setup_worktree_env(
@@ -327,8 +344,8 @@ def setup_worktree_env(
     1. Symlinks large shared directories so the agent doesn't need to
        reinstall dependencies.
     2. Copies per-worktree files (e.g. ``.env``) so each agent has its
-       own editable copy, and excludes them from git so a broad ``git add``
-       cannot commit them onto the agent's branch.
+       own editable copy. ``WorktreeManager.create`` excludes them, scoped to
+       the worktree, before this runs (see :func:`_copy_files_exclude_entries`).
     3. Applies sparse checkout if configured.
     4. Optionally runs a setup command (e.g. ``npm install``) inside the
        worktree when symlinks are insufficient.
@@ -343,7 +360,6 @@ def setup_worktree_env(
     """
     _symlink_dirs(repo_root, worktree_path, config.symlink_dirs)
     _copy_files(repo_root, worktree_path, config.copy_files)
-    _exclude_copied_files(worktree_path, config.copy_files)
 
     # --- Apply sparse checkout ------------------------------------------------
     if config.sparse_paths:
@@ -583,7 +599,7 @@ def _worktree_config_would_rescope_core_settings(worktree_path: Path) -> bool:
     return False
 
 
-def _ensure_worktree_local_excludes(worktree_path: Path) -> None:
+def _ensure_worktree_local_excludes(worktree_path: Path, extra_entries: Sequence[str] = ()) -> None:
     """Scope orchestrator runtime-state exclusion to this worktree only.
 
     Bernstein orchestrates agents against arbitrary target repositories that
@@ -615,6 +631,8 @@ def _ensure_worktree_local_excludes(worktree_path: Path) -> None:
 
     Args:
         worktree_path: Root of the newly-created worktree.
+        extra_entries: Further exclude lines for this worktree only, such as
+            the ``copy_files`` names from :func:`_copy_files_exclude_entries`.
     """
     git_dir = _resolve_git_dir(worktree_path)
     if git_dir is None:
@@ -634,7 +652,7 @@ def _ensure_worktree_local_excludes(worktree_path: Path) -> None:
         return
 
     exclude_path = git_dir / _LOCAL_EXCLUDES_FILENAME
-    entries = _derive_local_exclude_entries()
+    entries = (*_derive_local_exclude_entries(), *extra_entries)
     content = "\n".join(("# Local agent-orchestrator runtime state (not a project deliverable).", *entries, ""))
     try:
         exclude_path.write_text(content, encoding="utf-8")
@@ -1165,7 +1183,10 @@ class WorktreeManager:
             # change what the operator's own main checkout (or any other
             # worktree of the same clone) picks up. Must happen before any
             # setup step that might itself write into the worktree.
-            _ensure_worktree_local_excludes(worktree_path)
+            copy_entries: tuple[str, ...] = ()
+            if self._setup_config is not None:
+                copy_entries = _copy_files_exclude_entries(self.repo_root, self._setup_config.copy_files)
+            _ensure_worktree_local_excludes(worktree_path, copy_entries)
 
             # Write lock file for stale detection (T487)
             worker_pid = os.getpid()
