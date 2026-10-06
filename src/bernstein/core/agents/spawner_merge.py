@@ -44,12 +44,15 @@ ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH = "BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH"
 #: (quality gates, file scope, blast radius) that the override does not touch.
 REFUSAL_TARGET_IS_DEFAULT_BRANCH: Final = "target-is-default-branch"
 
-#: Env var an operator sets to keep a run entirely local: the merge still
-#: happens, the push after it does not. ``safe_push`` fetches, may rebase, and
-#: writes to ``origin``, so on a repository that has a remote a local-only or
-#: offline run published agent commits nobody had reviewed -- and there was no
-#: way to ask it not to short of removing the remote. Accepts the project's
-#: standard truthy words.
+#: Env var an operator sets to keep merge-backs local: the merge still happens,
+#: the push after it (and the pending-push retry queue) does not. ``safe_push``
+#: fetches, may rebase, and writes to ``origin``, so on a repository that has a
+#: remote a local-only or offline run published agent commits nobody had
+#: reviewed -- and there was no way to ask it not to short of removing the
+#: remote. Scope is the merge-back push only: the salvage push of
+#: ``salvage/<id>`` (``core/git/salvage.py``) and evolve mode's ``safe_push``
+#: to ``main`` (``orchestrator_evolve.py``) do not read this flag. Accepts the
+#: project's standard truthy words.
 ENV_LOCAL_ONLY = "BERNSTEIN_LOCAL_ONLY"
 
 _TRUTHY_ALLOW = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
