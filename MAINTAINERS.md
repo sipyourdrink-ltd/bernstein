@@ -26,9 +26,11 @@ disagree the TOML wins. How the count works is in
 | Maintainer | [@chernistry](https://github.com/chernistry) | Own changes merge without approvals; approves protected paths and changes over 1,000 lines |
 | Core reviewers | [@vaibhav8a](https://github.com/vaibhav8a), [@thegoodengineer](https://github.com/thegoodengineer), [@tenequm](https://github.com/tenequm), [@Phoenix1504e](https://github.com/Phoenix1504e), [@Chirag6722](https://github.com/Chirag6722) | At least one of the two approvals a contributor's change needs comes from here |
 | Committers | [@Silentpartnercoding](https://github.com/Silentpartnercoding) | Approvals count toward the two; a standing "changes requested" blocks a merge, the maintainer's own included |
+| Area reviewers | none yet | Approvals count toward the two; count as core only on a pull request wholly inside their area (adapters, web, tui, docs, packaging) |
+| Triagers | none yet | Labels, assignments, milestones, closing duplicates; no approval weight |
 | Automation | `bernstein-the-conductor[bot]`, `renovate[bot]`, `dependabot[bot]` | Own changes merge on green CI, except on sensitive paths, where the maintainer approves |
 
 A change to the roster is a pull request against the TOML file, following
-[GOVERNANCE.md](GOVERNANCE.md); this table is updated in the same pull request.
+[GOVERNANCE.md](GOVERNANCE.md); this table is updated in the same pull request. Entries may carry a term; see [Roles and terms](docs/governance/review-charter.md#11-roles-and-terms).
 
 Security reports do not go here. Use the channels in [SECURITY.md](SECURITY.md).
