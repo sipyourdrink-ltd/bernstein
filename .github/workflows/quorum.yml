@@ -33,11 +33,13 @@ name: quorum
 # in-tree emitter of the name; `scripts/publish_required_check.py` is the
 # supported way to re-publish it from a privileged workflow.
 #
-# No ruleset currently in force on `main` lists `quorum`, so today the check
-# is advisory: the merge queue does not wait for it, and a merge that went
-# through without the quorum shows as a failed `quorum` run on the merged
-# commit. Making it required is a ruleset change reserved to the maintainer
-# (charter section 4).
+# The intended home for that requirement is an organization ruleset, which
+# nothing inside this repository - a pull request included - can edit. The
+# organization's plan does not offer organization rulesets, and no ruleset
+# in force on `main` lists `quorum`, so today the check is advisory: the
+# merge queue does not wait for it, and a merge that went through without
+# the quorum shows as a failed `quorum` run on the merged commit. Making it
+# required is a ruleset change reserved to the maintainer (charter section 4).
 
 on:
   pull_request:
