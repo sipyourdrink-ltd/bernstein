@@ -13,6 +13,7 @@ Foundation.
 
 ```
 bernstein trace export <RUN_ID> [--out PATH] [--out-dir DIR] [--json] [--last] [--sdd-dir PATH]
+                        [--anchor-endpoint URL]
 ```
 
 - `--last` picks the most recently finished run in `.sdd/runs/`
@@ -22,9 +23,13 @@ bernstein trace export <RUN_ID> [--out PATH] [--out-dir DIR] [--json] [--last] [
   run-level `aggregate.json` into a directory.
 - `--json` emits the canonical JSON form (identical to the default output).
 - `--sdd-dir` overrides the `.sdd/` path; defaults to `./.sdd/` or `./.`.
+- `--anchor-endpoint` (opt-in, off by default) submits each written record
+  to a time-anchor service after the export; see
+  [Anchoring a record in time](#trace-anchor).
 
 Exit codes: `0` = exported, `1` = run not found / chain broken / emit
-error, `2` = missing `RUN_ID` argument.
+error / anchoring failed (the export is still written), `2` = missing
+`RUN_ID` argument or an unusable `--anchor-endpoint`.
 
 The trace extra (`bernstein[trace]`) is required.
 
@@ -210,6 +215,64 @@ uv run --with agentrust-trace-tests==0.5.1 trace-tests verify \
 fixture vectors use a frozen 2023-11-14 clock, not wall-clock time —
 an unmodified default would reject every vector as stale.)
 
+## Anchoring a record in time (opt-in) {#trace-anchor}
+
+A record's only time is `iat`, which the producer writes, and TRACE
+verifiers reject a record older than 24 hours by default. Nothing inside
+the record bounds `iat` from outside, so a record that is checkable today
+is not checkable by a conformant verifier next month, and a reader has
+only the producer's word for when it was made.
+
+`--anchor-endpoint URL` hands each record to a service that keeps the
+exact bytes and later commits their digest to a clock the producer does
+not control. It is off unless the option is given: Bernstein has no
+default anchor host, sends nothing otherwise, and the export path above
+never depends on a service being reachable.
+
+```bash
+bernstein trace export <RUN_ID> --out trace.json --anchor-endpoint https://anchor.example/evidence/trace
+```
+
+After the record is written, Bernstein POSTs `{"record": <the record>}`
+to `URL` and expects a 2xx JSON answer carrying at least:
+
+| Member | Meaning |
+|---|---|
+| `sha` | lowercase hex SHA-256 of the RFC 8785 (JCS) form of the record as submitted |
+| `status` | `pending` (accepted, not yet committed) or `anchored` |
+
+Bernstein recomputes the JCS digest itself and fails if `sha` names any
+other value, so a receipt can only refer to the bytes that were exported.
+That digest is the one these records already use to link hops: a child
+record's `delegation.parent_record_hash` is `sha256:` followed by its
+parent's anchored `sha`. A 4xx answer is reported with its
+`reason_code` when the body carries one.
+
+The receipt is written beside each record as `<name>.anchor.json`
+(`trace.anchor.json`, or `<exec_id>.anchor.json` and
+`aggregate.anchor.json` under `--out-dir`), and to stderr when the record
+went to stdout:
+
+```json
+{
+  "endpoint": "https://anchor.example/evidence/trace",
+  "record_sha256": "62e4a015...",
+  "status": "pending",
+  "response": {"sha": "62e4a015...", "status": "pending"}
+}
+```
+
+`response` is the service's answer kept verbatim; Bernstein interprets
+only `sha` and `status`. The endpoint must be `https://` (plain `http://`
+is accepted for a loopback host, for local testing) and redirects are
+refused. If anchoring fails for any record, the others are still
+attempted, the export stays on disk, and the command exits `1`.
+
+What a receipt does not establish: that any claim inside the record is
+true, or that the key in `cnf.jwk` belongs to the subject. It bounds when
+the bytes existed; appraising what they say is still the verifier's job,
+exactly as for the record's own signature.
+
 ## Identifier URIs {#trace-identifiers}
 
 Two fixed URIs appear in every trust record this producer emits. Both
@@ -251,5 +314,6 @@ for the span-side workflow.
 `src/bernstein/cli/commands/advanced_cmd.py` (`trace export`),
 `src/bernstein/core/observability/trust_record.py`
 (`TrustRecordEmitter`, `sign_trust_record`, `verify_trust_record`),
+`src/bernstein/core/observability/time_anchor.py` (`anchor_record`, opt-in),
 `tests/fixtures/trust-record-vectors/` (committed test vectors),
 `schemas/trace-spec/0.2/trace-v0.2.json` (vendored schema).
