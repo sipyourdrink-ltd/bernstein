@@ -208,6 +208,42 @@ def _no_git_background_maintenance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_CONFIG_COUNT", str(start + 2))
 
 
+def _is_pytest_capture_handler(handler: logging.Handler) -> bool:
+    """pytest's own capture handlers, which it adds and removes around each phase."""
+    return type(handler).__module__.startswith("_pytest")
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logging() -> Iterator[None]:
+    """Give every test the root logging state it found, whatever the last test did (#6296).
+
+    ``bernstein --quiet`` runs ``logging.basicConfig(level=logging.ERROR, force=True)``,
+    which is right for a program and wrong to leave behind in a test process: it sets
+    the ROOT level to ERROR and nothing restores it. Every ``bernstein.*`` logger is a
+    plain ``getLogger(__name__)`` that inherits that level, so a later test on the same
+    worker asserting on a WARNING record read an empty ``caplog`` against correct code.
+
+    Level and ``logging.disable`` are restored as found. Handlers are compared without
+    pytest's per-phase capture handlers, which pytest attaches and detaches itself: one
+    a test added (``basicConfig``'s stderr handler) is removed, and one it removed is put
+    back.
+    """
+    root = logging.getLogger()
+    level = root.level
+    disabled = logging.root.manager.disable
+    handlers = [h for h in root.handlers if not _is_pytest_capture_handler(h)]
+    yield
+    root.setLevel(level)
+    logging.disable(disabled)
+    for handler in list(root.handlers):
+        if not _is_pytest_capture_handler(handler) and handler not in handlers:
+            root.removeHandler(handler)
+            handler.close()
+    for handler in handlers:
+        if handler not in root.handlers:
+            root.addHandler(handler)
+
+
 @pytest.fixture(autouse=True)
 def _memory_guard():
     """Reclaim as RSS approaches the cap; abort the session once it exceeds it."""
