@@ -348,6 +348,7 @@ src/bernstein/core/security/sandbox_profiles.py::list_builtin_profiles          
 src/bernstein/core/security/sandbox_profiles.py::render_profile_summary                        # exercised by tests only; no production caller
 src/bernstein/core/security/sandbox_profiles.py::validate_profile                              # exercised by tests only; no production caller
 src/bernstein/core/security/sbom.py::SBOMScanResult.has_critical                               # no production caller and no test reference; baseline entry from the first scan
+src/bernstein/core/security/sbom.py::SBOMScanResult.has_high                                   # no production caller and no test reference. It only looked reached because a local variable named has_high in quality_gates.py matched by name (#6191)
 src/bernstein/core/security/seccomp_profiles.py::build_custom_profile                          # exercised by tests only; no production caller
 src/bernstein/core/security/seccomp_profiles.py::build_profile                                 # exercised by tests only; no production caller
 src/bernstein/core/security/seccomp_profiles.py::profile_for_role                              # exercised by tests only; no production caller
