@@ -36,11 +36,14 @@ on:
       - ready_for_review
       - labeled
       - unlabeled
-      - auto_merge_enabled
 
 # Cancel superseded pull_request runs (repo-wide rule; none of these
 # checks is a branch-protection required context, so a cancelled run
-# cannot wedge a PR -- see tests/unit/test_pull_request_workflow_concurrency_yaml.py).
+# should not wedge a PR -- see tests/unit/test_pull_request_workflow_concurrency_yaml.py).
+# NOTE: a cancelled check run still poisons the commit status rollup
+# (rollup=FAILURE), which blocks auto-merge. The auto_merge_enabled
+# event type was removed above to prevent the race that produced
+# cancelled artifacts on every auto-merge enablement.
 # The expression keeps non-PR events (none today) outside the cancel path.
 concurrency:
   group: pr-policy-${{ github.event.pull_request.number }}
