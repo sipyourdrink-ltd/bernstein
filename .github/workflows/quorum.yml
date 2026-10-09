@@ -24,14 +24,20 @@ name: quorum
 # instead of passing it. The rules a pull request is measured against are
 # therefore always the current ones, whenever it was opened.
 #
-# An organization ruleset requires the context this workflow publishes,
-# `quorum`, on the default branch. The context is required by name rather
-# than the workflow by path, because a verdict that turns on elapsed time -
+# The context this workflow publishes, `quorum`, is meant to be required by
+# name on the default branch, not as the workflow by path, because a verdict
+# that turns on elapsed time -
 # the 72-hour objection window - has to be answerable again after the clock
 # moves, by a re-run or by a re-publish of the same context, without the
 # gate insisting on which run produced it. The job below is the only
 # in-tree emitter of the name; `scripts/publish_required_check.py` is the
 # supported way to re-publish it from a privileged workflow.
+#
+# No ruleset currently in force on `main` lists `quorum`, so today the check
+# is advisory: the merge queue does not wait for it, and a merge that went
+# through without the quorum shows as a failed `quorum` run on the merged
+# commit. Making it required is a ruleset change reserved to the maintainer
+# (charter section 4).
 
 on:
   pull_request:
