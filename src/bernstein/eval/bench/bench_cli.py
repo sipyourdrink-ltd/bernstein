@@ -189,6 +189,38 @@ def bench_group() -> None:
     """
 
 
+# This strict merge gate deliberately does not use bench run --ci's neutral
+# scorecard policy or the receipt-only replay adapter's status == "fail" score.
+@bench_group.command(name="gate-evasion-baseline")
+@click.option(
+    "--baseline",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path(".github/gate-evasion-baseline.json"),
+    show_default=True,
+)
+@click.option("--update", is_flag=True, help="Explicitly remeasure and write the committed baseline.")
+@click.option("--reason", default="", help="Required review rationale for --update.")
+def bench_gate_evasion_baseline(baseline: Path, update: bool, reason: str) -> None:
+    """Fail closed on baseline corruption, tool drift, missed cases or reduced catch rate."""
+    import os
+
+    from bernstein.eval.bench.gate_evasion_baseline import check_or_update_baseline
+
+    if update and os.environ.get("CI"):
+        raise click.ClickException("CI cannot update the gate-evasion baseline; run --update locally with --reason")
+    try:
+        result = check_or_update_baseline(baseline, update=update, reason=reason)
+    except Exception as exc:
+        # A failed gate or invalid measurement must never become a neutral
+        # scorecard or a zero exit status.
+        raise click.ClickException(f"gate-evasion baseline verification failed: {type(exc).__name__}: {exc}") from exc
+    action = "Updated" if update else "Verified"
+    click.echo(
+        f"{action} gate-evasion baseline: {result['caught_count']}/{result['total']} caught "
+        f"({result['catch_rate']:.1%}); suite={result['suite_hash']}; corpus={result['corpus_sha256']}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # bernstein bench run
 # ---------------------------------------------------------------------------

@@ -827,13 +827,61 @@ The eight built-in classes, and what the gates return on them today:
 | `nonexistent_api_mock_test` | `tests` | **missed** | a spec-less `MagicMock` accepts the non-existent attribute, so the test passes and the gate misses it |
 | `unimported_test_symbol` | `tests` | **missed** | the placeholder test passes; nothing ties a test to the changed symbol |
 | `runtime_config_placeholder_secret` | `dlp_scan` | **missed** | the DLP scan has no pattern for a placeholder key in an `os.getenv` default |
-| `dead_code_test_deletion` | `dead_code` | **missed** | `command_not_found`: vulture is not a project dependency |
-| `empty_file_deletion` | `dead_code` | **missed** | `command_not_found`: as above |
+| `dead_code_test_deletion` | `dead_code` | **missed** | `no_gate`: a deletion-only change leaves no Python file to scan; passing its deleted filename to vulture is a tool error, not a finding |
+| `empty_file_deletion` | `dead_code` | **missed** | `pass`: vulture runs but finds no unused code |
 | `impossible_local_verification_publish` | `publish_verification` | **missed** | `no_gate`: no gate checks that a publish was verifiable locally |
 
-Catch rate today: 2 of 8, both identified by ruff's own finding count. The misses are the suite's output, not a defect in it — each names the gate that should have flagged the class, and each has a follow-up issue against that gate: #6150 (`nonexistent_api_mock_test`), #6151 (`unimported_test_symbol`), #6152 (`runtime_config_placeholder_secret`), #6153 (`impossible_local_verification_publish`), #5869 (both `dead_code` classes — the gate reports a missing vulture as a failure and vulture is not a project dependency).
+The pinned-tool baseline currently measures **2 of 8** catches (25%, from ruff finding signatures), with `ruff 0.16.7`, `pytest 9.1.1` and `vulture 2.14` in Python 3.13. The misses are recorded by case and responsible gate: #6150 (`nonexistent_api_mock_test`), #6151 (`unimported_test_symbol`), #6152 (`runtime_config_placeholder_secret`), #6153 (`impossible_local_verification_publish`), #5869 (dead-code deletion coverage).
 
-Pinning the rate against a signed baseline is #6154; this suite measures, it does not yet gate.
+### Required catch-rate baseline (#6154)
+
+`.github/gate-evasion-baseline.json` is the **content-addressed, committed**
+reference for the strict `gate-evasion-v1` merge check. It contains schema
+version, suite version/hash, the SHA-256 of **all** corpus-relative fixture and
+manifest file paths and original bytes (not just the manifests), exact installed
+tool versions, each case's gate, expected/actual verdict, `caught` flag and
+`verdict_basis`, total/caught counts, catch rate, update rationale and a
+canonical self-SHA-256.
+
+The suite hash alone does not cover fixture bytes. A changed fixture, new case,
+removed case or changed tool version therefore **fails closed**, even if the
+headline percentage happens to match. A result counts as caught only with
+positive `finding_signature` or `junit_failures` evidence; a tool/runner
+error, missing vulture, bad signature, missing or damaged baseline, or incomplete
+run is a hard failure. A genuinely unimplemented `no_gate` is an honest,
+measured miss. Total catch-rate regressions fail, and **any previously caught
+class turning into a miss fails even when another class compensates for it**.
+This command does not use `bench run --ci`'s intentionally neutral generic
+scorecard policy or the replay adapter's bare `status == "fail"` scoring.
+
+```bash
+# Install every required command-gate tool into this interpreter, not uv tool.
+UV_PYTHON=3.13 uv sync --locked --group dev --python 3.13
+UV_PYTHON=3.13 uv run --no-sync bernstein bench gate-evasion-baseline \
+  --baseline .github/gate-evasion-baseline.json
+```
+
+When a new evasion case or an intentional gate change requires a new reference,
+measure **all** cases in the same locked environment and state the reason:
+
+```bash
+UV_PYTHON=3.13 uv run --no-sync bernstein bench gate-evasion-baseline \
+  --baseline .github/gate-evasion-baseline.json \
+  --update --reason "Add reviewed case X and remeasure with pinned gate tools"
+UV_PYTHON=3.13 uv run --no-sync bernstein bench gate-evasion-baseline \
+  --baseline .github/gate-evasion-baseline.json
+git diff -- .github/gate-evasion-baseline.json
+```
+
+Commit the baseline update for review with its case-level changes; CI never
+passes `--update` and refuses update attempts under `CI`. The hash detects
+accidental mismatch to the committed contents, **not the identity of a signer**:
+an attacker who can edit the JSON can recompute its digest. The existing Git
+review, branch-protection and merge-queue approvals are the trust boundary; no
+public stub signature or CI private signing key is implied. The dedicated CI
+job runs on relevant quality-gate, corpus, benchmark, baseline and dependency
+changes, including the combined merge-queue diff; see
+[`docs/operations/ci.md`](../operations/ci.md).
 
 ---
 

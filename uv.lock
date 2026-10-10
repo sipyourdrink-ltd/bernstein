@@ -507,6 +507,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-qrcode" },
     { name = "types-reportlab" },
+    { name = "vulture" },
 ]
 discord = [
     { name = "discord-py" },
@@ -625,6 +626,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-qrcode" },
     { name = "types-reportlab" },
+    { name = "vulture" },
 ]
 docs = [
     { name = "mkdocs" },
@@ -738,6 +740,7 @@ requires-dist = [
     { name = "types-reportlab", marker = "extra == 'dev'", specifier = ">=4.5.1.20260724" },
     { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.30" },
+    { name = "vulture", marker = "extra == 'dev'", specifier = "==2.14" },
     { name = "watchdog", specifier = ">=4.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]
@@ -784,6 +787,7 @@ dev = [
     { name = "types-pyyaml", specifier = ">=6.0.12.20260724" },
     { name = "types-qrcode", specifier = ">=8.2.0.20260518" },
     { name = "types-reportlab", specifier = ">=4.5.1.20260724" },
+    { name = "vulture", specifier = "==2.14" },
 ]
 docs = [
     { name = "mkdocs", specifier = ">=1.6.1,<2" },
@@ -5914,6 +5918,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5d/ad/04bbb797c84fc1f26cb171f7394716f4865ffb8d8c5e1eef42565c2dfa6b/uvicorn-0.53.0.tar.gz", hash = "sha256:a9356f0cb89b3b8621529c5d5eebd69bfe154f4c3f68b4cf2de47e45fa855c2e", size = 110881, upload-time = "2026-09-14T07:44:23.815Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/18/0eea75741ee812e9f598b687619ce2454f6c3a1c5cd21ea990ec6bd26f45/uvicorn-0.53.0-py3-none-any.whl", hash = "sha256:e8dca71ec86dce5f04e333f0d56cdedf942446e6643b9cea1af0d6d3a02cb03e", size = 87081, upload-time = "2026-09-14T07:44:22.179Z" },
+]
+
+[[package]]
+name = "vulture"
+version = "2.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8e/25/925f35db758a0f9199113aaf61d703de891676b082bd7cf73ea01d6000f7/vulture-2.14.tar.gz", hash = "sha256:cb8277902a1138deeab796ec5bef7076a6e0248ca3607a3f3dee0b6d9e9b8415", size = 58823, upload-time = "2024-12-08T17:39:43.319Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a0/56/0cc15b8ff2613c1d5c3dc1f3f576ede1c43868c1bc2e5ccaa2d4bcd7974d/vulture-2.14-py2.py3-none-any.whl", hash = "sha256:d9a90dba89607489548a49d557f8bac8112bd25d3cbc8aeef23e860811bd5ed9", size = 28915, upload-time = "2024-12-08T17:39:40.573Z" },
 ]
 
 [[package]]

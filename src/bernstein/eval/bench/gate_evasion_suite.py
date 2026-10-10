@@ -106,8 +106,8 @@ _PATCH_PATH_RE = re.compile(r"^(?:---|\+\+\+) [ab]/(\S+)", re.MULTILINE)
 
 #: The Python module each command gate shells out to. Checked before the gate
 #: runs: a gate whose tool is not installed cannot have caught anything, and
-#: the dead-code gate reports a missing vulture as ``fail`` -- which would
-#: count as a catch. Here it is ``command_not_found``, a miss with a reason.
+#: a missing command must not count as a catch. The strict baseline gate
+#: additionally requires these tools in the pinned interpreter before running.
 _GATE_TOOL_MODULE = {"lint": "ruff", "dead_code": "vulture", "tests": "pytest", "type_check": "pyright"}
 
 # ---------------------------------------------------------------------------
@@ -415,6 +415,20 @@ def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
         scratch.mkdir()
         junit = Path(tmp) / "junit.xml"
         changed = materialise_case(case, scratch)
+        # A deletion-only dead-code fixture has no surviving Python file to
+        # scan. Passing its deleted pathname to vulture yields a tool error,
+        # not a finding. Record this known coverage gap as a real miss instead
+        # of making the strict baseline gate fail for a nonexistent input.
+        if gate == "dead_code" and not any((scratch / name).is_file() for name in changed if name.endswith(".py")):
+            return GateEvasionResult(
+                case_class=case.class_name,
+                gate_that_must_flag=gate,
+                expected_verdict=case.expected_verdict,
+                caught=False,
+                actual_verdict="no_gate",
+                details="dead_code has no surviving Python file to inspect in this deletion-only change",
+                verdict_basis="no_gate",
+            )
         runner = GateRunner(_hermetic_config(), scratch)
         override = None
         if gate == "tests":
