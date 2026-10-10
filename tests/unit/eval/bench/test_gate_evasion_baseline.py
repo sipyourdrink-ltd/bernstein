@@ -262,6 +262,7 @@ def test_runner_error_never_becomes_neutral(monkeypatch: pytest.MonkeyPatch, tmp
 def test_cli_requires_explicit_reason_and_never_updates_during_check(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("CI", raising=False)
     monkeypatch.setattr(baseline, "measure_gate_evasion", lambda: _measured())
     path = tmp_path / "baseline.json"
     runner = CliRunner()
