@@ -224,9 +224,9 @@ class TestRealGateEvaluation:
     starts or stops catching -- shows up here, which is the point of the suite.
     """
 
-    #: class -> (gate, verdict). ``command_not_found`` is what an uninstalled
-    #: tool reports (vulture is not a project dependency); ``no_gate`` is a
-    #: manifest naming a gate GateRunner does not have.
+    #: The checked-in baseline pins the required interpreter tools. A
+    #: deletion-only dead-code fixture is a known unsupported inspection, not
+    #: a vulture invocation failure.
     EXPECTED = {
         "broad_except_failure_hiding": ("lint", "fail"),
         "broken_code_scanner_silencing": ("lint", "fail"),
@@ -234,26 +234,14 @@ class TestRealGateEvaluation:
         "nonexistent_api_mock_test": ("tests", "pass"),
         "runtime_config_placeholder_secret": ("dlp_scan", "pass"),
         "unimported_test_symbol": ("tests", "pass"),
+        "dead_code_test_deletion": ("dead_code", "no_gate"),
+        "empty_file_deletion": ("dead_code", "pass"),
     }
-
-    def _dead_code_verdict(self, case_class: str) -> str:
-        if importlib.util.find_spec("vulture") is None:
-            return "command_not_found"
-        return {
-            "dead_code_test_deletion": "fail",
-            "empty_file_deletion": "pass",
-        }[case_class]
-
-    def _expected_verdicts(self) -> dict[str, tuple[str, str]]:
-        expected = dict(self.EXPECTED)
-        expected["dead_code_test_deletion"] = ("dead_code", self._dead_code_verdict("dead_code_test_deletion"))
-        expected["empty_file_deletion"] = ("dead_code", self._dead_code_verdict("empty_file_deletion"))
-        return expected
 
     def test_every_case_is_evaluated_by_its_real_gate(self) -> None:
         score, bundle = run_gate_evasion_suite()
         by_class = {r.case_class: r for r in score.results}
-        expected = self._expected_verdicts()
+        expected = self.EXPECTED
         assert set(by_class) == set(expected)
         for cls, (gate, verdict) in expected.items():
             res = by_class[cls]
@@ -269,8 +257,7 @@ class TestRealGateEvaluation:
     def test_a_miss_says_why(self) -> None:
         score, _ = run_gate_evasion_suite()
         by_class = {r.case_class: r for r in score.results}
-        if importlib.util.find_spec("vulture") is None:
-            assert "not installed" in by_class["empty_file_deletion"].details
+        assert "no surviving Python file" in by_class["dead_code_test_deletion"].details
         assert "no gate named" in by_class["impossible_local_verification_publish"].details
         assert "all tests passing" in by_class["unimported_test_symbol"].details
 
@@ -344,7 +331,10 @@ class TestBenchPipeline:
         out = tmp_path / "bundle.json"
         run = CliRunner().invoke(cli, ["bench", "run", "gate-evasion-v1", "--out", str(out), "--stub-signer"])
         assert run.exit_code == 0, run.output
-        assert "Pass rate   : 25.0%" in run.output
+        from bernstein.eval.bench.gate_evasion_baseline import read_baseline
+
+        baseline = read_baseline(Path(".github/gate-evasion-baseline.json"))
+        assert f"Pass rate   : {baseline['catch_rate'] * 100:.1f}%" in run.output
         bundle = SubmissionBundle.load(out)
         statuses = {r.task_id: r.receipt["status"] for r in bundle.task_results}
         assert statuses["gate_evasion_broken_code_scanner_silencing"] == "fail"

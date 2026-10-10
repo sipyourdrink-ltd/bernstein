@@ -172,6 +172,7 @@ jobs:
       tests_changed: ${{ steps.classify.outputs.tests_changed }}
       gha_workflows_changed: ${{ steps.classify.outputs.gha_workflows_changed }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      gate_evasion_relevant: ${{ steps.classify.outputs.gate_evasion_relevant }}
       # macos_sensitive: true when the diff touches platform-specific code
       # paths whose macOS behaviour cannot be exercised on ubuntu/windows
       # runners. Used by the `test` matrix gate (see #1468) to skip the
@@ -289,6 +290,7 @@ jobs:
               echo "docs_only=false"
               echo "macos_sensitive=true"
               echo "rpm_relevant_changed=true"
+              echo "gate_evasion_relevant=true"
             } | tee -a "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -303,6 +305,7 @@ jobs:
           docs_only=true
           macos_sensitive=false
           rpm_relevant_changed=false
+          gate_evasion_relevant=false
           # Classify each changed path via grep. Using grep instead of
           # bash `case` to avoid linter warnings on overlapping patterns
           # (case-globs cannot cross slashes anyway).
@@ -314,6 +317,11 @@ jobs:
             fi
             if printf '%s\n' "$f" | grep -Eq '^tests/'; then
               tests_changed=true; docs_only=false; matched_meta=true
+            fi
+            # Recheck the content-addressed corpus gate if the benchmark, a
+            # covered quality gate, its pinned tools or its CI definition changes.
+            if printf '%s\n' "$f" | grep -Eq '^src/bernstein/core/quality/|^src/bernstein/eval/cases/gate_evasion/|^src/bernstein/eval/bench/(gate_evasion_(suite|baseline)|bench_cli|suite|ci)\.py$|^\.github/gate-evasion-baseline\.json$|^(pyproject\.toml|uv\.lock|\.github/workflows/ci\.yml)$|^tests/unit/eval/bench/test_gate_evasion_(suite|baseline)\.py$|^tests/unit/test_ci_gate_evasion_workflow_yaml\.py$'; then
+              gate_evasion_relevant=true
             fi
             if printf '%s\n' "$f" | grep -Eq '^\.github/workflows/.*\.(yml|yaml)$'; then
               gha_workflows_changed=true; docs_only=false; matched_meta=true
@@ -383,6 +391,7 @@ jobs:
           # treat as "not docs-only" so we don't intentionally skip tests.
           if [ -z "$CHANGED" ]; then
             docs_only=false
+            gate_evasion_relevant=true
           fi
           echo "python_changed=$python_changed"        | tee -a "$GITHUB_OUTPUT"
           echo "tests_changed=$tests_changed"          | tee -a "$GITHUB_OUTPUT"
@@ -390,6 +399,7 @@ jobs:
           echo "docs_only=$docs_only"                  | tee -a "$GITHUB_OUTPUT"
           echo "macos_sensitive=$macos_sensitive"      | tee -a "$GITHUB_OUTPUT"
           echo "rpm_relevant_changed=$rpm_relevant_changed" | tee -a "$GITHUB_OUTPUT"
+          echo "gate_evasion_relevant=$gate_evasion_relevant" | tee -a "$GITHUB_OUTPUT"
 
   plan-affected-tests:
     name: Plan affected tests
@@ -915,6 +925,34 @@ jobs:
       # reports the generator's habits, not ours: protobuf emits imports
       # its descriptor uses at runtime and vulture cannot see.
       - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
+
+  gate-evasion:
+    name: Gate-evasion baseline
+    needs: [determine-changes]
+    if: ${{ needs.determine-changes.outputs.gate_evasion_relevant == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The repository's default .python-version can differ; both install and
+      # measurement must use the same locked Python interpreter.
+      UV_PYTHON: "3.13"
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          python-version: "3.13"
+      - name: Install pinned gate-evasion tools in the tested interpreter
+        run: uv sync --locked --group dev --python 3.13
+      - name: Fail on gate-evasion regression or an unverifiable baseline
+        run: uv run --no-sync bernstein bench gate-evasion-baseline --baseline .github/gate-evasion-baseline.json
 
   dist-size:
     # Skips only when a merge-queue group's combined diff is docs-only
@@ -2554,6 +2592,7 @@ jobs:
       - actionlint
       - lineage-gate
       - dead-code
+      - gate-evasion
       - dist-size
       - install-smoke-pipx
       - install-smoke-uv
@@ -2707,6 +2746,11 @@ jobs:
               if r == "success":
                   continue
               if r == "skipped":
+                  # Only a proven irrelevant diff may skip the strict
+                  # gate-evasion baseline check. Unknown planner output,
+                  # cancelled jobs and failed jobs are never permitted.
+                  if name == "gate-evasion" and plan.get("gate_evasion_relevant") == "false":
+                      continue
                   if ordinary_main_push and name in POST_MERGE_PUSH_SKIPPABLE:
                       continue
                   if name == "coverage-report" and not coverage_required:
