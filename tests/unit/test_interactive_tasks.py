@@ -176,6 +176,60 @@ async def test_patch_task_priority(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_patch_task_persists_escalation_context(client: AsyncClient) -> None:
+    """A ladder hop's model, adapter, context line, and step survive the patch."""
+    task = await _create_task(client, model="qwen2.5-coder-7b")
+    context = "ESCALATION: step 0->1; attempts=1; evidence=verification_failure"
+
+    resp = await client.patch(
+        f"/tasks/{task['id']}",
+        json={
+            "model": "qwen2.5-coder-32b",
+            "cli": "qwen",
+            "meta_messages": [context],
+            "escalation_ladder_step": 1,
+            "escalation_ladder_attempts": 1,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model"] == "qwen2.5-coder-32b"
+    assert data["cli"] == "qwen"
+    assert context in data["meta_messages"]
+    assert data["metadata"]["escalation_ladder_step"] == 1
+    assert data["metadata"]["escalation_ladder_attempts"] == 1
+
+
+@pytest.mark.anyio
+async def test_patch_task_cannot_write_ladder_evidence_or_spend(client: AsyncClient) -> None:
+    """PATCH has no free-form metadata: evidence and spend keys never reach the task."""
+    task = await _create_task(client)
+
+    resp = await client.patch(
+        f"/tasks/{task['id']}",
+        json={
+            "priority": 1,
+            "metadata": {
+                "failure_evidence_class": "verification_failure",
+                "failure_evidence_digest": "c" * 64,
+                "spend_usd": 0.0,
+            },
+        },
+    )
+    assert resp.status_code == 200
+    metadata = resp.json().get("metadata") or {}
+    for key in ("failure_evidence_class", "failure_evidence_digest", "spend_usd"):
+        assert key not in metadata
+
+
+@pytest.mark.anyio
+async def test_patch_task_rejects_negative_ladder_step(client: AsyncClient) -> None:
+    task = await _create_task(client)
+    resp = await client.patch(f"/tasks/{task['id']}", json={"escalation_ladder_step": -1})
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
 async def test_patch_task_unknown_returns_404(client: AsyncClient) -> None:
     resp = await client.patch("/tasks/nonexistent", json={"model": "haiku"})
     assert resp.status_code == 404

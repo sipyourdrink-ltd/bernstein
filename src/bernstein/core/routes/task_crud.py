@@ -2443,7 +2443,16 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
                     f"role mismatch: token is issued for role '{agent_role}'; agent tokens cannot reassign task roles"
                 ),
             )
-        task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
+        task = await store.update(
+            task_id,
+            role=body.role,
+            priority=body.priority,
+            model=body.model,
+            cli=body.cli,
+            meta_messages=body.meta_messages,
+            escalation_ladder_step=body.escalation_ladder_step,
+            escalation_ladder_attempts=body.escalation_ladder_attempts,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))

@@ -2105,7 +2105,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
         "operationId": "patch_task_tasks__task_id__patch",
         "parameters": [
           {
@@ -7084,7 +7084,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does,\nincluding the soft-delete semantics a client meets on ``DELETE``.",
         "operationId": "service_provider_config_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -11394,7 +11394,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
         "operationId": "patch_task_api_v1_tasks__task_id__patch",
         "parameters": [
           {
@@ -16373,7 +16373,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does,\nincluding the soft-delete semantics a client meets on ``DELETE``.",
         "operationId": "service_provider_config_api_v1_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -22625,11 +22625,64 @@
               }
             ],
             "title": "Model"
+          },
+          "cli": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cli"
+          },
+          "meta_messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta Messages"
+          },
+          "escalation_ladder_step": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalation Ladder Step"
+          },
+          "escalation_ladder_attempts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalation Ladder Attempts"
           }
         },
         "type": "object",
         "title": "TaskPatchRequest",
-        "description": "Body for PATCH /tasks/{task_id} - manager corrections."
+        "description": "Body for PATCH /tasks/{task_id} - manager corrections.\n\n``meta_messages``, ``cli``, ``escalation_ladder_step`` and\n``escalation_ladder_attempts`` carry an evidence-gated escalation hop\n(issue #4855): the context line, the step's adapter, and the ladder\nposition. ``model`` is the step's model id, unmodified.\n\nThere is deliberately no free-form ``metadata`` here. The ladder's\nevidence is resolved from the audit chain and its spend from the cost\nledger, so no PATCH body can fabricate either; the two position fields\ngrant nothing ``model`` does not already grant."
       },
       "TaskProgressRequest": {
         "properties": {

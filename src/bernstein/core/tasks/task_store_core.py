@@ -3370,17 +3370,30 @@ class TaskStore:
         role: str | None,
         priority: int | None,
         model: str | None = None,
+        cli: str | None = None,
+        meta_messages: list[str] | None = None,
+        escalation_ladder_step: int | None = None,
+        escalation_ladder_attempts: int | None = None,
     ) -> Task:
         """Update mutable task fields (role, priority, model) - manager corrections.
 
         Only open or failed tasks can be reassigned; claimed/in-progress tasks
         are left to finish before the new assignment takes effect.
 
+        ``cli``, ``meta_messages`` and the two ladder-position fields persist
+        an escalation hop onto the retry task (issue #4855). The position is
+        written under its own metadata keys; no other metadata is touched.
+
         Args:
             task_id: Task identifier.
             role: New role if provided.
             priority: New priority if provided.
-            model: New model hint if provided (e.g. "haiku", "sonnet", "opus").
+            model: New model id if provided. Stored unmodified.
+            cli: Adapter name for the new model, when the ladder step names one.
+            meta_messages: Replacement operational nudges, including the
+                escalation-context line.
+            escalation_ladder_step: Ladder rung the retry task runs on.
+            escalation_ladder_attempts: Attempts already spent on that rung.
 
         Returns:
             The updated Task.
@@ -3408,6 +3421,19 @@ class TaskStore:
                 self._index_add(task)
             if model is not None:
                 task.model = model
+            if cli is not None:
+                task.cli = cli
+            if meta_messages is not None:
+                task.meta_messages = list(meta_messages)
+            from bernstein.core.routing.escalation_ladder import (
+                LADDER_ATTEMPTS_METADATA_KEY,
+                LADDER_STEP_METADATA_KEY,
+            )
+
+            if escalation_ladder_step is not None:
+                task.metadata[LADDER_STEP_METADATA_KEY] = escalation_ladder_step
+            if escalation_ladder_attempts is not None:
+                task.metadata[LADDER_ATTEMPTS_METADATA_KEY] = escalation_ladder_attempts
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             return task

@@ -316,6 +316,11 @@ EVENT_ESCALATION_LADDER_EXHAUSTION = "escalation.ladder_exhaustion"
 #: exceed ``escalation_budget_usd``; the stop reason is recorded.
 EVENT_ESCALATION_LADDER_BUDGET_STOP = "escalation.ladder_budget_stop"
 
+#: Issue #4855 -- failure evidence a failure path recorded for a task. The
+#: ladder resolves its advance evidence from this event (keyed by the failed
+#: task id) and never from task metadata, which API clients can write.
+EVENT_ESCALATION_LADDER_FAILURE_EVIDENCE = "escalation.ladder_failure_evidence"
+
 #: Issue #2310 -- emitted whenever a webhook-node receipt is anchored in the
 #: webhook-node lineage spine. Inbound receipts bind ``{event_hash,
 #: journal_root}`` for a signed inbound event that spawned a run; outbound
@@ -3200,6 +3205,36 @@ def record_escalation_receipt(
         resource_type="escalation_receipt",
         resource_id=journal_entry_hash,
         details=details,
+    )
+
+
+def record_escalation_ladder_failure_evidence(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    evidence_class: str,
+    evidence_digest: str,
+    actor: str = "escalation_ladder",
+) -> AuditEvent:
+    """Append an ``escalation.ladder_failure_evidence`` event into *chain* (#4855).
+
+    Called by the failure path that produced the artefact (gate result,
+    loop verdict, degraded-terminal projection). ``evidence_digest`` is that
+    artefact's content address; the ladder later resolves the reference
+    from this event rather than from anything a client can PATCH.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ESCALATION_LADDER_FAILURE_EVIDENCE,
+        actor=actor,
+        resource_type="escalation_ladder_failure_evidence",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "evidence_class": evidence_class,
+            "evidence_digest": evidence_digest,
+        },
     )
 
 
@@ -9902,6 +9937,7 @@ __all__ = [
     "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_LADDER_BUDGET_STOP",
     "EVENT_ESCALATION_LADDER_EXHAUSTION",
+    "EVENT_ESCALATION_LADDER_FAILURE_EVIDENCE",
     "EVENT_ESCALATION_LADDER_HOP",
     "EVENT_ESCALATION_LADDER_REFUSAL",
     "EVENT_ESCALATION_RECEIPT",
@@ -10065,6 +10101,7 @@ __all__ = [
     "record_endpoint_certification",
     "record_escalation_ladder_budget_stop",
     "record_escalation_ladder_exhaustion",
+    "record_escalation_ladder_failure_evidence",
     "record_escalation_ladder_hop",
     "record_escalation_ladder_refusal",
     "record_escalation_receipt",
