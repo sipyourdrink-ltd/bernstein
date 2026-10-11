@@ -556,6 +556,30 @@ Check out a non-default branch before merging, or opt in explicitly:
 BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH=1
 ```
 
+### Local-only merge-backs
+
+By default a successful merge-back is followed by a push of the merged branch
+to `origin`, and a push that fails is queued in
+`.sdd/runtime/pending_pushes.jsonl` for a later retry. To keep merged work on
+the machine, set:
+
+```bash
+BERNSTEIN_LOCAL_ONLY=1
+```
+
+Accepted values are `1`, `true`, `yes`, `on`, `enable` and `enabled`
+(case-insensitive); anything else, or unset, keeps pushing. When it is set:
+
+- the merge into the checked-out branch still happens;
+- the push after it is skipped outright, so there is no fetch, rebase or push
+  to the remote for that merge;
+- the pending-push retry queue is not drained, and is left intact on disk, so
+  unsetting the flag resumes those retries.
+
+It does not cover the salvage push of a `salvage/<id>` branch when a dirty
+worktree is captured, or evolve mode's push to `main`; both still reach the
+remote.
+
 ---
 
 ## Always-allow rules (`.bernstein/always_allow.yaml`)
