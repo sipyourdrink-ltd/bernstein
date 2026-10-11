@@ -67,7 +67,7 @@
   ],
   "catch_rate": 0.25,
   "caught_count": 2,
-  "content_sha256": "ccb0ae611a6c887bfc15d99b24cbd802cf7ad11ab30066a2b013b0e4a78620e6",
+  "content_sha256": "b8a9d442d920cbfa63121c15da471b26e2b00f063f11a99fc33610c5aa101797",
   "corpus_sha256": "4ba42c1fa358f2163d4a46ea3ef41eb82c1ec413ab75f5bee097dac5be671fef",
   "schema_version": 1,
   "suite_hash": "9607e09c7cc120f7d59fe1cdc5a511b23af71a94e0c721bda190b7f39e107700",
@@ -75,8 +75,8 @@
   "tools": {
     "pytest": "9.1.1",
     "ruff": "0.16.7",
-    "vulture": "2.14"
+    "vulture": "2.16"
   },
   "total": 8,
-  "update_reason": "Initial measured baseline with Python 3.13 and locked ruff, pytest and vulture tools (#6154)"
+  "update_reason": "Update gate-evasion baseline to match vulture 2.16 in dev dependencies"
 }

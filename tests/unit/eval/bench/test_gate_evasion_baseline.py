@@ -35,7 +35,7 @@ def _measured(caught: tuple[str, ...] = ("a",), names: tuple[str, ...] = ("a", "
         "suite_version": "gate-evasion-v1",
         "suite_hash": "a" * 64,
         "corpus_sha256": "b" * 64,
-        "tools": {"pytest": "9.1.1", "ruff": "0.16.7", "vulture": "2.14"},
+        "tools": {"pytest": "9.1.1", "ruff": "0.16.7", "vulture": "2.16"},
         "cases": entries,
         "total": len(entries),
         "caught_count": count,
@@ -54,7 +54,7 @@ def test_committed_baseline_integrity_and_corpus_identity() -> None:
     data = baseline.read_baseline(path)
     assert data["total"] == len(data["cases"]) == 8
     assert data["corpus_sha256"] == baseline.corpus_bytes_digest()
-    assert data["tools"] == {"pytest": "9.1.1", "ruff": "0.16.7", "vulture": "2.14"}
+    assert data["tools"] == {"pytest": "9.1.1", "ruff": "0.16.7", "vulture": "2.16"}
 
 
 def test_equal_and_improved_catch_sets_pass(tmp_path: Path) -> None:
@@ -83,7 +83,7 @@ def test_rate_drop_and_changed_identity_fail(tmp_path: Path) -> None:
     for key, new_value in (
         ("suite_hash", "d" * 64),
         ("corpus_sha256", "e" * 64),
-        ("tools", {"ruff": "old", "pytest": "9.1.1", "vulture": "2.14"}),
+        ("tools", {"ruff": "old", "pytest": "9.1.1", "vulture": "2.16"}),
     ):
         changed = {**_measured(("a", "b")), key: new_value}
         with pytest.raises(ValueError, match=key):

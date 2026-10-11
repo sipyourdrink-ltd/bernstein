@@ -831,7 +831,7 @@ The eight built-in classes, and what the gates return on them today:
 | `empty_file_deletion` | `dead_code` | **missed** | `pass`: vulture runs but finds no unused code |
 | `impossible_local_verification_publish` | `publish_verification` | **missed** | `no_gate`: no gate checks that a publish was verifiable locally |
 
-The pinned-tool baseline currently measures **2 of 8** catches (25%, from ruff finding signatures), with `ruff 0.16.7`, `pytest 9.1.1` and `vulture 2.14` in Python 3.13. The misses are recorded by case and responsible gate: #6150 (`nonexistent_api_mock_test`), #6151 (`unimported_test_symbol`), #6152 (`runtime_config_placeholder_secret`), #6153 (`impossible_local_verification_publish`), #5869 (dead-code deletion coverage).
+The pinned-tool baseline currently measures **2 of 8** catches (25%, from ruff finding signatures), with `ruff 0.16.7`, `pytest 9.1.1` and `vulture 2.16` in Python 3.13. The misses are recorded by case and responsible gate: #6150 (`nonexistent_api_mock_test`), #6151 (`unimported_test_symbol`), #6152 (`runtime_config_placeholder_secret`), #6153 (`impossible_local_verification_publish`), #5869 (dead-code deletion coverage).
 
 ### Required catch-rate baseline (#6154)
 
