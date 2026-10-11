@@ -159,7 +159,7 @@ dev = [
     "hypothesis>=6.100",
     "respx>=0.22",
     "ruff>=0.9",
-    "vulture==2.14",  # Gate-evasion baseline: hermetic dead-code gate tool
+    "vulture==2.16",  # Gate-evasion baseline: hermetic dead-code gate tool
     "pyright>=1.1",
     # Declared so `uv run mypy` resolves the project interpreter instead of
     # falling through to whatever `mypy` sits on PATH. A PATH mypy bound to
@@ -877,7 +877,7 @@ dev = [
     "hypothesis>=6.100",
     "respx>=0.22",
     "ruff>=0.9",
-    "vulture==2.14",  # Gate-evasion baseline: mirror the dev extra
+    "vulture==2.16",  # Gate-evasion baseline: mirror the dev extra
     "pyright>=1.1",
     # Declared so `uv run mypy` resolves the project interpreter instead of
     # falling through to whatever `mypy` sits on PATH. A PATH mypy bound to
