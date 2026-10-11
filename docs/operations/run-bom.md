@@ -100,3 +100,70 @@ Two derivations of the same run's BOM are byte-identical. The encoder is
 canonical JSON (sorted keys, minimal separators, UTF-8) and every field is a
 pure function of the spine, so a reviewer who re-runs the command against the
 same chain gets the same bytes.
+
+## CycloneDX version and the ML-BOM model card
+
+`--format cyclonedx` emits **CycloneDX 1.7** (`$schema` is
+`http://cyclonedx.org/schema/bom-1.7.schema.json`). The version is pinned in
+the encoder rather than resolved at run time, because a compliance document
+has to name the specification its bytes validate against. The dependency SBOM
+(`core/security/sbom.py`) and the per-run compliance SBOM
+(`core/security/compliance.py`) emit the same version: one release does not
+ship two CycloneDX versions. The vendored copy of
+the official schema lives in `tests/fixtures/cyclonedx/` (provenance and
+digests in its README), and
+`tests/unit/compliance/test_ai_bom_cyclonedx_schema.py` validates the emitted
+document against it offline.
+
+### Model card fields that are emitted
+
+| `modelCard` field | Drawn from |
+|---|---|
+| `modelParameters.modelArchitecture` | the model identifier recorded on the spine (`models[].name`) |
+
+The specification asks `modelArchitecture` for the specific model -- its own
+examples are `GPT-1`, `ResNet-50`, `YOLOv3` -- and the identifier the run
+records is exactly that fact. No classification of the string takes place.
+
+### Model card fields that are deliberately absent
+
+A BOM is a projection: every line item has to resolve back into the chain, so
+a field with no recorded fact behind it is omitted rather than inferred.
+
+| Field | Why it is absent |
+|---|---|
+| `modelParameters.task`, `architectureFamily`, `approach` | the run records the model identifier, not the model's ML task, architecture family or learning approach. Filling these means classifying every model string against a taxonomy the chain cannot prove |
+| `modelParameters.datasets` | the run does not record which dataset trained the model. Data sources the run *read* stay as separate `data` components; calling them training data would be a different, unverifiable claim |
+| `quantitativeAnalysis.performanceMetrics` | evaluation results are recorded against gates and eval suites, not against a model entry, so there is no per-model metric to project |
+| provider endpoint | the spine records the model string only; no endpoint URL is recorded anywhere in a run, so none is emitted. `component.publisher` carries the provider when the snapshot supplies one |
+
+`provider` and `version` are empty for a lineage-derived BOM and carry the
+snapshot's values for a hand-assembled one -- see the projection table above.
+
+`serialNumber` is a UUID URN derived deterministically from the run id
+(`uuid5` in the AI-BOM schema namespace). CycloneDX requires
+`urn:uuid:<uuid>`, and the readable run id stays in
+`metadata.properties[bernstein:run_id]`, so nothing is lost against the
+previous, schema-invalid form.
+
+## SPDX: staying on 2.3 for now
+
+Decision (2026-09): the SPDX encoder stays on **SPDX 2.3**; no SPDX 3.0
+AI-profile output is added yet. Reasons, in order:
+
+1. No consumer has asked for it. The procurement checks behind the CycloneDX
+   move name the CycloneDX ML-BOM fields; SPDX 3.0 appears in those
+   questionnaires only as an alternative, and no questionnaire we can point at
+   requires the 3.0 shape specifically.
+2. SPDX 3.0 is a different document model, not a version bump. It is
+   JSON-LD with `@context`/`spdxId` and a separate AI profile, so the cross-walk
+   would have to be re-derived field by field against a second official schema,
+   vendored the same way -- a second maintenance surface for no requested
+   capability.
+3. 2.3 is what the SBOM scanners Bernstein drives ingest. Emitting 3.0 alone
+   risks a document the consumer cannot read, which is worse than a 2.3
+   document that still carries the full model and package inventory.
+
+Revisit when a named requirement asks for the SPDX 3.0 AI profile, or when the
+SPDX project deprecates the 2.x line. The decision is recorded here, next to
+the projection tables, rather than in a code comment.
