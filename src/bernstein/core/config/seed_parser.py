@@ -1532,6 +1532,24 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
             "no one. Pin each peer as 'gossip_peer_keys: {<node_id>: <ed25519 public key>}' "
             "(the peer's .sdd/cluster/identity/claim_signing.pub).",
         )
+    shard_id_raw: object = cluster_dict.get("shard_id")
+    shards_raw: object = cluster_dict.get("shards", [])
+    if not isinstance(shards_raw, list):
+        raise SeedError(f"cluster.shards must be a list, got: {type(shards_raw).__name__}")
+    shards: list[tuple[str, str]] = []
+    for index, entry in enumerate(cast("list[object]", shards_raw)):
+        if not isinstance(entry, dict):
+            raise SeedError(f"cluster.shards[{index}] must be a mapping with 'id' and 'url', got: {entry!r}")
+        shard_entry = cast("_StrObjDict", entry)
+        sid, surl = shard_entry.get("id"), shard_entry.get("url")
+        if not isinstance(sid, str) or not sid or not isinstance(surl, str) or not surl:
+            raise SeedError(f"cluster.shards[{index}] needs non-empty string 'id' and 'url', got: {entry!r}")
+        shards.append((sid, surl))
+    shard_id: str | None = str(shard_id_raw) if shard_id_raw is not None else None
+    if shards and shard_id not in {sid for sid, _ in shards}:
+        raise SeedError(f"cluster.shard_id {shard_id!r} must be one of the ids listed in cluster.shards")
+    if shard_id is not None and not shards:
+        raise SeedError("cluster.shard_id requires cluster.shards")
     return ClusterConfig(
         enabled=bool(cluster_dict.get("enabled", False)),
         topology=topology,
@@ -1544,6 +1562,8 @@ def _parse_cluster(raw: object) -> ClusterConfig | None:
         claim_lease_ttl_s=lease_raw,
         claim_journal_path=journal_path,
         gossip_peer_keys=peer_keys,
+        shard_id=shard_id,
+        shards=tuple(shards),
     )
 
 

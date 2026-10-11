@@ -811,6 +811,10 @@ class NodeCapacitySchema(BaseModel):
     active_agents: int = 0
     gpu_available: bool = False
     supported_models: list[str] = Field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+    disk_free_mb: int | None = Field(default=None, ge=0)
+    mem_used_pct: float | None = Field(default=None, ge=0, le=100)
+    mesh_rtt_ms: float | None = Field(default=None, ge=0)
+    platform: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class NodeRegisterRequest(BaseModel):
@@ -827,6 +831,27 @@ class NodeHeartbeatRequest(BaseModel):
     """Body for POST /cluster/nodes/{node_id}/heartbeat."""
 
     capacity: NodeCapacitySchema | None = None
+
+
+class NodeHeartbeatItem(BaseModel):
+    """Single heartbeat item in a batch request."""
+
+    node_id: str
+    capacity: NodeCapacitySchema | None = None
+
+
+class NodeHeartbeatBatchRequest(BaseModel):
+    """Body for POST /cluster/nodes/heartbeats."""
+
+    heartbeats: list[NodeHeartbeatItem] = Field(max_length=500)
+
+
+class NodeHeartbeatBatchResponse(BaseModel):
+    """Response for POST /cluster/nodes/heartbeats."""
+
+    accepted: list[str]
+    unknown: list[str]
+    misdirected: dict[str, str] = Field(default_factory=dict)
 
 
 class NodeResponse(BaseModel):
@@ -854,6 +879,28 @@ class ClusterStatusResponse(BaseModel):
     available_slots: int
     active_agents: int
     nodes: list[NodeResponse]
+
+
+class ShardNodeInfo(BaseModel):
+    """Shard endpoint in shard map."""
+
+    id: str
+    url: str
+
+
+class ShardMapResponse(BaseModel):
+    """Response for GET /cluster/shard-map."""
+
+    shard_id: str
+    vnodes: int = 1
+    shards: list[ShardNodeInfo]
+
+
+class MisdirectedResponse(BaseModel):
+    """Response for 421 Misdirected Request."""
+
+    shard_id: str
+    url: str
 
 
 class ClaimGossipRequest(BaseModel):
