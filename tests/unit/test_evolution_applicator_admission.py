@@ -166,7 +166,7 @@ def test_rollback_restores_backup_files(tmp_path) -> None:
     applying = FileUpgradeExecutor(state_dir)
     config_file = state_dir / "config" / "policies.yaml"
     config_file.write_text("original: true\n", encoding="utf-8")
-    applying._backup_file("policies.yaml", proposal.id)
+    applying._backup_file("policies.yaml", proposal.storage_key)
     config_file.write_text("broken: yes\n", encoding="utf-8")
     applying._record_history(proposal, "applied")
 
