@@ -359,9 +359,11 @@ def _autowrite_seed(workdir: Path) -> None:
 
 def test_bootstrap_from_goal_autowrites_seed_on_first_run(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     invariants_module: types.ModuleType,
 ) -> None:
     """bootstrap_from_goal auto-writes bernstein.yaml on a first run with cli=auto."""
+    monkeypatch.setenv("BERNSTEIN_ADAPTER", "codex")  # #6126: a run with no adapter now refuses at startup
     fake_console = MagicMock()
     discovery = SimpleNamespace(agents=[SimpleNamespace(name="codex", logged_in=True)])
     sync_result = SimpleNamespace(created=[], skipped=[])
@@ -480,6 +482,7 @@ def test_seed_readiness_error_reports_the_timeout_the_wait_actually_uses(
 
 def test_goal_readiness_error_reports_the_timeout_the_wait_actually_uses(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     invariants_module: types.ModuleType,
 ) -> None:
     """The second call site, in _bootstrap_from_goal_impl, derives the same number.
@@ -487,6 +490,7 @@ def test_goal_readiness_error_reports_the_timeout_the_wait_actually_uses(
     The two sites drifted independently before: the issue that prompted this
     found the same hardcoded ``10.0s`` in both.
     """
+    monkeypatch.setenv("BERNSTEIN_ADAPTER", "codex")  # #6126: a run with no adapter now refuses at startup
     discovery = SimpleNamespace(agents=[SimpleNamespace(name="codex", logged_in=True)])
 
     with ExitStack() as stack:
