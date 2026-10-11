@@ -401,6 +401,18 @@ walked in full, and every finding names the same `segment:line` a full
 `verify()` names. a log sealed before checkpoints existed has no pin and
 is walked in full.
 
+the pins are evidence about length as well as content. a segment cut back
+to a record boundary, or deleted outright, leaves a chain that still walks
+clean, so `verify()` alone passes it. the incremental verifier reports a
+pinned segment that is gone, shorter than its pin, or whose pinned prefix
+changed under a chain that still verifies, naming the segment, with the
+same wording the checkpoint pillar of `bernstein audit verify` uses. an
+`ack-tear` acknowledgement for that checkpoint clears it, exactly as it
+does for the checkpoint pillar. records appended after the newest seal
+are pinned by nothing, so removing them is not detectable from this
+directory alone; that is what external anchors and witness co-signatures
+(below) are for.
+
 a tile is unsigned, so editing a segment and rewriting its tile to match
 buys nothing: the edit fails the signed leaf and the segment is walked.
 each tile is compared byte for byte with the tile the seal would publish

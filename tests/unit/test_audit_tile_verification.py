@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import sys
 from collections.abc import Callable
@@ -671,6 +672,13 @@ def _edit_inside_a_sealed_prefix(audit_dir: Path) -> None:
     _flip(middle, len(lines[0]) + len(lines[1]) // 2)
 
 
+def _swap_two_sealed_segments(audit_dir: Path) -> None:
+    first, second = _segments(audit_dir)[:2]
+    first_bytes = first.read_bytes()
+    first.write_bytes(second.read_bytes())
+    second.write_bytes(first_bytes)
+
+
 @pytest.mark.parametrize("with_tiles", [True, False], ids=["tiles", "no-tiles"])
 @pytest.mark.parametrize(
     "damage",
@@ -681,6 +689,7 @@ def _edit_inside_a_sealed_prefix(audit_dir: Path) -> None:
         _tear_the_tail,
         _delete_first_segment,
         _drop_a_sealed_record,
+        _swap_two_sealed_segments,
     ],
 )
 def test_incremental_verify_reports_exactly_what_a_full_verify_reports(
@@ -697,13 +706,22 @@ def test_incremental_verify_reports_exactly_what_a_full_verify_reports(
         for tile in (audit_dir / "tiles").glob("*.tile"):
             tile.unlink()
     _append(audit_dir, key, day=_segments(audit_dir)[-1].stem, count=3)
+    before = {p.name for p in _segments(audit_dir)}
     damage(audit_dir)
+    deleted = sorted(before - {p.name for p in _segments(audit_dir)})
 
     full_ok, full_errors = AuditLog(audit_dir, key=key).verify()
     report = AuditLog(audit_dir, key=key).verify_incremental()
 
     assert not full_ok
-    assert (report.ok, report.errors) == (full_ok, full_errors)
+    assert not report.ok
+    # Every chain finding, in order, with the same segment:line names...
+    assert report.errors[: len(full_errors)] == full_errors
+    # ...plus, for a pinned segment that is gone, the checkpoint's evidence of it:
+    # a chain walk alone cannot name a file that is no longer there.
+    extra = report.errors[len(full_errors) :]
+    assert [line.split(": ", 1)[0] for line in extra] == deleted
+    assert all("segment pinned by the checkpoint is gone" in line for line in extra)
 
 
 def test_a_damaged_appended_record_is_named_by_its_line_in_the_segment(tmp_path: Path) -> None:
@@ -906,3 +924,130 @@ def test_incremental_verify_on_a_read_only_directory(tmp_path: Path) -> None:
 
     assert report.ok, report.errors
     assert (report.tiles_trusted, report.records_walked) == (3, 2)
+
+
+# ---------------------------------------------------------------------------
+# The signed pins are evidence about length too. A truncation back to a record
+# boundary leaves a chain that walks clean, so these cases are invisible to a
+# chain walk and must be reported from the checkpoint, tiles or no tiles.
+# ---------------------------------------------------------------------------
+
+
+def _drop_last_records(segment: Path, count: int) -> None:
+    lines = segment.read_bytes().splitlines(keepends=True)
+    segment.write_bytes(b"".join(lines[:-count]))
+
+
+@pytest.mark.parametrize("with_tiles", [True, False], ids=["tiles", "no-tiles"])
+def test_a_segment_cut_back_inside_its_pin_is_reported_naming_the_segment(tmp_path: Path, with_tiles: bool) -> None:
+    audit_dir, key = _sealed_log(tmp_path)
+    if not with_tiles:
+        shutil.rmtree(audit_dir / "tiles")
+    newest = _segments(audit_dir)[-1]
+    pinned = len(newest.read_bytes())
+    _drop_last_records(newest, 2)
+
+    assert AuditLog(audit_dir, key=key).verify() == (True, [])
+    report = AuditLog(audit_dir, key=key).verify_incremental()
+
+    assert not report.ok
+    assert len(report.errors) == 1
+    assert report.errors[0].startswith(
+        f"{newest.name}: segment is {len(newest.read_bytes())} bytes; checkpoint pinned the first {pinned}"
+    )
+
+
+@pytest.mark.parametrize("with_tiles", [True, False], ids=["tiles", "no-tiles"])
+def test_a_deleted_newest_segment_is_reported(tmp_path: Path, with_tiles: bool) -> None:
+    audit_dir, key = _sealed_log(tmp_path)
+    if not with_tiles:
+        shutil.rmtree(audit_dir / "tiles")
+    newest = _segments(audit_dir)[-1]
+    newest.unlink()
+
+    assert AuditLog(audit_dir, key=key).verify() == (True, [])
+    report = AuditLog(audit_dir, key=key).verify_incremental()
+
+    assert not report.ok
+    assert [error.split(": ", 1)[0] for error in report.errors] == [newest.name]
+    assert "segment pinned by the checkpoint is gone" in report.errors[0]
+
+
+def test_an_emptied_audit_directory_with_a_checkpoint_is_not_a_clean_history(tmp_path: Path) -> None:
+    audit_dir, key = _sealed_log(tmp_path)
+    names = [p.name for p in _segments(audit_dir)]
+    for segment in _segments(audit_dir):
+        segment.unlink()
+
+    report = AuditLog(audit_dir, key=key).verify_incremental()
+
+    assert not report.ok
+    assert [error.split(": ", 1)[0] for error in report.errors] == names
+
+
+def test_a_history_rewritten_by_a_key_holder_is_reported_against_the_pin(tmp_path: Path) -> None:
+    """Rewritten records chain and MAC correctly; only the pinned leaf hashes disagree."""
+    audit_dir, key = _sealed_log(tmp_path, segments=2, events_per=3)
+    names = [p.name for p in _segments(audit_dir)]
+    for segment in _segments(audit_dir):
+        segment.unlink()
+    for name in names:
+        _append(audit_dir, key, day=Path(name).stem, count=3)
+
+    assert AuditLog(audit_dir, key=key).verify() == (True, [])
+    report = AuditLog(audit_dir, key=key).verify_incremental()
+
+    assert not report.ok
+    assert [error.split(": ", 1)[0] for error in report.errors] == names
+    # Shorter rewrites read as shrunk, others as a changed prefix: either way the pin names them.
+    assert all(("no longer reproduce" in e or "checkpoint pinned the first" in e) for e in report.errors)
+
+
+def test_an_acknowledged_divergence_is_not_reported_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The operator path ``bernstein audit verify`` honours is honoured here too."""
+    from click.testing import CliRunner
+
+    from bernstein.cli.commands.audit_cmd import audit_group
+    from bernstein.core.security.audit import AUDIT_KEY_ENV, load_or_create_audit_key
+
+    monkeypatch.setenv(AUDIT_KEY_ENV, str(tmp_path / "audit.key"))
+    monkeypatch.chdir(tmp_path)
+    key = load_or_create_audit_key()
+    audit_dir = tmp_path / ".sdd" / "audit"
+    audit_dir.mkdir(parents=True)
+    _make_chain(audit_dir, key=key, segments=2, events_per=4)
+    _seal(audit_dir, key)
+    newest = _segments(audit_dir)[-1]
+    _drop_last_records(newest, 2)
+    assert not AuditLog(audit_dir, key=key).verify_incremental().ok
+
+    acked = CliRunner().invoke(
+        audit_group,
+        [
+            "ack-tear",
+            "--segment",
+            newest.name,
+            "--offset",
+            str(len(newest.read_bytes())),
+            "--reason",
+            "restored from a backup taken before the last two records",
+        ],
+    )
+    assert acked.exit_code == 0, acked.output
+
+    report = AuditLog(audit_dir, key=key).verify_incremental()
+    assert report.ok, report.errors
+
+
+def test_records_the_writer_appends_are_in_the_framing_trust_requires(tmp_path: Path) -> None:
+    """If the writer's framing drifted, pinned prefixes would silently stop being trusted.
+
+    Trust requires each record to be byte-equal to ``json.dumps(record, sort_keys=True)``.
+    """
+    audit_dir, key = _sealed_log(tmp_path)
+    _append(audit_dir, key, day="2026-09-02", count=3)
+
+    lines = [line for segment in _segments(audit_dir) for line in segment.read_bytes().splitlines()]
+    assert lines
+    assert all(json.dumps(json.loads(line), sort_keys=True).encode() == line for line in lines)
+    assert AuditLog(audit_dir, key=key).verify_incremental().tiles_trusted == 3

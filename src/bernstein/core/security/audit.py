@@ -995,8 +995,8 @@ def _store_tile_read_count(audit_dir: Path, count: int) -> None:
             tmp.unlink()
 
 
-def _signed_leaf_pins(audit_dir: Path, key: bytes) -> dict[str, tuple[int, str]]:
-    """Return ``{segment: (byte_len, leaf_hash)}`` from the newest signed checkpoint.
+def _signed_leaf_pins(audit_dir: Path, key: bytes) -> tuple[str, dict[str, tuple[int, str]]]:
+    """Return ``(root_hash, {segment: (byte_len, leaf_hash)})`` from the newest signed checkpoint.
 
     Reads the atomically-replaced ``checkpoints/latest.json`` pointer first and
     falls back to the append-only ledger, so it never needs the writer lock and
@@ -1004,7 +1004,8 @@ def _signed_leaf_pins(audit_dir: Path, key: bytes) -> dict[str, tuple[int, str]]
     pin is used. An older pin (a stale pointer, a ledger whose newest line was
     torn) is still a prefix a key holder verified, so it only trusts less,
     never wrongly. Nothing usable means nothing is trusted and every segment is
-    walked in full.
+    walked in full. The root names the checkpoint an ``ack-tear``
+    acknowledgement must cite.
     """
     from bernstein.core.persistence.chain_checkpoint import (
         CheckpointFileError,
@@ -1017,12 +1018,13 @@ def _signed_leaf_pins(audit_dir: Path, key: bytes) -> dict[str, tuple[int, str]]
         try:
             checkpoint = load_checkpoints(audit_dir, key).last
         except CheckpointFileError:
-            return {}
+            return "", {}
     if checkpoint is None:
-        return {}
+        return "", {}
+    root = str(checkpoint.get("root_hash", ""))
     leaves = checkpoint.get("leaves")
     if not isinstance(leaves, list):
-        return {}
+        return root, {}
     pins: dict[str, tuple[int, str]] = {}
     for leaf in cast("list[object]", leaves):
         if not isinstance(leaf, dict):
@@ -1039,11 +1041,18 @@ def _signed_leaf_pins(audit_dir: Path, key: bytes) -> dict[str, tuple[int, str]]
             and isinstance(leaf_hash, str)
         ):
             pins[name] = (byte_len, leaf_hash)
-    return pins
+    return root, pins
 
 
 def _canonical_record(raw_line: bytes) -> dict[str, Any] | None:
-    """Parse *raw_line* as a record in the writer's exact byte framing, or ``None``."""
+    """Parse *raw_line* as a record in the writer's exact byte framing, or ``None``.
+
+    The framing is ``json.dumps(entry, sort_keys=True)`` with default
+    separators, the bytes :meth:`AuditLog.log` writes and the bytes
+    :func:`_verify_log_bytes` requires. If the writer's framing ever changes,
+    this must change with it: a mismatch fails safe (no prefix is trusted and
+    every segment is walked in full) but silently, with no error anywhere.
+    """
     try:
         parsed = json.loads(raw_line)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -1102,7 +1111,10 @@ def _tile_fault(audit_dir: Path, segment_name: str, raw: bytes) -> str | None:
     """Return why the published hash tile for *segment_name* misdescribes *raw*, or ``None``.
 
     Called only once *raw* has been authenticated in this run, so any
-    disagreement is the tile's fault and the message names the tile file.
+    disagreement is the tile's fault and the message names the tile file. A
+    segment that failed its walk, or no longer holds the prefix the signed
+    checkpoint pins, is already named, and its tile is not checked: a tile
+    that disagrees with damaged bytes says nothing about which one is wrong.
     The tile is re-rendered from the authenticated bytes with
     :func:`~bernstein.core.persistence.tiles.render_hash_tile` and compared
     byte for byte, so a flipped byte anywhere in the file is a finding, not
@@ -1367,16 +1379,36 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
     against the authenticated bytes and reported by name when it does not
     describe them.
 
+    The signed pins are evidence about length as well as content. A pinned
+    segment that is gone, shorter than its pin, or whose pinned prefix
+    changed under a chain that still verifies is reported naming the segment,
+    exactly the per-segment conflicts :func:`check_extension` reports, unless
+    a chain-resident ``ack-tear`` acknowledgement for that checkpoint covers
+    them. A truncation back to a record boundary leaves a chain that walks
+    clean, so without this the verdict would depend on whether an unsigned
+    tile happened to describe the missing bytes.
+
     The run is a pure read of the audit directory apart from the best-effort
     tile-read counter (:func:`_store_tile_read_count`), which is written only
     after a clean run and whose failure (a read-only directory) changes
     nothing about the verdict.
     """
+    from bernstein.core.persistence.chain_checkpoint import (
+        CheckpointConflict,
+        authorize_divergence,
+        find_divergence_acks,
+        leaf_conflict,
+    )
+    from bernstein.core.persistence.tiles import has_hash_tile
+
+    audit_dir = log._audit_dir
+    key = log._key
     errors: list[str] = []
     ctx = _ChainWalkContext()
-    archived = _archived_segment_paths(log._audit_dir)
-    live_files = sorted(log._audit_dir.glob(_JSONL_GLOB))
-    if not archived and not live_files:
+    archived = _archived_segment_paths(audit_dir)
+    live_files = sorted(audit_dir.glob(_JSONL_GLOB))
+    checkpoint_root, pins = _signed_leaf_pins(audit_dir, key)
+    if not archived and not live_files and not pins:
         report = IncrementalVerifyReport(
             ok=True,
             errors=[],
@@ -1385,12 +1417,10 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
             segments_re_read=0,
             run_was_full=True,
         )
-        _store_tile_read_count(log._audit_dir, 0)
+        _store_tile_read_count(audit_dir, 0)
         return report
 
-    from bernstein.core.persistence.tiles import has_hash_tile
-
-    pins = _signed_leaf_pins(log._audit_dir, log._key)
+    conflicts: list[CheckpointConflict] = []
     tiles_read = 0
     tiles_trusted = 0
     segments_re_read = 0
@@ -1408,7 +1438,7 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
             if raw is None:
                 break
         else:
-            raw = _read_live_segment(path, log._audit_dir)
+            raw = _read_live_segment(path, audit_dir)
             if raw is None:
                 errors.append(f"{display_name}: segment disappeared during verification")
                 break
@@ -1418,7 +1448,7 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
         if trusted is None:
             segments_re_read += 1
             records_walked += _count_records(raw)
-            prev_hmac = _verify_log_bytes(raw, display_name, prev_hmac, log._key, errors, ctx)
+            prev_hmac = _verify_log_bytes(raw, display_name, prev_hmac, key, errors, ctx)
         else:
             byte_len, line_count, prev_hmac = trusted
             tiles_trusted += 1
@@ -1435,21 +1465,38 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
                     suffix,
                     display_name,
                     prev_hmac,
-                    log._key,
+                    key,
                     errors,
                     ctx,
                     base_line=line_count,
                     base_offset=byte_len,
                 )
 
-        if has_hash_tile(log._audit_dir, segment_name):
+        segment_failed = len(errors) != errors_before
+        pin = pins.get(segment_name)
+        if not segment_failed and trusted is None and pin is not None:
+            # The bytes walk clean but do not hold what the checkpoint pinned:
+            # shrunk back to a record boundary, or rewritten by a key holder.
+            conflict = leaf_conflict(segment_name, pin[0], pin[1], raw)
+            if conflict is not None:
+                conflicts.append(conflict)
+                segment_failed = True
+
+        if has_hash_tile(audit_dir, segment_name):
             tiles_read += 1
             # A segment that failed is already named; only a tile that
             # misdescribes bytes this run authenticated is the tile's fault.
-            if len(errors) == errors_before:
-                fault = _tile_fault(log._audit_dir, segment_name, raw)
+            if not segment_failed:
+                fault = _tile_fault(audit_dir, segment_name, raw)
                 if fault is not None:
                     errors.append(fault)
+
+    listed = {segment_name for _path, segment_name, _is_archived in walk_order}
+    for name, (byte_len, leaf_hash) in sorted(pins.items()):
+        if name not in listed:
+            missing = leaf_conflict(name, byte_len, leaf_hash, None)
+            if missing is not None:
+                conflicts.append(missing)
 
     chain_report = _build_verify_report(errors, ctx)
     hard_errors = list(chain_report.hard_errors)
@@ -1458,6 +1505,13 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
             hard_errors.extend(tear.raw_errors)
         else:
             hard_errors.append(f"{tear.describe()} - run 'bernstein audit ack-tear' after investigating")
+    if conflicts:
+        acks = find_divergence_acks(audit_dir, key, checkpoint_root)
+        if authorize_divergence(conflicts, acks) is None:
+            hard_errors.extend(
+                f"{conflict.segment}: {conflict.detail} (checkpoint root {checkpoint_root[:16]}...)"
+                for conflict in conflicts
+            )
 
     report = IncrementalVerifyReport(
         ok=not hard_errors,
@@ -1469,7 +1523,7 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
         records_walked=records_walked,
     )
     if not hard_errors:
-        _store_tile_read_count(log._audit_dir, tiles_read)
+        _store_tile_read_count(audit_dir, tiles_read)
     return report
 
 
@@ -2724,6 +2778,11 @@ class AuditLog:
         walks them, and a segment with no usable pin is walked in full. So
         after a seal, appending N records costs a walk of N records; the pinned
         prefixes are hashed, not walked.
+
+        The pins also bind length: a pinned segment that is gone, shorter than
+        its pin, or rewritten under a chain that still verifies is reported
+        naming the segment, unless an ``ack-tear`` acknowledgement for that
+        checkpoint covers it.
 
         Hash tiles are not a trust input: they are unsigned, so a tile never
         lets a byte go unchecked. Each published tile is checked against the

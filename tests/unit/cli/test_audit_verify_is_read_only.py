@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import stat
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -107,3 +109,88 @@ def test_edit_inside_the_sealed_prefix_exits_nonzero(project: Path) -> None:
 
     assert result.exit_code != 0
     assert "TAMPERED" in result.output
+
+
+def _forbid_writes_and_the_writer_lock(monkeypatch: pytest.MonkeyPatch, root: Path) -> list[str]:
+    """Make every write under *root*, and taking the chain lock, fail; return what was attempted.
+
+    ``mkdir`` of a directory that already exists answers ``FileExistsError``,
+    as a read-only filesystem does, so ``mkdir(exist_ok=True)`` on the audit
+    directory is not counted as a write.
+    """
+    import builtins
+    import io
+    import os
+
+    import bernstein.core.security.audit as audit_mod
+
+    attempts: list[str] = []
+    resolved = str(root.resolve())
+
+    def _guard(target: object, what: str) -> None:
+        if str(Path(str(target)).resolve()).startswith(resolved):
+            attempts.append(f"{what} {target}")
+            raise PermissionError(f"read-only: {target}")
+
+    real_open = builtins.open
+    real_os_open = os.open
+    write_flags = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+
+    def _open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if any(flag in mode for flag in "wax+"):
+            _guard(file, f"open({mode})")
+        return real_open(file, mode, *args, **kwargs)
+
+    def _os_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if flags & write_flags:
+            _guard(path, "os.open")
+        return real_os_open(path, flags, *args, **kwargs)
+
+    def _guarded(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def _call(*args: Any, **kwargs: Any) -> Any:
+            if name == "mkdir" and args and Path(str(args[0])).is_dir():
+                raise FileExistsError(args[0])
+            for arg in args:
+                _guard(arg, f"os.{name}")
+            return real(*args, **kwargs)
+
+        return _call
+
+    def _no_lock(*args: Any, **kwargs: Any) -> Any:
+        attempts.append("chain append lock")
+        raise AssertionError("verification must not take the writer lock")
+
+    monkeypatch.setattr(builtins, "open", _open)
+    monkeypatch.setattr(io, "open", _open)
+    monkeypatch.setattr(os, "open", _os_open)
+    for name in ("replace", "rename", "remove", "unlink", "rmdir", "mkdir"):
+        monkeypatch.setattr(os, name, _guarded(name, getattr(os, name)))
+    monkeypatch.setattr(audit_mod, "_chain_append_lock", _no_lock)
+    return attempts
+
+
+def test_verify_needs_no_write_access_and_no_writer_lock(project: Path) -> None:
+    """The published layout (segments, tiles, checkpoint) verifies with writes and the lock forbidden (#3160)."""
+    assert _run("seal").exit_code == 0
+    _close_the_run(project)
+    assert (project / ".sdd" / "audit" / "checkpoints" / "latest.json").is_file()
+    assert any((project / ".sdd" / "audit" / "tiles").glob("*.tile"))
+
+    with pytest.MonkeyPatch.context() as patch:
+        attempts = _forbid_writes_and_the_writer_lock(patch, project / ".sdd")
+        clean = _run("verify")
+
+    assert attempts == []
+    assert clean.exit_code == 0, clean.output
+
+    segment = next((project / ".sdd" / "audit").glob("*.jsonl"))
+    data = bytearray(segment.read_bytes())
+    data[40] ^= 0x01
+    segment.write_bytes(bytes(data))
+
+    with pytest.MonkeyPatch.context() as patch:
+        attempts = _forbid_writes_and_the_writer_lock(patch, project / ".sdd")
+        damaged = _run("verify")
+
+    assert attempts == []
+    assert damaged.exit_code == 1
