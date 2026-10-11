@@ -56,6 +56,7 @@ from rich.table import Table
 
 from bernstein.cli.commands.govern_audit_cmd import govern_audit_cmd as govern_audit_contract_cmd
 from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
+from bernstein.cli.commands.govern_lane_cmd import govern_lane_group
 from bernstein.cli.helpers import console
 from bernstein.core.govern import collect_remediation as _collect_remediation
 from bernstein.core.govern import compute_plan as _compute_plan
@@ -1034,6 +1035,8 @@ def governance_audit_keys_cmd() -> None:
 govern_group.add_command(govern_reconcile_cmd, "reconcile")
 # Inventory topology graph from the store (#5133).
 govern_group.add_command(govern_inventory_cmd, "inventory")
+# Reconciliation lanes: bootstrap/list/show against the chain (#5120).
+govern_group.add_command(govern_lane_group, "lane")
 
 
 @click.group("governance")
