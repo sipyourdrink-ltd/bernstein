@@ -100,7 +100,11 @@ def test_branch_protection_audit_is_scheduled_and_manual_only() -> None:
 def test_branch_protection_audit_permissions() -> None:
     workflow = _workflow()
     assert workflow.get("permissions") in ({}, "{}"), "workflow-level permissions must be default-deny"
-    assert _audit_job(workflow).get("permissions") == {"contents": "read", "issues": "write"}
+    assert _audit_job(workflow).get("permissions") == {
+        "contents": "read",
+        "issues": "write",
+        "id-token": "write",
+    }
 
 
 def test_branch_protection_audit_toggles_marker_issue_on_failure_and_recovery() -> None:
