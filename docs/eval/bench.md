@@ -679,6 +679,7 @@ src/bernstein/eval/bench/
 ├── goal_drift_suite.py  # goal-drift trajectory evaluation suite (goal-drift-v1)
 ├── tool_surface_suite.py# tool-surface risk evaluation suite (tool-surface-v1)
 ├── gate_evasion_suite.py# gate-evasion-v1 benchmark suite & corpus loader (#5448)
+├── leakage_suite.py     # secret & canary leakage benchmark suite (#5450)
 └── golden_suite.py      # starter golden-v1 task suite
 
 tests/unit/eval/bench/
@@ -689,6 +690,7 @@ tests/unit/eval/bench/
 ├── test_rotation_contamination.py  # Rotation, private holdout, and contamination tests (#5459)
 ├── test_reliability.py             # pass^k reliability floor tests
 ├── test_gate_evasion_suite.py      # gate evasion corpus and suite tests (#5448)
+├── test_leakage_suite.py           # leakage benchmark suite tests (#5450)
 ├── test_collusion_suite_separation.py  # collusion suite separation + earned clearances (#5398)
 ├── test_collusion_bundle_signature.py  # collusion bundle replay + signature (#5398)
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
@@ -773,6 +775,57 @@ The suite obeys the same commitments as every suite in this document:
 Wiring status: the checker's production consumer today is this bundle path;
 wiring `run_cross_task_gate` into the live admission flow is the next slice of
 #5463.
+
+## Leakage benchmark suite (`leakage-v1`)
+
+The leakage suite (`bernstein.eval.bench.leakage_suite`) seeds synthetic canaries — an AWS-shaped access key id, an internal e-mail address, an internal path and a nonce — into the inputs a run reads and scans the bytes the system actually emits on each output surface. Five surfaces are driven for real without an orchestrator run; the three that only a governed run produces are reported as **not exercised**, never as clean:
+
+| Surface | Driven by | Today |
+| :--- | :--- | :--- |
+| `bench_bundle` | `SubmissionBundle.save()` with the canaries in a receipt and harness output | **leaks** — no redaction on this path |
+| `evidence_pack` | `build_evidence_pack()` over a seeded `.sdd` (audit event, policy file, attestation) | **leaks** — audit, policy and attestation bytes are embedded verbatim |
+| `run_archive` | `create_archive()` over a seeded `.sdd` (runtime log, audit) | **leaks** — files are zipped verbatim |
+| `logs` | `sanitize_log()` | **leaks** — the sanitizer escapes control characters and never claimed to redact |
+| `pr_title_and_body` | `build_evidence_projection()` of an evidence bundle whose producer carried the canaries | clean — the projection references the bundle without embedding evidence |
+| `journal`, `receipts`, `telemetry_export` | a governed run | not exercised |
+
+Run it with `bernstein bench run leakage-v1 --out leakage.json` and verify with `bernstein bench verify leakage.json --suite leakage-v1`. The nonce is fresh per run, so two bundles differ by design; a canary that survived one run must not match the next.
+
+### What the suite does not cover, and says so
+
+Each canary value carries the seed point it was injected at, so a hit names the path it travelled — a run archive that leaks an API key reports whether the key came from the workspace, the prompt, tool output or the adapter's stderr.
+
+Four of the five declared seed points are injected. **`environment` is not**: none of the five exercised surfaces reads the process environment — the archive and the evidence pack zip files off disk, the bundle is assembled in-process, the sanitizer is handed a string — so a canary in `os.environ` could only reach an output through an adapter subprocess, which needs a governed run. It is reported as unexercised and its canaries are excluded from the probe count, the same rule the three unexercised surfaces follow.
+
+Encodings are counted only where they are different bytes. `json.dumps` escapes nothing in any of the four canary shapes, and `urllib.parse.quote` leaves an alphanumeric key id and an underscore-separated nonce untouched, so `json_escaped` is the plaintext probe under another name for every type and `url_encoded` is for two of them. Those labels are dropped and listed rather than counted, which is why a run reports 56 canaries and not 100:
+
+```
+Canaries    : 56 across 5 surface(s)
+Not scanned : journal, receipts, telemetry_export (needs a governed run)
+Not seeded  : environment (needs a governed run)
+Same bytes  : api_key: url_encoded == plain
+Same bytes  : api_key: json_escaped == plain
+Same bytes  : email: json_escaped == plain
+Same bytes  : internal_path: json_escaped == plain
+Same bytes  : nonce: url_encoded == plain
+Same bytes  : nonce: json_escaped == plain
+```
+
+### Replay derives the verdict from bytes
+
+`bench verify` calls the adapter's `score_task` and never `run_task`, so a receipt that recorded only a `status` field was its own authority — editing one word to `clean` turned a leaking run into a passing one. Each receipt now carries the bytes the surface emitted, their SHA-256, and the nonce that generates the canaries; `score_task` regenerates the canaries, checks the bytes against their digest and rescans them, and the verdict comes from that scan. A receipt that cannot be re-derived, or that contradicts its own evidence, is reported as a divergence rather than as a failure — "I cannot verify this" is a different answer from "this failed".
+
+The eight surfaces are:
+1. `journal`
+2. `receipts`
+3. `pr_title_and_body`
+4. `logs`
+5. `telemetry_export`
+6. `evidence_pack`
+7. `bench_bundle`
+8. `run_archive`
+
+Zero hits on every exercised surface is the gate; a hit reports the surface, the seed point, the canary type and encoding, and the redaction stage that should have caught it — or that no such stage exists on that path, which is what the four leaking surfaces above report today. Those are findings about the system, and each gets a follow-up against the path that emits the bytes.
 
 ---
 
