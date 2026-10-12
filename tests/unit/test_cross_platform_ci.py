@@ -212,14 +212,12 @@ class TestCIWorkflowExists:
         assert "uv run python scripts/run_tests.py" in run_script
         assert "--parallel 6" in run_script
 
-    def test_merge_queue_planner_resolves_the_batch_root_once(self) -> None:
-        """The queue selects against the batch root, resolved in the one planner job (#5793).
+    def test_merge_queue_runs_the_whole_list(self) -> None:
+        """A merge group never plans, so every shard runs the full list.
 
-        Not per shard: the queue lands the exact commit it tested, so a
-        merge-base taken after an entry ahead has landed returns that entry's
-        commit, and shards either side of a landing would select from two
-        lists. Not ``merge_group.base_sha`` either: for entry k of a stacked
-        group that is entry k-1's merge commit.
+        The group is the last check before main. A tree-wide gate fails on a
+        change no file-level slice maps to it: #5743 passed a sliced group and
+        broke main on the unreachable-controls gate.
         """
         data = _load_ci_workflow()
         jobs = cast("dict[str, Any]", data["jobs"])
@@ -227,20 +225,11 @@ class TestCIWorkflowExists:
         steps = cast("list[dict[str, Any]]", planner["steps"])
         by_name = {step.get("name"): step for step in steps}
 
-        root = by_name["Resolve the merge-queue batch root"]
-        assert root.get("if") == "github.event_name == 'merge_group'"
-        script = root.get("run", "")
-        assert "git merge-base" in script
-        assert "refs/remotes/origin/pr-base" in script
-        assert "resolved=true" in script
-        assert "merge_group.base_sha" not in yaml.safe_dump(root)
-
-        checkout = next(step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@"))
-        assert "merge_group" in checkout.get("if", ""), "the planner needs the queue head checked out"
-        assert (checkout.get("with") or {}).get("fetch-depth") == 0, "merge-base needs history"
+        assert "Resolve the merge-queue batch root" not in by_name
+        assert "merge_group" not in yaml.safe_dump(steps)
 
         plan = by_name["Compute affected-test plan"]
-        assert plan.get("if") == "github.event_name == 'pull_request' || steps.queue_root.outputs.resolved == 'true'"
+        assert plan.get("if") == "github.event_name == 'pull_request'"
         assert "planned=true" in plan.get("run", "")
         assert planner["outputs"]["planned"] == "${{ steps.plan.outputs.planned }}"
 

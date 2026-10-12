@@ -412,9 +412,9 @@ jobs:
       affected_count: ${{ steps.plan.outputs.affected_count }}
       base_sha: ${{ steps.plan.outputs.base_sha }}
       head_sha: ${{ steps.plan.outputs.head_sha }}
-      # 'true' only when a plan was written and uploaded. The test shards key
-      # on this, not on the event name: a merge group whose batch root could
-      # not be resolved has no plan, and its shards run the full list.
+      # 'true' only when a plan was written and uploaded, which is pull
+      # requests only. The test shards key on this, not on the event name:
+      # without a plan every shard runs the full list.
       planned: ${{ steps.plan.outputs.planned }}
     steps:
       - name: Harden runner (audit mode)
@@ -422,12 +422,12 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        if: github.event_name == 'pull_request'
         with:
           persist-credentials: false
           fetch-depth: 0
       - uses: ./.github/actions/bootstrap
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        if: github.event_name == 'pull_request'
         with:
           python-version: "3.13"
       - name: Fetch base commit for impacted-test selection
@@ -437,37 +437,13 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin \
             "${BASE_SHA}:refs/remotes/origin/pr-base"
-      - id: queue_root
-        name: Resolve the merge-queue batch root
-        # The merge queue selects against the commit the group was built on
-        # (#5793). Resolved here, once, because the planner is the one job
-        # every shard reads from: a shard that took its own merge-base later
-        # could get a different answer. The queue lands the exact commit it
-        # tested, so once an entry ahead merges it is an ancestor of `main`
-        # and a merge-base taken after that returns THAT entry's commit.
-        #
-        # NOT `github.event.merge_group.base_sha`: for entry k of a stacked
-        # group that field is entry k-1's merge commit, so selecting against
-        # it would never test entry j's tests against entry k's change.
-        #
-        # Unresolvable leaves pr-base unwritten, so no plan is made and every
-        # shard runs the full list: slower, never a silently unrun slice.
-        if: github.event_name == 'merge_group'
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          git fetch --no-tags origin \
-            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" || true
-          if root=$(git merge-base "refs/remotes/origin/${DEFAULT_BRANCH}" HEAD 2>/dev/null); then
-            git update-ref refs/remotes/origin/pr-base "${root}"
-            echo "resolved=true" >> "$GITHUB_OUTPUT"
-            echo "queue batch root: ${root}"
-          else
-            echo "::warning::could not resolve the queue batch root; shards will run the full list"
-          fi
       - id: plan
         name: Compute affected-test plan
-        if: github.event_name == 'pull_request' || steps.queue_root.outputs.resolved == 'true'
+        # Pull requests only. A merge group runs the whole list: it is the last
+        # check before main, and tree-wide gates (unreachable controls, the
+        # published-URL manifest) fail on a change that no file-level slice
+        # maps to them, so #5743 went through a green group and broke main.
+        if: github.event_name == 'pull_request'
         run: |
           uv run python scripts/plan_affected_tests.py plan \
             --base refs/remotes/origin/pr-base \
