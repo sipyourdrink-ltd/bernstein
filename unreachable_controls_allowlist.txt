@@ -80,6 +80,7 @@ src/bernstein/core/security/audit_chain.py::record_escalation_ladder_refusal    
 src/bernstein/core/security/audit_chain.py::record_expectation_expired                         # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_capsule                              # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_drift                                # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_lane_retired                                # exported in the module's __all__ as public surface; lane_registry projects lane.retired, no CLI verb emits it yet
 src/bernstein/core/security/audit_chain.py::record_mcp_task_handle                             # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_memory_write                                # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_pool_claim_receipt                          # exported in the module's __all__ as public surface; no in-tree caller
