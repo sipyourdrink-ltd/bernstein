@@ -178,6 +178,7 @@ from bernstein.core.task_lifecycle import (
     collect_completion_data,
     evict_degraded_sessions,
     maybe_retry_task,
+    note_queued_retries,
     prepare_speculative_warm_pool,
     process_completed_tasks,
     retry_or_fail_task,
@@ -2195,6 +2196,10 @@ class Orchestrator:
 
         # 4b. Use cached failed tasks and maybe retry with escalation
         failed_tasks = tasks_by_status["failed"]
+        note_queued_retries(
+            (task for tasks in tasks_by_status.values() for task in tasks),
+            self._retried_task_ids,
+        )
         for task in failed_tasks:
             if self._maybe_retry_task(task):
                 result.retried.append(task.id)
@@ -3248,6 +3253,20 @@ class Orchestrator:
         # before the first tick.
         self._reconcile_claimed_tasks()
         self._record_run_started()
+        # The owner record names the ``run_started`` row itself: recovery
+        # verifies it against the journal's first event, so it is published
+        # before any other row is appended.
+        try:
+            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+
+            write_spawner_run_owner(
+                sdd_dir=self._workdir / ".sdd",
+                run_id=self._run_id,
+                journal_head=self._recorder.fingerprint(),
+                journal_event_count=self._recorder.event_count(),
+            )
+        except OSError as exc:
+            logger.warning("Run owner record not written for %s: %s", self._run_id, sanitize_log(str(exc)))
         # Record the skill and plugin set this install actually resolved,
         # once per run and before the first agent spawns. `bernstein skills`
         # and `bernstein plugins` report the declaration; a path override, a
@@ -3269,17 +3288,6 @@ class Orchestrator:
         except Exception:
             logger.exception("Loaded extension set not recorded (non-fatal) - continuing startup")
 
-        try:
-            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
-
-            write_spawner_run_owner(
-                sdd_dir=self._workdir / ".sdd",
-                run_id=self._run_id,
-                journal_head=self._recorder.fingerprint(),
-                journal_event_count=self._recorder.event_count(),
-            )
-        except OSError as exc:
-            logger.warning("Run owner record not written for %s: %s", self._run_id, sanitize_log(str(exc)))
         # WAL recovery: detect uncommitted entries from crashed previous runs.
         # Must run after WAL writer is initialized (in __init__) so that
         # acknowledgement entries are written to the current run's WAL.

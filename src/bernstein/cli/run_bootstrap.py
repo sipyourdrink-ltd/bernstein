@@ -2970,7 +2970,7 @@ def _run_impl(
                 raise click.UsageError("--worker requires a seed file; it is not supported with --plan-file.")
 
             with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
-                bootstrap_from_goal(
+                bootstrapped = bootstrap_from_goal(
                     goal=loaded_goal,
                     workdir=workdir,
                     port=port,
@@ -2983,7 +2983,7 @@ def _run_impl(
                 )
                 persist_server_port(port, workdir)
 
-            _finalize_run_output(quiet=quiet, wait=wait)
+            _finalize_run_output(quiet=quiet, wait=wait, seed=bootstrapped.seed)
             return
         except BernsteinFirstRunError:
             # Already carries a structured category and exit code; let the
@@ -3017,7 +3017,7 @@ def _run_impl(
             raise click.UsageError("--worker requires a seed file; it is not supported with an inline goal.")
         try:
             with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
-                bootstrap_from_goal(
+                bootstrapped = bootstrap_from_goal(
                     goal=goal,
                     workdir=workdir,
                     port=port,
@@ -3032,7 +3032,7 @@ def _run_impl(
 
             bootstrap_failed(exc).print()
             raise SystemExit(1) from exc
-        _finalize_run_output(quiet=quiet, wait=wait)
+        _finalize_run_output(quiet=quiet, wait=wait, seed=bootstrapped.seed)
         return
 
     # Seed file mode
@@ -3054,7 +3054,7 @@ def _run_impl(
         # CLI --cells overrides seed file value when explicitly set (cells > 1)
         cli_cells: int | None = cells if cells > 1 else None
         with _make_profile_ctx(cprofile, workdir), _quiet_bootstrap_console(quiet):
-            bootstrap_from_seed(
+            bootstrapped = bootstrap_from_seed(
                 seed_path=path,
                 workdir=workdir,
                 port=port,
@@ -3077,7 +3077,7 @@ def _run_impl(
         bootstrap_failed(exc).print()
         raise SystemExit(1) from exc
 
-    _finalize_run_output(quiet=quiet, wait=wait)
+    _finalize_run_output(quiet=quiet, wait=wait, seed=bootstrapped.seed)
 
     # Close the first-run timer (spec 2026-05-17).  Fail-closed.
     if _telemetry_first_run_timer is not None:

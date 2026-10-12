@@ -75,7 +75,7 @@ from bernstein.core.tick_pipeline import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from bernstein.core.git_ops import MergeResult
@@ -654,6 +654,25 @@ def _extract_failure_context(
             logger.debug("Failed to record retry failure category metric: %s", exc)
 
     return failure_context
+
+
+def note_queued_retries(tasks: Iterable[Task], retried_task_ids: set[str]) -> None:
+    """Mark every task that already has a retry on the board as handled.
+
+    ``retried_task_ids`` lives in one orchestrator process, but the retries it
+    guards against duplicating live on the task server. A restarted
+    orchestrator starts with an empty set and, without this, queues a second
+    retry for every failure an earlier process already retried. A retry's
+    ``metadata["retry_of"]`` names its source, so the board itself answers.
+
+    Args:
+        tasks: Every task on the board, in any status.
+        retried_task_ids: Set of handled task IDs (mutated in-place).
+    """
+    for task in tasks:
+        source = task.metadata.get("retry_of")
+        if source:
+            retried_task_ids.add(str(source))
 
 
 def maybe_retry_task(
