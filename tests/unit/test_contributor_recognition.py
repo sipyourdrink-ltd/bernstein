@@ -198,7 +198,7 @@ def test_registry_reads_flags_and_exclusions(tmp_path: Path):
 
 def test_shipped_registry_loads_and_seeds_the_5524_opt_ins():
     reg = cr.load_registry(Path(__file__).resolve().parents[2] / "community" / "recognition" / "opt-ins.toml")
-    for login in ("Phoenix1504e", "PARZIVAL7498", "thegoodengineer", "Maqbool61", "atirna", "Silentpartnercoding"):
+    for login in ("Phoenix1504e", "BUTTERFINGERS7498", "thegoodengineer", "Maqbool61", "atirna", "Silentpartnercoding"):
         rec = reg.get(login)
         assert rec and rec.opt_in and "5524" in rec.source
     assert reg.get("Silentpartnercoding").review_before_publish
