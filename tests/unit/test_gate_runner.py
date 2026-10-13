@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from bernstein.core.gate_runner import GatePipelineStep, GateRunner, normalize_gate_condition
+from bernstein.core.gate_runner import GatePipelineStep, GateResult, GateRunner, normalize_gate_condition
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.quality_gates import QualityGatesConfig
 
@@ -149,6 +149,218 @@ def test_non_required_fail_does_not_block(tmp_path: Path) -> None:
     assert report.overall_pass
     assert report.results[0].status == "fail"
     assert not report.results[0].blocked
+
+
+def _test_expansion_report(
+    tmp_path: Path, files: dict[str, str], changed: list[str], *, required: bool = False
+) -> tuple[GateResult, bool]:
+    for name, content in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    step = GatePipelineStep(name="test_expansion", required=required, condition="python_changed")
+    config = QualityGatesConfig(pipeline=[step], cache_enabled=False)
+    report = asyncio.run(GateRunner(config, tmp_path).run_all(_make_task(owned_files=changed), tmp_path))
+    return report.results[0], report.overall_pass
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_expansion_unimported_placeholder_is_uncovered(tmp_path: Path, required: bool) -> None:
+    result, overall_pass = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/feature.py": "def new_secure_handler(payload: dict) -> bool:\n    return payload.get('auth') is True\n",
+            "tests/unit/test_feature.py": "def test_placeholder():\n    assert 1 + 1 == 2\n",
+        },
+        ["src/demo/feature.py", "tests/unit/test_feature.py"],
+        required=required,
+    )
+    assert result.status == "fail"
+    assert result.blocked is required
+    assert overall_pass is (not required)
+    assert result.metadata["uncovered_files"] == ["src/demo/feature.py"]
+    needs_coverage = tmp_path / ".sdd/runtime/needs_coverage.json"
+    assert '"source_file": "src/demo/feature.py"' in needs_coverage.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("test_import", ["from demo.feature import new_secure_handler\n", "import demo.feature\n"])
+def test_expansion_changed_test_imports_changed_module(tmp_path: Path, test_import: str) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/feature.py": "def new_secure_handler():\n    return True\n",
+            "tests/unit/test_feature.py": test_import + "def test_placeholder():\n    assert True\n",
+        },
+        ["src/demo/feature.py", "tests/unit/test_feature.py"],
+    )
+    assert result.status == "pass"
+    assert result.metadata.get("uncovered_files", []) == []
+
+
+def test_expansion_changed_test_imports_transitive_source_module(tmp_path: Path) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/feature.py": "def new_secure_handler():\n    return True\n",
+            "src/demo/bridge.py": "from demo.feature import new_secure_handler\n",
+            "tests/unit/test_feature.py": "from demo.bridge import new_secure_handler\ndef test_placeholder():\n    assert True\n",
+        },
+        ["src/demo/feature.py", "tests/unit/test_feature.py"],
+    )
+    assert result.status == "pass"
+
+
+def test_expansion_existing_unchanged_test_does_not_prove_import(tmp_path: Path) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/feature.py": "def new_secure_handler():\n    return True\n",
+            "tests/unit/test_feature.py": "def test_placeholder():\n    assert 'demo.feature'\n",
+            "tests/unit/test_existing.py": "from demo.feature import new_secure_handler\n",
+        },
+        ["src/demo/feature.py", "tests/unit/test_feature.py"],
+    )
+    assert result.status == "fail"
+    assert result.metadata["uncovered_files"] == ["src/demo/feature.py"]
+
+
+def test_expansion_only_unreachable_production_module_is_reported(tmp_path: Path) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/used.py": "def changed():\n    return True\n",
+            "src/demo/missing.py": "def changed():\n    return True\n",
+            "tests/unit/test_used.py": "import demo.used\ndef test_placeholder():\n    assert True\n",
+        },
+        ["src/demo/used.py", "src/demo/missing.py", "tests/unit/test_used.py"],
+    )
+    assert result.status == "fail"
+    assert result.metadata["uncovered_files"] == ["src/demo/missing.py"]
+
+
+def test_expansion_test_only_change_is_skipped(tmp_path: Path) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {"tests/unit/test_feature.py": "def test_placeholder():\n    assert True\n"},
+        ["tests/unit/test_feature.py"],
+    )
+    assert result.status == "skipped"
+
+
+def test_expansion_flat_fixture_and_suffix_test_are_supported(tmp_path: Path) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "feature.py": "def new_secure_handler():\n    return True\n",
+            "feature_test.py": "from feature import new_secure_handler\ndef test_placeholder():\n    assert True\n",
+        },
+        ["feature.py", "feature_test.py"],
+    )
+    assert result.status == "pass"
+
+
+@pytest.mark.parametrize(
+    ("test_import", "bridge_import", "expected"),
+    [
+        ("from demo import feature", "", "pass"),
+        ("from demo import bridge", "from demo import feature\n", "pass"),
+        ("from demo import bridge", "from . import feature\n", "pass"),
+        ("import demo", "", "fail"),
+        ("from demo import bridge", "", "fail"),
+    ],
+)
+def test_expansion_package_child_imports(tmp_path: Path, test_import: str, bridge_import: str, expected: str) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/__init__.py": "",
+            "src/demo/feature.py": "def target():\n    return True\n",
+            "src/demo/bridge.py": bridge_import,
+            "tests/unit/test_feature.py": f"{test_import}\ndef test_placeholder():\n    assert True\n",
+        },
+        ["src/demo/feature.py", "tests/unit/test_feature.py"],
+    )
+    assert result.status == expected
+    assert result.metadata.get("uncovered_files", []) == ([] if expected == "pass" else ["src/demo/feature.py"])
+
+
+def test_expansion_importing_child_reaches_changed_package_init(tmp_path: Path) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/__init__.py": "VALUE = 1\n",
+            "src/demo/feature.py": "def target():\n    return True\n",
+            "tests/unit/test_feature.py": "import demo.feature\ndef test_placeholder():\n    assert True\n",
+        },
+        ["src/demo/__init__.py", "tests/unit/test_feature.py"],
+    )
+    assert result.status == "pass"
+
+
+@pytest.mark.parametrize(
+    "test_import",
+    ["from scripts.feature import target", "from scripts import feature", "from scripts.bridge import target"],
+)
+def test_expansion_mixed_src_and_root_modules(tmp_path: Path, test_import: str) -> None:
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/unrelated.py": "def other():\n    return True\n",
+            "scripts/feature.py": "def target():\n    return True\n",
+            "scripts/bridge.py": "from scripts.feature import target\n",
+            "tests/unit/test_feature.py": f"{test_import}\ndef test_placeholder():\n    assert True\n",
+        },
+        ["scripts/feature.py", "tests/unit/test_feature.py"],
+    )
+    assert result.status == "pass"
+
+
+@pytest.mark.parametrize(
+    ("changed_source", "bridge", "bridge_import", "expected"),
+    [
+        ("src/demo/feature.py", "scripts/bridge.py", "from demo.feature import target", "pass"),
+        ("feature.py", "bridge.py", "from feature import target", "pass"),
+        ("src/demo/feature.py", "scripts/bridge.py", "from demo.unrelated import target", "fail"),
+    ],
+)
+def test_expansion_unchanged_root_bridge(
+    tmp_path: Path, changed_source: str, bridge: str, bridge_import: str, expected: str
+) -> None:
+    module = bridge[:-3].replace("/", ".")
+    result, _ = _test_expansion_report(
+        tmp_path,
+        {
+            "src/demo/unrelated.py": "def target():\n    return True\n",
+            changed_source: "def target():\n    return True\n",
+            bridge: bridge_import + "\n",
+            "tests/unit/test_feature.py": f"from {module} import target\ndef test_active():\n    assert target()\n",
+        },
+        [changed_source, "tests/unit/test_feature.py"],
+    )
+    assert result.status == expected
+    assert result.metadata.get("uncovered_files", []) == ([] if expected == "pass" else [changed_source])
+
+
+def test_expansion_does_not_cache_stale_transitive_imports(tmp_path: Path) -> None:
+    files = {
+        "src/demo/feature.py": "def target():\n    return True\n",
+        "src/demo/bridge.py": "from demo.feature import target\n",
+        "tests/unit/test_feature.py": "from demo.bridge import target\ndef test_placeholder():\n    assert True\n",
+    }
+    for name, content in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    step = GatePipelineStep(name="test_expansion", required=False, condition="python_changed")
+    runner = GateRunner(QualityGatesConfig(pipeline=[step], cache_enabled=True), tmp_path)
+    changed = ["src/demo/feature.py", "tests/unit/test_feature.py"]
+    first = asyncio.run(runner.run_gate(step, _make_task(), tmp_path, changed))
+    assert first.status == "pass" and not first.cached
+
+    (tmp_path / "src/demo/bridge.py").write_text("VALUE = 1\n", encoding="utf-8")
+    second = asyncio.run(runner.run_gate(step, _make_task(), tmp_path, changed))
+    assert second.status == "fail" and not second.cached
+    assert second.metadata["uncovered_files"] == ["src/demo/feature.py"]
 
 
 def test_cache_hit_and_invalidation_by_content_hash(tmp_path: Path) -> None:

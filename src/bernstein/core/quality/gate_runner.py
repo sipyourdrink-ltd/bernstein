@@ -48,6 +48,14 @@ from bernstein.core.quality.gate_pipeline import (
     is_dep_file as _is_dep_file,
 )
 from bernstein.core.quality.run_config_gate import check_paths
+from bernstein.core.quality.test_impact import (
+    _expand_transitive_modules,
+    _path_to_module,
+    build_compat_dep_map,
+    discover_module_aliases,
+    extract_project_imports,
+    resolve_module_aliases,
+)
 from bernstein.core.telemetry import start_span
 
 #: A runner that could not START, in the two shapes the platform reports it.
@@ -1904,7 +1912,7 @@ class GateRunner:
     ) -> str | None:
         if step.name not in VALID_GATE_NAMES:
             return None
-        if step.name in {"coverage_delta", "complexity_check", "merge_conflict"}:
+        if step.name in {"coverage_delta", "complexity_check", "merge_conflict", "test_expansion"}:
             return None
         if step.name == "tests" and self._config.flaky_detection:
             return None
@@ -2001,43 +2009,101 @@ class GateRunner:
         run_dir: Path,
         changed_files: list[str],
     ) -> GateResult:
-        """Check whether agent-modified source files have corresponding test coverage.
+        """Check module import reachability from tests in the same change.
 
-        Identifies source files without matching test files and reports them
-        as uncovered. This is a non-blocking advisory gate.
+        Static imports do not prove symbol calls, data flow, or execution.
         """
         source_files = [f for f in changed_files if not self._is_test_path(f) and f.endswith(".py")]
-        uncovered: list[str] = []
-        for src in source_files:
-            # Derive expected test path: src/foo/bar.py → tests/unit/test_bar.py
-            src_path = Path(src)
-            expected_test = Path("tests") / "unit" / f"test_{src_path.stem}.py"
-            if not (run_dir / expected_test).exists() and expected_test.as_posix() not in changed_files:
-                uncovered.append(src)
-
         if not source_files:
             return self._skipped(step, "No Python source files changed.")
 
-        # Always pass - this is an advisory gate. Record uncovered files in metadata
-        # and write needs_coverage.json for downstream consumers.
-        if uncovered:
-            import json as _json
+        changed_tests = [
+            f
+            for f in changed_files
+            if f.endswith(".py") and (Path(f).name.startswith("test_") or Path(f).name.endswith("_test.py"))
+        ]
+        src_root = run_dir / "src" if (run_dir / "src").is_dir() else run_dir
+        prefixes = {p.name for p in src_root.iterdir() if p.is_dir()}
+        prefixes.update(p.stem for p in src_root.glob("*.py"))
+        extra_sources: set[Path] = set()
+        for rel in source_files:
+            path = run_dir / rel
+            if path.is_relative_to(src_root):
+                continue
+            parts = Path(rel).parts
+            if len(parts) > 1:
+                prefixes.add(parts[0])
+                extra_sources.update((run_dir / parts[0]).rglob("*.py"))
+            else:
+                prefixes.add(path.stem)
+                extra_sources.add(path)
+        # Index only root-level modules named by changed tests, not unrelated trees.
+        root_modules = {
+            path.name if path.is_dir() else path.stem
+            for path in run_dir.iterdir()
+            if path.name not in {"src", "tests", "build", "dist", "node_modules", "__pycache__"}
+            and not path.name.startswith(".")
+            and (path.is_dir() or path.suffix == ".py")
+        }
+        for rel in changed_tests:
+            for imported in extract_project_imports(run_dir / rel, root_modules - prefixes):
+                top = imported.split(".", 1)[0]
+                root_path = run_dir / top
+                if root_path.is_dir():
+                    extra_sources.update(root_path.rglob("*.py"))
+                elif root_path.with_suffix(".py").is_file():
+                    extra_sources.add(root_path.with_suffix(".py"))
+                prefixes.add(top)
+        # A root-level test is parsed directly instead of scanning the whole repo.
+        test_dirs = sorted({(run_dir / f).parent for f in changed_tests if (run_dir / f).parent != run_dir})
+        dep_map = build_compat_dep_map(run_dir, src_root, test_dirs, prefixes, sorted(extra_sources))
+        source_imports = dep_map["source_imports"]
+        test_deps = dep_map["test_deps"]
+        aliases = discover_module_aliases(src_root) if any(f not in test_deps for f in changed_tests) else {}
 
-            coverage_file = run_dir / ".sdd" / "runtime" / "needs_coverage.json"
+        changed_imports: set[str] = set()
+        for rel in changed_tests:
+            if rel in test_deps:
+                changed_imports.update(test_deps[rel]["imports"])
+            else:
+                # The shared index covers test_*.py; use its extractor for *_test.py.
+                changed_imports.update(
+                    resolve_module_aliases(
+                        extract_project_imports(
+                            run_dir / rel, prefixes, importable_modules=set(source_imports) | set(aliases)
+                        ),
+                        aliases,
+                    )
+                )
+
+        uncovered: list[str] = []
+        for rel in source_files:
+            path = run_dir / rel
+            module = _path_to_module(path, src_root if path.is_relative_to(src_root) else run_dir)
+            roots = {module}
+            if path.name == "__init__.py":
+                # Importing a child necessarily initializes each parent package.
+                roots.update(name for name in source_imports if name.startswith(f"{module}."))
+            if not changed_imports.intersection(_expand_transitive_modules(roots, source_imports)):
+                uncovered.append(rel)
+        coverage_file = run_dir / ".sdd" / "runtime" / "needs_coverage.json"
+        if uncovered:
             coverage_file.parent.mkdir(parents=True, exist_ok=True)
             entries = [{"source_file": f, "expected_test": f"tests/unit/test_{Path(f).stem}.py"} for f in uncovered]
-            coverage_file.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+            coverage_file.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+        else:
+            coverage_file.unlink(missing_ok=True)
 
         details = (
-            f"{len(uncovered)} source file(s) without test coverage: {', '.join(uncovered[:5])}"
+            f"{len(uncovered)} source module(s) not imported from changed tests: {', '.join(uncovered[:5])}"
             if uncovered
-            else f"All {len(source_files)} source file(s) have corresponding tests."
+            else f"All {len(source_files)} source module(s) reachable from changed tests."
         )
         return GateResult(
             name=step.name,
-            status="pass",
+            status="fail" if uncovered else "pass",
             required=step.required,
-            blocked=False,
+            blocked=bool(uncovered and step.required),
             cached=False,
             duration_ms=0,
             details=details,
