@@ -15,7 +15,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -37,11 +39,7 @@ class _StopLoop(Exception):
 
 
 def _reaped_pid() -> int:
-    """A pid that is positively dead: a child that already exited and was reaped.
-
-    A fixed number such as 999999 can name a live process on a busy CI host,
-    and a live pid whose command line cannot be read counts as ours.
-    """
+    """A pid that is positively dead: a child that already exited and was reaped."""
     child = subprocess.Popen([sys.executable, "-c", "pass"])
     child.wait()
     return child.pid
@@ -67,7 +65,11 @@ def _one_watchdog_cycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list
             raise _StopLoop
 
     restarts: list[Any] = []
-    monkeypatch.setattr(bootstrap.time, "sleep", _sleep)
+    # Replace only bootstrap's ``time``. Patching ``time.sleep`` globally also
+    # catches ``subprocess.run(..., timeout=...)`` inside the liveness probe,
+    # which sleeps while it reaps ``ps`` on a loaded host and would end the
+    # loop before its first cycle.
+    monkeypatch.setattr(bootstrap, "time", SimpleNamespace(sleep=_sleep, monotonic=time.monotonic))
     monkeypatch.setattr(bootstrap, "_start_spawner", lambda *a, **kw: restarts.append((a, kw)) or 4242)
     monkeypatch.setattr(bootstrap, "_start_server", lambda *a, **kw: pytest.fail("server is alive"))
     with pytest.raises(_StopLoop):
