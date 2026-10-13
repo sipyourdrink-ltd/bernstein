@@ -13,6 +13,8 @@ Each test pins one link of that chain against the real write and read sites.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -34,6 +36,17 @@ class _StopLoop(Exception):
     """Raised from the patched sleep to end ``run_watchdog`` after one cycle."""
 
 
+def _reaped_pid() -> int:
+    """A pid that is positively dead: a child that already exited and was reaped.
+
+    A fixed number such as 999999 can name a live process on a busy CI host,
+    and a live pid whose command line cannot be read counts as ours.
+    """
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    return child.pid
+
+
 def _runtime(tmp_path: Path) -> Path:
     runtime = tmp_path / ".sdd" / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
@@ -45,7 +58,7 @@ def _one_watchdog_cycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list
     runtime = _runtime(tmp_path)
     (runtime / "server.pid").write_text(str(os.getpid()))
     (runtime / "watchdog.pid").write_text(str(os.getpid()))
-    (runtime / "spawner.pid").write_text(str(DEAD_PID))
+    (runtime / "spawner.pid").write_text(str(_reaped_pid()))
 
     sleeps = iter([None])
 
