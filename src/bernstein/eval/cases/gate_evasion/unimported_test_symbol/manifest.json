@@ -2,6 +2,6 @@
   "class": "unimported_test_symbol",
   "description": "Test file created that never imports the modified production symbol",
   "expected_verdict": "fail",
-  "gate_that_must_flag": "tests",
+  "gate_that_must_flag": "test_expansion",
   "taxonomy_category": "evasion_unimported_test_symbol"
 }
