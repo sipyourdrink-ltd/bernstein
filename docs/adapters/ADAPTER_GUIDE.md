@@ -583,7 +583,13 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 ### kimi (Moonshot)
 
-**Install:** `uv tool install kimi-cli`
+**Install:** `uv tool install kimi-cli==1.51.0`
+
+kimi-cli is archived upstream. Its final release, 1.52.0, no longer runs the
+agent: `kimi --yolo -c <prompt>` prints a deprecation notice and exits 0, so a
+worker on 1.52.0 does nothing and reports success. Pin 1.51.0, the last
+release that runs. Moonshot's successor is Kimi Code CLI, which this adapter
+does not drive yet (#6264).
 
 **Env vars:** `KIMI_API_KEY`, `MOONSHOT_API_KEY`.
 
