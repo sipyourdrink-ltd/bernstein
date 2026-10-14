@@ -215,6 +215,10 @@ class MCPGateway:
         self._loop_detector = WorkerLoopDetector()
         self._proc: asyncio.subprocess.Process | None = None
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
+        # Stripped upstream line per answered request id, so ``toolcall.effect``
+        # digests the bytes as received (#6270). Callers of ``_send_request``
+        # take their entry on success; failures discard it.
+        self._received_lines: dict[Any, bytes] = {}
         self._reader_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
@@ -277,6 +281,7 @@ class MCPGateway:
         except Exception:
             logger.debug("Capability drift check: tools/list failed", exc_info=True)
             return
+        self._received_lines.pop(0, None)
         tools = (response or {}).get("result", {}).get("tools", [])
         if not isinstance(tools, list):
             return
@@ -334,6 +339,7 @@ class MCPGateway:
                 if req_id is not None:
                     fut = self._pending.get(req_id)
                     if fut and not fut.done():
+                        self._received_lines[req_id] = line
                         fut.set_result(msg)
         except Exception:
             # Upstream died - fail all pending futures
@@ -430,6 +436,7 @@ class MCPGateway:
         except TimeoutError:
             await self._record_tool_effect(prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout")
             raise
+        received = self._received_lines.pop(req_id, None)
         from bernstein.core.security.toolcall_interlock import toolcall_effect_outcome
 
         await self._record_tool_effect(
@@ -437,6 +444,7 @@ class MCPGateway:
             response,
             latency_ms,
             toolcall_effect_outcome(response),
+            received=received,
         )
 
         self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
@@ -504,6 +512,8 @@ class MCPGateway:
         response: dict[str, Any] | None,
         duration_ms: float,
         outcome: str,
+        *,
+        received: bytes | None = None,
     ) -> None:
         """Write ``toolcall.effect`` after the connector returns (#6270)."""
         if prepared is None or self._attestation_interlock is None:
@@ -515,6 +525,7 @@ class MCPGateway:
             response=response,
             duration_ms=duration_ms,
             outcome=outcome,
+            received=received,
         )
 
     async def _send_request(self, message: dict[str, Any], req_id: Any) -> tuple[dict[str, Any], float]:
@@ -530,6 +541,9 @@ class MCPGateway:
         try:
             await self._send_upstream(message)
             response: dict[str, Any] = await asyncio.wait_for(asyncio.shield(fut), timeout=_CONNECTOR_REQUEST_TIMEOUT_S)
+        except BaseException:
+            self._received_lines.pop(req_id, None)
+            raise
         finally:
             self._pending.pop(req_id, None)
         return response, (time.monotonic() - t0) * 1000.0
@@ -576,6 +590,7 @@ class MCPGateway:
         except TimeoutError:
             await self._record_tool_effect(retried_prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout")
             raise
+        retried_received = self._received_lines.pop(retried_id, None)
         from bernstein.core.security.toolcall_interlock import toolcall_effect_outcome
 
         await self._record_tool_effect(
@@ -583,6 +598,7 @@ class MCPGateway:
             settled,
             latency_ms,
             toolcall_effect_outcome(settled),
+            received=retried_received,
         )
         wal_entry = self._record_wal_and_metrics("tools/call", retried_params, retried_id, settled, latency_ms)
         self._anchor_proxied_call("tools/call", retried_params)

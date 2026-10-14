@@ -105,9 +105,9 @@ Completeness is derived from ordered chain projections. Every
 `toolcall.attestation`; a receipt field claiming `complete` cannot upgrade a
 run with absent, reordered, or unmatched markers. After the connector
 returns, the native provider also writes `toolcall.effect` under the same
-intent digest (response or patch digest, outcome, wall time). A missing
-effect record is unobserved, not success. `bernstein gateway start` does
-not attach `attestation_interlock`; the writer is opt-in until an operator
+intent digest (digest of the response line as received or of the patch,
+outcome, wall time). A missing effect record is unobserved, not success.
+`bernstein gateway start` does not attach `attestation_interlock`; the writer is opt-in until an operator
 wires `NativeToolCallEvidenceProvider`. The interlock protocol owns
 neither identity keys nor policy evaluation, so native and external providers
 can implement the same contract without becoming dependencies of the gateway.

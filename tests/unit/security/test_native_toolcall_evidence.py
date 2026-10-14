@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -151,6 +154,49 @@ async def test_effect_record_binds_to_the_intent_digest(tmp_path: Any) -> None:
     assert chain.verify() == (True, [])
 
 
+class _UpstreamStdout:
+    """Async line source standing in for the connector's stdout pipe."""
+
+    def __init__(self) -> None:
+        self.lines: asyncio.Queue[bytes] = asyncio.Queue()
+
+    def __aiter__(self) -> _UpstreamStdout:
+        return self
+
+    async def __anext__(self) -> bytes:
+        line = await self.lines.get()
+        if not line:
+            raise StopAsyncIteration
+        return line
+
+
+@pytest.mark.asyncio
+async def test_gateway_effect_digest_is_the_received_upstream_line(tmp_path: Any) -> None:
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    gateway = _gateway(tmp_path, NativeToolCallEvidenceProvider(chain))
+    stdout = _UpstreamStdout()
+    gateway._proc = SimpleNamespace(stdout=stdout)  # type: ignore[assignment]
+    reader = asyncio.create_task(gateway._read_upstream_loop())
+    raw_line = b'  {"id": 7, "jsonrpc": "2.0", "result": {"text": "caf\\u00e9"}}\r\n'
+
+    async def connector_answers(_message: dict[str, Any]) -> None:
+        stdout.lines.put_nowait(raw_line)
+
+    try:
+        with patch.object(gateway, "_send_upstream", side_effect=connector_answers):
+            response = await gateway.handle_jsonrpc(_tools_call())
+    finally:
+        stdout.lines.put_nowait(b"")
+        await reader
+
+    assert response == {"id": 7, "jsonrpc": "2.0", "result": {"text": "café"}}
+    effect = chain.query(resource_id="scope:run-1:agent-1")[-1]
+    assert effect.event_type == "toolcall.effect"
+    assert effect.details["effect_digest"] == "sha256:" + hashlib.sha256(raw_line.strip()).hexdigest()
+    assert effect.details["effect_digest"] != canonical_effect_digest(response)
+    assert gateway._received_lines == {}
+
+
 @pytest.mark.asyncio
 async def test_missing_effect_record_reads_unobserved_not_success(tmp_path: Any) -> None:
     """Writer produces no effect row. Slice 2 will read that absence as unobserved, never success."""
@@ -219,26 +265,51 @@ def test_partial_outcome_when_result_and_error_are_both_present() -> None:
 
 
 def test_timestamp_echo_changes_the_raw_effect_digest() -> None:
-    base: dict[str, Any] = {"jsonrpc": "2.0", "id": 7, "result": {"ok": True}}
-    echoed: dict[str, Any] = {
-        "jsonrpc": "2.0",
-        "id": 7,
-        "result": {"ok": True, "echoed_at": "2026-09-27T10:00:00Z"},
-    }
-    assert effect_digest_for_connector_response(base) != effect_digest_for_connector_response(echoed)
-    assert effect_digest_for_connector_response(base).startswith("sha256:")
+    base = b'{"jsonrpc":"2.0","id":7,"result":{"ok":true}}'
+    echoed = b'{"jsonrpc":"2.0","id":7,"result":{"ok":true,"echoed_at":"2026-09-27T10:00:00Z"}}'
+    base_digest = effect_digest_for_connector_response(json.loads(base), base)
+    assert base_digest != effect_digest_for_connector_response(json.loads(echoed), echoed)
+    assert base_digest.startswith("sha256:")
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        b'{"jsonrpc": "2.0", "id": 7, "result": {"text": "caf\xc3\xa9"}}',
+        b'{"jsonrpc":"2.0","id":7,"result":{"text":"caf\\u00e9"}}',
+        b'{"id":7,"jsonrpc":"2.0","result":{"text":"caf\xc3\xa9"}}',
+    ],
+)
+def test_effect_digest_hashes_bytes_as_received(variant: bytes) -> None:
+    compact = b'{"jsonrpc":"2.0","id":7,"result":{"text":"caf\xc3\xa9"}}'
+    assert json.loads(variant) == json.loads(compact)
+    digest = effect_digest_for_connector_response(json.loads(variant), variant)
+    assert digest == "sha256:" + hashlib.sha256(variant).hexdigest()
+    assert digest != effect_digest_for_connector_response(json.loads(compact), compact)
+
+
+def test_string_result_keeps_the_patch_preimage_over_received_bytes() -> None:
+    patch_text = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n"
+    response: dict[str, Any] = {"jsonrpc": "2.0", "id": 7, "result": patch_text}
+    received = json.dumps(response).encode("utf-8")
+    assert effect_digest_for_connector_response(response, received) == canonical_effect_digest(patch_text)
+
+
+def test_timeout_hashes_null_even_with_stray_bytes() -> None:
+    assert effect_digest_for_connector_response(None, b'{"id":7}') == canonical_effect_digest(None)
 
 
 def test_patch_effect_digest_matches_result_bundle() -> None:
-    import hashlib
-
     patch = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n"
     assert canonical_effect_digest(patch) == "sha256:" + hashlib.sha256(patch.encode("utf-8")).hexdigest()
 
 
 def test_recorded_effect_fixture_digest_is_stable() -> None:
     fixture = json.loads(_EFFECT_FIXTURE.read_text(encoding="utf-8"))
-    assert effect_digest_for_connector_response(fixture["response"]) == fixture["effect_digest"]
+    received = fixture["received"].encode("utf-8")
+    response = json.loads(received)
+    assert effect_digest_for_connector_response(response, received) == fixture["effect_digest"]
+    assert canonical_effect_digest(response) != fixture["effect_digest"]
     assert canonical_effect_digest(fixture["patch"]) == fixture["patch_effect_digest"]
 
 
