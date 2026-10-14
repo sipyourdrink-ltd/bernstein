@@ -32,9 +32,10 @@ The `gate-evasion` job runs on changes to
 `src/bernstein/core/quality/**`, `src/bernstein/eval/cases/gate_evasion/**`,
 the gate-evasion benchmark/check implementation, the committed baseline,
 `pyproject.toml`, `uv.lock`, and the CI gate definition/tests. The
-`determine-changes` planner uses the pull-request merge diff, or the
-`merge_group` base SHA for the combined queue batch; failures to calculate
-the diff choose **run**, never skip. On a truly unrelated diff, the planner
+`determine-changes` planner uses the pull-request merge diff, or, for a
+queued group, the diff from the batch root (the merge-base of the queue head
+with the target branch) so a stacked entry is classified with every entry
+ahead of it; failures to calculate the diff choose **run**, never skip. On a truly unrelated diff, the planner
 publishes `gate_evasion_relevant=false` and `CI gate` permits only that
 explicit skip. Missing/unknown planner outputs, cancellation, unexpected
 skips, or a failing gate-evasion job make the required roll-up fail.

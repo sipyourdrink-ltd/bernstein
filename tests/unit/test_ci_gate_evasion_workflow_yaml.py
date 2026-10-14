@@ -35,7 +35,7 @@ def test_planner_covers_quality_corpus_tools_baseline_and_merge_group() -> None:
         assert path in script
     assert 'echo "gate_evasion_relevant=true"' in script
     assert "gate_evasion_relevant=false" in script
-    assert 'git diff --name-only "${MERGE_GROUP_BASE_SHA}...HEAD"' in script
+    assert 'git diff --name-only "${ROOT}...HEAD"' in script
     assert 'git diff --name-only "origin/${BASE_REF}...HEAD"' in script
     classifier = next(line for line in script.splitlines() if "grep -Eq" in line and "gate-evasion-baseline" in line)
     expression = classifier.split("grep -Eq '", 1)[1].rsplit("'", 1)[0]

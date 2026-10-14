@@ -821,7 +821,7 @@ def test_ci_merge_group_trigger_is_unconditional(ci_doc: dict[str, object]) -> N
 # These tests execute the shipped classifier, not a copy of it.
 # ---------------------------------------------------------------------------
 
-MERGE_GROUP_BASE_SHA_EXPR = "github.event.merge_group.base_sha"
+MERGE_GROUP_BASE_REF_EXPR = "github.event.merge_group.base_ref"
 
 _SHELL_TOOLS_PRESENT = shutil.which("bash") is not None and shutil.which("git") is not None
 requires_shell_tools = pytest.mark.skipif(
@@ -897,20 +897,26 @@ def _commit_file(repo: Path, relpath: str, body: str, message: str) -> str:
     return head.stdout.strip()
 
 
-def _synthetic_merge_group(tmp_path: Path) -> tuple[Path, str]:
+def _synthetic_merge_group(tmp_path: Path) -> tuple[Path, str, str]:
     """Build a two-entry merge group whose tail entry is docs-only.
 
-    Returns the repo path and the group's `base_sha`. Entry 1 touches a
-    macOS-sensitive Python module; entry 2 touches only docs. A planner that
-    reads the tail alone sees a docs-only group.
+    Returns the queue checkout, the batch root, and entry 1's head. ``origin``
+    holds ``main`` at the root, the way the target branch looks while the group
+    builds. Entry 1 touches a macOS-sensitive Python module; entry 2 touches
+    only docs. A planner that reads the tail alone sees a docs-only group, and
+    so does one that reads entry 2's ``base_sha``, which the queue sets to
+    entry 1's head (#5901).
     """
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "--initial-branch=main")
+    root_sha = _commit_file(origin, "README.md", "base\n", "base commit")
     repo = tmp_path / "queue-ref"
-    repo.mkdir()
-    _git(repo, "init", "--initial-branch=main")
-    base_sha = _commit_file(repo, "README.md", "base\n", "base commit")
-    _commit_file(repo, "src/bernstein/core/tunnels/ssh.py", "x = 1\n", "entry 1: tunnels")
+    _git(tmp_path, "clone", "--quiet", str(origin), str(repo))
+    _git(repo, "checkout", "--quiet", "-b", "gh-readonly-queue/main/pr-2")
+    entry_1 = _commit_file(repo, "src/bernstein/core/tunnels/ssh.py", "x = 1\n", "entry 1: tunnels")
     _commit_file(repo, "docs/notes.md", "notes\n", "entry 2: docs only")
-    return repo, base_sha
+    return repo, root_sha, entry_1
 
 
 def _run_classify(
@@ -928,6 +934,7 @@ def _run_classify(
         "HOME": str(repo),
         "EVENT_NAME": event,
         "BASE_REF": "",
+        "MERGE_GROUP_BASE_REF": "",
         "MERGE_GROUP_BASE_SHA": "",
         "PUSH_BEFORE_SHA": "",
         "GITHUB_OUTPUT": str(output_path),
@@ -952,18 +959,32 @@ def _run_classify(
     return parsed
 
 
-def test_classify_step_reads_the_merge_group_base_sha(ci_doc: dict[str, object]) -> None:
-    """The group's base SHA must reach the script through `env:`.
+def test_classify_step_reads_the_merge_group_base_ref(ci_doc: dict[str, object]) -> None:
+    """The queue's target branch must reach the script through `env:`.
 
-    Interpolating it straight into the `run:` body would be a template
-    injection surface; reading it from the environment keeps the script
-    auditable and testable.
+    The batch root is resolved from it. Interpolating it straight into the
+    `run:` body would be a template injection surface; reading it from the
+    environment keeps the script auditable and testable.
     """
     env = _classify_env(ci_doc)
-    assert any(MERGE_GROUP_BASE_SHA_EXPR in value for value in env.values()), (
-        "the `classify` step must expose `github.event.merge_group.base_sha` via "
-        f"`env:`; found {env!r}. Without it the planner classifies a queued group "
-        "from its tail commit only."
+    assert any(MERGE_GROUP_BASE_REF_EXPR in value for value in env.values()), (
+        "the `classify` step must expose `github.event.merge_group.base_ref` via "
+        f"`env:`; found {env!r}. Without it the planner cannot resolve the batch root."
+    )
+
+
+def test_classify_step_resolves_the_root_through_merge_base(ci_doc: dict[str, object]) -> None:
+    """The merge_group branch diffs from a merge-base, not the payload's base_sha (#5901).
+
+    `base_sha` is the previous entry's head for a stacked entry, so diffing
+    from it classifies that entry on its own diff.
+    """
+    script = _classify_script(ci_doc)
+    branch = script.split('elif [ "$EVENT_NAME" = "merge_group" ]; then', 1)[1].split("\n          else\n", 1)[0]
+    assert "git merge-base refs/remotes/origin/queue-trunk HEAD" in branch, branch
+    assert 'git diff --name-only "${ROOT}...HEAD"' in branch, branch
+    assert '"${MERGE_GROUP_BASE_SHA}...HEAD"' not in branch, (
+        "the merge_group branch must not diff from github.event.merge_group.base_sha"
     )
 
 
@@ -975,12 +996,12 @@ def test_planner_classifies_the_whole_merge_group(ci_doc: dict[str, object], tmp
     docs. The planner must report the union, otherwise every Python test job
     skips and `CI gate` certifies an untested combination.
     """
-    repo, base_sha = _synthetic_merge_group(tmp_path)
+    repo, root_sha, _ = _synthetic_merge_group(tmp_path)
     outputs = _run_classify(
         repo,
         _classify_script(ci_doc),
         event="merge_group",
-        extra_env={"MERGE_GROUP_BASE_SHA": base_sha},
+        extra_env={"MERGE_GROUP_BASE_REF": "refs/heads/main", "MERGE_GROUP_BASE_SHA": root_sha},
     )
     assert outputs["docs_only"] == "false", (
         "planner reported docs_only=true for a merge group that changes "
@@ -997,6 +1018,45 @@ def test_planner_classifies_the_whole_merge_group(ci_doc: dict[str, object], tmp
 
 
 @requires_shell_tools
+def test_a_stacked_docs_only_entry_does_not_skip_python_tests(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """Entry 2's payload base_sha is entry 1's head; the planner still sees entry 1 (#5901).
+
+    This is the queue's real shape for a stacked entry. Diffing from
+    `base_sha` would read only the docs commit and skip every Python job for
+    a combination that changes Python.
+    """
+    repo, _, entry_1 = _synthetic_merge_group(tmp_path)
+    outputs = _run_classify(
+        repo,
+        _classify_script(ci_doc),
+        event="merge_group",
+        extra_env={"MERGE_GROUP_BASE_REF": "refs/heads/main", "MERGE_GROUP_BASE_SHA": entry_1},
+    )
+    assert outputs["docs_only"] == "false", (
+        f"a stacked docs-only entry behind a Python change read as docs-only; outputs={outputs!r}"
+    )
+    assert outputs["python_changed"] == "true", outputs
+
+
+@requires_shell_tools
+def test_the_root_does_not_move_when_an_entry_lands_on_main(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """Every job of one run must classify against the same commit.
+
+    The queue squashes, so the commit entry 1 lands as on `main` is a new
+    commit, never an ancestor of the queue head. A planner job that starts
+    after that landing must resolve the same root as one that started before.
+    """
+    repo, _, entry_1 = _synthetic_merge_group(tmp_path)
+    script = _classify_script(ci_doc)
+    env = {"MERGE_GROUP_BASE_REF": "refs/heads/main", "MERGE_GROUP_BASE_SHA": entry_1}
+    before = _run_classify(repo, script, event="merge_group", extra_env=env)
+    _commit_file(tmp_path / "origin", "src/bernstein/core/tunnels/ssh.py", "x = 1\n", "entry 1 (squashed)")
+    after = _run_classify(repo, script, event="merge_group", extra_env=env)
+    assert before == after, f"classification moved when entry 1 landed: {before!r} -> {after!r}"
+    assert after["docs_only"] == "false", after
+
+
+@requires_shell_tools
 def test_tail_only_classification_would_have_missed_it(ci_doc: dict[str, object], tmp_path: Path) -> None:
     """Pin down why the base SHA is needed rather than `HEAD~1`.
 
@@ -1005,7 +1065,7 @@ def test_tail_only_classification_would_have_missed_it(ci_doc: dict[str, object]
     group; the test exists so a future simplification back to one shared
     heuristic fails loudly instead of silently skipping the test suite.
     """
-    repo, _ = _synthetic_merge_group(tmp_path)
+    repo, _, _ = _synthetic_merge_group(tmp_path)
     outputs = _run_classify(repo, _classify_script(ci_doc), event="push")
     assert outputs["docs_only"] == "true", (
         "expected the tail-only (push) heuristic to see just the docs commit; "
@@ -1014,15 +1074,31 @@ def test_tail_only_classification_would_have_missed_it(ci_doc: dict[str, object]
 
 
 @requires_shell_tools
-def test_planner_fails_safe_when_the_group_base_is_missing(ci_doc: dict[str, object], tmp_path: Path) -> None:
-    """No base SHA must widen the classification, never narrow it.
+@pytest.mark.parametrize(
+    "extra_env",
+    [
+        pytest.param({}, id="no-base-ref"),
+        pytest.param({"MERGE_GROUP_BASE_REF": "refs/heads/no-such-branch"}, id="unresolvable-trunk"),
+    ],
+)
+def test_planner_fails_safe_when_the_group_base_is_missing(
+    ci_doc: dict[str, object], tmp_path: Path, extra_env: dict[str, str]
+) -> None:
+    """No batch root must widen the classification, never narrow it.
 
-    A missing or unresolvable base is an infrastructure problem. Skipping test
+    A missing or unresolvable root is an infrastructure problem. Skipping test
     jobs because of one would let the queue merge an unvalidated combination,
-    so the planner has to fall back to "everything changed".
+    so the planner has to fall back to "everything changed". It does not fall
+    back to `base_sha` either: for a stacked entry that is the very diff #5901
+    is about.
     """
-    repo, _ = _synthetic_merge_group(tmp_path)
-    outputs = _run_classify(repo, _classify_script(ci_doc), event="merge_group")
+    repo, _, entry_1 = _synthetic_merge_group(tmp_path)
+    outputs = _run_classify(
+        repo,
+        _classify_script(ci_doc),
+        event="merge_group",
+        extra_env={"MERGE_GROUP_BASE_SHA": entry_1, **extra_env},
+    )
     assert outputs["docs_only"] == "false", (
         f"planner must not report docs_only on an unresolvable base; outputs={outputs!r}"
     )

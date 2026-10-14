@@ -203,12 +203,15 @@ jobs:
           # The merge queue builds a synthetic ref that stacks every entry in
           # the group on top of `main`. `github.event.before` does not exist on
           # this event and the group can carry many commits, so the planner
-          # needs the group's own base SHA to see the whole combined diff.
+          # resolves the batch root from the queue's target branch (#5901).
+          # `base_sha` is kept for the diagnostic only: for a stacked entry it
+          # is the previous entry's head, not the root.
+          MERGE_GROUP_BASE_REF: ${{ github.event.merge_group.base_ref }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           # On pull_request, diff against the base branch. On merge_group,
-          # diff against the group's base SHA. On push to main (or any other
+          # diff against the batch root. On push to main (or any other
           # push event), diff against the previous commit so the planner stays
           # useful for filter-skipped downstream jobs.
           #
@@ -247,26 +250,41 @@ jobs:
             # docs_only=true and every Python test job skips, and the roll-up
             # then reports `CI gate` green for a combination nothing ever ran.
             # That is precisely the untested-combination hole the queue exists
-            # to close, so the planner must diff against the group's own base.
+            # to close, so the planner must diff against the batch root.
             #
-            # `github.event.merge_group.base_sha` is the commit the group was
-            # built on, and checkout above uses fetch-depth: 0, so the range
-            # `<base_sha>...HEAD` is the exact combined diff the queue is
-            # asking CI to validate.
-            if [ -n "$MERGE_GROUP_BASE_SHA" ] && ! git cat-file -e "${MERGE_GROUP_BASE_SHA}^{commit}" 2>/dev/null; then
-              # Normally already present; fetch defensively rather than
-              # silently classifying against a commit git cannot resolve.
-              git fetch --no-tags origin "$MERGE_GROUP_BASE_SHA" || true
+            # `github.event.merge_group.base_sha` is NOT that root for a stacked
+            # entry. The queue builds up to five entries at once, and entry k's
+            # base_sha is entry k-1's queue head, so `<base_sha>...HEAD` is
+            # entry k's own diff. A docs-only entry behind a Python change
+            # would then read docs_only=true (#5901). The root is the merge-base
+            # with the queue's target branch instead: `main` takes squash
+            # commits, which are never ancestors of a queue head, so that
+            # merge-base does not move while the group builds and every job of
+            # one run resolves the same commit. checkout above uses
+            # fetch-depth: 0; the target branch is fetched explicitly anyway so
+            # the ref the merge-base reads is the one named in the payload.
+            # A root that cannot be resolved fails closed: the planner must not
+            # skip anything when it cannot find what it is diffing against.
+            TRUNK="${MERGE_GROUP_BASE_REF#refs/heads/}"
+            ROOT=""
+            if [ -n "$TRUNK" ]; then
+              git fetch --no-tags origin "+refs/heads/${TRUNK}:refs/remotes/origin/queue-trunk" || true
+              ROOT="$(git merge-base refs/remotes/origin/queue-trunk HEAD 2>/dev/null || true)"
             fi
             echo "::group::git diagnostic"
-            echo "merge_group base -> ${MERGE_GROUP_BASE_SHA:-UNSET}"
-            echo "HEAD             -> $(git rev-parse HEAD 2>&1 || echo UNRESOLVED)"
+            echo "merge_group base_ref -> ${MERGE_GROUP_BASE_REF:-UNSET}"
+            echo "merge_group base_sha -> ${MERGE_GROUP_BASE_SHA:-UNSET}"
+            echo "batch root           -> ${ROOT:-UNRESOLVED}"
+            echo "HEAD                 -> $(git rev-parse HEAD 2>&1 || echo UNRESOLVED)"
+            if [ -n "$ROOT" ] && [ -n "$MERGE_GROUP_BASE_SHA" ] && [ "$ROOT" != "$MERGE_GROUP_BASE_SHA" ]; then
+              echo "stacked entry: base_sha is an earlier entry's head; classifying from the batch root"
+            fi
             echo "::endgroup::"
-            if [ -z "$MERGE_GROUP_BASE_SHA" ]; then
-              echo "::warning::merge_group payload carried no base_sha; falling back to safe over-broad result"
+            if [ -z "$ROOT" ]; then
+              echo "::warning::could not resolve the merge_group batch root; falling back to safe over-broad result"
               diff_failed=true
-            elif ! CHANGED=$(git diff --name-only "${MERGE_GROUP_BASE_SHA}...HEAD" 2>&1); then
-              echo "::warning::git diff failed against the merge_group base; falling back to safe over-broad result"
+            elif ! CHANGED=$(git diff --name-only "${ROOT}...HEAD" 2>&1); then
+              echo "::warning::git diff failed against the merge_group batch root; falling back to safe over-broad result"
               echo "diff stderr: $CHANGED"
               diff_failed=true
             fi
