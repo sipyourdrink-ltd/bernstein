@@ -583,6 +583,10 @@ Accepted values are `1`, `true`, `yes`, `on`, `enable` and `enabled`
 - the pending-push retry queue is not drained, and is left intact on disk, so
   unsetting the flag resumes those retries.
 
+Clearing the flag publishes the backlog. The first merge-back after it is
+unset runs `git push <remote> <branch>`, and that push sends every merge made
+on the branch while the flag was set, not just the new one.
+
 It does not cover the salvage push of a `salvage/<id>` branch when a dirty
 worktree is captured, or evolve mode's push to `main`; both still reach the
 remote.

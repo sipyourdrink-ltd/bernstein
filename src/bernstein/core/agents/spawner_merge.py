@@ -69,7 +69,10 @@ def _allow_merge_to_default_branch(env: dict[str, str] | None = None) -> bool:
 
 
 def _local_only(env: dict[str, str] | None = None) -> bool:
-    """Return ``True`` when this run must not touch a git remote.
+    """Return ``True`` when this run must skip the merge-back push and the pending-push retry.
+
+    It does not stop every remote write: the salvage push and evolve mode's
+    push to ``main`` do not read it (see `ENV_LOCAL_ONLY`).
 
     Read at the push site rather than passed down: the two merge entry points
     and the queue path all reach the same `safe_push`, and threading a flag
@@ -936,15 +939,16 @@ def retry_pending_pushes(workdir: Path) -> int:
     Returns:
         Number of pushes successfully retried.
     """
+    path = pending_pushes_path(workdir)
+    if not path.exists():
+        return 0
+
     if _local_only():
         # The queue is left intact: these are pushes a previous run recorded,
         # and a local-only run declining to send them is not the same as
-        # deciding they are never wanted (#5961).
+        # deciding they are never wanted (#5961). Checked after the file so an
+        # empty queue does not log on every tick.
         logger.info("%s set: not retrying pending pushes", ENV_LOCAL_ONLY)
-        return 0
-
-    path = pending_pushes_path(workdir)
-    if not path.exists():
         return 0
 
     try:
