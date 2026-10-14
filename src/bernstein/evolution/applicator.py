@@ -432,7 +432,7 @@ class FileUpgradeExecutor:
                 + "\n"
             )
 
-    def _backup_file(self, filename: str, storage_key: str) -> None:
+    def _backup_file(self, filename: str, proposal: UpgradeProposal) -> None:
         """Copy a config file aside before modifying it, and RECORD that it did.
 
         The record is the point. The previous version wrote the copy to a
@@ -440,7 +440,9 @@ class FileUpgradeExecutor:
         so the bytes survived a restart and nothing could find them. Here the
         path is derived from the proposal's ``storage_key`` and the mapping is written to a
         manifest beside it, which is what lets `rollback_upgrade` work in a
-        process that did not perform the apply.
+        process that did not perform the apply. It takes the proposal, not a
+        key string, so a caller cannot hand it the reusable ``UPG-NNNN`` label
+        and file the backup where a later proposal with the same label finds it.
 
         Two limits, both stated rather than papered over. A file that does not
         exist yet is not recorded (there is nothing to copy), so an apply that
@@ -451,6 +453,7 @@ class FileUpgradeExecutor:
         source_path = self.config_dir / filename
         if not source_path.exists():
             return
+        storage_key = proposal.storage_key
         backup_dir = self._backup_dir(storage_key)
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_path = backup_dir / filename

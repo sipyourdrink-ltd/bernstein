@@ -58,7 +58,7 @@ def _applied_change(state_dir: Path, proposal: UpgradeProposal, filename: str = 
     """
     executor = FileUpgradeExecutor(state_dir)
     (executor.config_dir / filename).write_text(ORIGINAL, encoding="utf-8")
-    executor._backup_file(filename, proposal.storage_key)
+    executor._backup_file(filename, proposal)
     (executor.config_dir / filename).write_text(CHANGED, encoding="utf-8")
     executor._record_history(proposal, "applied")
 

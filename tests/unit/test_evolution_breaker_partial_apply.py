@@ -57,7 +57,7 @@ class _PartialSinkExecutor(FileUpgradeExecutor):
     """A sink shaped like a real one: back up, write one file, fail on the next."""
 
     def _apply_policy_update(self, proposal: UpgradeProposal) -> bool:
-        self._backup_file("policies.yaml", proposal.storage_key)
+        self._backup_file("policies.yaml", proposal)
         self._atomic_write(self.config_dir / "policies.yaml", {"policies": {"max_retries": 99}})
         raise OSError("disk full")
 
@@ -146,12 +146,12 @@ def test_a_prior_rollback_does_not_mask_a_later_backup_under_the_same_id(tmp_pat
     target.write_text(ORIGINAL, encoding="utf-8")
     proposal = _proposal("UPG-0001")
 
-    executor._backup_file("policies.yaml", proposal.storage_key)
+    executor._backup_file("policies.yaml", proposal)
     target.write_text("half-written", encoding="utf-8")
     executor.rollback_upgrade(proposal)
     assert executor.was_applied(proposal) is False
 
-    executor._backup_file("policies.yaml", proposal.storage_key)
+    executor._backup_file("policies.yaml", proposal)
     target.write_text("half-written again", encoding="utf-8")
     assert executor.was_applied(proposal) is True
     executor.rollback_upgrade(proposal)
@@ -188,9 +188,9 @@ def test_a_rollback_that_cannot_restore_records_exactly_one_rollback(tmp_path: P
     executor = loop._executor
     original_backup = executor._backup_file
 
-    def backup_then_lose_it(filename: str, proposal_id: str) -> None:
-        original_backup(filename, proposal_id)
-        (executor._backup_dir(proposal_id) / filename).unlink()
+    def backup_then_lose_it(filename: str, proposal: UpgradeProposal) -> None:
+        original_backup(filename, proposal)
+        (executor._backup_dir(proposal.storage_key) / filename).unlink()
 
     executor._backup_file = backup_then_lose_it  # type: ignore[method-assign]
 
@@ -203,7 +203,7 @@ def test_repeat_rollback_keeps_the_receipt_of_the_one_that_restored(tmp_path: Pa
     executor = FileUpgradeExecutor(tmp_path)
     (executor.config_dir / "policies.yaml").write_text(ORIGINAL, encoding="utf-8")
     proposal = _proposal()
-    executor._backup_file("policies.yaml", proposal.storage_key)
+    executor._backup_file("policies.yaml", proposal)
     assert executor.rollback_upgrade(proposal) is True
     assert executor.rollback_upgrade(proposal) is True
 
@@ -275,7 +275,7 @@ def test_was_applied_is_false_again_once_rolled_back(tmp_path: Path) -> None:
     executor = FileUpgradeExecutor(tmp_path)
     (executor.config_dir / "policies.yaml").write_text(ORIGINAL, encoding="utf-8")
     proposal = _proposal()
-    executor._backup_file("policies.yaml", proposal.storage_key)
+    executor._backup_file("policies.yaml", proposal)
     assert executor.was_applied(proposal) is True
     executor.rollback_upgrade(proposal)
     assert executor.was_applied(proposal) is False
