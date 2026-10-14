@@ -84,6 +84,37 @@ uv run python scripts/check_test_count_drop.py --base origin/main
 uv run python scripts/check_test_count_drop.py --base origin/main --pr-body "$(gh pr view --json body -q .body)"
 ```
 
+## The suite's memory guard
+
+`tests/conftest.py` caps each test process's address space (`RLIMIT_AS`)
+at **2 GB**. It does this because the full suite holds references across
+thousands of tests and can otherwise grow without bound. A run that crosses the
+cap fails fast instead of taking the machine down. `scripts/run_tests.py`
+already isolates each file in its own process, so CI never comes near it.
+
+Set `BERNSTEIN_MEM_GUARD_GB` to change the cap, as a whole number of GB
+(`0` or an unparsable value keeps the 2 GB default). The rendering lane
+sets it to `2048`, because headless Chromium reserves a ~1.5 TB virtual
+address space at launch.
+
+**Running with pytest-xdist (`-n`).** The cap applies in each xdist worker
+and in a plain run, never in the xdist controller. The controller runs no
+tests, but its address space grows with the session, and capping it made
+large `-n` runs die at teardown with `can't start new thread` (#5938). A
+worker on a big local run can still cross 2 GB. When a test then fails on
+`can't start new thread`, a refused fork (`BlockingIOError`) or a
+`MemoryError`, the report carries a `memory guard` section naming the
+limit and the process's `VmSize`. Rerun with a higher cap to confirm:
+
+```bash
+BERNSTEIN_MEM_GUARD_GB=8 uv run pytest tests/unit -n 8 -q
+```
+
+pytest-xdist is not in the dev group; install it into your environment
+yourself (`uv pip install pytest-xdist`). macOS does not let a process
+lower `RLIMIT_AS`, so the cap is a no-op there and only the per-test RSS
+check applies.
+
 ## Run any of the above locally
 
 ```bash

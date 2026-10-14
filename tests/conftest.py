@@ -119,12 +119,90 @@ _SPAWNER_TMP_REPO_TESTS = {
     "test_workspace.py",
 }
 
-if platform.system() != "Windows":
+
+def _is_xdist_controller(config: pytest.Config) -> bool:
+    """Return ``True`` in the pytest-xdist controller process.
+
+    The controller runs no tests, so a cap there measures nothing, but its
+    address space grows with the session (items, the junit tree, an execnet
+    channel per worker). Past 2 GB, ``pthread_create`` fails and the run dies
+    at teardown with ``can't start new thread``, losing the junit file (#5938).
+
+    Workers carry ``config.workerinput``. A process without it is the
+    controller only when xdist is distributing: ``-n N`` sets ``dist`` away
+    from ``"no"`` before ``pytest_configure``, and ``-n 0`` or no xdist at all
+    leaves it at ``"no"``. Reading the config rather than ``PYTEST_XDIST_WORKER``
+    keeps a plain, non-xdist run guarded, since that variable is unset there
+    as well as in the controller.
+    """
+    if hasattr(config, "workerinput"):
+        return False
+    return str(getattr(config.option, "dist", "no")) != "no"
+
+
+def _apply_address_space_cap(config: pytest.Config) -> None:
+    """Cap ``RLIMIT_AS`` at the guard, in every process that runs tests."""
+    if platform.system() == "Windows" or _is_xdist_controller(config):
+        return
     import resource
 
     with suppress(ValueError, AttributeError):
         _soft, _hard = resource.getrlimit(resource.RLIMIT_AS)
         resource.setrlimit(resource.RLIMIT_AS, (_MAX_RSS_BYTES, _hard))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """Apply the address-space cap once the process knows whether it is the xdist controller."""
+    _apply_address_space_cap(config)
+
+
+def _is_resource_exhaustion(exc: BaseException) -> bool:
+    """A failure the ``RLIMIT_AS`` guard can cause: a thread, fork or allocation refused."""
+    if isinstance(exc, RuntimeError) and "can't start new thread" in str(exc):
+        return True
+    return isinstance(exc, (BlockingIOError, MemoryError))
+
+
+def _memory_guard_diagnostic() -> str:
+    """Name the guard, its limit and this process's address space.
+
+    Without it the failure reads as the test's own fault, and under xdist a
+    worker that crosses the cap points at whichever test happened to be running.
+    """
+    limit = "unlimited"
+    if platform.system() != "Windows":
+        import resource
+
+        with suppress(ValueError, AttributeError, OSError):
+            soft, _hard = resource.getrlimit(resource.RLIMIT_AS)
+            if soft != resource.RLIM_INFINITY:
+                limit = f"{soft / (1024**3):.1f} GB"
+    vm_size = "unknown"
+    with suppress(Exception):
+        import psutil
+
+        vm_size = f"{psutil.Process().memory_info().vms / (1024**3):.1f} GB"
+    return (
+        f"memory guard: RLIMIT_AS soft limit is {limit} (BERNSTEIN_MEM_GUARD_GB, default 2), "
+        f"process VmSize is {vm_size}. A thread, fork or allocation refused near that limit "
+        "is the guard, not the test; rerun with a higher BERNSTEIN_MEM_GUARD_GB to confirm."
+    )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Iterator[None]:
+    """Attach the memory-guard diagnostic to a test that failed on resource exhaustion."""
+    report = yield
+    if call.excinfo is not None and _is_resource_exhaustion(call.excinfo.value):
+        report.sections.append(("memory guard", _memory_guard_diagnostic()))
+    return report
+
+
+def pytest_internalerror(excrepr: object, excinfo: pytest.ExceptionInfo[BaseException]) -> None:
+    """Name the guard when the session itself dies on resource exhaustion."""
+    if _is_resource_exhaustion(excinfo.value):
+        sys.stderr.write(f"INTERNALERROR> {_memory_guard_diagnostic()}\n")
 
 
 def _current_rss_bytes() -> int:
