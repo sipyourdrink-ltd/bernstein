@@ -216,7 +216,7 @@ jobs:
         with:
           enable-uv-cache: "false"
       - run: uv build
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dist
           path: dist/
@@ -732,7 +732,7 @@ jobs:
           echo "Rendered catalog payload for commit ${RELEASE_COMMIT}"
 
       - name: Upload rendered catalog payload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: docker-mcp-catalog-rendered
           path: server.yaml.rendered
