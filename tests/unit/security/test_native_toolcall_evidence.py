@@ -177,7 +177,7 @@ async def test_gateway_effect_digest_is_the_received_upstream_line(tmp_path: Any
     stdout = _UpstreamStdout()
     gateway._proc = SimpleNamespace(stdout=stdout)  # type: ignore[assignment]
     reader = asyncio.create_task(gateway._read_upstream_loop())
-    raw_line = b'  {"id": 7, "jsonrpc": "2.0", "result": {"text": "caf\\u00e9"}}\r\n'
+    raw_line = b'  {"id": 7, "jsonrpc": "2.0", "result": {"text": "\\u20ac"}}\r\n'
 
     async def connector_answers(_message: dict[str, Any]) -> None:
         stdout.lines.put_nowait(raw_line)
@@ -189,7 +189,7 @@ async def test_gateway_effect_digest_is_the_received_upstream_line(tmp_path: Any
         stdout.lines.put_nowait(b"")
         await reader
 
-    assert response == {"id": 7, "jsonrpc": "2.0", "result": {"text": "café"}}
+    assert response == {"id": 7, "jsonrpc": "2.0", "result": {"text": "€"}}
     effect = chain.query(resource_id="scope:run-1:agent-1")[-1]
     assert effect.event_type == "toolcall.effect"
     assert effect.details["effect_digest"] == "sha256:" + hashlib.sha256(raw_line.strip()).hexdigest()
@@ -275,13 +275,13 @@ def test_timestamp_echo_changes_the_raw_effect_digest() -> None:
 @pytest.mark.parametrize(
     "variant",
     [
-        b'{"jsonrpc": "2.0", "id": 7, "result": {"text": "caf\xc3\xa9"}}',
-        b'{"jsonrpc":"2.0","id":7,"result":{"text":"caf\\u00e9"}}',
-        b'{"id":7,"jsonrpc":"2.0","result":{"text":"caf\xc3\xa9"}}',
+        b'{"jsonrpc": "2.0", "id": 7, "result": {"text": "\xe2\x82\xac"}}',
+        b'{"jsonrpc":"2.0","id":7,"result":{"text":"\\u20ac"}}',
+        b'{"id":7,"jsonrpc":"2.0","result":{"text":"\xe2\x82\xac"}}',
     ],
 )
 def test_effect_digest_hashes_bytes_as_received(variant: bytes) -> None:
-    compact = b'{"jsonrpc":"2.0","id":7,"result":{"text":"caf\xc3\xa9"}}'
+    compact = b'{"jsonrpc":"2.0","id":7,"result":{"text":"\xe2\x82\xac"}}'
     assert json.loads(variant) == json.loads(compact)
     digest = effect_digest_for_connector_response(json.loads(variant), variant)
     assert digest == "sha256:" + hashlib.sha256(variant).hexdigest()
