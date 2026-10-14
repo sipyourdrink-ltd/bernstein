@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from contextlib import suppress
@@ -11,6 +12,7 @@ import pytest
 
 import bernstein
 from bernstein.cli.run_archive import (
+    ARCHIVE_ANCHOR_EVENT,
     ARCHIVE_SECTIONS,
     ArchiveManifest,
     ArchiveManifestError,
@@ -18,9 +20,11 @@ from bernstein.cli.run_archive import (
     create_archive,
     format_archive_summary,
     format_verification,
+    manifest_digest,
     read_archive_manifest,
     verify_archive,
 )
+from bernstein.core.security.audit import AuditLog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -522,3 +526,121 @@ def test_a_member_that_fails_its_crc_is_modified_not_an_unreadable_archive(tmp_p
     result = verify_archive(stored)
     assert result.ok is False
     assert result.modified == [target]
+
+
+# ---------------------------------------------------------------------------
+# Manifest anchor (#6258): the hashes detect modification, the anchor speaks
+# to authorship, and the two are reported apart.
+# ---------------------------------------------------------------------------
+
+
+def _audit_log(where: Path) -> AuditLog:
+    return AuditLog(where, key=b"archive-anchor-test-key-32-bytes")
+
+
+def _forge(archive: Path, member: str, body: bytes) -> None:
+    """Edit a member AND rewrite the manifest to match, as someone with write access could."""
+    with zipfile.ZipFile(archive) as zf:
+        members = {name: zf.read(name) for name in zf.namelist()}
+    manifest = json.loads(members["manifest.json"])
+    members[member] = body
+    manifest["files"][member] = hashlib.sha256(body).hexdigest()
+    members["manifest.json"] = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
+    archive.unlink()
+    with zipfile.ZipFile(archive, "w") as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+
+
+def test_an_anchored_archive_verifies_and_is_attested(tmp_path: Path) -> None:
+    _populate_sdd(tmp_path)
+    log = _audit_log(tmp_path / "operator-audit")
+    archive = tmp_path / "out.zip"
+    create_archive(tmp_path, archive, audit_log=log)
+
+    result = verify_archive(archive, audit_log=log)
+
+    assert result.ok
+    assert result.attestation == "anchored"
+    records = log.query(event_type=ARCHIVE_ANCHOR_EVENT)
+    assert [r.resource_id for r in records] == [manifest_digest(archive)]
+    assert records[0].details["run_id"] == "run-42"
+
+
+def test_a_forged_manifest_passes_the_hashes_and_fails_the_anchor(tmp_path: Path) -> None:
+    """The case the anchor exists for: edit a member, recompute its hash, rewrite the manifest."""
+    _populate_sdd(tmp_path)
+    log = _audit_log(tmp_path / "operator-audit")
+    archive = tmp_path / "out.zip"
+    create_archive(tmp_path, archive, audit_log=log)
+
+    _forge(archive, ".sdd/tasks/tasks.jsonl", b'{"rewritten": true}\n')
+    result = verify_archive(archive, audit_log=log)
+
+    assert result.ok, "the forged manifest is self-consistent, so the hash check alone passes"
+    assert result.attestation == "unattested"
+    assert result.attestation_detail is not None
+    assert manifest_digest(archive) in result.attestation_detail
+
+
+def test_without_an_audit_log_attestation_is_unchecked_not_unattested(tmp_path: Path) -> None:
+    _populate_sdd(tmp_path)
+    archive = tmp_path / "out.zip"
+    create_archive(tmp_path, archive)
+
+    result = verify_archive(archive)
+
+    assert result.ok
+    assert result.attestation == "unchecked"
+    assert format_verification(archive, result) == f"OK  {archive}"
+
+
+def test_an_archive_never_anchored_is_unattested_against_a_log(tmp_path: Path) -> None:
+    _populate_sdd(tmp_path)
+    log = _audit_log(tmp_path / "operator-audit")
+    archive = tmp_path / "out.zip"
+    create_archive(tmp_path, archive)
+
+    result = verify_archive(archive, audit_log=log)
+
+    assert result.ok
+    assert result.attestation == "unattested"
+
+
+def test_a_record_in_a_chain_that_does_not_verify_vouches_for_nothing(tmp_path: Path) -> None:
+    _populate_sdd(tmp_path)
+    audit_dir = tmp_path / "operator-audit"
+    archive = tmp_path / "out.zip"
+    create_archive(tmp_path, archive, audit_log=_audit_log(audit_dir))
+    (day_file,) = audit_dir.glob("*.jsonl")
+    day_file.write_text(day_file.read_text(encoding="utf-8").replace("run-42", "run-43"), encoding="utf-8")
+
+    result = verify_archive(archive, audit_log=_audit_log(audit_dir))
+
+    assert result.attestation == "unattested"
+    assert result.attestation_detail is not None
+    assert "does not verify" in result.attestation_detail
+
+
+def test_the_report_names_the_attestation_beside_the_hash_result(tmp_path: Path) -> None:
+    _populate_sdd(tmp_path)
+    log = _audit_log(tmp_path / "operator-audit")
+    archive = tmp_path / "out.zip"
+    create_archive(tmp_path, archive, audit_log=log)
+    _forge(archive, ".sdd/tasks/tasks.jsonl", b"{}\n{}\n")
+
+    report = format_verification(archive, verify_archive(archive, audit_log=log))
+
+    assert report.splitlines()[0] == f"OK  {archive}"
+    assert "attestation: UNATTESTED" in report
+
+
+def test_the_anchor_hashes_the_manifest_bytes_as_written(tmp_path: Path) -> None:
+    _populate_sdd(tmp_path)
+    log = _audit_log(tmp_path / "operator-audit")
+    archive = tmp_path / "out.zip"
+    create_archive(tmp_path, archive, audit_log=log)
+    with zipfile.ZipFile(archive) as zf:
+        written = zf.read("manifest.json")
+
+    assert manifest_digest(archive) == hashlib.sha256(written).hexdigest()

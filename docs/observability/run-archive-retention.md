@@ -82,7 +82,47 @@ hashes it lists contradicts itself, and reports `unverifiable`.
 ## What the hashes do not prove
 
 Per-file hashes detect modification; they do not attest authorship. The
-manifest travels inside the archive with nothing outside it to check against, so
-someone who can edit a member can also recompute its hash and rewrite the
-manifest. Whether the manifest should be anchored or signed is tracked in
-[#6258](https://github.com/sipyourdrink-ltd/bernstein/issues/6258).
+manifest travels inside the archive, so someone who can edit a member can also
+recompute its hash and rewrite the manifest, and the result verifies `ok`.
+
+## Anchoring the manifest outside the archive
+
+Pass an audit log to `create_archive` and it records the sha256 of the
+`manifest.json` bytes it wrote, as a `run_archive.created` event whose
+`resource_id` is that digest. Pass the same log to `verify_archive` and the
+result says whether the log vouches for this exact manifest:
+
+```python
+from pathlib import Path
+
+from bernstein.cli.run_archive import create_archive, verify_archive
+from bernstein.core.security.audit import AuditLog
+
+anchor = AuditLog(Path("/var/lib/bernstein/audit"))  # outlives the workspace
+create_archive(Path.cwd(), Path("run-archive.zip"), audit_log=anchor)
+
+result = verify_archive(Path("run-archive.zip"), audit_log=anchor)
+assert result.ok and result.attestation == "anchored", result
+```
+
+`attestation` is reported beside `ok`, never folded into it, because an archive
+can be intact and still unattested:
+
+| `attestation` | Meaning |
+|---|---|
+| `anchored` | The audit log's HMAC chain verifies, and it holds a `run_archive.created` record of this manifest's sha256. |
+| `unattested` | The log was consulted and does not vouch for this manifest. Either no record names it (the manifest was rewritten, or the archive was never anchored there), or the chain itself does not verify, so none of its records count. |
+| `unchecked` | No audit log was given, so nothing outside the archive was consulted. |
+
+`format_verification` adds an `attestation:` line whenever a log was consulted.
+
+The log has to be one that survives the workspace. The project's own
+`.sdd/audit` is deleted with the workspace the archive exists to replace, so
+`create_archive` does not anchor there by default. Use an audit directory on
+storage the run does not own.
+
+This anchors the manifest in a record the archive cannot rewrite. Whoever holds
+the audit key can still write such a record, so this is not a signature. A
+detached signature over the manifest is the stronger option discussed in
+[#6258](https://github.com/sipyourdrink-ltd/bernstein/issues/6258), and it
+would bring key custody with it.
