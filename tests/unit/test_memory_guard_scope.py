@@ -134,6 +134,19 @@ def pytest_configure(config):
 """
 
 
+def _uncapped() -> None:
+    """Start the child at its hard limit, not this process's guard.
+
+    The suite running this test is itself capped by the same conftest, and a
+    child inherits that cap. Without resetting it, "the controller kept the
+    limit it started with" would hold whether or not the controller was capped.
+    """
+    import resource
+
+    _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    resource.setrlimit(resource.RLIMIT_AS, (hard, hard))
+
+
 def _session(tmp_path: Path, test_body: str, *args: str, extra_path: str = "") -> subprocess.CompletedProcess[str]:
     tree = tmp_path / "session"
     tree.mkdir()
@@ -171,6 +184,7 @@ def _session(tmp_path: Path, test_body: str, *args: str, extra_path: str = "") -
         text=True,
         timeout=300,
         check=False,
+        preexec_fn=_uncapped if platform.system() != "Windows" else None,
     )
 
 
@@ -185,12 +199,12 @@ def test_memory_guard_not_applied_to_xdist_controller(tmp_path: Path) -> None:
     import resource
 
     xdist_dir = str(Path(sys.modules["xdist"].__file__ or "").resolve().parents[1])
-    inherited = resource.getrlimit(resource.RLIMIT_AS)[0]
+    hard = resource.getrlimit(resource.RLIMIT_AS)[1]
     proc = _session(tmp_path, "def test_a():\n    pass\n\ndef test_b():\n    pass\n", "-n", "2", extra_path=xdist_dir)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     controller = _limits(tmp_path, "controller")
     workers = _limits(tmp_path, "worker")
-    assert controller == [inherited], (controller, inherited)
+    assert controller == [hard], (controller, hard)
     assert len(workers) == 2, workers
     assert all(limit == suite_conftest._memory_guard_bytes() for limit in workers), workers
 
