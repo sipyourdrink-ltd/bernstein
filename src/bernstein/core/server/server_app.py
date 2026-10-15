@@ -59,6 +59,8 @@ from bernstein.core.tasks.task_store import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from bernstein.core.fleet import FleetAggregator
+
 logger = logging.getLogger(__name__)
 
 
@@ -672,6 +674,41 @@ async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
                 logger.info("SSE bus: cleaned up %d stale subscribers", removed)
 
 
+async def _start_fleet_aggregator(app: FastAPI) -> FleetAggregator | None:
+    """Attach a multi-project fleet aggregator when ``BERNSTEIN_FLEET_CONFIG`` is set.
+
+    The operator UI's Fleet view reads ``/fleet/projects`` from the task
+    server it is served by, and that route only has projects to show when
+    an aggregator sits on ``app.state.fleet_aggregator``. Pointing
+    ``BERNSTEIN_FLEET_CONFIG`` at a ``projects.toml`` (the file
+    ``bernstein fleet`` reads) makes this server poll every listed task
+    server and serve the overview itself. The aggregator authenticates the
+    way every CLI client does, with ``BERNSTEIN_AUTH_TOKEN`` plus any
+    access-proxy headers, so each listed server must accept that token.
+
+    Returns:
+        The started aggregator, or ``None`` when the variable is unset or
+        the config lists no usable project (config errors are logged).
+    """
+    raw = os.environ.get("BERNSTEIN_FLEET_CONFIG", "").strip()
+    if not raw:
+        return None
+    from bernstein.cli.helpers import auth_headers
+    from bernstein.core.fleet import FleetAggregator, load_projects_config
+
+    config = load_projects_config(Path(raw).expanduser())
+    for err in config.errors:
+        logger.warning("fleet config %s: %s", config.source_path or raw, err.message)
+    if not config.projects:
+        logger.warning("BERNSTEIN_FLEET_CONFIG=%s lists no usable project; the Fleet view stays empty", raw)
+        return None
+    aggregator = FleetAggregator(config.projects, headers=auth_headers())
+    await aggregator.start()
+    app.state.fleet_aggregator = aggregator
+    logger.info("Fleet aggregator attached: %d project(s) from %s", len(config.projects), raw)
+    return aggregator
+
+
 def _install_artifact_event_publisher(bus: SSEBus | None) -> None:
     """Point the lineage write boundary's event sink at ``bus`` (issue #2559).
 
@@ -1135,8 +1172,12 @@ def create_app(
                 interval_s=effective_cluster.node_heartbeat_interval_s,
             )
         )
+        fleet_aggregator = await _start_fleet_aggregator(app)
         yield
         # Shutdown
+        if fleet_aggregator is not None:
+            app.state.fleet_aggregator = None
+            await fleet_aggregator.stop()
         _install_artifact_event_publisher(None)
         reaper.cancel()
         sse_heartbeat.cancel()

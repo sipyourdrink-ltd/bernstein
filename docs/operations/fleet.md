@@ -167,6 +167,21 @@ changes. `--web` requires `uvicorn` to be importable.
 Both views read the same in-memory `FleetAggregator` instance, so the
 TUI and the web view see identical numbers.
 
+### Fleet view in the operator UI
+
+The operator UI (`/ui`) has a Fleet toggle that reads `/fleet/projects`
+from the task server serving it. A task server started with
+`BERNSTEIN_FLEET_CONFIG` pointing at a `projects.toml` attaches its own
+`FleetAggregator` at startup (`server_app._start_fleet_aggregator`) and
+serves every listed project there. Without the variable the route
+answers with an empty, `stub: true` list. One task server can therefore
+act as the fleet's single front door:
+
+```bash
+BERNSTEIN_FLEET_CONFIG=/srv/fleet/projects.toml \
+  python -m uvicorn bernstein.core.server:app --host 0.0.0.0 --port 8052
+```
+
 ---
 
 ## Adding / removing projects
@@ -201,9 +216,12 @@ Per-project parse errors do not crash the dashboard. They surface as
 Fleet mode is multi-project, **not** multi-tenant in the security
 sense. Every task server it queries is assumed to be run by the same
 operator, on a network the operator trusts. The fleet HTTP client
-holds no per-project credential, and the aggregator does not
-authenticate against the task server beyond what `httpx` does by
-default.
+holds no per-project credential. It sends every listed task server the
+same headers every CLI client sends: the bearer from
+`BERNSTEIN_AUTH_TOKEN` (or the workspace's run token file), plus the
+Cloudflare Access service-token headers when `CF_ACCESS_CLIENT_ID` and
+`CF_ACCESS_CLIENT_SECRET` are both set. Every listed server must accept
+that bearer, or its row stays offline with a 401.
 
 If you need actual tenant isolation:
 
