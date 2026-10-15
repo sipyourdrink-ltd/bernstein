@@ -15,6 +15,8 @@ import pytest
 
 from bernstein.core.persistence.wal import WALWriter
 from bernstein.core.protocols.mcp.mcp_gateway import MCPGateway
+from bernstein.core.protocols.payments.mandates import IntentMandate
+from bernstein.core.protocols.payments.x402 import SettlementContext, X402Config, X402SettlementCoordinator
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.native_toolcall_evidence import NativeToolCallEvidenceProvider
 from bernstein.core.security.toolcall_interlock import (
@@ -103,9 +105,13 @@ async def test_provider_rejects_empty_intent_fields(tmp_path: Any) -> None:
         await provider.prepare_dispatch(invalid)
 
 
-def _gateway(tmp_path: Any, provider: NativeToolCallEvidenceProvider) -> MCPGateway:
+def _gateway(
+    tmp_path: Any,
+    provider: NativeToolCallEvidenceProvider,
+    settlement: X402SettlementCoordinator | None = None,
+) -> MCPGateway:
     sdd = tmp_path / ".sdd"
-    sdd.mkdir()
+    sdd.mkdir(exist_ok=True)
     return MCPGateway(
         upstream_cmd=[],
         wal_writer=WALWriter(run_id="effect-record", sdd_dir=sdd),
@@ -115,6 +121,7 @@ def _gateway(tmp_path: Any, provider: NativeToolCallEvidenceProvider) -> MCPGate
             scope_id="scope:run-1:agent-1",
             mode=AttestationMode.ENFORCED,
         ),
+        settlement=settlement,
     )
 
 
@@ -170,13 +177,22 @@ class _UpstreamStdout:
         return line
 
 
+def _attach_upstream(gateway: MCPGateway) -> tuple[_UpstreamStdout, asyncio.Task[None]]:
+    """Run the real ``_read_upstream_loop`` over a fake connector stdout."""
+    stdout = _UpstreamStdout()
+    gateway._proc = SimpleNamespace(stdout=stdout)  # type: ignore[assignment]
+    return stdout, asyncio.create_task(gateway._read_upstream_loop())
+
+
+def _sha256(raw: bytes) -> str:
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
 @pytest.mark.asyncio
 async def test_gateway_effect_digest_is_the_received_upstream_line(tmp_path: Any) -> None:
     chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
     gateway = _gateway(tmp_path, NativeToolCallEvidenceProvider(chain))
-    stdout = _UpstreamStdout()
-    gateway._proc = SimpleNamespace(stdout=stdout)  # type: ignore[assignment]
-    reader = asyncio.create_task(gateway._read_upstream_loop())
+    stdout, reader = _attach_upstream(gateway)
     raw_line = b'  {"id": 7, "jsonrpc": "2.0", "result": {"text": "\\u20ac"}}\r\n'
 
     async def connector_answers(_message: dict[str, Any]) -> None:
@@ -192,9 +208,128 @@ async def test_gateway_effect_digest_is_the_received_upstream_line(tmp_path: Any
     assert response == {"id": 7, "jsonrpc": "2.0", "result": {"text": "€"}}
     effect = chain.query(resource_id="scope:run-1:agent-1")[-1]
     assert effect.event_type == "toolcall.effect"
-    assert effect.details["effect_digest"] == "sha256:" + hashlib.sha256(raw_line.strip()).hexdigest()
+    assert effect.details["effect_digest"] == _sha256(raw_line.strip())
     assert effect.details["effect_digest"] != canonical_effect_digest(response)
     assert gateway._received_lines == {}
+
+
+class _SettlementHook:
+    def settle(self, challenge: Any, *, server_name: str, tool_name: str, amount_usd: float) -> str | None:
+        return "pay-ref-0001"
+
+
+def _x402_settlement(tmp_path: Path) -> X402SettlementCoordinator:
+    key = b"x" * 32
+    sdd = tmp_path / ".sdd"
+    sdd.mkdir(parents=True, exist_ok=True)
+    intent = IntentMandate(task_id="task-x402", allowed_tool_calls=("read_file",), spend_cap_usd=100.0).sign(key)
+    return X402SettlementCoordinator(
+        SettlementContext(
+            config=X402Config(enabled=True, hook=_SettlementHook()),
+            hmac_key=key,
+            workdir=tmp_path,
+            lineage_root=sdd / "lineage",
+            wal_sdd_dir=sdd,
+            wal_run_id="effect-record",
+            intent=intent,
+            meter=None,
+            audit_chain=AuditChainStore(sdd / "x402-audit", key=key),
+            now=lambda: 1_700_000_000,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_x402_retry_effect_digest_is_the_settled_upstream_line(tmp_path: Any) -> None:
+    chain = AuditChainStore(tmp_path / "audit", key=b"k" * 32)
+    gateway = _gateway(tmp_path, NativeToolCallEvidenceProvider(chain), settlement=_x402_settlement(Path(tmp_path)))
+    stdout, reader = _attach_upstream(gateway)
+    challenge_line = (
+        b'{"jsonrpc": "2.0", "id": 7, "error": {"code": 402, "message": "Payment Required", '
+        b'"data": {"x402Version": 1, "accepts": [{"scheme": "exact", "maxAmountRequired": "4000000", '
+        b'"amountUsd": 4.0}]}}}\n'
+    )
+    settled_line = b'{"id": 7,  "jsonrpc": "2.0", "result": {"content": [{"type": "text", "text": "settled"}]}}\n'
+
+    async def connector_answers(message: dict[str, Any]) -> None:
+        paid = "_x402_payment" in message["params"]["arguments"]
+        stdout.lines.put_nowait(settled_line if paid else challenge_line)
+
+    try:
+        with patch.object(gateway, "_send_upstream", side_effect=connector_answers):
+            response = await gateway.handle_jsonrpc(_tools_call())
+    finally:
+        stdout.lines.put_nowait(b"")
+        await reader
+
+    assert response is not None
+    assert response["result"]["content"][0]["text"] == "settled"
+    effects = [
+        event for event in chain.query(resource_id="scope:run-1:agent-1") if event.event_type == "toolcall.effect"
+    ]
+    assert [effect.details["effect_digest"] for effect in effects] == [
+        _sha256(challenge_line.strip()),
+        _sha256(settled_line.strip()),
+    ]
+    assert effects[-1].details["effect_digest"] != canonical_effect_digest(response)
+    assert gateway._received_lines == {}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_send_discards_the_stored_line(tmp_path: Any) -> None:
+    gateway = _gateway(tmp_path, NativeToolCallEvidenceProvider(AuditChainStore(tmp_path / "audit", key=b"k" * 32)))
+    stdout, reader = _attach_upstream(gateway)
+
+    async def answered_then_cancelled(_message: dict[str, Any]) -> None:
+        stdout.lines.put_nowait(b'{"jsonrpc": "2.0", "id": 7, "result": {"ok": true}}\n')
+        for _ in range(100):
+            if 7 in gateway._received_lines:
+                break
+            await asyncio.sleep(0)
+        assert 7 in gateway._received_lines
+        raise asyncio.CancelledError
+
+    try:
+        with (
+            patch.object(gateway, "_send_upstream", side_effect=answered_then_cancelled),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await gateway._send_request(_tools_call(), 7)
+    finally:
+        stdout.lines.put_nowait(b"")
+        await reader
+
+    assert gateway._received_lines == {}
+
+
+@pytest.mark.asyncio
+async def test_slice_one_recorder_without_received_still_records(tmp_path: Any) -> None:
+    native = NativeToolCallEvidenceProvider(AuditChainStore(tmp_path / "audit", key=b"k" * 32))
+    outcomes: list[str] = []
+
+    class _SliceOneProvider:
+        async def prepare_dispatch(self, intent: ToolCallIntent) -> Any:
+            return await native.prepare_dispatch(intent)
+
+        async def record_effect(
+            self,
+            intent: ToolCallIntent,
+            evidence: Any,
+            *,
+            response: Any,
+            duration_ms: float,
+            outcome: str,
+            patch: str | None = None,
+        ) -> None:
+            outcomes.append(outcome)
+
+    interlock = ToolCallAttestationInterlock(provider=_SliceOneProvider(), scope_id="scope:run-1:agent-1")
+    evidence = await interlock.before_dispatch(_intent())
+    await interlock.after_dispatch(
+        _intent(), evidence, response={"result": {"ok": True}}, duration_ms=1.0, outcome="ok", received=b"{}"
+    )
+
+    assert outcomes == ["ok"]
 
 
 @pytest.mark.asyncio

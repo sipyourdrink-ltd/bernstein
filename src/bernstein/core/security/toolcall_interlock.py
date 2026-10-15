@@ -114,7 +114,9 @@ def canonical_effect_digest(payload: Any) -> str:
     Bytes hash as-is and text hashes its UTF-8 bytes -- the same preimage as
     ``ResultBundle.patch_sha256``. Any other value (``None`` on timeout, or
     a mapping the host did not read off the wire) dumps with compact
-    separators and ``ensure_ascii=False``, without ``sort_keys``.
+    separators and ``ensure_ascii=False``, without ``sort_keys``. That
+    compact-JSON branch is not the primary form: a live connector return is
+    digested from its received bytes.
     """
     if isinstance(payload, bytes):
         digest = hashlib.sha256(payload).hexdigest()
@@ -148,6 +150,22 @@ def effect_digest_for_connector_response(
     if received is not None:
         return canonical_effect_digest(received)
     return canonical_effect_digest(response)
+
+
+def _accepts_keyword(func: Any, name: str) -> bool:
+    """Whether *func* takes keyword *name*; a slice-1 ``record_effect`` does not."""
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            param.name == name
+            and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        )
+        for param in params
+    )
 
 
 def toolcall_effect_outcome(response: Mapping[str, Any] | None) -> str:
@@ -293,6 +311,9 @@ class ToolCallAttestationInterlock:
         try:
             if evidence.intent_digest != intent.digest():
                 raise ToolCallInterlockError("effect evidence is bound to a different tool-call intent")
+            extra: dict[str, Any] = {}
+            if _accepts_keyword(recorder, "received"):
+                extra["received"] = received
             recorded = recorder(
                 intent,
                 evidence,
@@ -300,7 +321,7 @@ class ToolCallAttestationInterlock:
                 duration_ms=duration_ms,
                 outcome=outcome,
                 patch=patch,
-                received=received,
+                **extra,
             )
             if inspect.isawaitable(recorded):
                 await recorded

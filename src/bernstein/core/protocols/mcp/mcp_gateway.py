@@ -217,7 +217,9 @@ class MCPGateway:
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
         # Stripped upstream line per answered request id, so ``toolcall.effect``
         # digests the bytes as received (#6270). Callers of ``_send_request``
-        # take their entry on success; failures discard it.
+        # take their entry on success; failures discard it. ``_read_upstream_loop``
+        # must stay the only reader of upstream stdout: a reader that skips this
+        # map silently downgrades effect digests to the compact-JSON fallback.
         self._received_lines: dict[Any, bytes] = {}
         self._reader_task: asyncio.Task[None] | None = None
 

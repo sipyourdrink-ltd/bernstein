@@ -93,6 +93,15 @@ response the host did not read off the wire (a direct `after_dispatch`
 caller without `received`) falls back to compact JSON
 (`separators=(",", ":")`, `ensure_ascii=False`, no `sort_keys`).
 
+Verification path: no Bernstein record holds the received line today. The
+effect event keeps only `effect_digest`, and the WAL keeps the parsed
+`result` / `error`, which cannot reproduce the original bytes. Slice 1
+therefore binds what the host saw. The digest can be checked only against an
+independent capture of the connector's output, never recomputed from the run's
+artifacts. Slice 2 must persist the received line (for example
+content-addressed beside the WAL entry) before the verifier can recompute
+`effect_digest` offline.
+
 With a run identity, lineage signer, and journal-head reader configured, the
 native provider additionally creates a versioned, JCS-canonicalized Ed25519
 identity envelope before either marker is appended. Its signature input is
