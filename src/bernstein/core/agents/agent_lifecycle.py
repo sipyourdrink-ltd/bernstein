@@ -510,6 +510,13 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
     # deferral was never followed by real progress (issue #4222).
     _reevaluate_pending_death_judgments(orch, tasks_snapshot)
 
+    # spawner.kill() marks a session dead itself, so the loop above never runs
+    # _handle_dead_agent (and its lock release) for a killed session, and a
+    # lock persisted by an earlier orchestrator process names a session this
+    # one never tracked. Either would refuse every retry of the task until the
+    # lock TTL expires.
+    _release_orphaned_file_locks(orch)
+
     # Purge dead agents to prevent unbounded dict growth (memory leak fix)
     purge_dead_agents(orch)
 
@@ -3243,6 +3250,24 @@ def _release_file_ownership(orch: Any, agent_id: str) -> None:
     lock_manager = getattr(orch, "_lock_manager", None)
     if lock_manager is not None:
         lock_manager.release(agent_id)
+
+
+def _release_orphaned_file_locks(orch: Any) -> None:
+    """Release every file lock no live session holds.
+
+    Batch-API sessions are tracked outside ``_agents`` and count as holders.
+
+    Args:
+        orch: Orchestrator instance.
+    """
+    lock_manager = getattr(orch, "_lock_manager", None)
+    if lock_manager is None:
+        return
+    sessions = [*orch._agents.values(), *getattr(orch, "_batch_sessions", {}).values()]
+    live = {session.id for session in sessions if session.status != "dead"}
+    released = lock_manager.release_all_except(live)
+    if released:
+        logger.info("Released %d file lock(s) held by no live session: %s", len(released), sorted(released))
 
 
 def _release_task_to_session(orch: Any, task_ids: list[str]) -> None:

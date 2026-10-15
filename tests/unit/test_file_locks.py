@@ -122,6 +122,31 @@ def test_release_enables_reacquire_by_other_agent(mgr: FileLockManager) -> None:
 
 
 # ---------------------------------------------------------------------------
+# release_all_except
+# ---------------------------------------------------------------------------
+
+
+def test_release_all_except_drops_locks_of_agents_outside_the_live_set(mgr: FileLockManager) -> None:
+    mgr.acquire(["src/live.py"], agent_id="live", task_id="t1")
+    mgr.acquire(["src/dead.py", "src/dead2.py"], agent_id="dead", task_id="t2")
+    released = mgr.release_all_except({"live"})
+    assert sorted(released) == ["src/dead.py", "src/dead2.py"]
+    assert [lock.agent_id for lock in mgr.all_locks()] == ["live"]
+
+
+def test_release_all_except_keeps_locks_when_every_holder_is_live(mgr: FileLockManager) -> None:
+    mgr.acquire(["src/a.py"], agent_id="a1", task_id="t1")
+    assert mgr.release_all_except({"a1", "a2"}) == []
+    assert [lock.file_path for lock in mgr.all_locks()] == ["src/a.py"]
+
+
+def test_release_all_except_persists_for_the_next_manager(workdir: Path, mgr: FileLockManager) -> None:
+    mgr.acquire(["src/dead.py"], agent_id="dead", task_id="t1")
+    mgr.release_all_except(set())
+    assert FileLockManager(workdir).all_locks() == []
+
+
+# ---------------------------------------------------------------------------
 # Tool concurrency safety classification (T438)
 # ---------------------------------------------------------------------------
 
