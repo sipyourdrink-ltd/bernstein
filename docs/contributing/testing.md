@@ -34,7 +34,7 @@ locally without waiting for the cloud runner.
 | **No-network guard**        | Unit tests that open a real outbound connection (flaky by design) | PR (every unit run) |
 | **Spawned-process identity race** | Duplicate run identities hidden by thread-only locking      | PR (identity anchor unit suite) |
 | **ruff** + **typos**        | Lint, format drift, common typos                                  | PR                  |
-| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes | local only (`cd web && npm test`; not run in CI) |
+| **Web Node tests**          | Pre-hydration theme resolution, SSE handling, governance/vocabulary routes, the access-token prompt | local only (`cd web && npm test`; not run in CI) |
 
 ## Web UI tests
 
@@ -50,6 +50,11 @@ isolated VM contexts. They cover stored and system theme resolution, blocked
 storage, unavailable or throwing browser APIs, inaccessible document roots,
 and the matching `ThemeProvider` storage fallback. They do not start a web
 server or make network requests.
+
+`test/auth-token-prompt.test.mjs` renders React into a `happy-dom` window,
+installed before React loads, and drives it with real DOM events: the 401
+path in `src/lib/api.ts` and the shell's access-token prompt. `fetch` is
+stubbed; nothing listens on a port.
 
 Test-count drop vs merge base (#4873)
 
