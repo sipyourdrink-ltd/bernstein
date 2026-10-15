@@ -2167,7 +2167,7 @@ def _shape_tools_list(mcp: FastMCP[None]) -> None:
       content, describing the envelope exactly as it is emitted for the
       current cost-meter state (#3086).
 
-    FastMCP 1.28.1 carries none of these fields at registration time
+    FastMCP (through 1.30.0) carries none of these fields at registration time
     (``@mcp.tool()`` takes no such arguments), so the low-level handler is
     wrapped here. When an SDK release adds first-class support the migration
     is deleting this function and moving the declarations into the
