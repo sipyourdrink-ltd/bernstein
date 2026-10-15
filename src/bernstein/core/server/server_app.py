@@ -693,8 +693,8 @@ async def _start_fleet_aggregator(app: FastAPI) -> FleetAggregator | None:
     raw = os.environ.get("BERNSTEIN_FLEET_CONFIG", "").strip()
     if not raw:
         return None
-    from bernstein.cli.helpers import auth_headers
     from bernstein.core.fleet import FleetAggregator, load_projects_config
+    from bernstein.core.run_auth_token import auth_headers
 
     config = load_projects_config(Path(raw).expanduser())
     for err in config.errors:
