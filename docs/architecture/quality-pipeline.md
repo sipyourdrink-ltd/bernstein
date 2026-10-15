@@ -141,6 +141,10 @@ an explicit `quality_gates.pipeline` fails with
 A failing **required** gate hard-blocks merge. A failing **optional** gate
 is reported but does not block.
 
+The optional `test_expansion` gate checks whether each changed Python source
+module has a static import path from a test file changed in the same task.
+It does not prove that the test calls or executes any changed symbol.
+
 `behavior_probe` is the only gate that executes the changed code against
 inputs the worker did not choose (`behavior_probe.py`). It walks the diff with
 `ast`, turns each parameter annotation into a fixed list of boundary values
