@@ -157,3 +157,24 @@ def test_receipt_export_requires_signing_key(tmp_path: Path, monkeypatch) -> Non
     )
     assert result.exit_code == 2
     assert "signing-key-path" in result.output
+
+
+def test_receipt_verifier_falls_back_to_the_installed_copy(tmp_path: Path, monkeypatch) -> None:
+    """Outside a checkout the CLI runs the verifier the installed package carries.
+
+    A pip / uv / conda install has no tools/ directory above the CWD, so the
+    lookup must end at the copy bundled into the wheel instead of giving up.
+    """
+    from bernstein.cli.commands import audit_cmd
+    from bernstein.core.verifier import audit_receipt_verifier
+
+    bundled = tmp_path / "bundled" / "verify_audit_receipt.py"
+    bundled.parent.mkdir()
+    bundled.write_text("", encoding="utf-8")
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.delenv("BERNSTEIN_AUDIT_RECEIPT_VERIFIER", raising=False)
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(audit_receipt_verifier, "VERIFIER_SCRIPT", bundled)
+
+    assert audit_cmd._find_receipt_verifier() == bundled

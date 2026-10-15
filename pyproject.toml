@@ -541,6 +541,13 @@ artifacts = [
 "rules" = "bernstein/_default_templates/agent_plugin/rules"
 ".mcp.json" = "bernstein/_default_templates/agent_plugin/.mcp.json"
 ".plugin/plugin.json" = "bernstein/_default_templates/agent_plugin/.plugin/plugin.json"
+# Standalone audit-receipt verifier. The `verify-audit-receipt` console
+# script and `bernstein audit receipt verify` run this file as a subprocess
+# (it imports only stdlib + cryptography + cbor2, never bernstein). It lives
+# at the repo root under tools/, so without this entry every pip / uv / conda
+# install exited 2 with "can't open file .../tools/verify_audit_receipt.py".
+# Loader: bernstein.core.verifier.audit_receipt_verifier.VERIFIER_SCRIPT.
+"tools/verify_audit_receipt.py" = "bernstein/_default_templates/tools/verify_audit_receipt.py"
 # ascii_logo.md now lives in-package at src/bernstein/_default_templates/ -
 # no force-include needed. The dev-repo copy at docs/assets/ascii_logo.md is
 # the display fallback read by cli/display/splash_v2.py when running from a

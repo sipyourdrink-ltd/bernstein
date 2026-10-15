@@ -1089,6 +1089,12 @@ jobs:
       - name: bernstein --help (exit zero)
         shell: bash
         run: bernstein --help
+      - name: verify-audit-receipt --help (exit zero)
+        # The console script runs tools/verify_audit_receipt.py, which the
+        # wheel carries only through its force-include entry; without it
+        # every install exited 2 with "can't open file".
+        shell: bash
+        run: verify-audit-receipt --help
       - name: Verify packaged resources load via importlib
         # Confirms package-data survived the wheel build by reading a
         # bundled MCP tool schema and a force-included default template
@@ -1202,6 +1208,12 @@ jobs:
       - name: bernstein --help (exit zero)
         shell: bash
         run: bernstein --help
+      - name: verify-audit-receipt --help (exit zero)
+        # The console script runs tools/verify_audit_receipt.py, which the
+        # wheel carries only through its force-include entry; without it
+        # every install exited 2 with "can't open file".
+        shell: bash
+        run: verify-audit-receipt --help
       - name: Verify packaged resources load via importlib
         # Mirror of the pipx job's resource probe but resolved through
         # the uv-managed tool venv. See pipx counterpart for rationale.
