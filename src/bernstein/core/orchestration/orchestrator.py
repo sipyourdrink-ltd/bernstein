@@ -361,6 +361,26 @@ def has_terminal_task(tasks_by_status: Mapping[str, list[Task]]) -> bool:
     return bool(tasks_by_status.get("done") or tasks_by_status.get("failed") or tasks_by_status.get("closed"))
 
 
+def has_inflight_task(tasks_by_status: Mapping[str, list[Task]]) -> bool:
+    """Is any task still held by a worker, local or remote?
+
+    Step-8b quiescence read only ``open`` and this orchestrator's own agents.
+    In cluster mode a remote ``bernstein worker`` claims tasks from the same
+    task server, and those claims belong to no local agent: the run read
+    ``open=0 agents=0`` while a remote worker was still running a retry, the
+    orchestrator self-stopped, and when the retry finished the dependents it
+    unblocked had no spawner left. A step for a role the remote worker does
+    not poll then stayed ``open`` for good.
+
+    Read on the settle-window refetch, not the top-of-tick snapshot: a task a
+    dead local agent held is auto-completed by ``reap_dead_agents`` within the
+    tick, so the snapshot still shows it ``claimed`` when it no longer is. A
+    claim held by a dead local agent does not keep the run alive forever
+    either: ``_release_stale_claims`` retries or fails it on a normal tick.
+    """
+    return bool(tasks_by_status.get("claimed") or tasks_by_status.get("in_progress"))
+
+
 def _model_identity(
     model: str | None,
     provider: str | None,
@@ -2600,7 +2620,8 @@ class Orchestrator:
                 if settled is not None:
                     settled_open = len(settled["open"])
                     settled_agents = sum(1 for a in self._agents.values() if a.status != "dead")
-                    if settled_open == settled_agents == 0:
+                    settled_inflight = has_inflight_task(settled)
+                    if settled_open == settled_agents == 0 and not settled_inflight:
                         # Hold/release API (supplements the settle-timer
                         # self-stop above): external callers can call
                         # POST /orchestrator/holds to keep this orchestrator
@@ -2654,11 +2675,12 @@ class Orchestrator:
                     else:
                         logger.info(
                             "Quiescence NOT confirmed after %.1fs settle window (tick #%d): "
-                            "open=%d agents=%d - run continues",
+                            "open=%d agents=%d in_flight=%s - run continues",
                             _settle_s,
                             self._tick_count,
                             settled_open,
                             settled_agents,
+                            settled_inflight,
                         )
 
         # 9. Log summary

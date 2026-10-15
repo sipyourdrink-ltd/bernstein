@@ -105,6 +105,15 @@ Capacity is set with `--slots`. Internally the worker tracks `available_slots
 adapter processes the host can comfortably run. There is no auto-detection -
 oversubscribing a worker just queues longer.
 
+Run end with remote workers: the central orchestrator does not end a run while
+any task is `claimed` or `in_progress`, whichever process holds it - its own
+agent or a remote worker. A worker's claim belongs to no local agent, so the
+run stays up until that claim finishes and the steps it unblocks are
+scheduled. A step whose role no worker lists in `--roles` (for example
+`reviewer`) is run by the central orchestrator's own spawner, or not at all
+when the central runs with no local agents: list every role your plans use
+across the workers.
+
 Worker environment requirements:
 
 - A logged-in CLI agent (`claude`, `codex`, `gemini`, `qwen`, `aider`).
