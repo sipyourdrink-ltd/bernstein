@@ -84,6 +84,37 @@ logger = logging.getLogger(__name__)
 LEGACY_PYTHON_CONDITION = "changed_files.any('.py')"
 
 
+def _effective_base_ref(workdir: Path, base_ref: str) -> str:
+    """Return *base_ref*, or the run branch when *base_ref* names no commit in *workdir*.
+
+    Agent worktrees fork from the branch checked out in *workdir* and merge back
+    into it. A configured base that does not exist in the repository (the default
+    ``main`` where the trunk is ``master``, or a run on a branch of its own) made
+    every diff against it fail; changed files went unresolved and the PII/DLP gates
+    read the whole tree, so text already on the branch blocked every merge.
+    """
+    from bernstein.core.git.git_basic import current_branch
+
+    try:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{base_ref}^{{commit}}"],
+            cwd=workdir,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return base_ref
+    if probe.returncode == 0:
+        return base_ref
+    branch = current_branch(workdir)
+    if branch is None:
+        return base_ref
+    logger.info(
+        "Quality gate base %r does not exist in %s; diffing against the run branch %r", base_ref, workdir, branch
+    )
+    return branch
+
+
 class GateRunner:
     """Run a configured quality-gate pipeline for one task.
 
@@ -96,7 +127,7 @@ class GateRunner:
     def __init__(self, config: QualityGatesConfig, workdir: Path, *, base_ref: str = "main") -> None:
         self._config = config
         self._workdir = workdir
-        self._base_ref = base_ref
+        self._base_ref = _effective_base_ref(workdir, base_ref)
         self._cache_lock = threading.Lock()
         self._cache_loaded = False
         self._cache_entries: dict[str, dict[str, Any]] = {}

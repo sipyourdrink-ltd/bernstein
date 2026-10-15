@@ -643,3 +643,63 @@ def test_a_clean_run_is_still_a_pass(tmp_path: Path) -> None:
     report = _dead_code_report(tmp_path, output="(no output)", exit_code=0)
 
     assert report.results[0].status in ("pass", "warn")
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True, encoding="utf-8"
+    ).stdout.strip()
+
+
+def _run_branch_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """A repo whose only branch is ``fleet/work`` (no ``main``), holding a file that
+    trips the DLP license check, and an agent worktree that adds one new file."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "fleet/work")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "commit.gpgsign", "false")
+    (repo / "NOTICE.md").write_text("Vendored notes. All rights reserved.\n", encoding="utf-8")
+    _git(repo, "add", "NOTICE.md")
+    _git(repo, "commit", "-m", "seed")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "agent/A-1", str(worktree))
+    (worktree / "src").mkdir()
+    (worktree / "src" / "new.py").write_text("x = 1\n", encoding="utf-8")
+    _git(worktree, "add", "src/new.py")
+    _git(worktree, "commit", "-m", "agent: add new.py")
+    return repo, worktree
+
+
+def test_missing_base_ref_falls_back_to_the_run_branch(tmp_path: Path) -> None:
+    """The default base ``main`` does not exist here: the diff is taken against the branch
+    the agent forked from and merges into, not dropped in favour of a whole-tree scan."""
+    repo, worktree = _run_branch_repo(tmp_path)
+    runner = GateRunner(QualityGatesConfig(cache_enabled=False), repo)
+
+    assert runner._base_ref == "fleet/work"
+    assert runner._resolve_changed_files_sync(_make_task(), worktree) == ["src/new.py"]
+
+
+def test_existing_base_ref_is_kept(tmp_path: Path) -> None:
+    repo, _ = _run_branch_repo(tmp_path)
+    _git(repo, "branch", "main")
+
+    assert GateRunner(QualityGatesConfig(cache_enabled=False), repo)._base_ref == "main"
+
+
+def test_dlp_gate_reads_only_the_agent_change_when_base_ref_is_missing(tmp_path: Path) -> None:
+    """Text already on the run branch must not block an agent whose change is clean."""
+    repo, worktree = _run_branch_repo(tmp_path)
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="dlp_scan", required=True)],
+        cache_enabled=False,
+    )
+
+    report = asyncio.run(GateRunner(config, repo).run_all(_make_task(), worktree))
+
+    assert report.changed_files == ["src/new.py"]
+    assert [(r.name, r.status, r.blocked) for r in report.results] == [("dlp_scan", "pass", False)]
