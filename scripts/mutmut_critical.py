@@ -188,11 +188,18 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="sandbox_eval",
         source="src/bernstein/core/security/sandbox_eval.py",
-        tests=("tests/unit/test_sandbox_eval.py",),
+        tests=(
+            "tests/unit/test_sandbox_eval.py",
+            "tests/unit/test_sandbox_eval_mutation_kill.py",
+        ),
         threshold=0.70,
         budget_seconds=900,
         max_candidates=60,
-        note="Sandbox session lifecycle and repo URL validation (25 tests).",
+        note=(
+            "Sandbox session lifecycle and repo URL validation. Scored 19/60 on the lifecycle tests"
+            " alone; the kill file pins the published limits, the solution-pack table, the elapsed"
+            " clock, both session caps at their boundary and every transition guard."
+        ),
     ),
     Module(
         key="policy_engine",
