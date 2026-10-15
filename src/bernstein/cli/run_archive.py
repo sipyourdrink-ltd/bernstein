@@ -351,15 +351,23 @@ def _attestation(digest: str, audit_log: AuditLog) -> tuple[Attestation, str]:
 
     The record only counts if the chain it sits in verifies: a log that can be
     edited without breaking its HMACs could be given any record at all.
+
+    One authenticated read, not a verify followed by a query. ``query`` parses
+    raw lines and checks no HMAC, so a record appended between the two calls
+    (a forged digest with a dummy HMAC) was counted as an anchor although
+    ``verify`` never saw it. ``scan_verified`` returns exactly the rows it
+    authenticated, and refuses the whole read when any of them fails.
     """
-    valid, errors = audit_log.verify()
-    if not valid:
-        first = errors[0] if errors else "no detail"
+    result = audit_log.scan_verified(event_type=ARCHIVE_ANCHOR_EVENT)
+    if not result.ok:
+        first = result.errors[0] if result.errors else "no detail"
         return "unattested", f"the audit chain does not verify ({first}), so its records vouch for nothing"
-    records = audit_log.query(event_type=ARCHIVE_ANCHOR_EVENT, resource_id=digest, include_archived=True)
-    if not records:
+    anchors = [
+        event for event in result.events if event.event_type == ARCHIVE_ANCHOR_EVENT and event.resource_id == digest
+    ]
+    if not anchors:
         return "unattested", f"no {ARCHIVE_ANCHOR_EVENT} record names manifest sha256 {digest}"
-    return "anchored", f"manifest sha256 {digest} recorded at {records[0].timestamp}"
+    return "anchored", f"manifest sha256 {digest} recorded at {anchors[0].timestamp}"
 
 
 def _verify_open_archive(zf: zipfile.ZipFile, archive_path: Path) -> ArchiveVerification:

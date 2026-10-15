@@ -87,6 +87,9 @@ recompute its hash and rewrite the manifest, and the result verifies `ok`.
 
 ## Anchoring the manifest outside the archive
 
+The anchor is reachable from Python only for now. No CLI command passes an
+audit log to `create_archive` or `verify_archive` yet, so call them as below.
+
 Pass an audit log to `create_archive` and it records the sha256 of the
 `manifest.json` bytes it wrote, as a `run_archive.created` event whose
 `resource_id` is that digest. Pass the same log to `verify_archive` and the
@@ -110,7 +113,7 @@ can be intact and still unattested:
 
 | `attestation` | Meaning |
 |---|---|
-| `anchored` | The audit log's HMAC chain verifies, and it holds a `run_archive.created` record of this manifest's sha256. |
+| `anchored` | The audit log's HMAC chain verifies, and it holds a `run_archive.created` record of this manifest's sha256. The record is read in the same authenticated scan that verifies the chain (`AuditLog.scan_verified`), so a line that scan did not authenticate never counts. |
 | `unattested` | The log was consulted and does not vouch for this manifest. Either no record names it (the manifest was rewritten, or the archive was never anchored there), or the chain itself does not verify, so none of its records count. |
 | `unchecked` | No audit log was given, so nothing outside the archive was consulted. |
 
