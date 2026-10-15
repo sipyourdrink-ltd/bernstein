@@ -97,7 +97,7 @@ jobs:
           fi
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
           # SBOMs ship as release assets - the cache is shared across the
           # repo, so an attacker who can write to PR caches could poison
@@ -108,7 +108,7 @@ jobs:
         run: uv build
 
       - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
         with:
           path: .
           format: spdx-json
@@ -120,7 +120,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate CycloneDX SBOM
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
         with:
           path: .
           format: cyclonedx-json
