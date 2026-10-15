@@ -1482,8 +1482,12 @@ def test_completion_survives_evidence_gate_exception(tmp_path: Path, make_task: 
 
 
 def _incident_cases_dir(workdir: Path) -> Path:
-    """Return the corpus directory IncidentSynthesizer writes cases into."""
-    return workdir / "src" / "bernstein" / "eval" / "cases" / "incidents"
+    """Return the corpus directory IncidentSynthesizer writes cases into.
+
+    The tmp workdir is not Bernstein's source tree, so the case belongs with
+    the run state, never in the managed project's own source tree.
+    """
+    return workdir / ".sdd" / "eval" / "cases" / "incidents"
 
 
 def test_dead_lettered_task_writes_an_incident_eval_case(tmp_path: Path, make_task: Any) -> None:
@@ -1509,6 +1513,7 @@ def test_dead_lettered_task_writes_an_incident_eval_case(tmp_path: Path, make_ta
     body = written[0].read_text(encoding="utf-8")
     assert "Stabilize parser" in body
     assert "max_retries_exceeded" in body
+    assert not (tmp_path / "src").exists(), "the managed project's source tree must not receive the case"
 
 
 def test_repeated_dead_letter_does_not_duplicate_the_incident_case(tmp_path: Path, make_task: Any) -> None:
