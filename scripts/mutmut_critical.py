@@ -200,11 +200,17 @@ MODULES: tuple[Module, ...] = (
         tests=(
             "tests/unit/test_policy_engine.py",
             "tests/unit/test_decision_graph.py",
+            "tests/unit/security/test_policy_engine_mutation_kill.py",
         ),
         threshold=0.70,
         budget_seconds=900,
         max_candidates=60,
-        note="Rego/YAML policy evaluation and decision graph precedence (8 tests).",
+        note=(
+            "Rego/YAML policy evaluation and decision graph precedence. Scored 27/60 on the two"
+            " example-driven files; the kill file pins precedence in both insertion orders, the"
+            " bypass rule, the empty-directory and OPA-missing branches, the YAML loader and every"
+            " comparison operator at its boundary."
+        ),
     ),
     Module(
         key="compliance_policies",
