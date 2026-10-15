@@ -640,6 +640,7 @@ def _run_merge_and_push(
 
     if merge_result and merge_result.success:
         _record_landed_provenance(session.id, worktree_root, before_sha, run_id)
+        _dispatch_post_merge(session, worktree_root, target_branch)
         # Push the branch we actually merged into (never a hard-coded "main").
         # ``target_branch`` is None only on detached HEAD; fall back to the
         # resolved default there.
@@ -651,6 +652,51 @@ def _run_merge_and_push(
             logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
 
     return merge_result
+
+
+def _dispatch_post_merge(session: AgentSession, worktree_root: Path, merged_into: str | None) -> None:
+    """Fire ``LifecycleEvent.POST_MERGE`` for a merge that just landed (#5962).
+
+    Dispatched on the process-wide registry, the same lookup the
+    ``worker.escalated`` event uses: with none installed this is a no-op.
+    The payload names the merged branch, the branch it landed on, and the
+    commit ``HEAD`` points at after the merge.
+
+    The merge has already happened, so nothing a hook does here can undo
+    it: a failing or denying hook is logged and the merge path carries on.
+    """
+    from bernstein.core.lifecycle import hooks as lifecycle_hooks
+
+    registry = getattr(lifecycle_hooks, "GLOBAL_REGISTRY", None)
+    if registry is None:
+        return
+
+    from bernstein.core.git.git_basic import run_git as _run_git
+
+    try:
+        head = _run_git(["rev-parse", "HEAD"], worktree_root, timeout=10)
+        commit_sha = head.stdout.strip() if head.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("post_merge: HEAD unreadable at %s: %s", worktree_root, exc)
+        commit_sha = ""
+
+    task_ids = list(session.task_ids)
+    ctx = lifecycle_hooks.LifecycleContext(
+        event=lifecycle_hooks.LifecycleEvent.POST_MERGE,
+        task=task_ids[0] if task_ids else None,
+        session_id=session.id,
+        workdir=worktree_root,
+        data={
+            "branch": f"agent/{session.id}",
+            "merged_into": merged_into or "",
+            "commit_sha": commit_sha,
+            "task_ids": task_ids,
+        },
+    )
+    try:
+        registry.run(lifecycle_hooks.LifecycleEvent.POST_MERGE, ctx)
+    except Exception as exc:
+        logger.warning("post_merge hook failed for %s: %s", sanitize_log(session.id), exc)
 
 
 def _do_merge(

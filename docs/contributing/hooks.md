@@ -74,6 +74,19 @@ by issue #1323. Existing hook scripts continue to work without edits.
 
 These events accept any payload shape - no schema is enforced.
 
+`post_merge` fires once an agent branch has been merged back, never for a
+refused or failed merge. Its `data` carries:
+
+| Key | Value |
+|-----|-------|
+| `branch` | The merged agent branch, `agent/<session_id>`. |
+| `merged_into` | The branch it landed on (empty on a detached `HEAD`). |
+| `commit_sha` | The commit `HEAD` points at after the merge. |
+| `task_ids` | Every task id the session carried; `task` is the first. |
+
+The merge has already landed when the event fires, so a hook that raises
+or denies is logged and does not fail the merge.
+
 ---
 
 ## Where hooks live
