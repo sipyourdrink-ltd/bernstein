@@ -261,6 +261,27 @@ def test_a_never_applied_upg_0001_does_not_restore_another_runs_backup(tmp_path:
     assert receipt["restored_files"] == []
 
 
+def test_two_runs_upg_0001_rolled_back_in_turn_leave_two_receipts(tmp_path: Path) -> None:
+    """The issue's first demonstration: a second run's receipt replaced the first run's.
+
+    Both runs mint ``UPG-0001``. Each is applied and rolled back in its own process; both receipts
+    survive, each naming its own proposal by title and storage key.
+    """
+    first = _run_proposal("Disable the retry budget entirely", created_at=1_000.0)
+    _applied_change(tmp_path, first)
+    assert FileUpgradeExecutor(tmp_path).rollback_upgrade(first) is True
+
+    second = _run_proposal("Rewrite the admission policy", created_at=2_000.0)
+    _applied_change(tmp_path, second)
+    assert FileUpgradeExecutor(tmp_path).rollback_upgrade(second) is True
+
+    receipts = sorted((tmp_path / "upgrades" / "rollbacks").glob("UPG-0001*.json"))
+    bodies = [json.loads(path.read_text(encoding="utf-8")) for path in receipts]
+    assert len(bodies) == 2
+    assert {b["title"] for b in bodies} == {first.title, second.title}
+    assert {b["storage_key"] for b in bodies} == {first.storage_key, second.storage_key}
+
+
 def test_the_applied_proposal_still_rolls_back_from_its_own_key(tmp_path: Path) -> None:
     applied = _run_proposal("Disable the retry budget entirely", created_at=1_000.0)
     _applied_change(tmp_path, applied)
