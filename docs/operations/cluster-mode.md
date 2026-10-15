@@ -125,6 +125,30 @@ Worker environment requirements:
 > init step that clones it, so `/workspace` is a git checkout with a commit
 > before `bernstein worker` starts.
 
+### Central behind Cloudflare Access
+
+A central server can be published to workers outside its network through a
+Cloudflare tunnel with an Access application in front of it. Access then
+rejects, at the edge, every request without an Access service token, before
+the server's own bearer check runs. Give the worker the service token as two
+environment variables next to the bearer:
+
+```bash
+export CF_ACCESS_CLIENT_ID=<service-token client id>
+export CF_ACCESS_CLIENT_SECRET=<service-token client secret>
+bernstein worker --server https://central.example.com --token "$BERNSTEIN_AUTH_TOKEN"
+```
+
+When both are set, the worker sends `CF-Access-Client-Id` and
+`CF-Access-Client-Secret` on every request (register, heartbeat, claim,
+report). The same headers go out from every CLI call that talks to the server
+(`bernstein task complete`, `bernstein status`), and both variables pass the
+agent environment allowlist, so agents spawned on the worker reach the
+central through the same edge. With only one of the two set, neither is sent,
+and the edge's 403 shows the misconfiguration. The bearer token is still
+required: Access decides whether a request may reach the server, and the
+server still decides what the caller may do.
+
 ### Workspace preflight
 
 Before it registers or accepts any claim, the worker verifies its workspace is

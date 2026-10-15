@@ -77,7 +77,7 @@ Source pointers (read these if you need to debug from code):
 | File | What it does |
 |------|--------------|
 | `src/bernstein/core/agents/spawner_core.py` (`_issue_agent_token`, `_render_auth_section`) | Mints the per-session JWT, writes it `0600`, injects path into the manager prompt. |
-| `src/bernstein/adapters/env_isolation.py` (`_BASE_ALLOWLIST`) | Allowlist for cross-process env inheritance. Contains `BERNSTEIN_AUTH_TOKEN`, `BERNSTEIN_HOOK_SECRET`, `BERNSTEIN_AUTH_DISABLED`. |
+| `src/bernstein/adapters/env_isolation.py` (`_BASE_ALLOWLIST`) | Allowlist for cross-process env inheritance. Contains `BERNSTEIN_AUTH_TOKEN`, `BERNSTEIN_HOOK_SECRET`, `BERNSTEIN_AUTH_DISABLED`, and the Cloudflare Access service-token pair `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` (central behind Access, see `docs/operations/cluster-mode.md`). |
 | `src/bernstein/core/security/auth.py` (`AuthService`, `create_jwt`, `verify_jwt`) | JWT mint/verify (HS256), legacy bearer constant-time compare. |
 | `src/bernstein/core/security/auth_middleware.py` (`SSOAuthMiddleware`, `auth_disabled_via_opt_out`) | Server-side gate. Implements the three-strategy chain (SSO JWT → agent JWT → legacy bearer). |
 | `src/bernstein/core/server/server_app.py` (`create_app`) | Resolves `BERNSTEIN_AUTH_TOKEN` at boot, wires `legacy_auth_token` and `AgentIdentityStore` into middleware. |

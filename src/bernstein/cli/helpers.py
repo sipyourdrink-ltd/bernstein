@@ -121,6 +121,29 @@ def print_startup_banner() -> None:
     print_banner()
 
 
+#: Cloudflare Access service-token credentials. A central server published
+#: through a Cloudflare tunnel behind an Access application rejects, at the
+#: edge, every request that lacks both headers - before the server's own
+#: bearer check ever runs.
+ACCESS_CLIENT_ID_ENV = "CF_ACCESS_CLIENT_ID"
+ACCESS_CLIENT_SECRET_ENV = "CF_ACCESS_CLIENT_SECRET"
+
+
+def access_proxy_headers() -> dict[str, str]:
+    """Return the Cloudflare Access service-token headers, when configured.
+
+    Sent alongside (never instead of) the bearer token: Access only decides
+    whether a request may reach the server at all. Both env vars must be set;
+    with only one the request goes out without either, and the edge's 403
+    shows the misconfiguration instead of a half-credential being sent.
+    """
+    client_id = os.environ.get(ACCESS_CLIENT_ID_ENV, "").strip()
+    client_secret = os.environ.get(ACCESS_CLIENT_SECRET_ENV, "").strip()
+    if client_id and client_secret:
+        return {"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": client_secret}
+    return {}
+
+
 def auth_headers(workdir: Path | None = None) -> dict[str, str]:
     """Return the Authorization header dict for talking to the local server.
 
@@ -137,16 +160,18 @@ def auth_headers(workdir: Path | None = None) -> dict[str, str]:
 
     Returns:
         ``{"Authorization": "Bearer <token>"}`` when a token is found, else an
-        empty dict.
+        empty dict, plus the :func:`access_proxy_headers` when the server sits
+        behind Cloudflare Access.
     """
+    headers = access_proxy_headers()
     token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
     if not token:
         from bernstein.core.run_auth_token import read_run_auth_token
 
         token = read_run_auth_token(workdir or Path.cwd())
     if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def resolve_server_url(workdir: Path | None = None) -> str:

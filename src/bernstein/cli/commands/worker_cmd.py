@@ -12,6 +12,10 @@ Cluster mode enables bearer auth on the central server, so ``--token`` (or the
 ``BERNSTEIN_AUTH_TOKEN`` env var) is required: pass the value the central node
 was started with (``BERNSTEIN_AUTH_TOKEN`` or ``BERNSTEIN_CLUSTER_AUTH_SECRET``).
 When the central auto-generates one it is written to ``.sdd/runtime/auth.token``.
+
+A central published through a Cloudflare tunnel behind an Access application
+also needs ``CF_ACCESS_CLIENT_ID`` and ``CF_ACCESS_CLIENT_SECRET`` (an Access
+service token) in the worker's environment; both headers ride on every request.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from pathlib import Path
 import click
 import httpx
 
-from bernstein.cli.helpers import adapter_cli_choice, console
+from bernstein.cli.helpers import access_proxy_headers, adapter_cli_choice, console
 from bernstein.core.capacity_wake import CapacityWake, WakeReason
 from bernstein.core.poll_config import PollConfig, validate_poll_config
 
@@ -147,7 +151,9 @@ class WorkerLoop:
         self._wake = CapacityWake()
 
     def _headers(self) -> dict[str, str]:
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        # A central behind Cloudflare Access needs the service-token headers on
+        # every request; the edge answers 403 before the bearer is checked.
+        headers: dict[str, str] = {"Content-Type": "application/json", **access_proxy_headers()}
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
         return headers
