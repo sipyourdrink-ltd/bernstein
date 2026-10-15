@@ -800,15 +800,16 @@ def test_completion_marker_dead_agent_skipped(tmp_path: Path) -> None:
 # tests/unit/test_agent_lifecycle.py.
 
 
-def test_idle_force_kill_salvage_carries_the_recorder_and_the_idle_reason(
+def test_idle_force_kill_disposes_of_the_worktree_after_the_kill_with_the_idle_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from bernstein.core.agents import agent_recycling
 
-    salvage = MagicMock(return_value=False)
-    monkeypatch.setattr(agent_recycling, "_save_partial_work", salvage)
+    calls: list[str] = []
+    dispose = MagicMock(side_effect=lambda *a, **k: calls.append("dispose"))
+    monkeypatch.setattr(agent_recycling, "_dispose_dead_worktree", dispose)
     orch = _make_orch(tmp_path)
-    orch._recorder = object()
+    orch._spawner.kill.side_effect = lambda *a, **k: calls.append("kill")
     session = _make_session(["T-idle-9"], session_id="s-idle-09")
     orch._agents["s-idle-09"] = session
     now = time.time()
@@ -816,8 +817,9 @@ def test_idle_force_kill_salvage_carries_the_recorder_and_the_idle_reason(
 
     agent_recycling._recycle_or_kill(orch, session, now, reason="heartbeat_60s")
 
-    salvage.assert_called_once_with(orch._spawner, session, recorder=orch._recorder, reason="heartbeat_60s")
+    dispose.assert_called_once_with(orch, session, reason="heartbeat_60s")
     orch._spawner.kill.assert_called_once_with(session)
+    assert calls == ["kill", "dispose"]
 
 
 def test_completion_reap_salvage_carries_the_recorder_and_says_completed(

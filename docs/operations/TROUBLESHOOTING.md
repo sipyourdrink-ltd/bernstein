@@ -280,7 +280,7 @@ git worktree prune         # removes stale worktree entries
 # If a directory still exists but git lost track:
 git worktree remove <path> --force
 ```
-The orchestrator's janitor attempts this automatically via `_save_partial_work()` before worktree cleanup, but manual intervention is needed when the `.git/worktrees/` metadata is inconsistent.
+The orchestrator's worktree cleanup does this automatically when it reaps an agent, but manual intervention is needed when the `.git/worktrees/` metadata is inconsistent.
 
 ---
 
@@ -378,7 +378,8 @@ grep -i "timeout" .sdd/runtime/<session>.log
 **Resolution:**
 - Increase `timeout_seconds` per-agent or in the orchestrator config.
 - Break large tasks into smaller scopes (small/medium).
-- The watchdog sends SIGTERM first, waits 30s for graceful shutdown, then SIGKILL. Partial work is committed via `_save_partial_work()` before worktree cleanup.
+- The watchdog sends SIGTERM first, waits 30s for graceful shutdown, then SIGKILL.
+- A timed-out, crashed or recycled agent's work is merged only when its task was already accepted (`done`). Otherwise nothing reaches the run branch: uncommitted edits are kept on `salvage/<session>`, unmerged commits under `refs/graveyard/<session>-<ts>`, and the task's progress log names the ref and sha. Inspect with `git log -p salvage/<session>`; reuse with `git cherry-pick` or `git checkout salvage/<session> -- <path>`.
 - If agents consistently time out, the task scope or complexity rating may be wrong.
 
 ---
