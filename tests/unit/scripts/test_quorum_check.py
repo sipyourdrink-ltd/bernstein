@@ -1011,10 +1011,23 @@ def test_an_uncomputable_fingerprint_falls_back_to_the_head_sha(qc: ModuleType, 
         fake.compares[SHA_A] = broken
     pr = _fetch(qc, fake)
     assert pr.same_diff == frozenset()
-    assert not _evaluate(qc, roster, pr).passed
+    assert pr.uncompared == (SHA_A,)
+    verdict = _evaluate(qc, roster, pr)
+    assert not verdict.passed
+    # The fallback is never silent: the notes name the commit it could not compare.
+    assert any("could not be compared" in note and SHA_A[:7] in note for note in verdict.notes)
     # The same approvals on the head itself still count: sha binding is the floor.
     fake.reviews = [_raw_review("core1", SHA_B), _raw_review("comm1", SHA_B)]
     assert _evaluate(qc, roster, _fetch(qc, fake)).passed
+
+
+def test_a_compared_diff_leaves_no_fallback_note(qc: ModuleType, roster) -> None:
+    fake = _merged_main(merger="outsider", reviews=[_raw_review("core1", SHA_A), _raw_review("comm1", SHA_A)])
+    pr = _fetch(qc, fake)
+    assert pr.uncompared == ()
+    verdict = _evaluate(qc, roster, pr)
+    assert verdict.passed
+    assert not any("could not be compared" in note for note in verdict.notes)
 
 
 def test_each_sha_is_compared_at_most_once_per_run(qc: ModuleType) -> None:
@@ -1124,3 +1137,4 @@ def test_the_window_falls_back_to_the_last_push_when_the_diff_cannot_be_compared
     verdict = _evaluate(qc, roster, pr)
     assert not verdict.passed
     assert "71h from now" in verdict.requirements[0].who
+    assert any("objection window runs from the last push" in note for note in verdict.notes)

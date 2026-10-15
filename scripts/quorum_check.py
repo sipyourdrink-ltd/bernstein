@@ -84,6 +84,8 @@ Whenever a fingerprint cannot be worked out - a compare GitHub truncates, a
 file with no patch (binary or too large), an API error - it matches nothing,
 and each rule falls back to what it did before: approvals bind to the head
 commit, the committer stays a contributor, the window runs from the last push.
+The verdict says so in its notes, naming the commits it could not compare, so
+a silent fallback never reads as a considered decision.
 
 A `changes requested` survives a push, and stays counted until its author
 withdraws it. A review whose state is `commented` does not replace an earlier
@@ -423,6 +425,11 @@ class PullRequest:
     # When the net diff last changed. None when that cannot be worked out, and
     # the objection window then runs from `last_push`.
     diff_changed_at: datetime | None = None
+    # Commits whose net diff could not be compared with the base branch (a
+    # truncated compare, a file with no patch, an API error, the budget). The
+    # rules above fell back to the commit itself wherever one of these was
+    # consulted, and the verdict says so.
+    uncompared: tuple[str, ...] = ()
 
     def is_current(self, sha: str) -> bool:
         """Whether a review given on `sha` was given on what is about to merge."""
@@ -596,6 +603,8 @@ class NetDiff:
         self.base = base
         self.api = api
         self._snapshots: dict[str, Snapshot] = {}
+        # Every sha whose fingerprint came back unknown, in the order asked.
+        self.uncompared: list[str] = []
         self._force_pushes: list[ForcePush] | None = None
         self._force_pushes_read = False
         self._contributed: dict[tuple[str, int], bool] = {}
@@ -603,6 +612,8 @@ class NetDiff:
     def snapshot(self, sha: str) -> Snapshot:
         if sha not in self._snapshots:
             self._snapshots[sha] = self._compare(sha)
+            if sha and self._snapshots[sha].fingerprint is None:
+                self.uncompared.append(sha)
         return self._snapshots[sha]
 
     def _compare(self, sha: str) -> Snapshot:
@@ -833,6 +844,7 @@ def fetch_pull_request(
         same_diff=same_diff,
         update_only=update_only,
         diff_changed_at=diff_changed_at,
+        uncompared=tuple(diffs.uncompared),
     )
 
 
@@ -1081,6 +1093,15 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         verdict.notes.append(
             f"Approvals given on an earlier commit with the same net diff count: {_names(carried_approvals)}. "
             "The pushes since only merged the base branch in or rebased onto it (charter, section 2)."
+        )
+
+    if pr.uncompared:
+        shown = ", ".join(sha[:7] for sha in pr.uncompared[:3]) + (", ..." if len(pr.uncompared) > 3 else "")
+        verdict.notes.append(
+            f"The net diff of {len(pr.uncompared)} commit(s) could not be compared with the base branch ({shown}), "
+            "so the rules used the commit itself there: an approval counts only on the head commit, a committer who "
+            "touched one of them is a writer, and the objection window runs from the last push rather than from the "
+            "last change to the diff."
         )
 
     verdict.passed = all(req.met for req in verdict.requirements)
