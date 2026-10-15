@@ -664,7 +664,7 @@ def popen(monkeypatch: pytest.MonkeyPatch) -> _PopenRecorder:
     return recorder
 
 
-_ADAPTERS = [GPTResearcherAdapter, TongyiDeepResearchAdapter]
+_ADAPTERS = [GPTResearcherAdapter, PaperQAAdapter, TongyiDeepResearchAdapter]
 
 
 @pytest.mark.parametrize("cls", _ADAPTERS)
@@ -700,6 +700,17 @@ def test_spawn_is_unchanged_without_a_restrictive_policy(cls: type, popen: _Pope
     assert result.pid == 4242  # type: ignore[attr-defined]
     assert popen.calls == 1
     assert (tmp_path / ".sdd" / cls.slug / "analyst-ab12cd34" / "prompt.txt").read_text() == "What is X?"  # type: ignore[attr-defined]
+
+
+def test_paper_qa_dials_only_the_gateway(
+    popen: _PopenRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The papers are local and metadata lookup is off, so a policy that allows the gateway
+    alone is enough, and the gateway is the only destination the check is asked about."""
+    assert PaperQAAdapter().egress_endpoints(GATEWAY) == [("gw.test", 80)]
+    monkeypatch.setenv("BERNSTEIN_NETWORK_POLICY", "gw.test:80")
+    _spawn(PaperQAAdapter(), tmp_path)
+    assert popen.calls == 1
 
 
 def test_gpt_researcher_needs_its_retriever_host_allowed_too(
@@ -797,7 +808,7 @@ def test_the_adapters_do_not_claim_a_completion_path_they_do_not_feed() -> None:
     """The runners leave the report in their own run directory; nothing copies it to a
     task's declared artifact path, so declaring ``artifact`` would fail every
     declared-artifact task at verification."""
-    for name in ("gpt_researcher", "tongyi_deepresearch"):
+    for name in ("gpt_researcher", "paper_qa", "tongyi_deepresearch"):
         assert strategy_for(name).output_mode is OutputMode.GIT_DIFF
 
 
