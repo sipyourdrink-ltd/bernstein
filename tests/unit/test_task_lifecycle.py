@@ -1432,6 +1432,29 @@ def test_completion_seals_evidence_for_task_with_declared_producers(tmp_path: Pa
     orch._spawner.cleanup_worktree.assert_called_once_with(session.id)
 
 
+def test_failed_task_in_the_terminal_chain_is_registered_not_processed(tmp_path: Path, make_task: Any) -> None:
+    """A failed task passed in with the done ones (the quiescence pass does) is only
+    registered for the drain tracker. It has no completion to verify or merge, and the
+    retry machinery already decided it: a janitor FAIL here used to reopen retried and
+    permanently failed tasks, so superseded copies of one task ran side by side."""
+    done = make_task(id="T-done", title="ship it", description="Done.", status=TaskStatus.DONE)
+    failed = make_task(id="T-failed", title="ship it", description="Done.", status=TaskStatus.FAILED)
+    session = _session_for(failed.id, exit_code=1)
+    orch = _seal_wiring_orch(tmp_path, session)
+
+    with (
+        patch("bernstein.core.tasks.task_lifecycle._enqueue_alive_exit_janitor_pass", return_value=None) as janitor,
+        patch("bernstein.core.tasks.task_lifecycle._process_single_completed_task") as chain,
+    ):
+        process_completed_tasks(orch, [done, failed], TickResult())
+
+    assert list(orch._processed_done_tasks) == [done.id, failed.id]
+    assert [c.args[1].id for c in janitor.call_args_list] == [done.id]
+    assert [c.args[1].id for c in chain.call_args_list] == [done.id]
+    orch._spawner.reap_completed_agent.assert_not_called()
+    orch._client.post.assert_not_called()
+
+
 def test_completion_untouched_when_task_declares_no_producers(tmp_path: Path, make_task: Any) -> None:
     """The seal is still invoked, but with an empty producer set it is a no-op
     (proven by the helper's own tests); the completion path is unchanged."""

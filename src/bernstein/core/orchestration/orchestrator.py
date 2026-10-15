@@ -2481,10 +2481,10 @@ class Orchestrator:
                 try:
                     _chain_result = TickResult()
                     # Pass both done and failed - process_completed_tasks
-                    # filters to ``_processed_done_tasks`` itself so a
-                    # failed task gets registered the same way as a done
-                    # task. A pure done-only filter here would strand
-                    # failed tasks in the drain tracker.
+                    # registers every task in ``_processed_done_tasks`` and
+                    # runs the post-/complete chain for the done ones only.
+                    # A pure done-only filter here would strand failed tasks
+                    # in the drain tracker.
                     process_completed_tasks(
                         self,
                         _newly_terminal_for_chain.copy(),
@@ -5038,10 +5038,21 @@ class Orchestrator:
             if agent_dead:
                 # Agent confirmed gone — reclaim immediately, no timeout wait.
                 try:
-                    self._retry_or_fail_task(
-                        task.id,
-                        reason=("Dead agent: claimed task held by agent no longer tracked (or confirmed dead)"),
-                    )
+                    if task.id in self._retried_task_ids:
+                        # Claimed again after its retry was queued: retry_or_fail_task
+                        # skips a task it has already retried, which left this claim,
+                        # and the files it owns, held by no one.
+                        fail_task(
+                            self._client,
+                            self._config.server_url,
+                            task.id,
+                            reason="Dead agent: claim released; this task's retry is already queued",
+                        )
+                    else:
+                        self._retry_or_fail_task(
+                            task.id,
+                            reason=("Dead agent: claimed task held by agent no longer tracked (or confirmed dead)"),
+                        )
                     released += 1
                     logger.warning(
                         "Immediately reclaimed task %s (%s) from dead/gone agent",

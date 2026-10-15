@@ -5094,6 +5094,12 @@ def process_completed_tasks(
         if task.id in orch._processed_done_tasks:
             continue
         orch._processed_done_tasks[task.id] = None
+        # A failed task (the quiescence pass hands those in too) is registered for
+        # the drain tracker only: it has no completion to verify or merge, and the
+        # retry machinery already decided it. Running the chain on it let a janitor
+        # FAIL reopen retried and permanently failed tasks.
+        if task.status != TaskStatus.DONE:
+            continue
         new_tasks.append(task)
 
     if not new_tasks:
