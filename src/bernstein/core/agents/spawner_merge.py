@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 #: project's standard truthy words.
 ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH = "BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH"
 
+#: Journal code for a merge refused because its target is the protected
+#: default branch -- the only refusal ``ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH``
+#: lifts. Every other code in ``refused_merges.jsonl`` names a merge gate
+#: (quality gates, file scope, blast radius) that the override does not touch.
+REFUSAL_TARGET_IS_DEFAULT_BRANCH: Final = "target-is-default-branch"
+
 _TRUTHY_ALLOW = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
 
 
@@ -55,22 +61,28 @@ def _record_merge_refusal(
     worktree_root: Path,
     session_id: str,
     branch: str,
-    reason: str = "target-is-default-branch",
+    reason: str = REFUSAL_TARGET_IS_DEFAULT_BRANCH,
+    detail: str = "",
 ) -> None:
     """Persist a visible record that a merge was refused.
 
     Written to ``.sdd/runtime/refused_merges.jsonl`` next to the pending-push
     journal so an operator (and any postmortem) can see exactly which session
-    was blocked, on which branch, why, and when.
+    was blocked, on which branch, why, and when. ``reason`` is the
+    machine-readable code; ``detail`` is the gate's own explanation (which
+    gates failed, which path fell outside the scope) and is written only
+    when the caller has one.
     """
     import json as _json
 
-    entry = {
+    entry: dict[str, object] = {
         "session_id": sanitize_log(session_id),
         "branch": sanitize_log(branch),
         "reason": sanitize_log(reason),
         "ts": time.time(),
     }
+    if detail:
+        entry["detail"] = sanitize_log(detail)
     try:
         path = worktree_root / ".sdd" / "runtime" / "refused_merges.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -292,7 +304,7 @@ def _refuse_merge(
     reconstructing either from ``refused_merges.jsonl`` should not find one
     of them better recorded than the other.
     """
-    _record_merge_refusal(worktree_root, session.id, branch, reason=code)
+    _record_merge_refusal(worktree_root, session.id, branch, reason=code, detail=reason)
     logger.error(
         "Refusing to merge agent work from %s: %s",
         sanitize_log(session.id),
