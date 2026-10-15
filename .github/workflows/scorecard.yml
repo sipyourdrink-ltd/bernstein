@@ -90,7 +90,7 @@ jobs:
           persist-credentials: false
 
       - name: Download SARIF artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: scorecard-results
 
@@ -104,6 +104,6 @@ jobs:
             results.sarif > results.filtered.sarif
 
       - name: Upload to Code Scanning
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4
         with:
           sarif_file: results.filtered.sarif
