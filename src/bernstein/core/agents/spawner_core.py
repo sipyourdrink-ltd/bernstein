@@ -6018,16 +6018,50 @@ class AgentSpawner:
                 f"Response-style profile {_resume_style.style!r} for role {role!r} "
                 f"(source={_resume_style.source}) cannot be rendered on resume: {exc}"
             ) from exc
-        result = self._adapter.spawn(
-            prompt=prompt,
-            workdir=worktree_path,
-            model_config=model_config,
-            session_id=session_id,
-            timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
-            task_scope=resume_scope,
-            system_addendum=_resume_addendum,
-            **_resume_extra,
-        )
+        # The resumed agent continues the replaced agent's worktree under this
+        # session's own name: the merge, the merge gates and cleanup look for
+        # a session's work at ``.sdd/worktrees/<session_id>`` on
+        # ``agent/<session_id>``, so a worktree left under the old name would
+        # be gated against the repository root and merged from a branch that
+        # does not exist. Everything above read the worktree under its old
+        # name (the attachment pin is that path), so the hand-over happens
+        # only now, and is undone if the agent does not start so the next
+        # resume still finds the worktree where it was preserved.
+        preserved_path = worktree_path
+        owner = next((m for m in self._worktree_managers.values() if m.owns(preserved_path)), None)
+        if owner is not None:
+            try:
+                worktree_path = owner.adopt(preserved_path, session_id)
+            except WorktreeError as exc:
+                raise SpawnError(
+                    f"Cannot hand preserved worktree {preserved_path} to resume session {session_id}: {exc}"
+                ) from exc
+        try:
+            result = self._adapter.spawn(
+                prompt=prompt,
+                workdir=worktree_path,
+                model_config=model_config,
+                session_id=session_id,
+                timeout_seconds=session.timeout_s or DEFAULT_TIMEOUT_SECONDS,
+                task_scope=resume_scope,
+                system_addendum=_resume_addendum,
+                **_resume_extra,
+            )
+        except BaseException:
+            if owner is not None and worktree_path != preserved_path:
+                try:
+                    owner.adopt(worktree_path, preserved_path.name)
+                except WorktreeError as undo_exc:
+                    logger.error(
+                        "Resume session %s did not start and its worktree %s could not be handed back to %s: %s",
+                        session_id,
+                        worktree_path,
+                        preserved_path,
+                        undo_exc,
+                    )
+            raise
+        if owner is not None:
+            self._worktree_roots[session_id] = owner.repo_root
         session.pid = result.pid
         session.abort_reason = result.abort_reason
         session.abort_detail = result.abort_detail

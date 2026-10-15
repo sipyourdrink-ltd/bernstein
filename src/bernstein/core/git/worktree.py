@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from bernstein.core.git.git_basic import run_git
 from bernstein.core.git.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
 from bernstein.core.git.git_pr import _MERGE_DENY_EXACT, _MERGE_DENY_PREFIXES
 from bernstein.core.git.salvage import SalvageResult, salvage_worktree
@@ -1237,6 +1238,79 @@ class WorktreeManager:
             remove_worktree_lock(self.repo_root, session_id)
         except Exception as exc:
             logger.warning("undo create: lock removal failed for %s: %s", session_id, exc)
+
+    def owns(self, worktree_path: Path) -> bool:
+        """Return whether *worktree_path* is a linked worktree in this manager's slot directory.
+
+        A linked worktree carries a ``.git`` *file* pointing at the shared git
+        dir; a plain directory under the base does not, and is not one of the
+        session worktrees :meth:`create` makes.
+        """
+        return worktree_path.resolve().parent == self._base_dir.resolve() and (worktree_path / ".git").is_file()
+
+    def adopt(self, worktree_path: Path, session_id: str) -> Path:
+        """Hand an existing session worktree to *session_id* and return its new path.
+
+        A resumed agent (crash recovery, gate repair) continues in the
+        worktree of the agent it replaces, but the merge, the merge gates and
+        :meth:`cleanup` all find a session's work as
+        ``.sdd/worktrees/{session_id}`` on ``agent/{session_id}``. Left under
+        the old name, the resumed work would be gated against the repository
+        root and merged from a branch that does not exist. Moving the
+        worktree and renaming its branch keeps that one naming rule true for
+        the new session; uncommitted files move with the worktree, and the
+        lock follows. Adopting back under the original name undoes it.
+
+        Args:
+            worktree_path: A worktree of this manager (``.sdd/worktrees/<id>``).
+            session_id: The session taking it over.
+
+        Returns:
+            The worktree's path under *session_id*; *worktree_path* itself
+            when it already carries that name.
+
+        Raises:
+            WorktreeError: If *session_id* is not a valid slug, either path
+                falls outside the base directory, the target already
+                exists, or a git step fails. A failed branch rename moves
+                the worktree back before raising.
+        """
+        validate_worktree_slug(session_id)
+        self._require_inside_base_dir(worktree_path)
+        old_id = worktree_path.name
+        if old_id == session_id:
+            return worktree_path
+        target = self._base_dir / session_id
+        self._require_inside_base_dir(target)
+        if target.exists():
+            raise WorktreeError(f"Cannot adopt worktree '{worktree_path}': '{target}' already exists")
+
+        old_branch = f"agent/{old_id}"
+        new_branch = f"agent/{session_id}"
+        try:
+            moved = run_git(["worktree", "move", str(worktree_path), str(target)], self.repo_root, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise WorktreeError(f"git worktree move failed for '{worktree_path}': {exc}") from exc
+        if not moved.ok:
+            raise WorktreeError(f"git worktree move failed for '{worktree_path}': {moved.stderr.strip()}")
+        try:
+            renamed = run_git(["branch", "-m", old_branch, new_branch], self.repo_root, timeout=30)
+            rename_error = renamed.stderr.strip() if not renamed.ok else ""
+        except (OSError, subprocess.SubprocessError) as exc:
+            rename_error = str(exc)
+        if rename_error:
+            try:
+                undo = run_git(["worktree", "move", str(target), str(worktree_path)], self.repo_root, timeout=30)
+                if not undo.ok:
+                    logger.error("adopt: could not move %s back to %s: %s", target, worktree_path, undo.stderr.strip())
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.error("adopt: could not move %s back to %s: %s", target, worktree_path, exc)
+            raise WorktreeError(f"git branch -m {old_branch} {new_branch} failed: {rename_error}")
+
+        remove_worktree_lock(self.repo_root, old_id)
+        write_worktree_lock(self.repo_root, session_id, pid=os.getpid())
+        logger.info("Adopted worktree %s as %s (branch %s)", worktree_path, target, new_branch)
+        return target
 
     def cleanup(self, session_id: str) -> None:
         """Remove the worktree and branch for *session_id*.
