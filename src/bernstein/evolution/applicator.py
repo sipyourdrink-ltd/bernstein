@@ -262,7 +262,7 @@ class FileUpgradeExecutor:
         return candidate
 
     def _retire_backup(self, storage_key: str) -> None:
-        """Move a restored proposal's backups aside so the id is free again.
+        """Move a restored proposal's backups aside so its storage key is free again.
 
         Renamed rather than deleted: the bytes that were restored stay available
         to whoever wants to know what the rollback overwrote.
@@ -296,8 +296,9 @@ class FileUpgradeExecutor:
         and inventing one from the prose would be worse than using the record
         the apply actually left.
 
-        The manifest is keyed by proposal id and written at apply time, so it
-        is per-proposal and survives a restart - which is what the process-local
+        The manifest is keyed by the proposal's ``storage_key`` (its id plus a
+        digest of its identity fields) and written at apply time, so it is
+        per-proposal and survives a restart - which is what the process-local
         map failed at. When the two proposal types are reconciled, the declared
         inverse becomes the authority and this becomes the check on it.
         """
@@ -450,6 +451,11 @@ class FileUpgradeExecutor:
         it. And the manifest is written before the caller mutates anything, so
         it records an intent to change, not a change.
         """
+        # The bare id must be a path segment too, checked before anything is written: rollback
+        # writes its receipt under it (`rollbacks/<id>.json`), so an id of "", "." or ".." would
+        # restore the files and then fail at the receipt, leaving the manifest unretired and
+        # `was_applied` true. The storage key's own check does not cover it.
+        self._path_segment(proposal.id)
         source_path = self.config_dir / filename
         if not source_path.exists():
             return

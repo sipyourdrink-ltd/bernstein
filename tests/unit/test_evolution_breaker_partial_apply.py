@@ -242,6 +242,25 @@ def test_a_proposal_id_that_is_not_one_path_segment_is_refused(tmp_path: Path, b
     assert not (tmp_path / "escape.json").exists()
 
 
+@pytest.mark.parametrize("bad_id", ["../escape", "a/b", "..", ".", ""])
+def test_backing_up_under_an_id_that_is_not_one_path_segment_is_refused_before_writing(
+    tmp_path: Path, bad_id: str
+) -> None:
+    """The bare id is checked as well as the storage key, before anything is copied aside.
+
+    Rollback files its receipt under the bare id. Without this check a backup under "", "." or
+    ".." was written, the later rollback restored the files and then failed at the receipt, and the
+    manifest was never retired, so `was_applied` stayed true.
+    """
+    executor = FileUpgradeExecutor(tmp_path / "state")
+    executor.config_dir.mkdir(parents=True, exist_ok=True)
+    (executor.config_dir / "policies.yaml").write_text("max_retries: 3\n", encoding="utf-8")
+
+    with pytest.raises(RollbackError, match="path component"):
+        executor._backup_file("policies.yaml", _proposal(bad_id))
+    assert not (executor.upgrades_dir / "backups").exists()
+
+
 class _RollbackRaises:
     """An executor that is only the two-method Protocol, and whose rollback fails."""
 
