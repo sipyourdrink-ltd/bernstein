@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 
+from bernstein.adapters.base import AdapterCooldownError
 from bernstein.core import defaults as _defaults
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
@@ -72,6 +73,7 @@ from bernstein.core.tick_pipeline import (
     close_task,
     complete_task,
     fail_task,
+    release_task,
 )
 
 if TYPE_CHECKING:
@@ -3177,6 +3179,18 @@ def claim_and_spawn_batches(
                 session.id,
                 session.agent_source,
             )
+        except AdapterCooldownError as exc:
+            # The adapter is backing off, the tasks did not fail. Failing them
+            # here spent their retry budget on every tick of the backoff until
+            # the lineage failed for good and its dependents were blocked.
+            # Hand the claims back untouched instead; the next tick after the
+            # backoff claims them again.
+            logger.info("Spawn deferred for batch %s: %s", [t.id for t in batch], exc)
+            for task in batch:
+                try:
+                    release_task(orch._client, base, task.id, f"spawn deferred: {exc}")
+                except Exception as rel_exc:
+                    logger.warning("Could not release task %s after adapter cooldown: %s", task.id, rel_exc)
         except (OSError, RuntimeError, ValueError, RouterError) as exc:
             logger.error("Spawn failed for batch %s: %s", [t.id for t in batch], exc)
             result.errors.append(f"spawn: {exc}")

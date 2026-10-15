@@ -1617,3 +1617,56 @@ def test_bandit_outcome_records_the_effort_the_session_actually_ran_at(
     bandit.record_outcome.assert_called_once()
     _, kwargs = bandit.record_outcome.call_args
     assert kwargs["effort"] == "high"
+
+
+def _recording_post(calls: list[str]) -> Any:
+    """POST stub that records URLs and answers every call with a 200."""
+
+    def _post(url: str, **kwargs: Any) -> SimpleNamespace:
+        del kwargs
+        calls.append(url)
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None)
+
+    return _post
+
+
+def test_adapter_cooldown_releases_claim_without_spending_retry_budget(tmp_path: Path, make_task: Any) -> None:
+    """An adapter backoff hands the claim back instead of failing the task.
+
+    Failing it here created a retry on every tick of the backoff, so a few
+    ticks spent the lineage's retry budget, the task failed for good and its
+    dependents were blocked although no agent had ever run.
+    """
+    from bernstein.adapters.base import AdapterCooldownError
+
+    orch = _claim_orch(tmp_path)
+    task = make_task(id="T-cool", role="qa")
+    calls: list[str] = []
+    orch._client.post.side_effect = _recording_post(calls)
+    orch._spawner.spawn_for_tasks.side_effect = AdapterCooldownError("Agent codex is in cooldown after recent failure")
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    assert [c.rsplit("/", 1)[-1] for c in calls] == ["claim", "release"]
+    assert calls[-1].endswith("/tasks/T-cool/release")
+    assert orch._spawn_failures == {}
+    assert result.errors == []
+
+
+def test_transient_spawn_failure_still_fails_and_counts(tmp_path: Path, make_task: Any) -> None:
+    """Control: a transient failure of the spawn itself keeps the fail-and-count path."""
+    from bernstein.adapters.base import SpawnError
+
+    orch = _claim_orch(tmp_path)
+    task = make_task(id="T-flaky", role="qa")
+    calls: list[str] = []
+    orch._client.post.side_effect = _recording_post(calls)
+    orch._spawner.spawn_for_tasks.side_effect = SpawnError("agent process exited during startup: connection reset")
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    assert calls[-1].endswith("/tasks/T-flaky/fail")
+    assert orch._spawn_failures
+    assert result.errors

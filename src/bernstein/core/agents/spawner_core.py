@@ -18,7 +18,13 @@ from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, RateLimitError, SpawnError, SpawnResult
+from bernstein.adapters.base import (
+    DEFAULT_TIMEOUT_SECONDS,
+    AdapterCooldownError,
+    RateLimitError,
+    SpawnError,
+    SpawnResult,
+)
 from bernstein.adapters.plugin_sdk import (
     SAMPLING_PARAM_KEYS,
     SamplingParamsRefusal,
@@ -4273,7 +4279,7 @@ class AgentSpawner:
                 adapter_name,
                 SPAWN.spawn_failure_cooldown_s - (now - last_fail),
             )
-            raise SpawnError(f"Agent {adapter_name} is in cooldown after recent failure")
+            raise AdapterCooldownError(f"Agent {adapter_name} is in cooldown after recent failure")
         if not self._adapter_health.is_healthy(adapter_name):
             stats = self._adapter_health.get_stats(adapter_name)
             rate = stats.failure_rate if stats is not None else 0.0
@@ -4282,7 +4288,9 @@ class AgentSpawner:
                 adapter_name,
                 rate * 100,
             )
-            raise SpawnError(f"Adapter {adapter_name} is disabled by health monitor (failure rate {rate:.0%})")
+            raise AdapterCooldownError(
+                f"Adapter {adapter_name} is disabled by health monitor (failure rate {rate:.0%})"
+            )
 
         if not tasks:
             raise ValueError("Cannot spawn agent with empty task list")

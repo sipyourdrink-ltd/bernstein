@@ -437,6 +437,8 @@ cat .sdd/runtime/<session>.log   # usually contains the CLI's error message
 - Common fixes: set API key, fix model name (check `_MODEL_MAP` in the adapter), install missing dependencies.
 - If the CLI requires interactive setup (e.g., `opencode auth login`), run it manually first.
 
+**Related - `Spawn deferred ... is in cooldown after recent failure`:** after an agent of an adapter dies with an adapter-level failure (for example the provider kept answering 429), the adapter backs off for `spawn_failure_cooldown_s` (5 min); the adapter health monitor can trip the same way. This is not a task failure: the orchestrator hands the claimed tasks back to the open pool (`POST /tasks/{id}/release`) without spending their retry budget, and claims them again once the backoff ends. If tasks keep cycling through deferrals, the cause is upstream capacity (provider quotas or rate limits), not the tasks.
+
 ---
 
 ## 16. Stale PID Files
