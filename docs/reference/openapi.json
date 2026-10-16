@@ -22647,11 +22647,64 @@
               }
             ],
             "title": "Model"
+          },
+          "cli": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cli"
+          },
+          "meta_messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta Messages"
+          },
+          "escalation_ladder_step": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalation Ladder Step"
+          },
+          "escalation_ladder_attempts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalation Ladder Attempts"
           }
         },
         "type": "object",
         "title": "TaskPatchRequest",
-        "description": "Body for PATCH /tasks/{task_id} - manager corrections."
+        "description": "Body for PATCH /tasks/{task_id} - manager corrections.\n\n``meta_messages``, ``cli``, ``escalation_ladder_step`` and\n``escalation_ladder_attempts`` carry an evidence-gated escalation hop\n(issue #4855): the context line, the step's adapter, and the ladder\nposition. ``model`` is the step's model id, unmodified.\n\nThere is deliberately no free-form ``metadata`` here. The ladder's\nevidence is resolved from the audit chain and its spend from the cost\nledger, so no PATCH body can fabricate either; the two position fields\ngrant nothing ``model`` does not already grant."
       },
       "TaskProgressRequest": {
         "properties": {

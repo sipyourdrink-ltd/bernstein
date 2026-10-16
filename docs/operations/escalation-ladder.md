@@ -1,7 +1,7 @@
 # Escalation ladder (config + evidence records)
 
-Issue #4855 — PR1 lands the ladder as **data only**. Retry wiring in
-`agent_lifecycle` is unchanged; a follow-up PR consumes these types.
+Issue #4855 — PR1 lands the ladder as **data only**. PR2 wires it into the
+compaction retry patch in `agent_lifecycle` (see "Where the inputs come from").
 
 ## Why
 
@@ -69,7 +69,26 @@ advance decision reads the evidence first.
 | `escalation.ladder_hop` | Evidence caused N→N+1 |
 | `escalation.ladder_refusal` | Advance requested without qualifying evidence |
 | `escalation.ladder_exhaustion` | Final step failed with evidence |
-| `escalation.ladder_budget_stop` | Climb would exceed `escalation_budget_usd` |
+| `escalation.ladder_budget_stop` | Climb would exceed `escalation_budget_usd`, or spend or the next step's estimate is unknown |
+| `escalation.ladder_failure_evidence` | A failure path recorded evidence for a task |
+
+## Where the inputs come from
+
+The compaction retry patch (`_patch_retry_with_compaction`) plans the hop from
+server-side sources only:
+
+- **Evidence** is the latest `escalation.ladder_failure_evidence` event for the
+  failed task id, read from a chain that verifies. Task metadata is never
+  consulted, so a `PATCH /tasks/{id}` body cannot fabricate a hop.
+- **Spend** is the cost ledger's total for the task's retry lineage
+  (`CostTracker.spent_for_task`), not a metadata field.
+- **Next-step estimate** comes from `estimate_spawn_cost`. When a budget is set
+  and either spend or the estimate is unavailable, the ladder stops with
+  `escalation_budget_unpriced` instead of treating the cost as zero.
+
+The retry patch records the decision on the chain after the PATCH lands. If
+that append fails, the hop is applied without its attestation and a warning is
+logged; replay then shows the model change with no matching hop event.
 
 Hop / exhaustion payloads bind `from_step`, `to_step`, `evidence_class`,
 `evidence_digest`, and `ladder_policy_version`. Replay recomputes
@@ -97,11 +116,14 @@ On a successful advance the decision carries a one-line brief:
 ESCALATION: step 0->1; attempts=2; evidence=verification_failure
 ```
 
-When retry wiring lands, that line is part of the recorded task patch so
-replay reproduces the same brief. Compaction must not step the ladder back
+That line is part of the recorded task patch so replay reproduces the same
+brief. Compaction must not step the ladder back
 down: within a task attempt chain the position is monotonic.
 
-## Out of scope (this PR)
+## Not wired yet
 
 - Changing default policy for existing roles
-- Wiring `agent_lifecycle` retry patching to consume the ladder (follow-up)
+- The tick-loop retry path (`maybe_retry_task`); only the compaction retry
+  patch consumes the ladder today
+- Failure paths calling `record_escalation_ladder_failure_evidence`; until they
+  do, a configured ladder refuses every hop with `missing_evidence`
