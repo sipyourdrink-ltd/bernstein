@@ -401,14 +401,17 @@ class TestReplayDerivesTheVerdictFromBytes:
 
         suite = build_leakage_suite_v1()
         submitter = LeakageReplayAdapter(nonce="submitter_nonce")
-        task = next(t for t in suite.tasks if t.id == "leakage_bench_bundle")
-        receipt = submitter.run_task(task, {})
+        results = []
+        for task in suite.tasks:
+            receipt = submitter.run_task(task, {})
+            passed, score, _ = submitter.score_task(task, receipt)
+            results.append(
+                TaskResult(task_id=task.id, task_hash=task.content_hash(), receipt=receipt, passed=passed, score=score)
+            )
         bundle = SubmissionBundle(
             suite_hash=suite.suite_hash,
             suite_version=suite.version,
-            task_results=[
-                TaskResult(task_id=task.id, task_hash=task.content_hash(), receipt=receipt, passed=False, score=0.0)
-            ],
+            task_results=results,
             scheduler_config={},
         )
         result = BenchVerifier(
