@@ -364,7 +364,7 @@ class GateRunner:
         step: GatePipelineStep,
         task: Task,
         run_dir: Path,
-        _changed_files: list[str],
+        changed_files: list[str],
     ) -> GateResult:
         from bernstein.core import quality_gates as qg
 
@@ -374,6 +374,7 @@ class GateRunner:
                 self._config,
                 task,
                 run_dir,
+                changed_files,
             )
         else:
             ok, detail, score, evidence_status = await asyncio.to_thread(
