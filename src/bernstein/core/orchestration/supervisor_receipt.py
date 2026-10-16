@@ -129,6 +129,12 @@ class StallReason(StrEnum):
     #: for it, so no existing decision changes.
     COHORT_LAGGARD = "cohort_laggard"
 
+    #: Issue #5439 -- no artefact progress observed for the configured window.
+    ARTEFACT_NO_PROGRESS = "artefact_no_progress"
+
+    #: Issue #5439 -- repeated identical command and exit code executed >= N times.
+    REPEATED_COMMAND = "repeated_command"
+
     #: Fallback when an upstream detector produces a structured reason
     #: the supervisor does not know about. Carries the original token
     #: in ``details["raw_reason"]`` so a verifier can still inspect it.
@@ -414,7 +420,12 @@ def recommend_action(
     if reason == StallReason.MANAGER_NO_CHILDREN:
         return RecommendedAction.ESCALATE
 
-    if reason in (StallReason.HEARTBEAT_STALE, StallReason.NO_PROGRESS):
+    if reason in (
+        StallReason.HEARTBEAT_STALE,
+        StallReason.NO_PROGRESS,
+        StallReason.ARTEFACT_NO_PROGRESS,
+        StallReason.REPEATED_COMMAND,
+    ):
         failures = _count_recent_failures(audit_entries)
         if respawn_budget_remaining > 0 and failures < 2:
             return RecommendedAction.RESPAWN
