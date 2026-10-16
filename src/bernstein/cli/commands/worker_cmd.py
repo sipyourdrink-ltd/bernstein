@@ -143,11 +143,14 @@ class WorkerLoop:
         self._workdir = workdir or Path.cwd()
         self._running = False
         self._active_tasks: dict[str, int] = {}  # task_id -> pid
+        self._task_sessions: dict[str, str] = {}  # task_id -> session_id
         # Terminal outcomes reaped from finished agents, drained to the server
-        # by _report_finished. (task_id, ok, detail). Worker-side reporting is
-        # authoritative and does not depend on the in-agent completion curl
-        # (#2808): without it a finished agent leaves its task CLAIMED forever.
-        self._pending_reports: list[tuple[str, bool, str]] = []
+        # by _report_finished. (task_id, ok, detail, delivery). Worker-side
+        # reporting is authoritative and does not depend on the in-agent
+        # completion curl (#2808): without it a finished agent leaves its task
+        # CLAIMED forever. ``delivery`` is an optional (branch, sha) tuple
+        # for remote agent work that was pushed to the shared remote (#6538).
+        self._pending_reports: list[tuple[str, bool, str, tuple[str, str] | None]] = []
         self._wake = CapacityWake()
 
     def _headers(self) -> dict[str, str]:
@@ -328,6 +331,11 @@ class WorkerLoop:
         (#2808). Success/failure is derived from the exit code: a clean exit
         (0) completes the task; a non-zero exit or signal kill fails it.
 
+        On a clean exit the agent's work is pushed to the shared remote so
+        the central can fetch and merge it (#6538). Push failure downgrades
+        the outcome to a failure: work that never leaves the node is not
+        a completion.
+
         Returns:
             ``True`` if at least one task was reaped (a slot became available).
         """
@@ -341,8 +349,6 @@ class WorkerLoop:
             try:
                 reaped_pid, status = os.waitpid(pid, os.WNOHANG)
             except ChildProcessError:
-                # Already reaped elsewhere; the exit status is gone. Treat as a
-                # completion and let server-side verification have the final say.
                 exited = True
             else:
                 if reaped_pid == pid:
@@ -356,10 +362,89 @@ class WorkerLoop:
                 finished.append((task_id, ok, detail))
         for task_id, ok, detail in finished:
             del self._active_tasks[task_id]
-            self._pending_reports.append((task_id, ok, detail))
+            delivery: tuple[str, str] | None = None
+            if ok:
+                delivery = self._push_agent_work(task_id)
+                if delivery is None:
+                    ok = False
+                    detail = f"{detail}; delivery failed: agent branch not pushed"
+            self._task_sessions.pop(task_id, None)
+            self._pending_reports.append((task_id, ok, detail, delivery))
         if finished:
             self._wake.signal_capacity()
         return bool(finished)
+
+    def _push_agent_work(self, task_id: str) -> tuple[str, str] | None:
+        """Push the agent's branch to the shared remote after a clean exit.
+
+        Returns ``(branch_name, head_sha)`` on success, ``None`` on failure.
+        The central fetches this branch on ``/complete`` and merges it through
+        the standard gate pipeline (#6538).
+        """
+        import subprocess
+
+        session_id = self._task_sessions.get(task_id)
+        if not session_id:
+            logger.warning("No session_id for task %s; cannot push agent work", task_id)
+            return None
+
+        branch = f"agent/{session_id}"
+        worktree_path = self._workdir / ".sdd" / "worktrees" / session_id
+
+        try:
+            # Auto-commit uncommitted work in the worktree before pushing.
+            if worktree_path.is_dir():
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    timeout=30,
+                )
+                subprocess.run(
+                    [
+                        "git",
+                        "commit",
+                        "--allow-empty-message",
+                        "-m",
+                        f"worker auto-commit for {task_id}",
+                        "--no-verify",
+                    ],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    timeout=30,
+                )
+
+            # Get the HEAD SHA of the agent branch.
+            sha_result = subprocess.run(
+                ["git", "rev-parse", branch],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if sha_result.returncode != 0:
+                logger.warning("Cannot resolve %s: %s", branch, sha_result.stderr.strip())
+                return None
+            sha = sha_result.stdout.strip()
+
+            # Push the agent branch to origin.
+            push_result = subprocess.run(
+                ["git", "push", "origin", f"{branch}:{branch}", "--force"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if push_result.returncode != 0:
+                logger.warning("Push failed for %s: %s", branch, push_result.stderr.strip())
+                return None
+
+            logger.info("Pushed %s (%s) for task %s", branch, sha[:12], task_id)
+            return (branch, sha)
+
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("Failed to push agent work for task %s: %s", task_id, exc)
+            return None
 
     def _register(self, client: httpx.Client) -> str | None:
         """Register with the central server. Returns node ID or None."""
@@ -464,12 +549,27 @@ class WorkerLoop:
                 return resp.json()
         return None
 
-    def _complete_task(self, client: httpx.Client, task_id: str, summary: str) -> None:
-        """Report task completion to the central server."""
+    def _complete_task(
+        self,
+        client: httpx.Client,
+        task_id: str,
+        summary: str,
+        delivery: tuple[str, str] | None = None,
+    ) -> None:
+        """Report task completion to the central server.
+
+        When *delivery* is ``(branch, sha)``, the body includes
+        ``agent_branch`` and ``agent_sha`` so the central can fetch and
+        merge the remote agent's work (#6538).
+        """
+        body: dict[str, str] = {"result_summary": summary}
+        if delivery is not None:
+            body["agent_branch"] = delivery[0]
+            body["agent_sha"] = delivery[1]
         try:
             client.post(
                 f"{self._server_url}/tasks/{task_id}/complete",
-                json={"result_summary": summary},
+                json=body,
                 headers=self._headers(),
                 timeout=10.0,
             )
@@ -517,9 +617,9 @@ class WorkerLoop:
         if not self._pending_reports:
             return
         pending, self._pending_reports = self._pending_reports, []
-        for task_id, ok, detail in pending:
+        for task_id, ok, detail, delivery in pending:
             if ok:
-                self._complete_task(client, task_id, detail)
+                self._complete_task(client, task_id, detail, delivery)
             else:
                 self._fail_task(client, task_id, detail)
 
@@ -561,6 +661,7 @@ class WorkerLoop:
             # missing optionals.
             session = spawner.spawn_for_tasks([Task.from_dict(task)])
             if session and session.pid:
+                self._task_sessions[task_id] = session.id
                 return session.pid
         except Exception as exc:
             logger.warning("Failed to spawn agent for task %s: %s", task_id, exc)
