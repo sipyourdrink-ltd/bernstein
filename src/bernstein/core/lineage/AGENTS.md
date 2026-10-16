@@ -15,6 +15,11 @@ Per-artifact provenance in two layers: Lineage v1 (Sigstore-style transparency l
 | `gate.py` | Lineage CI gate (ADR-009 §6.2) |
 | `run_graph.py` | Pairs each fan-out worktree branch with the spine that recorded it: `build_run_graph` returns one `RunGraphNode` per branch (`session_id`, `head_sha`, `run_id`, `spine_head_hash`) plus a deterministic root hash. Pure - it adds no storage and resolves `session_id -> run_id` from a caller-supplied mapping |
 | `merge_provenance.py` | Records one row per path a CLI agent's work lands through a merge (issue #2789). Reads `before..after` so a fast-forward records like a true merge, hashes the git blob rather than the working tree, and names the merge commit in `step_id` - so a third party recomputes every `content_hash` from the repository alone. Recording must never undo a landed merge: `spawner_merge` logs a failure and keeps the merge, and neither reading the base nor writing the rows may gate it |
+| `prov_export.py` | Projects one artefact's ancestry (walk of `parent_hashes`) into W3C PROV-O JSON and Turtle (`bernstein lineage export-prov`). Pure: no clock, env or random source, so two exports of the same ancestry are byte-identical |
+| `sensitivity.py` | Effective sensitivity is the *maximum* class over the lineage closure (`public < internal < confidential < restricted`), the mirror of `provenance.py`'s minimum-trust rule. Unlabelled or unresolved fails closed to the highest class. Reports only; nothing here refuses a read |
+| `plan_render.py` | Renders a run's whole task graph from the journal's `plan.graph.full` rows via `replay.review_board.project_board` (`bernstein lineage plan`). Same journal, same bytes |
+| `foreign_attestation.py` | Classifies a claim Bernstein did not issue (`external_attestation` on `LineageEntry`): `verified_foreign`, `unverifiable`, `rejected` or `malformed`. It may carry an outsider trust class only (`third_party`, `public`) |
+| `dependency.py` | `ChangeFact` / `TaskEffects` effect footprints and the pairwise `coupled` predicate that `../quality/collusion.py` evaluates at merge admission |
 
 ## Invariants
 
@@ -24,10 +29,11 @@ Per-artifact provenance in two layers: Lineage v1 (Sigstore-style transparency l
 - The spine's HMAC tag uses a per-store key derived from the audit-chain master key with HKDF-SHA256 (`../security/key_derivation.py`): v2 MACs the derived key over a domain-tagged preimage, v1 keeps the raw key untagged. `../security/audit.py`'s key rules apply.
 - A new `LineageEntry` field must be optional, default `None`, dropped from `_canonical_body` when `None`, and read back in `_entry_from_dict` (cf. `attachment_digests`) - that is what keeps every historical entry's bytes, HMAC and JWS valid.
 - `parent_hashes` is the artefact's ancestry only: tip projection reads two or more as a *fork merge*, so other inputs need their own field.
+- The spine's `hash_profile` is `py-json-v1` unless the caller asks for `jcs-v2`; `spine.head` names a non-legacy profile and `verify()` fails closed on one it does not know. Add a profile; never change what an existing one hashes.
 - Design rationale: `docs/decisions/009-lineage-v1.md`.
 
 ## Testing
 
 Single files only, e.g. `uv run pytest tests/unit/test_lineage_record.py -x -q`; the `test_lineage_*.py` files cover entries, stores, signing, and gates. Merge recording is tested against real git repositories, not a stub - what it asserts is that a row's `content_hash` is the blob git stored (`tests/unit/lineage/test_merge_provenance.py`).
 
-<!-- Reviewed 2026-08-28 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-10-16 against this subtree; the notes above still hold. -->
