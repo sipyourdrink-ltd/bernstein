@@ -747,6 +747,7 @@ def run_agent_test_mutation_gate_sync(
     config: QualityGatesConfig,
     task: Task,
     run_dir: Path,
+    changed_files: list[str] | None = None,
 ) -> tuple[bool, str, float | None, str | None]:
     """Verify that agent-written tests actually catch bugs via targeted mutation testing.
 
@@ -759,18 +760,41 @@ def run_agent_test_mutation_gate_sync(
     which runs full mutation testing on Bernstein's own test suite.  This gate
     runs *per agent task*, focused only on the tests the agent produced.
 
+    Before any mutant runs, every changed test file must build its mocks
+    with a spec (:mod:`bernstein.core.quality.mock_spec`, #6150). A bare
+    ``MagicMock()`` answers to any attribute name, so a test can assert on
+    an API the code does not have and still pass. That fails the gate with
+    one ``path:line: mock without a spec`` line per mock, and mutmut is not
+    run: its score would describe tests that may not reach the code at all.
+
     Args:
         config: Quality gates configuration.
         task: The completed agent task (used to get owned files for diff).
         run_dir: Repository root for running commands.
+        changed_files: The change set the gate runner was handed. Its test
+            files are checked for spec-less mocks alongside the ones the git
+            diff names, so the check does not depend on the worktree's history.
 
     Returns:
         Tuple of (passed, detail_message, score_or_None, evidence_status).
         ``evidence_status`` is None when evidence exists, or a reason string
         like ``evidence-missing`` when the gate cannot run.
     """
+    from bernstein.core.quality.mock_spec import is_test_file, scan_test_files
+
     diff = _get_intent_diff(run_dir, task.owned_files or [])
     test_files = _extract_agent_test_files(diff)
+
+    spec_scope = set(test_files) | {f for f in changed_files or [] if is_test_file(f)}
+    unspecced = scan_test_files(run_dir, spec_scope)
+    if unspecced:
+        lines = "\n".join(finding.render() for finding in unspecced)
+        detail = (
+            f"{len(unspecced)} mock(s) in agent-written tests answer to any attribute name, so the tests "
+            f"can pass without touching the code they claim to test. Give each one a spec.\n{lines}"
+        )
+        return False, detail, None, None
+
     if not test_files:
         return True, "No agent-written test files detected in diff - skipping agent mutation gate.", None, None
 

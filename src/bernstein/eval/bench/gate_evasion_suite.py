@@ -94,6 +94,10 @@ _FINDING_SIGNATURE: dict[str, re.Pattern[str]] = {
     "lint": re.compile(r"^Found \d+ errors?\.$", re.MULTILINE),
     # vulture has no summary line; each finding is "path:line: unused ...".
     "dead_code": re.compile(r"^\S+:\d+: unused ", re.MULTILINE),
+    # The spec check that runs before any mutant prints one
+    # "path:line: mock without a spec: ..." line per mock (#6150). A low
+    # mutation score or a missing mutmut prints none, so neither is credited.
+    "agent_test_mutation": re.compile(r"^\S+:\d+: mock without a spec: ", re.MULTILINE),
 }
 
 #: Attributes of pytest's ``<testsuite>`` element. Read with a regex rather
