@@ -1117,6 +1117,65 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             return _error_response(exc)
 
     @mcp.tool()
+    async def bernstein_create_task(  # pyright: ignore[reportUnusedFunction]
+        title: str,
+        description: str,
+        role: str = "auto",
+        priority: int = 2,
+        depends_on: list[str] | None = None,
+        scope: str = "medium",
+        model: str | None = None,
+        effort: str | None = None,
+    ) -> str:
+        """Create a bare task without triggering orchestration or spawning agents.
+
+        The task enters the backlog and is immediately claimable via
+        ``bernstein_claim`` by any session matching its role.  This is the
+        lightweight path for administrative and inter-session communication
+        tasks that do not need an LLM planner.
+
+        Args:
+            title: Human-readable task title.
+            description: Full task description / brief.
+            role: Target role (e.g. ``backend``, ``reviewer``). ``auto``
+                lets the server classify from the description.
+            priority: 1 (critical) to 3 (low). Default 2.
+            depends_on: Task ids that must complete before this task is
+                eligible for claim.
+            scope: Task scope: ``small``, ``medium``, ``large``.
+            model: Optional model hint (``opus``, ``sonnet``, ``haiku``).
+            effort: Optional effort hint (``max``, ``high``, ``medium``, ``low``).
+
+        Returns:
+            JSON of the created task (``id``, ``title``, ``status``, ...).
+        """
+        payload: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "role": role,
+            "priority": priority,
+            "scope": scope,
+        }
+        if depends_on:
+            payload["depends_on"] = depends_on
+        if model is not None:
+            payload["model"] = model
+        if effort is not None:
+            payload["effort"] = effort
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{server_url}/tasks",
+                    json=payload,
+                    headers=_auth_headers(),
+                )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(data, indent=2)
+        except Exception as exc:
+            return _error_response(exc)
+
+    @mcp.tool()
     async def bernstein_post_message(  # pyright: ignore[reportUnusedFunction]
         task_id: str,
         body: str,
