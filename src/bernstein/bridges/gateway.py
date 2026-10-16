@@ -112,9 +112,7 @@ class GatewayBridge(RuntimeBridge):
                 logger.warning("credential pool exhausted, falling back to config api_key")
         return None, self._config.api_key or None
 
-    def _release_credential(
-        self, key_id: str | None, *, rate_limited: bool = False
-    ) -> None:
+    def _release_credential(self, key_id: str | None, *, rate_limited: bool = False) -> None:
         if key_id is not None and self._credential_pool is not None:
             self._credential_pool.release(key_id, rate_limited=rate_limited)
 
@@ -136,7 +134,9 @@ class GatewayBridge(RuntimeBridge):
             extra_headers["Authorization"] = f"Bearer {bearer}"
         try:
             resp = await self._client.post(
-                "/v1/tasks", json=payload, headers=extra_headers if extra_headers else None,
+                "/v1/tasks",
+                json=payload,
+                headers=extra_headers if extra_headers else None,
             )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -157,7 +157,8 @@ class GatewayBridge(RuntimeBridge):
                     )
                     payload["model"] = fallback
                     resp = await self._client.post(
-                        "/v1/tasks", json=payload,
+                        "/v1/tasks",
+                        json=payload,
                         headers=extra_headers if extra_headers else None,
                     )
                     resp.raise_for_status()
