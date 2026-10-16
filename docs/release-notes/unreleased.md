@@ -13,3 +13,7 @@ rather than as its own attribution is exempted by hand there, with the reason.
 ## Eval
 
 - Incident eval cases synthesised from dead-lettered tasks and post-mortems no longer land in the source tree of the project being orchestrated. Outside Bernstein's own source tree they are written to `.sdd/eval/cases/incidents/`, with the rest of the run state the orchestrator never stages; Bernstein's source tree keeps extending its checked-in `src/bernstein/eval/cases/incidents/`. The P0 incident gate and `bernstein audit diagnose --signal incident:<case-id>` read the same directory the synthesiser writes, an explicit `cases_dir` still overrides it, and `bernstein eval sync-incidents` prints where it wrote. A `src/bernstein/eval/cases/incidents/` directory an earlier version left in another project is no longer read or extended: delete it, or move its files into `.sdd/eval/cases/incidents/`.
+
+## Release
+
+- Copr RPM publishing runs in its own `copr` deployment environment, so a Copr build failure no longer marks the PyPI deployment as failed.
