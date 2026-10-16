@@ -81,13 +81,26 @@ Production `bernstein gateway start` still constructs `MCPGateway`
 without `attestation_interlock`: the native writer is opt-in, and slice 1
 does not turn the CLI proxy into an always-on interlock.
 
-Canonical form of `effect_digest`: the raw connector return, compacted
-JSON with insertion order preserved (`json.dumps(..., separators=(",",
-":"), ensure_ascii=False)`, no `sort_keys`). Timestamps and echoed
-request ids are not stripped — a connector that echoes a timestamp
-produces a different digest. A string-only `result` (and an explicit
-patch) uses SHA-256 of the UTF-8 bytes, the same preimage as
-`ResultBundle.patch_sha256`.
+Canonical form of `effect_digest`: SHA-256 of the connector's JSON-RPC
+response line exactly as received, after stripping surrounding whitespace
+and the line terminator (`_read_upstream_loop` keeps those bytes per request
+id). Nothing is parsed and re-serialised, so key order, spacing, `\u`
+escapes, timestamps and echoed request ids all count — a connector that
+echoes a timestamp produces a different digest. A string-only `result`
+(and an explicit patch) uses SHA-256 of the UTF-8 text instead, the same
+preimage as `ResultBundle.patch_sha256`. A timeout hashes JSON `null`. A
+response the host did not read off the wire (a direct `after_dispatch`
+caller without `received`) falls back to compact JSON
+(`separators=(",", ":")`, `ensure_ascii=False`, no `sort_keys`).
+
+Verification path: no Bernstein record holds the received line today. The
+effect event keeps only `effect_digest`, and the WAL keeps the parsed
+`result` / `error`, which cannot reproduce the original bytes. Slice 1
+therefore binds what the host saw. The digest can be checked only against an
+independent capture of the connector's output, never recomputed from the run's
+artifacts. Slice 2 must persist the received line (for example
+content-addressed beside the WAL entry) before the verifier can recompute
+`effect_digest` offline.
 
 With a run identity, lineage signer, and journal-head reader configured, the
 native provider additionally creates a versioned, JCS-canonicalized Ed25519
