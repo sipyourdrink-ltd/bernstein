@@ -10,7 +10,6 @@ default. CI runs them via ``.github/workflows/cluster-e2e.yml``.
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 
@@ -162,10 +161,13 @@ def test_central_restart_persists_registry(two_node_cluster: ClusterHandle) -> N
     assert worker.node_id is not None
 
     # Confirm the registry hit disk.
-    assert _wait_for(handle.nodes_json.exists, timeout_s=10.0), "nodes.json never written"
+    assert _wait_for(handle.nodes_json.exists, timeout_s=10.0), "nodes.db never written"
 
-    persisted = json.loads(handle.nodes_json.read_text(encoding="utf-8"))
-    assert any(n.get("id") == worker.node_id for n in persisted), f"Worker not in nodes.json: {persisted}"
+    import sqlite3
+
+    with sqlite3.connect(str(handle.nodes_json)) as conn:
+        persisted = [r[0] for r in conn.execute("SELECT id FROM nodes")]
+    assert worker.node_id in persisted, f"Worker not in nodes.db: {persisted}"
 
     # Restart central in-place.
     handle.restart_central()

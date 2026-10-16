@@ -1,0 +1,7 @@
+name = "edge-relay"
+main = "src/worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+SHARD_MAP = '[{"id": "shard-0", "url": "http://localhost:8000"}, {"id": "shard-1", "url": "http://localhost:8001"}]'
+# Add other environment variables here as needed, e.g., VNODE_COUNT = 128
