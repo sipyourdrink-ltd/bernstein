@@ -20,7 +20,10 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "pyjwt", specifier = ">=2.14" }]
+overrides = [
+    { name = "pyjwt", specifier = ">=2.14" },
+    { name = "urllib3", specifier = ">=2.8.0" },
+]
 
 [[package]]
 name = "agentrust-trace"
