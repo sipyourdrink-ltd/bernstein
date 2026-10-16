@@ -27,6 +27,7 @@ from bernstein.bridges.base import (
     RuntimeBridge,
     SpawnRequest,
 )
+from bernstein.core.credentials import CredentialPool, NoAvailableCredentialError
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,17 @@ class GatewayBridge(RuntimeBridge):
     - ``capability_hints``: list of capability tags the gateway should match
     """
 
-    def __init__(self, config: BridgeConfig, **_kw: Any) -> None:
+    def __init__(
+        self,
+        config: BridgeConfig,
+        *,
+        credential_pool: CredentialPool | None = None,
+        **_kw: Any,
+    ) -> None:
         super().__init__(config)
         if not config.endpoint:
             raise BridgeError("GatewayBridge requires an endpoint", agent_id="", status_code=0)
+        self._credential_pool = credential_pool
         self._client = httpx.AsyncClient(
             base_url=config.endpoint.rstrip("/"),
             timeout=config.timeout_seconds,
@@ -94,6 +102,22 @@ class GatewayBridge(RuntimeBridge):
             headers["Authorization"] = f"Bearer {config.api_key}"
         return headers
 
+    def _acquire_auth_header(self) -> tuple[str | None, str | None]:
+        """Return (key_id, bearer_token) from the credential pool or config."""
+        if self._credential_pool is not None:
+            try:
+                entry = self._credential_pool.acquire()
+                return entry.key_id, entry.secret_ref
+            except NoAvailableCredentialError:
+                logger.warning("credential pool exhausted, falling back to config api_key")
+        return None, self._config.api_key or None
+
+    def _release_credential(
+        self, key_id: str | None, *, rate_limited: bool = False
+    ) -> None:
+        if key_id is not None and self._credential_pool is not None:
+            self._credential_pool.release(key_id, rate_limited=rate_limited)
+
     async def spawn(self, request: SpawnRequest) -> AgentStatus:
         payload = {
             "agent_id": request.agent_id,
@@ -106,10 +130,23 @@ class GatewayBridge(RuntimeBridge):
             "capability_hints": self._config.extra.get("capability_hints", []),
             "env": request.env,
         }
+        cred_key_id, bearer = self._acquire_auth_header()
+        extra_headers: dict[str, str] = {}
+        if bearer:
+            extra_headers["Authorization"] = f"Bearer {bearer}"
         try:
-            resp = await self._client.post("/v1/tasks", json=payload)
+            resp = await self._client.post(
+                "/v1/tasks", json=payload, headers=extra_headers if extra_headers else None,
+            )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                self._release_credential(cred_key_id, rate_limited=True)
+                raise BridgeError(
+                    f"gateway rate limited: {exc}",
+                    agent_id=request.agent_id,
+                    status_code=429,
+                ) from exc
             if exc.response.status_code == 503:
                 fallback = self._config.extra.get("fallback_model")
                 if fallback and payload.get("model") != fallback:
@@ -119,27 +156,34 @@ class GatewayBridge(RuntimeBridge):
                         fallback,
                     )
                     payload["model"] = fallback
-                    resp = await self._client.post("/v1/tasks", json=payload)
+                    resp = await self._client.post(
+                        "/v1/tasks", json=payload,
+                        headers=extra_headers if extra_headers else None,
+                    )
                     resp.raise_for_status()
                 else:
+                    self._release_credential(cred_key_id)
                     raise BridgeError(
                         f"gateway unavailable: {exc}",
                         agent_id=request.agent_id,
                         status_code=exc.response.status_code,
                     ) from exc
             else:
+                self._release_credential(cred_key_id)
                 raise BridgeError(
                     f"gateway spawn failed: {exc}",
                     agent_id=request.agent_id,
                     status_code=exc.response.status_code,
                 ) from exc
         except httpx.HTTPError as exc:
+            self._release_credential(cred_key_id)
             raise BridgeError(
                 f"gateway connection error: {exc}",
                 agent_id=request.agent_id,
                 status_code=0,
             ) from exc
 
+        self._release_credential(cred_key_id)
         data = resp.json()
         self._store_routing_metadata(request.agent_id, data)
         return self._parse_status(request.agent_id, data)
