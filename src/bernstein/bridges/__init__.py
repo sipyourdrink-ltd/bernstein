@@ -8,6 +8,7 @@ from bernstein.bridges.base import (
     RuntimeBridge,
     SpawnRequest,
 )
+from bernstein.bridges.gateway import GatewayBridge
 from bernstein.bridges.openclaw import OpenClawBridge
 from bernstein.bridges.prefect import PrefectBridge
 
@@ -16,6 +17,7 @@ __all__ = [
     "AgentStatus",
     "BridgeConfig",
     "BridgeError",
+    "GatewayBridge",
     "OpenClawBridge",
     "PrefectBridge",
     "RuntimeBridge",
