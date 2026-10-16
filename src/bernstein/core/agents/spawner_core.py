@@ -1668,6 +1668,7 @@ class AgentSpawner:
         # pin must never be overridden by model-name substring inference --
         # see :meth:`_infer_adapter_name_for_provider` (#2751).
         self._adapter_pinned = adapter_pinned
+        self._tier_adapters: dict[str, str] = {}
         # Run-level model (e.g. from ``bernstein run --model``), threaded in by
         # the orchestrator from the CLI flag / seed config. Used to coerce
         # Claude tier names (opus/sonnet/haiku) emitted by the heuristic
@@ -2186,6 +2187,10 @@ class AgentSpawner:
     def set_quality_gate_config(self, config: Any) -> None:
         """Wire in the orchestrator's :class:`QualityGatesConfig` (#4393)."""
         self._quality_gate_config = config
+
+    def set_tier_adapters(self, mapping: dict[str, str]) -> None:
+        """Map DispatchTier values to adapter (cli) names for tier-aware routing (#6554)."""
+        self._tier_adapters = dict(mapping)
 
     def set_max_agent_runtime_s(self, max_agent_runtime_s: int) -> None:
         """Wire in the orchestrator's upward-only runtime floor."""
@@ -4153,11 +4158,28 @@ class AgentSpawner:
     ) -> tuple[ModelConfig, str | None, str]:
         """Select provider and model via router or operator config."""
         provider_name: str | None = None
+        # Tier-aware routing (#6554): when a task declares a non-local
+        # dispatch tier and the spawner has a mapping for it, inject the
+        # tier's adapter as a cli override (same mechanism as per-step cli:).
+        # Fallback: unmapped tiers silently fall through to the run-level
+        # adapter (backward compatible — AC3/AC4).
+        dispatch_tier = getattr(tasks[0], "dispatch_tier", None)
+        tier_cli: str | None = None
+        if dispatch_tier is not None and dispatch_tier.value != "local" and self._tier_adapters:
+            tier_cli = self._tier_adapters.get(dispatch_tier.value)
+            if tier_cli:
+                logger.info(
+                    "Tier-aware routing: task %s tier=%s -> adapter %s",
+                    tasks[0].id, dispatch_tier.value, tier_cli,
+                )
         # Per-step `cli:` is treated as a synthetic pinned adapter so the
         # router-skip decision matches the role_model_policy cli case.
         effective_role_policy: dict[str, Any] = role_policy.copy()
-        if tasks[0].cli and "cli" not in effective_role_policy:
-            effective_role_policy["cli"] = tasks[0].cli
+        # Tier adapter takes precedence over task.cli but not over
+        # role_model_policy cli (operator always wins).
+        effective_cli = tasks[0].cli or tier_cli
+        if effective_cli and "cli" not in effective_role_policy:
+            effective_role_policy["cli"] = effective_cli
         configured_cli = self._resolve_configured_cli(effective_role_policy.get("cli"))
         use_router = _should_use_router(
             role_policy=effective_role_policy,

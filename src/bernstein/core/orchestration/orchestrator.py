@@ -7415,6 +7415,9 @@ if __name__ == "__main__":
             # Context policy configuration (loads from bernstein.yaml context: section)
             context_policy_config=getattr(seed, "context", None) if seed else None,
         )
+        _tier_adapters = getattr(seed, "tier_adapters", None) if seed else None
+        if _tier_adapters:
+            spawner.set_tier_adapters(_tier_adapters)
         run_config_budget_usd: float | None = None
         dry_run = False
         approval_mode = "auto"

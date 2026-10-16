@@ -2338,6 +2338,7 @@ _PARSED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "smtp",
         "storage",
         "team",
+        "tier_adapters",
         "team_manifest",
         "tenants",
         "test_agent",
@@ -2572,6 +2573,12 @@ def parse_seed(path: Path) -> SeedConfig:
     judge_provider_raw = _parse_optional_str_field(data, "judge_provider")
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
     provider_availability = _parse_provider_availability(data.get("provider_availability"))
+    _raw_tier_adapters = data.get("tier_adapters")
+    tier_adapters: dict[str, str] = {}
+    if _raw_tier_adapters is not None:
+        if not isinstance(_raw_tier_adapters, dict):
+            raise SeedError(f"tier_adapters must be a mapping, got: {type(_raw_tier_adapters).__name__}")
+        tier_adapters = {str(k): str(v) for k, v in _raw_tier_adapters.items()}
     cost_tags = _parse_cost_tags(data.get("cost_tags", {}))
     cost_autopilot_raw = _validate_optional_bool(data, "cost_autopilot", False)
     cost_envelopes = _parse_cost_envelopes(data)
@@ -2640,6 +2647,7 @@ def parse_seed(path: Path) -> SeedConfig:
         judge_provider=cast("str | None", judge_provider_raw),
         model_fallback=model_fallback,
         provider_availability=provider_availability,
+        tier_adapters=tier_adapters,
         cost_tags=cost_tags,
         cost_autopilot=cost_autopilot_raw,
         cost_envelopes=cost_envelopes,
