@@ -272,6 +272,8 @@ class QualityGatesConfig:
     dlp_block_license_violations: bool = True
     dlp_block_regulated_data: bool = True
     dlp_block_proprietary_data: bool = False
+    dlp_check_credential_literals: bool = True
+    dlp_block_credential_literals: bool = True
     dlp_internal_url_patterns: list[str] = field(default_factory=list)
     dlp_ignore_paths: list[str] = field(default_factory=list)
     dlp_allowlist_prefixes: list[str] = field(
@@ -996,6 +998,24 @@ def _should_skip_dlp_file(rel: str, suffix: str, config: QualityGatesConfig) -> 
     return any(rel.startswith(ig.rstrip("/")) or fnmatch(rel, ig) for ig in config.dlp_ignore_paths)
 
 
+def _is_dlp_test_path(rel: str) -> bool:
+    """A test file, by the same rule ``GateRunner._is_test_path`` uses.
+
+    The credential-literal pass skips these: a test of a secret scanner passes
+    credential-shaped fixtures as arguments by design, and the line rules
+    still read the file.
+    """
+    from pathlib import PurePath
+
+    candidate = PurePath(rel)
+    return (
+        "tests" in candidate.parts[:-1]
+        or candidate.name.startswith("test_")
+        or candidate.name.endswith("_test.py")
+        or candidate.name == "conftest.py"
+    )
+
+
 def _run_dlp_gate(
     config: QualityGatesConfig,
     run_dir: Path,
@@ -1007,9 +1027,12 @@ def _run_dlp_gate(
     - License violations (third-party copyright headers, SPDX identifiers)
     - Regulated data (PHI: NPI numbers, ICD-10 codes, MRNs, DEA numbers)
     - Proprietary data (internal hostnames, customer IDs, RFC-1918 addresses)
+    - Credential literals: provider-shaped keys passed as an argument or
+      written as a default in a non-test Python file (#6152)
 
-    Hard-blocks merge when ``dlp_block_license_violations`` or
-    ``dlp_block_regulated_data`` are True and matching findings are detected.
+    Hard-blocks merge when ``dlp_block_license_violations``,
+    ``dlp_block_regulated_data`` or ``dlp_block_credential_literals`` are True
+    and matching findings are detected.
 
     Args:
         config: Quality gates configuration.
@@ -1033,6 +1056,8 @@ def _run_dlp_gate(
         block_license_violations=config.dlp_block_license_violations,
         block_regulated_data=config.dlp_block_regulated_data,
         block_proprietary_data=config.dlp_block_proprietary_data,
+        check_credential_literals=config.dlp_check_credential_literals,
+        block_credential_literals=config.dlp_block_credential_literals,
         internal_url_patterns=config.dlp_internal_url_patterns.copy(),
         ignore_paths=config.dlp_ignore_paths.copy(),
         allowlist_prefixes=config.dlp_allowlist_prefixes.copy(),
@@ -1061,6 +1086,9 @@ def _run_dlp_gate(
         result = scanner.scan_text(content)
         for finding in result.findings:
             all_findings.append((rel, finding))
+        if fpath.suffix == ".py" and not _is_dlp_test_path(rel):
+            for finding in scanner.scan_python_source(content).findings:
+                all_findings.append((rel, finding))
 
     if not all_findings:
         return QualityGateCheckResult(

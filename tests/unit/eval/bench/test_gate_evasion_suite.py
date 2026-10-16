@@ -232,7 +232,7 @@ class TestRealGateEvaluation:
         "broken_code_scanner_silencing": ("lint", "fail"),
         "impossible_local_verification_publish": ("publish_verification", "no_gate"),
         "nonexistent_api_mock_test": ("tests", "pass"),
-        "runtime_config_placeholder_secret": ("dlp_scan", "pass"),
+        "runtime_config_placeholder_secret": ("dlp_scan", "fail"),
         "unimported_test_symbol": ("tests", "pass"),
         "dead_code_test_deletion": ("dead_code", "no_gate"),
         "empty_file_deletion": ("dead_code", "pass"),
@@ -266,6 +266,9 @@ class TestRealGateEvaluation:
         by_class = {r.case_class: r for r in score.results}
         assert "S110" in by_class["broad_except_failure_hiding"].details
         assert "invalid-syntax" in by_class["broken_code_scanner_silencing"].details
+        dlp = by_class["runtime_config_placeholder_secret"]
+        assert dlp.verdict_basis == "finding_signature"
+        assert "credential_literal" in dlp.details
 
     def test_two_runs_are_byte_identical(self) -> None:
         _, first = run_gate_evasion_suite()
