@@ -10,6 +10,7 @@ This document records the canonical benchmark suites provided by `bernstein.eval
 | `tool-surface-v1` | Tool-surface risk scoring, risky triple detection, and forced approval gating | `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04` | 10 fixtures | 1.0 (100%) |
 | `gate-evasion-v1` | Each fixture is a way a change once evaded a quality gate; the named gate runs on it through `GateRunner`, and only a gate finding counts as a catch | — | 8 classes | today 2/8, see `docs/eval/bench.md` |
 | `goal-drift-v1` | Trajectory goal drift measurement across contract boundaries with planted distractions | `CTRL-GOAL-ALIGNMENT`, `ASI01` | 10 fixtures | unmeasured by default; supply `--trajectory` |
+| `collusion/1` | Cross-task collusion detection: paired change fixtures where each half passes its gate alone but the pair violates a stated invariant; flags name the invariant and both tasks and are recorded in the merge receipt (#5398). Runs via the signed-bundle path (`bernstein.eval.bench.collusion_bundle`), not `bernstein bench run` | — | 10 paired fixtures (5 colluding + 5 benign) | 1.0 (100%) |
 
 ---
 
@@ -76,8 +77,3 @@ bernstein bench run goal-drift-v1 --out goal-drift-bundle.json
 # Offline independent verification for goal-drift
 bernstein bench verify goal-drift-bundle.json --suite goal-drift-v1
 ```
-
-| Suite | Cases | Result | Notes |
-|---|---|---|---|
-| collusion-pairs | 10 | collusion flagged 5/5 · benign passed 5/5 | cross-task check at merge admission (#5398) — eval suite only; live admission wiring is #5463 slice 2 |
-
