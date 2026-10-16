@@ -729,7 +729,7 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 **Env vars:** `LETTA_API_KEY`, `LETTA_BASE_URL`, plus `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` for the underlying model.
 
-**Invocation:** `letta --output-format stream-json --permission-mode unrestricted -p '<prompt>' --new-agent --conversation <id>`. The `-p` flag is the documented one-off prompt mode; `--permission-mode unrestricted` is passed on every spawn because the adapter declares its dangerous-mode strategy as `cli-flag`.
+**Invocation:** `letta --output-format stream-json --permission-mode unrestricted -p '<prompt>' --new-agent`. No `--conversation`: letta refuses it beside `--new-agent` and exits before the prompt runs; the new agent's conversation id is read from the stream's envelope. The `-p` flag is the documented one-off prompt mode; `--permission-mode unrestricted` is passed on every spawn because the adapter declares its dangerous-mode strategy as `cli-flag`.
 
 **Caveats:** Letta Code's signature feature is cross-task memory via Letta Cloud. **Bernstein wraps Letta as a leaf-node one-shot agent** - Bernstein does not coordinate Letta's memory across tasks. Cross-task memory still works in Letta's own backend; it's just opaque to Bernstein's accounting and routing.
 
