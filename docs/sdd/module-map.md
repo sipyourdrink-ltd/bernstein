@@ -107,6 +107,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `amp.py`                        | Amp CLI adapter |
 | `auggie.py`                     | Auggie (Augment Code) CLI adapter |
 | `autohand.py`                   | Autohand Code CLI adapter |
+| `bandit.py`                     | Deterministic Bandit scanner adapter and SARIF normalization |
 | `base.py`                       | Base adapter for CLI coding agents |
 | `caching_adapter.py`            | Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse |
 | `canary.py`                     | Adapter conformance canary matrix (issue #2368) |
