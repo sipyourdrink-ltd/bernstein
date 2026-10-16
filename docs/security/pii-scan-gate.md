@@ -63,13 +63,22 @@ Two post-filters reduce false positives before a match is reported:
 
 ## What is skipped
 
-- Lines matching a built-in allowlist: `example.com/.org/.net`, addresses
-  starting `test@`/`user@`/`admin@`/`noreply@`/`no-reply@`, values containing
-  `placeholder`/`changeme`/`your-api-key`/`xxxx`, `localhost`/`127.0.0.1`/
-  `0.0.0.0`, and password assignments using known test values
-  (`test`/`password`/`changeme`/`secret`/`admin`).
-- Lines whose value carries a configured `pii_allowlist_prefixes` prefix
-  (default: `FAKE`, `TEST`, `EXAMPLE`, `DUMMY`, `PLACEHOLDER`, `LOCALHOST`).
+- Matches that overlap a built-in allowlist value: `example.com/.org/.net`
+  and their subdomains (not a host that merely contains them, such as
+  `counterexample.com` or `example.com.au`), addresses whose local part is
+  exactly `test`/`user`/`admin`/`noreply`/`no-reply` (not `sysadmin@`,
+  `contact.test@`, or a URL password such as `svc:admin@`), values
+  containing `placeholder`/`changeme`/`your-api-key`/`xxxx`,
+  `localhost`/`127.0.0.1`/`0.0.0.0`, and password assignments using known
+  test values (`test`/`password`/`changeme`/`secret`/`admin`).
+- Matches that overlap a value carrying a configured `pii_allowlist_prefixes`
+  prefix (default: `FAKE`, `TEST`, `EXAMPLE`, `DUMMY`, `PLACEHOLDER`,
+  `LOCALHOST`).
+
+  The allowlist exempts the value, not the line: `postgres://...@localhost`
+  and `ssn = "FAKE-123-45-6789"` are skipped, but a real token beside a
+  `# placeholder` comment, or an SSN beside a `user@` address, is still
+  reported.
 - Paths matching `pii_ignore_paths` (glob or prefix match).
 - Binary-ish file suffixes: `.pyc .pyo .so .dylib .whl .egg .gz .zip .tar
   .png .jpg .gif .ico .pdf`.

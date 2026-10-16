@@ -192,13 +192,24 @@ _SECRET_RULES: list[tuple[str, re.Pattern[str], str, str]] = [
     ),
 ]
 
-# Lines matching these patterns are whitelisted (example values, test fixtures).
+# Known benign values (example domains, test addresses, placeholders, local
+# hosts). A match is exempt only when it overlaps one of these, i.e. when the
+# benign marker is part of the flagged value: see :func:`_benign_spans`.
 _ALLOWLIST_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"(?i)example\.com|example\.org|example\.net"),
-    re.compile(r"(?i)test@|user@|admin@|noreply@|no-reply@"),
+    # Anchored at both ends, so a real host that merely contains a marker
+    # (``counterexample.com``, ``db.myexample.org``, ``example.com.au``) is not
+    # exempt; a subdomain (``api.example.com``) or a sentence-final ``.`` is.
+    re.compile(r"(?i)(?<![\w\-])example\.(?:com|org|net)(?![\w\-]|\.[\w\-])"),
+    # Anchored to the start of the local part, so ``sysadmin@`` is not read as
+    # ``admin@``. ``:`` is excluded too, because a URL's password sits right
+    # after one: neither a ``latest@`` password nor a password that *is* a
+    # marker (``svc:admin@``) is read as a benign address.
+    re.compile(r"(?i)(?<![\w.%+\-:])(?:test|user|admin|noreply|no-reply)@"),
     re.compile(r"(?i)placeholder|changeme|your[-_]?api[-_]?key|xxxx"),
     re.compile(r"(?i)localhost|127\.0\.0\.1|0\.0\.0\.0"),
-    re.compile(r"(?i)password[^\n]{0,200}=[^\n]{0,200}['\"](?:test|password|changeme|secret|admin)['\"]"),
+    # Only the assignment itself, so the span cannot stretch over a real secret
+    # sitting between ``password`` and some later test-looking value.
+    re.compile(r"(?i)password\s*=\s*['\"](?:test|password|changeme|secret|admin)['\"]"),
 ]
 _DEFAULT_ALLOWLIST_PREFIXES: tuple[str, ...] = ("FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST")
 
@@ -216,20 +227,17 @@ def _matches_ignore_path(path: str | None, ignore_paths: list[str] | None) -> bo
     return any(fnmatch(normalized, pattern) or normalized.startswith(pattern.rstrip("/")) for pattern in ignore_paths)
 
 
-def _contains_allowlist_prefix(line: str, allowlist_prefixes: list[str] | None) -> bool:
-    """Return True when the line contains a known fake/test placeholder prefix."""
+def _allowlist_prefix_pattern(allowlist_prefixes: list[str] | None) -> re.Pattern[str]:
+    """Return the pattern for a value that starts with a fake/test placeholder prefix."""
     prefixes = allowlist_prefixes or list(_DEFAULT_ALLOWLIST_PREFIXES)
     prefix_pattern = "|".join(re.escape(prefix) for prefix in prefixes)
-    return bool(
-        re.search(
-            rf"""(?ix)
-            (?:["']|=|:)\s*
-            (?:{prefix_pattern})
-            (?:[:\-\w./]*)?
-            (?:["']|$)
-            """,
-            line,
-        )
+    return re.compile(
+        rf"""(?ix)
+        (?:["']|=|:)\s*
+        (?:{prefix_pattern})
+        (?:[:\-\w./]*)?
+        (?:["']|$)
+        """
     )
 
 
@@ -256,9 +264,24 @@ def _looks_like_credit_card(match_text: str) -> bool:
     return luhn_check(digits)
 
 
-def _is_allowlisted(line: str, allowlist_prefixes: list[str] | None = None) -> bool:
-    """Return True if the line matches a known false-positive pattern."""
-    return any(p.search(line) for p in _ALLOWLIST_PATTERNS) or _contains_allowlist_prefix(line, allowlist_prefixes)
+def _benign_spans(line: str, allowlist_prefixes: list[str] | None) -> list[tuple[int, int]]:
+    """Return the spans of *line* that the allowlist marks as benign values.
+
+    A match is suppressed only when it overlaps one of these spans -- when the
+    benign marker is part of the flagged value (``"postgres://...@localhost"``,
+    ``user@example.com``, ``"TEST_..."``). Applied to the whole line, a
+    ``user@`` address, a ``# placeholder`` comment or a ``localhost`` note
+    anywhere on it would hide a real token, SSN or card number beside it.
+    """
+    spans = [match.span() for pattern in _ALLOWLIST_PATTERNS for match in pattern.finditer(line)]
+    spans.extend(match.span() for match in _allowlist_prefix_pattern(allowlist_prefixes).finditer(line))
+    return spans
+
+
+def _overlaps(span: tuple[int, int], others: list[tuple[int, int]]) -> bool:
+    """True when *span* shares at least one character with any of *others*."""
+    start, end = span
+    return any(start < other_end and other_start < end for other_start, other_end in others)
 
 
 def _passes_rule_filters(
@@ -323,12 +346,14 @@ def _scan_line(
     possible if scans ever overlap) are not counted twice. This prevents the
     scanner-evasion bug where a single rule's dedup would silently drop the
     second/third secret of the same type.
+
+    A match whose span overlaps a benign value (see :func:`_benign_spans`) is
+    skipped; every other match on the line is still reported.
     """
-    if _is_allowlisted(line, allowlist_prefixes):
-        return
+    benign = _benign_spans(line, allowlist_prefixes)
     for rule_label, pattern, severity, description in _SECRET_RULES:
         for m in pattern.finditer(line):
-            if not _passes_rule_filters(rule_label, m):
+            if _overlaps(m.span(), benign) or not _passes_rule_filters(rule_label, m):
                 continue
             match_key = (rule_label, line_num, m.start(), m.end())
             if match_key in seen_matches:
