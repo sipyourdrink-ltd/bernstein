@@ -100,3 +100,55 @@ def test_the_fatal_still_offers_the_two_remedies_that_are_not_flags() -> None:
     """The env var and the config key work and are the fallbacks when no flag fits."""
     assert "BERNSTEIN_ADAPTER" in NO_ADAPTER_CONFIGURED
     assert "bernstein.yaml" in NO_ADAPTER_CONFIGURED
+
+
+def _run_bootstrap(workdir, monkeypatch, *, cli="auto", adapter_env=None):
+    """Call the goal bootstrap with every process-spawning step replaced by a mock."""
+    from unittest.mock import patch
+
+    from bernstein.core.orchestration import bootstrap
+
+    if adapter_env:
+        monkeypatch.setenv("BERNSTEIN_ADAPTER", adapter_env)
+    else:
+        monkeypatch.delenv("BERNSTEIN_ADAPTER", raising=False)
+    monkeypatch.delenv("BERNSTEIN_SEED_PATH", raising=False)
+    with patch.object(bootstrap, "_acquire_pid_lock", side_effect=_Reached):
+        bootstrap.bootstrap_from_goal(goal="anything", workdir=workdir, cli=cli)
+
+
+class _Reached(Exception):
+    """Raised by the patched pid lock: the guard let the run proceed."""
+
+
+def test_fresh_directory_without_adapter_refuses_at_startup(tmp_path, monkeypatch) -> None:
+    """No bernstein.yaml, no .sdd, no flag, no env: exit 1 before anything starts (#6126)."""
+    with pytest.raises(SystemExit) as excinfo:
+        _run_bootstrap(tmp_path, monkeypatch)
+
+    assert excinfo.value.code == 1
+    assert not (tmp_path / ".sdd").exists()
+    assert not (tmp_path / "bernstein.yaml").exists()
+
+
+def test_existing_sdd_without_adapter_refuses_at_startup(tmp_path, monkeypatch) -> None:
+    (tmp_path / ".sdd").mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        _run_bootstrap(tmp_path, monkeypatch)
+    assert excinfo.value.code == 1
+
+
+def test_cli_flag_lets_the_run_proceed(tmp_path, monkeypatch) -> None:
+    with pytest.raises(_Reached):
+        _run_bootstrap(tmp_path, monkeypatch, cli="codex")
+
+
+def test_env_adapter_lets_the_run_proceed(tmp_path, monkeypatch) -> None:
+    with pytest.raises(_Reached):
+        _run_bootstrap(tmp_path, monkeypatch, adapter_env="codex")
+
+
+def test_seed_file_lets_the_run_proceed(tmp_path, monkeypatch) -> None:
+    (tmp_path / "bernstein.yaml").write_text("cli: auto\n")
+    with pytest.raises(_Reached):
+        _run_bootstrap(tmp_path, monkeypatch)

@@ -9,7 +9,11 @@ import pytest
 from bernstein.core.bootstrap import bootstrap_from_goal
 
 
-def test_bootstrap_from_goal_prints_single_agent_suggestion(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+def test_bootstrap_from_goal_prints_single_agent_suggestion(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BERNSTEIN_ADAPTER", "codex")  # #6126: no adapter refuses at startup
+
     def _stop_after_preflight(cli: str, port: int) -> None:
         raise RuntimeError("stop-after-suggestion")
 
