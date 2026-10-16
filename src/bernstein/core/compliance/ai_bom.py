@@ -22,8 +22,8 @@ Public surface (mirrors ``article12.py``):
 * :func:`encode_bom` -- format dispatcher (json | cyclonedx | spdx).
 * :func:`verify_bom` -- structural + hash verifier.
 
-The CycloneDX 1.5 encoder follows the AI/ML extension recommendations
-documented at https://cyclonedx.org/capabilities/aibom/. The SPDX 2.3
+The CycloneDX 1.6 encoder emits the AI/ML BOM with modelCard fields per
+https://cyclonedx.org/capabilities/aibom/. The SPDX 2.3
 encoder emits the SBOM subset relevant to model+package listing; AI-
 specific fields cross-walk to ``annotations`` so a vanilla SPDX
 validator accepts the document.

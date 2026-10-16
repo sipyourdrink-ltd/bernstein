@@ -1,6 +1,6 @@
 """SBOM (Software Bill of Materials) generation for agent-produced artifacts.
 
-Generates CycloneDX 1.5 JSON SBOMs from project dependencies and optionally
+Generates CycloneDX 1.6 JSON SBOMs from project dependencies and optionally
 runs vulnerability scanning via ``osv-scanner`` or ``grype``.
 
 When an agent installs new packages the orchestrator can call:
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # CycloneDX spec version emitted by this generator.
-_CYCLONEDX_SPEC_VERSION = "1.5"
+_CYCLONEDX_SPEC_VERSION = "1.6"
 _BERNSTEIN_TOOL_NAME = "bernstein"
 
 
@@ -96,7 +96,7 @@ class SBOMComponent:
     licenses: list[str] = field(default_factory=list)
 
     def to_cyclonedx_dict(self) -> dict[str, Any]:
-        """Serialise to a CycloneDX 1.5 component dict."""
+        """Serialise to a CycloneDX 1.6 component dict."""
         result: dict[str, Any] = {
             "type": self.component_type,
             "name": self.name,
@@ -122,7 +122,7 @@ class SBOMDocument:
     source: str = ""  # "pip", "npm", "requirements.txt", etc.
 
     def to_cyclonedx_dict(self) -> dict[str, Any]:
-        """Serialise to CycloneDX 1.5 JSON-compatible dict."""
+        """Serialise to CycloneDX 1.6 JSON-compatible dict."""
         import datetime
 
         ts = datetime.datetime.fromtimestamp(self.generated_at, tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -313,7 +313,7 @@ class SBOMGenerator:
     """Generate and scan SBOMs for a project.
 
     Supports:
-    - CycloneDX 1.5 JSON output
+    - CycloneDX 1.6 JSON output
     - SPDX 2.3 JSON output
     - Vulnerability scanning via osv-scanner or grype
 

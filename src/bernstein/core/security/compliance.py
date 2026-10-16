@@ -364,7 +364,7 @@ def generate_sbom(
     output_dir.mkdir(parents=True, exist_ok=True)
     sbom = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.6",
         "serialNumber": f"urn:uuid:{run_id}",
         "version": 1,
         "metadata": {

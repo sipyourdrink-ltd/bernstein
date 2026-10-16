@@ -73,7 +73,7 @@ def test_cyclonedx_document_structure() -> None:
     doc = sbom.to_cyclonedx_dict()
 
     assert doc["bomFormat"] == "CycloneDX"
-    assert doc["specVersion"] == "1.5"
+    assert doc["specVersion"] == "1.6"
     assert doc["serialNumber"] == "urn:uuid:12345678-1234-5678-1234-567812345678"
     assert doc["version"] == 1
     assert "timestamp" in doc["metadata"]

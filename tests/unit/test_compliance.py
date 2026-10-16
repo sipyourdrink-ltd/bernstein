@@ -275,7 +275,7 @@ class TestSBOM:
         assert result.exists()
         data = json.loads(result.read_text())
         assert data["bomFormat"] == "CycloneDX"
-        assert data["specVersion"] == "1.5"
+        assert data["specVersion"] == "1.6"
         assert len(data["components"]) == 2
         assert data["components"][0]["name"] == "requests"
         assert data["components"][0]["purl"] == "pkg:pypi/requests@2.31.0"

@@ -508,7 +508,7 @@ class TestEncoders:
         bom = generate_bom(_full_snapshot())
         decoded = json.loads(encode_bom(bom, fmt="cyclonedx"))
         assert decoded["bomFormat"] == "CycloneDX"
-        assert decoded["specVersion"] == "1.5"
+        assert decoded["specVersion"] == "1.6"
         assert "components" in decoded
         assert any(c["type"] == "machine-learning-model" for c in decoded["components"])
 
@@ -611,9 +611,14 @@ class TestCycloneDXSnapshot:
 
         # Top-level frame
         assert decoded["bomFormat"] == "CycloneDX"
-        assert decoded["specVersion"] == "1.5"
+        assert decoded["specVersion"] == "1.6"
         assert decoded["version"] == 1
-        assert decoded["serialNumber"] == "urn:uuid:bernstein-ai-bom:fixture-run-001"
+        import re
+
+        assert re.fullmatch(
+            r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            decoded["serialNumber"],
+        ), f"serialNumber is not a valid urn:uuid: {decoded['serialNumber']!r}"
 
         # metadata.tools points at bernstein
         assert decoded["metadata"]["tools"][0]["name"] == "bernstein"
@@ -627,6 +632,58 @@ class TestCycloneDXSnapshot:
         model_comp = next(c for c in decoded["components"] if c["type"] == "machine-learning-model")
         assert model_comp["publisher"] == "acme"
         assert model_comp["version"] == "v1"
+        # 1.6: model card block is present with invocation_count
+        assert "modelCard" in model_comp
+        mc_props = {p["name"]: p["value"] for p in model_comp["modelCard"]["properties"]}
+        assert mc_props["bernstein:invocation_count"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# 6b. CycloneDX 1.6 schema validation
+# ---------------------------------------------------------------------------
+
+
+class TestCycloneDXSchemaValidation:
+    """Validate the CycloneDX output against the vendored 1.6 JSON schema."""
+
+    def test_full_bom_validates_against_cyclonedx_1_6_schema(self) -> None:
+        import jsonschema
+
+        schema_path = Path(__file__).parent.parent.parent / "fixtures" / "schemas" / "bom-1.6.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        bom = generate_bom(_full_snapshot())
+        doc = json.loads(encode_bom(bom, fmt="cyclonedx"))
+        jsonschema.validate(doc, schema)
+
+    def test_minimal_bom_validates_against_cyclonedx_1_6_schema(self) -> None:
+        import jsonschema
+
+        schema_path = Path(__file__).parent.parent.parent / "fixtures" / "schemas" / "bom-1.6.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        bom = generate_bom(_minimal_snapshot())
+        doc = json.loads(encode_bom(bom, fmt="cyclonedx"))
+        jsonschema.validate(doc, schema)
+
+    def test_two_exports_of_same_run_are_byte_identical(self) -> None:
+        bom = generate_bom(_full_snapshot())
+        assert encode_bom(bom, fmt="cyclonedx") == encode_bom(bom, fmt="cyclonedx")
+
+    def test_model_card_present_on_machine_learning_model_components(self) -> None:
+        bom = generate_bom(_full_snapshot())
+        decoded = json.loads(encode_bom(bom, fmt="cyclonedx"))
+        ml_components = [c for c in decoded["components"] if c["type"] == "machine-learning-model"]
+        assert ml_components, "expected at least one machine-learning-model component"
+        for comp in ml_components:
+            assert "modelCard" in comp, f"modelCard missing on component {comp['name']!r}"
+            assert "properties" in comp["modelCard"]
+
+    def test_serial_number_is_rfc4122_uuid(self) -> None:
+        import re
+
+        bom = generate_bom(_full_snapshot())
+        decoded = json.loads(encode_bom(bom, fmt="cyclonedx"))
+        pattern = r"^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        assert re.match(pattern, decoded["serialNumber"]), decoded["serialNumber"]
 
 
 # ---------------------------------------------------------------------------
