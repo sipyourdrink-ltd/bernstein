@@ -1,0 +1,24 @@
+# Contract for the Mistral Vibe CLI (adapter: mistral, binary: vibe).
+#
+# Always-passed flags from src/bernstein/adapters/mistral.py:
+# ``vibe --auto-approve --prompt <task>``. vibe has no sampling flag
+# (``--temperature`` is rejected as an unrecognized argument), so the adapter
+# declares no sampling capability and passes none.
+adapter: mistral
+binary: vibe
+install:
+  method: pipx
+  spec: "mistral-vibe"
+  python: "3.12"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "MISTRAL_API_KEY"
+  basis: api_key
+required_flags:
+  - "--auto-approve"
+  - "--prompt"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
