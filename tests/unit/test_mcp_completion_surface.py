@@ -113,6 +113,7 @@ def _stdio_args(tmp_path: Path) -> dict[str, dict[str, Any]]:
         "bernstein_shutdown_orchestrator": {"workdir": str(tmp_path)},
         "bernstein_approve": {"task_id": _TASK_ID, "note": "unstick it"},
         "bernstein_complete": {"task_id": _TASK_ID, "result_summary": "looked done to me"},
+        "bernstein_create_task": {"title": "sweep task", "description": "sweep test"},
         "bernstein_task_capsule": {"task_id": _TASK_ID, "workdir": str(tmp_path)},
         "load_skill": {"name": "backend"},
         # Deprecated aliases, callable for one release (#3087): swept with

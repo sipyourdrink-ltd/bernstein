@@ -28,6 +28,7 @@ plus lineage exposes all of them.
     bernstein_shutdown_orchestrator - whole-orchestrator shutdown signal
     bernstein_approve       - approve a pending/blocked task
     bernstein_complete      - complete a task the caller is executing
+    bernstein_create_task   - create a bare backlog task without orchestration
     load_skill              - return skill pack file contents; never execute
 
 Registered from sibling modules by the same ``create_mcp_server`` call:
