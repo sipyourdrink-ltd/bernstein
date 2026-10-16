@@ -448,13 +448,17 @@ npm install -g opencode-ai
 
 **Install:**
 ```bash
-npm install -g kilocode
+npm install -g @kilocode/cli
 ```
+
+(The `kilocode` package on npm is an empty placeholder with no binary.)
+
+**Invocation:** `kilo run --model <provider/model> --auto -- '<prompt>'`.
 
 **Unique features:**
 - ACP/MCP protocol support
-- MCP config injection via `--mcp` flag
-- Auto-approve mode (`--yes`)
+- MCP servers come from Kilo's own configuration (`kilo mcp`); `kilo run` has no flag that takes them, so servers passed for a task are logged as not delivered
+- Auto-approve mode (`--auto`)
 - Provider routing through the providers configured in Kilo
 
 **Best for:** Teams already using Kilo Code. Kilo's ACP support means it can participate in Bernstein's agent-to-agent communication protocols.

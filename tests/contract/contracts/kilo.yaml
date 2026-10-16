@@ -1,0 +1,24 @@
+# Contract for the Kilo Code CLI (adapter: kilo).
+#
+# Always-passed surface from src/bernstein/adapters/kilo.py:
+# ``kilo run --model <m> --auto -- <prompt>``. The flags live on the ``run``
+# subcommand, so the help text checked is ``kilo run --help``. kilo 7.8
+# rejects ``--prompt``, ``--yes`` and ``--mcp`` on ``run`` with a usage dump.
+adapter: kilo
+binary: kilo
+install:
+  method: npm
+  spec: "@kilocode/cli@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "KILO_API_KEY"
+  basis: api_key
+help_command: ["kilo", "run", "--help"]
+required_flags:
+  - "--model"
+  - "--auto"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
