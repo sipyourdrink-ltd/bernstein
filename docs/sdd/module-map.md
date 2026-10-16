@@ -112,6 +112,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `canary.py`                     | Adapter conformance canary matrix (issue #2368) |
 | `capability_profile.py`         | Declarative adapter capability profiles and the profile factory |
 | `charm.py`                      | Charm Crush CLI adapter |
+| `checkov.py`                    | Deterministic Checkov IaC scanner adapter and SARIF normalization |
 | `claude.py`                     | Claude Code CLI adapter |
 | `claude_agents.py`              | Build per-task Claude Code subagent definitions for the --agents flag |
 | `claude_cache_control.py`       | Anthropic API cache-control block builder for the Claude Code adapter |
