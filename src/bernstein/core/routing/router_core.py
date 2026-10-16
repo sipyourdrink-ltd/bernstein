@@ -958,8 +958,7 @@ def _emit_route_decision(task: Task, cfg: ModelConfig) -> None:
         dispatch_tier = getattr(task, "dispatch_tier", None)
         tier_label = dispatch_tier.value if dispatch_tier is not None else "local"
         rationale = (
-            f"role={getattr(task, 'role', '')} priority={getattr(task, 'priority', '')}"
-            f" dispatch_tier={tier_label}"
+            f"role={getattr(task, 'role', '')} priority={getattr(task, 'priority', '')} dispatch_tier={tier_label}"
         )
         record_decision(
             kind="model_route",

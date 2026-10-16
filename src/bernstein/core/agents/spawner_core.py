@@ -4170,7 +4170,9 @@ class AgentSpawner:
             if tier_cli:
                 logger.info(
                     "Tier-aware routing: task %s tier=%s -> adapter %s",
-                    tasks[0].id, dispatch_tier.value, tier_cli,
+                    tasks[0].id,
+                    dispatch_tier.value,
+                    tier_cli,
                 )
         # Per-step `cli:` is treated as a synthetic pinned adapter so the
         # router-skip decision matches the role_model_policy cli case.
