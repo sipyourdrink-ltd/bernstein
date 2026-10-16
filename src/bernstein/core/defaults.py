@@ -573,6 +573,31 @@ class TriggerDefaults:
 
 
 # ---------------------------------------------------------------------------
+# Quality / completion-signal defaults
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class QualityDefaults:
+    """Completion-signal verification timeouts.
+
+    Tunable via ``tuning.quality.*`` in bernstein.yaml or the matching
+    ``BERNSTEIN_*`` env var, read at the call site rather than captured at
+    import/class-definition time (see the ``EscalationThresholds.
+    default_factory`` note in ``core/agents/heartbeat_escalation.py`` for why
+    a plain dataclass default would silently ignore configuration).
+    """
+
+    # Wall-clock budget for a single ``test_passes`` completion-signal
+    # command (janitor.py's ``_check_test_passes``). Was hardcoded to 120
+    # with no override, so a project whose verification command legitimately
+    # takes longer than 120s could never pass the signal (issue #6119).
+    # Override via ``tuning.quality.test_timeout_s`` or the
+    # ``BERNSTEIN_TEST_TIMEOUT_S`` env var (checked first).
+    test_timeout_s: int = 120
+
+
+# ---------------------------------------------------------------------------
 # Janitor / retention defaults
 # ---------------------------------------------------------------------------
 
@@ -839,6 +864,7 @@ PLAN = PlanDefaults()
 PHASE_PIPELINE = PhasePipelineDefaults()
 BEST_OF_N = BestOfNDefaults()
 TRIGGER = TriggerDefaults()
+QUALITY = QualityDefaults()
 JANITOR = JanitorDefaults()
 CATALOG = CatalogDefaults()
 MCP_TOOL_SEARCH = MCPToolSearchDefaults()
@@ -896,6 +922,7 @@ _SECTION_TO_ATTR: Mapping[str, str] = MappingProxyType(
         "phase_pipeline": "PHASE_PIPELINE",
         "best_of_n": "BEST_OF_N",
         "trigger": "TRIGGER",
+        "quality": "QUALITY",
         "janitor": "JANITOR",
         "catalog": "CATALOG",
         "mcp_tool_search": "MCP_TOOL_SEARCH",
@@ -928,6 +955,7 @@ _ATTR_TO_FACTORY: Mapping[str, type[Any]] = MappingProxyType(
         "PHASE_PIPELINE": PhasePipelineDefaults,
         "BEST_OF_N": BestOfNDefaults,
         "TRIGGER": TriggerDefaults,
+        "QUALITY": QualityDefaults,
         "JANITOR": JanitorDefaults,
         "CATALOG": CatalogDefaults,
         "MCP_TOOL_SEARCH": MCPToolSearchDefaults,
