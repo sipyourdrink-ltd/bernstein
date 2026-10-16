@@ -17,6 +17,7 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 | `surface_grant_delta.py` | Lineage gate grant analysis across diffs |
 | `key_derivation.py` | HKDF-SHA256 per-store key derivation with scheme versioning |
 | `approval_decision.py` | Signed, nonce-bound decision records read by the task approval gates |
+| `dlp_scanner.py` | `DLPScanner` behind the `dlp_scan` gate: secrets and regulated data in changed files, with value-scoped allowlisting |
 
 ## Invariants
 
@@ -27,13 +28,12 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 - Chain helpers take the chain as a parameter (no singletons) and log through `log_with_prev_digest`, so `prev_chain_digest` is in the payload before the HMAC.
 - The audit chain is opt-in at runtime (`BERNSTEIN_AUDIT=1`, read in `../orchestration/orchestrator.py`); features degrade without it.
 - Untrusted paths are opened, never compared: a comparison validates one lookup while the open performs another (`sigstore_attestation.py`).
-- Same rule for tenant writes: the whole subtree is created and opened through
-  `TenantPaths.anchor` (`../persistence/anchored_write.py`), rotation included. It
-  needs `dir_fd` + `O_NOFOLLOW`; lacking either, the refusal narrows to the final
-  component or vanishes, never weakens (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
+- Same rule for tenant writes: the whole subtree is created and opened through `TenantPaths.anchor` (`../persistence/anchored_write.py`), rotation included. It needs `dir_fd` + `O_NOFOLLOW`; lacking either, the refusal narrows to the final component or vanishes, never weakens (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
+- `AuditLog.verify_incremental()` trusts only signed or HMAC-chained material. The signed checkpoint pins each sealed segment prefix by hash and by length, so a segment that is gone or cut back is reported by name. Hash tiles are unsigned: they are checked against the bytes, never used to skip them (#6435, #6443).
+- DLP allowlist entries mark a *value* as benign, not the line: a rule skips only a match that overlaps an allowlisted span. Only operator `allowlist_patterns` suppress a whole line (`dlp_scanner.py`, #6430).
 
 ## Testing
 
 Single files only: `uv run pytest tests/unit/test_audit.py -x -q`.
 
-<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-10-16 against this subtree; the notes above still hold. -->
