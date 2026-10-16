@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bernstein.core.security.audit_chain import AuditChainStore
+    from bernstein.core.verification import VerifyContract  # noqa: F401 - cross-tier contract (#6559)
 
 logger = logging.getLogger(__name__)
 
