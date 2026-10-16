@@ -89,13 +89,15 @@ class AiderAdapter(CLIAdapter):
 
         # Aider supports both Anthropic and OpenAI models; include both API keys
         # and custom base URL overrides so gateway-routed models reach the gateway.
-        env = build_filtered_env([
-            "ANTHROPIC_API_KEY",
-            "OPENAI_API_KEY",
-            "AZURE_OPENAI_API_KEY",
-            "OPENAI_API_BASE",
-            "OPENAI_BASE_URL",
-        ])
+        env = build_filtered_env(
+            [
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "AZURE_OPENAI_API_KEY",
+                "OPENAI_API_BASE",
+                "OPENAI_BASE_URL",
+            ]
+        )
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
