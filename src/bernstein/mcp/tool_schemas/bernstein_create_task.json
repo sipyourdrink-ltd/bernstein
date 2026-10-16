@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "bernstein_create_task",
-  "description": "Create a bare task without triggering orchestration or spawning agents. The task enters the backlog and is immediately claimable via bernstein_claim by any session matching its role. Host effects: writes task state; makes network requests.",
+  "description": "Create a bare task without triggering orchestration or spawning agents. The task enters the backlog and is immediately claimable via bernstein_claim by any session matching its role. Host effects: writes files; makes network requests.",
   "timeoutSeconds": 30.0,
   "type": "object",
   "additionalProperties": false,
