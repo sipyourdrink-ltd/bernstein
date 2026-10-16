@@ -575,7 +575,7 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 **Install:** `npm install -g @augmentcode/auggie`
 
-**Env vars:** `AUGMENT_API_KEY`, `AUGMENT_TOKEN`.
+**Env vars:** `AUGMENT_SESSION_AUTH` (the JSON `auggie login` writes to `~/.augment/session.json`), or `AUGMENT_API_TOKEN` with `AUGMENT_API_URL`. Spawned with `--print`, so a missing login fails at once instead of waiting for a terminal.
 
 **Best for:** Monorepos using Augment's context engine for repo-scale retrieval.
 

@@ -14,13 +14,23 @@ if TYPE_CHECKING:
     from bernstein.core.models import ModelConfig
 
 
+#: Authentication variables auggie reads: the documented session JSON, and the
+#: token/URL pair it sets from a session.
+_AUGGIE_AUTH_ENV = ("AUGMENT_SESSION_AUTH", "AUGMENT_API_TOKEN", "AUGMENT_API_URL")
+
+
 class AuggieAdapter(CLIAdapter):
     """Spawn and monitor Auggie (Augment Code) CLI sessions.
 
-    Auggie is Augment Code's CLI coding agent.  It is invoked with a
-    positional prompt and the ``--allow-indexing`` flag, which is kept
+    Auggie is Augment Code's CLI coding agent.  It is invoked in print
+    (one-shot) mode with a positional prompt. ``--allow-indexing`` is kept
     always-on so Auggie does not block the session waiting for an
     interactive indexing confirmation.
+
+    Auggie authenticates from ``AUGMENT_SESSION_AUTH`` (the documented
+    headless route, the same JSON as ``~/.augment/session.json``) or from
+    the ``AUGMENT_API_TOKEN`` / ``AUGMENT_API_URL`` pair it derives from a
+    session; ``~/.augment/session.json`` itself is found through ``HOME``.
 
     See https://docs.augmentcode.com/cli/overview for details.
     """
@@ -66,8 +76,13 @@ class AuggieAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # --print: a spawned agent has no TTY. Without the flag auggie 0.36
+        # prints "Interactive mode requires a terminal", says it is switching
+        # to print mode, and then does not exit -- an agent that cannot even
+        # authenticate sat there until the watchdog killed it, where --print
+        # fails in under a second with the reason.
         # --allow-indexing is always-on; otherwise Auggie prompts each session.
-        cmd = ["auggie", "--allow-indexing", prompt]
+        cmd = ["auggie", "--print", "--allow-indexing", prompt]
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
@@ -80,7 +95,9 @@ class AuggieAdapter(CLIAdapter):
             model=model_config.model,
         )
 
-        env = build_filtered_env(["AUGMENT_API_KEY", "AUGMENT_TOKEN"])
+        # The variables auggie reads. AUGMENT_API_KEY and AUGMENT_TOKEN, which
+        # this list used to forward, appear nowhere in auggie 0.36.
+        env = build_filtered_env(_AUGGIE_AUTH_ENV)
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
