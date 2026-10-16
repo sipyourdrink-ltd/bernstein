@@ -70,9 +70,7 @@ class TestPrefectBridgeSpawn:
         bridge._deployment_cache["acc-store/sync-inventory"] = "dep-uuid-1"
         bridge._client = AsyncMock()
         bridge._client.post = AsyncMock(
-            return_value=_mock_response(
-                json_data={"id": "run-uuid-1", "state": {"type": "SCHEDULED"}}
-            )
+            return_value=_mock_response(json_data={"id": "run-uuid-1", "state": {"type": "SCHEDULED"}})
         )
 
         result = await bridge.spawn(_make_request())
@@ -89,9 +87,7 @@ class TestPrefectBridgeSpawn:
         bridge = PrefectBridge(_make_config())
         bridge._deployment_cache["acc-store/sync-inventory"] = "dep-uuid-1"
         bridge._client = AsyncMock()
-        bridge._client.post = AsyncMock(
-            return_value=_mock_response(json_data={"id": "run-uuid-2"})
-        )
+        bridge._client.post = AsyncMock(return_value=_mock_response(json_data={"id": "run-uuid-2"}))
 
         await bridge.spawn(_make_request())
 
@@ -105,9 +101,7 @@ class TestPrefectBridgeSpawn:
         bridge = PrefectBridge(_make_config())
         bridge._deployment_cache["acc-store/sync-inventory"] = "dep-uuid-1"
         bridge._client = AsyncMock()
-        bridge._client.post = AsyncMock(
-            return_value=_mock_response(status_code=422, json_data={"detail": "bad"})
-        )
+        bridge._client.post = AsyncMock(return_value=_mock_response(status_code=422, json_data={"detail": "bad"}))
 
         with pytest.raises(BridgeError, match="422"):
             await bridge.spawn(_make_request())
@@ -181,9 +175,7 @@ class TestPrefectBridgeStatus:
     async def test_status_not_found_raises(self) -> None:
         bridge = PrefectBridge(_make_config())
         bridge._client = AsyncMock()
-        bridge._client.get = AsyncMock(
-            return_value=_mock_response(status_code=404, json_data={"detail": "not found"})
-        )
+        bridge._client.get = AsyncMock(return_value=_mock_response(status_code=404, json_data={"detail": "not found"}))
 
         with pytest.raises(BridgeError, match="404"):
             await bridge.status("nonexistent")
@@ -197,9 +189,7 @@ class TestPrefectBridgeCancel:
     async def test_cancel_sends_cancelling_state(self) -> None:
         bridge = PrefectBridge(_make_config())
         bridge._client = AsyncMock()
-        bridge._client.post = AsyncMock(
-            return_value=_mock_response(json_data={"status": "ok"})
-        )
+        bridge._client.post = AsyncMock(return_value=_mock_response(json_data={"status": "ok"}))
 
         await bridge.cancel("run-uuid-1")
 
@@ -212,9 +202,7 @@ class TestPrefectBridgeCancel:
     async def test_cancel_ignores_409(self) -> None:
         bridge = PrefectBridge(_make_config())
         bridge._client = AsyncMock()
-        bridge._client.post = AsyncMock(
-            return_value=_mock_response(status_code=409, json_data={"detail": "conflict"})
-        )
+        bridge._client.post = AsyncMock(return_value=_mock_response(status_code=409, json_data={"detail": "conflict"}))
 
         await bridge.cancel("run-uuid-1")
 

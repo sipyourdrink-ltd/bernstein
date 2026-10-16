@@ -228,10 +228,7 @@ class PrefectBridge(RuntimeBridge):
             ) from exc
 
         entries = resp.json()
-        lines = [
-            f"[{e.get('timestamp', '')}] {e.get('level', 'INFO'):8s} {e.get('message', '')}"
-            for e in entries
-        ]
+        lines = [f"[{e.get('timestamp', '')}] {e.get('level', 'INFO'):8s} {e.get('message', '')}" for e in entries]
         text = "\n".join(lines)
         if self._config.max_log_bytes:
             text = text[-self._config.max_log_bytes :]
@@ -241,9 +238,7 @@ class PrefectBridge(RuntimeBridge):
 
     async def list_pools(self) -> list[PoolInfo]:
         try:
-            resp = await self._client.post(
-                "/api/work_pools/filter", json={"limit": 100}
-            )
+            resp = await self._client.post("/api/work_pools/filter", json={"limit": 100})
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise BridgeError(f"Prefect pool listing failed: {exc}") from exc
@@ -296,12 +291,8 @@ class PrefectBridge(RuntimeBridge):
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            raise BridgeError(
-                f"Failed to {'pause' if paused else 'resume'} pool {pool_name!r}: {exc}"
-            ) from exc
-        logger.info(
-            "Prefect pool %r %s", pool_name, "paused" if paused else "resumed"
-        )
+            raise BridgeError(f"Failed to {'pause' if paused else 'resume'} pool {pool_name!r}: {exc}") from exc
+        logger.info("Prefect pool %r %s", pool_name, "paused" if paused else "resumed")
 
     # ── Internal helpers ──
 
@@ -310,9 +301,7 @@ class PrefectBridge(RuntimeBridge):
             return self._deployment_cache[deployment_name]
 
         try:
-            resp = await self._client.get(
-                f"/api/deployments/name/{deployment_name}"
-            )
+            resp = await self._client.get(f"/api/deployments/name/{deployment_name}")
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise BridgeError(
