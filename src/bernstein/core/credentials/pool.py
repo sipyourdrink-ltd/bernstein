@@ -115,9 +115,7 @@ class CredentialPool:
     def add(self, entry: CredentialEntry) -> None:
         with self._lock:
             if entry.key_id in self._entries:
-                raise CredentialPoolError(
-                    f"key_id {entry.key_id!r} already exists in pool {self._name!r}"
-                )
+                raise CredentialPoolError(f"key_id {entry.key_id!r} already exists in pool {self._name!r}")
             self._entries[entry.key_id] = entry
             self._persist()
 
@@ -149,9 +147,7 @@ class CredentialPool:
         with self._lock:
             now = time.time()
             candidates = [
-                e for e in self._entries.values()
-                if e.is_available
-                and (provider is None or e.provider == provider)
+                e for e in self._entries.values() if e.is_available and (provider is None or e.provider == provider)
             ]
             if not candidates:
                 raise NoAvailableCredentialError(
@@ -183,7 +179,9 @@ class CredentialPool:
                 entry.rate_limit_count += 1
                 logger.info(
                     "credential %s in pool %s rate-limited (count: %d)",
-                    key_id, self._name, entry.rate_limit_count,
+                    key_id,
+                    self._name,
+                    entry.rate_limit_count,
                 )
             if exhausted:
                 entry.remaining_quota = 0
@@ -195,19 +193,10 @@ class CredentialPool:
             now = time.time()
             total = len(self._entries)
             exhausted = sum(1 for e in self._entries.values() if e.remaining_quota == 0)
-            cooling = sum(
-                1 for e in self._entries.values()
-                if e.cooldown_until_ts > now and e.remaining_quota != 0
-            )
+            cooling = sum(1 for e in self._entries.values() if e.cooldown_until_ts > now and e.remaining_quota != 0)
             active = total - exhausted - cooling
-            agg_quota = sum(
-                e.remaining_quota for e in self._entries.values() if e.remaining_quota > 0
-            )
-            unlimited = any(
-                e.remaining_quota == _DEFAULT_QUOTA
-                for e in self._entries.values()
-                if e.is_available
-            )
+            agg_quota = sum(e.remaining_quota for e in self._entries.values() if e.remaining_quota > 0)
+            unlimited = any(e.remaining_quota == _DEFAULT_QUOTA for e in self._entries.values() if e.is_available)
             return PoolStatus(
                 pool_name=self._name,
                 total_keys=total,
@@ -237,7 +226,9 @@ class CredentialPool:
         if raw.get("schema_version") != _POOL_SCHEMA_VERSION:
             logger.warning(
                 "pool %s schema version %s != %s, ignoring",
-                self._name, raw.get("schema_version"), _POOL_SCHEMA_VERSION,
+                self._name,
+                raw.get("schema_version"),
+                _POOL_SCHEMA_VERSION,
             )
             return
         self._created_ts = raw.get("created_ts", time.time())

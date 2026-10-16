@@ -115,7 +115,8 @@ class GatewayBridge(RuntimeBridge):
                 if fallback and payload.get("model") != fallback:
                     logger.info(
                         "gateway returned 503 for %s, retrying with fallback %s",
-                        request.agent_id, fallback,
+                        request.agent_id,
+                        fallback,
                     )
                     payload["model"] = fallback
                     resp = await self._client.post("/v1/tasks", json=payload)
@@ -210,9 +211,11 @@ class GatewayBridge(RuntimeBridge):
             latency_ms=float(routing.get("latency_ms", 0.0)),
             fallback_used=bool(routing.get("fallback_used", False)),
             cache_hit=bool(routing.get("cache_hit", False)),
-            extra={k: v for k, v in routing.items()
-                   if k not in ("provider", "model", "cost_usd", "latency_ms",
-                                "fallback_used", "cache_hit")},
+            extra={
+                k: v
+                for k, v in routing.items()
+                if k not in ("provider", "model", "cost_usd", "latency_ms", "fallback_used", "cache_hit")
+            },
         )
 
     @staticmethod
@@ -226,9 +229,7 @@ class GatewayBridge(RuntimeBridge):
             started_at=data.get("started_at"),
             finished_at=data.get("finished_at"),
             message=data.get("message", ""),
-            metadata={
-                k: str(v) for k, v in (data.get("routing") or {}).items()
-            },
+            metadata={k: str(v) for k, v in (data.get("routing") or {}).items()},
         )
 
 

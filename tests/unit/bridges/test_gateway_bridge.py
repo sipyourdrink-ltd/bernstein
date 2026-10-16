@@ -66,15 +66,18 @@ class TestGatewayBridgeSpawn:
     @pytest.mark.anyio
     async def test_spawn_success(self):
         bridge = GatewayBridge(_make_config())
-        mock_resp = _mock_response(200, {
-            "status": "pending",
-            "routing": {
-                "provider": "anthropic",
-                "model": "claude-sonnet-4",
-                "cost_usd": 0.003,
-                "latency_ms": 120.0,
+        mock_resp = _mock_response(
+            200,
+            {
+                "status": "pending",
+                "routing": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4",
+                    "cost_usd": 0.003,
+                    "latency_ms": 120.0,
+                },
             },
-        })
+        )
         bridge._client = AsyncMock()
         bridge._client.post = AsyncMock(return_value=mock_resp)
 
@@ -126,11 +129,14 @@ class TestGatewayBridgeStatus:
     @pytest.mark.anyio
     async def test_status_completed(self):
         bridge = GatewayBridge(_make_config())
-        mock_resp = _mock_response(200, {
-            "status": "completed",
-            "exit_code": 0,
-            "routing": {"provider": "openai", "model": "gpt-5.5"},
-        })
+        mock_resp = _mock_response(
+            200,
+            {
+                "status": "completed",
+                "exit_code": 0,
+                "routing": {"provider": "openai", "model": "gpt-5.5"},
+            },
+        )
         bridge._client = AsyncMock()
         bridge._client.get = AsyncMock(return_value=mock_resp)
 
@@ -204,18 +210,21 @@ class TestRoutingMetadata:
     @pytest.mark.anyio
     async def test_metadata_cached_from_spawn(self):
         bridge = GatewayBridge(_make_config())
-        mock_resp = _mock_response(200, {
-            "status": "pending",
-            "routing": {
-                "provider": "anthropic",
-                "model": "claude-opus-4",
-                "cost_usd": 0.01,
-                "latency_ms": 250.0,
-                "fallback_used": True,
-                "cache_hit": False,
-                "region": "us-east-1",
+        mock_resp = _mock_response(
+            200,
+            {
+                "status": "pending",
+                "routing": {
+                    "provider": "anthropic",
+                    "model": "claude-opus-4",
+                    "cost_usd": 0.01,
+                    "latency_ms": 250.0,
+                    "fallback_used": True,
+                    "cache_hit": False,
+                    "region": "us-east-1",
+                },
             },
-        })
+        )
         bridge._client = AsyncMock()
         bridge._client.post = AsyncMock(return_value=mock_resp)
 

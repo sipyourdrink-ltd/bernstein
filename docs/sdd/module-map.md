@@ -34,6 +34,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `compliance/`               | Compliance subpackage |
 | `config/`                   | Config: seed parsing, config management, settings, feature gates |
 | `cost/`                     | cost sub-package |
+| `credentials/`              | Managed credential pools with usage tracking and rotation |
 | `daemon/`                   | Daemon installation helpers for Bernstein |
 | `datasources/`              | Content-addressed query receipts (issue #2887) and the schema-bound query driver (issue #3125) |
 | `devops/`                   | devops sub-package |
