@@ -260,7 +260,13 @@ jobs:
             # with the queue's target branch instead: `main` takes squash
             # commits, which are never ancestors of a queue head, so that
             # merge-base does not move while the group builds and every job of
-            # one run resolves the same commit. checkout above uses
+            # one run resolves the same commit. That holds only while the queue
+            # merges with SQUASH: under MERGE the tested SHA itself lands on
+            # main, entry 2's merge-base becomes entry 1's head, and the #5901
+            # diff returns without a warning. The method is pinned in
+            # docs/operations/merge-queue-ruleset.json and drift-checked by
+            # scripts/verify_merge_queue_ruleset.py; change it there with this in
+            # mind. checkout above uses
             # fetch-depth: 0; the target branch is fetched explicitly anyway so
             # the ref the merge-base reads is the one named in the payload.
             # A root that cannot be resolved fails closed: the planner must not
