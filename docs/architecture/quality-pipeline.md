@@ -167,6 +167,19 @@ in the receipt with a reason code (`missing-annotation`,
 `behavior_probe_per_callable_timeout_s`, `behavior_probe_gate_timeout_s` and
 the two probe caps.
 
+`agent_test_mutation` checks the changed tests before it runs any mutant
+(`mock_spec.py`, #6150). Every `Mock`, `MagicMock`, `AsyncMock`,
+`NonCallableMock` or `NonCallableMagicMock` must be given a spec (a first
+positional argument, `spec=` or `spec_set=`, or `create_autospec(...)`), and
+every `patch("<first-party target>")` must pass `autospec=`, `spec=`,
+`spec_set=`, `new=` or `new_callable=`. A spec-less mock answers to any
+attribute name, so a test can assert on an API the code does not have and
+still pass. A spec makes that an `AttributeError` at run time. The gate fails
+with one `path:line: mock without a spec: ...` line per mock and does not run
+mutmut. Third-party patch targets and `patch.object` are not checked. The
+check reads the tests named by the git diff and by the change set the runner
+was handed.
+
 Gate conditions (`VALID_GATE_CONDITIONS` in `gate_pipeline.py`) gate execution by what changed:
 `always`, `python_changed`, `tests_changed`, `any_changed`, `deps_changed`.
 The legacy condition string `changed_files.any('.py')` is normalised to
