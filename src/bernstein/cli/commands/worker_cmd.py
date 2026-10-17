@@ -27,6 +27,7 @@ import socket
 import time
 from contextlib import suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 import httpx
@@ -48,6 +49,9 @@ from bernstein.core.orchestration.terminal_report_outbox import (
     TerminalReportOutbox,
 )
 from bernstein.core.poll_config import PollConfig, validate_poll_config
+
+if TYPE_CHECKING:
+    import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +215,19 @@ class WorkerLoop:
         self._running = False
         self._active_tasks: dict[str, int] = {}  # task_id -> pid
         self._task_sessions: dict[str, str] = {}  # task_id -> session_id
+        # The waitable handle for each agent this node spawned, and the only
+        # reliable way to read its exit status. A Popen registers itself on
+        # subprocess._active when constructed, so the *next* Popen created
+        # anywhere in the worker -- the git calls in _push_agent_work for a
+        # different task, or the next spawn -- runs _cleanup() and reaps it,
+        # recording the status on the handle. A raw os.waitpid on that pid then
+        # raises ChildProcessError, which used to be read as "status
+        # unknowable": a clean run whose branch was never pushed and whose task
+        # was failed. Polling the handle reads whatever status was recorded,
+        # whoever got there first. Handles are process-local by nature; after a
+        # restart there are none, and the durable outbox -- not a Popen -- is
+        # what survives.
+        self._agent_procs: dict[str, subprocess.Popen[bytes]] = {}
         # The execution claim this node holds per task, captured from the grant.
         # It is the fence the terminal report must carry: without it a report
         # replayed after this node's claim was released (unregister, heartbeat
@@ -403,12 +420,18 @@ class WorkerLoop:
         Each reaped task is queued in the durable outbox as a terminal outcome
         for _report_finished to deliver, so a finished agent transitions its
         task instead of leaving it CLAIMED (#2808). The outcome comes from the
-        exit status: a clean exit (0) is a completion, a non-zero exit or signal
-        kill a failure. A status the worker cannot observe -- a child someone
-        else already reaped, or a process that simply vanished -- is queued as
-        *unknown*: an unwaitable exit proves nothing, so it must not be reported
-        as success. Only the server's authoritative state decides an unknown
-        outcome (#2808 follow-up).
+        exit status read off the handle this worker took at spawn time: a clean
+        exit (0) is a completion, a non-zero exit or signal kill a failure.
+        Reading it from the handle rather than from ``os.waitpid`` is what makes
+        the status reliable -- the child may already have been reaped by
+        ``subprocess._cleanup()`` on the worker's behalf, and its status then
+        lives only on the handle.
+
+        A task with no handle is queued as *unknown*: a worker that restarted
+        never held one, and an in-process, container, or sandbox backend gives
+        none. An exit status nobody observed proves nothing, so it must not be
+        reported as success; only the server's authoritative state decides an
+        unknown outcome (#2808 follow-up).
 
         On a clean exit the agent's work is pushed to the shared remote so
         the central can fetch and merge it (#6538). Push failure downgrades
@@ -425,25 +448,38 @@ class WorkerLoop:
 
         finished: list[tuple[str, str, str]] = []
         for task_id, pid in list(self._active_tasks.items()):
-            exited = False
-            outcome = OUTCOME_UNKNOWN
-            detail = "worker reaped agent process (exit status unavailable)"
-            try:
-                reaped_pid, status = os.waitpid(pid, os.WNOHANG)
-            except ChildProcessError:
-                exited = True
+            proc = self._agent_procs.get(task_id)
+            if proc is not None:
+                exit_code = proc.poll()
+                if exit_code is None:
+                    continue
+                outcome = OUTCOME_DONE if exit_code == 0 else OUTCOME_FAILED
+                detail = f"agent exited with code {exit_code}"
             else:
-                if reaped_pid == pid:
+                # No handle, so this process never started the agent: a worker
+                # that came back after a restart, or a backend that hands out no
+                # child at all. An exit status nobody observed proves nothing.
+                exited = False
+                outcome = OUTCOME_UNKNOWN
+                detail = "worker reaped agent process (exit status unavailable)"
+                try:
+                    reaped_pid, status = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
                     exited = True
-                    exit_code = os.waitstatus_to_exitcode(status)
-                    outcome = OUTCOME_DONE if exit_code == 0 else OUTCOME_FAILED
-                    detail = f"agent exited with code {exit_code}"
-                elif not process_alive(pid):
-                    exited = True
-            if exited:
-                finished.append((task_id, outcome, detail))
+                else:
+                    if reaped_pid == pid:
+                        exited = True
+                        exit_code = os.waitstatus_to_exitcode(status)
+                        outcome = OUTCOME_DONE if exit_code == 0 else OUTCOME_FAILED
+                        detail = f"agent exited with code {exit_code}"
+                    elif not process_alive(pid):
+                        exited = True
+                if not exited:
+                    continue
+            finished.append((task_id, outcome, detail))
         for task_id, outcome, detail in finished:
             del self._active_tasks[task_id]
+            self._agent_procs.pop(task_id, None)
             delivery: tuple[str, str] | None = None
             if outcome == OUTCOME_DONE:
                 delivery = self._push_agent_work(task_id)
@@ -1058,6 +1094,17 @@ class WorkerLoop:
             session = spawner.spawn_for_tasks([Task.from_dict(task)])
             if session and session.pid:
                 self._task_sessions[task_id] = session.id
+                # Lift the handle out of the spawner and hold it here. The
+                # spawner is a local, so its _procs entry dies with this call;
+                # the Popen object itself is then only kept alive by
+                # subprocess._active, where the next Popen in the process reaps
+                # it through _cleanup(). Holding our own reference is what makes
+                # the recorded status readable at reap time instead of lost.
+                # None here means the backend has no local child (in-process,
+                # container, sandbox), and the reap must not invent a status.
+                proc = spawner.session_process(session.id)
+                if proc is not None:
+                    self._agent_procs[task_id] = proc
                 return session.pid
         except Exception as exc:
             logger.warning("Failed to spawn agent for task %s: %s", task_id, exc)

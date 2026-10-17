@@ -136,12 +136,16 @@ server-side guarantee rather than a convention.
 
 Two outcomes deliberately are not treated as success. A clean agent exit whose
 push to the shared remote failed is reported as a failure: work that never left
-the node is not delivered. And an exit status the worker never observed - a
-child someone else reaped, or a process that vanished - is recorded as
-`unknown` and decided from the server's task state, because an unwaitable exit
-proves nothing. An unknown outcome never reaches `/complete`, and it never
-releases the task either: releasing invites a second execution of work that may
-already be done.
+the node is not delivered. And a task the worker holds no process handle for is
+recorded as `unknown` and decided from the server's task state, because an exit
+status nobody observed proves nothing. That happens when the worker restarted
+into a workdir whose agent it never spawned, or when the backend runs the agent
+in a container or sandbox that gives it no local child. It deliberately does
+*not* happen for an agent this worker spawned: the worker keeps that handle and
+reads the exit status from it, because `subprocess` may have reaped the child
+first and left the status on the handle and nowhere else. An unknown outcome
+never reaches `/complete`, and it never releases the task either: releasing
+invites a second execution of work that may already be done.
 
 Delivery coordinates itself across a shared workdir. Each record carries the
 node that produced it and only that node drains it, every mutation is a locked

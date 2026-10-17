@@ -15,6 +15,8 @@ central acknowledges it or the task record settles it.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -189,9 +191,11 @@ class TestReapQueuesDurableOutcome:
     def test_already_reaped_child_is_unknown_not_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """An exit status the worker never read proves nothing (#3.22.0 defect).
 
-        The old code reported this as a success and pushed the branch. A child
-        someone else reaped, or one that simply vanished, is queued as unknown
-        and decided by the server's task record instead.
+        The old code reported this as a success and pushed the branch. This is
+        now the *handle-less* case -- a worker that restarted, or a backend that
+        gives no waitable process -- and it is queued as unknown for the server's
+        task record to decide. A child the worker spawned and can still poll is
+        decided by its real status instead (see TestReapReadsTheRetainedHandle).
         """
         loop = _make_loop(tmp_path)
         loop._active_tasks = {"task-5": 555}
@@ -209,6 +213,73 @@ class TestReapQueuesDurableOutcome:
         assert report.outcome == OUTCOME_UNKNOWN
         assert "exit status unavailable" in report.detail
         assert pushes == []
+
+
+class TestReapReadsTheRetainedHandle:
+    """F4: the exit status must be read from the handle the worker keeps.
+
+    ``_spawn_agent`` used to build its ``AgentSpawner`` as a local, so the
+    ``Popen`` it stored in ``_procs`` went out of scope with the method. A
+    garbage-collected ``Popen`` is still on ``subprocess._active``, so the *next*
+    ``Popen`` created anywhere in the worker reaps it through ``_cleanup()`` --
+    which is exactly what ``_push_agent_work``'s git calls do for another task.
+    The worker's ``os.waitpid`` then raised ``ChildProcessError``, the outcome
+    became UNKNOWN, the branch was never pushed, and the task was failed: work
+    that succeeded was reported as having failed.
+    """
+
+    def test_a_status_subprocess_consumed_first_is_still_reported_as_done(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        loop = _make_loop(tmp_path)
+        # A real child with a real exit status, already waited on by its Popen --
+        # the state _cleanup() leaves the OS in. os.waitpid can no longer see it.
+        proc = subprocess.Popen([sys.executable, "-c", "raise SystemExit(0)"])
+        assert proc.wait() == 0
+
+        loop._active_tasks = {"task-11": proc.pid}
+        loop._task_sessions["task-11"] = "sess-11"
+        loop._agent_procs["task-11"] = proc
+        monkeypatch.setattr(loop, "_push_agent_work", lambda tid: ("agent/sess-11", "sha-11"))
+
+        assert loop._reap_finished() is True
+        (report,) = _queued(loop)
+        assert report.outcome == OUTCOME_DONE
+        assert report.detail == "agent exited with code 0"
+        # The whole point: a clean exit still delivers.
+        assert (report.agent_branch, report.agent_sha) == ("agent/sess-11", "sha-11")
+        # And the handle leaves with the slot, so a restarted worker cannot
+        # mistake a stale Popen for a live agent.
+        assert loop._agent_procs == {}
+
+    def test_a_failing_handle_is_reported_as_failed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        loop = _make_loop(tmp_path)
+        proc = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+        assert proc.wait() == 3
+
+        loop._active_tasks = {"task-12": proc.pid}
+        loop._agent_procs["task-12"] = proc
+        monkeypatch.setattr(loop, "_push_agent_work", lambda tid: pytest.fail("a failed agent must not push"))
+
+        assert loop._reap_finished() is True
+        (report,) = _queued(loop)
+        assert report.outcome == OUTCOME_FAILED
+        assert report.detail == "agent exited with code 3"
+
+    def test_a_still_running_handle_is_not_reaped(self, tmp_path: Path) -> None:
+        """Polling a live handle must not block the loop or free the slot."""
+        loop = _make_loop(tmp_path)
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            loop._active_tasks = {"task-13": proc.pid}
+            loop._agent_procs["task-13"] = proc
+
+            assert loop._reap_finished() is False
+            assert loop._active_tasks == {"task-13": proc.pid}
+            assert _queued(loop) == []
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
 
 
 class TestAcknowledgeBeforeSettling:
