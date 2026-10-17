@@ -15,7 +15,7 @@ Deterministic tick loop: watch tasks, spawn agents, verify completion, repeat. C
 | `escalation.py` | Journal-anchored, Ed25519-signed stall escalation receipts |
 | `decomposition_proposal.py`, `decomposition_emitter.py` | Content-addressed proposal to split an issue whose tasks keep exhausting their retries |
 | `trigger_manager.py` | Evaluates `triggers.yaml` rules into `TriggerEvent`s (event and cron sources) |
-| `worker.py` | `bernstein-worker` process wrapper for spawned CLI agents |
+| `worker.py`, `terminal_report_outbox.py` | `bernstein-worker` process wrapper for spawned CLI agents; the outbox is the durable queue of terminal outcomes a worker still owes the central (appended + fsynced before delivery, removed only on an ack) (#2808) |
 | `run_closure_owner.py` | Universal authenticated run closure owner |
 | `issue_claim.py` | Claim etiquette for coordinator-free issue intake: recognises a run's own claim, detects a stale one |
 | `source_fetcher.py` | The research worker's `fetch(ref) -> bytes` protocol plus a recorded, offline implementation (#3112) |
@@ -29,9 +29,9 @@ Heavy lifting lives in siblings: `../tasks/task_lifecycle.py` (claim, spawn, ret
 - Replay is strict: a cache miss raises `ReplayMissError`, not a silent live call.
 - Prefer pure decision functions (`run_stall.py` is the model) so a criterion is testable without a tick loop, server, or real clock.
 - A quiescence self-stop writes `.sdd/runtime/spawner-deliberate-stop`, and the watchdog does not restart past it (#6097, #6474). So the settle re-check refuses to stop while any task is `claimed` or `in_progress`, whoever holds it (#6537), and counts archived tasks as terminal (#5968).
+- A worker's terminal outcome is queued durably *before* it is posted and removed only on a response that acknowledges the task (#2808): never clear a queued outcome on a failed post, never read an unparseable or foreign 2xx body as that acknowledgement, reconcile `409`/`422` against `GET /tasks/{id}` rather than blind-retrying, and leave a conflicting server outcome in place instead of compensating over it. An exit status the worker did not observe is `unknown`, never success - resolved from server state, and it posts neither `/complete` nor `/release` (a release re-opens work that may be done).
 - A failed task handed over by the quiescence pass is tracked for drain only; the completion chain runs for `done` tasks and never reopens a failed one (#6542).
-- Optional third-party imports degrade to a no-op instead of raising; `trigger_manager.py` yields no events when `croniter` is absent.
-- Operator config is validated per item: a bad entry is logged and skipped, never fatal (`croniter` can raise `TypeError` or `AttributeError`, not only `ValueError`).
+- Optional third-party imports degrade to a no-op instead of raising; `trigger_manager.py` yields no events when `croniter` is absent. Operator config is validated per item: a bad entry is logged and skipped, never fatal (`croniter` can raise `TypeError` or `AttributeError`, not only `ValueError`).
 
 ## Testing
 

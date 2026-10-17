@@ -79,6 +79,80 @@ mapped to the worker that delivered it, and the guarantee it does carry is
 that no task is ever mapped to one claimant while another node holds it,
 because every path back to the pool records a release first.
 
+## Durable terminal reports
+
+A remote worker owns the terminal transition of the task it executes: the
+in-agent completion call may never fire (crash, kill, wrong URL), so when the
+worker reaps the agent process it reports the outcome itself. In 3.22.0 that
+report was held in memory and cleared before the response was read, so an
+HTTP 500, a 409, or a dead socket discarded the outcome as thoroughly as never
+posting it, and the task sat `claimed` with no live agent behind it.
+
+The outcome is now written to an outbox *before* any delivery attempt, and only
+an acknowledgement removes it:
+
+```text
+.sdd/runtime/worker_outbox.jsonl
+```
+
+The file is append-only per outcome and fsynced before the first attempt, so a
+report outlives both the failed request and the worker process. Retry state
+(attempt count, next-attempt gate, last status) lives in the record too, so a
+restart resumes the schedule instead of re-hammering an endpoint already in
+trouble. Settled records are dropped by an atomic rewrite, which is what stops
+a delivered outcome replaying after a reboot.
+
+What retires a report is the response, read deliberately:
+
+| Central answers | Worker does |
+| --- | --- |
+| `200`/`201` naming this task id | Delivered - record dropped |
+| `200` whose body is not this task | Not an ack; retried (a cache or proxy page must not retire a real outcome) |
+| `409`/`422`/`404` | Reconciled against `GET /tasks/{id}`, never blind-retried |
+| `429` | Held for the response's `Retry-After` |
+| `401`/`403` | Held at the capped interval; a token fix recovers it without a restart |
+| `5xx` / transport failure | Retried on a bounded, jittered backoff |
+
+Retries are bounded in delay, never in count - capping the count is the same
+silent discard by another name. Nothing sleeps in the worker loop: a report
+that is not due yet is simply absent from the due set, so a wedged central
+slows report retries without delaying the heartbeats and claims the same loop
+carries.
+
+Reconciling a `409` is not optional, because the status code is genuinely
+ambiguous: it is equally true when this worker's own earlier attempt landed
+(a duplicate to retire) and when the janitor or an operator ended the task
+differently (a conflict that must not be overwritten). The task record tells
+them apart. On a conflict the central is authoritative - the worker logs it and
+posts nothing further, so a node that believes a task succeeded can never
+paper over a server-side failure, and neither can it post a compensating
+`/fail` to "agree" with one.
+
+Two outcomes deliberately are not treated as success. A clean agent exit whose
+push to the shared remote failed is reported as a failure: work that never left
+the node is not delivered. And an exit status the worker never observed - a
+child someone else reaped, or a process that vanished - is recorded as
+`unknown` and decided from the server's task state, because an unwaitable exit
+proves nothing. An unknown outcome never reaches `/complete`, and it never
+releases the task either: releasing invites a second execution of work that may
+already be done.
+
+Delivery coordinates itself across a shared workdir. Each record carries the
+node that produced it and only that node drains it, every mutation is a locked
+load-modify-save, and the reported `(branch, sha)` pair is frozen at reap time
+and replayed verbatim, so a retry can never move HEAD out from under the merge
+preview that verifies it.
+
+For an operator, the file is the whole queue - `cat` it to see what a node
+still owes and why each attempt failed:
+
+```bash
+cat .sdd/runtime/worker_outbox.jsonl
+```
+
+A record that will not drain is a central that will not acknowledge it, not a
+worker that forgot.
+
 ## Worker mailbox
 
 `POST /tasks/{task_id}/messages` hands a structured payload to a worker's

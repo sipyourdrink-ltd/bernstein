@@ -33,9 +33,75 @@ import httpx
 
 from bernstein.cli.helpers import access_proxy_headers, adapter_cli_choice, console
 from bernstein.core.capacity_wake import CapacityWake, WakeReason
+from bernstein.core.log_safe import for_log
+from bernstein.core.orchestration.terminal_report_outbox import (
+    OUTCOME_DONE,
+    OUTCOME_FAILED,
+    OUTCOME_UNKNOWN,
+    SETTLE_ACKED,
+    SETTLE_CONFLICT,
+    SETTLE_DUPLICATE,
+    SETTLE_GONE,
+    SETTLE_RESOLVED,
+    TerminalReport,
+    TerminalReportOutbox,
+)
 from bernstein.core.poll_config import PollConfig, validate_poll_config
 
 logger = logging.getLogger(__name__)
+
+#: Server states that mean the outcome this worker owed already landed.
+#: ``pending_approval`` counts: an approval-gated task reached the state the
+#: report asked for, it just has a human gate before taking effect.
+_SUCCESS_STATES = frozenset({"done", "closed", "pending_approval"})
+#: Server states that mean the task ended, but not the way this worker reported.
+_FAILURE_STATES = frozenset({"failed", "cancelled", "refused", "abandoned"})
+
+#: Responses that acknowledge a report outright.
+_ACK_STATES = frozenset({200, 201})
+#: Credential rejections: not transient, but not a reason to stop the node.
+_AUTH_STATES = frozenset({401, 403})
+#: How long an auth-rejected report is held before it is tried again. A
+#: credential fix by the operator must recover the report without a restart.
+_AUTH_HOLD_S = 300.0
+
+
+class _TaskUnreachableError(RuntimeError):
+    """The authoritative task state could not be read.
+
+    Deliberately distinct from "the task does not exist": collapsing the two
+    would let a two-second outage be read as a deleted task, which is exactly
+    how a real outcome gets discarded.
+    """
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """Seconds requested by a ``Retry-After`` header, if it carries one.
+
+    Only the delta-seconds form is honoured; the HTTP-date form is rare on this
+    server and parsing it would need clock-skew handling for no real gain.
+    """
+    raw = resp.headers.get("Retry-After") if resp.headers else None
+    if not raw:
+        return None
+    try:
+        requested = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return requested if requested >= 0 else None
+
+
+def _retryable_states() -> frozenset[int]:
+    """Status codes the shared HTTP retry policy treats as transient.
+
+    Read from :class:`RetryConfig` rather than restated here, so this worker and
+    every other Bernstein HTTP client agree on what "transient" means. Deferred
+    because importing the server package pulls FastAPI into the worker CLI,
+    and the set is only needed once a report has already failed.
+    """
+    from bernstein.core.server.http_retry import RetryConfig
+
+    return RetryConfig().retryable_status_codes
 
 
 def _detect_worker_adapter() -> str:
@@ -144,13 +210,13 @@ class WorkerLoop:
         self._running = False
         self._active_tasks: dict[str, int] = {}  # task_id -> pid
         self._task_sessions: dict[str, str] = {}  # task_id -> session_id
-        # Terminal outcomes reaped from finished agents, drained to the server
-        # by _report_finished. (task_id, ok, detail, delivery). Worker-side
-        # reporting is authoritative and does not depend on the in-agent
-        # completion curl (#2808): without it a finished agent leaves its task
-        # CLAIMED forever. ``delivery`` is an optional (branch, sha) tuple
-        # for remote agent work that was pushed to the shared remote (#6538).
-        self._pending_reports: list[tuple[str, bool, str, tuple[str, str] | None]] = []
+        # Terminal outcomes owed the central server, drained by _report_finished.
+        # Worker-side reporting is authoritative and does not depend on the
+        # in-agent completion curl (#2808): without it a finished agent leaves
+        # its task CLAIMED forever. This queue is durable and hydrates on
+        # construction, so an outcome survives both a failed post and a worker
+        # restart; a report is dropped only once the server acknowledges it.
+        self._outbox = TerminalReportOutbox(self._workdir, node=self._name)
         self._wake = CapacityWake()
 
     def _headers(self) -> dict[str, str]:
@@ -323,28 +389,35 @@ class WorkerLoop:
         return max(0, self._max_agents - len(self._active_tasks))
 
     def _reap_finished(self) -> bool:
-        """Remove tasks whose agent process has exited.
+        """Remove tasks whose agent process has exited, queueing each outcome.
 
-        Each reaped task is queued as a terminal outcome (success/failure from
-        the agent exit code) for _report_finished to post to the server, so a
-        finished agent transitions its task instead of leaving it CLAIMED
-        (#2808). Success/failure is derived from the exit code: a clean exit
-        (0) completes the task; a non-zero exit or signal kill fails it.
+        Each reaped task is queued in the durable outbox as a terminal outcome
+        for _report_finished to deliver, so a finished agent transitions its
+        task instead of leaving it CLAIMED (#2808). The outcome comes from the
+        exit status: a clean exit (0) is a completion, a non-zero exit or signal
+        kill a failure. A status the worker cannot observe -- a child someone
+        else already reaped, or a process that simply vanished -- is queued as
+        *unknown*: an unwaitable exit proves nothing, so it must not be reported
+        as success. Only the server's authoritative state decides an unknown
+        outcome (#2808 follow-up).
 
         On a clean exit the agent's work is pushed to the shared remote so
         the central can fetch and merge it (#6538). Push failure downgrades
         the outcome to a failure: work that never leaves the node is not
-        a completion.
+        a completion. The resulting (branch, sha) pair is captured exactly once
+        here and frozen into the queued report, so every later retry -- and
+        every retry after a restart -- re-delivers the same SHA the central
+        verifies against instead of re-pushing and moving HEAD under it.
 
         Returns:
             ``True`` if at least one task was reaped (a slot became available).
         """
         from bernstein.core.platform_compat import process_alive
 
-        finished: list[tuple[str, bool, str]] = []
+        finished: list[tuple[str, str, str]] = []
         for task_id, pid in list(self._active_tasks.items()):
             exited = False
-            ok = True
+            outcome = OUTCOME_UNKNOWN
             detail = "worker reaped agent process (exit status unavailable)"
             try:
                 reaped_pid, status = os.waitpid(pid, os.WNOHANG)
@@ -354,22 +427,24 @@ class WorkerLoop:
                 if reaped_pid == pid:
                     exited = True
                     exit_code = os.waitstatus_to_exitcode(status)
-                    ok = exit_code == 0
+                    outcome = OUTCOME_DONE if exit_code == 0 else OUTCOME_FAILED
                     detail = f"agent exited with code {exit_code}"
                 elif not process_alive(pid):
                     exited = True
             if exited:
-                finished.append((task_id, ok, detail))
-        for task_id, ok, detail in finished:
+                finished.append((task_id, outcome, detail))
+        for task_id, outcome, detail in finished:
             del self._active_tasks[task_id]
             delivery: tuple[str, str] | None = None
-            if ok:
+            if outcome == OUTCOME_DONE:
                 delivery = self._push_agent_work(task_id)
                 if delivery is None:
-                    ok = False
+                    outcome = OUTCOME_FAILED
                     detail = f"{detail}; delivery failed: agent branch not pushed"
             self._task_sessions.pop(task_id, None)
-            self._pending_reports.append((task_id, ok, detail, delivery))
+            # Durable before delivery: if the post below fails or this process
+            # dies, the outcome is still on disk and still owed.
+            self._outbox.append(task_id, outcome, detail, delivery=delivery)
         if finished:
             self._wake.signal_capacity()
         return bool(finished)
@@ -555,38 +630,50 @@ class WorkerLoop:
         task_id: str,
         summary: str,
         delivery: tuple[str, str] | None = None,
-    ) -> None:
+    ) -> httpx.Response | None:
         """Report task completion to the central server.
 
         When *delivery* is ``(branch, sha)``, the body includes
         ``agent_branch`` and ``agent_sha`` so the central can fetch and
         merge the remote agent's work (#6538).
+
+        Returns:
+            The response, or ``None`` if the request never completed. The
+            caller decides whether that counts as an acknowledgement: the
+            status code IS the outcome, and discarding it is what let a 500 or
+            a dead socket look like a delivered report.
         """
         body: dict[str, str] = {"result_summary": summary}
         if delivery is not None:
             body["agent_branch"] = delivery[0]
             body["agent_sha"] = delivery[1]
         try:
-            client.post(
+            return client.post(
                 f"{self._server_url}/tasks/{task_id}/complete",
                 json=body,
                 headers=self._headers(),
                 timeout=10.0,
             )
         except httpx.HTTPError as exc:
-            logger.warning("Failed to report completion for %s: %s", task_id, exc)
+            logger.warning("Failed to report completion for %s: %s", for_log(task_id), exc)
+            return None
 
-    def _fail_task(self, client: httpx.Client, task_id: str, reason: str) -> None:
-        """Report task failure to the central server."""
+    def _fail_task(self, client: httpx.Client, task_id: str, reason: str) -> httpx.Response | None:
+        """Report task failure to the central server.
+
+        Returns:
+            The response, or ``None`` if the request never completed.
+        """
         try:
-            client.post(
+            return client.post(
                 f"{self._server_url}/tasks/{task_id}/fail",
                 json={"reason": reason},
                 headers=self._headers(),
                 timeout=10.0,
             )
         except httpx.HTTPError as exc:
-            logger.warning("Failed to report failure for %s: %s", task_id, exc)
+            logger.warning("Failed to report failure for %s: %s", for_log(task_id), exc)
+            return None
 
     def _release_task(self, client: httpx.Client, task_id: str, reason: str) -> None:
         """Release a claimed task back to the open pool after a failed spawn.
@@ -607,21 +694,253 @@ class WorkerLoop:
             logger.warning("Failed to release task %s back to pool: %s", task_id, exc)
 
     def _report_finished(self, client: httpx.Client) -> None:
-        """Post queued terminal outcomes for reaped agents to the server.
+        """Deliver every terminal outcome the server has not acknowledged yet.
 
         This is what drives a remotely executed task to a terminal state: the
-        in-agent completion curl may never fire (crash, kill, wrong URL), so
-        the worker reports completion/failure itself (#2808). A task already
-        terminal server-side simply no-ops the redundant report.
+        in-agent completion curl may never fire (crash, kill, wrong URL), so the
+        worker reports completion/failure itself (#2808).
+
+        The outcomes come from the durable outbox and only one thing removes
+        them: an acknowledgement from the central. A 5xx, a dead socket, or a
+        409 therefore leaves the report queued and retried on a later cycle
+        instead of discarding it. Nothing sleeps here - a report that is not due
+        yet is simply absent from :meth:`due`, so a wedged central slows report
+        retries without stalling the heartbeats and claims this loop also
+        carries (#3309).
         """
-        if not self._pending_reports:
+        for report in self._outbox.due():
+            self._deliver_report(client, report)
+
+    def _deliver_report(self, client: httpx.Client, report: TerminalReport) -> None:
+        """Attempt one queued report and settle it from the response."""
+        if report.outcome == OUTCOME_UNKNOWN:
+            self._resolve_unknown_outcome(client, report)
             return
-        pending, self._pending_reports = self._pending_reports, []
-        for task_id, ok, detail, delivery in pending:
-            if ok:
-                self._complete_task(client, task_id, detail, delivery)
+        if report.outcome == OUTCOME_DONE:
+            delivery = self._delivery_of(report)
+            resp = self._complete_task(client, report.task_id, report.detail, delivery)
+        else:
+            resp = self._fail_task(client, report.task_id, report.detail)
+        self._settle_from_response(client, report, resp)
+
+    @staticmethod
+    def _delivery_of(report: TerminalReport) -> tuple[str, str] | None:
+        """Replay the (branch, sha) frozen at reap time, or None if absent.
+
+        Deliberately replayed rather than recomputed: the central verifies the
+        reported SHA against the branch it fetches (#6538), so re-pushing on a
+        retry would move HEAD out from under the verdict the janitor renders.
+        """
+        if report.agent_branch and report.agent_sha:
+            return (report.agent_branch, report.agent_sha)
+        return None
+
+    def _settle_from_response(
+        self,
+        client: httpx.Client,
+        report: TerminalReport,
+        resp: httpx.Response | None,
+    ) -> None:
+        """Decide whether one delivery attempt settled, retried, or conflicts.
+
+        Every branch either settles the report on real evidence or reschedules
+        it; there is no branch that simply drops it, which is the defect this
+        path existed to fix.
+        """
+        if resp is None:
+            # Transport failure: the report was never even evaluated upstream.
+            self._outbox.note_attempt(report.report_id, "transport-failure")
+            return
+
+        code = resp.status_code
+        if code in _ACK_STATES:
+            if self._acknowledges(resp, report.task_id):
+                self._outbox.settle(report.report_id, SETTLE_ACKED)
             else:
-                self._fail_task(client, task_id, detail)
+                # A 200 that does not name this task is a proxy or cache
+                # answering, not the central confirming the transition.
+                self._outbox.note_attempt(report.report_id, f"http-{code}-unverifiable")
+            return
+
+        if code in (404, 409, 422):
+            # All three mean "the server already knows something you don't":
+            # 409 is already terminal, 422 auto-failed the task and released
+            # the slot, 404 may be a deleted task. Only the task record says
+            # which, so ask it - never blind-retry these.
+            self._reconcile(client, report, f"http-{code}")
+            return
+
+        if code in _AUTH_STATES:
+            logger.warning(
+                "central rejected the terminal report for task %s with %d; holding it for %ds "
+                "(check this worker's bearer token)",
+                for_log(report.task_id),
+                code,
+                int(_AUTH_HOLD_S),
+            )
+            self._outbox.note_attempt(report.report_id, f"http-{code}", retry_after_s=_AUTH_HOLD_S)
+            return
+
+        if code == 429:
+            self._outbox.note_attempt(
+                report.report_id,
+                "http-429",
+                retry_after_s=_retry_after_seconds(resp),
+            )
+            return
+
+        status = f"http-{code}"
+        if code >= 500 or code in _retryable_states():
+            self._outbox.note_attempt(report.report_id, status)
+            return
+
+        logger.warning(
+            "central answered %d for the terminal report of task %s; retrying at the capped interval",
+            code,
+            for_log(report.task_id),
+        )
+        self._outbox.note_attempt(report.report_id, status, retry_after_s=_AUTH_HOLD_S)
+
+    @staticmethod
+    def _acknowledges(resp: httpx.Response, task_id: str) -> bool:
+        """Whether a 2xx response confirms this task specifically.
+
+        The endpoints answer with the serialised task, so the id is the proof.
+        An unparseable body or a different id is not an ack: a CDN page or a
+        stale cache must not be able to retire a real outcome.
+        """
+        try:
+            body = resp.json()
+        except ValueError:
+            return False
+        return isinstance(body, dict) and body.get("id") == task_id
+
+    def _task_state(self, client: httpx.Client, task_id: str) -> str | None:
+        """Read the authoritative status of a task from the central.
+
+        Returns:
+            The status string, or ``None`` when the central says the task does
+            not exist.
+
+        Raises:
+            _TaskUnreachableError: When the status could not be read at all.
+        """
+        try:
+            resp = client.get(
+                f"{self._server_url}/tasks/{task_id}",
+                headers=self._headers(),
+                timeout=10.0,
+            )
+        except httpx.HTTPError as exc:
+            raise _TaskUnreachableError(str(exc)) from exc
+        if resp.status_code == 404:
+            return None
+        if resp.status_code not in _ACK_STATES:
+            raise _TaskUnreachableError(f"HTTP {resp.status_code}")
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            raise _TaskUnreachableError("unreadable task payload") from exc
+        if not isinstance(body, dict) or body.get("id") != task_id:
+            raise _TaskUnreachableError("task payload did not name this task")
+        status = body.get("status")
+        if not isinstance(status, str) or not status:
+            raise _TaskUnreachableError("task payload carried no status")
+        return status
+
+    def _reconcile(self, client: httpx.Client, report: TerminalReport, context: str) -> None:
+        """Settle a rejected report against the server's authoritative state.
+
+        A 409/422 cannot be read on its own: it says the transition was
+        illegal, which is equally true when this worker's own earlier attempt
+        landed (a duplicate it should retire) and when something else ended the
+        task differently (a conflict it must not overwrite). Asking the task
+        record is what tells them apart.
+        """
+        try:
+            status = self._task_state(client, report.task_id)
+        except _TaskUnreachableError as exc:
+            logger.warning(
+                "cannot reconcile %s for task %s yet: %s", context, for_log(report.task_id), for_log(str(exc))
+            )
+            self._outbox.note_attempt(report.report_id, f"{context}-unreconcilable")
+            return
+
+        if status is None:
+            logger.warning(
+                "task %s no longer exists on the central; dropping its %s report",
+                for_log(report.task_id),
+                report.outcome,
+            )
+            self._outbox.settle(report.report_id, SETTLE_GONE)
+            return
+
+        if status in _SUCCESS_STATES or status in _FAILURE_STATES:
+            if self._outcome_matches(report.outcome, status):
+                self._outbox.settle(report.report_id, SETTLE_DUPLICATE)
+                return
+            # The server holds a different terminal outcome than this worker
+            # observed (an in-agent completion, a janitor verdict, an operator).
+            # The central is authoritative: retire the report, say so loudly,
+            # and never post a compensating transition over the top of it.
+            logger.warning(
+                "task %s ended %s on the central but this node reported %s (%s); leaving the server outcome in place",
+                for_log(report.task_id),
+                for_log(status),
+                report.outcome,
+                context,
+            )
+            self._outbox.settle(report.report_id, SETTLE_CONFLICT)
+            return
+
+        # Still open/claimed: the 409 came from a version conflict or the
+        # auto-claim path racing, not from a settled outcome. Retry.
+        self._outbox.note_attempt(report.report_id, f"{context}:{status}")
+
+    @staticmethod
+    def _outcome_matches(outcome: str, server_status: str) -> bool:
+        """Whether a queued outcome is equivalent to the state on the server."""
+        if outcome == OUTCOME_DONE:
+            return server_status in _SUCCESS_STATES
+        if outcome == OUTCOME_FAILED:
+            return server_status in _FAILURE_STATES
+        return False
+
+    def _resolve_unknown_outcome(self, client: httpx.Client, report: TerminalReport) -> None:
+        """Decide a report whose agent exit status was never observed.
+
+        An exit status this worker could not read proves nothing, so it is never
+        reported as success. The central's task record decides instead: if the
+        task already reached a terminal state (typically the agent completing
+        its own task before dying), the outcome is settled as resolved; if it is
+        still live, the task is failed explicitly. It is deliberately *not*
+        released back to the open pool - a release invites a second execution of
+        a task whose work may already be done.
+        """
+        try:
+            status = self._task_state(client, report.task_id)
+        except _TaskUnreachableError as exc:
+            logger.info(
+                "cannot resolve the unknown exit of task %s yet: %s",
+                for_log(report.task_id),
+                for_log(str(exc)),
+            )
+            self._outbox.note_attempt(report.report_id, "unknown-unreconcilable")
+            return
+
+        if status is None:
+            self._outbox.settle(report.report_id, SETTLE_GONE)
+            return
+        if status in _SUCCESS_STATES or status in _FAILURE_STATES:
+            self._outbox.settle(report.report_id, SETTLE_RESOLVED)
+            return
+
+        resp = self._fail_task(
+            client,
+            report.task_id,
+            f"{report.detail}; worker could not observe the agent exit status and the task was still {status}",
+        )
+        self._settle_from_response(client, report, resp)
 
     def _spawn_agent(self, task: dict) -> int | None:
         """Spawn a CLI agent process to work on a task. Returns PID or None."""
@@ -806,7 +1125,10 @@ class WorkerLoop:
                 if self._wake.wait(timeout_s=poll_s) == WakeReason.ABORT:
                     break
 
-            # Flush any outcomes reaped in the final cycle before leaving.
+            # One last reap-and-flush so a clean stop does not defer reports
+            # unnecessarily. It is not the last chance for them: anything still
+            # unacknowledged is on disk and is drained by the next start, which
+            # is why a failing central cannot turn shutdown into data loss.
             self._reap_finished()
             self._report_finished(client)
             self._unregister(client, node_id)
