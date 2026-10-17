@@ -130,7 +130,12 @@ class TerminalReport:
             the fence exists to close.
         node: Name of the worker node that produced the report; only that node
             drains it.
-        report_id: Content-unique id, stable across restarts.
+        report_id: This queueing's own id, stable across restarts because it is
+            persisted with the record. It identifies one queued *report*, not the
+            outcome it carries: it is minted per :meth:`append`, so the same task
+            reporting the same outcome twice yields two ids and two posts. The
+            claim fence is what makes the second post harmless, so nothing here
+            tries to derive an id from the content and deduplicate on it.
         attempts: Delivery attempts already made (drives the backoff schedule).
         first_seen_at: Wall-clock creation time.
         next_attempt_at: Wall-clock gate for the next attempt; persisted so a

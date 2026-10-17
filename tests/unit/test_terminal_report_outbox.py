@@ -86,7 +86,7 @@ class TestAppendIsDurable:
     def test_undurable_append_degrades_to_retryable_not_lost(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A wedged lock must not silently discard the outcome (#3.22.0 defect)."""
+        """A wedged lock must not silently discard the outcome (#2808)."""
 
         class _Busy:
             def __enter__(self) -> None:

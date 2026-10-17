@@ -678,6 +678,61 @@ grep -n "ruff\|uv run" .sdd/runtime/<session>.log   # which command was run
 
 ---
 
+## 24. Task Stays `CLAIMED` After Its Agent Finished (Undelivered Terminal Report)
+
+**Symptom:** The agent on a worker node exited cleanly, but the task is still
+`CLAIMED` on the central. The node's log repeats a refused report every few
+minutes and never settles.
+
+**Cause:** The worker reports its own agent's terminal state (the in-agent
+completion curl is not trusted), and the report only leaves the node's outbox on
+an acknowledgement from the central. Until then it is retried, so an
+undelivered report looks like a hang and is not one: nothing has been lost, and
+nothing is discarded by waiting.
+
+**Diagnosis:**
+
+```bash
+# The queue this node still owes. Empty means the reports went out.
+cat .sdd/runtime/worker_outbox.jsonl
+```
+
+Read `last_status` on the pending record -- it says which of the four cases this
+is. Meanings and the reasoning behind each are in
+[Cross-worker coordination](../orchestration/worker-coordination.md#durable-terminal-reports).
+
+| `last_status` contains | What it means | What to do |
+|------------------------|---------------|------------|
+| `http-401` / `http-403` | The central rejected this node's token | Fix the bearer token; held reports recover without a restart |
+| `task-absent` | The central says the task does not exist | Check the token's tenant before believing it -- a wrong-tenant token is answered with the same body. Reports drop only after the verdict repeats three times |
+| `:blocked`, `:suspended`, `:planned`, `:waiting_for_subtasks` | The task is parked and cannot accept a report | Un-park it or end it on the central. Escalated to `ERROR` after about half an hour; no retry from the node can fix this |
+| `transport-failure`, `http-5xx` | The central never answered | Nothing to do; it is retried. Check reachability if it persists |
+
+Two log lines to search for, both naming the task:
+
+- `this node's delivery (... ) was refused and is not merged` -- the task reached
+  a terminal state by some other route, so this node's pushed branch was never
+  merged. The branch and SHA in that line are the only surviving copy of the
+  artifact on this node; recover it through the janitor's posted-artefact merge
+  preview (#6612).
+- `deferring N terminal report(s)` -- the cycle ran out of its 5s report budget so
+  heartbeats and claims could go first. Normal under a slow central; a large `N`
+  that never drains means the central is not answering.
+
+**Resolution:**
+
+- Do not restart the worker to "clear" it. The queue is on disk and the retry
+  schedule is on the record, so a restart resumes the same state; a new hostname
+  does not discard it either.
+- If the outcome is genuinely stale (the task was reopened and is now owned by
+  another node), the report retires itself with a `claim_superseded` 409 -- that
+  is the fence working, not a failure.
+- Ending or reopening the task on the central is the operator's lever. The worker
+  never posts a compensating transition over a server-side outcome it did not
+  produce.
+
+---
+
 ## Quick Reference: Exit Codes
 
 | Exit code | Meaning | Likely cause |

@@ -214,7 +214,7 @@ class TestReapQueuesDurableOutcome:
         assert _queued(loop) == []
 
     def test_already_reaped_child_is_unknown_not_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """An exit status the worker never read proves nothing (#3.22.0 defect).
+        """An exit status the worker never read proves nothing (#2808).
 
         The old code reported this as a success and pushed the branch. This is
         now the *handle-less* case -- a worker that restarted, or a backend that
