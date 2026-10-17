@@ -311,5 +311,9 @@ def test_dead_path_janitor_pass_unchanged() -> None:
     from bernstein.core.agents import agent_lifecycle
 
     src = inspect.getsource(agent_lifecycle.handle_orphaned_task)
-    # The synchronous completion-verification call must still be present.
-    assert "passed, failed_signals = verify_task_completion(task, orch._workdir)" in src
+    # The synchronous completion-verification call must still be present; it
+    # is bound through the merge-preview seam so the dead agent's branch is
+    # graded on the merged tree, then invoked inline.
+    assert "_bind_verification(\n            verify_task_completion," in src
+    assert "passed, failed_signals = _verify(*_args)" in src
+    assert "_enqueue_alive_exit_janitor_pass" not in src
