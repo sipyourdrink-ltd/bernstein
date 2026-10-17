@@ -103,6 +103,9 @@ When Bernstein spawns Aider for a task it narrows what Aider reads:
 - Plan-level `context_files:` that exist in the worktree are passed with
   `--read` (read-only). A path that is both owned and context is passed once,
   as editable.
+- When a step declares files, Aider also gets a per-session ignore file
+  (`--aiderignore`) that admits only the declared paths, so files the task
+  prompt merely mentions are not pulled into the chat or the repository map.
 - The repository map budget scales with task scope: `--map-tokens` is 512
   for `small`, 1024 for `medium`, 2048 for `large`.
 
