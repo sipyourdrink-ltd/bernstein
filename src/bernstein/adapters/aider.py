@@ -51,6 +51,7 @@ class AiderAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
         multimodal_context: Any | None = None,
+        context_files: list[str] | None = None,
     ) -> SpawnResult:
         self.refuse_multimodal_if_needed(multimodal_context)
         self.enforce_network_policy()
@@ -91,6 +92,12 @@ class AiderAdapter(CLIAdapter):
             "--analytics-log",
             str(analytics_log_path),
         ]
+
+        if context_files:
+            for cf in context_files:
+                resolved = workdir / cf
+                if resolved.is_file():
+                    cmd.extend(["--file", str(resolved)])
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"

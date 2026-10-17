@@ -263,6 +263,55 @@ class TestAiderAdapterSpawn:
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
 
+    def test_context_files_added_as_file_flags(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("pass")
+        (tmp_path / "README.md").write_text("hi")
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=530)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-ctx",
+                context_files=["src/main.py", "README.md"],
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        file_args = [inner[i + 1] for i, v in enumerate(inner) if v == "--file"]
+        assert str(tmp_path / "src" / "main.py") in file_args
+        assert str(tmp_path / "README.md") in file_args
+
+    def test_context_files_skips_missing(self, tmp_path: Path) -> None:
+        (tmp_path / "exists.py").write_text("pass")
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=531)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-ctx2",
+                context_files=["exists.py", "missing.py"],
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        file_args = [inner[i + 1] for i, v in enumerate(inner) if v == "--file"]
+        assert str(tmp_path / "exists.py") in file_args
+        assert len(file_args) == 1
+
+    def test_context_files_none_no_file_flags(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=532)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-ctx3",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--file" not in inner
+
     def test_spawn_result_pid(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock(pid=508)
