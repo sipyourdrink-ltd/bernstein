@@ -2927,8 +2927,17 @@ _ORCHESTRATOR_WORKTREE_FILES: frozenset[str] = frozenset(
         ".env",
         "bernstein.yaml",
         "bernstein.yml",
+        # aider writes these into every worktree it runs in; none of them is a
+        # deliverable (measured 2026-10-17: nine clean exits in a row read dirty).
+        ".aider.conf.yml",
+        ".aider.chat.history.md",
+        ".aider.input.history",
+        ".aider.llm.history",
     }
 )
+# aider's own caches, never part of the target repo's work.
+_ADAPTER_WORKTREE_DIRS: tuple[str, ...] = (".aider.tags.cache.v4/", ".aider/")
+_ADAPTER_GITIGNORE_PREFIX = ".aider"
 # Keep this scoped to ``.sdd/``: identities land in ``.sdd/auth`` and
 # attestations in ``.sdd/attestations``, both covered here.  Bare ``auth/``
 # or ``attestations/`` prefixes hide legitimate target-repo work and can cause
@@ -2988,8 +2997,51 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
             continue
         if path in _ORCHESTRATOR_WORKTREE_FILES or path.startswith(_ORCHESTRATOR_WORKTREE_DIRS):
             continue
+        if path.startswith(_ADAPTER_WORKTREE_DIRS):
+            continue
+        if path == ".gitignore" and _gitignore_change_is_adapter_noise(worktree_path):
+            continue
         paths.append(path)
     return paths
+
+
+def _gitignore_change_is_adapter_noise(worktree_path: Path) -> bool:
+    """True when the only lines added to ``.gitignore`` are aider's ``.aider*`` entries.
+
+    aider appends ``.aider*`` to the target repo's ``.gitignore`` on start-up
+    (``--gitignore``, default on). An agent that then exited cleanly with no
+    other change was failed as "deliverable written but never committed" on
+    that single path - nine times in a row on one central, 2026-10-17. A
+    ``.gitignore`` edit with any other added line is still the agent's work.
+    Unreadable diffs are not noise: the caller then counts the path.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD", "--unified=0", "--", ".gitignore"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    added = [
+        line[1:].strip()
+        for line in result.stdout.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added and not result.stdout:
+        # Untracked .gitignore: the whole file is the addition.
+        try:
+            added = [ln.strip() for ln in (worktree_path / ".gitignore").read_text(encoding="utf-8").splitlines()]
+        except OSError:
+            return False
+    added = [ln for ln in added if ln]
+    return bool(added) and all(ln.startswith(_ADAPTER_GITIGNORE_PREFIX) for ln in added)
 
 
 def _has_git_commits_on_branch(worktree_path: Path, since_ts: float) -> bool:
