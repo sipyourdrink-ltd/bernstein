@@ -437,11 +437,14 @@ def _build_file_affinity_groups(
     for task in role_tasks:
         task_files = set(task.owned_files)
         matching_groups: list[int] = []
+        merged_tasks = [task]
         if task_files:
             for i, group in enumerate(affinity_groups):
                 group_files: set[str] = set().union(*(set(t.owned_files) for t in group))  # type: ignore[reportUnknownVariableType]
-                if task_files & group_files and _groups_can_merge(group, [task], agent_affinity):
+                # A bridge must be compatible with every group already selected.
+                if task_files & group_files and _groups_can_merge(group, merged_tasks, agent_affinity):
                     matching_groups.append(i)
+                    merged_tasks.extend(group)
 
         if matching_groups:
             first_idx = matching_groups[0]
