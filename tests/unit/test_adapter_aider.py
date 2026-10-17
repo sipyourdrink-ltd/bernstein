@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.aider import AiderAdapter
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -300,6 +297,25 @@ class TestAiderAdapterSpawn:
         inner = self._spawn_inner(tmp_path)
         assert "--file" not in inner
         assert "--read" not in inner
+        assert "--aiderignore" not in inner
+
+    def test_declared_files_whitelist_everything_else_out(self, tmp_path: Path) -> None:
+        pathspec = pytest.importorskip("pathspec")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "API.md").write_text("x")
+        inner = self._spawn_inner(
+            tmp_path,
+            owned_files=["planned/relay/server.py", "planned/relay/test_[x].py"],
+            context_files=["docs/API.md"],
+        )
+        ignore_file = Path(self._flag_values(inner, "--aiderignore")[0])
+        spec = pathspec.PathSpec.from_lines("gitwildmatch", ignore_file.read_text().splitlines())
+        assert not spec.match_file("planned/relay/server.py")
+        assert not spec.match_file("planned/relay/test_[x].py")
+        assert not spec.match_file("docs/API.md")
+        assert spec.match_file("planned/acc-store/web_api.py")
+        assert spec.match_file("planned/relay/other.py")
+        assert spec.match_file("MASTER-REPORT-INDEX.md")
 
     def test_spawn_result_pid(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()

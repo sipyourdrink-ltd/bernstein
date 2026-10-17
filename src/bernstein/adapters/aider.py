@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,12 @@ _MODEL_MAP: dict[str, str] = {
     "gpt-5.4": "openai/gpt-5.4",  # pinned fallback
     "gpt-5.4-mini": "openai/gpt-5.4-mini",
 }
+
+
+def _whitelist_ignore(paths: list[str]) -> str:
+    """Gitignore-syntax body that ignores every path except *paths*."""
+    escaped = (re.sub(r"([\[\]*?!#\\])", r"\\\1", p.lstrip("/")) for p in paths)
+    return "*\n" + "".join(f"!/{p}\n" for p in escaped)
 
 
 class AiderAdapter(CLIAdapter):
@@ -96,11 +103,19 @@ class AiderAdapter(CLIAdapter):
 
         # Explicit files keep aider from repo-mapping the whole tree: owned files
         # go in editable (aider creates missing ones), context files read-only.
-        for path in dict.fromkeys(owned_files or []):
+        owned = list(dict.fromkeys(owned_files or []))
+        context = [p for p in dict.fromkeys(context_files or []) if p not in owned and (workdir / p).is_file()]
+        for path in owned:
             cmd.extend(["--file", str(workdir / path)])
-        for path in dict.fromkeys(context_files or []):
-            if path not in (owned_files or []) and (workdir / path).is_file():
-                cmd.extend(["--read", str(workdir / path)])
+        for path in context:
+            cmd.extend(["--read", str(workdir / path)])
+        if owned:
+            # --yes-always also approves aider's "add mentioned file?" prompt, and the
+            # task prompt names many paths; a whitelist ignore file keeps every path
+            # outside the declared set out of the chat and the repo map.
+            ignore_path = log_path.parent / f"{session_id}.aiderignore"
+            ignore_path.write_text(_whitelist_ignore(owned + context))
+            cmd.extend(["--aiderignore", str(ignore_path)])
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
