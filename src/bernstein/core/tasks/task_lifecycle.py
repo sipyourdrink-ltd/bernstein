@@ -4921,6 +4921,45 @@ class _JanitorFutureLike(Protocol):
     def done(self) -> bool: ...
 
 
+def _ingest_remote_completion(orch: Any, task: Task) -> str | None:
+    """Return the branch holding a remote completion's posted artifact, or None.
+
+    A ``code_diff`` task yields its posted ``diff`` applied onto HEAD; an
+    artifact-mode task yields its posted ``artifact`` written at the declared
+    output path. No verified artifact, or an artifact that does not apply,
+    yields None with an explicit log line, and verification proceeds on the run
+    checkout so the verdict stays an honest FAIL rather than a silent skip.
+    """
+    from bernstein.core.git.remote_diff_ingest import (
+        RemoteDiffApplyError,
+        ingest_remote_artifact,
+        ingest_remote_diff,
+    )
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    workdir = Path(getattr(orch, "_workdir", "") or "")
+    if not str(workdir):
+        return None
+    sdd_dir = workdir / ".sdd"
+    try:
+        hmac_key = load_or_create_audit_key()
+        if is_artifact_mode(task):
+            branch = ingest_remote_artifact(workdir, sdd_dir, task, hmac_key=hmac_key)
+        else:
+            branch = ingest_remote_diff(workdir, sdd_dir, task.id, hmac_key=hmac_key)
+    except RemoteDiffApplyError as exc:
+        logger.warning("janitor: remote artifact did not apply task=%s detail=%s", task.id, exc.detail[-300:])
+        return None
+    except Exception as exc:  # pragma: no cover - defensive: never lose a task on ingest
+        logger.warning("janitor: remote artifact ingest raised task=%s exc=%s", task.id, exc)
+        return None
+    if branch is None:
+        logger.info("janitor: remote completion without a posted artifact task=%s", task.id)
+        return None
+    logger.info("janitor: remote artifact ingested task=%s branch=%s", task.id, branch)
+    return branch
+
+
 def _enqueue_alive_exit_janitor_pass(
     orch: Any,
     task: Task,
@@ -4997,6 +5036,14 @@ def _enqueue_alive_exit_janitor_pass(
     judge_provider: str | None = getattr(_orch_config, "judge_provider", None)
     executor = getattr(orch, "_executor", None)
     preview_branch = _agent_preview_branch(orch, session_id)
+    if session_id is None and preview_branch is None:
+        # Issue #6611: a worker outside the host completed over HTTP and handed
+        # its output back as a posted artifact. Nothing in the run checkout
+        # carries it, so grading that tree fails every remote completion.
+        # Materialise the receipted bytes as a branch and grade the merged tree.
+        preview_branch = _ingest_remote_completion(orch, task)
+        if preview_branch is not None:
+            session_id = f"remote-{task.id}"
     preview_setup = _preview_setup(orch) if preview_branch is not None else None
     if executor is None:
         # Defensive: if the orchestrator has no executor we still want a

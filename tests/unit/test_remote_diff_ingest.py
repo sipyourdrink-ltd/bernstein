@@ -46,7 +46,7 @@ def _post_diff_artifact(sdd_dir: Path, task_id: str, diff_content: str = DIFF, v
     # Post the artifact for the specified version.
     # We call post_run_artifact once, and it increments the version internally
     # so if we want to post version N, we call it N times.
-    for i in range(version):
+    for _ in range(version):
         post_run_artifact(sdd_dir=sdd_dir, task_id=task_id, key="diff", payload=payload, actor="gha-x", hmac_key=_KEY)
 
 
@@ -141,3 +141,133 @@ def test_conflicting_diff_raises(repo: Path, sdd: Path) -> None:
 
     # No leftover worktree entries
     assert not (repo / ".sdd" / "runtime" / "remote-ingest").exists()
+
+
+# --- artifact-mode ingest -------------------------------------------------
+
+
+def test_ingest_remote_artifact_writes_output_path(repo: Path, sdd: Path) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.evidence.run_artifacts import ArtifactPayload, post_run_artifact
+    from bernstein.core.git.remote_diff_ingest import ingest_remote_artifact
+    from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+    task = SimpleNamespace(
+        id="task-report1", artifact_spec=ArtifactSpec(kind=ArtifactKind.REPORT, output_path="out/report.md")
+    )
+    post_run_artifact(
+        sdd_dir=sdd,
+        task_id=task.id,
+        key="artifact",
+        payload=ArtifactPayload.report(body="# Verdict\n\naccept\n"),
+        actor="gha-x",
+        hmac_key=_KEY,
+    )
+    branch = ingest_remote_artifact(repo, sdd, task, hmac_key=_KEY)
+    assert branch == "agent/remote-task-report1-v1"
+    shown = subprocess.run(
+        ["git", "show", f"{branch}:out/report.md"], cwd=repo, check=True, text=True, capture_output=True
+    ).stdout
+    assert shown.startswith("# Verdict")
+    assert not (repo / ".sdd" / "runtime" / "remote-ingest").exists()
+
+
+def test_ingest_remote_artifact_without_post_returns_none(repo: Path, sdd: Path) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.git.remote_diff_ingest import ingest_remote_artifact
+    from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+    task = SimpleNamespace(
+        id="task-report2", artifact_spec=ArtifactSpec(kind=ArtifactKind.REPORT, output_path="out/r.md")
+    )
+    assert ingest_remote_artifact(repo, sdd, task, hmac_key=_KEY) is None
+
+
+# --- janitor hook ---------------------------------------------------------
+
+
+def test_alive_exit_pass_routes_remote_completion_through_preview(monkeypatch, tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.models import CompletionSignal, Task, TaskType
+
+    from bernstein.core.git import remote_diff_ingest
+    from bernstein.core.tasks import task_lifecycle
+    from bernstein.core.tasks.task_lifecycle import (
+        _enqueue_alive_exit_janitor_pass,
+        _verify_against_merge_preview,
+    )
+
+    submitted: list[tuple] = []
+    executor = SimpleNamespace(submit=lambda fn, *a, **k: submitted.append((fn, a)) or SimpleNamespace())
+    orch = SimpleNamespace(
+        _executor=executor,
+        _processed_done_tasks={},
+        _config=SimpleNamespace(server_url="http://127.0.0.1:8052"),
+        _task_to_session={},
+        _workdir=tmp_path,
+        _find_session_for_task=lambda _tid: None,
+    )
+    task = Task(
+        id="remote-task-1",
+        title="t",
+        description="d",
+        role="qa",
+        task_type=TaskType.STANDARD,
+        status=task_lifecycle.TaskStatus.DONE,
+    )
+    task.completion_signals = [CompletionSignal(type="path_exists", value="planned/x/test_x.py")]
+    monkeypatch.setattr(remote_diff_ingest, "ingest_remote_diff", lambda *a, **k: "agent/remote-remote-task-1-v1")
+    monkeypatch.setattr("bernstein.core.security.audit.load_or_create_audit_key", lambda: _KEY)
+
+    future = _enqueue_alive_exit_janitor_pass(orch, task, reason="alive_exit_tick")
+
+    assert future is not None
+    fn, args = submitted[0]
+    assert fn is _verify_against_merge_preview
+    # (verify_fn, task, workdir, branch, session_id, preview_setup, ...)
+    assert args[3] == "agent/remote-remote-task-1-v1"
+    assert args[4] == "remote-remote-task-1"
+
+
+def test_alive_exit_pass_without_artifact_grades_run_checkout(monkeypatch, tmp_path: Path, caplog) -> None:
+    import logging
+    from types import SimpleNamespace
+
+    from bernstein.core.models import CompletionSignal, Task, TaskType
+
+    from bernstein.core.git import remote_diff_ingest
+    from bernstein.core.tasks import task_lifecycle
+    from bernstein.core.tasks.task_lifecycle import _enqueue_alive_exit_janitor_pass, _verify_against_merge_preview
+
+    submitted: list[tuple] = []
+    executor = SimpleNamespace(submit=lambda fn, *a, **k: submitted.append((fn, a)) or SimpleNamespace())
+    orch = SimpleNamespace(
+        _executor=executor,
+        _processed_done_tasks={},
+        _config=SimpleNamespace(server_url="http://127.0.0.1:8052"),
+        _task_to_session={},
+        _workdir=tmp_path,
+        _find_session_for_task=lambda _tid: None,
+    )
+    task = Task(
+        id="remote-task-2",
+        title="t",
+        description="d",
+        role="qa",
+        task_type=TaskType.STANDARD,
+        status=task_lifecycle.TaskStatus.DONE,
+    )
+    task.completion_signals = [CompletionSignal(type="path_exists", value="x")]
+    monkeypatch.setattr(remote_diff_ingest, "ingest_remote_diff", lambda *a, **k: None)
+    monkeypatch.setattr("bernstein.core.security.audit.load_or_create_audit_key", lambda: _KEY)
+
+    with caplog.at_level(logging.INFO, logger="bernstein.core.tasks.task_lifecycle"):
+        _enqueue_alive_exit_janitor_pass(orch, task, reason="alive_exit_tick")
+
+    fn, args = submitted[0]
+    assert fn is not _verify_against_merge_preview
+    assert args[1] == tmp_path
+    assert "remote completion without a posted artifact" in caplog.text
