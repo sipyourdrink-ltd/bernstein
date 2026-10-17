@@ -4779,7 +4779,17 @@ def _agent_preview_branch(orch: Any, session_id: str | None) -> str | None:
         return None
     if worktree is None:
         return None
-    return f"agent/{session_id}"
+    from pathlib import Path
+
+    from bernstein.core.git.git_basic import current_branch
+
+    worktree_path = Path(worktree)
+    if worktree_path.resolve() == Path(getattr(orch, "_workdir", "") or ".").resolve():
+        return None
+    # The commits are on whatever the worktree has checked out. A resume
+    # session whose preserved worktree was not handed over still sits on the
+    # replaced agent's branch; ``agent/<session_id>`` does not exist then.
+    return current_branch(worktree_path) or f"agent/{session_id}"
 
 
 def _preview_setup(orch: Any) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
