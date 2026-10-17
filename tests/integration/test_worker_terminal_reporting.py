@@ -14,7 +14,7 @@ Both are asserted here against ``create_app`` rather than a mock.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
@@ -291,3 +291,100 @@ def test_a_late_failure_from_the_same_claim_still_corrects_done(tmp_path: Path, 
 
     assert _status(test_client, task_id) == "failed"
     assert loop._outbox.pending() == []
+
+
+class _CommitsThenStopsAnswering:
+    """A central that applies the transition and then never returns a response.
+
+    This is the F8 failure made testable against the real app. ``/complete`` does
+    its own git fetch and auto-commit, which can finish *after* the worker's client
+    gives up -- so the transition is real while the acknowledgement is not. The
+    request is performed for real and only the response is dropped, which is what a
+    timeout looks like from this side and the reason "no response" cannot be read
+    as "no effect".
+    """
+
+    def __init__(self, app: TestClient, *, silent_post: str) -> None:
+        self._app = app
+        self._silent_post = silent_post
+        self.posted: list[str] = []
+        self.timeouts: list[object] = []
+
+    def post(self, url: str, *, json: object = None, headers: object = None, timeout: object = None) -> None:
+        self.posted.append(url)
+        self.timeouts.append(timeout)
+        self._app.post(url, json=json, headers=headers)  # type: ignore[arg-type]
+        if url == self._silent_post:
+            raise httpx.ReadTimeout("the server's fetch outlived our patience")
+
+    def get(self, url: str, *, headers: object = None, timeout: object = None) -> httpx.Response:
+        # TestClient answers with a different httpx distribution's Response than the
+        # worker imports. Nominal difference only -- the report path reads
+        # .status_code and .json(), which both carry -- so it is stated, not worked
+        # around.
+        return cast("httpx.Response", self._app.get(url))
+
+
+def test_a_timeout_after_the_server_committed_the_transition_does_not_repost_it(
+    tmp_path: Path, test_client: TestClient
+) -> None:
+    """F8 against the real contract: a slow /complete must not be posted twice.
+
+    The unit version of this scripts a canned 200 to the follow-up read. This one
+    lets the real server do the transition and then withholds the ack, so what is
+    under test is whether the worker can recognise its *own* delivered work in the
+    record the real app returns -- and retire the report instead of re-posting it.
+    A second ``/complete`` here is not idempotent noise: it is a second auto-commit.
+    """
+    task_id = _new_task(test_client, claim=False)
+    token = _claim(test_client, task_id)
+    loop = _make_loop(tmp_path)
+    loop._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0", claim_token=token)
+
+    central = _CommitsThenStopsAnswering(test_client, silent_post=f"{SERVER_URL}/tasks/{task_id}/complete")
+    loop._report_finished(central)  # type: ignore[arg-type]
+
+    assert central.posted == [f"{SERVER_URL}/tasks/{task_id}/complete"], "one post, then the read"
+    assert _status(test_client, task_id) == "done"
+    assert loop._outbox.pending() == [], "the report is settled by the record, not retried"
+
+    # And a later cycle has nothing left to send, which is the assertion that
+    # matters: the danger was never this cycle, it was the next one.
+    loop._report_finished(test_client)
+    assert _status(test_client, task_id) == "done"
+
+
+def test_a_renamed_node_neither_loses_nor_steals_what_the_old_name_owed(
+    tmp_path: Path, test_client: TestClient
+) -> None:
+    """F5's boundary, pinned rather than assumed.
+
+    Node identity is ``--name``, defaulting to the hostname, and it is stamped on
+    every report. So a worker that comes back under a different hostname is, as far
+    as this queue is concerned, a *different node* -- which is the right answer for
+    a shared ``.sdd/`` hosting several workers (one outcome, one post) and the
+    reason a rename cannot be treated as a no-op. What has to hold across the rename
+    is that the record is neither lost nor handed to the wrong owner: it stays on
+    disk and stays owed, and the name that earned it can still deliver it.
+
+    Reported rather than "fixed": the claim fence does make draining a peer's record
+    safe, but deciding which process may deliver somebody else's outcome is a change
+    to delivery ownership, not to durability, so it is a maintainer call.
+    """
+    task_id = _new_task(test_client, claim=False)
+    token = _claim(test_client, task_id, node="old-host")
+    former = _make_loop(tmp_path, name="old-host")
+    former._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0", claim_token=token)
+
+    renamed = _make_loop(tmp_path, name="new-host")
+    renamed._report_finished(test_client)
+
+    assert _status(test_client, task_id) == "claimed", "the new name must not post the old name's outcome"
+    assert [r.task_id for r in renamed._outbox.pending()] == [task_id], "and it must not discard it either"
+    assert [r.claim_token for r in renamed._outbox.pending()] == [token]
+
+    # The name that holds the claim can still deliver it, so nothing was stranded by
+    # the rename -- only deferred until a process wearing the right name returns.
+    _make_loop(tmp_path, name="old-host")._report_finished(test_client)
+    assert _status(test_client, task_id) == "done"
+    assert renamed._outbox.pending() == []
