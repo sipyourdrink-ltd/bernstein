@@ -99,7 +99,7 @@ jobs:
       idempotent_skip: ${{ steps.idempotency.outputs.skip }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -142,7 +142,7 @@ jobs:
         # SHA-pinned action vendors a pinned uv release, so the toolchain
         # is reproducible without an unpinned `pip install` step
         # (Scorecard pinned-dependencies).
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
           python-version: "3.14"
@@ -299,7 +299,7 @@ jobs:
       HAS_TRIGGERING_TOKEN: ${{ secrets.BERNSTEIN_AUTOSYNC_TOKEN != '' }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -331,7 +331,7 @@ jobs:
           git -c advice.detachedHead=false checkout "$HEAD_SHA"
 
       - name: Install uv (provides Python via .python-version)
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
 
@@ -350,7 +350,7 @@ jobs:
         # `crate-ci/typos` is the upstream-recommended GH action and
         # mirrors the binary used by the spelling job in ci.yml.
         if: needs.triage.outputs.strategy == 'typos-allowlist'
-        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1
+        uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1
         with:
           # `--format json` would normally print findings; we only need
           # the binary on $PATH for the apply step below to invoke.
