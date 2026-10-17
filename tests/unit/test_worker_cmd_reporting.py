@@ -15,6 +15,7 @@ central acknowledges it or the task record settles it.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import time
@@ -501,6 +502,47 @@ class TestReconcileRejectedReports:
 
         assert client.posted("t-conflict", "fail") == []
         assert _queued(loop) == []
+
+    def test_a_delivery_dropped_as_duplicate_is_said_out_loud(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F9: "duplicate" means the status matched, not that the work landed.
+
+        The status is all :meth:`WorkerLoop._outcome_matches` can compare - the
+        task record carries no branch or SHA, so a DONE that arrived with a
+        delivery is retired on the same evidence as one that didn't. That is the
+        one case where a pushed artifact never reached the central: the agent
+        self-completed over curl without a branch, this node's branch and SHA
+        were refused, and the merge never happened. Retiring it is right (the
+        central is authoritative on status), but the artifact has to be named in
+        the log or the only witness is gone with the record.
+        """
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-lost", OUTCOME_DONE, "done", delivery=("agent/sess-7", "deadbeef99"))
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-lost/complete", _http(409, body={"error": "already terminal"}))
+        client.script(f"{SERVER}/tasks/t-lost", _task("t-lost", "done"))
+
+        with caplog.at_level(logging.WARNING, logger="bernstein.cli.commands.worker_cmd"):
+            loop._report_finished(client)
+
+        assert _queued(loop) == [], "the report still retires; only its silence is the defect"
+        text = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
+        assert "agent/sess-7" in text and "deadbeef99" in text
+
+    def test_a_duplicate_without_a_delivery_stays_quiet(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """The warning names a lost artifact, so it must not fire when none existed."""
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-plain", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-plain/complete", _http(409, body={"error": "already terminal"}))
+        client.script(f"{SERVER}/tasks/t-plain", _task("t-plain", "done"))
+
+        with caplog.at_level(logging.WARNING, logger="bernstein.cli.commands.worker_cmd"):
+            loop._report_finished(client)
+
+        assert _queued(loop) == []
+        assert caplog.records == []
 
     def test_409_while_task_is_still_live_retries(self, tmp_path: Path) -> None:
         """A version-conflict 409 is not a settled outcome: keep owing it."""

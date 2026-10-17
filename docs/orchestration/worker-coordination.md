@@ -135,6 +135,18 @@ retired as a duplicate instead of replayed, and a report that never arrived is
 still owed. That ask costs one GET; the alternative is a duplicate merge
 attempt per slow fetch.
 
+A duplicate is matched on the outcome alone, because the task record keeps no
+branch or SHA - delivery exists only on the completion request. So a `DONE`
+that arrived carrying a delivery is retired on the same evidence as one that
+didn't, and those two are not the same event: an agent can self-complete over
+curl without naming a branch, leaving this node's pushed branch refused and
+unmerged while the task is legitimately `done`. Retiring it stays correct (the
+central owns the status, and re-posting cannot un-complete the task), but the
+worker logs the branch and SHA at WARNING first, because retiring the record
+removes the only copy of an artifact the central never saw. Recovering that
+work goes through the janitor's posted-artefact merge preview (#6612), which
+starts from the branch name in that line.
+
 A `404` saying "no such task" is the one rejection that would delete an
 outcome, so it is the one that gets the most suspicion. It is not proof of
 deletion: a token scoped to the wrong tenant is answered with the same

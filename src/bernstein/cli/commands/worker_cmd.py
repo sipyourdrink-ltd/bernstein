@@ -1071,6 +1071,7 @@ class WorkerLoop:
 
         if status in _SUCCESS_STATES or status in _FAILURE_STATES:
             if self._outcome_matches(report.outcome, status):
+                self._warn_delivery_left_unmerged(report, status)
                 self._outbox.settle(report.report_id, SETTLE_DUPLICATE)
                 return
             # The server holds a different terminal outcome than this worker
@@ -1099,6 +1100,32 @@ class WorkerLoop:
         if outcome == OUTCOME_FAILED:
             return server_status in _FAILURE_STATES
         return False
+
+    def _warn_delivery_left_unmerged(self, report: TerminalReport, server_status: str) -> None:
+        """Say so when a report that carried work is retired as a duplicate.
+
+        :meth:`_outcome_matches` compares the outcome and nothing else, because
+        the task record stores no branch or SHA -- delivery lives only on the
+        completion request body. So "already done" is read as "this node's work
+        landed too", which is not always true: an agent that self-completed over
+        curl reports no branch at all, and this node's pushed branch can be
+        refused while the task is done for someone else's reasons. The
+        retirement is still correct -- the central owns the status and re-posting
+        cannot un-complete the task -- but the record is about to be rewritten
+        away, which makes this log the only surviving record of an artifact that
+        never reached the central. The janitor's posted-artifact merge preview
+        (#6612) is the remaining path to it, and it starts from the branch name.
+        """
+        if report.outcome != OUTCOME_DONE or report.agent_branch is None:
+            return
+        logger.warning(
+            "task %s is already %s on the central, so this node's delivery (%s @ %s) was refused "
+            "and is not merged; the janitor's posted-artefact merge preview is the remaining path to it",
+            for_log(report.task_id),
+            for_log(server_status),
+            for_log(report.agent_branch),
+            for_log(report.agent_sha or "unknown sha"),
+        )
 
     def _resolve_unknown_outcome(self, client: httpx.Client, report: TerminalReport) -> None:
         """Decide a report whose agent exit status was never observed.
