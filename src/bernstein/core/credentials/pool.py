@@ -208,7 +208,6 @@ class CredentialPool:
                 aggregate_remaining_quota=-1 if unlimited else agg_quota,
             )
 
-
     def batch_add(self, entries: list[CredentialEntry]) -> int:
         """Add multiple credentials at once.  Returns count of newly added keys."""
         added = 0

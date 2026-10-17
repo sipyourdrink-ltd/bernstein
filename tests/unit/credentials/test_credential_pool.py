@@ -232,7 +232,6 @@ class TestPersistence:
         assert snap.schema_version == 1
 
 
-
 class TestBatchAdd:
     def test_batch_add_multiple(self):
         pool = CredentialPool("test")
@@ -296,26 +295,31 @@ class TestAvailableByProxy:
 class TestFromManifest:
     def test_load_manifest(self, tmp_path: Path):
         import json as _json
+
         manifest = tmp_path / "free-tier.json"
-        manifest.write_text(_json.dumps({
-            "pool_name": "free-tier",
-            "cooldown_seconds": 90,
-            "credentials": [
+        manifest.write_text(
+            _json.dumps(
                 {
-                    "key_id": "oai-001",
-                    "provider": "openai",
-                    "secret_ref": "vault:oai-001",
-                    "exit_proxy": "socks5://10.0.0.1:1080",
-                    "fingerprint_id": "fp-alpha",
-                    "remaining_quota": 200,
-                },
-                {
-                    "key_id": "oai-002",
-                    "provider": "openai",
-                    "secret_ref": "vault:oai-002",
-                },
-            ],
-        }))
+                    "pool_name": "free-tier",
+                    "cooldown_seconds": 90,
+                    "credentials": [
+                        {
+                            "key_id": "oai-001",
+                            "provider": "openai",
+                            "secret_ref": "vault:oai-001",
+                            "exit_proxy": "socks5://10.0.0.1:1080",
+                            "fingerprint_id": "fp-alpha",
+                            "remaining_quota": 200,
+                        },
+                        {
+                            "key_id": "oai-002",
+                            "provider": "openai",
+                            "secret_ref": "vault:oai-002",
+                        },
+                    ],
+                }
+            )
+        )
         pool = CredentialPool.from_manifest(manifest)
         assert pool.name == "free-tier"
         assert len(pool.keys()) == 2
