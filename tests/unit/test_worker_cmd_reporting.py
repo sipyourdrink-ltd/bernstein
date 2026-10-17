@@ -33,6 +33,7 @@ from bernstein.core.orchestration.terminal_report_outbox import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 SERVER = "http://central:8052"
@@ -127,6 +128,24 @@ def _retry_now(loop: WorkerLoop) -> None:
     """
     loop._outbox._base_delay_s = 0.0
     loop._outbox._max_delay_s = 0.0
+
+
+def _advancing_clock(*, step: float) -> Callable[[], float]:
+    """A monotonic clock that burns *step* seconds on every read.
+
+    The report phase's wall-clock budget cannot be exercised by making the
+    central genuinely slow (that is a 75s test), so time itself is the knob. One
+    large step makes "the budget is spent" a fact the code can observe instead of
+    a race the test would lose.
+    """
+    state = {"now": 0.0}
+
+    def _clock() -> float:
+        value = state["now"]
+        state["now"] += step
+        return value
+
+    return _clock
 
 
 def _reap_with_exit_code(loop: WorkerLoop, monkeypatch: pytest.MonkeyPatch, status: int, code: int) -> bool:
@@ -419,6 +438,56 @@ class TestTransientFailuresKeepTheReport:
         # 60s is the server's own git-fetch budget (task_crud._fetch_remote_agent_branch).
         assert worker_cmd._TERMINAL_REPORT_TIMEOUT_S > 60.0
         assert client.timeouts == [worker_cmd._TERMINAL_REPORT_TIMEOUT_S]
+
+    def test_a_report_backlog_cannot_hog_the_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F13: the report phase shares this thread with the heartbeats.
+
+        F8 raised the terminal-report timeout to 75s because a slow /complete is
+        legitimately slow. That budget is spent once *per report*, and the loop
+        that spends it is the one that heartbeats every 15s and claims tasks.
+        Against a central that accepts the connection and does not answer, an
+        unbounded backlog becomes N x 75s before the next beat: the node is
+        evicted, its tasks reopen, and the reports replay against claims it no
+        longer holds. The phase therefore gets a wall-clock budget.
+        """
+        loop = _make_loop(tmp_path)
+        _retry_now(loop)
+        for n in range(3):
+            loop._outbox.append(f"t-backlog-{n}", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        for n in range(3):
+            client.script(f"{SERVER}/tasks/t-backlog-{n}/complete", _ack(f"t-backlog-{n}"))
+        monkeypatch.setattr(worker_cmd.time, "monotonic", _advancing_clock(step=60.0))
+
+        with caplog.at_level(logging.WARNING, logger="bernstein.cli.commands.worker_cmd"):
+            loop._report_finished(client)
+
+        assert len(client.post_urls()) == 1, "the phase kept spending the cycle after its budget was gone"
+        # Yielded, never dropped: the two unsent reports are still owed.
+        assert [r.task_id for r in _queued(loop)] == ["t-backlog-1", "t-backlog-2"]
+        assert any("t-backlog" in r.getMessage() for r in caplog.records), "a deferred backlog must be visible"
+
+    def test_a_healthy_central_drains_the_whole_backlog_in_one_cycle(self, tmp_path: Path) -> None:
+        """The budget is a ceiling for a wedged central, not a throttle on a working one.
+
+        Without this, "yield after the budget" could quietly become "post one
+        report per poll", and a backlog would take forever to drain while every
+        test above stayed green.
+        """
+        loop = _make_loop(tmp_path)
+        _retry_now(loop)
+        for n in range(3):
+            loop._outbox.append(f"t-drain-{n}", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        for n in range(3):
+            client.script(f"{SERVER}/tasks/t-drain-{n}/complete", _ack(f"t-drain-{n}"))
+
+        loop._report_finished(client)
+
+        assert len(client.post_urls()) == 3
+        assert _queued(loop) == []
 
     def test_recovery_after_an_outage_delivers_once(self, tmp_path: Path) -> None:
         loop = _make_loop(tmp_path)

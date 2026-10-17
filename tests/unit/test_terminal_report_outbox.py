@@ -39,6 +39,12 @@ def _outbox(tmp_path: Path, *, node: str = "node-a", **kwargs: object) -> Termin
     return TerminalReportOutbox(tmp_path, node=node, **kwargs)  # type: ignore[arg-type]
 
 
+#: The worker's default heartbeat interval (worker_cmd registers with
+#: ``heartbeat_interval_ms: 15000``). Outbox locking happens on that same thread,
+#: so lock waits are judged against this number and not against queue throughput.
+_HEARTBEAT_S = 15.0
+
+
 def _lines(tmp_path: Path) -> list[dict]:
     path = _outbox(tmp_path).path
     if not path.is_file():
@@ -99,6 +105,51 @@ class TestAppendIsDurable:
         monkeypatch.setattr(outbox_mod, "cross_process_lock", file_locks.cross_process_lock)
         assert [r.task_id for r in outbox.pending()] == ["t-stuck"]
         assert [raw["task_id"] for raw in _lines(tmp_path)] == ["t-stuck"]
+
+
+class TestLockWaitsCannotStallTheLoop:
+    """F13: the lock is taken on the thread that also has to heartbeat.
+
+    Every outbox mutation takes the peer lock, and the worker loop that calls
+    them is the one sending heartbeats every 15s and claiming tasks. So the price
+    of waiting for that lock is measured against the heartbeat interval, not
+    against queue throughput: a wait long enough, or repeated often enough in one
+    cycle, gets the node evicted, its tasks reopened, and its reports replayed
+    against claims it no longer holds.
+    """
+
+    def test_one_lock_wait_costs_a_bounded_slice_of_the_heartbeat_budget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _WedgedPeer:
+            def __init__(self, timeout: float) -> None:
+                self._timeout = timeout
+
+            def __enter__(self) -> None:
+                # Faithful to a wedged peer: it occupies the lock for the whole
+                # requested timeout and only then lets the caller give up. The
+                # wait is therefore the caller's constant, not a fiction here.
+                time.sleep(self._timeout)
+                raise file_locks.LockTimeout("peer holds the lock")
+
+            def __exit__(self, *exc: object) -> None:
+                return None
+
+        monkeypatch.setattr(outbox_mod, "cross_process_lock", lambda _path, timeout=0.0: _WedgedPeer(timeout))
+        outbox = _outbox(tmp_path)
+
+        started = time.monotonic()
+        report = outbox.append("t-wedged", OUTCOME_DONE, "done")
+        waited = time.monotonic() - started
+
+        monkeypatch.setattr(outbox_mod, "cross_process_lock", file_locks.cross_process_lock)
+
+        assert report.report_id
+        assert waited < _HEARTBEAT_S / 4, (
+            f"a single outbox lock wait cost {waited:.1f}s of a {_HEARTBEAT_S:.0f}s heartbeat interval"
+        )
+        # Bounded, and still owed: the ceiling is not bought by dropping anything.
+        assert [r.task_id for r in outbox.pending()] == ["t-wedged"]
 
 
 class TestRetrySchedule:

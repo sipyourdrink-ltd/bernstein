@@ -72,7 +72,22 @@ SETTLE_SUPERSEDED = "superseded"
 
 _DETAIL_LIMIT = 1000
 _STATUS_LIMIT = 200
-_LOCK_TIMEOUT_S = 10.0
+#: How long an outbox mutation waits for a peer before giving up.
+#:
+#: Every one of these calls happens on the worker's own thread, and that thread
+#: also carries the heartbeats (15s by default) and the claim polls. So this is
+#: not a throughput knob -- it is a ceiling on how much of a heartbeat interval
+#: one contended file lock may consume. The critical section is a local read and
+#: an atomic rewrite of a small file, which is milliseconds; anything still
+#: holding the lock after this long is wedged (an NFS flock caveat, a peer stuck
+#: in a rewrite), and waiting it out is a bet that the peer recovers before the
+#: central decides this node is gone.
+#:
+#: Losing the race is safe, which is what lets the ceiling be short: :meth:`append`
+#: parks the record in memory and keeps it deliverable, :meth:`pending` answers
+#: from that same copy, and :meth:`_apply` keeps the record it could not write.
+#: The cost of a timeout is a deferred cycle, never a lost outcome.
+_LOCK_TIMEOUT_S = 2.0
 #: Last status stamped by :meth:`TerminalReportOutbox.note_absence`.
 _ABSENT_STATUS = "task-absent"
 #: A task id is interpolated into ``/tasks/{id}/complete``, so it must be one

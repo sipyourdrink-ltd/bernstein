@@ -118,10 +118,22 @@ What retires a report is the response, read deliberately:
 | `409` on a parked task | Retried and escalated: still owed, and the wedge is logged (see below) |
 
 Retries are bounded in delay, never in count - capping the count is the same
-silent discard by another name. Nothing sleeps in the worker loop: a report
-that is not due yet is simply absent from the due set, so a wedged central
-slows report retries without delaying the heartbeats and claims the same loop
-carries.
+silent discard by another name. Reporting shares its thread with the heartbeats
+and claims, so it is bounded in two ways rather than allowed to consume the
+loop. A report that is not due yet is simply absent from the due set, so nothing
+sleeps. And because a due report can still block for the full terminal-report
+timeout, one cycle stops *starting* reports after 5s of report work and logs how
+many it deferred; a deferred report stays queued and due and goes out on the
+next cycle. The outbox's own peer lock is capped at 2s for the same reason -
+waiting out a wedged peer is a bet that it recovers before the central declares
+this node gone, and losing that race is safe anyway, since a record the lock
+denied stays in memory and still gets delivered.
+
+The residual risk is stated rather than hidden: a report already in flight still
+gets its full 75s, so a central that accepts the connection and never answers
+can cost one worker one missed beat. Bounding that means moving terminal
+reporting off the loop thread, which changes the worker's shape and is left as a
+maintainer's decision, not folded in here.
 
 A report that gets no answer is not a report the central ignored. `POST
 /tasks/{id}/complete` fetches the agent branch and runs the pre-complete

@@ -122,6 +122,22 @@ _PARKED_STATES = frozenset(
 #: is durable) without emitting an ERROR every five minutes forever.
 _PARKED_ESCALATION_ATTEMPTS = 12
 
+#: Wall-clock one cycle's terminal-report phase may spend before it hands the
+#: loop back. This is not about throughput: a due report can block for the whole
+#: :data:`_TERMINAL_REPORT_TIMEOUT_S`, and the thread that blocks is the one that
+#: heartbeats every 15s and claims tasks. Unbounded, a central that accepts the
+#: connection and does not answer turns a backlog into N x 75s per cycle, the
+#: node stops beating, gets evicted, its tasks reopen, and the reports replay
+#: against claims it no longer holds.
+#:
+#: This bounds the multiplication, not the single worst case: one report already
+#: in flight still gets its full timeout, because cutting that would reinstate
+#: the slow-fetch amplification above. Making the last 75s impossible means
+#: moving reports off this thread, which is a change to the worker's shape rather
+#: than a number, and is reported as a decision for the maintainer instead of one
+#: made quietly here.
+_REPORT_PHASE_BUDGET_S = 5.0
+
 
 class _TaskUnreachableError(RuntimeError):
     """The authoritative task state could not be read.
@@ -834,12 +850,33 @@ class WorkerLoop:
         The outcomes come from the durable outbox and only one thing removes
         them: an acknowledgement from the central. A 5xx, a dead socket, or a
         409 therefore leaves the report queued and retried on a later cycle
-        instead of discarding it. Nothing sleeps here - a report that is not due
-        yet is simply absent from :meth:`due`, so a wedged central slows report
-        retries without stalling the heartbeats and claims this loop also
-        carries (#3309).
+        instead of discarding it.
+
+        Two bounds stop this phase from eating the loop that carries the
+        heartbeats and claims. A report that is not due yet is simply absent from
+        :meth:`due`, so nothing here sleeps (#3309). And a report that *is* due
+        can still block for the full :data:`_TERMINAL_REPORT_TIMEOUT_S` waiting on
+        a server that is doing a legitimately slow fetch, so the phase stops
+        starting new reports once it has spent :data:`_REPORT_PHASE_BUDGET_S`.
+        Deferring is not discarding: a skipped report stays queued and due and is
+        taken on the next cycle, which is why the budget can be small.
         """
-        for report in self._outbox.due():
+        deadline = time.monotonic() + _REPORT_PHASE_BUDGET_S
+        reports = self._outbox.due()
+        for index, report in enumerate(reports):
+            # The first report of a cycle is always attempted, however late this
+            # thread already is: a budget that starved the queue entirely would
+            # trade a stall for a wedge.
+            if index and time.monotonic() > deadline:
+                deferred = reports[index:]
+                logger.warning(
+                    "deferring %d terminal report(s), oldest %s, after %.0fs of report work this cycle; "
+                    "each stays queued and due, and this cycle goes back to heartbeats and claims",
+                    len(deferred),
+                    for_log(deferred[0].task_id),
+                    _REPORT_PHASE_BUDGET_S,
+                )
+                return
             self._deliver_report(client, report)
 
     def _deliver_report(self, client: httpx.Client, report: TerminalReport) -> None:
