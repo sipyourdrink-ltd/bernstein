@@ -164,7 +164,11 @@ def classify_task(task: Task) -> ClassificationResult:
     # description routinely mentions tools as context ("lint is disabled",
     # "format the line plainly") without asking for them to run.
     title = task.title.lower()
-    for pattern, action, rule_name in _l0_patterns:
+    # Declared completion signals name what the task must produce; a formatter
+    # or import sorter run cannot be presumed to produce it, and the fast path
+    # completes without the janitor ever checking those signals.
+    l0_patterns = () if task.completion_signals else _l0_patterns
+    for pattern, action, rule_name in l0_patterns:
         if pattern.search(title):
             return ClassificationResult(
                 level=TaskLevel.L0,

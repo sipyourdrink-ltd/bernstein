@@ -16,7 +16,7 @@ from bernstein.core.fast_path import (
     get_l1_model_config,
     try_fast_path_batch,
 )
-from bernstein.core.models import Complexity, ModelConfig, Scope, Task
+from bernstein.core.models import CompletionSignal, Complexity, ModelConfig, Scope, Task
 
 from bernstein.core import fast_path as fast_path_module
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
@@ -73,6 +73,17 @@ class TestClassifyTask:
         task = _make_task(title="Format code", role="manager")
         result = classify_task(task)
         assert result.level == TaskLevel.L2
+
+    def test_declared_completion_signals_never_l0(self) -> None:
+        # A title that mentions a flag ("--format json") is not a formatting task;
+        # a formatter run cannot produce what the task's signals require.
+        task = _make_task(title="#5880: cli: the insights command is unregistered, and --format json crashes")
+        task.completion_signals = [
+            CompletionSignal(type="file_contains", value="src/bernstein/cli/main.py :: insights_cmd")
+        ]
+        result = classify_task(task)
+        assert result.level != TaskLevel.L0
+        assert result.action is None
 
     def test_architect_role_always_l2(self) -> None:
         task = _make_task(title="Format code", role="architect")
