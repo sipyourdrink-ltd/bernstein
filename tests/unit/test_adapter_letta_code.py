@@ -83,8 +83,10 @@ def test_spawn_uses_permission_mode_not_yolo(tmp_path: Path) -> None:
     assert inner[inner.index("--permission-mode") + 1] == "unrestricted"
 
 
-def test_spawn_passes_new_agent_and_conversation(tmp_path: Path) -> None:
-    """After tasks 3671-A/B: --new-agent and --conversation <derived_id> in command."""
+def test_spawn_passes_new_agent_without_a_conversation(tmp_path: Path) -> None:
+    """letta 0.26 refuses ``--conversation`` beside ``--new-agent`` and exits 1
+    before the prompt runs ("--conversation cannot be used with --new-agent"),
+    so passing both made every spawn fail."""
     adapter = LettaCodeAdapter()
     proc_mock = make_popen_mock(900)
 
@@ -96,40 +98,11 @@ def test_spawn_passes_new_agent_and_conversation(tmp_path: Path) -> None:
             session_id="letta-s1",
         )
 
-    cmd = popen.call_args.args[0]
-    inner = inner_cmd(cmd)
+    inner = inner_cmd(popen.call_args.args[0])
     assert "--new-agent" in inner
-    assert "--conversation" in inner
-
-
-def test_consecutive_runs_get_distinct_conversation_bindings(tmp_path: Path) -> None:
-    """After tasks 3671-A/B: two spawns with different session_ids produce different --conversation values."""
-    adapter = LettaCodeAdapter()
-
-    proc_mock1 = make_popen_mock(900)
-    proc_mock2 = make_popen_mock(901)
-
-    with patch("bernstein.adapters.letta_code.subprocess.Popen", side_effect=[proc_mock1, proc_mock2]) as popen_calls:
-        adapter.spawn(
-            prompt="fix the bug",
-            workdir=tmp_path,
-            model_config=ModelConfig(model="sonnet", effort="high"),
-            session_id="letta-s1",
-        )
-        adapter.spawn(
-            prompt="fix the bug",
-            workdir=tmp_path,
-            model_config=ModelConfig(model="sonnet", effort="high"),
-            session_id="letta-s2",
-        )
-
-    cmd1 = popen_calls.call_args_list[0][0][0]
-    cmd2 = popen_calls.call_args_list[1][0][0]
-    inner1 = inner_cmd(cmd1)
-    inner2 = inner_cmd(cmd2)
-    conv1 = inner1[inner1.index("--conversation") + 1]
-    conv2 = inner2[inner2.index("--conversation") + 1]
-    assert conv1 != conv2
+    assert "--conversation" not in inner
+    assert "--conv" not in inner
+    assert inner[inner.index("-p") + 1] == "fix the bug"
 
 
 ENVELOPE = {
