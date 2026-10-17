@@ -261,6 +261,7 @@ bernstein.core.security.policy: #4526 audit in flight
 bernstein.core.security.policy_limits: #4526 audit in flight
 bernstein.core.security.policy_templates: #4526 audit in flight
 bernstein.core.security.promptware_ingest: #4526 audit in flight
+bernstein.core.security.quarantine_journal: #4526 audit in flight
 bernstein.core.security.quarantined_parser: #4526 audit in flight
 bernstein.core.security.rbac: #4526 audit in flight
 bernstein.core.security.sandbox_escape_detector: #4526 audit in flight
