@@ -83,6 +83,19 @@ _AUTH_HOLD_S = 300.0
 _GONE_HOLD_S = 900.0
 _GONE_CONFIRMATIONS = 3
 
+#: How long a terminal report may take to come back before this worker gives up
+#: on it. Deliberately far above the ordinary 10s request budget, because
+#: ``/complete`` is not an ordinary request: it runs a synchronous ``git fetch``
+#: of the agent branch with its own 60s timeout
+#: (:func:`bernstein.core.routes.task_crud._fetch_remote_agent_branch`) and then
+#: an auto-commit before it answers. A short client timeout turns every slow
+#: fetch into a false transport failure, and the first retry - which full jitter
+#: puts within a second - lands while the original is still running, so the
+#: central fetches the same ref and auto-commits twice. A report that genuinely
+#: outlives this ceiling is not retried blind either; see
+#: :meth:`WorkerLoop._settle_from_response`.
+_TERMINAL_REPORT_TIMEOUT_S = 75.0
+
 
 class _TaskUnreachableError(RuntimeError):
     """The authoritative task state could not be read.
@@ -715,7 +728,9 @@ class WorkerLoop:
             The response, or ``None`` if the request never completed. The
             caller decides whether that counts as an acknowledgement: the
             status code IS the outcome, and discarding it is what let a 500 or
-            a dead socket look like a delivered report.
+            a dead socket look like a delivered report. ``None`` is explicitly
+            NOT evidence that the central did nothing -- see
+            :data:`_TERMINAL_REPORT_TIMEOUT_S`.
         """
         body: dict[str, str] = {"result_summary": summary}
         if delivery is not None:
@@ -728,7 +743,7 @@ class WorkerLoop:
                 f"{self._server_url}/tasks/{task_id}/complete",
                 json=body,
                 headers=self._headers(),
-                timeout=10.0,
+                timeout=_TERMINAL_REPORT_TIMEOUT_S,
             )
         except httpx.HTTPError as exc:
             logger.warning("Failed to report completion for %s: %s", for_log(task_id), exc)
@@ -759,7 +774,7 @@ class WorkerLoop:
                 f"{self._server_url}/tasks/{task_id}/fail",
                 json=body,
                 headers=self._headers(),
-                timeout=10.0,
+                timeout=_TERMINAL_REPORT_TIMEOUT_S,
             )
         except httpx.HTTPError as exc:
             logger.warning("Failed to report failure for %s: %s", for_log(task_id), exc)
@@ -838,8 +853,14 @@ class WorkerLoop:
         path existed to fix.
         """
         if resp is None:
-            # Transport failure: the report was never even evaluated upstream.
-            self._outbox.note_attempt(report.report_id, "transport-failure")
+            # No verdict came back. That is not the same as "the central did
+            # nothing": a /complete whose fetch runs past
+            # :data:`_TERMINAL_REPORT_TIMEOUT_S` has usually applied the
+            # outcome already, and re-posting it makes the central do that work
+            # a second time while the first is still running. The task record
+            # settles a report that landed and holds one that never arrived, so
+            # asking costs one GET and removes the amplification.
+            self._reconcile(client, report, "transport-failure")
             return
 
         code = resp.status_code

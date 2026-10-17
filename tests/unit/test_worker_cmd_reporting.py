@@ -50,6 +50,10 @@ class FakeCentral:
         self.routes: dict[str, list[object]] = {}
         self.post_calls: list[tuple[str, dict]] = []
         self.get_calls: list[str] = []
+        #: Timeout each POST asked for, in call order. The terminal-report budget
+        #: has to stay above the server's own fetch time, and that is a number, so
+        #: it needs a witness rather than a comment.
+        self.timeouts: list[float] = []
 
     def script(self, url: str, *replies: object) -> None:
         self.routes.setdefault(url, []).extend(replies)
@@ -62,6 +66,7 @@ class FakeCentral:
 
     def post(self, url: str, *, json: dict | None = None, headers: dict | None = None, timeout: float = 0.0):
         self.post_calls.append((url, dict(json or {})))
+        self.timeouts.append(timeout)
         reply = self._answer(url)
         if isinstance(reply, Exception):
             raise reply
@@ -365,15 +370,54 @@ class TestTransientFailuresKeepTheReport:
         assert [r.task_id for r in loop._outbox.due(now=time.time() + 3600)] == ["t-5xx"]
 
     def test_transport_failure_leaves_report_queued(self, tmp_path: Path) -> None:
+        """An unanswered report is still owed, and the ask must not cost it."""
         loop = _make_loop(tmp_path)
         loop._outbox.append("t-down", OUTCOME_DONE, "done")
         client = FakeCentral()
         client.script(f"{SERVER}/tasks/t-down/complete", httpx.ConnectError("connection refused"))
+        client.script(f"{SERVER}/tasks/t-down", httpx.ConnectError("connection refused"))
 
         loop._report_finished(client)
 
         (report,) = _queued(loop)
-        assert report.last_status == "transport-failure"
+        assert report.last_status == "transport-failure-unreconcilable"
+
+    def test_a_slow_complete_is_not_reposted_when_the_central_applied_it(self, tmp_path: Path) -> None:
+        """F8: the client gave up, the central did not.
+
+        ``/complete`` runs a synchronous ``git fetch`` with a 60s budget plus an
+        auto-commit before it answers. A client timeout inside that window leaves a
+        report the central has already applied still counted as owed, and the first
+        retry (0-1s with full jitter) makes the central fetch the same ref and
+        auto-commit a second time. Asking the task record retires it instead.
+        """
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-slow", OUTCOME_DONE, "done", delivery=("agent/s1", "sha1"))
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-slow/complete", httpx.ReadTimeout("timed out"))
+        client.script(f"{SERVER}/tasks/t-slow", _task("t-slow", "done"))
+
+        loop._report_finished(client)
+
+        assert len(client.posted("t-slow", "complete")) == 1, "the central must not fetch the ref twice"
+        assert _queued(loop) == []
+
+    def test_the_terminal_report_timeout_outlives_the_servers_fetch(self, tmp_path: Path) -> None:
+        """The timeout must sit above the work the server does before answering.
+
+        Below it, every slow fetch turns into the amplification above; the guard is
+        the number itself, so it is asserted rather than trusted to the comment.
+        """
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-timeout", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-timeout/complete", _ack("t-timeout"))
+
+        loop._report_finished(client)
+
+        # 60s is the server's own git-fetch budget (task_crud._fetch_remote_agent_branch).
+        assert worker_cmd._TERMINAL_REPORT_TIMEOUT_S > 60.0
+        assert client.timeouts == [worker_cmd._TERMINAL_REPORT_TIMEOUT_S]
 
     def test_recovery_after_an_outage_delivers_once(self, tmp_path: Path) -> None:
         loop = _make_loop(tmp_path)
@@ -381,6 +425,7 @@ class TestTransientFailuresKeepTheReport:
         loop._outbox.append("t-blip", OUTCOME_DONE, "done")
         client = FakeCentral()
         client.script(f"{SERVER}/tasks/t-blip/complete", httpx.ConnectError("down"), _http(503), _ack("t-blip"))
+        client.script(f"{SERVER}/tasks/t-blip", _task("t-blip", "claimed"))
 
         for _ in range(3):
             loop._report_finished(client)

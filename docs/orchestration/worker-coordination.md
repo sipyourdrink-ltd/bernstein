@@ -113,13 +113,27 @@ What retires a report is the response, read deliberately:
 | `404` that names this task | Held, and dropped only after it repeats (see below) |
 | `429` | Held for the response's `Retry-After` |
 | `401`/`403` | Held at the capped interval; a token fix recovers it without a restart |
-| `5xx` / transport failure | Retried on a bounded, jittered backoff |
+| `5xx` | Retried on a bounded, jittered backoff |
+| No response at all | Reconciled against `GET /tasks/{id}` first, then retried on the same backoff |
 
 Retries are bounded in delay, never in count - capping the count is the same
 silent discard by another name. Nothing sleeps in the worker loop: a report
 that is not due yet is simply absent from the due set, so a wedged central
 slows report retries without delaying the heartbeats and claims the same loop
 carries.
+
+A report that gets no answer is not a report the central ignored. `POST
+/tasks/{id}/complete` fetches the agent branch and runs the pre-complete
+auto-commit synchronously before it replies, and that fetch carries its own
+60s budget, so the terminal-report timeout is set above it (75s) rather than
+at the worker's ordinary 10s request budget. Below that line every slow fetch
+looks like a transport failure, and the first retry - which full jitter puts
+within a second - lands while the original is still running, making the central
+fetch the same ref and auto-commit twice. Even past the ceiling the worker asks
+`GET /tasks/{id}` before re-posting, so a completion the central did apply is
+retired as a duplicate instead of replayed, and a report that never arrived is
+still owed. That ask costs one GET; the alternative is a duplicate merge
+attempt per slow fetch.
 
 A `404` saying "no such task" is the one rejection that would delete an
 outcome, so it is the one that gets the most suspicion. It is not proof of
