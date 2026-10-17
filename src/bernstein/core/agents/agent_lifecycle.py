@@ -2947,6 +2947,16 @@ _ORCHESTRATOR_WORKTREE_FILES: frozenset[str] = frozenset(
 # or ``attestations/`` prefixes hide legitimate target-repo work and can cause
 # a false "no changes" completion; see :mod:`bernstein.core.git.git_basic`.
 _ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/",)
+# Aider writes its chat/input/LLM history and repo-map cache at the worktree root on every
+# session. They are adapter scratch, not a deliverable: counting them failed an aider agent
+# that wrote nothing as "3 uncommitted path(s)" (measured 2026-10-17). ``.aider.conf.yml``
+# is project config and stays counted.
+_ADAPTER_SESSION_PREFIXES: tuple[str, ...] = (
+    ".aider.chat.history",
+    ".aider.input.history",
+    ".aider.llm.history",
+    ".aider.tags.cache",
+)
 
 
 def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
@@ -3000,6 +3010,8 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
         if not path:
             continue
         if path in _ORCHESTRATOR_WORKTREE_FILES or path.startswith(_ORCHESTRATOR_WORKTREE_DIRS):
+            continue
+        if path.startswith(_ADAPTER_SESSION_PREFIXES):
             continue
         paths.append(path)
     return paths

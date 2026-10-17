@@ -134,6 +134,35 @@ def test_exact_orchestrator_files_are_ignored_regardless_of_git_status(tmp_path:
     assert _uncommitted_work_paths(repo) == []
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".aider.chat.history.md",
+        ".aider.input.history",
+        ".aider.llm.history",
+        ".aider.tags.cache.v4/cache.db",
+    ],
+)
+def test_aider_session_files_are_not_work(tmp_path: Path, path: str) -> None:
+    """Measured 2026-10-17: an aider agent that wrote nothing failed as "3 uncommitted path(s)".
+
+    The three paths were aider's own chat/input history and repo-map cache, written at the
+    worktree root on every session. With ``gitignore: false`` aider no longer ignores them.
+    """
+    repo = _repo(tmp_path)
+    artifact = repo / path
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("session\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == []
+
+
+def test_aider_config_edit_is_still_work(tmp_path: Path) -> None:
+    """``.aider.conf.yml`` is project config a step may change, not session scratch."""
+    repo = _repo(tmp_path)
+    (repo / ".aider.conf.yml").write_text("read: CONVENTIONS.md\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == [".aider.conf.yml"]
+
+
 def test_rename_with_spaced_paths_reports_destination_once(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     source = repo / "old name.py"
