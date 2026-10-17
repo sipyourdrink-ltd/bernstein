@@ -30,7 +30,12 @@ from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
-from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_agent, transition_task
+from bernstein.core.tasks.lifecycle import (
+    IllegalTransitionError,
+    check_claim_fence,
+    transition_agent,
+    transition_task,
+)
 from bernstein.core.tasks.models import (
     AgentSession,
     CompletionSignal,
@@ -152,6 +157,10 @@ class TaskRecord(TypedDict):
     completed_at: float | None
     closed_at: float | None
     claimed_by_session: str | None
+    # Part of the persisted record, not just in-memory state: a reloaded task
+    # that came back without its token would disarm the terminal-report fence
+    # for every task the server reloads.
+    claim_token: str | None
     parent_session_id: str | None
     subtask_wait_started_at: float | None
     parent_context: str | None
@@ -794,6 +803,10 @@ class TaskStore:
                 )
                 task.claimed_at = None
                 task.claimed_by_session = None
+                # No live claim, so no report is authorized to land on it: the
+                # token goes with the claim, or a replay of the dead agent's
+                # terminal report would still match after the restart.
+                task.claim_token = None
                 self._index_add(task)
                 self._record_release_receipt(
                     task,
@@ -853,6 +866,10 @@ class TaskStore:
                 )
                 task.claimed_at = None
                 task.claimed_by_session = None
+                # The departed node still holds its terminal reports on disk and
+                # will replay them; retiring the token is what stops that replay
+                # from landing on whoever picks the task up next.
+                task.claim_token = None
                 task.version += 1
                 self._index_add(task)
                 self._record_release_receipt(
@@ -1180,6 +1197,10 @@ class TaskStore:
             "completed_at": task.completed_at,
             "closed_at": task.closed_at,
             "claimed_by_session": task.claimed_by_session,
+            # The fence has to survive a restart: claims are replayed from this
+            # log, and a token that came back as None would silently disarm the
+            # check for every task the server reloads.
+            "claim_token": task.claim_token,
             "parent_session_id": task.parent_session_id,
             "subtask_wait_started_at": task.subtask_wait_started_at,
             # The parent agent's context summary is what ties a subtask back to
@@ -2133,6 +2154,10 @@ class TaskStore:
             transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_next")
             task.claimed_at = time.time()
             task.claimed_by_session = claimed_by_session
+            # A grant mints a fresh execution-claim identity; a terminal report
+            # has to name this one to move the task. Rotating it here is what
+            # retires the previous holder's right to report.
+            task.claim_token = uuid.uuid4().hex
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
@@ -2199,6 +2224,7 @@ class TaskStore:
             transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_by_id")
             task.claimed_at = time.time()
             task.claimed_by_session = claimed_by_session
+            task.claim_token = uuid.uuid4().hex
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
@@ -2260,6 +2286,7 @@ class TaskStore:
                 task.claimed_at = time.time()
                 task.assigned_agent = agent_id
                 task.claimed_by_session = claimed_by_session
+                task.claim_token = uuid.uuid4().hex
                 task.version += 1
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
@@ -2272,6 +2299,7 @@ class TaskStore:
         result_summary: str,
         *,
         completion: WorkerCompletion | None = None,
+        claim_token: str | None = None,
     ) -> Task:
         """Mark a task as done.
 
@@ -2282,12 +2310,17 @@ class TaskStore:
                 (#2244). When provided, the payload, contract version, and
                 validation outcome are persisted in ``task.metadata`` and
                 recorded as an HMAC-chained audit event.
+            claim_token: Execution-claim identity the reporter holds. When
+                supplied it must still be the task's current claim, or nothing
+                is written and :class:`ClaimFenceError` is raised. ``None`` is a
+                pre-fence caller and is accepted unchanged.
 
         Returns:
             The updated Task.
 
         Raises:
             KeyError: If task_id does not exist.
+            ClaimFenceError: If *claim_token* is not the task's current claim.
             EmptyCompletionError: If *result_summary* is empty.
                 The task is auto-transitioned to ``FAILED`` with
                 ``reason='completion missing summary'`` before this is
@@ -2305,6 +2338,9 @@ class TaskStore:
                 task = self._tasks.get(task_id)
                 if task is None:
                     raise KeyError(task_id)
+                # Fenced before the auto-fail too: an empty summary from a dead
+                # claim must not fail a task somebody else is now running.
+                check_claim_fence(task, claim_token)
                 # If the task is already in a terminal state, do not re-fail.
                 if task.status in (
                     TaskStatus.DONE,
@@ -2345,6 +2381,11 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            # The fence is evaluated here, under the same lock as the
+            # transition it guards. A caller that checked the task beforehand
+            # can still be overtaken by a release-and-reclaim in the gap; this
+            # position cannot.
+            check_claim_fence(task, claim_token)
 
             # Issue #4401: A planning/manager task that created zero child tasks has not
             # accomplished any work. It must fail rather than falsely reporting success.
@@ -2448,7 +2489,14 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             return task
 
-    async def fail(self, task_id: str, reason: str, *, terminal_reason: str | None = None) -> Task:
+    async def fail(
+        self,
+        task_id: str,
+        reason: str,
+        *,
+        terminal_reason: str | None = None,
+        claim_token: str | None = None,
+    ) -> Task:
         """Mark a task as failed.
 
         Args:
@@ -2456,17 +2504,23 @@ class TaskStore:
             reason: Why it failed.
             terminal_reason: Optional machine-readable failure class
                 (e.g. ``"contract_violation"``) persisted on the task.
+            claim_token: Execution-claim identity the reporter holds; see
+                :meth:`complete`. A late failure from the claim that is still
+                current is accepted here even when the task already reads DONE
+                -- that is the authorized correction, not a stale overwrite.
 
         Returns:
             The updated Task.
 
         Raises:
             KeyError: If task_id does not exist.
+            ClaimFenceError: If *claim_token* is not the task's current claim.
         """
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            check_claim_fence(task, claim_token)
             snapshot = self._claim_snapshot(task)
             self._index_remove(task)
             transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
@@ -2529,7 +2583,7 @@ class TaskStore:
         self._audit_contract_outcome(task_id, outcome="violation", schema_error_path=violation.path)
         return task
 
-    async def refuse(self, task_id: str, refusal: WorkerRefusal) -> Task:
+    async def refuse(self, task_id: str, refusal: WorkerRefusal, *, claim_token: str | None = None) -> Task:
         """Mark *task_id* as :class:`TaskStatus.REFUSED` with a typed refusal.
 
         Distinct from :meth:`fail`: REFUSED is the terminal state for a
@@ -2541,12 +2595,15 @@ class TaskStore:
         Args:
             task_id: Task identifier.
             refusal: The validated refusal payload.
+            claim_token: Execution-claim identity the reporter holds; see
+                :meth:`complete`.
 
         Returns:
             The updated Task.
 
         Raises:
             KeyError: If task_id does not exist.
+            ClaimFenceError: If *claim_token* is not the task's current claim.
             IllegalTransitionError: If the current status cannot
                 transition to REFUSED (e.g. already terminal).
         """
@@ -2557,6 +2614,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            check_claim_fence(task, claim_token)
             snapshot = self._claim_snapshot(task)
             self._index_remove(task)
             transition_task(task, TaskStatus.REFUSED, actor="task_store", reason=refusal.detail)
@@ -2691,6 +2749,7 @@ class TaskStore:
             task.metadata["janitor_reopen_count"] = reopen_count
             task.claimed_at = None
             task.claimed_by_session = None
+            task.claim_token = None
             task.assigned_agent = None
             task.completed_at = None
             task.result_summary = None
@@ -2754,6 +2813,7 @@ class TaskStore:
             )
             task.claimed_at = None
             task.claimed_by_session = None
+            task.claim_token = None
             task.assigned_agent = None
             task.version += 1
             self._index_add(task)
@@ -3484,6 +3544,7 @@ class TaskStore:
                 self._index_add(task)
             task.claimed_at = None  # Clear claim timestamp on force-claim
             task.claimed_by_session = None  # Clear ownership on force-claim
+            task.claim_token = None  # The displaced holder loses its reporting right too
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             self._record_release_receipt(task, snapshot, release_path="force_claim", reason="force_claim")

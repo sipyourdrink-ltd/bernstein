@@ -26,7 +26,7 @@ from bernstein.core.eu_ai_act import (
     merge_bernstein_risk,
     merge_eu_ai_act_risk,
 )
-from bernstein.core.lifecycle import IllegalTransitionError
+from bernstein.core.lifecycle import ClaimFenceError, IllegalTransitionError, check_claim_fence
 from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.store import RoleMismatchError
 from bernstein.core.role_classifier import classify_role
@@ -1664,9 +1664,21 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             if task is None:
                 raise KeyError
             _require_task_access(task, request)
+            # Fenced callers are refused before anything expensive or
+            # observable happens: /complete below does a remote git fetch and an
+            # auto-commit, and a report that is already provably stale should
+            # neither pay for that nor leave a commit behind. The store re-checks
+            # the fence under its own lock, so this only skips wasted work --
+            # it is not what makes the fence atomic.
+            check_claim_fence(task, body.claim_token)
             # Auto-claim if task reverted to "open" (e.g. after orchestrator
             # restart reconciliation).  Prevents agents from looping on 409.
-            if task.status.value == "open":
+            # A fenced caller must never take this branch: an OPEN task carries
+            # no live claim, so a report naming a token cannot come from the
+            # current holder -- its claim was released or reopened. Auto-claiming
+            # here would adopt the dead claim and let the stale report complete
+            # work it no longer owns, which is the exact hole the fence closes.
+            if task.status.value == "open" and body.claim_token is None:
                 logger.info(
                     "task.complete auto-claim: task_id=%s reverted to open, re-claiming before complete",
                     for_log(task_id),
@@ -1675,7 +1687,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             structured = _parse_terminal_body(body)
             if isinstance(structured, WorkerRefusal):
                 refusal = structured
-                task = await store.refuse(task_id, refusal)
+                task = await store.refuse(task_id, refusal, claim_token=body.claim_token)
             else:
                 if structured is not None:
                     result_summary = structured.summary
@@ -1692,9 +1704,29 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                 # the bounded-reopen path.  Logging contract in
                 # ``_run_auto_commit_pre_complete``.
                 _run_auto_commit_pre_complete(request, task)
-                task = await store.complete(task_id, result_summary, completion=structured)
+                task = await store.complete(
+                    task_id, result_summary, completion=structured, claim_token=body.claim_token
+                )
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except ClaimFenceError as exc:
+            # A report whose claim was superseded. Machine-readable so the
+            # worker retires the report instead of retrying it forever: no
+            # amount of retrying will make a dead claim current again.
+            logger.warning(
+                "task.complete refused: superseded claim, task_id=%s current_status=%s",
+                for_log(task_id),
+                for_log(exc.task_status),
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "claim_superseded",
+                    "task_id": exc.task_id,
+                    "status": exc.task_status,
+                    "message": str(exc),
+                },
+            ) from None
         except RoleMismatchError as exc:
             # Only the auto-claim above raises this: an agent token may not
             # claim (and so finish) an open task of another role.
@@ -1797,16 +1829,38 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
+        check_claim_fence(existing_task, body.claim_token)
         # Auto-claim if task reverted to "open" (same rationale as /complete).
-        if existing_task.status.value == "open":
+        # Unfenced callers only, for the same reason: adopting a dead claim from
+        # a fenced report would let it fail work it no longer owns.
+        if existing_task.status.value == "open" and body.claim_token is None:
             logger.info(
                 "task.fail auto-claim: task_id=%s reverted to open, re-claiming before fail",
                 for_log(task_id),
             )
             await store.claim_by_id(task_id, agent_role=_caller_agent_role(request))
-        task = await store.fail(task_id, body.reason)
+        task = await store.fail(task_id, body.reason, claim_token=body.claim_token)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except ClaimFenceError as exc:
+        # See the matching branch in complete_task: the report belongs to a
+        # claim that no longer exists, so retrying cannot help. This is also
+        # what keeps a *stale* failure from flipping a task a newer claim
+        # already completed, while the live claim may still correct DONE.
+        logger.warning(
+            "task.fail refused: superseded claim, task_id=%s current_status=%s",
+            for_log(task_id),
+            for_log(exc.task_status),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "claim_superseded",
+                "task_id": exc.task_id,
+                "status": exc.task_status,
+                "message": str(exc),
+            },
+        ) from None
     except RoleMismatchError as exc:
         # Raised by the auto-claim above, as in ``complete_task``.
         raise HTTPException(status_code=403, detail=str(exc)) from None

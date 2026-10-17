@@ -142,9 +142,9 @@ def test_conflicting_outcome_never_overwrites_the_real_server(
     fails_posted: list[str] = []
     real_fail = loop._fail_task
 
-    def _spy(client: httpx.Client, task: str, reason: str) -> httpx.Response | None:
+    def _spy(client: httpx.Client, task: str, reason: str, claim_token: str | None = None) -> httpx.Response | None:
         fails_posted.append(task)
-        return real_fail(client, task, reason)
+        return real_fail(client, task, reason, claim_token)
 
     monkeypatch.setattr(loop, "_fail_task", _spy)
     loop._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0")
@@ -180,3 +180,114 @@ def test_second_node_never_reposts_the_outcome_it_does_not_own(tmp_path: Path, t
 
     owner._report_finished(test_client)
     assert _status(test_client, task_id) == "done"
+
+
+# ---------------------------------------------------------------------------
+# Claim fencing on the worker side (adversarial review F1/F2).
+#
+# The server now refuses a terminal report whose ``claim_token`` no longer
+# identifies the live claim. Two things have to hold here for that to be a fix
+# rather than a new outage: the token must travel with the report (including
+# across a restart, since the whole point of the outbox is that reports are
+# replayed later), and the refusal must *settle* the report. A 409 that falls
+# through to the generic reconcile path reads the newer claim's ``claimed``
+# status, is not treated as terminal, and is retried forever -- a report that
+# can never succeed occupying the queue indefinitely.
+# ---------------------------------------------------------------------------
+
+
+def _claim(client: TestClient, task_id: str, *, node: str = "node-a") -> str:
+    resp = client.post(f"/tasks/{task_id}/claim", params={"claimed_by_session": node})
+    assert resp.status_code == 200, resp.text
+    token = resp.json().get("claim_token")
+    assert isinstance(token, str) and token, f"claim grant carried no claim_token: {resp.json()}"
+    return token
+
+
+def test_the_token_a_report_carries_is_the_one_the_server_mints(tmp_path: Path, test_client: TestClient) -> None:
+    """Capture is real: the worker holds the same fence the central issued."""
+    task_id = _new_task(test_client, claim=False)
+    token = _claim(test_client, task_id)
+    assert test_client.get(f"/tasks/{task_id}").json()["claim_token"] == token
+
+    loop = _make_loop(tmp_path)
+    loop._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0", claim_token=token)
+
+    assert [r.claim_token for r in loop._outbox.pending()] == [token]
+
+
+def test_a_report_replays_the_same_fence_after_a_restart(tmp_path: Path, test_client: TestClient) -> None:
+    """The replayed report must name the claim it was granted, not a new one.
+
+    Durability is the entire reason a stale report is possible, so the fence has
+    to be as durable as the report it guards. A token that lived only in memory
+    would come back ``None`` after a restart, which the server reads as an
+    unfenced legacy caller and accepts -- silently reopening the hole.
+    """
+    task_id = _new_task(test_client, claim=False)
+    token = _claim(test_client, task_id)
+
+    first = _make_loop(tmp_path)
+    first._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0", claim_token=token)
+
+    second = _make_loop(tmp_path)
+    owed = second._outbox.pending()
+    assert len(owed) == 1
+    assert owed[0].claim_token == token, "a restart must not downgrade a fenced report to an unfenced one"
+
+
+def test_a_superseded_report_is_retired_not_retried_forever(tmp_path: Path, test_client: TestClient) -> None:
+    """The server named our claim dead; that settles the report."""
+    task_id = _new_task(test_client, claim=False)
+    stale = _claim(test_client, task_id, node="node-a")
+    assert test_client.post(f"/tasks/{task_id}/release", json={"reason": "node-a left"}).status_code == 200
+    fresh = _claim(test_client, task_id, node="node-b")
+
+    loop = _make_loop(tmp_path, name="node-a")
+    loop._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0", claim_token=stale)
+
+    loop._report_finished(test_client)
+
+    assert loop._outbox.pending() == [], "a report that can never succeed must not hold the queue"
+    # And the refusal left the newer claim exactly as it found it.
+    body = test_client.get(f"/tasks/{task_id}").json()
+    assert body["status"] == "claimed"
+    assert body["claim_token"] == fresh
+
+    # A later cycle has nothing left to post.
+    loop._report_finished(test_client)
+    assert test_client.get(f"/tasks/{task_id}").json()["status"] == "claimed"
+
+
+def test_a_bogus_fence_is_not_mistaken_for_an_ack(tmp_path: Path, test_client: TestClient) -> None:
+    """A rejected report must not be recorded as delivered.
+
+    This is the assertion that the token really rides on the request: were it
+    dropped from the body the server would answer 200 and the task would be
+    done, so a still-claimed task is the proof it was sent and refused.
+    """
+    task_id = _new_task(test_client)
+    loop = _make_loop(tmp_path)
+    loop._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0", claim_token="0" * 32)
+
+    loop._report_finished(test_client)
+
+    assert _status(test_client, task_id) == "claimed"
+    assert loop._outbox.pending() == []
+
+
+def test_a_late_failure_from_the_same_claim_still_corrects_done(tmp_path: Path, test_client: TestClient) -> None:
+    """F2's legitimate half, driven by the worker: DONE then FAILED."""
+    task_id = _new_task(test_client, claim=False)
+    token = _claim(test_client, task_id)
+    loop = _make_loop(tmp_path)
+
+    loop._outbox.append(task_id, OUTCOME_DONE, "agent exited with code 0", claim_token=token)
+    loop._report_finished(test_client)
+    assert _status(test_client, task_id) == "done"
+
+    loop._outbox.append(task_id, OUTCOME_FAILED, "agent wrapper exited 71 after self-completing", claim_token=token)
+    loop._report_finished(test_client)
+
+    assert _status(test_client, task_id) == "failed"
+    assert loop._outbox.pending() == []

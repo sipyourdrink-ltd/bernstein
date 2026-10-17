@@ -325,6 +325,7 @@ def task_to_response(task: Task) -> TaskResponse:
         metadata=task.metadata,
         created_at=task.created_at,
         claimed_at=task.claimed_at,
+        claim_token=task.claim_token,
         completed_at=task.completed_at,
         closed_at=task.closed_at,
         progress_log=cast("list[ProgressEntry]", task.progress_log).copy(),  # type: ignore[reportUnknownMemberType]

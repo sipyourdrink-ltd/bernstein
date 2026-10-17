@@ -30,6 +30,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusSummary, role_mismatch_error
+from bernstein.core.tasks.lifecycle import ClaimFenceError
 from bernstein.core.tasks.models import (
     CompletionSignal,
     Complexity,
@@ -97,6 +98,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     progress_log      JSONB       NOT NULL DEFAULT '[]',
     version           INTEGER     NOT NULL DEFAULT 1,
     claimed_by_session TEXT,
+    claim_token       TEXT,
     tenant_id         TEXT        NOT NULL DEFAULT 'default'
 );
 
@@ -105,6 +107,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 -- written before the tenant column existed carry no recorded scope, so they
 -- land in the default tenant - the only interpretation available.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by_session TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claim_token TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status        ON tasks (status);
@@ -151,7 +154,8 @@ CREATE INDEX IF NOT EXISTS idx_archive_completed ON task_archive (completed_at D
 _CLAIM_NEXT_SQL = """
 UPDATE tasks AS t
 SET    status  = 'claimed',
-       version = version + 1
+       version = version + 1,
+       claim_token = gen_random_uuid()::text
 WHERE  t.id = (
     SELECT c.id
     FROM   tasks AS c
@@ -211,7 +215,8 @@ def _claim_by_id_sql(role_predicate: str = "") -> str:
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1,
-       claimed_by_session = $2
+       claimed_by_session = $2,
+       claim_token = gen_random_uuid()::text
 WHERE  id = $1
 AND    status = 'open'{role_predicate}
 AND    {_DEPENDS_ON_SATISFIED_SQL}
@@ -224,7 +229,8 @@ def _claim_by_id_cas_sql(role_predicate: str = "") -> str:
 UPDATE tasks
 SET    status  = 'claimed',
        version = version + 1,
-       claimed_by_session = $3
+       claimed_by_session = $3,
+       claim_token = gen_random_uuid()::text
 WHERE  id      = $1
 AND    version = $2
 AND    status  = 'open'{role_predicate}
@@ -290,6 +296,10 @@ def _row_to_task(row: Any) -> Task:
         owned_files=list(raw.get("owned_files") or []),
         assigned_agent=raw.get("assigned_agent"),
         claimed_by_session=raw.get("claimed_by_session"),
+        # Without this the grant would return no token, every worker would fall
+        # back to the unfenced path, and the fence would be silently disabled on
+        # exactly the backend multi-node deployments use.
+        claim_token=raw.get("claim_token"),
         tenant_id=normalize_tenant_id(raw.get("tenant_id") or DEFAULT_TENANT_ID),
         result_summary=raw.get("result_summary"),
         cell_id=raw.get("cell_id"),
@@ -626,6 +636,7 @@ class PostgresTaskStore(BaseTaskStore):
                         SET    status             = 'claimed',
                                assigned_agent     = $2,
                                claimed_by_session = $3,
+                               claim_token        = gen_random_uuid()::text,
                                version            = version + 1
                         WHERE  {" AND ".join(predicates)}
                         RETURNING id
@@ -638,72 +649,82 @@ class PostgresTaskStore(BaseTaskStore):
                     failed.append(task_id)
         return claimed, failed
 
-    async def complete(self, task_id: str, result_summary: str) -> Task:
+    async def complete(self, task_id: str, result_summary: str, *, claim_token: str | None = None) -> Task:
         """Mark a task done and write an archive record."""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                UPDATE tasks
-                SET    status         = 'done',
-                       result_summary = $2,
-                       version        = version + 1
-                WHERE  id = $1
-                RETURNING *
-                """,
-                task_id,
-                result_summary,
-            )
-            if row is None:
-                raise KeyError(task_id)
-            task = _row_to_task(row)
-            completed_at = time.time()
-            await conn.execute(
-                _ARCHIVE_INSERT_SQL,
-                task.id,
-                task.title,
-                task.role,
-                task.status.value,
-                task.created_at,
-                completed_at,
-                round(completed_at - task.created_at, 3),
-                result_summary,
-                None,
-            )
-        return task
+            return await self._terminal_transition(conn, task_id, "done", result_summary, claim_token)
 
-    async def fail(self, task_id: str, reason: str) -> Task:
+    async def fail(self, task_id: str, reason: str, *, claim_token: str | None = None) -> Task:
         """Mark a task failed and write an archive record."""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                UPDATE tasks
-                SET    status         = 'failed',
-                       result_summary = $2,
-                       version        = version + 1
-                WHERE  id = $1
-                RETURNING *
-                """,
-                task_id,
-                reason,
-            )
-            if row is None:
+            return await self._terminal_transition(conn, task_id, "failed", reason, claim_token)
+
+    @staticmethod
+    async def _terminal_transition(
+        conn: Any,
+        task_id: str,
+        status: str,
+        summary: str,
+        claim_token: str | None,
+    ) -> Task:
+        """Apply a fenced terminal transition and write its archive record.
+
+        DONE and FAILED share one statement on purpose.  The fence predicate is
+        the thing standing between a replayed report from a dead claim and an
+        outcome a newer claim already recorded; expressing it twice is how one
+        path gets fixed and the other silently keeps the hole.
+
+        The check rides in the ``WHERE`` of the statement that performs the
+        transition, so it is evaluated by the same row lock that orders the
+        write - no window exists in which a concurrent re-claim can slip between
+        reading the fence and honouring it.  A ``claim_token`` of ``None`` is the
+        deliberately supported unfenced caller: the ``IS NULL`` arm admits it
+        unchanged, so legacy clients keep working.
+
+        Raises:
+            KeyError: No such task.
+            ClaimFenceError: *claim_token* no longer names the live claim.
+        """
+        row = await conn.fetchrow(
+            """
+            UPDATE tasks
+            SET    status         = $3,
+                   result_summary = $2,
+                   version        = version + 1
+            WHERE  id = $1
+            AND    ($4::text IS NULL OR claim_token IS NOT DISTINCT FROM $4::text)
+            RETURNING *
+            """,
+            task_id,
+            summary,
+            status,
+            claim_token,
+        )
+        if row is None:
+            # A gated UPDATE that matches nothing is ambiguous, so re-read to
+            # name the real reason - the same convention the claim statements
+            # follow. The re-read only classifies; the refusal already happened
+            # atomically above.
+            current = await conn.fetchrow("SELECT status FROM tasks WHERE id=$1", task_id)
+            if current is None:
                 raise KeyError(task_id)
-            task = _row_to_task(row)
-            completed_at = time.time()
-            await conn.execute(
-                _ARCHIVE_INSERT_SQL,
-                task.id,
-                task.title,
-                task.role,
-                task.status.value,
-                task.created_at,
-                completed_at,
-                round(completed_at - task.created_at, 3),
-                reason,
-                None,
-            )
+            raise ClaimFenceError(task_id, str(current["status"]))
+        task = _row_to_task(row)
+        completed_at = time.time()
+        await conn.execute(
+            _ARCHIVE_INSERT_SQL,
+            task.id,
+            task.title,
+            task.role,
+            task.status.value,
+            task.created_at,
+            completed_at,
+            round(completed_at - task.created_at, 3),
+            summary,
+            None,
+        )
         return task
 
     async def add_progress(self, task_id: str, message: str, percent: int) -> Task:

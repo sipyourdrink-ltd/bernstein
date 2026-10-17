@@ -108,6 +108,7 @@ What retires a report is the response, read deliberately:
 | --- | --- |
 | `200`/`201` naming this task id | Delivered - record dropped |
 | `200` whose body is not this task | Not an ack; retried (a cache or proxy page must not retire a real outcome) |
+| `409` tagged `claim_superseded` | Retired immediately - the claim it answers is dead and no retry can revive it |
 | `409`/`422`/`404` | Reconciled against `GET /tasks/{id}`, never blind-retried |
 | `429` | Held for the response's `Retry-After` |
 | `401`/`403` | Held at the capped interval; a token fix recovers it without a restart |
@@ -124,9 +125,14 @@ ambiguous: it is equally true when this worker's own earlier attempt landed
 (a duplicate to retire) and when the janitor or an operator ended the task
 differently (a conflict that must not be overwritten). The task record tells
 them apart. On a conflict the central is authoritative - the worker logs it and
-posts nothing further, so a node that believes a task succeeded can never
-paper over a server-side failure, and neither can it post a compensating
-`/fail` to "agree" with one.
+posts nothing further, so a node that believes a task succeeded can never paper
+over a server-side failure.
+
+That last guarantee is a property of this one worker's decision, not of the
+API: the reconcile path stops *this* report, but a worker that gave up and
+posted `/fail` directly used to be able to rewrite the outcome anyway, because
+`DONE -> FAILED` is a legal transition. The fence below is what makes it a
+server-side guarantee rather than a convention.
 
 Two outcomes deliberately are not treated as success. A clean agent exit whose
 push to the shared remote failed is reported as a failure: work that never left
@@ -152,6 +158,55 @@ cat .sdd/runtime/worker_outbox.jsonl
 
 A record that will not drain is a central that will not acknowledge it, not a
 worker that forgot.
+
+### Claim fencing on terminal reports
+
+Durable replay is what makes a stale report dangerous. Three server behaviours
+combine: a departing node's in-flight claims are reopened (graceful unregister
+and the heartbeat reaper), `/complete` and `/fail` auto-claim a task that has
+reverted to `OPEN`, and `DONE -> FAILED` is legal. Without a fence, a report
+written hours earlier can transition a task a *different* node now owns -
+including failing work that node already delivered.
+
+Each claim grant mints an opaque `claim_token` and returns it on the task
+payload. It is rotated on re-claim, cleared on every surrender path in the
+receipt table above, and deliberately **preserved across terminal transitions** -
+that preservation is what lets the node still holding the claim post a late
+correction. `/complete`, `/fail` and the typed refusal accept it, and the server
+compares it **inside the store lock at transition time**. A `GET` before the
+`POST` is not sufficient and is not what is implemented: check-then-act is not
+atomic, and the claim can be released and re-granted between the two calls.
+
+| Caller | Result |
+| --- | --- |
+| Token matches the live claim | Accepted, including `DONE -> FAILED` on its own completion |
+| Token names a superseded, released or reopened claim | `409` with `detail.error = "claim_superseded"`; the task is untouched |
+| Token supplied but wrong | Refused, not ignored - a truncated token must not downgrade to the unfenced path |
+| No token | Accepted unchanged (see residual risk below) |
+
+A fenced caller is also excluded from the auto-claim-on-`OPEN` convenience: an
+`OPEN` task has no live claim, so a report naming a token cannot come from the
+current holder, and adopting it would be the exact hole the fence closes. The
+fence is enforced by both store backends; a check that existed in only one would
+be bypassable by choosing the other.
+
+The worker persists the token in its outbox record alongside the outcome.
+Durability is the reason a stale report is possible at all, so the fence has to
+be as durable as the report it guards - a token that lived only in memory would
+come back `None` after a restart and silently disarm the check. A
+`claim_superseded` answer retires the record rather than reconciling it: the
+task is legitimately live under a newer claim, which reads as non-terminal, so
+reconciling would retry a report that can never succeed.
+
+**Residual risk, accepted deliberately.** A caller that sends no token is a
+pre-fence client - an older worker, an in-agent completion `curl`, an
+integration - and is still accepted, because refusing them would break every
+existing deployment. Such a report is unfenced and can still land on a newer
+claim, so the guarantee is only as strong as the fleet's upgrade: **upgrade
+every worker to a build that echoes the grant token to get it.** The unfenced
+path is asserted as a tested property in `tests/unit/test_task_claim_fence.py`
+(`TestUnfencedClientsStayAccepted`) rather than left as an accident, so removing
+it later is a visible decision with a test that fails.
 
 ## Worker mailbox
 

@@ -29,7 +29,13 @@ if TYPE_CHECKING:
     # ``from bernstein.core.lifecycle import ...`` actually resolves to at
     # runtime. Type-only: nothing here executes.
     from bernstein.core.tasks.lifecycle import (
+        ClaimFenceError as ClaimFenceError,
+    )
+    from bernstein.core.tasks.lifecycle import (
         IllegalTransitionError as IllegalTransitionError,
+    )
+    from bernstein.core.tasks.lifecycle import (
+        check_claim_fence as check_claim_fence,
     )
     from bernstein.core.tasks.lifecycle import (
         transition_agent as transition_agent,

@@ -58,6 +58,11 @@ SETTLE_DUPLICATE = "duplicate"
 SETTLE_CONFLICT = "conflict"
 SETTLE_RESOLVED = "resolved"
 SETTLE_GONE = "gone"
+#: The central refused the report because the execution claim it names is no
+#: longer current. Unlike the others this is not a race over one outcome: the
+#: report belongs to a dead claim and can never succeed, so retrying it is not
+#: caution but a permanent hold on the queue.
+SETTLE_SUPERSEDED = "superseded"
 
 _DETAIL_LIMIT = 1000
 _STATUS_LIMIT = 200
@@ -82,6 +87,13 @@ class TerminalReport:
         agent_branch: Remote branch holding the agent's work, captured once at
             reap time. Frozen here so every retry re-delivers the same SHA.
         agent_sha: Head SHA of :attr:`agent_branch`.
+        claim_token: The execution claim this report answers, captured from the
+            claim grant. Persisted for the same reason the outcome is: the
+            report is replayed later, possibly after a restart, and the fence
+            has to outlive the process that learned it. A token that lived only
+            in memory would come back ``None``, which the server reads as an
+            unfenced legacy caller and accepts -- silently reopening the hole
+            the fence exists to close.
         node: Name of the worker node that produced the report; only that node
             drains it.
         report_id: Content-unique id, stable across restarts.
@@ -97,6 +109,7 @@ class TerminalReport:
     detail: str = ""
     agent_branch: str | None = None
     agent_sha: str | None = None
+    claim_token: str | None = None
     node: str = ""
     report_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     attempts: int = 0
@@ -186,6 +199,7 @@ class TerminalReportOutbox:
         detail: str = "",
         *,
         delivery: tuple[str, str] | None = None,
+        claim_token: str | None = None,
     ) -> TerminalReport:
         """Durably queue one terminal outcome. Call this before delivering.
 
@@ -195,6 +209,8 @@ class TerminalReportOutbox:
             detail: Summary/reason text for the server.
             delivery: ``(branch, sha)`` of the pushed agent work, captured once
                 at reap time and replayed verbatim on every retry.
+            claim_token: The execution claim this report answers, replayed
+                verbatim on every retry for the same reason *delivery* is.
 
         Returns:
             The queued record (durable unless the write failed).
@@ -205,6 +221,7 @@ class TerminalReportOutbox:
             detail=detail[:_DETAIL_LIMIT],
             agent_branch=delivery[0] if delivery else None,
             agent_sha=delivery[1] if delivery else None,
+            claim_token=claim_token,
             node=self._node,
         )
         try:
@@ -374,6 +391,7 @@ __all__ = [
     "SETTLE_DUPLICATE",
     "SETTLE_GONE",
     "SETTLE_RESOLVED",
+    "SETTLE_SUPERSEDED",
     "TerminalReport",
     "TerminalReportOutbox",
     "retry_delay_s",

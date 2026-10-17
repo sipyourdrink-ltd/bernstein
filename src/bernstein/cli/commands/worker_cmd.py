@@ -43,6 +43,7 @@ from bernstein.core.orchestration.terminal_report_outbox import (
     SETTLE_DUPLICATE,
     SETTLE_GONE,
     SETTLE_RESOLVED,
+    SETTLE_SUPERSEDED,
     TerminalReport,
     TerminalReportOutbox,
 )
@@ -210,6 +211,14 @@ class WorkerLoop:
         self._running = False
         self._active_tasks: dict[str, int] = {}  # task_id -> pid
         self._task_sessions: dict[str, str] = {}  # task_id -> session_id
+        # The execution claim this node holds per task, captured from the grant.
+        # It is the fence the terminal report must carry: without it a report
+        # replayed after this node's claim was released (unregister, heartbeat
+        # expiry) reads as an unfenced legacy call and is accepted over the head
+        # of the node that took the task over. In-memory is sufficient - the
+        # claim only has to outlive the agent, and a restart loses the pid
+        # anyway, so there is nothing left to report a status for.
+        self._claim_tokens: dict[str, str] = {}
         # Terminal outcomes owed the central server, drained by _report_finished.
         # Worker-side reporting is authoritative and does not depend on the
         # in-agent completion curl (#2808): without it a finished agent leaves
@@ -443,8 +452,17 @@ class WorkerLoop:
                     detail = f"{detail}; delivery failed: agent branch not pushed"
             self._task_sessions.pop(task_id, None)
             # Durable before delivery: if the post below fails or this process
-            # dies, the outcome is still on disk and still owed.
-            self._outbox.append(task_id, outcome, detail, delivery=delivery)
+            # dies, the outcome is still on disk and still owed. The fence goes
+            # into the same record for the same reason: it is re-posted on every
+            # retry, possibly after a restart, and a retry that lost it would be
+            # accepted as an unfenced legacy call.
+            self._outbox.append(
+                task_id,
+                outcome,
+                detail,
+                delivery=delivery,
+                claim_token=self._claim_tokens.pop(task_id, None),
+            )
         if finished:
             self._wake.signal_capacity()
         return bool(finished)
@@ -630,12 +648,19 @@ class WorkerLoop:
         task_id: str,
         summary: str,
         delivery: tuple[str, str] | None = None,
+        claim_token: str | None = None,
     ) -> httpx.Response | None:
         """Report task completion to the central server.
 
         When *delivery* is ``(branch, sha)``, the body includes
         ``agent_branch`` and ``agent_sha`` so the central can fetch and
         merge the remote agent's work (#6538).
+
+        *claim_token* fences the report to the execution claim that produced
+        it, so a replay cannot rewrite a task a newer claim now owns. ``None``
+        posts it unfenced, which the server still accepts for backward
+        compatibility -- so a caller that has a token and omits it is silently
+        choosing the unsafe path, and no error will tell it so.
 
         Returns:
             The response, or ``None`` if the request never completed. The
@@ -647,6 +672,8 @@ class WorkerLoop:
         if delivery is not None:
             body["agent_branch"] = delivery[0]
             body["agent_sha"] = delivery[1]
+        if claim_token is not None:
+            body["claim_token"] = claim_token
         try:
             return client.post(
                 f"{self._server_url}/tasks/{task_id}/complete",
@@ -658,16 +685,30 @@ class WorkerLoop:
             logger.warning("Failed to report completion for %s: %s", for_log(task_id), exc)
             return None
 
-    def _fail_task(self, client: httpx.Client, task_id: str, reason: str) -> httpx.Response | None:
+    def _fail_task(
+        self,
+        client: httpx.Client,
+        task_id: str,
+        reason: str,
+        claim_token: str | None = None,
+    ) -> httpx.Response | None:
         """Report task failure to the central server.
+
+        *claim_token* fences the report as in :meth:`_complete_task`. This is
+        the path a live claim uses to correct a completion it later disproved,
+        so a token lost here is what lets one node's dead report flip another
+        node's finished task.
 
         Returns:
             The response, or ``None`` if the request never completed.
         """
+        body: dict[str, str] = {"reason": reason}
+        if claim_token is not None:
+            body["claim_token"] = claim_token
         try:
             return client.post(
                 f"{self._server_url}/tasks/{task_id}/fail",
-                json={"reason": reason},
+                json=body,
                 headers=self._headers(),
                 timeout=10.0,
             )
@@ -718,9 +759,9 @@ class WorkerLoop:
             return
         if report.outcome == OUTCOME_DONE:
             delivery = self._delivery_of(report)
-            resp = self._complete_task(client, report.task_id, report.detail, delivery)
+            resp = self._complete_task(client, report.task_id, report.detail, delivery, claim_token=report.claim_token)
         else:
-            resp = self._fail_task(client, report.task_id, report.detail)
+            resp = self._fail_task(client, report.task_id, report.detail, claim_token=report.claim_token)
         self._settle_from_response(client, report, resp)
 
     @staticmethod
@@ -760,6 +801,22 @@ class WorkerLoop:
                 # A 200 that does not name this task is a proxy or cache
                 # answering, not the central confirming the transition.
                 self._outbox.note_attempt(report.report_id, f"http-{code}-unverifiable")
+            return
+
+        if code == 409 and self._claim_superseded(resp):
+            # The central is not disagreeing about this task's outcome - it is
+            # saying the execution claim this report answers no longer exists.
+            # That is permanent, so this is the one 409 that must not go through
+            # _reconcile: the task is legitimately live under a *newer* claim,
+            # which reads as non-terminal, and the report would be retried
+            # forever without ever being able to succeed.
+            logger.warning(
+                "central refused the %s report for task %s: its claim was superseded by a newer one; "
+                "retiring the report and leaving the current owner's outcome in place",
+                report.outcome,
+                for_log(report.task_id),
+            )
+            self._outbox.settle(report.report_id, SETTLE_SUPERSEDED)
             return
 
         if code in (404, 409, 422):
@@ -814,6 +871,25 @@ class WorkerLoop:
         except ValueError:
             return False
         return isinstance(body, dict) and body.get("id") == task_id
+
+    @staticmethod
+    def _claim_superseded(resp: httpx.Response) -> bool:
+        """Whether a 409 says the report's claim was superseded, not that a
+        transition was illegal.
+
+        Both are 409s and the distinction decides whether to retry, so the
+        server answers this one with a machine-readable tag rather than a
+        message the worker would have to pattern-match. An unparseable body is
+        deliberately not treated as superseded: falling back to the reconcile
+        path costs one extra read, whereas guessing wrong discards a report that
+        might still have been deliverable.
+        """
+        try:
+            body = resp.json()
+        except ValueError:
+            return False
+        detail = body.get("detail") if isinstance(body, dict) else None
+        return isinstance(detail, dict) and detail.get("error") == "claim_superseded"
 
     def _task_state(self, client: httpx.Client, task_id: str) -> str | None:
         """Read the authoritative status of a task from the central.
@@ -939,6 +1015,7 @@ class WorkerLoop:
             client,
             report.task_id,
             f"{report.detail}; worker could not observe the agent exit status and the task was still {status}",
+            claim_token=report.claim_token,
         )
         self._settle_from_response(client, report, resp)
 
@@ -1038,6 +1115,14 @@ class WorkerLoop:
             pid = self._spawn_agent(task)
             if pid is not None:
                 self._active_tasks[task_id] = pid
+                # Keep the fence the grant handed us. The claim response is the
+                # only place the token is ever disclosed, so a worker that drops
+                # it here can never post a fenced report later -- and an
+                # unfenced report is accepted unconditionally, which is the
+                # stale-write path the fence exists to close.
+                token = task.get("claim_token")
+                if isinstance(token, str) and token:
+                    self._claim_tokens[task_id] = token
                 console.print(f"  [green]Claimed[/green] {task_id}: {task.get('title', '')[:50]} (pid={pid})")
             else:
                 # Spawn failed: release the claim so another node can run the

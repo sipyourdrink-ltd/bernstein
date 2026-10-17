@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import hmac
 import json
 import logging
 import time
@@ -128,6 +129,60 @@ class IllegalTransitionError(TaskDomainError):
         self.from_status = from_status
         self.to_status = to_status
         super().__init__(f"Illegal {entity_type} transition: {from_status!r} -> {to_status!r} (entity {entity_id})")
+
+
+class ClaimFenceError(TaskDomainError):
+    """Raised when a terminal report carries a claim identity that is not current.
+
+    A terminal report is durable and replayed, so it can reach the server long
+    after it was produced -- possibly after its own claim was released (node
+    unregister, heartbeat expiry, reopen) and the task was re-claimed by someone
+    else. Accepting it would let a dead execution decide the outcome of a live
+    one, so the transition is refused.
+
+    Refused here rather than by the HTTP layer reading the task first: the check
+    is only meaningful if it is atomic with the transition it guards, and a GET
+    before the POST is not.
+
+    Attributes:
+        task_id: The task the rejected report was for.
+        task_status: The task's status at refusal, for the 409 payload.
+    """
+
+    def __init__(self, task_id: str, task_status: str) -> None:
+        self.task_id = task_id
+        self.task_status = task_status
+        super().__init__(
+            f"claim for task {task_id!r} was superseded; refusing its terminal report (task is now {task_status!r})"
+        )
+
+
+def check_claim_fence(task: Task, claim_token: str | None) -> None:
+    """Guard a transition with the caller's execution-claim identity.
+
+    A caller that supplies no token is a pre-fence client and is let through
+    unchanged: refusing them would break every worker, in-agent completion curl,
+    and integration that predates fencing. That is a deliberate compatibility
+    choice, and its cost -- an unfenced report can still land on a newer claim
+    -- is documented in ``docs/orchestration/worker-coordination.md`` and asserted
+    by ``tests/unit/test_task_claim_fence.py``.
+
+    Args:
+        task: The task the transition targets, read under the store lock.
+        claim_token: The identity the caller claims to hold, or ``None`` for an
+            unfenced (legacy) caller.
+
+    Raises:
+        ClaimFenceError: If a token was supplied and it is not the task's
+            current claim identity -- including the case where the task has no
+            live claim at all, which is how a released or reopened claim reads.
+    """
+    if claim_token is None:
+        return
+    current = task.claim_token
+    if current is not None and hmac.compare_digest(str(current), str(claim_token)):
+        return
+    raise ClaimFenceError(task.id, task.status.value)
 
 
 # ---------------------------------------------------------------------------
