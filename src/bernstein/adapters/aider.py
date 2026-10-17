@@ -52,6 +52,7 @@ class AiderAdapter(CLIAdapter):
         system_addendum: str = "",
         multimodal_context: Any | None = None,
         context_files: list[str] | None = None,
+        owned_files: list[str] | None = None,
     ) -> SpawnResult:
         self.refuse_multimodal_if_needed(multimodal_context)
         self.enforce_network_policy()
@@ -93,11 +94,13 @@ class AiderAdapter(CLIAdapter):
             str(analytics_log_path),
         ]
 
-        if context_files:
-            for cf in context_files:
-                resolved = workdir / cf
-                if resolved.is_file():
-                    cmd.extend(["--file", str(resolved)])
+        # Explicit files keep aider from repo-mapping the whole tree: owned files
+        # go in editable (aider creates missing ones), context files read-only.
+        for path in dict.fromkeys(owned_files or []):
+            cmd.extend(["--file", str(workdir / path)])
+        for path in dict.fromkeys(context_files or []):
+            if path not in (owned_files or []) and (workdir / path).is_file():
+                cmd.extend(["--read", str(workdir / path)])
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"

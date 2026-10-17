@@ -263,54 +263,43 @@ class TestAiderAdapterSpawn:
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
 
-    def test_context_files_added_as_file_flags(self, tmp_path: Path) -> None:
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "main.py").write_text("pass")
-        (tmp_path / "README.md").write_text("hi")
+    def _spawn_inner(self, tmp_path: Path, **kwargs: object) -> list[str]:
         adapter = AiderAdapter()
-        proc_mock = _make_popen_mock(pid=530)
-        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=530)) as popen:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
                 model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-ctx",
-                context_files=["src/main.py", "README.md"],
+                **kwargs,  # type: ignore[arg-type]
             )
-        inner = _inner_cmd(popen.call_args.args[0])
-        file_args = [inner[i + 1] for i, v in enumerate(inner) if v == "--file"]
-        assert str(tmp_path / "src" / "main.py") in file_args
-        assert str(tmp_path / "README.md") in file_args
+        return _inner_cmd(popen.call_args.args[0])
 
-    def test_context_files_skips_missing(self, tmp_path: Path) -> None:
-        (tmp_path / "exists.py").write_text("pass")
-        adapter = AiderAdapter()
-        proc_mock = _make_popen_mock(pid=531)
-        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
-            adapter.spawn(
-                prompt="hello",
-                workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-5.4", effort="high"),
-                session_id="aider-ctx2",
-                context_files=["exists.py", "missing.py"],
-            )
-        inner = _inner_cmd(popen.call_args.args[0])
-        file_args = [inner[i + 1] for i, v in enumerate(inner) if v == "--file"]
-        assert str(tmp_path / "exists.py") in file_args
-        assert len(file_args) == 1
+    @staticmethod
+    def _flag_values(inner: list[str], flag: str) -> list[str]:
+        return [inner[i + 1] for i, v in enumerate(inner) if v == flag]
 
-    def test_context_files_none_no_file_flags(self, tmp_path: Path) -> None:
-        adapter = AiderAdapter()
-        proc_mock = _make_popen_mock(pid=532)
-        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
-            adapter.spawn(
-                prompt="hello",
-                workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-5.4", effort="high"),
-                session_id="aider-ctx3",
-            )
-        inner = _inner_cmd(popen.call_args.args[0])
+    def test_owned_files_passed_editable_even_when_missing(self, tmp_path: Path) -> None:
+        (tmp_path / "server.py").write_text("pass")
+        inner = self._spawn_inner(tmp_path, owned_files=["server.py", "test_new.py", "server.py"])
+        assert self._flag_values(inner, "--file") == [str(tmp_path / "server.py"), str(tmp_path / "test_new.py")]
+
+    def test_context_files_passed_read_only_existing_only(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("hi")
+        inner = self._spawn_inner(tmp_path, context_files=["README.md", "missing.md"])
+        assert self._flag_values(inner, "--read") == [str(tmp_path / "README.md")]
         assert "--file" not in inner
+
+    def test_context_file_also_owned_is_not_duplicated_read_only(self, tmp_path: Path) -> None:
+        (tmp_path / "a.py").write_text("pass")
+        inner = self._spawn_inner(tmp_path, owned_files=["a.py"], context_files=["a.py"])
+        assert self._flag_values(inner, "--file") == [str(tmp_path / "a.py")]
+        assert "--read" not in inner
+
+    def test_no_files_no_flags(self, tmp_path: Path) -> None:
+        inner = self._spawn_inner(tmp_path)
+        assert "--file" not in inner
+        assert "--read" not in inner
 
     def test_spawn_result_pid(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
