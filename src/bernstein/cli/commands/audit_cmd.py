@@ -361,6 +361,13 @@ def verify_cmd(
     if not _verify_checkpoints():
         failed_pillars.append("Checkpoints")
 
+    # The hash tiles `audit seal` publishes beside the segments are part of the
+    # read layout an offline verifier is handed, so a damaged one must fail
+    # verify naming the file (#3160). Runs regardless of --hmac-only /
+    # --merkle-only for the same reason the checkpoint pillar does.
+    if not _verify_hash_tiles():
+        failed_pillars.append("Hash Tiles")
+
     # External anchors are the pillar the operator cannot satisfy from inside:
     # a checkpoint proves the history did not shrink relative to material we
     # hold, and an actor who holds all of it can roll all of it back together.
@@ -1274,6 +1281,50 @@ def _verify_checkpoints() -> bool:
 
     _print_checkpoint_conflict(CheckpointConsistencyError(last, conflicts))
     return False
+
+
+def _verify_hash_tiles() -> bool:
+    """Check every published hash tile against the segment bytes it describes.
+
+    A tile is never trusted, only checked: once a segment's bytes are
+    authenticated (through the signed checkpoint and the HMAC chain), its tile
+    must be byte-for-byte the tile the seal would publish for them. A tile
+    beside a segment that fails is not judged, since the segment is already
+    the finding; those failures belong to the HMAC Chain and Checkpoints
+    pillars, and this one reports only tile faults.
+
+    A layout with no tiles passes: the orchestrator's shutdown seal publishes
+    none, and nothing trusts a tile, so a missing one weakens nothing.
+    Read-only, like every pillar: the tile-read counter is not recorded.
+    """
+    from bernstein.core.persistence.tiles import TILES_SUBDIR
+    from bernstein.core.security.audit import AuditKeyMissingError, AuditLog, load_audit_key
+
+    console.print()
+    if not any((AUDIT_DIR / TILES_SUBDIR).glob("*.tile")):
+        console.print("[dim]No hash tiles published. Run 'bernstein audit seal' to publish them.[/dim]")
+        return True
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError:
+        # Judging a tile needs authenticated segment bytes, and the chain is
+        # authenticated with the audit key - the same named degradation the
+        # checkpoint pillar takes.
+        console.print(
+            "[yellow]Hash tile verification skipped: no audit HMAC key available "
+            "(tiles are checked against authenticated segment bytes).[/yellow]"
+        )
+        return True
+
+    report = AuditLog(AUDIT_DIR, key=key).verify_incremental(record_tile_reads=False)
+    if report.tile_faults:
+        console.print(Panel("[bold red]Hash Tile Verification FAILED[/bold red]", border_style="red", expand=False))
+        for fault in report.tile_faults:
+            console.print(f"  [red]![/red] {fault}")
+        return False
+    console.print(Panel("[bold green]Hash Tile Verification Passed[/bold green]", border_style="green", expand=False))
+    console.print(f"  [dim]{report.tiles_read} tile(s) checked against authenticated segment bytes.[/dim]")
+    return True
 
 
 def _known_checkpoint_roots() -> set[str] | None:

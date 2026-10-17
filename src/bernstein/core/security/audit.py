@@ -1107,8 +1107,34 @@ def _trusted_prefix(raw: bytes, pin: tuple[int, str] | None, prev_hmac: str) -> 
     return byte_len, len(lines), head
 
 
-def _tile_fault(audit_dir: Path, segment_name: str, raw: bytes) -> str | None:
+def _snapshot_published_tiles(audit_dir: Path) -> dict[str, bytes | OSError]:
+    """Read every published hash tile, keyed by the segment it describes.
+
+    Called before any segment is read. Segments only grow, and a seal writes a
+    segment's tile only after the bytes it describes are on disk, so a tile
+    read first can never describe more than the segment read after it. Reading
+    the other way round, a seal landing between the two reads publishes a tile
+    for bytes this run never saw, and an honest layout reports a tile fault.
+    """
+    from bernstein.core.persistence.tiles import TILES_SUBDIR
+
+    tiles: dict[str, bytes | OSError] = {}
+    tiles_dir = audit_dir / TILES_SUBDIR
+    if not tiles_dir.is_dir():
+        return tiles
+    for path in sorted(tiles_dir.glob("*.tile")):
+        try:
+            tiles[path.name.removesuffix(".tile")] = path.read_bytes()
+        except OSError as exc:
+            tiles[path.name.removesuffix(".tile")] = exc
+    return tiles
+
+
+def _tile_fault(segment_name: str, raw: bytes, published: bytes | OSError) -> str | None:
     """Return why the published hash tile for *segment_name* misdescribes *raw*, or ``None``.
+
+    *published* is the tile as :func:`_snapshot_published_tiles` read it, before
+    *raw* was read.
 
     Called only once *raw* has been authenticated in this run, so any
     disagreement is the tile's fault and the message names the tile file. A
@@ -1123,13 +1149,11 @@ def _tile_fault(audit_dir: Path, segment_name: str, raw: bytes) -> str | None:
     endings normalised to LF.
     """
     from bernstein.core.persistence.merkle import _LEGACY_SCHEME_VERSION, SEAL_SCHEME_VERSION, _leaf_digest
-    from bernstein.core.persistence.tiles import TILES_SUBDIR, render_hash_tile, tile_hash_path
+    from bernstein.core.persistence.tiles import TILES_SUBDIR, render_hash_tile
 
     tile_name = f"{TILES_SUBDIR}/{segment_name}.tile"
-    try:
-        published = tile_hash_path(audit_dir, segment_name).read_bytes()
-    except OSError as exc:
-        return f"{tile_name}: hash tile is unreadable - {exc}"
+    if isinstance(published, OSError):
+        return f"{tile_name}: hash tile is unreadable - {published}"
     try:
         parsed: object = json.loads(published)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -1366,7 +1390,7 @@ def _classify_torn_bytes(torn: bytes) -> str:
     return "invalid_hmac" if "hmac" in parsed else "non_canonical"
 
 
-def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
+def _run_incremental_verify(log: AuditLog, *, record_tile_reads: bool = True) -> IncrementalVerifyReport:
     """Body of :meth:`AuditLog.verify_incremental`.
 
     Walks archived then live segments in the order :meth:`verify_detailed`
@@ -1388,10 +1412,15 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
     clean, so without this the verdict would depend on whether an unsigned
     tile happened to describe the missing bytes.
 
+    Published metadata is read before the data it describes: the signed pins,
+    then every tile (:func:`_snapshot_published_tiles`), then the segments.
+    Segments only grow, so a seal that lands while the run is in progress
+    cannot make an intact layout look damaged.
+
     The run is a pure read of the audit directory apart from the best-effort
     tile-read counter (:func:`_store_tile_read_count`), which is written only
-    after a clean run and whose failure (a read-only directory) changes
-    nothing about the verdict.
+    after a clean run, never when *record_tile_reads* is false, and whose
+    failure (a read-only directory) changes nothing about the verdict.
     """
     from bernstein.core.persistence.chain_checkpoint import (
         CheckpointConflict,
@@ -1399,7 +1428,6 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
         find_divergence_acks,
         leaf_conflict,
     )
-    from bernstein.core.persistence.tiles import has_hash_tile
 
     audit_dir = log._audit_dir
     key = log._key
@@ -1408,6 +1436,7 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
     archived = _archived_segment_paths(audit_dir)
     live_files = sorted(audit_dir.glob(_JSONL_GLOB))
     checkpoint_root, pins = _signed_leaf_pins(audit_dir, key)
+    published_tiles = _snapshot_published_tiles(audit_dir)
     if not archived and not live_files and not pins:
         report = IncrementalVerifyReport(
             ok=True,
@@ -1417,10 +1446,12 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
             segments_re_read=0,
             run_was_full=True,
         )
-        _store_tile_read_count(audit_dir, 0)
+        if record_tile_reads:
+            _store_tile_read_count(audit_dir, 0)
         return report
 
     conflicts: list[CheckpointConflict] = []
+    tile_faults: list[str] = []
     tiles_read = 0
     tiles_trusted = 0
     segments_re_read = 0
@@ -1482,14 +1513,16 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
                 conflicts.append(conflict)
                 segment_failed = True
 
-        if has_hash_tile(audit_dir, segment_name):
+        published = published_tiles.get(segment_name)
+        if published is not None:
             tiles_read += 1
             # A segment that failed is already named; only a tile that
             # misdescribes bytes this run authenticated is the tile's fault.
             if not segment_failed:
-                fault = _tile_fault(audit_dir, segment_name, raw)
+                fault = _tile_fault(segment_name, raw, published)
                 if fault is not None:
                     errors.append(fault)
+                    tile_faults.append(fault)
 
     listed = {segment_name for _path, segment_name, _is_archived in walk_order}
     for name, (byte_len, leaf_hash) in sorted(pins.items()):
@@ -1521,8 +1554,9 @@ def _run_incremental_verify(log: AuditLog) -> IncrementalVerifyReport:
         segments_re_read=segments_re_read,
         run_was_full=tiles_trusted == 0,
         records_walked=records_walked,
+        tile_faults=tile_faults,
     )
-    if not hard_errors:
+    if record_tile_reads and not hard_errors:
         _store_tile_read_count(audit_dir, tiles_read)
     return report
 
@@ -1609,6 +1643,10 @@ class IncrementalVerifyReport:
         records_walked: Records parsed and HMAC-checked in this run. After a
             seal, appending N records and re-running walks N records: the
             pinned prefixes are hashed, not parsed or HMAC-checked.
+        tile_faults: The subset of *errors* that are faults in a published
+            hash tile, each naming ``tiles/<segment>.tile``. Chain damage and
+            checkpoint conflicts are reported in *errors* only, so a caller
+            that already verifies those elsewhere can report just these.
     """
 
     ok: bool
@@ -1618,6 +1656,7 @@ class IncrementalVerifyReport:
     segments_re_read: int
     run_was_full: bool
     records_walked: int = 0
+    tile_faults: list[str] = field(default_factory=list[str])
 
 
 class OutstandingTearError(RuntimeError):
@@ -2768,7 +2807,7 @@ class AuditLog:
                 errors.append(f"{tear.describe()} - run 'bernstein audit ack-tear' after investigating")
         return len(errors) == 0, errors
 
-    def verify_incremental(self) -> IncrementalVerifyReport:
+    def verify_incremental(self, *, record_tile_reads: bool = True) -> IncrementalVerifyReport:
         """Verify the chain, trusting the prefixes the signed checkpoint pins.
 
         The newest signed checkpoint pins each sealed segment prefix by leaf
@@ -2793,13 +2832,14 @@ class AuditLog:
         except signed or HMAC-chained material, so the method runs against a
         read-only copy while a writer appends to the live one. The only write
         is the best-effort counter behind :meth:`last_tile_read_count`, made
-        after a clean run; failing to write it changes nothing.
+        after a clean run; failing to write it changes nothing, and
+        ``record_tile_reads=False`` skips it (``bernstein audit verify`` does).
 
         Returns:
             An :class:`IncrementalVerifyReport` with the verdict and the work
             the run did.
         """
-        return _run_incremental_verify(self)
+        return _run_incremental_verify(self, record_tile_reads=record_tile_reads)
 
     def last_tile_read_count(self) -> int:
         """Return the tile-read count from the most recent ``verify_incremental`` run.

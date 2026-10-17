@@ -1051,3 +1051,74 @@ def test_records_the_writer_appends_are_in_the_framing_trust_requires(tmp_path: 
     assert lines
     assert all(json.dumps(json.loads(line), sort_keys=True).encode() == line for line in lines)
     assert AuditLog(audit_dir, key=key).verify_incremental().tiles_trusted == 3
+
+
+# ---------------------------------------------------------------------------
+# A seal that lands while a verifier is running must not look like damage.
+# ---------------------------------------------------------------------------
+
+
+def test_a_seal_between_reading_a_segment_and_its_tile_is_not_a_tile_fault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Segments only grow, so the verifier reads each tile before its segment.
+
+    The writer appends to the newest segment and re-seals at the worst moment:
+    after the verifier has read that segment, before it looks at the tile. The
+    re-seal publishes a tile describing more bytes than the verifier holds.
+    """
+    import bernstein.core.security.audit as audit_mod
+
+    audit_dir, key = _sealed_log(tmp_path)
+    newest = _segments(audit_dir)[-1]
+    real_read = audit_mod._read_live_segment  # pyright: ignore[reportPrivateUsage]
+    sealed_mid_run: list[bool] = []
+
+    def _read_then_writer_seals(path: Path, root: Path) -> bytes | None:
+        raw = real_read(path, root)
+        if path.name == newest.name and not sealed_mid_run:
+            sealed_mid_run.append(True)
+            _append(audit_dir, key, day=newest.stem, count=2)
+            _seal(audit_dir, key)
+        return raw
+
+    # Built first: opening the log reads the newest segment to recover the chain
+    # tail, and the seal must land inside the verification run, not before it.
+    verifier = AuditLog(audit_dir, key=key)
+    monkeypatch.setattr(audit_mod, "_read_live_segment", _read_then_writer_seals)
+    report = verifier.verify_incremental()
+    monkeypatch.undo()
+
+    assert sealed_mid_run
+    assert report.ok, report.errors
+    # The run checked the tile it read, against the bytes it read.
+    assert report.tiles_read == 3
+
+    # Once the run is over, the re-sealed layout verifies on its own terms.
+    assert AuditLog(audit_dir, key=key).verify_incremental().ok
+
+
+def test_the_cli_path_does_not_record_tile_reads(tmp_path: Path) -> None:
+    """`verify_incremental(record_tile_reads=False)` leaves the directory untouched."""
+    audit_dir, key = _sealed_log(tmp_path)
+    before = sorted((p.name, p.read_bytes()) for p in audit_dir.rglob("*") if p.is_file())
+
+    report = AuditLog(audit_dir, key=key).verify_incremental(record_tile_reads=False)
+
+    assert report.ok, report.errors
+    assert sorted((p.name, p.read_bytes()) for p in audit_dir.rglob("*") if p.is_file()) == before
+    assert not (audit_dir / ".tiles-read.json").exists()
+
+
+def test_tile_faults_are_reported_apart_from_chain_errors(tmp_path: Path) -> None:
+    audit_dir, key = _sealed_log(tmp_path)
+    first, second = _segments(audit_dir)[:2]
+    tile = tile_hash_path(audit_dir, first.name)
+    tile.write_bytes(tile.read_bytes().replace(b'"scheme": 2', b'"scheme": 3'))
+    _flip(second, 30)
+
+    report = AuditLog(audit_dir, key=key).verify_incremental()
+
+    assert report.tile_faults == [f"tiles/{first.name}.tile: hash tile names unsupported seal scheme 3"]
+    assert report.tile_faults[0] in report.errors
+    assert any(error.startswith(f"{second.name}:") for error in report.errors)

@@ -194,3 +194,113 @@ def test_verify_needs_no_write_access_and_no_writer_lock(project: Path) -> None:
 
     assert attempts == []
     assert damaged.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# The published hash tiles are part of what `audit verify` attests (#3160).
+# ---------------------------------------------------------------------------
+
+
+def _sealed_tile(project: Path) -> Path:
+    assert _run("seal").exit_code == 0
+    _close_the_run(project)
+    tiles = sorted((project / ".sdd" / "audit" / "tiles").glob("*.tile"))
+    assert len(tiles) == 1
+    return tiles[0]
+
+
+def _flip_hex_digit(data: bytes, field: bytes) -> bytes:
+    at = data.index(b'"' + field + b'": "') + len(field) + 5
+    flipped = bytearray(data)
+    flipped[at] = ord("0") if flipped[at] != ord("0") else ord("1")
+    return bytes(flipped)
+
+
+_TILE_DAMAGE: dict[str, Callable[[bytes], bytes]] = {
+    "flipped content_sha256": lambda data: _flip_hex_digit(data, b"content_sha256"),
+    "flipped leaf_hash": lambda data: _flip_hex_digit(data, b"leaf_hash"),
+    "truncated": lambda data: data[: len(data) // 2],
+    "renamed segment field": lambda data: data.replace(b'"segment": "', b'"segment": "x'),
+    "empty": lambda data: b"",
+}
+
+
+def test_verify_passes_and_reports_an_intact_tile(project: Path) -> None:
+    _sealed_tile(project)
+
+    result = _run("verify")
+
+    assert result.exit_code == 0, result.output
+    assert "Hash Tile Verification Passed" in result.output
+
+
+@pytest.mark.parametrize("damage", sorted(_TILE_DAMAGE))
+def test_a_damaged_tile_fails_verify_naming_the_tile(project: Path, damage: str) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(_TILE_DAMAGE[damage](tile.read_bytes()))
+
+    result = _run("verify")
+
+    assert result.exit_code == 1, result.output
+    assert f"tiles/{tile.name}:" in result.output
+    failing = result.output.split("Failing pillar(s):", 1)[1]
+    assert "Hash Tiles" in failing
+    assert "HMAC Chain" not in failing
+
+
+@pytest.mark.parametrize("narrow", ["--hmac-only", "--merkle-only"])
+def test_a_damaged_tile_fails_the_narrow_forms_too(project: Path, narrow: str) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(_TILE_DAMAGE["flipped content_sha256"](tile.read_bytes()))
+
+    result = _run("verify", narrow)
+
+    assert result.exit_code == 1, result.output
+    assert f"tiles/{tile.name}:" in result.output
+
+
+def test_a_tile_beside_a_damaged_segment_is_not_blamed(project: Path) -> None:
+    """The segment is the finding; a tile that disagrees with damaged bytes proves nothing."""
+    tile = _sealed_tile(project)
+    segment = project / ".sdd" / "audit" / tile.name.removesuffix(".tile")
+    data = bytearray(segment.read_bytes())
+    data[40] ^= 0x01
+    segment.write_bytes(bytes(data))
+
+    result = _run("verify")
+
+    assert result.exit_code == 1
+    failing = result.output.split("Failing pillar(s):", 1)[1]
+    assert "HMAC Chain" in failing
+    assert "Hash Tiles" not in failing
+    assert f"tiles/{tile.name}:" not in result.output
+
+
+def test_a_layout_without_tiles_still_verifies(project: Path) -> None:
+    """The orchestrator's shutdown seal publishes no tiles; that is not damage."""
+    tile = _sealed_tile(project)
+    tile.unlink()
+
+    result = _run("verify")
+
+    assert result.exit_code == 0, result.output
+
+
+def test_a_tile_written_with_windows_line_endings_still_verifies(project: Path) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(tile.read_bytes().replace(b"\n", b"\r\n"))
+
+    assert _run("verify").exit_code == 0
+
+
+def test_a_damaged_tile_is_reported_with_writes_and_the_lock_forbidden(project: Path) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(_TILE_DAMAGE["flipped leaf_hash"](tile.read_bytes()))
+
+    with pytest.MonkeyPatch.context() as patch:
+        attempts = _forbid_writes_and_the_writer_lock(patch, project / ".sdd")
+        result = _run("verify")
+
+    assert attempts == []
+    assert result.exit_code == 1
+    assert f"tiles/{tile.name}:" in result.output

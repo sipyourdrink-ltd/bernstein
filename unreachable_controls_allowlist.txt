@@ -57,8 +57,6 @@ src/bernstein/core/security/article12_bundle.py::validate_retention             
 src/bernstein/core/security/article12_bundle.py::verify_bundle                                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit.py::AuditLog.force_full_verify                               # exercised by tests only; no production caller
 src/bernstein/core/security/audit.py::AuditLog.last_tile_read_count                            # no production caller and no test reference; baseline entry from the first scan
-src/bernstein/core/security/audit.py::AuditLog.verify_incremental                              # exercised by tests only; no production caller
-src/bernstein/core/security/audit.py::IncrementalVerifyReport                                  # exercised by tests only; no production caller
 src/bernstein/core/security/audit_chain.py::CapabilityAuthorizationDetails                     # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::CapabilityDeltaDetails                             # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::MemoryWriteDetails                                 # exported in the module's __all__ as public surface; no in-tree caller
