@@ -394,6 +394,85 @@ class TestOneWritePath:
         assert [r.task_id for r in _outbox(tmp_path).pending()] == ["t-1"]
 
 
+class TestRecordsThatCouldRetargetARequest:
+    """F12: a record is worker input, and its task id becomes a request path.
+
+    The task id is interpolated straight into ``/tasks/{id}/complete``, and httpx
+    normalises dot segments before sending: a stored id of
+    ``../../cluster/nodes/x`` turns that into ``/cluster/nodes/x/complete``. An
+    agent runs under ``.sdd/worktrees/`` with write access to this file and
+    already holds the worker's bearer token, so the file has to be treated as
+    input that can aim the worker's authenticated requests at any endpoint.
+
+    A refused id is the one case where dropping the report is right: it could
+    never be delivered to the endpoint it names, and attempting it is the leak.
+    """
+
+    def test_an_id_that_would_move_the_request_is_not_queued(self, tmp_path: Path) -> None:
+        outbox = _outbox(tmp_path)
+
+        outbox.append("../../cluster/nodes/x", OUTCOME_DONE, "done")
+
+        assert outbox.pending() == []
+        assert _lines(tmp_path) == []
+
+    def test_a_forged_line_that_would_move_the_request_is_not_loaded(self, tmp_path: Path) -> None:
+        outbox = _outbox(tmp_path)
+        outbox.append("t-good", OUTCOME_DONE, "done")
+        forged = {"task_id": "../../cluster/nodes/x", "outcome": OUTCOME_DONE}
+        outbox.path.write_text(
+            outbox.path.read_text(encoding="utf-8") + json.dumps(forged) + "\n",
+            encoding="utf-8",
+        )
+
+        assert [r.task_id for r in _outbox(tmp_path).pending()] == ["t-good"]
+
+    def test_an_id_that_only_looks_like_a_parent_segment_is_refused(self, tmp_path: Path) -> None:
+        outbox = _outbox(tmp_path)
+
+        for unsafe in ("..", ".", "-leading", ".hidden", "a/b", "a?b=c", "a b", ""):
+            outbox.append(unsafe, OUTCOME_DONE, "done")
+
+        assert outbox.pending() == []
+
+    def test_ordinary_ids_are_still_queued(self, tmp_path: Path) -> None:
+        """The rule must not refuse the ids the server really hands out."""
+        outbox = _outbox(tmp_path)
+
+        for safe in ("t-1", "a.b_c-d", "1f0321beb", "T9"):
+            outbox.append(safe, OUTCOME_DONE, "done")
+
+        assert [r.task_id for r in outbox.pending()] == ["t-1", "a.b_c-d", "1f0321beb", "T9"]
+
+    def test_a_forged_branch_outside_the_agent_namespace_loses_its_delivery(self, tmp_path: Path) -> None:
+        """The outcome is still owed; the unverifiable ref is not believed.
+
+        The central refuses to *fetch* a branch it did not create but still
+        accepts the completion, so a forged ``main`` here would mark the task done
+        while none of its work merged. Dropping the pair leaves the report
+        truthful -- a completion with no delivery metadata, which is what an
+        in-agent curl completion looks like.
+        """
+        outbox = _outbox(tmp_path)
+        report = outbox.append("t-1", OUTCOME_DONE, "done", delivery=("agent/s1", "sha1"))
+        raw = _lines(tmp_path)[0]
+        raw.update({"agent_branch": "refs/heads/main", "agent_sha": "0" * 40})
+        outbox.path.write_text(json.dumps(raw) + "\n", encoding="utf-8")
+
+        (reloaded,) = _outbox(tmp_path).pending()
+
+        assert reloaded.report_id == report.report_id
+        assert reloaded.outcome == OUTCOME_DONE
+        assert (reloaded.agent_branch, reloaded.agent_sha) == (None, None)
+
+    def test_the_branch_the_worker_wrote_is_kept(self, tmp_path: Path) -> None:
+        outbox = _outbox(tmp_path)
+        outbox.append("t-1", OUTCOME_DONE, "done", delivery=("agent/sess-9", "a" * 40))
+
+        (reloaded,) = _outbox(tmp_path).pending()
+        assert (reloaded.agent_branch, reloaded.agent_sha) == ("agent/sess-9", "a" * 40)
+
+
 class TestLoadsTolerantGarbage:
     def test_truncated_last_line_is_skipped_not_fatal(self, tmp_path: Path) -> None:
         """A crash mid-write must not blind the worker to the reports behind it."""

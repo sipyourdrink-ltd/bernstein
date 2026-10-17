@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field, fields
@@ -74,6 +75,17 @@ _STATUS_LIMIT = 200
 _LOCK_TIMEOUT_S = 10.0
 #: Last status stamped by :meth:`TerminalReportOutbox.note_absence`.
 _ABSENT_STATUS = "task-absent"
+#: A task id is interpolated into ``/tasks/{id}/complete``, so it must be one
+#: inert path segment. httpx collapses dot segments before sending, so a stored
+#: id of ``../../cluster/nodes/x`` is delivered as ``/cluster/nodes/x/complete``
+#: -- with the worker's own bearer token on it. The outbox sits under ``.sdd/``,
+#: which every agent on the node can write, so records are input here, not
+#: trusted state. Same character rule as the approvals id in
+#: :mod:`bernstein.core.orchestration.approval_gate`: leading alphanumeric (which
+#: is what rules out ``.`` and ``..``), then ``[A-Za-z0-9._-]``.
+_TASK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+#: The only branch namespace a worker's own work lands in (see ``_push_agent_work``).
+_AGENT_BRANCH_PREFIX = "agent/"
 DEFAULT_BASE_DELAY_S = 1.0
 DEFAULT_MAX_DELAY_S = 300.0
 
@@ -141,6 +153,42 @@ class TerminalReport:
         kwargs.setdefault("task_id", "")
         kwargs.setdefault("outcome", OUTCOME_UNKNOWN)
         return cls(**kwargs)  # type: ignore[arg-type]
+
+
+def _is_safe_task_id(task_id: object) -> bool:
+    """Whether *task_id* can be interpolated into a request path unchanged.
+
+    Shared by :meth:`TerminalReportOutbox.append` and its loader so the two
+    cannot disagree about what is safe to send. The ``isinstance`` half is not
+    pedantry: a hand-edited record carrying a non-string id would otherwise make
+    ``fullmatch`` raise and blind the worker to every report in the file.
+    """
+    return isinstance(task_id, str) and _TASK_ID_RE.fullmatch(task_id) is not None
+
+
+def _trusted_delivery(
+    delivery: tuple[str | None, str | None] | None,
+) -> tuple[str | None, str | None]:
+    """Return the ``(branch, sha)`` pair only if the branch is one we may name.
+
+    The central refuses to *fetch* a branch outside ``agent/`` but still accepts
+    the completion that names it, so a forged ``main`` here would mark a task done
+    while none of its work merged. Refusing the pair keeps the report truthful --
+    a completion carrying no delivery metadata, which is what an in-agent curl
+    completion already looks like -- instead of either losing the outcome or
+    believing a ref the worker never pushed.
+
+    A delivery whose SHA does not match its branch is left alone: the central
+    compares the two itself (#6538) and the janitor verifies the posted artifact
+    (#6612), so that check belongs where the remote can be consulted.
+    """
+    branch, sha = delivery if delivery is not None else (None, None)
+    if branch is None or sha is None:
+        return None, None
+    if not branch.startswith(_AGENT_BRANCH_PREFIX):
+        logger.error("ignoring a terminal-report delivery outside the agent namespace: %r", branch)
+        return None, None
+    return branch, sha
 
 
 def retry_delay_s(
@@ -225,17 +273,31 @@ class TerminalReportOutbox:
                 verbatim on every retry for the same reason *delivery* is.
 
         Returns:
-            The queued record (durable unless the write failed).
+            The queued record (durable unless the write failed), or an
+            unqueued one if *task_id* was refused.
+
+        Raises:
+            Nothing. The reap loop calls this once per finished agent with no
+            guard around it, so a bad id is refused and logged rather than
+            raised -- raising would cost the *other* finished agents their
+            reports.
         """
+        branch, sha = _trusted_delivery(delivery)
         report = TerminalReport(
             task_id=task_id,
             outcome=outcome,
             detail=detail[:_DETAIL_LIMIT],
-            agent_branch=delivery[0] if delivery else None,
-            agent_sha=delivery[1] if delivery else None,
+            agent_branch=branch,
+            agent_sha=sha,
             claim_token=claim_token,
             node=self._node,
         )
+        if not _TASK_ID_RE.fullmatch(task_id):
+            # Deliberately not parked in _volatile either: a retry could not
+            # reach the endpoint this id names, it would only resend this node's
+            # bearer token somewhere else.
+            logger.error("refusing to queue a terminal report for an unsafe task id: %r", task_id)
+            return report
         try:
             with cross_process_lock(self._lock_path, timeout=_LOCK_TIMEOUT_S):
                 self._load()
@@ -434,9 +496,18 @@ class TerminalReportOutbox:
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 logger.warning("skipping malformed terminal-report record in %s: %s", self._path, exc)
                 continue
-            if not record.task_id:
-                logger.warning("skipping terminal-report record without a task id in %s", self._path)
+            if not _is_safe_task_id(record.task_id):
+                # Covers the missing id and the path-shaped one. Such a record is
+                # either junk or an attempt to aim this worker's next
+                # authenticated post at another endpoint; neither is deliverable,
+                # so it is dropped here rather than retried forever.
+                logger.error(
+                    "skipping terminal-report record with an unusable task id (%r) in %s",
+                    record.task_id,
+                    self._path,
+                )
                 continue
+            record.agent_branch, record.agent_sha = _trusted_delivery((record.agent_branch, record.agent_sha))
             self._records[record.report_id] = record
 
 
