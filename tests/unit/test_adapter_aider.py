@@ -210,7 +210,6 @@ class TestAiderAdapterSpawn:
         assert "--map-tokens" in inner
         assert inner[inner.index("--map-tokens") + 1] == "1024"  # medium scope default
 
-
     def test_map_tokens_small_scope(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock(pid=520)
@@ -238,6 +237,7 @@ class TestAiderAdapterSpawn:
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert inner[inner.index("--map-tokens") + 1] == "2048"
+
     def test_no_auto_lint_flag_present(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock(pid=512)
