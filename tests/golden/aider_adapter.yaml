@@ -13,7 +13,8 @@ steps:
       - "--yes-always"
       - "--auto-commits"
       - "--map-tokens"
-      - "2048"
+      # Default task_scope is "medium"; the repo-map budget scales with scope.
+      - "1024"
       - "--no-auto-lint"
       - "--no-detect-urls"
       - "--analytics-log"
