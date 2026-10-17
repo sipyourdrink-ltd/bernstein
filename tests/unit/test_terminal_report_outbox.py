@@ -11,6 +11,7 @@ reaped agent and a task stuck in CLAIMED forever.
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,7 @@ from bernstein.core.persistence import file_locks
 from bernstein.core.server import http_retry
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -241,6 +243,70 @@ class TestSettling:
 
         assert outbox.pending() == []
         assert outbox.due() == []
+
+
+class TestOneWritePath:
+    """F3/F11: every mutation must travel through the same atomic write.
+
+    ``append`` used a different primitive from every other mutation, and the
+    divergence was not cosmetic. A text append has no atomicity guarantee, so a
+    crash mid-write left a fragment with no trailing newline -- and the *next*
+    append concatenated straight onto it, destroying a record that was still
+    owed. The two paths also disagreed about everything else: ``open(..., "a")``
+    inherits the process umask where the rewrite forces 0o600, so the file was
+    world-readable right after an append and owner-only after a compaction; and
+    an append follows a symlink planted at the runtime path into whatever file it
+    points at, where a rename replaces the link.
+    """
+
+    @pytest.fixture
+    def permissive_umask(self) -> Iterator[None]:
+        """Pin the umask the append path used to inherit, so the mode is not shell-dependent."""
+        previous = os.umask(0o022)
+        try:
+            yield
+        finally:
+            os.umask(previous)
+
+    def test_a_torn_tail_does_not_swallow_the_next_report(self, tmp_path: Path) -> None:
+        outbox = _outbox(tmp_path)
+        outbox.append("t-good", OUTCOME_DONE, "done")
+        # What a SIGKILL mid-write leaves behind: bytes, no closing brace, and
+        # critically no newline for the next writer to land after.
+        with outbox.path.open("a", encoding="utf-8") as handle:
+            handle.write('{"task_id": "t-half", "out')
+
+        outbox.append("t-after", OUTCOME_DONE, "done")
+
+        # The unreadable fragment is a loss; the report behind it is not.
+        assert [raw["task_id"] for raw in _lines(tmp_path)] == ["t-good", "t-after"]
+        assert [r.task_id for r in _outbox(tmp_path).pending()] == ["t-good", "t-after"]
+
+    def test_the_file_is_owner_only_from_the_first_record(self, tmp_path: Path, permissive_umask: None) -> None:
+        """A record carries task metadata and a claim token: 0o644 is a leak."""
+        outbox = _outbox(tmp_path)
+
+        outbox.append("t-1", OUTCOME_DONE, "done", claim_token="a" * 32)
+
+        assert outbox.path.stat().st_mode & 0o077 == 0
+        # And it must not drift when a later mutation rewrites the same file.
+        owed = outbox.pending()[0]
+        outbox.note_attempt(owed.report_id, "http-503")
+        assert outbox.path.stat().st_mode & 0o077 == 0
+
+    def test_a_symlink_at_the_outbox_path_is_not_written_through(self, tmp_path: Path) -> None:
+        """A link planted in a shared .sdd/ must not capture the worker's writes."""
+        victim = tmp_path / "elsewhere.jsonl"
+        victim.write_text("not the outbox\n", encoding="utf-8")
+        outbox = _outbox(tmp_path)
+        outbox.path.parent.mkdir(parents=True, exist_ok=True)
+        outbox.path.symlink_to(victim)
+
+        outbox.append("t-1", OUTCOME_DONE, "done")
+
+        assert victim.read_text(encoding="utf-8") == "not the outbox\n"
+        assert not outbox.path.is_symlink()
+        assert [r.task_id for r in _outbox(tmp_path).pending()] == ["t-1"]
 
 
 class TestLoadsTolerantGarbage:

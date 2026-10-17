@@ -13,10 +13,16 @@ file too, so a restart resumes the schedule instead of re-hammering an endpoint
 that is already in trouble.
 
 The shape follows the durable bulletin retry outbox (#2648) and reuses the
-shared persistence primitives (``fsynced_write``, ``write_atomic_text``,
-``cross_process_lock``). JSONL over SQLite is deliberate: a worker's backlog is
-bounded by its own slot count, line-granular appends are already crash-safe,
-and an operator can read the file with ``cat``.
+shared persistence primitives (``write_atomic_text``, ``cross_process_lock``).
+JSONL over SQLite is deliberate: a worker's backlog is bounded by its own slot
+count and an operator can read the file with ``cat``. Every mutation -- the
+first record ever queued included -- is a locked load-modify-``write_atomic_text``
+rather than an ``open(path, "a")``. An append carries no atomicity guarantee: a
+crash mid-write leaves a fragment with no trailing newline, and the next append
+concatenates onto that fragment, so one torn write destroys the report behind it
+too. Appending also inherits the process umask where the rewrite pins 0o600, and
+it follows a symlink planted at the runtime path instead of replacing it. A full
+rewrite is free at this file's size and removes all three failure modes.
 
 Concurrency: several workers may share one ``.sdd/`` directory, so every
 mutation is a locked load-modify-save (the same discipline as
@@ -34,7 +40,6 @@ from dataclasses import asdict, dataclass, field, fields
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.atomic_write import write_atomic_text
-from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.file_locks import LockTimeout, cross_process_lock
 
 if TYPE_CHECKING:
@@ -228,13 +233,8 @@ class TerminalReportOutbox:
             with cross_process_lock(self._lock_path, timeout=_LOCK_TIMEOUT_S):
                 self._load()
                 if report.report_id not in self._records:
-                    self._path.parent.mkdir(parents=True, exist_ok=True)
-                    # fsynced_write owns flush/fsync/close, so the line has
-                    # reached stable storage before this method returns and the
-                    # caller is allowed to attempt delivery.
-                    with fsynced_write(self._path) as handle:
-                        handle.write(json.dumps(report.to_dict(), sort_keys=True) + "\n")
-                self._records[report.report_id] = report
+                    self._records[report.report_id] = report
+                    self._rewrite_locked()
         except (OSError, LockTimeout) as exc:
             logger.error("could not durably queue terminal report for task %s: %s", report.task_id, exc)
             self._volatile[report.report_id] = report
@@ -355,10 +355,10 @@ class TerminalReportOutbox:
     def _load(self) -> None:
         """Hydrate :attr:`_records` from disk, skipping unreadable lines.
 
-        Lock-free on purpose: appends are single fsynced lines and compaction
-        swaps the file through ``os.replace``, so a reader sees either the old
-        or the new file -- never a torn mix. The skip keeps one hand-edited or
-        truncated line from blinding the worker to every report behind it.
+        Lock-free on purpose: every writer swaps the whole file through
+        ``os.replace``, so a reader sees either the old or the new file -- never
+        a torn mix. The skip keeps one hand-edited or truncated line from
+        blinding the worker to every report behind it.
         """
         self._records = {}
         if not self._path.is_file():
