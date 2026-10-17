@@ -97,7 +97,51 @@ class TestAiderAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert inner[inner.index("--model") + 1] == "anthropic/claude-opus-4-7"
 
-    def test_unknown_model_passes_through(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("base_var", ["OPENAI_API_BASE", "OPENAI_BASE_URL"])
+    def test_bare_model_gets_openai_prefix_with_gateway_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_var: str
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.setenv(base_var, "http://gateway:20128/v1")
+        adapter = AiderAdapter()
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=520)) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="fleet-hard", effort="high"),
+                session_id="aider-gw1",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--model") + 1] == "openai/fleet-hard"
+
+    def test_prefixed_model_unchanged_with_gateway_base(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_BASE", "http://gateway:20128/v1")
+        adapter = AiderAdapter()
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=521)) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="aider-gw2",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--model") + 1] == "anthropic/claude-sonnet-4-6"
+
+    def test_no_detect_urls_flag_present(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=522)) as popen:
+            adapter.spawn(
+                prompt="see http://127.0.0.1:8052/tasks",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-flags4",
+            )
+        assert "--no-detect-urls" in _inner_cmd(popen.call_args.args[0])
+
+    def test_unknown_model_passes_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock(pid=504)
         with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:

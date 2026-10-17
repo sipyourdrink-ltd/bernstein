@@ -15,6 +15,7 @@ steps:
       - "--map-tokens"
       - "2048"
       - "--no-auto-lint"
+      - "--no-detect-urls"
       - "--analytics-log"
       # Per-session path under the worktree, so it is not reproducible
       # across runs. Named below so the comparison strips the argument

@@ -74,6 +74,8 @@ GitHub App, Datadog APM, or the Cloudflare bridges).
 | Vault file backend     | `BERNSTEIN_VAULT_BACKEND`, `BERNSTEIN_VAULT_PASSPHRASE_ENV` (and the env-var it names) | `core/security/vault/factory.py`                                |
 | HashiCorp Vault server | `VAULT_ADDR`, `VAULT_TOKEN`                                                        | `core/security/secrets.py`, `core/security/vault_injector.py`        |
 
+When `OPENAI_API_BASE` or `OPENAI_BASE_URL` points at an OpenAI-compatible gateway, the aider adapter treats a bare model name (for example `fleet-hard`) as a gateway route and passes it to aider as `openai/<name>`. Names that already carry a provider prefix are passed unchanged.
+
 The rule of thumb is: anything `*_API_KEY` / `*_API_TOKEN` /
 `*_BOT_TOKEN` / `*_WEBHOOK_*` is a secret; anything `*_BASE_URL` /
 `*_ACCOUNT_ID` / `*_PROJECT` is configuration that is fine to log.

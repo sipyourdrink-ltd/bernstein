@@ -58,7 +58,23 @@ class AiderAdapter(CLIAdapter):
         analytics_log_path = workdir / ".sdd" / "runtime" / f"analytics_{session_id}.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Aider supports both Anthropic and OpenAI models; include both API keys
+        # and custom base URL overrides so gateway-routed models reach the gateway.
+        env = build_filtered_env(
+            [
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "AZURE_OPENAI_API_KEY",
+                "OPENAI_API_BASE",
+                "OPENAI_BASE_URL",
+            ]
+        )
+
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
+        # litellm rejects a bare model name ("LLM Provider NOT provided"); with an
+        # OpenAI-compatible base configured, a bare name is a gateway route.
+        if "/" not in model_id and (env.get("OPENAI_API_BASE") or env.get("OPENAI_BASE_URL")):
+            model_id = f"openai/{model_id}"
 
         cmd = [
             "aider",
@@ -71,6 +87,7 @@ class AiderAdapter(CLIAdapter):
             "--map-tokens",
             "2048",  # larger repo map for better codebase navigation
             "--no-auto-lint",  # lint is orchestrator's job, not each agent's
+            "--no-detect-urls",  # task prompts carry server URLs; aider would try to scrape them
             "--analytics-log",
             str(analytics_log_path),
         ]
@@ -87,17 +104,6 @@ class AiderAdapter(CLIAdapter):
             model=model_id,
         )
 
-        # Aider supports both Anthropic and OpenAI models; include both API keys
-        # and custom base URL overrides so gateway-routed models reach the gateway.
-        env = build_filtered_env(
-            [
-                "ANTHROPIC_API_KEY",
-                "OPENAI_API_KEY",
-                "AZURE_OPENAI_API_KEY",
-                "OPENAI_API_BASE",
-                "OPENAI_BASE_URL",
-            ]
-        )
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
