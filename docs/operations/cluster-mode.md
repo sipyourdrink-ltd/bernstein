@@ -158,6 +158,22 @@ and the edge's 403 shows the misconfiguration. The bearer token is still
 required: Access decides whether a request may reach the server, and the
 server still decides what the caller may do.
 
+### Proxied and tunnelled workers: restarts and rate limits
+
+| Variable | Default | Effect |
+|---|---|---|
+| `BERNSTEIN_TRUSTED_PROXY_IPS` | unset | Comma-separated proxy peer IPs whose `X-Forwarded-For` is honoured for rate-limit keys. |
+| `BERNSTEIN_NODES_PERSIST_PATH` | unset | Absolute path of the node registry file. When set, registered nodes are always persisted there and reloaded as `offline` after a central restart; their next heartbeat brings them back `online`. Without it, persistence is only on when the task store lives in `.sdd/runtime/`. |
+| `BERNSTEIN_RATE_LIMIT_WRITE_RPM` | 30 | Default per-client write (POST/PUT/PATCH/DELETE) limit per minute. |
+| `BERNSTEIN_RATE_LIMIT_READ_RPM` | 300 | Default per-client read (GET/HEAD/OPTIONS) limit per minute. |
+| `BERNSTEIN_RATE_LIMIT_HEARTBEAT_RPM` | 600 | Limit per minute for `POST /cluster/nodes/{id}/heartbeat` and `POST /agents/{id}/heartbeat` (with or without `/api/v1`). |
+
+Heartbeats are counted in their own `heartbeat` bucket. Authenticated
+heartbeats are keyed by the node or agent id in the path, so many workers
+behind one proxy IP do not share one budget. Heartbeats without an
+`Authorization` header stay keyed by client IP. Invalid or non-positive
+values fall back to the defaults.
+
 ### Workspace preflight
 
 Before it registers or accepts any claim, the worker verifies its workspace is
@@ -228,8 +244,11 @@ an admin-scoped token — the same credential the drain and cordon primitives
 already need.
 
 The worker side of the flow lives in `worker_cmd.py:134-164` (registration)
-and `:165-190` (heartbeat). On HTTP 404 from the heartbeat the worker
-re-registers automatically (eviction recovery).
+and `:165-190` (heartbeat). A heartbeat for a node id the central does not
+know returns HTTP 410 Gone with
+`{"error": "node_unknown", "node_id": ..., "hint": "re-register via POST /cluster/nodes"}`;
+the worker then re-registers automatically (it also accepts 404 from older
+servers). Other node routes keep returning 404 for unknown ids.
 
 ### The gRPC cluster surface
 

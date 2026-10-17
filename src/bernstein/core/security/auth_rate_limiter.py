@@ -18,8 +18,10 @@ sending ``X-Forwarded-For``; proxied traffic is always rate-limited.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -159,6 +161,53 @@ _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DEFAULT_WRITE_RPM = 30
 DEFAULT_READ_RPM = 300
 DEFAULT_SSE_MAX_CONCURRENT = 10
+DEFAULT_HEARTBEAT_RPM = 600
+
+_WRITE_RPM_ENV = "BERNSTEIN_RATE_LIMIT_WRITE_RPM"
+_READ_RPM_ENV = "BERNSTEIN_RATE_LIMIT_READ_RPM"
+_HEARTBEAT_RPM_ENV = "BERNSTEIN_RATE_LIMIT_HEARTBEAT_RPM"
+
+logger = logging.getLogger(__name__)
+
+# Heartbeat routes get their own bucket keyed by the node/agent id in the
+# path, so many workers behind one proxy IP do not share a single budget.
+_HEARTBEAT_PATH_RE = re.compile(r"^(?:/api/v1)?/(?:cluster/nodes|agents)/(?P<id>[^/]+)/heartbeat/?$")
+
+
+def _env_rpm(name: str, default: int) -> int:
+    """Read a positive integer requests-per-minute value from the environment.
+
+    Missing, non-integer or non-positive values fall back to *default*.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r; using default %d", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("Ignoring non-positive %s=%r; using default %d", name, raw, default)
+        return default
+    return value
+
+
+def _heartbeat_key(request: Request, path: str, method: str) -> str | None:
+    """Return the heartbeat bucket key for *request*, or ``None`` if not a heartbeat.
+
+    The node/agent id from the path is used as the key only when the request
+    carries credentials (``Authorization`` header). Anonymous requests keep
+    the peer-IP key so rotating ids cannot mint unbounded buckets.
+    """
+    if method != "POST":
+        return None
+    match = _HEARTBEAT_PATH_RE.match(path)
+    if match is None:
+        return None
+    if request.headers.get("Authorization"):
+        return f"id:{match.group('id')}"
+    return f"ip:{_request_client_id(request)}"
 
 
 class RequestRateLimitMiddleware(BaseHTTPMiddleware):
@@ -167,6 +216,11 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
     When no seed_config bucket matches, applies sensible defaults:
     - POST/PUT/DELETE: 30 requests/minute per client
     - GET: 300 requests/minute per client
+    - POST heartbeat routes: 600 requests/minute per node/agent id
+      (authenticated) or per client (anonymous)
+
+    Defaults are overridable via ``BERNSTEIN_RATE_LIMIT_WRITE_RPM``,
+    ``BERNSTEIN_RATE_LIMIT_READ_RPM`` and ``BERNSTEIN_RATE_LIMIT_HEARTBEAT_RPM``.
     - /events SSE: max 10 concurrent connections
 
     Clients are identified by the real TCP peer (``request.client.host``).
@@ -179,14 +233,18 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
         app: ASGIApp,
         limiter: RequestRateLimiter | None = None,
         *,
-        write_rpm: int = DEFAULT_WRITE_RPM,
-        read_rpm: int = DEFAULT_READ_RPM,
+        write_rpm: int | None = None,
+        read_rpm: int | None = None,
         sse_max_concurrent: int = DEFAULT_SSE_MAX_CONCURRENT,
+        heartbeat_rpm: int | None = None,
     ) -> None:
         super().__init__(app)
         self._limiter = limiter or RequestRateLimiter()
-        self._write_rpm = write_rpm
-        self._read_rpm = read_rpm
+        self._write_rpm = write_rpm if write_rpm is not None else _env_rpm(_WRITE_RPM_ENV, DEFAULT_WRITE_RPM)
+        self._read_rpm = read_rpm if read_rpm is not None else _env_rpm(_READ_RPM_ENV, DEFAULT_READ_RPM)
+        self._heartbeat_rpm = (
+            heartbeat_rpm if heartbeat_rpm is not None else _env_rpm(_HEARTBEAT_RPM_ENV, DEFAULT_HEARTBEAT_RPM)
+        )
         self._sse_max_concurrent = sse_max_concurrent
         self._sse_connections: int = 0
 
@@ -240,7 +298,12 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
 
         # Default method-based rate limits
         client_id = _request_client_id(request)
-        if method in _WRITE_METHODS:
+        heartbeat_key = _heartbeat_key(request, path, method)
+        if heartbeat_key is not None:
+            bucket_name = "heartbeat"
+            rpm = self._heartbeat_rpm
+            client_id = heartbeat_key
+        elif method in _WRITE_METHODS:
             bucket_name = "default_write"
             rpm = self._write_rpm
         elif method in _READ_METHODS:

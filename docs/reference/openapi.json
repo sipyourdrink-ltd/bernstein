@@ -3214,8 +3214,8 @@
           "401": {
             "description": "Cluster authentication failed"
           },
-          "404": {
-            "description": "Node not registered"
+          "410": {
+            "description": "Node id unknown to this server (e.g. registry lost across a restart); the node must re-register via POST /cluster/nodes"
           },
           "422": {
             "description": "Validation Error",
@@ -12503,8 +12503,8 @@
           "401": {
             "description": "Cluster authentication failed"
           },
-          "404": {
-            "description": "Node not registered"
+          "410": {
+            "description": "Node id unknown to this server (e.g. registry lost across a restart); the node must re-register via POST /cluster/nodes"
           },
           "422": {
             "description": "Validation Error",

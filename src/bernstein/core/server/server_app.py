@@ -1073,6 +1073,11 @@ def create_app(
     _nodes_persist: Path | None = None
     if _runtime_dir.name == "runtime" and _runtime_dir.parent.name == ".sdd":
         _nodes_persist = _runtime_dir / "nodes.json"
+    # Explicit override: always persist the node registry at this path so
+    # registered nodes survive a server restart regardless of runtime layout.
+    _nodes_persist_env = os.environ.get("BERNSTEIN_NODES_PERSIST_PATH", "").strip()
+    if _nodes_persist_env:
+        _nodes_persist = Path(_nodes_persist_env).expanduser()
     node_registry = NodeRegistry(effective_cluster, persist_path=_nodes_persist)
 
     # Cluster JWT authentication. Constructed below, once the API legacy
