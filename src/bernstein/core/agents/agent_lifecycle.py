@@ -3030,9 +3030,7 @@ def _gitignore_change_is_adapter_noise(worktree_path: Path) -> bool:
     if result.returncode != 0:
         return False
     added = [
-        line[1:].strip()
-        for line in result.stdout.splitlines()
-        if line.startswith("+") and not line.startswith("+++")
+        line[1:].strip() for line in result.stdout.splitlines() if line.startswith("+") and not line.startswith("+++")
     ]
     if not added and not result.stdout:
         # Untracked .gitignore: the whole file is the addition.
