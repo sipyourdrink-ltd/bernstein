@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,12 @@ _MODEL_MAP: dict[str, str] = {
 }
 
 
+def _whitelist_ignore(paths: list[str]) -> str:
+    """Gitignore-syntax body that ignores every path except *paths*."""
+    escaped = (re.sub(r"([\[\]*?!#\\])", r"\\\1", p.lstrip("/")) for p in paths)
+    return "*\n" + "".join(f"!/{p}\n" for p in escaped)
+
+
 class AiderAdapter(CLIAdapter):
     """Spawn and monitor Aider CLI sessions.
 
@@ -51,6 +58,8 @@ class AiderAdapter(CLIAdapter):
         budget_multiplier: float = 1.0,
         system_addendum: str = "",
         multimodal_context: Any | None = None,
+        context_files: list[str] | None = None,
+        owned_files: list[str] | None = None,
     ) -> SpawnResult:
         self.refuse_multimodal_if_needed(multimodal_context)
         self.enforce_network_policy()
@@ -58,7 +67,23 @@ class AiderAdapter(CLIAdapter):
         analytics_log_path = workdir / ".sdd" / "runtime" / f"analytics_{session_id}.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Aider supports both Anthropic and OpenAI models; include both API keys
+        # and custom base URL overrides so gateway-routed models reach the gateway.
+        env = build_filtered_env(
+            [
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "AZURE_OPENAI_API_KEY",
+                "OPENAI_API_BASE",
+                "OPENAI_BASE_URL",
+            ]
+        )
+
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
+        # litellm rejects a bare model name ("LLM Provider NOT provided"); with an
+        # OpenAI-compatible base configured, a bare name is a gateway route.
+        if "/" not in model_id and (env.get("OPENAI_API_BASE") or env.get("OPENAI_BASE_URL")):
+            model_id = f"openai/{model_id}"
 
         cmd = [
             "aider",
@@ -69,11 +94,28 @@ class AiderAdapter(CLIAdapter):
             "--yes-always",  # auto-confirm all prompts (upstream renamed from --yes)
             "--auto-commits",  # explicit: create a commit per change for clean worktree history
             "--map-tokens",
-            "2048",  # larger repo map for better codebase navigation
+            {"small": "512", "medium": "1024"}.get(task_scope, "2048"),
             "--no-auto-lint",  # lint is orchestrator's job, not each agent's
+            "--no-detect-urls",  # task prompts carry server URLs; aider would try to scrape them
             "--analytics-log",
             str(analytics_log_path),
         ]
+
+        # Explicit files keep aider from repo-mapping the whole tree: owned files
+        # go in editable (aider creates missing ones), context files read-only.
+        owned = list(dict.fromkeys(owned_files or []))
+        context = [p for p in dict.fromkeys(context_files or []) if p not in owned and (workdir / p).is_file()]
+        for path in owned:
+            cmd.extend(["--file", str(workdir / path)])
+        for path in context:
+            cmd.extend(["--read", str(workdir / path)])
+        if owned:
+            # --yes-always also approves aider's "add mentioned file?" prompt, and the
+            # task prompt names many paths; a whitelist ignore file keeps every path
+            # outside the declared set out of the chat and the repo map.
+            ignore_path = log_path.parent / f"{session_id}.aiderignore"
+            ignore_path.write_text(_whitelist_ignore(owned + context))
+            cmd.extend(["--aiderignore", str(ignore_path)])
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
@@ -87,8 +129,6 @@ class AiderAdapter(CLIAdapter):
             model=model_id,
         )
 
-        # Aider supports both Anthropic and OpenAI models; include both API keys
-        env = build_filtered_env(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY"])
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(

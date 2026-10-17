@@ -32,6 +32,9 @@ from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import AbortReason, AgentSession, Task, TaskStatus, TransitionReason
 from bernstein.core.task_lifecycle import (
+    _agent_preview_branch,
+    _bind_verification,
+    _preview_setup,
     _write_retry_checkpoint,
     collect_completion_data,
     retry_or_fail_task,
@@ -2594,7 +2597,17 @@ def handle_orphaned_task(
     # Artifact-mode tasks run the pass even with no declared signals: the
     # signed receipt it records is their completion identity (issue #2608).
     if task.completion_signals or is_artifact_mode(task):
-        passed, failed_signals = verify_task_completion(task, orch._workdir)
+        # The dead agent's commits are still on agent/<session>; grade the merged
+        # tree, as the alive-exit path does (#4367), not the run checkout.
+        _verify, _args = _bind_verification(
+            verify_task_completion,
+            task,
+            orch._workdir,
+            _agent_preview_branch(orch, session.id),
+            session.id,
+            _preview_setup(orch),
+        )
+        passed, failed_signals = _verify(*_args)
         if passed:
             try:
                 result_payload: dict[str, Any] = {

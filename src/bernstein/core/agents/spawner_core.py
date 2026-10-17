@@ -5459,6 +5459,11 @@ class AgentSpawner:
                                         "adapter (claude, gemini) or drop the attachments."
                                     )
                                 _extra_spawn_kwargs["multimodal_context"] = _attachments.context
+                            if _task_context_files and "context_files" in _spawn_params:
+                                _extra_spawn_kwargs["context_files"] = _task_context_files
+                            _owned = [f for t in tasks for f in t.owned_files]
+                            if _owned and "owned_files" in _spawn_params:
+                                _extra_spawn_kwargs["owned_files"] = _owned
                             # Cacheable prefix extraction is deferred to adapters
                             # that support provider-specific caching.
                             result = target_adapter.spawn(
@@ -5997,7 +6002,7 @@ class AgentSpawner:
         # attachment set must be re-resolved against that worktree so the
         # run journal pins the bytes this session actually sees, including
         # any edits the crashed agent made to the declared files.
-        self._resolve_and_stamp_context_files(session, tasks, worktree_path)
+        _resume_context_files = self._resolve_and_stamp_context_files(session, tasks, worktree_path)
         self._resolve_and_stamp_injected_skills(session, tasks)
         # Issue #1797: rebuild the attachment context from CAS rather than
         # re-reading the operator's files. The crashed agent may have edited
@@ -6028,6 +6033,11 @@ class AgentSpawner:
                     "spawn() does not accept multimodal_context."
                 )
             _resume_extra["multimodal_context"] = _resume_attachments
+        if _resume_context_files and "context_files" in _resume_params:
+            _resume_extra["context_files"] = _resume_context_files
+        _resume_owned = [f for t in tasks for f in t.owned_files]
+        if _resume_owned and "owned_files" in _resume_params:
+            _resume_extra["owned_files"] = _resume_owned
         # Issue #3565: a resumed agent goes straight to ``self._adapter``
         # (no ``_spawn_for_tasks_internal``), so it used to skip the
         # response-style resolution that path performs and the resumed

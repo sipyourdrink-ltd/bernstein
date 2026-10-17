@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.aider import AiderAdapter
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,7 +94,51 @@ class TestAiderAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert inner[inner.index("--model") + 1] == "anthropic/claude-opus-4-7"
 
-    def test_unknown_model_passes_through(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("base_var", ["OPENAI_API_BASE", "OPENAI_BASE_URL"])
+    def test_bare_model_gets_openai_prefix_with_gateway_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base_var: str
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.setenv(base_var, "http://gateway:20128/v1")
+        adapter = AiderAdapter()
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=520)) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="fleet-hard", effort="high"),
+                session_id="aider-gw1",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--model") + 1] == "openai/fleet-hard"
+
+    def test_prefixed_model_unchanged_with_gateway_base(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_BASE", "http://gateway:20128/v1")
+        adapter = AiderAdapter()
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=521)) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="aider-gw2",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--model") + 1] == "anthropic/claude-sonnet-4-6"
+
+    def test_no_detect_urls_flag_present(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=522)) as popen:
+            adapter.spawn(
+                prompt="see http://127.0.0.1:8052/tasks",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-flags4",
+            )
+        assert "--no-detect-urls" in _inner_cmd(popen.call_args.args[0])
+
+    def test_unknown_model_passes_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock(pid=504)
         with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
@@ -164,6 +205,34 @@ class TestAiderAdapterSpawn:
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--map-tokens" in inner
+        assert inner[inner.index("--map-tokens") + 1] == "1024"  # medium scope default
+
+    def test_map_tokens_small_scope(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=520)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-small",
+                task_scope="small",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--map-tokens") + 1] == "512"
+
+    def test_map_tokens_large_scope(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=521)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-large",
+                task_scope="large",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
         assert inner[inner.index("--map-tokens") + 1] == "2048"
 
     def test_no_auto_lint_flag_present(self, tmp_path: Path) -> None:
@@ -190,6 +259,63 @@ class TestAiderAdapterSpawn:
                 session_id="aider-s8",
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
+
+    def _spawn_inner(self, tmp_path: Path, **kwargs: object) -> list[str]:
+        adapter = AiderAdapter()
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=_make_popen_mock(pid=530)) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-ctx",
+                **kwargs,  # type: ignore[arg-type]
+            )
+        return _inner_cmd(popen.call_args.args[0])
+
+    @staticmethod
+    def _flag_values(inner: list[str], flag: str) -> list[str]:
+        return [inner[i + 1] for i, v in enumerate(inner) if v == flag]
+
+    def test_owned_files_passed_editable_even_when_missing(self, tmp_path: Path) -> None:
+        (tmp_path / "server.py").write_text("pass")
+        inner = self._spawn_inner(tmp_path, owned_files=["server.py", "test_new.py", "server.py"])
+        assert self._flag_values(inner, "--file") == [str(tmp_path / "server.py"), str(tmp_path / "test_new.py")]
+
+    def test_context_files_passed_read_only_existing_only(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("hi")
+        inner = self._spawn_inner(tmp_path, context_files=["README.md", "missing.md"])
+        assert self._flag_values(inner, "--read") == [str(tmp_path / "README.md")]
+        assert "--file" not in inner
+
+    def test_context_file_also_owned_is_not_duplicated_read_only(self, tmp_path: Path) -> None:
+        (tmp_path / "a.py").write_text("pass")
+        inner = self._spawn_inner(tmp_path, owned_files=["a.py"], context_files=["a.py"])
+        assert self._flag_values(inner, "--file") == [str(tmp_path / "a.py")]
+        assert "--read" not in inner
+
+    def test_no_files_no_flags(self, tmp_path: Path) -> None:
+        inner = self._spawn_inner(tmp_path)
+        assert "--file" not in inner
+        assert "--read" not in inner
+        assert "--aiderignore" not in inner
+
+    def test_declared_files_whitelist_everything_else_out(self, tmp_path: Path) -> None:
+        pathspec = pytest.importorskip("pathspec")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "API.md").write_text("x")
+        inner = self._spawn_inner(
+            tmp_path,
+            owned_files=["planned/relay/server.py", "planned/relay/test_[x].py"],
+            context_files=["docs/API.md"],
+        )
+        ignore_file = Path(self._flag_values(inner, "--aiderignore")[0])
+        spec = pathspec.PathSpec.from_lines("gitwildmatch", ignore_file.read_text().splitlines())
+        assert not spec.match_file("planned/relay/server.py")
+        assert not spec.match_file("planned/relay/test_[x].py")
+        assert not spec.match_file("docs/API.md")
+        assert spec.match_file("planned/acc-store/web_api.py")
+        assert spec.match_file("planned/relay/other.py")
+        assert spec.match_file("MASTER-REPORT-INDEX.md")
 
     def test_spawn_result_pid(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
