@@ -52,6 +52,10 @@ class FakeCentral:
         self.routes: dict[str, list[object]] = {}
         self.post_calls: list[tuple[str, dict]] = []
         self.get_calls: list[str] = []
+        #: Departs this node asked the central to record. Leaving is not neutral --
+        #: it reopens this node's claimed tasks -- so whether it happened at all
+        #: is the assertion some of these tests turn on.
+        self.delete_calls: list[str] = []
         #: Timeout each POST asked for, in call order. The terminal-report budget
         #: has to stay above the server's own fetch time, and that is a number, so
         #: it needs a witness rather than a comment.
@@ -80,6 +84,10 @@ class FakeCentral:
         if isinstance(reply, Exception):
             raise reply
         return reply
+
+    def delete(self, url: str, *, headers: dict | None = None, timeout: float = 0.0):
+        self.delete_calls.append(url)
+        return httpx.Response(204)
 
     def posted(self, task_id: str, verb: str) -> list[dict]:
         return [body for url, body in self.post_calls if url == f"{SERVER}/tasks/{task_id}/{verb}"]
@@ -881,3 +889,73 @@ class TestDeliverySurvivesRetriesAndRestarts:
 
         assert [r.task_id for r in peer._outbox.due()] == []
         assert [r.task_id for r in owner._outbox.due()] == ["t-owned"]
+
+
+class TestDepartureDoesNotReopenOwedWork:
+    """Leaving the cluster is a state change, so it cannot be unconditional.
+
+    ``DELETE /cluster/nodes/{id}`` calls ``reopen_tasks_for_node`` on the central,
+    which hands every task this node claimed to somebody else. Doing that while
+    this node still holds an unacknowledged outcome for one of those tasks is
+    scenario B of the claim-fence finding: the fence now stops the replay landing
+    on the new claim, so the wrong-SHA damage is gone, but what remains is the
+    waste -- the true outcome is refused as superseded and the work is redone
+    elsewhere. Holding the departure is the remaining half of that finding, and it
+    is cheap: if this node really is gone the heartbeat reaper reopens the task
+    anyway, which is the honest failure, and a restart that returns inside that
+    window drains the queue with no reopen at all.
+    """
+
+    def test_a_shutdown_that_still_owes_a_report_does_not_reopen_its_task(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-owed", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-owed/complete", _http(503))
+
+        with caplog.at_level(logging.WARNING, logger="bernstein.cli.commands.worker_cmd"):
+            loop._depart(client, "node-7")
+
+        assert client.delete_calls == [], "departing would reopen the task this report describes"
+        assert [r.task_id for r in _queued(loop)] == ["t-owed"]
+        text = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
+        assert "t-owed" in text, "a node that skips its departure has to say why"
+
+    def test_a_shutdown_with_a_settled_queue_still_says_goodbye(self, tmp_path: Path) -> None:
+        """Holding the departure is for owed reports only -- a clean node must not linger."""
+        loop = _make_loop(tmp_path)
+        client = FakeCentral()
+
+        loop._depart(client, "node-7")
+
+        assert client.delete_calls == [f"{SERVER}/cluster/nodes/node-7"]
+
+    def test_a_report_that_is_not_due_yet_still_holds_the_departure(self, tmp_path: Path) -> None:
+        """The final flush skips what isn't due, and that must not read as clean.
+
+        ``due()`` enforces the backoff gate by omission because the loop may not
+        sleep; the departure decision has to ask a different question -- is
+        anything owed at all -- or every restart that lands inside a backoff
+        window reopens the task it is about to report on.
+        """
+        loop = _make_loop(tmp_path)
+        report = loop._outbox.append("t-backoff", OUTCOME_DONE, "done")
+        loop._outbox.note_attempt(report.report_id, "http-500", retry_after_s=120.0)
+        client = FakeCentral()
+
+        loop._depart(client, "node-7")
+
+        assert client.post_calls == [], "the gate is still honoured"
+        assert client.delete_calls == []
+
+    def test_a_peer_owed_report_does_not_hold_this_node_open(self, tmp_path: Path) -> None:
+        """A shared .sdd/ means shared blame here, so the scope has to be this node's."""
+        peer = _make_loop(tmp_path, name="node-b")
+        peer._outbox.append("t-theirs", OUTCOME_DONE, "done")
+        leaving = _make_loop(tmp_path, name="node-a")
+        client = FakeCentral()
+
+        leaving._depart(client, "node-a-id")
+
+        assert client.delete_calls == [f"{SERVER}/cluster/nodes/node-a-id"]

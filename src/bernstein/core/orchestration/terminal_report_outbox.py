@@ -339,6 +339,20 @@ class TerminalReportOutbox:
         owed = (r for r in self.pending() if (not r.node or r.node == self._node) and r.next_attempt_at <= moment)
         return sorted(owed, key=lambda r: r.first_seen_at)
 
+    def owed_here(self) -> list[TerminalReport]:
+        """Every report this node owes, due or not, oldest first.
+
+        :meth:`due` answers "what can be posted this cycle without sleeping", so
+        it hides a report sitting in backoff. Shutdown needs the wider question: a
+        report that is not due for another two minutes is still an outcome the
+        central has not accepted, and a node that unregisters while it holds one
+        reopens the very task that report describes.
+
+        Scoped to this node because a shared workdir means shared file, not shared
+        blame: a peer's undelivered outcome must not keep this node registered.
+        """
+        return [r for r in self.pending() if not r.node or r.node == self._node]
+
     def pending(self) -> list[TerminalReport]:
         """Every report still owed, durable or not, oldest first.
 

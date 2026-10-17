@@ -279,6 +279,26 @@ path is asserted as a tested property in `tests/unit/test_task_claim_fence.py`
 (`TestUnfencedClientsStayAccepted`) rather than left as an accident, so removing
 it later is a visible decision with a test that fails.
 
+### A departing worker stays registered while it still owes a report
+
+`DELETE /cluster/nodes/{id}` is not a goodbye, it is a write: it reopens every
+task that node claimed. On a stop signal the worker therefore flushes its outbox
+and unregisters **only if the flush left nothing owed**. Departing with a report
+still queued is this node handing another node work it has already finished: the
+reopen puts the task back in the pool, and when this node's report finally lands
+the fence refuses it as `claim_superseded`, so the outcome is discarded and the
+work is redone. The fence keeps that from corrupting the newer claim; skipping
+the departure is what keeps it from happening at all.
+
+Staying registered cannot strand anything. A node that really is gone is evicted
+by the heartbeat reaper, whose path reopens the same tasks, so the only thing the
+worker buys is a race against the reaper's clock - and it usually wins. A restart
+that returns inside that window drains the queue against the claim it never lost,
+with no reopen at all, which is the ordinary case and precisely the case the old
+unconditional unregister guaranteed to break. A node that leaves this way logs a
+WARNING naming the owed tasks, so a registration that outlives its worker is
+explained by the log rather than mysterious.
+
 ## Worker mailbox
 
 `POST /tasks/{task_id}/messages` hands a structured payload to a worker's

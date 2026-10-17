@@ -1395,6 +1395,40 @@ class WorkerLoop:
             )
             console.print(f"[dim]Unregistered node {node_id}[/dim]")
 
+    def _depart(self, client: httpx.Client, node_id: str | None) -> None:
+        """Flush what this node owes, then leave the cluster only if leaving is safe.
+
+        Unregistering is not a goodbye, it is a write: the route behind it reopens
+        every task this node claimed. Doing that while an outcome for one of those
+        tasks is still queued hands the work to another node, and this node's
+        report is then refused as superseded when it finally lands -- the finished
+        work is discarded and redone elsewhere. The claim fence built for the same
+        finding keeps the newer claim from being corrupted, which is the
+        correctness half; this is the waste half.
+
+        Staying registered is the conservative side, and it cannot strand anything.
+        A node that really is gone is evicted by the heartbeat reaper, whose path
+        reopens the same tasks, so the delay only ever buys a comparison against
+        the reaper's clock: a restart that lands inside that window drains the
+        queue against the claim it never lost and no reopen happens at all. That
+        is the ordinary case for a restart, which is why this is worth the extra
+        few lines -- the shutdown path used to guarantee the reopen on every one.
+        """
+        self._reap_finished()
+        self._report_finished(client)
+        owed = self._outbox.owed_here()
+        if owed:
+            logger.warning(
+                "leaving the cluster registered: %d terminal report(s) still owed (%s); unregistering now "
+                "would reopen those tasks and hand finished work to another node. The node reaper reclaims "
+                "them if this worker does not come back.",
+                len(owed),
+                for_log(", ".join(report.task_id for report in owed[:5])),
+            )
+            console.print(f"[yellow]Left registered[/yellow]: {len(owed)} terminal report(s) still owed")
+            return
+        self._unregister(client, node_id)
+
     def run(self) -> None:
         """Main worker loop. Blocks until SIGINT/SIGTERM."""
         # Preflight the workspace before registering or accepting any claim. A
@@ -1462,13 +1496,11 @@ class WorkerLoop:
                 if self._wake.wait(timeout_s=poll_s) == WakeReason.ABORT:
                     break
 
-            # One last reap-and-flush so a clean stop does not defer reports
-            # unnecessarily. It is not the last chance for them: anything still
-            # unacknowledged is on disk and is drained by the next start, which
-            # is why a failing central cannot turn shutdown into data loss.
-            self._reap_finished()
-            self._report_finished(client)
-            self._unregister(client, node_id)
+            # Say goodbye on the way out: one last reap-and-flush so a clean stop
+            # does not defer reports unnecessarily, then unregister -- but only if
+            # the flush left nothing owed. Departing while a report is still queued
+            # reopens the task that report describes on the central.
+            self._depart(client, node_id)
 
         console.print("[bold]Worker stopped.[/bold]")
 
