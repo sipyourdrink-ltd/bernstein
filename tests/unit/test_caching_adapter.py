@@ -330,3 +330,74 @@ def test_model_vendor_defaults_to_empty_when_the_inner_adapter_declares_none(tmp
     adapter = CachingAdapter(inner, tmp_path)
 
     assert adapter.model_vendor == ""
+
+
+class _FileAwareInner(CLIAdapter):
+    """Inner adapter whose spawn() accepts declared files, like the aider adapter."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def spawn(  # type: ignore[override]
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = 1800,
+        task_scope: str = "medium",
+        budget_multiplier: float = 1.0,
+        system_addendum: str = "",
+        multimodal_context: Any | None = None,
+        context_files: list[str] | None = None,
+        owned_files: list[str] | None = None,
+    ) -> SpawnResult:
+        self.calls.append({"context_files": context_files, "owned_files": owned_files})
+        return SpawnResult(pid=4321, log_path=workdir / f"{session_id}.log")
+
+    def name(self) -> str:
+        return "file-aware"
+
+
+def test_wrapper_signature_exposes_declared_file_parameters() -> None:
+    """The spawner gates on the wrapper's signature; a missing name drops the files silently.
+
+    Measured 2026-10-17: every fleet aider spawn ran without --file/--read/--aiderignore
+    because production wraps the adapter in CachingAdapter.
+    """
+    import inspect
+
+    params = inspect.signature(CachingAdapter.spawn).parameters
+    assert "context_files" in params
+    assert "owned_files" in params
+
+
+def test_declared_files_reach_an_inner_adapter_that_accepts_them(tmp_path: Path) -> None:
+    inner = _FileAwareInner()
+    CachingAdapter(inner, tmp_path).spawn(
+        prompt="edit the lease module",
+        workdir=tmp_path,
+        model_config=_model_config("fleet-hard"),
+        session_id="backend-1",
+        context_files=["docs/contract.md"],
+        owned_files=["src/lease.py"],
+    )
+    assert inner.calls == [{"context_files": ["docs/contract.md"], "owned_files": ["src/lease.py"]}]
+
+
+def test_declared_files_are_not_forwarded_to_an_inner_adapter_without_them(
+    adapter: CachingAdapter, mock_inner: MagicMock, tmp_path: Path
+) -> None:
+    adapter.spawn(
+        prompt="edit the lease module",
+        workdir=tmp_path,
+        model_config=_model_config("fleet-hard"),
+        session_id="backend-2",
+        context_files=["docs/contract.md"],
+        owned_files=["src/lease.py"],
+    )
+    kwargs = mock_inner.spawn.call_args.kwargs
+    assert "context_files" not in kwargs
+    assert "owned_files" not in kwargs

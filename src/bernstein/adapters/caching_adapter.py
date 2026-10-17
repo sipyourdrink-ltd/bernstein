@@ -113,6 +113,8 @@ class CachingAdapter(CLIAdapter):
         task_id: str = "",
         task_title: str = "",
         explicit_max_turns: int | None = None,
+        context_files: list[str] | None = None,
+        owned_files: list[str] | None = None,
     ) -> SpawnResult:
         """Spawn agent with caching: process prompt, check response cache, then delegate.
 
@@ -219,6 +221,14 @@ class CachingAdapter(CLIAdapter):
                     self._inner.name(),
                     explicit_max_turns,
                 )
+        # Declared files hit the same wall: without these parameters the spawner
+        # dropped them on every wrapped spawn, so aider ran with no --file/--read
+        # and no ignore whitelist and pulled whole modules into a 90k-token prompt
+        # (measured 2026-10-17).
+        if context_files and "context_files" in _inner_params:
+            _identity_kwargs["context_files"] = context_files
+        if owned_files and "owned_files" in _inner_params:
+            _identity_kwargs["owned_files"] = owned_files
         return self._inner.spawn(
             prompt=prompt,
             workdir=workdir,
