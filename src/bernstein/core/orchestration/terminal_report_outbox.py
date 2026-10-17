@@ -72,6 +72,8 @@ SETTLE_SUPERSEDED = "superseded"
 _DETAIL_LIMIT = 1000
 _STATUS_LIMIT = 200
 _LOCK_TIMEOUT_S = 10.0
+#: Last status stamped by :meth:`TerminalReportOutbox.note_absence`.
+_ABSENT_STATUS = "task-absent"
 DEFAULT_BASE_DELAY_S = 1.0
 DEFAULT_MAX_DELAY_S = 300.0
 
@@ -107,6 +109,10 @@ class TerminalReport:
         next_attempt_at: Wall-clock gate for the next attempt; persisted so a
             restart cannot collapse the backoff into an immediate retry storm.
         last_status: Last response status/error, for diagnosis.
+        absences: Consecutive reads in which the central answered that this
+            task does not exist. On the record, not in memory, because the only
+            safe reading of that answer is "repeat it a few times before
+            believing it" and the repeats must survive a restart.
     """
 
     task_id: str
@@ -121,6 +127,7 @@ class TerminalReport:
     first_seen_at: float = field(default_factory=time.time)
     next_attempt_at: float = field(default_factory=time.time)
     last_status: str = ""
+    absences: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise for the JSONL outbox."""
@@ -305,6 +312,7 @@ class TerminalReportOutbox:
             if record is None:
                 return
             record.attempts += 1
+            record.absences = 0
             record.last_status = status[:_STATUS_LIMIT]
             record.next_attempt_at = moment + retry_delay_s(
                 record.attempts,
@@ -314,6 +322,31 @@ class TerminalReportOutbox:
             )
 
         self._apply(_stamp, report_id)
+
+    def note_absence(self, report_id: str, *, hold_s: float, now: float | None = None) -> int:
+        """Stamp one "this task does not exist" read; return the running count.
+
+        The count is what lets a caller insist that such a verdict be repeated
+        before it is acted on, so it has to be part of the record: a counter
+        held in memory would restart at zero on exactly the process restart that
+        a long hold invites. Any other answer (:meth:`note_attempt`) clears it,
+        because a server that replies about the task proved it exists.
+        """
+        moment = self._moment(now)
+        seen = 0
+
+        def _bump(records: dict[str, TerminalReport]) -> None:
+            nonlocal seen
+            record = records.get(report_id)
+            if record is None:
+                return
+            record.absences += 1
+            seen = record.absences
+            record.last_status = _ABSENT_STATUS
+            record.next_attempt_at = moment + hold_s
+
+        self._apply(_bump, report_id)
+        return seen
 
     def settle(self, report_id: str, disposition: str) -> None:
         """Drop a record: the server has resolved it (*disposition* says how)."""

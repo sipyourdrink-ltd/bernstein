@@ -69,6 +69,19 @@ _AUTH_STATES = frozenset({401, 403})
 #: How long an auth-rejected report is held before it is tried again. A
 #: credential fix by the operator must recover the report without a restart.
 _AUTH_HOLD_S = 300.0
+#: How long a report is held when the central says its task does not exist, and
+#: how many times that verdict has to repeat before it is believed.
+#:
+#: A 404 is not evidence of deletion on its own. ``_require_task_access`` answers
+#: 404 for a task that exists in a tenant this token cannot see, an unknown
+#: tenant answers 404, and so does a misrouted ingress -- and the first two
+#: produce the very ``Task '<id>' not found`` body a real deletion produces.
+#: 401 and 403 already hold on that reasoning; a credential-shaped 404 must not
+#: be the one rejection that silently discards every queued outcome. Holding
+#: forever would be the mirror defect, so an answer that positively names the
+#: task is believed once it has repeated across :data:`_GONE_HOLD_S` intervals.
+_GONE_HOLD_S = 900.0
+_GONE_CONFIRMATIONS = 3
 
 
 class _TaskUnreachableError(RuntimeError):
@@ -931,11 +944,12 @@ class WorkerLoop:
         """Read the authoritative status of a task from the central.
 
         Returns:
-            The status string, or ``None`` when the central says the task does
-            not exist.
+            The status string, or ``None`` when the central answered that this
+            task does not exist *and* named the task doing so.
 
         Raises:
-            _TaskUnreachableError: When the status could not be read at all.
+            _TaskUnreachableError: When the status could not be read at all,
+                including a 404 that says nothing about this task.
         """
         try:
             resp = client.get(
@@ -946,7 +960,9 @@ class WorkerLoop:
         except httpx.HTTPError as exc:
             raise _TaskUnreachableError(str(exc)) from exc
         if resp.status_code == 404:
-            return None
+            if self._names_this_task(resp, task_id):
+                return None
+            raise _TaskUnreachableError("HTTP 404 that did not name this task")
         if resp.status_code not in _ACK_STATES:
             raise _TaskUnreachableError(f"HTTP {resp.status_code}")
         try:
@@ -959,6 +975,56 @@ class WorkerLoop:
         if not isinstance(status, str) or not status:
             raise _TaskUnreachableError("task payload carried no status")
         return status
+
+    @staticmethod
+    def _names_this_task(resp: httpx.Response, task_id: str) -> bool:
+        """Whether a 404 is the central's own "that task is gone" answer.
+
+        FastAPI renders an HTTPException as ``{"detail": ...}`` and both the
+        deletion paths and the tenant-scope guard phrase it ``Task '<id>' not
+        found``, so requiring the id here is what separates that from the
+        anonymous 404 an ingress or CDN answers for any path it does not route.
+        It cannot separate a wrong-tenant token, which gets the same body: that
+        is why the caller still insists on repetition before believing it.
+        """
+        try:
+            body = resp.json()
+        except ValueError:
+            return False
+        detail = body.get("detail") if isinstance(body, dict) else None
+        return isinstance(detail, str) and task_id in detail
+
+    def _hold_unconfirmed_absence(self, report: TerminalReport, context: str) -> None:
+        """Hold a report the central answered "no such task", until it repeats.
+
+        A single absence read is not proof of deletion. A token scoped to the
+        wrong tenant is answered with the very same body (see
+        :data:`_GONE_HOLD_S`), and believing the first sighting costs the one
+        outcome this worker owes while its task is still live. The count rides
+        on the outbox record, so neither a long hold nor a process restart resets
+        it, and :meth:`TerminalReportOutbox.note_absence` clears it the moment
+        the central says anything else about the task.
+        """
+        seen = self._outbox.note_absence(report.report_id, hold_s=_GONE_HOLD_S)
+        if seen >= _GONE_CONFIRMATIONS:
+            logger.warning(
+                "central has answered %d times that task %s does not exist (%s); dropping its %s report",
+                seen,
+                for_log(report.task_id),
+                context,
+                report.outcome,
+            )
+            self._outbox.settle(report.report_id, SETTLE_GONE)
+            return
+        logger.warning(
+            "central says task %s does not exist (%d of %d); holding its %s report for %ds -- a token "
+            "scoped to the wrong tenant is answered the same way",
+            for_log(report.task_id),
+            seen,
+            _GONE_CONFIRMATIONS,
+            report.outcome,
+            int(_GONE_HOLD_S),
+        )
 
     def _reconcile(self, client: httpx.Client, report: TerminalReport, context: str) -> None:
         """Settle a rejected report against the server's authoritative state.
@@ -979,12 +1045,7 @@ class WorkerLoop:
             return
 
         if status is None:
-            logger.warning(
-                "task %s no longer exists on the central; dropping its %s report",
-                for_log(report.task_id),
-                report.outcome,
-            )
-            self._outbox.settle(report.report_id, SETTLE_GONE)
+            self._hold_unconfirmed_absence(report, context)
             return
 
         if status in _SUCCESS_STATES or status in _FAILURE_STATES:
@@ -1041,7 +1102,7 @@ class WorkerLoop:
             return
 
         if status is None:
-            self._outbox.settle(report.report_id, SETTLE_GONE)
+            self._hold_unconfirmed_absence(report, "unknown-exit")
             return
         if status in _SUCCESS_STATES or status in _FAILURE_STATES:
             self._outbox.settle(report.report_id, SETTLE_RESOLVED)

@@ -482,16 +482,67 @@ class TestReconcileRejectedReports:
         (report,) = _queued(loop)
         assert report.last_status.endswith("-unreconcilable")
 
-    def test_409_for_a_deleted_task_settles_as_gone(self, tmp_path: Path) -> None:
+    def test_409_for_a_deleted_task_is_held_until_the_absence_is_repeated(self, tmp_path: Path) -> None:
+        """One "not found" is not proof: a wrong tenant answers with the same body.
+
+        ``_require_task_access`` raises 404 ``Task '<id>' not found`` for a task
+        that exists in another tenant, which is byte-for-byte the shape a deleted
+        task produces. Dropping the outcome on the first sighting is how a token
+        rotated into the wrong tenant silently loses every queued report.
+        """
         loop = _make_loop(tmp_path)
         loop._outbox.append("t-gone", OUTCOME_DONE, "done")
         client = FakeCentral()
         client.script(f"{SERVER}/tasks/t-gone/complete", _http(409))
-        client.script(f"{SERVER}/tasks/t-gone", _http(404, body={"error": "not found"}))
+        client.script(f"{SERVER}/tasks/t-gone", _http(404, body={"detail": "Task 't-gone' not found"}))
 
+        before = time.time()
+        loop._report_finished(client)
+
+        (report,) = _queued(loop)
+        assert report.absences == 1
+        assert report.next_attempt_at >= before + worker_cmd._GONE_HOLD_S - 1
+
+    def test_a_repeatedly_absent_task_finally_drops_the_report(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After enough confirmations spread out in time the report is retired."""
+        monkeypatch.setattr(worker_cmd, "_GONE_HOLD_S", 0.0)
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-deleted", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-deleted/complete", _http(409))
+        client.script(f"{SERVER}/tasks/t-deleted", _http(404, body={"detail": "Task 't-deleted' not found"}))
+
+        for _ in range(worker_cmd._GONE_CONFIRMATIONS - 1):
+            _retry_now(loop)
+            loop._report_finished(client)
+            assert _queued(loop), "an unconfirmed absence must keep the report owed"
+
+        _retry_now(loop)
         loop._report_finished(client)
 
         assert _queued(loop) == []
+
+    def test_a_proxy_404_never_drops_the_report(self, tmp_path: Path) -> None:
+        """A 404 that does not even name the task says nothing about the task.
+
+        A misrouted ingress answers this way for every path, so it must be held
+        like a transport failure however often it repeats.
+        """
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-proxy", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-proxy/complete", _http(409))
+        client.script(f"{SERVER}/tasks/t-proxy", _http(404, body={"detail": "Not Found"}))
+
+        for _ in range(worker_cmd._GONE_CONFIRMATIONS + 2):
+            _retry_now(loop)
+            loop._report_finished(client)
+
+        (report,) = _queued(loop)
+        assert report.absences == 0
+        assert report.last_status.endswith("-unreconcilable")
 
     def test_422_reconciles_instead_of_blind_retry(self, tmp_path: Path) -> None:
         """422 means the slot was reclaimed and the task auto-failed."""

@@ -110,6 +110,7 @@ What retires a report is the response, read deliberately:
 | `200` whose body is not this task | Not an ack; retried (a cache or proxy page must not retire a real outcome) |
 | `409` tagged `claim_superseded` | Retired immediately - the claim it answers is dead and no retry can revive it |
 | `409`/`422`/`404` | Reconciled against `GET /tasks/{id}`, never blind-retried |
+| `404` that names this task | Held, and dropped only after it repeats (see below) |
 | `429` | Held for the response's `Retry-After` |
 | `401`/`403` | Held at the capped interval; a token fix recovers it without a restart |
 | `5xx` / transport failure | Retried on a bounded, jittered backoff |
@@ -119,6 +120,20 @@ silent discard by another name. Nothing sleeps in the worker loop: a report
 that is not due yet is simply absent from the due set, so a wedged central
 slows report retries without delaying the heartbeats and claims the same loop
 carries.
+
+A `404` saying "no such task" is the one rejection that would delete an
+outcome, so it is the one that gets the most suspicion. It is not proof of
+deletion: a token scoped to the wrong tenant is answered with the same
+`Task '<id>' not found` body as a task that really was deleted, and an
+unknown tenant or a misrouted ingress answer 404 as well. The worker therefore
+holds the report and believes the verdict only after it has repeated across
+three reads spaced fifteen minutes apart, with the count kept in the outbox
+record so neither the hold nor a process restart resets it. Any other answer
+about the task clears the count, and a `404` that does not even name the task
+-an ingress answering for a path it does not route - never increments it at
+all. The residual risk is a token that stays pointed at the wrong tenant for
+over half an hour: its reports are then dropped, which is why each hold is
+logged.
 
 Reconciling a `409` is not optional, because the status code is genuinely
 ambiguous: it is equally true when this worker's own earlier attempt landed
