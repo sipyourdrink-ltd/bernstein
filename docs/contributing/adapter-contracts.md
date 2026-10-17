@@ -122,7 +122,7 @@ coverage when it is absent.
 
 | Secret                             | Used by                |
 |------------------------------------|------------------------|
-| `ADAPTER_CONTRACT_ANTHROPIC_API_KEY` | crush, goose |
+| `ADAPTER_CONTRACT_ANTHROPIC_API_KEY` | charm, goose |
 | `ADAPTER_CONTRACT_OPENAI_API_KEY`    | codex, aichat, aider, gptme |
 | `ADAPTER_CONTRACT_GEMINI_API_KEY`    | gemini               |
 

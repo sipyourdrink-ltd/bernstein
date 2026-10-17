@@ -3,7 +3,7 @@
 # Bernstein's ``charm`` adapter targets the ``crush`` binary published by
 # Charmbracelet. Always-passed surface from
 # src/bernstein/adapters/charm.py: ``crush --yolo <prompt>``.
-adapter: crush
+adapter: charm
 binary: crush
 install:
   method: npm

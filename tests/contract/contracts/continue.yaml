@@ -1,8 +1,8 @@
-# Contract for the Continue.dev CLI (adapter: continue_dev, binary: cn).
+# Contract for the Continue.dev CLI (adapter: continue, binary: cn).
 #
 # Always-passed surface from src/bernstein/adapters/continue_dev.py:
 # ``cn -p <prompt>``.
-adapter: continue_dev
+adapter: continue
 binary: cn
 install:
   method: npm

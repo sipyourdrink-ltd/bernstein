@@ -57,9 +57,9 @@ jobs:
           - aider
           - opencode
           - aichat
-          - crush
+          - charm
           - amp
-          - continue_dev
+          - continue
           - plandex
           - goose
           - q_dev
