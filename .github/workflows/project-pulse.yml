@@ -21,9 +21,9 @@ name: Project pulse
 # fails, so a broken query can never publish zeros that read as a quiet week.
 # Every later step only runs on a successful collection.
 #
-# Rolling, not proliferating: exactly one issue titled "Project pulse
-# (weekly)" is created on the first run and edited in place afterwards. It is
-# labelled `docs` and deliberately not pinned.
+# Rolling, not proliferating: the body of one permanent, pinned issue
+# (#6607, "Project pulse") is edited in place on every run. The workflow
+# never creates issues.
 #
 # Where the generated output lives: the rendered page, the SVG card the page
 # embeds (a light and a dark variant), the collected JSON and the weekly
@@ -157,46 +157,21 @@ jobs:
           git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
             "HEAD:refs/heads/${DATA_BRANCH}"
 
-      - name: Upsert the rolling pulse issue
+      - name: Update the permanent pulse issue
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          TITLE: Project pulse (weekly)
+          # The single permanent, pinned pulse issue. Its body is edited in
+          # place every run; the workflow never opens a new issue.
+          PULSE_NUMBER: "6607"
         run: |
           set -euo pipefail
-
-          # Strict title match on an exact-title search: a substring match
-          # could adopt an unrelated issue and overwrite someone's report.
-          EXISTING=$(gh issue list --repo "${REPO}" --state open \
-            --search "in:title \"${TITLE}\"" \
-            --limit 100 \
-            --json number,title \
-            --jq ".[] | select(.title == env.TITLE) | .number" \
-            | head -1)
-
-          if [ -n "${EXISTING}" ]; then
-            echo "Updating existing pulse issue #${EXISTING}"
-            gh issue edit "${EXISTING}" --repo "${REPO}" --body-file out/project-pulse.md
-            PULSE_NUMBER="${EXISTING}"
-          else
-            echo "Creating the pulse issue"
-            # Probe the label rather than retrying a failed create: a blind
-            # `create --label docs || create` retries on any failure -- a
-            # transport error that already created the issue included -- and
-            # can open a duplicate.
-            LABELS=$(gh label list --repo "${REPO}" --limit 200 --json name --jq '.[].name')
-            if grep -qxF "docs" <<<"${LABELS}"; then
-              PULSE_URL=$(gh issue create --repo "${REPO}" \
-                --title "${TITLE}" \
-                --body-file out/project-pulse.md \
-                --label "docs")
-            else
-              PULSE_URL=$(gh issue create --repo "${REPO}" \
-                --title "${TITLE}" \
-                --body-file out/project-pulse.md)
-            fi
-            PULSE_NUMBER=$(basename "${PULSE_URL}")
+          STATE=$(gh issue view "${PULSE_NUMBER}" --repo "${REPO}" --json state --jq .state)
+          if [ "${STATE}" != "OPEN" ]; then
+            echo "pulse issue #${PULSE_NUMBER} is ${STATE}; refusing to edit a closed issue"
+            exit 1
           fi
+          gh issue edit "${PULSE_NUMBER}" --repo "${REPO}" --body-file out/project-pulse.md
 
           {
             echo "### Project pulse"
