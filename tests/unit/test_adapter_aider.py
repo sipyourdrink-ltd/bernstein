@@ -208,8 +208,36 @@ class TestAiderAdapterSpawn:
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--map-tokens" in inner
-        assert inner[inner.index("--map-tokens") + 1] == "2048"
+        assert inner[inner.index("--map-tokens") + 1] == "1024"  # medium scope default
 
+
+    def test_map_tokens_small_scope(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=520)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-small",
+                task_scope="small",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--map-tokens") + 1] == "512"
+
+    def test_map_tokens_large_scope(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=521)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
+                session_id="aider-large",
+                task_scope="large",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--map-tokens") + 1] == "2048"
     def test_no_auto_lint_flag_present(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock(pid=512)

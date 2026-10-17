@@ -85,7 +85,7 @@ class AiderAdapter(CLIAdapter):
             "--yes-always",  # auto-confirm all prompts (upstream renamed from --yes)
             "--auto-commits",  # explicit: create a commit per change for clean worktree history
             "--map-tokens",
-            "2048",  # larger repo map for better codebase navigation
+            {"small": "512", "medium": "1024"}.get(task_scope, "2048"),
             "--no-auto-lint",  # lint is orchestrator's job, not each agent's
             "--no-detect-urls",  # task prompts carry server URLs; aider would try to scrape them
             "--analytics-log",
