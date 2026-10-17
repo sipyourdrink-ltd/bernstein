@@ -245,6 +245,91 @@ class TestSettling:
         assert outbox.due() == []
 
 
+class TestUndurableReportsStayDeliverable:
+    """F7: a full disk must not silently stop all reporting.
+
+    A record whose durable write failed went into ``_volatile`` and was then
+    invisible to ``due()``, so while the disk stayed full the worker posted
+    nothing at all -- even with a healthy central. Before the outbox existed the
+    report was delivered from memory, so this was a regression in the exact
+    mechanism meant to stop outcomes being lost.
+
+    Making those records deliverable also forces the second half: ``note_attempt``
+    and ``settle`` both began by popping the volatile copy and never put it back,
+    so the first retry of a not-yet-durable report would have deleted the outcome
+    it was supposed to keep retrying.
+    """
+
+    @pytest.fixture
+    def disk_full(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            outbox_mod,
+            "write_atomic_text",
+            lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left on device")),
+        )
+
+    def test_a_report_that_cannot_be_written_is_still_owed(self, tmp_path: Path, disk_full: None) -> None:
+        outbox = _outbox(tmp_path)
+
+        outbox.append("t-full", OUTCOME_DONE, "agent exited with code 0")
+
+        assert [r.task_id for r in outbox.due()] == ["t-full"], "a healthy central must still be told"
+        assert outbox.path.exists() is False
+
+    def test_a_retry_of_an_undurable_report_does_not_delete_it(
+        self, tmp_path: Path, disk_full: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stamping the backoff must not cost the only copy we hold."""
+        monkeypatch.setattr(http_retry.random, "uniform", lambda _a, b: b)
+        outbox = _outbox(tmp_path, base_delay_s=60.0, max_delay_s=60.0)
+        report = outbox.append("t-full", OUTCOME_DONE, "done")
+
+        outbox.note_attempt(report.report_id, "http-500", now=1_000.0)
+
+        (held,) = [r for r in outbox._volatile.values()]
+        assert held.attempts == 1
+        assert held.last_status == "http-500"
+        assert outbox.due(now=1_010.0) == []  # deferred by its schedule, not deleted
+        assert [r.task_id for r in outbox.due(now=1_070.0)] == ["t-full"]
+
+    def test_an_acknowledged_undurable_report_stops_being_owed(self, tmp_path: Path, disk_full: None) -> None:
+        """An ack retires it even though it was never on disk."""
+        outbox = _outbox(tmp_path)
+        report = outbox.append("t-full", OUTCOME_DONE, "done")
+
+        outbox.settle(report.report_id, SETTLE_ACKED)
+
+        assert outbox.due() == []
+        assert outbox._volatile == {}
+
+    def test_a_full_disk_does_not_stop_delivery_while_the_central_is_healthy(
+        self, tmp_path: Path, disk_full: None
+    ) -> None:
+        """The reviewer's sequence end to end: disk full, central fine, report posted."""
+        from bernstein.cli.commands.worker_cmd import WorkerLoop
+
+        loop = WorkerLoop(
+            server_url="http://central:8052", name="node-a", auth_token="t", adapter="claude", workdir=tmp_path
+        )
+        loop._outbox._base_delay_s = 0.0
+        loop._outbox._max_delay_s = 0.0
+        loop._outbox.append("t-full", OUTCOME_DONE, "agent exited with code 0")
+
+        posted: list[tuple[str, dict]] = []
+
+        class _Healthy:
+            def post(self, url: str, *, json: dict | None = None, headers: dict | None = None, timeout: float = 0.0):
+                posted.append((url, dict(json or {})))
+                import httpx
+
+                return httpx.Response(200, json={"id": "t-full", "status": "done"})
+
+        loop._report_finished(_Healthy())  # type: ignore[arg-type]
+
+        assert [url for url, _ in posted] == ["http://central:8052/tasks/t-full/complete"]
+        assert loop._outbox.due() == []
+
+
 class TestOneWritePath:
     """F3/F11: every mutation must travel through the same atomic write.
 

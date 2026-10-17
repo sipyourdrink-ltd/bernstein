@@ -241,7 +241,7 @@ class TerminalReportOutbox:
         return report
 
     def due(self, *, now: float | None = None) -> list[TerminalReport]:
-        """Durable reports this node owes, gated by their backoff schedule.
+        """Reports this node owes, gated by their backoff schedule.
 
         Records that are not yet due are simply absent: the caller must not
         sleep, because the worker loop also carries heartbeats and claims.
@@ -251,21 +251,33 @@ class TerminalReportOutbox:
         return sorted(owed, key=lambda r: r.first_seen_at)
 
     def pending(self) -> list[TerminalReport]:
-        """Every durable record held on disk, oldest first.
+        """Every report still owed, durable or not, oldest first.
 
-        A wedged peer lock defers the read to the next loop cycle rather than
-        raising into the worker loop: this queue is retried forever anyway, so
-        skipping one cycle is never a lost outcome.
+        A wedged peer lock defers the *disk* read to the next loop cycle rather
+        than raising into the worker loop: this queue is retried forever anyway,
+        so skipping one cycle is never a lost outcome. The undurable records are
+        still returned in that case, because they have no copy on disk to wait
+        for -- withholding them would stop all delivery for as long as the disk
+        refused writes, which is the regression this method used to be.
         """
         self._flush_volatile()
         try:
             with cross_process_lock(self._lock_path, timeout=_LOCK_TIMEOUT_S):
                 self._load()
-                records = list(self._records.values())
+                records = self._merged()
         except LockTimeout as exc:
             logger.warning("terminal-report outbox lock busy, deferring this cycle: %s", exc)
-            return []
-        return sorted(records, key=lambda r: r.first_seen_at)
+            records = dict(self._volatile)
+        return sorted(records.values(), key=lambda r: r.first_seen_at)
+
+    def _merged(self) -> dict[str, TerminalReport]:
+        """Durable records plus the undurable ones, the durable copy winning.
+
+        A report can only be in both when a flush raced its own retry; the file
+        is what every peer node sees, so that copy is authoritative and the
+        private one is dropped rather than delivered a second time.
+        """
+        return {**self._volatile, **self._records}
 
     @staticmethod
     def _moment(now: float | None) -> float:
@@ -318,8 +330,19 @@ class TerminalReportOutbox:
         A failed write leaves the record on disk untouched: the cost is one
         duplicate post (which the caller reconciles), versus a lost outcome if
         the removal had been assumed successful.
+
+        A record the disk would not accept travels with the change.
+        ``note_attempt`` has to stamp its backoff and ``settle`` has to retire
+        it; this method used to pop the in-memory copy and never put it back, so
+        the first retry of a not-yet-durable report deleted the only copy of the
+        outcome it was supposed to keep retrying.
         """
-        self._volatile.pop(report_id, None)
+        held = self._volatile.pop(report_id, None)
+        survivor: TerminalReport | None = None
+        if held is not None:
+            holder: dict[str, TerminalReport] = {report_id: held}
+            change(holder)
+            survivor = holder.get(report_id)
         try:
             with cross_process_lock(self._lock_path, timeout=_LOCK_TIMEOUT_S):
                 self._load()
@@ -327,6 +350,8 @@ class TerminalReportOutbox:
                 self._rewrite_locked()
         except (OSError, LockTimeout) as exc:
             logger.error("could not persist outbox change for report %s: %s", report_id, exc)
+        if survivor is not None:
+            self._volatile[report_id] = survivor
 
     def _rewrite_locked(self) -> None:
         """Compact the file to exactly :attr:`_records`. Caller holds the lock.
