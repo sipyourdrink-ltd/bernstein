@@ -52,6 +52,8 @@ class CredentialEntry:
     last_used_ts: float = 0.0
     cooldown_until_ts: float = 0.0
     rate_limit_count: int = 0
+    exit_proxy: str = ""
+    fingerprint_id: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -205,6 +207,108 @@ class CredentialPool:
                 cooling_down_keys=cooling,
                 aggregate_remaining_quota=-1 if unlimited else agg_quota,
             )
+
+
+    def batch_add(self, entries: list[CredentialEntry]) -> int:
+        """Add multiple credentials at once.  Returns count of newly added keys."""
+        added = 0
+        with self._lock:
+            for entry in entries:
+                if entry.key_id in self._entries:
+                    logger.debug("batch_add: skipping duplicate key_id %s", entry.key_id)
+                    continue
+                self._entries[entry.key_id] = entry
+                added += 1
+            if added:
+                self._persist()
+        return added
+
+    @classmethod
+    def from_manifest(
+        cls,
+        manifest_path: Path,
+        *,
+        pool_name: str | None = None,
+        persist_dir: Path | None = None,
+        cooldown_seconds: float = _DEFAULT_COOLDOWN_S,
+    ) -> CredentialPool:
+        """Load a pool from a JSON manifest file.
+
+        Manifest format::
+
+            {
+              "pool_name": "free-tier",
+              "cooldown_seconds": 90,
+              "credentials": [
+                {
+                  "key_id": "oai-001",
+                  "provider": "openai",
+                  "secret_ref": "vault:oai-001",
+                  "exit_proxy": "socks5://10.0.0.1:1080",
+                  "fingerprint_id": "fp-alpha",
+                  "remaining_quota": 200
+                }
+              ]
+            }
+        """
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        name = pool_name or raw.get("pool_name", manifest_path.stem)
+        cd = raw.get("cooldown_seconds", cooldown_seconds)
+        pool = cls(name, persist_dir=persist_dir, cooldown_seconds=cd)
+        entries = []
+        for cred in raw.get("credentials", []):
+            meta = cred.pop("metadata", {})
+            entries.append(CredentialEntry(**cred, metadata=meta))
+        pool.batch_add(entries)
+        return pool
+
+    def reachability_check(
+        self,
+        probe_fn: Any = None,
+    ) -> dict[str, bool]:
+        """Probe each credential and return {key_id: reachable}.
+
+        ``probe_fn(entry) -> bool`` is called for each entry.  If not
+        provided, all entries are assumed reachable.  Unreachable entries
+        are put into cooldown.
+        """
+        results: dict[str, bool] = {}
+        with self._lock:
+            for entry in self._entries.values():
+                if probe_fn is None:
+                    results[entry.key_id] = True
+                    continue
+                try:
+                    ok = probe_fn(entry)
+                except Exception:
+                    ok = False
+                results[entry.key_id] = ok
+                if not ok:
+                    entry.cooldown_until_ts = time.time() + self._cooldown_s
+                    logger.info("reachability: %s unreachable, cooling down", entry.key_id)
+            self._persist()
+        return results
+
+    def rotate_exhausted(self) -> list[CredentialEntry]:
+        """Remove and return all exhausted credentials."""
+        removed = []
+        with self._lock:
+            exhausted_ids = [k for k, e in self._entries.items() if e.remaining_quota == 0]
+            for kid in exhausted_ids:
+                removed.append(self._entries.pop(kid))
+            if removed:
+                self._persist()
+        return removed
+
+    def available_by_proxy(self) -> dict[str, list[str]]:
+        """Return {exit_proxy: [key_ids]} for load-spreading analysis."""
+        by_proxy: dict[str, list[str]] = {}
+        with self._lock:
+            for entry in self._entries.values():
+                if entry.is_available:
+                    proxy = entry.exit_proxy or "direct"
+                    by_proxy.setdefault(proxy, []).append(entry.key_id)
+        return by_proxy
 
     def _persist(self) -> None:
         if self._persist_dir is None:

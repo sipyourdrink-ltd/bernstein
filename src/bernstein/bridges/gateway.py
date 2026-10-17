@@ -102,15 +102,15 @@ class GatewayBridge(RuntimeBridge):
             headers["Authorization"] = f"Bearer {config.api_key}"
         return headers
 
-    def _acquire_auth_header(self) -> tuple[str | None, str | None]:
-        """Return (key_id, bearer_token) from the credential pool or config."""
+    def _acquire_auth_header(self) -> tuple[str | None, str | None, str]:
+        """Return (key_id, bearer_token, exit_proxy) from the credential pool or config."""
         if self._credential_pool is not None:
             try:
                 entry = self._credential_pool.acquire()
-                return entry.key_id, entry.secret_ref
+                return entry.key_id, entry.secret_ref, entry.exit_proxy
             except NoAvailableCredentialError:
                 logger.warning("credential pool exhausted, falling back to config api_key")
-        return None, self._config.api_key or None
+        return None, self._config.api_key or None, ""
 
     def _release_credential(self, key_id: str | None, *, rate_limited: bool = False) -> None:
         if key_id is not None and self._credential_pool is not None:
@@ -128,12 +128,20 @@ class GatewayBridge(RuntimeBridge):
             "capability_hints": self._config.extra.get("capability_hints", []),
             "env": request.env,
         }
-        cred_key_id, bearer = self._acquire_auth_header()
+        cred_key_id, bearer, exit_proxy = self._acquire_auth_header()
         extra_headers: dict[str, str] = {}
         if bearer:
             extra_headers["Authorization"] = f"Bearer {bearer}"
+        client = self._client
+        if exit_proxy:
+            client = httpx.AsyncClient(
+                base_url=self._config.endpoint.rstrip("/"),
+                timeout=self._config.timeout_seconds,
+                headers=self._build_headers(self._config),
+                proxy=exit_proxy,
+            )
         try:
-            resp = await self._client.post(
+            resp = await client.post(
                 "/v1/tasks",
                 json=payload,
                 headers=extra_headers if extra_headers else None,
@@ -142,6 +150,8 @@ class GatewayBridge(RuntimeBridge):
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429:
                 self._release_credential(cred_key_id, rate_limited=True)
+                if exit_proxy and client is not self._client:
+                    await client.aclose()
                 raise BridgeError(
                     f"gateway rate limited: {exc}",
                     agent_id=request.agent_id,
@@ -164,6 +174,8 @@ class GatewayBridge(RuntimeBridge):
                     resp.raise_for_status()
                 else:
                     self._release_credential(cred_key_id)
+                    if exit_proxy and client is not self._client:
+                        await client.aclose()
                     raise BridgeError(
                         f"gateway unavailable: {exc}",
                         agent_id=request.agent_id,
@@ -171,6 +183,8 @@ class GatewayBridge(RuntimeBridge):
                     ) from exc
             else:
                 self._release_credential(cred_key_id)
+                if exit_proxy and client is not self._client:
+                    await client.aclose()
                 raise BridgeError(
                     f"gateway spawn failed: {exc}",
                     agent_id=request.agent_id,
@@ -178,6 +192,8 @@ class GatewayBridge(RuntimeBridge):
                 ) from exc
         except httpx.HTTPError as exc:
             self._release_credential(cred_key_id)
+            if exit_proxy and client is not self._client:
+                await client.aclose()
             raise BridgeError(
                 f"gateway connection error: {exc}",
                 agent_id=request.agent_id,
@@ -185,6 +201,8 @@ class GatewayBridge(RuntimeBridge):
             ) from exc
 
         self._release_credential(cred_key_id)
+        if exit_proxy and client is not self._client:
+            await client.aclose()
         data = resp.json()
         self._store_routing_metadata(request.agent_id, data)
         return self._parse_status(request.agent_id, data)

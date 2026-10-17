@@ -230,3 +230,140 @@ class TestPersistence:
         assert snap.pool_name == "test"
         assert len(snap.entries) == 1
         assert snap.schema_version == 1
+
+
+
+class TestBatchAdd:
+    def test_batch_add_multiple(self):
+        pool = CredentialPool("test")
+        entries = [_make_entry(f"k{i}") for i in range(5)]
+        added = pool.batch_add(entries)
+        assert added == 5
+        assert len(pool.keys()) == 5
+
+    def test_batch_add_skips_duplicates(self):
+        pool = CredentialPool("test")
+        pool.add(_make_entry("k0"))
+        entries = [_make_entry("k0"), _make_entry("k1")]
+        added = pool.batch_add(entries)
+        assert added == 1
+        assert sorted(pool.keys()) == ["k0", "k1"]
+
+    def test_batch_add_empty(self):
+        pool = CredentialPool("test")
+        assert pool.batch_add([]) == 0
+
+
+class TestExitProxyAndFingerprint:
+    def test_entry_with_proxy(self):
+        e = _make_entry(exit_proxy="socks5://10.0.0.1:1080")
+        assert e.exit_proxy == "socks5://10.0.0.1:1080"
+        assert e.is_available
+
+    def test_entry_with_fingerprint(self):
+        e = _make_entry(fingerprint_id="fp-alpha")
+        assert e.fingerprint_id == "fp-alpha"
+
+    def test_persist_proxy_and_fingerprint(self, tmp_path: Path):
+        pool = CredentialPool("test", persist_dir=tmp_path)
+        pool.add(_make_entry("k1", exit_proxy="http://proxy:8080", fingerprint_id="fp-1"))
+        pool2 = CredentialPool("test", persist_dir=tmp_path)
+        e = pool2.get("k1")
+        assert e.exit_proxy == "http://proxy:8080"
+        assert e.fingerprint_id == "fp-1"
+
+
+class TestAvailableByProxy:
+    def test_groups_by_proxy(self):
+        pool = CredentialPool("test")
+        pool.add(_make_entry("k1", exit_proxy="socks5://a:1080"))
+        pool.add(_make_entry("k2", exit_proxy="socks5://a:1080"))
+        pool.add(_make_entry("k3", exit_proxy="socks5://b:1080"))
+        pool.add(_make_entry("k4"))
+        result = pool.available_by_proxy()
+        assert sorted(result["socks5://a:1080"]) == ["k1", "k2"]
+        assert result["socks5://b:1080"] == ["k3"]
+        assert result["direct"] == ["k4"]
+
+    def test_excludes_unavailable(self):
+        pool = CredentialPool("test")
+        pool.add(_make_entry("k1", exit_proxy="socks5://a:1080"))
+        pool.add(_make_entry("k2", exit_proxy="socks5://a:1080", remaining_quota=0))
+        result = pool.available_by_proxy()
+        assert result["socks5://a:1080"] == ["k1"]
+
+
+class TestFromManifest:
+    def test_load_manifest(self, tmp_path: Path):
+        import json as _json
+        manifest = tmp_path / "free-tier.json"
+        manifest.write_text(_json.dumps({
+            "pool_name": "free-tier",
+            "cooldown_seconds": 90,
+            "credentials": [
+                {
+                    "key_id": "oai-001",
+                    "provider": "openai",
+                    "secret_ref": "vault:oai-001",
+                    "exit_proxy": "socks5://10.0.0.1:1080",
+                    "fingerprint_id": "fp-alpha",
+                    "remaining_quota": 200,
+                },
+                {
+                    "key_id": "oai-002",
+                    "provider": "openai",
+                    "secret_ref": "vault:oai-002",
+                },
+            ],
+        }))
+        pool = CredentialPool.from_manifest(manifest)
+        assert pool.name == "free-tier"
+        assert len(pool.keys()) == 2
+        e = pool.get("oai-001")
+        assert e.exit_proxy == "socks5://10.0.0.1:1080"
+        assert e.remaining_quota == 200
+
+
+class TestReachabilityCheck:
+    def test_all_reachable_by_default(self):
+        pool = CredentialPool("test")
+        pool.add(_make_entry("k1"))
+        pool.add(_make_entry("k2"))
+        result = pool.reachability_check()
+        assert result == {"k1": True, "k2": True}
+
+    def test_unreachable_gets_cooldown(self):
+        pool = CredentialPool("test", cooldown_seconds=300)
+        pool.add(_make_entry("k1"))
+        pool.add(_make_entry("k2"))
+        result = pool.reachability_check(probe_fn=lambda e: e.key_id != "k2")
+        assert result == {"k1": True, "k2": False}
+        assert pool.get("k2").cooldown_until_ts > time.time()
+
+    def test_probe_exception_is_unreachable(self):
+        pool = CredentialPool("test")
+        pool.add(_make_entry("k1"))
+
+        def bad_probe(e):
+            raise ConnectionError("timeout")
+
+        result = pool.reachability_check(probe_fn=bad_probe)
+        assert result == {"k1": False}
+
+
+class TestRotateExhausted:
+    def test_removes_exhausted(self):
+        pool = CredentialPool("test")
+        pool.add(_make_entry("alive", remaining_quota=100))
+        pool.add(_make_entry("dead1", remaining_quota=0))
+        pool.add(_make_entry("dead2", remaining_quota=0))
+        removed = pool.rotate_exhausted()
+        assert len(removed) == 2
+        assert sorted(e.key_id for e in removed) == ["dead1", "dead2"]
+        assert pool.keys() == ["alive"]
+
+    def test_noop_when_none_exhausted(self):
+        pool = CredentialPool("test")
+        pool.add(_make_entry("k1"))
+        removed = pool.rotate_exhausted()
+        assert removed == []
