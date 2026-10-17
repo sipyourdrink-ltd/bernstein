@@ -96,6 +96,32 @@ _GONE_CONFIRMATIONS = 3
 #: :meth:`WorkerLoop._settle_from_response`.
 _TERMINAL_REPORT_TIMEOUT_S = 75.0
 
+#: States that cannot legally accept a terminal report from this node, and will
+#: not become able to by being asked again. These are distinct from the racing
+#: states (``open``/``claimed``/``in_progress``), where a 409 is a version
+#: conflict that a later attempt really can win, and from the terminal states
+#: handled by :meth:`WorkerLoop._outcome_matches`.
+#:
+#: They are deliberately NOT settled away. The outcome they carry is still true
+#: and still owed - the task is parked, not resolved - and discarding a real
+#: outcome because the central is temporarily unwilling to take it is the exact
+#: defect this outbox exists to fix. What they were missing is visibility.
+_PARKED_STATES = frozenset(
+    {
+        "planned",
+        "blocked",
+        "waiting_for_subtasks",
+        "suspended",
+        "blocked_by_abandon",
+        "blocked_by_failed_dep",
+    }
+)
+#: Retries per escalation for a parked task, and the periodicity after the first.
+#: With the 300s backoff cap the first ERROR arrives inside about half an hour
+#: and then repeats hourly, which survives a worker restart (the attempt count
+#: is durable) without emitting an ERROR every five minutes forever.
+_PARKED_ESCALATION_ATTEMPTS = 12
+
 
 class _TaskUnreachableError(RuntimeError):
     """The authoritative task state could not be read.
@@ -1088,9 +1114,42 @@ class WorkerLoop:
             self._outbox.settle(report.report_id, SETTLE_CONFLICT)
             return
 
+        if status in _PARKED_STATES:
+            self._escalate_parked_report(report, context, status)
+            return
+
         # Still open/claimed: the 409 came from a version conflict or the
         # auto-claim path racing, not from a settled outcome. Retry.
         self._outbox.note_attempt(report.report_id, f"{context}:{status}")
+
+    def _escalate_parked_report(self, report: TerminalReport, context: str, status: str) -> None:
+        """Keep owing a report the central will not take, and stop hiding that.
+
+        A parked task is not a resolved one, so the retry schedule is unchanged
+        and nothing is settled: the outcome stays owed until the task is
+        un-parked or somebody ends it. Only the silence is the defect -- the loop
+        was one 409 and one GET every few minutes, indefinitely, with no line an
+        operator could act on.
+
+        The ERROR fires on the crossing and then once every
+        :data:`_PARKED_ESCALATION_ATTEMPTS` attempts rather than every cycle, so
+        it stays readable, and it is derived from the durable attempt count, so
+        a restart does not reset the escalation and does not re-announce a wedge
+        the operator has already been told about.
+        """
+        self._outbox.note_attempt(report.report_id, f"{context}:{status}")
+        attempts = report.attempts + 1
+        if attempts % _PARKED_ESCALATION_ATTEMPTS:
+            return
+        logger.error(
+            "task %s has refused this node's %s report %d times because it is %s; still owing it and "
+            "retrying on schedule, but nothing this node does can un-park the task -- it needs to be "
+            "resumed, unblocked, or ended on the central",
+            for_log(report.task_id),
+            report.outcome,
+            attempts,
+            for_log(status),
+        )
 
     @staticmethod
     def _outcome_matches(outcome: str, server_status: str) -> bool:

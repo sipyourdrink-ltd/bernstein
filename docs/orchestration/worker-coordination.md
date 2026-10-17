@@ -115,6 +115,7 @@ What retires a report is the response, read deliberately:
 | `401`/`403` | Held at the capped interval; a token fix recovers it without a restart |
 | `5xx` | Retried on a bounded, jittered backoff |
 | No response at all | Reconciled against `GET /tasks/{id}` first, then retried on the same backoff |
+| `409` on a parked task | Retried and escalated: still owed, and the wedge is logged (see below) |
 
 Retries are bounded in delay, never in count - capping the count is the same
 silent discard by another name. Nothing sleeps in the worker loop: a report
@@ -160,6 +161,19 @@ about the task clears the count, and a `404` that does not even name the task
 all. The residual risk is a token that stays pointed at the wrong tenant for
 over half an hour: its reports are then dropped, which is why each hold is
 logged.
+
+A `409` from a *parked* task is the opposite case: nothing is wrong with the
+report, and the task simply cannot accept one - `planned` awaits plan approval,
+`blocked` and the two `blocked_by_*` states await another task,
+`waiting_for_subtasks` awaits its children, `suspended` awaits an operator's
+resume. Retrying is correct and the outcome stays owed; settling it would
+discard a true outcome because the central was temporarily unwilling to take it,
+which is the defect the outbox exists to fix. What was missing is that the loop
+was invisible - one `409` and one `GET` every few minutes, indefinitely. The
+worker now raises an ERROR once the refusals pass twelve attempts (inside about
+half an hour at the 300s backoff cap, then roughly hourly) naming the task, the
+outcome still owed, and the state blocking it. Nothing recovers automatically
+from here: the task has to be resumed, unblocked, or ended on the central.
 
 Reconciling a `409` is not optional, because the status code is genuinely
 ambiguous: it is equally true when this worker's own earlier attempt landed

@@ -544,6 +544,69 @@ class TestReconcileRejectedReports:
         assert _queued(loop) == []
         assert caplog.records == []
 
+    def test_a_parked_task_escalates_once_the_report_looks_wedged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F10: a refusal that can never succeed must stop being quiet.
+
+        ``blocked`` is not terminal, so the outcome stays owed and the retry is
+        correct - but a state this node cannot legally finish from never becomes
+        finishable by retrying, and the loop was invisible: one 409 and one GET
+        every few minutes, forever, with nothing for an operator to act on.
+        """
+        loop = _make_loop(tmp_path)
+        _retry_now(loop)
+        loop._outbox.append("t-parked", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-parked/complete", _http(409, body={"error": "illegal transition"}))
+        client.script(f"{SERVER}/tasks/t-parked", _task("t-parked", "blocked"))
+
+        with caplog.at_level(logging.WARNING, logger="bernstein.cli.commands.worker_cmd"):
+            for _ in range(worker_cmd._PARKED_ESCALATION_ATTEMPTS):
+                loop._report_finished(client)
+
+        errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("t-parked" in m and "blocked" in m for m in errors)
+        assert _queued(loop) != [], "escalating is not discarding: the outcome is still owed"
+
+    def test_a_parked_task_stays_quiet_until_it_looks_wedged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The first few refusals are ordinary; shouting about them is the noise that gets ignored."""
+        loop = _make_loop(tmp_path)
+        _retry_now(loop)
+        loop._outbox.append("t-fresh", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-fresh/complete", _http(409, body={"error": "illegal transition"}))
+        client.script(f"{SERVER}/tasks/t-fresh", _task("t-fresh", "suspended"))
+
+        with caplog.at_level(logging.WARNING, logger="bernstein.cli.commands.worker_cmd"):
+            for _ in range(worker_cmd._PARKED_ESCALATION_ATTEMPTS - 1):
+                loop._report_finished(client)
+
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+        assert _queued(loop) != []
+
+    def test_a_racing_state_never_escalates(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """``claimed`` really can become completable, so retrying it is not a wedge.
+
+        Without this boundary the escalation would fire on every contended claim
+        and the signal would be indistinguishable from ordinary traffic.
+        """
+        loop = _make_loop(tmp_path)
+        _retry_now(loop)
+        loop._outbox.append("t-contend", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-contend/complete", _http(409, body={"error": "version conflict"}))
+        client.script(f"{SERVER}/tasks/t-contend", _task("t-contend", "claimed"))
+
+        with caplog.at_level(logging.WARNING, logger="bernstein.cli.commands.worker_cmd"):
+            for _ in range(worker_cmd._PARKED_ESCALATION_ATTEMPTS * 2):
+                loop._report_finished(client)
+
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+        assert _queued(loop) != []
+
     def test_409_while_task_is_still_live_retries(self, tmp_path: Path) -> None:
         """A version-conflict 409 is not a settled outcome: keep owing it."""
         loop = _make_loop(tmp_path)
