@@ -93,3 +93,18 @@ entry). A backup of the pre-registration state is available as the
   reports an error rather than overwriting it.
 - If a future Aider release adds first-class MCP support, this adapter
   will move to use the new key without changing the operator workflow.
+
+## Context sent to the model
+
+When Bernstein spawns Aider for a task it narrows what Aider reads:
+
+- Files a plan step declares under `files:` are passed with `--file`
+  (editable; files that do not exist yet are created by Aider).
+- Plan-level `context_files:` that exist in the worktree are passed with
+  `--read` (read-only). A path that is both owned and context is passed once,
+  as editable.
+- The repository map budget scales with task scope: `--map-tokens` is 512
+  for `small`, 1024 for `medium`, 2048 for `large`.
+
+Declaring `files:` on each step is the main lever for keeping per-call prompt
+size down on large repositories.
