@@ -15,7 +15,7 @@ Deterministic tick loop: watch tasks, spawn agents, verify completion, repeat. C
 | `escalation.py` | Journal-anchored, Ed25519-signed stall escalation receipts |
 | `decomposition_proposal.py`, `decomposition_emitter.py` | Content-addressed proposal to split an issue whose tasks keep exhausting their retries |
 | `trigger_manager.py` | Evaluates `triggers.yaml` rules into `TriggerEvent`s (event and cron sources) |
-| `worker.py`, `terminal_report_outbox.py` | `bernstein-worker` process wrapper for spawned CLI agents; the outbox is the durable queue of terminal outcomes a worker still owes the central (appended + fsynced before delivery, removed only on an ack) (#2808) |
+| `worker.py`, `terminal_report_outbox.py` | `bernstein-worker` process wrapper for spawned CLI agents; the outbox is the durable queue of terminal outcomes a worker still owes the central. The JSONL file is rewritten whole under a cross-process lock through the atomic-write helper (temp file, fsync, rename, best-effort directory fsync) rather than appended in place, so a crash mid-write leaves the previous file instead of a truncated one; logically the queue only ever gains an outcome, and a record is dropped only on an ack from the central (#2808) |
 | `run_closure_owner.py` | Universal authenticated run closure owner |
 | `issue_claim.py` | Claim etiquette for coordinator-free issue intake: recognises a run's own claim, detects a stale one |
 | `source_fetcher.py` | The research worker's `fetch(ref) -> bytes` protocol plus a recorded, offline implementation (#3112) |

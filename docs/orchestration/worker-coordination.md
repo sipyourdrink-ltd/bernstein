@@ -150,14 +150,20 @@ auto-commit synchronously before it replies, and that fetch carries its own
 60s budget. The report timeout sits deliberately *below* that budget (30s,
 inside the node's 60s lease) rather than above it: a request that outlives the
 lease costs the node its identity and every claim it holds, which is a worse
-failure than one lost response. What keeps a re-post from overlapping the fetch
-is the re-ask delay, not the timeout - after a lost response the worker holds
-the report for 65s, longer than the central's fetch can run, before it asks
-`GET /tasks/{id}` again. A slow fetch therefore costs a number on a record, not
-a second auto-commit on the same ref. Asking before re-posting means a
-completion the central did apply is retired as a duplicate instead of replayed,
-and a report that never arrived is still owed. That ask costs one GET; the alternative is a duplicate merge
-attempt per slow fetch.
+failure than one lost response. The re-ask delay reduces how often a re-post can
+overlap that fetch; it does not order the two. After a lost response the worker
+holds the report for 65s -- longer than the central's fetch can run -- and then
+asks `GET /tasks/{id}`.
+
+That ask is a probability reducer, not a guard. When it answers, a completion the
+central did apply is retired as a duplicate; when it does not -- no answer, or a
+status the worker cannot interpret -- the record simply stays owed and is posted
+again once its hold expires. **Delivery here is at-least-once with
+reconciliation, not exactly-once execution**: a second fetch and a second
+auto-commit on the same ref remain possible, and the duplicates that survive are
+the ones the central cannot see. The alternative -- re-posting immediately with
+no ask at all -- produces those duplicates on every slow fetch instead of only on
+the ones the ask cannot resolve.
 
 A duplicate is matched on the outcome alone, because the task record keeps no
 branch or SHA - delivery exists only on the completion request. So a `DONE`
@@ -306,20 +312,33 @@ path is asserted as a tested property in `tests/unit/test_task_claim_fence.py`
 (`TestUnfencedClientsStayAccepted`) rather than left as an accident, so removing
 it later is a visible decision with a test that fails.
 
-### A restarted coordinator drops what it was doing
+### A restarted coordinator retires every claim it was holding
 
-The central keeps no in-flight queue across a restart, so work it had accepted
-but not finished is simply gone from its side while the node still believes it
-was delivered. Two outcomes follow, and which one you get depends on the caller:
+Startup recovery (`TaskStore.recover_stale_claimed_tasks`) walks the tasks that
+were `CLAIMED` or `IN_PROGRESS` when the process died, moves them back to `OPEN`,
+and clears `claimed_by_session` **and `claim_token`** with the release path
+`restart_recovery`. Clearing the token is deliberate: with no live claim there is
+no report authorized to land on the task, so leaving the token in place would let
+a dead agent's terminal report still match after the restart.
 
-* A **fenced** report that arrives after the restart is met with `409
-  claim_superseded` if the task was reclaimed meanwhile. The node retires the
-  record rather than retrying it, so the operator sees one log line and a task
-  owned by somebody else - not a stuck outbox.
+The consequence is that a **fenced report from a pre-restart execution is refused
+even if nobody reclaimed the task** -- the fence it was measured against no longer
+exists. The worker reads the `409 claim_superseded` and retires the record rather
+than retrying it, so the operator sees one log line and a task back in the pool,
+not a stuck outbox. Note that this is recovery, not the store's serialization:
+`claim_token` *is* written to the JSONL record and restored on replay, so a task
+recovery does not touch (one already at `DONE`) keeps the token its reporter
+holds.
+
+Two things follow for an operator:
+
+* A report the node *believed* was delivered before the restart is not owed again
+  -- it was already applied, or it is now refused. Restart is therefore not a
+  replay hazard for fenced reports; it is a **silent retirement** of them.
 * An **unfenced** report from the same window is still accepted, because an
   accepted `200` and a lost record are indistinguishable from the node's side.
-  A coordinator restart is therefore the concrete window in which the residual
-  risk above actually bites; it is not hypothetical.
+  A coordinator restart is the concrete window in which the residual risk above
+  actually bites; it is not hypothetical.
 
 Reconciling that window needs the central to remember deliveries it has already
 applied, which it does not do today.
