@@ -190,6 +190,34 @@ is by misreading the same library result.
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
 
+## `govern audit --only duplication`: duplicate implementations in this install
+
+```
+bernstein govern audit --only duplication [--json]
+```
+
+These checks count how many implementations of one capability the installed
+`bernstein` package carries, and compare each count with the number there should
+be (#5105). They read the package's own source, not `--workdir`, because no
+project tree can change the answer. For the same reason they are **opt-in**: a
+default `govern audit` does not run them, so a clean workspace stays green.
+`--list` shows them with the others.
+
+| Check | Expected | Today |
+|---|---|---|
+| `duplication:inline-canonical-bytes-sites` | 1 | measured: places that build canonical signing bytes inline instead of through one helper (#5094) |
+| `duplication:private-hmac-key-loaders` | 0 | measured: private `_load_hmac_key` wrappers |
+| `duplication:receipt-verify-kinds` | 1 | `not_measurable` until #5096 |
+| `duplication:verification-result-shapes` | 1 | `not_measurable` until #5099 |
+| `duplication:registry-duplicate-ids` | 0 | `not_measurable` until #5104 |
+| `duplication:orphan-modules` | 0 | `not_measurable` until #5100 |
+
+A count over the expected one is `fail`, with the count and the first offending
+`path:line` locations in the finding. A count within it is `pass`. A check whose
+subject does not exist yet is `not_measurable`, with the issue that would make it
+measurable, and is never reported as a pass. The findings carry no score or
+grade. Two runs over one install produce byte-identical `--json` output.
+
 ## Declared discovery probes
 
 Governance collectors can load probe declarations from a directory through

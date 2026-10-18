@@ -253,6 +253,21 @@ def fail_task(client: httpx.Client, base_url: str, task_id: str, reason: str) ->
     client.post(f"{base_url}/tasks/{task_id}/fail", json={"reason": reason}).raise_for_status()
 
 
+def release_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -> None:
+    """POST /tasks/{task_id}/release to hand a claimed task back to the open pool.
+
+    Unlike :func:`fail_task` the task is not failed: no retry is created and
+    its retry budget is untouched.
+
+    Args:
+        client: httpx client.
+        base_url: Server base URL.
+        task_id: ID of the claimed task.
+        reason: Why the claim is handed back.
+    """
+    client.post(f"{base_url}/tasks/{task_id}/release", json={"reason": reason}).raise_for_status()
+
+
 def block_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -> None:
     """POST /tasks/{task_id}/block to mark a task as blocked (requires human intervention).
 

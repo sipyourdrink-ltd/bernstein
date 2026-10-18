@@ -46,7 +46,12 @@ of them had a credential the approval was protecting, so they now run
 under `release-channels`, an environment with the same branch/tag
 restriction as `pypi` (`main`, `v*`, `ext-v*`) but no required reviewer.
 
-PyPI waits for a human; the other channels do not.
+PyPI waits for a human; the other channels do not. The one exception is the
+Copr RPM job: it runs under its own `copr` environment, which carries
+`COPR_CONFIG` and the same reviewer gate and branch/tag restriction as `pypi`.
+Keeping it off `pypi` means its deployments and failures are recorded apart
+from the PyPI upload, so a Copr build failure does not mark the PyPI
+deployment as failed.
 
 ## Release Milestones
 
@@ -163,11 +168,15 @@ entries to them.
 | Fact | Value |
 |---|---|
 | Copr project | <https://copr.fedorainfracloud.org/coprs/alexchernysh/bernstein/> |
-| Repository secret | `COPR_CONFIG` |
+| Environment secret | `COPR_CONFIG`, on the `copr` environment |
 | Publishing job | `publish-copr` in `.github/workflows/publish.yml` |
 | Spec | `packaging/rpm/bernstein.spec` |
 | Builder | `scripts/build_copr_srpm.py` |
 | Build watcher | `scripts/copr_build_watch.py` |
+
+`COPR_CONFIG` is defined on the `copr` environment, not as a repository secret
+and not on `pypi`: an environment secret does not follow a job across
+environments, so the job reads an empty value anywhere else.
 
 `COPR_CONFIG` holds a complete `copr-cli` configuration file — the same
 content `~/.config/copr` has on a workstation, including the `[copr-cli]`

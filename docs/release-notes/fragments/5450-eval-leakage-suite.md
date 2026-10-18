@@ -1,0 +1,5 @@
+## `leakage-v1`: do seeded secrets reach the bytes the system emits?
+
+`bernstein bench run leakage-v1` seeds an AWS-shaped access key id, an internal e-mail, an internal path and a nonce into the inputs a run reads, then scans the bytes the system actually writes on each output surface: a saved bench bundle, an exported evidence pack, a run archive, a sanitised log line and the PR projection of an evidence bundle. A hit names the surface, the seed point the value was injected at, the encoding and the redaction stage that should have caught it, or that no such stage exists on that path -- which is what the bundle, pack, archive and log surfaces report today.
+
+What the run did not cover is printed next to what it did, never folded into it: journal, receipts and telemetry export need a governed run, and so does the `environment` seed point, because no exercised surface reads the process environment. Encoding labels that produce identical bytes for a given canary are listed rather than counted twice. Receipts carry the emitted bytes and the canary nonce, so `bench verify` re-derives each verdict by rescanning rather than by reading a status field back out (#5450).

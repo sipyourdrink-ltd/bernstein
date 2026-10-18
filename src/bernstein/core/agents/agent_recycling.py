@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core import heartbeat as heartbeat_protocol  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.agents.agent_reaping import (
+    _dispose_dead_worktree,
     _propagate_abort_to_children,
     _save_partial_work,
 )
@@ -294,14 +295,8 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
             reason,
             int(_IDLE_GRACE_S),
         )
-        # The idle reason is the reason the merge happened; the default
-        # ("dead_agent") would be wrong on every path through here.
-        _save_partial_work(
-            orch._spawner,
-            session,
-            recorder=getattr(orch, "_recorder", None),
-            reason=reason,
-        )
+        # Killed before its worktree is disposed of, so the process cannot
+        # write into the tree while it is committed and kept.
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
         # Bug fix (2026-07-04): reap the heartbeat loop on every forced kill
@@ -324,8 +319,12 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
             session.id,
             _preserved_dir if _preserved_dir is not None else "nothing to preserve",
         )
-        with contextlib.suppress(Exception):
-            orch._spawner.cleanup_worktree(session.id)
+        # Merged only as an accepted attempt; any other attempt's work is kept
+        # on a salvage ref (#6539). The idle reason is written on that row.
+        try:
+            _dispose_dead_worktree(orch, session, reason=reason)
+        except Exception:
+            logger.exception("Worktree disposal failed for recycled agent %s", session.id)
         get_collector().end_agent(session.id)
 
 

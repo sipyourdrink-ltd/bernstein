@@ -356,10 +356,17 @@ class TaskCompleteRequest(BaseModel):
     refusal - and is schema-validated at the API boundary; an invalid
     payload is a typed ``contract_violation`` failure, never a silent
     accept. When ``payload`` is provided, ``result_summary`` is ignored.
+
+    Remote delivery (#6538): a worker node that pushed its agent branch
+    to the shared remote sets ``agent_branch`` and ``agent_sha`` so the
+    central can fetch and merge the work instead of looking for a local
+    worktree that does not exist.
     """
 
     result_summary: str = ""
     payload: dict[str, Any] | None = None
+    agent_branch: str | None = None
+    agent_sha: str | None = None
 
     @model_validator(mode="before")
     @classmethod

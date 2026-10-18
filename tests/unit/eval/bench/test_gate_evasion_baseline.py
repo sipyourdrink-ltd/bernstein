@@ -54,7 +54,9 @@ def test_committed_baseline_integrity_and_corpus_identity() -> None:
     data = baseline.read_baseline(path)
     assert data["total"] == len(data["cases"]) == 8
     assert data["corpus_sha256"] == baseline.corpus_bytes_digest()
-    assert data["tools"] == {"pytest": "9.1.1", "ruff": "0.16.7", "vulture": "2.14"}
+    # The lockfile is the one pin; the bench refuses tool drift the same way.
+    cases = baseline._corpus_cases(baseline.DEFAULT_EVASION_CORPUS_DIR)
+    assert data["tools"] == baseline.required_tool_versions(cases)
 
 
 def test_equal_and_improved_catch_sets_pass(tmp_path: Path) -> None:

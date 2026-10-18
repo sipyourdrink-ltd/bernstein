@@ -326,7 +326,8 @@ quality_gates:
   tests: false
   test_command: "uv run python scripts/run_tests.py -x"
   timeout_s: 120
-  base_ref: "main"               # base for incremental diff
+  base_ref: "main"               # base for incremental diff; if it names no commit in the
+                                 # repo, the branch checked out in the workdir is used
   cache_enabled: true            # reuse gate results when diff is unchanged
   allow_bypass: false            # whether the CLI can skip gates
 

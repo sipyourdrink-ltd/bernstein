@@ -177,3 +177,7 @@ def test_reap_merge_refuses_when_quality_gate_raises_exception(tmp_path: Path) -
     assert refusals_file.exists()
     refusals_content = refusals_file.read_text(encoding="utf-8")
     assert "quality-gates-errored" in refusals_content
+    # The gate's own explanation rides along, so the run summary can say why.
+    entry = json.loads(refusals_content.splitlines()[-1])
+    assert entry["reason"] == "quality-gates-errored"
+    assert "Subprocess timeout" in entry["detail"]

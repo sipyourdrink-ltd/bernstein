@@ -4017,22 +4017,25 @@ def _find_receipt_verifier() -> Path | None:
 
     The verify wrapper deliberately shells out to the standalone tool to prove
     it is self-contained. Resolution order: ``$BERNSTEIN_AUDIT_RECEIPT_VERIFIER``
-    override, then a ``tools/verify_audit_receipt.py`` walking up from the CWD
-    and from this module's location.
+    override, then a ``tools/verify_audit_receipt.py`` walking up from the CWD,
+    then the copy the installed package runs (the source checkout's tools/
+    script, or the one bundled into the wheel).
     """
     import os
+
+    from bernstein.core.verifier.audit_receipt_verifier import VERIFIER_SCRIPT
 
     override = os.environ.get("BERNSTEIN_AUDIT_RECEIPT_VERIFIER")
     if override:
         candidate = Path(override).expanduser()
         return candidate if candidate.is_file() else None
 
-    for base in (Path.cwd(), Path(__file__).resolve()):
-        for parent in (base, *base.parents):
-            candidate = parent / "tools" / "verify_audit_receipt.py"
-            if candidate.is_file():
-                return candidate
-    return None
+    cwd = Path.cwd()
+    for parent in (cwd, *cwd.parents):
+        candidate = parent / "tools" / "verify_audit_receipt.py"
+        if candidate.is_file():
+            return candidate
+    return VERIFIER_SCRIPT if VERIFIER_SCRIPT.is_file() else None
 
 
 @receipt_group.command("export")

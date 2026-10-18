@@ -955,7 +955,11 @@ def _emit_route_decision(task: Task, cfg: ModelConfig) -> None:
     try:
         from bernstein.core.observability.decision_log import record_decision
 
-        rationale = f"role={getattr(task, 'role', '')} priority={getattr(task, 'priority', '')}"
+        dispatch_tier = getattr(task, "dispatch_tier", None)
+        tier_label = dispatch_tier.value if dispatch_tier is not None else "local"
+        rationale = (
+            f"role={getattr(task, 'role', '')} priority={getattr(task, 'priority', '')} dispatch_tier={tier_label}"
+        )
         record_decision(
             kind="model_route",
             chosen=cfg.model,
@@ -968,6 +972,7 @@ def _emit_route_decision(task: Task, cfg: ModelConfig) -> None:
                 "priority": getattr(task, "priority", None),
                 "effort": cfg.effort,
                 "is_batch": cfg.is_batch,
+                "dispatch_tier": tier_label,
             },
         )
     except Exception as exc:  # pragma: no cover - defensive

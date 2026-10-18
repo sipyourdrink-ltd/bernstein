@@ -448,13 +448,17 @@ npm install -g opencode-ai
 
 **Install:**
 ```bash
-npm install -g kilocode
+npm install -g @kilocode/cli
 ```
+
+(The `kilocode` package on npm is an empty placeholder with no binary.)
+
+**Invocation:** `kilo run --model <provider/model> --auto -- '<prompt>'`.
 
 **Unique features:**
 - ACP/MCP protocol support
-- MCP config injection via `--mcp` flag
-- Auto-approve mode (`--yes`)
+- MCP servers come from Kilo's own configuration (`kilo mcp`); `kilo run` has no flag that takes them, so servers passed for a task are logged as not delivered
+- Auto-approve mode (`--auto`)
 - Provider routing through the providers configured in Kilo
 
 **Best for:** Teams already using Kilo Code. Kilo's ACP support means it can participate in Bernstein's agent-to-agent communication protocols.
@@ -575,7 +579,7 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 **Install:** `npm install -g @augmentcode/auggie`
 
-**Env vars:** `AUGMENT_API_KEY`, `AUGMENT_TOKEN`.
+**Env vars:** `AUGMENT_SESSION_AUTH` (the JSON `auggie login` writes to `~/.augment/session.json`), or `AUGMENT_API_TOKEN` with `AUGMENT_API_URL`. Spawned with `--print`, so a missing login fails at once instead of waiting for a terminal.
 
 **Best for:** Monorepos using Augment's context engine for repo-scale retrieval.
 
@@ -583,7 +587,13 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 ### kimi (Moonshot)
 
-**Install:** `uv tool install kimi-cli`
+**Install:** `uv tool install kimi-cli==1.51.0`
+
+kimi-cli is archived upstream. Its final release, 1.52.0, no longer runs the
+agent: `kimi --yolo -c <prompt>` prints a deprecation notice and exits 0, so a
+worker on 1.52.0 does nothing and reports success. Pin 1.51.0, the last
+release that runs. Moonshot's successor is Kimi Code CLI, which this adapter
+does not drive yet (#6264).
 
 **Env vars:** `KIMI_API_KEY`, `MOONSHOT_API_KEY`.
 

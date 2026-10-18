@@ -1,4 +1,4 @@
-"""``bernstein govern lane``: bootstrap, list and show reconciliation lanes (#5120).
+"""``bernstein govern lane``: bootstrap, list, show and retire reconciliation lanes (#5120).
 
 A lane is a first-class chained object, the same discipline
 :mod:`bernstein.cli.commands.pool_cmd` already established for pools.
@@ -8,7 +8,8 @@ it against the lanes already active in the HMAC audit chain, and appends a
 running it twice against an unchanged set changes nothing and says so. The
 runtime lane registry is a deterministic projection of those events (see
 :mod:`bernstein.core.govern.lane_registry`), so there is no side database that
-can drift out of agreement with the chain.
+can drift out of agreement with the chain. ``bernstein govern lane retire``
+appends ``lane.retired`` for an active lane, which drops it from that projection.
 """
 
 from __future__ import annotations
@@ -159,14 +160,41 @@ def govern_lane_show_cmd(name: str, workdir: Path) -> None:
     click.echo(json.dumps(manifest.to_dict(), indent=2, sort_keys=True))
 
 
+@click.command("retire")
+@click.argument("name")
+@_WORKDIR_OPTION
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the retirement as JSON.")
+def govern_lane_retire_cmd(name: str, workdir: Path, as_json: bool) -> None:
+    """Retire the active lane NAME by appending ``lane.retired`` to the chain.
+
+    An unknown or already-retired NAME is an error and appends nothing. The
+    lane body under ``.sdd/sandbox`` is left in place.
+    """
+    workdir = workdir.resolve()
+    lane_hash = project_lane_registry(_lane_events(workdir)).get(name)
+    if lane_hash is None:
+        console.print(f"[yellow]No active lane named[/yellow] {name!r}.")
+        raise SystemExit(1)
+
+    from bernstein.core.security.audit_chain import record_lane_retired
+
+    record_lane_retired(chain=_chain(workdir), lane_name=name, lane_hash=lane_hash)
+
+    if as_json:
+        click.echo(json.dumps({"retired": name, "lane_hash": lane_hash}, indent=2, sort_keys=True))
+        return
+    console.print(f"[green]Lane retired:[/green] [bold]{name}[/bold]  {lane_hash[:16]}...")
+
+
 @click.group("lane")
 def govern_lane_group() -> None:
-    """Bootstrap and inspect reconciliation lanes (chain-projected)."""
+    """Bootstrap, inspect and retire reconciliation lanes (chain-projected)."""
 
 
 govern_lane_group.add_command(govern_lane_bootstrap_cmd, "bootstrap")
 govern_lane_group.add_command(govern_lane_list_cmd, "list")
 govern_lane_group.add_command(govern_lane_show_cmd, "show")
+govern_lane_group.add_command(govern_lane_retire_cmd, "retire")
 
 
 __all__ = ["govern_lane_group"]

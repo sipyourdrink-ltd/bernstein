@@ -2128,9 +2128,14 @@ class TestFileOwnership:
             _mock_transport({"GET /tasks": httpx.Response(200, json=[_task_as_dict(task)])}),
             adapter=adapter,
         )
+        # The tick releases locks no live session holds, so the owner is a live session.
+        owner = AgentSession(id="qa-owner", role="qa", pid=7, task_ids=["T-owner"])
+        owner.status = "working"
+        owner.heartbeat_ts = time.time()
+        orch._agents[owner.id] = owner
         orch._lock_manager.acquire(
             ["src/locked.py"],
-            agent_id="backend-owner",
+            agent_id="qa-owner",
             task_id="T-owner",
             task_title="Owns locked file",
         )
@@ -2138,7 +2143,7 @@ class TestFileOwnership:
         orch.tick()
 
         prompt = adapter.spawn.call_args.kwargs["prompt"]
-        assert "src/locked.py (by backend-owner)" in prompt
+        assert "src/locked.py (by qa-owner)" in prompt
 
 
 # --- Feature 3: Metrics Emission ---

@@ -550,6 +550,13 @@ result at merge time. Modes that never merge back (`--dry-run`,
 printed in the end-of-run summary and the run health verdict is downgraded to
 UNHEALTHY.
 
+The same journal also records merges refused by the merge gates (quality
+gates, file scope, blast radius), each under its own code with the gate's
+explanation in a `detail` field. The end-of-run summary prints those
+separately, one line per agent branch with its code and detail, because the
+override below does not lift them: fix what the gate reports and re-run the
+task.
+
 Check out a non-default branch before merging, or opt in explicitly:
 
 ```bash

@@ -13,6 +13,7 @@ from bernstein.core.replay.diagnose_signals import (
     incident_signal,
     resolve_signal,
 )
+from bernstein.eval.incident_synthesizer import incident_cases_dir
 
 
 class TestFingerprintLines:
@@ -185,7 +186,7 @@ class TestResolveSignalIncident:
 
     def test_resolves_incident_signal(self, tmp_path: Path) -> None:
         """resolve_signal('incident:CASE_ID') delegates to incident_signal()."""
-        cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        cases_dir = incident_cases_dir(tmp_path)
         cases_dir.mkdir(parents=True)
         case_file = cases_dir / "test-case.yaml"
         case_file.write_text(

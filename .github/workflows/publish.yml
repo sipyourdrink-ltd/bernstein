@@ -238,7 +238,7 @@ jobs:
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist
           path: dist/
@@ -285,7 +285,7 @@ jobs:
         with:
           ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist
           path: dist/
@@ -520,7 +520,12 @@ jobs:
   publish-copr:
     name: Publish RPM to Copr
     runs-on: ubuntu-latest
-    environment: pypi
+    # Own environment rather than `pypi`: every run of this job opens a
+    # deployment, and under `pypi` a Copr build failure was recorded as a
+    # failed PyPI deployment even when the PyPI upload had succeeded. The
+    # `copr` environment carries COPR_CONFIG and the same reviewer gate and
+    # branch/tag restriction as `pypi`.
+    environment: copr
     needs: [publish, rpm-install-smoke]
     # `always()` so a channel-only republish still runs with the upstream
     # release graph skipped; the PyPI result still gates the normal tag path.

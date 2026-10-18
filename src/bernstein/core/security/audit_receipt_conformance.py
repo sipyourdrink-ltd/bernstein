@@ -66,7 +66,7 @@ from bernstein.core.security.audit_receipt import (
     rebuild_receipt_range,
 )
 from bernstein.core.security.key_custody import FileBasedKMSAdapter
-from bernstein.core.verifier.audit_receipt_verifier import _VERIFIER_SCRIPT
+from bernstein.core.verifier.audit_receipt_verifier import VERIFIER_SCRIPT
 
 if TYPE_CHECKING:
     from bernstein.core.security.key_custody import KMSAdapter
@@ -93,7 +93,7 @@ class AuditReceiptConformanceError(RuntimeError):
 
 def default_verifier_path() -> Path:
     """Return the repo's own standalone verifier -- the default implementation."""
-    return _VERIFIER_SCRIPT
+    return VERIFIER_SCRIPT
 
 
 # ---------------------------------------------------------------------------

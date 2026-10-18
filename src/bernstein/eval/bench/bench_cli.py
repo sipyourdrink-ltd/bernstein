@@ -44,6 +44,7 @@ def _get_suite(name: str):
     from bernstein.eval.bench.gate_evasion_suite import build_gate_evasion_suite_v1
     from bernstein.eval.bench.goal_drift_suite import build_goal_drift_suite
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
+    from bernstein.eval.bench.leakage_suite import build_leakage_suite_v1
     from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
@@ -52,6 +53,7 @@ def _get_suite(name: str):
         "goal-drift-v1": build_goal_drift_suite,
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
+        "leakage-v1": build_leakage_suite_v1,
     }
 
     if name in _BUILTIN:
@@ -70,7 +72,7 @@ def _get_suite(name: str):
 def _resolve_adapter(suite_obj: BenchSuite) -> ReplayAdapter:
     """The adapter that scores *suite_obj*: the suite's own, else the synthetic mock.
 
-    Only ``tool-surface-v1``, ``gate-evasion-v1``, and ``goal-drift-v1`` have an adapter
+    Only ``tool-surface-v1``, ``gate-evasion-v1``, ``goal-drift-v1``, and ``leakage-v1`` have an adapter
     that derives a verdict from a run. Every other suite (``golden-v1`` and any ``.json``
     suite) falls back to ``MockReplayAdapter``, which passes everything; callers must check
     :func:`_is_synthetic`.
@@ -89,6 +91,10 @@ def _resolve_adapter(suite_obj: BenchSuite) -> ReplayAdapter:
         from bernstein.eval.bench.goal_drift_suite import GoalDriftReplayAdapter
 
         return GoalDriftReplayAdapter()
+    if suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import LeakageReplayAdapter
+
+        return LeakageReplayAdapter()
     return MockReplayAdapter()
 
 
@@ -423,6 +429,10 @@ def bench_run(
             smoke_synthetic=smoke_synthetic,
             require_step_coverage=require_step_coverage,
         )
+    elif suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import LeakageReplayAdapter
+
+        adapter = LeakageReplayAdapter()
     else:
         adapter = _resolve_adapter(suite_obj)
 
@@ -456,6 +466,17 @@ def bench_run(
     click.echo(f"Pass rate   : {bundle.pass_rate * 100:.1f}%")
     click.echo(f"Total tokens: {bundle.total_tokens:,}")
     click.echo(f"Total cost  : ${bundle.total_cost_usd:.4f}")
+    if suite_obj.version == "leakage-v1":
+        from bernstein.eval.bench.leakage_suite import score_from_bundle
+
+        leakage = score_from_bundle(bundle)
+        click.echo(f"Canaries    : {leakage.total_canaries_tested} across {leakage.total_scanned_surfaces} surface(s)")
+        if leakage.surfaces_not_exercised:
+            click.echo(f"Not scanned : {', '.join(leakage.surfaces_not_exercised)} (needs a governed run)")
+        if leakage.seed_points_not_exercised:
+            click.echo(f"Not seeded  : {', '.join(leakage.seed_points_not_exercised)} (needs a governed run)")
+        for collapsed in leakage.encodings_collapsed:
+            click.echo(f"Same bytes  : {collapsed}")
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")

@@ -374,15 +374,20 @@ class MergeRefusal:
 
     Attributes:
         session_id: Agent session whose merge was refused.
-        branch: Branch the merge would have landed on.
+        branch: For a default-branch refusal, the protected branch the
+            merge would have landed on; for a gate refusal, the agent
+            branch the gate kept out.
         reason: Machine-readable refusal reason recorded by the guard.
         ts: Unix timestamp when the refusal was recorded.
+        detail: The gate's own explanation, when the guard recorded one
+            (empty for default-branch refusals and older journal lines).
     """
 
     session_id: str
     branch: str
     reason: str
     ts: float
+    detail: str = ""
 
 
 def read_merge_refusals(runtime_dir: Path, since_ts: float = 0.0) -> list[MergeRefusal]:
@@ -428,6 +433,7 @@ def read_merge_refusals(runtime_dir: Path, since_ts: float = 0.0) -> list[MergeR
                 branch=str(entry_dict.get("branch", "")),
                 reason=str(entry_dict.get("reason", "")),
                 ts=float(ts),
+                detail=str(entry_dict.get("detail", "")),
             )
         )
     return refusals

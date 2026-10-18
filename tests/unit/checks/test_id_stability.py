@@ -20,6 +20,13 @@ ACTIVE_PINNED_IDS: frozenset[str] = frozenset(
     {
         "doctor:compliance",
         "compliance:soc2:encryption_at_rest",
+        # Opt-in (#5105): run under `govern audit --only duplication`.
+        "duplication:inline-canonical-bytes-sites",
+        "duplication:orphan-modules",
+        "duplication:private-hmac-key-loaders",
+        "duplication:receipt-verify-kinds",
+        "duplication:registry-duplicate-ids",
+        "duplication:verification-result-shapes",
     }
 )
 
@@ -43,7 +50,7 @@ def test_active_pinned_ids_match_default_registry() -> None:
     registry = CheckRegistry()
     populate_default_checks(registry)
 
-    registered_ids = {c.check_id for c in registry.iter_checks()}
+    registered_ids = {c.check_id for c in registry.iter_checks(include_opt_in=True)}
     assert registered_ids == ACTIVE_PINNED_IDS, (
         f"Mismatch between populated registry and ACTIVE_PINNED_IDS. "
         f"Extra in registry: {registered_ids - ACTIVE_PINNED_IDS}, "
@@ -56,7 +63,7 @@ def test_check_ids_are_properly_namespaced() -> None:
     registry = CheckRegistry()
     populate_default_checks(registry)
 
-    for check in registry.iter_checks():
+    for check in registry.iter_checks(include_opt_in=True):
         cid = check.check_id
         assert isinstance(cid, str) and cid.strip() == cid
         assert ":" in cid, f"Check ID '{cid}' is not namespaced with a colon"
@@ -72,7 +79,7 @@ def test_populated_registry_contains_no_tombstoned_ids() -> None:
     registry = CheckRegistry()
     populate_default_checks(registry)
 
-    registered_ids = {c.check_id for c in registry.iter_checks()}
+    registered_ids = {c.check_id for c in registry.iter_checks(include_opt_in=True)}
     assert registered_ids & TOMBSTONED_IDS == set(), (
         f"Tombstoned IDs found in active registry: {registered_ids & TOMBSTONED_IDS}"
     )

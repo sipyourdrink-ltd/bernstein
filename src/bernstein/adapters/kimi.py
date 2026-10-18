@@ -22,6 +22,11 @@ class KimiAdapter(CLIAdapter):
 
     See https://www.kimi.com/code/docs/en/kimi-cli/guides/getting-started.html
     for installation and usage details.
+
+    kimi-cli is archived upstream. Its final release, 1.52.0, no longer runs
+    the agent: every invocation with arguments prints a deprecation notice
+    and exits 0. Install ``kimi-cli==1.51.0``, the last release that runs
+    (#6264).
     """
 
     model_vendor = "moonshot"
@@ -94,8 +99,9 @@ class KimiAdapter(CLIAdapter):
             except FileNotFoundError as exc:
                 msg = (
                     "kimi not found in PATH. "
-                    "Install: uv tool install kimi-cli "
-                    "(see https://www.kimi.com/code/docs/en/kimi-cli/guides/getting-started.html)"
+                    "Install: uv tool install kimi-cli==1.51.0 "
+                    "(1.52.0, the archived package's final release, only prints a deprecation notice; "
+                    "see https://www.kimi.com/code/docs/en/kimi-cli/guides/getting-started.html)"
                 )
                 raise RuntimeError(msg) from exc
             except PermissionError as exc:

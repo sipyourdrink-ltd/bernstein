@@ -1,6 +1,6 @@
 """End-to-end CLI surface for reconciliation lanes (#5120).
 
-Exercises ``bernstein govern lane bootstrap / list / show`` against a
+Exercises ``bernstein govern lane bootstrap / list / show / retire`` against a
 throwaway working directory, proving the verbs are wired to the chain and that
 a repeat bootstrap against an unchanged set is a no-op that says so.
 """
@@ -103,3 +103,55 @@ class TestGovernLaneCli:
         spec = _write_spec(tmp_path, dupe)
         res = _run(["bootstrap", str(spec), "--workdir", str(tmp_path)])
         assert res.exit_code == 1
+
+
+def _chain_length(workdir: Path) -> int:
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    return len(AuditChainStore(workdir / ".sdd" / "audit").query())
+
+
+class TestGovernLaneRetire:
+    def test_retired_lane_leaves_the_active_list(self, tmp_path: Path):
+        spec = _write_spec(tmp_path, _SPEC)
+        _run(["bootstrap", str(spec), "--workdir", str(tmp_path)])
+
+        res = _run(["retire", "canary", "--workdir", str(tmp_path)])
+        assert res.exit_code == 0, res.output
+        assert "retired" in res.output.lower()
+
+        res = _run(["list", "--workdir", str(tmp_path), "--json"])
+        assert res.exit_code == 0, res.output
+        assert "canary" not in json.loads(res.stdout)["lanes"]
+
+    def test_json_output_names_the_lane_and_its_hash(self, tmp_path: Path):
+        spec = _write_spec(tmp_path, _SPEC)
+        _run(["bootstrap", str(spec), "--workdir", str(tmp_path)])
+        active_hash = json.loads(_run(["list", "--workdir", str(tmp_path), "--json"]).stdout)["lanes"]["canary"]
+
+        res = _run(["retire", "canary", "--workdir", str(tmp_path), "--json"])
+
+        assert res.exit_code == 0, res.output
+        assert res.stdout.lstrip().startswith("{")
+        assert json.loads(res.stdout) == {"retired": "canary", "lane_hash": active_hash}
+
+    def test_unknown_lane_fails_and_appends_nothing(self, tmp_path: Path):
+        spec = _write_spec(tmp_path, _SPEC)
+        _run(["bootstrap", str(spec), "--workdir", str(tmp_path)])
+        before = _chain_length(tmp_path)
+
+        res = _run(["retire", "nope", "--workdir", str(tmp_path)])
+
+        assert res.exit_code == 1
+        assert _chain_length(tmp_path) == before
+
+    def test_retiring_twice_fails_and_appends_nothing(self, tmp_path: Path):
+        spec = _write_spec(tmp_path, _SPEC)
+        _run(["bootstrap", str(spec), "--workdir", str(tmp_path)])
+        assert _run(["retire", "canary", "--workdir", str(tmp_path)]).exit_code == 0
+        before = _chain_length(tmp_path)
+
+        res = _run(["retire", "canary", "--workdir", str(tmp_path)])
+
+        assert res.exit_code == 1
+        assert _chain_length(tmp_path) == before

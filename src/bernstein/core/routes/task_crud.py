@@ -480,6 +480,72 @@ def _is_salvage_branch(branch_name: str | None) -> bool:
     return "bernstein-salvage" in branch_name
 
 
+def _fetch_remote_agent_branch(
+    request: Request,
+    agent_branch: str,
+    agent_sha: str,
+) -> None:
+    """Fetch a remote worker's agent branch so the local merge pipeline sees it.
+
+    A remote worker node pushes ``agent/{session_id}`` to the shared remote
+    after a clean exit and includes the branch name and HEAD SHA in the
+    ``/complete`` body (#6538).  This function fetches that ref into the
+    local checkout so ``_run_auto_commit_pre_complete`` and the downstream
+    merge (``spawner_merge``) can operate on it as if the agent ran locally.
+
+    Failures are swallowed (fail-open, logged at WARNING): the auto-commit
+    hook will find no worktree and skip, and the janitor will catch the
+    0-diff task on its pass.
+    """
+    import subprocess
+
+    workdir = _get_workdir(request)
+    if not agent_branch.startswith("agent/"):
+        logger.warning(
+            "fetch_remote_agent_branch: refusing non-agent branch %r",
+            agent_branch,
+        )
+        return
+    try:
+        result = subprocess.run(
+            ["git", "fetch", "origin", f"{agent_branch}:{agent_branch}"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "fetch_remote_agent_branch: fetch failed for %s: %s",
+                agent_branch,
+                result.stderr.strip(),
+            )
+            return
+        local_sha = subprocess.run(
+            ["git", "rev-parse", agent_branch],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        local = local_sha.stdout.strip() if local_sha.returncode == 0 else "?"
+        if local != agent_sha:
+            logger.warning(
+                "fetch_remote_agent_branch: SHA mismatch for %s: expected %s, got %s",
+                agent_branch,
+                agent_sha[:12],
+                local[:12],
+            )
+        else:
+            logger.info(
+                "fetch_remote_agent_branch: fetched %s (%s)",
+                agent_branch,
+                agent_sha[:12],
+            )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("fetch_remote_agent_branch: %s: %s", agent_branch, exc)
+
+
 def _run_auto_commit_pre_complete(
     request: Request,
     task: Task,
@@ -1613,6 +1679,11 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             else:
                 if structured is not None:
                     result_summary = structured.summary
+                # Remote delivery (#6538): when a worker node pushed its
+                # agent branch to the shared remote, fetch it so the local
+                # merge pipeline can operate on it.
+                if body.agent_branch and body.agent_sha:
+                    _fetch_remote_agent_branch(request, body.agent_branch, body.agent_sha)
                 # Defect 33: auto-commit the worker's uncommitted work BEFORE
                 # the store transitions the task to done, so the commit message
                 # is visible to the janitor (which reads ``git log`` after

@@ -280,7 +280,7 @@ git worktree prune         # removes stale worktree entries
 # If a directory still exists but git lost track:
 git worktree remove <path> --force
 ```
-The orchestrator's janitor attempts this automatically via `_save_partial_work()` before worktree cleanup, but manual intervention is needed when the `.git/worktrees/` metadata is inconsistent.
+The orchestrator's worktree cleanup does this automatically when it reaps an agent, but manual intervention is needed when the `.git/worktrees/` metadata is inconsistent.
 
 ---
 
@@ -362,6 +362,12 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 **Resolution:** Declare the server in `bernstein.yaml` `mcp_servers`, or in `~/.claude/mcp.json`. Both are read by bernstein and passed to every spawned `claude` agent.
 
+**Symptom:** A spawned `pi` agent no longer has a tool that a pi extension gives you interactively, such as an MCP server added through an extension.
+
+**Cause:** Spawned `pi` agents run with `--no-extensions`. Pi has no MCP of its own; MCP servers and other tools reach it as extensions, which it discovers in `~/.pi/agent/extensions/` and in the repository's `.pi/extensions/`. Without the flag every spawned agent loaded the operator's personal extensions (#5965).
+
+**Resolution:** None needed for a run bernstein governs: bernstein passes pi no extension of its own. Use an adapter that takes `mcp_config` (for example `claude`) when a task needs an MCP server.
+
 ---
 
 ## 12. Agent Timeout (Watchdog Kill)
@@ -378,7 +384,8 @@ grep -i "timeout" .sdd/runtime/<session>.log
 **Resolution:**
 - Increase `timeout_seconds` per-agent or in the orchestrator config.
 - Break large tasks into smaller scopes (small/medium).
-- The watchdog sends SIGTERM first, waits 30s for graceful shutdown, then SIGKILL. Partial work is committed via `_save_partial_work()` before worktree cleanup.
+- The watchdog sends SIGTERM first, waits 30s for graceful shutdown, then SIGKILL.
+- A timed-out, crashed or recycled agent's work is merged only when its task was already accepted (`done`). Otherwise nothing reaches the run branch: uncommitted edits are kept on `salvage/<session>`, unmerged commits under `refs/graveyard/<session>-<ts>`, and the task's progress log names the ref and sha. Inspect with `git log -p salvage/<session>`; reuse with `git cherry-pick` or `git checkout salvage/<session> -- <path>`.
 - If agents consistently time out, the task scope or complexity rating may be wrong.
 
 ---
@@ -436,6 +443,8 @@ cat .sdd/runtime/<session>.log   # usually contains the CLI's error message
 - Read the log file. The CLI's stderr is captured there.
 - Common fixes: set API key, fix model name (check `_MODEL_MAP` in the adapter), install missing dependencies.
 - If the CLI requires interactive setup (e.g., `opencode auth login`), run it manually first.
+
+**Related - `Spawn deferred ... is in cooldown after recent failure`:** after an agent of an adapter dies with an adapter-level failure (for example the provider kept answering 429), the adapter backs off for `spawn_failure_cooldown_s` (5 min); the adapter health monitor can trip the same way. This is not a task failure: the orchestrator hands the claimed tasks back to the open pool (`POST /tasks/{id}/release`) without spending their retry budget, and claims them again once the backoff ends. If tasks keep cycling through deferrals, the cause is upstream capacity (provider quotas or rate limits), not the tasks.
 
 ---
 

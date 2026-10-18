@@ -105,6 +105,11 @@ servers, account connectors, and subagent servers referenced by name. To give a
 spawned agent one of those, declare it in `bernstein.yaml` `mcp_servers` or in
 `~/.claude/mcp.json`, which bernstein reads itself.
 
+The `pi` adapter takes no `mcp_config`: pi has no MCP of its own and reaches
+MCP servers only through extensions. It is spawned with `--no-extensions`, so
+the extensions in the operator's `~/.pi/agent/extensions/` (and a repo's
+`.pi/extensions/`) do not load into a spawned agent (#5965).
+
 ---
 
 ## Worked example

@@ -1002,11 +1002,11 @@ def test_handle_dead_agent_writes_retry_checkpoint_before_orphan_handling(tmp_pa
         patch("bernstein.core.agents.agent_lifecycle._preserve_runner_logs"),
         patch("bernstein.core.agents.agent_lifecycle._maybe_preserve_worktree"),
         patch("bernstein.core.agents.agent_lifecycle._handle_orphaned_task_guarded") as mock_orphan,
-        patch("bernstein.core.agents.agent_lifecycle._save_partial_work", return_value=False) as mock_save,
+        patch("bernstein.core.agents.agent_lifecycle._dispose_dead_worktree") as mock_save,
     ):
         # The checkpoint must exist by the time either the orphan-handling path
-        # (which reaches retry_or_fail_task) or _save_partial_work (which
-        # touches the worktree with its own WIP commit/merge) run.
+        # (which reaches retry_or_fail_task) or _dispose_dead_worktree (which
+        # touches the worktree with its merge or salvage commit) run.
         checkpoint_seen_by_orphan_handler = {}
 
         def _record_checkpoint_state(*_args, **_kwargs) -> None:
@@ -1059,12 +1059,11 @@ def test_reap_wall_clock_timeout_writes_retry_checkpoint_before_orphan_handling(
     def _record_checkpoint_state(*_args, **_kwargs) -> None:
         seen["ref"] = checkpoint_retry.latest_checkpoint(tmp_path / ".sdd", "T-wct-1")
 
-    def _record_still_present_at_save(*_args, **_kwargs) -> bool:
+    def _record_still_present_at_save(*_args, **_kwargs) -> None:
         # Symmetric with the crash test: the checkpoint must also still be
-        # there by the time _save_partial_work runs (it touches the
-        # worktree with its own WIP commit/merge right after).
+        # there by the time _dispose_dead_worktree runs (it touches the
+        # worktree with its merge or salvage commit right after).
         seen["still_present_at_save"] = checkpoint_retry.latest_checkpoint(tmp_path / ".sdd", "T-wct-1") is not None
-        return False
 
     with (
         patch("bernstein.core.agents.agent_lifecycle._propagate_abort_to_children"),
@@ -1073,7 +1072,7 @@ def test_reap_wall_clock_timeout_writes_retry_checkpoint_before_orphan_handling(
         patch("bernstein.core.agents.agent_lifecycle._preserve_runner_logs"),
         patch("bernstein.core.agents.agent_lifecycle.handle_orphaned_task", side_effect=_record_checkpoint_state),
         patch(
-            "bernstein.core.agents.agent_lifecycle._save_partial_work",
+            "bernstein.core.agents.agent_lifecycle._dispose_dead_worktree",
             side_effect=_record_still_present_at_save,
         ),
     ):

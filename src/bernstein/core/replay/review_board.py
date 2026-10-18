@@ -92,6 +92,12 @@ BOARD_COLUMNS = ("queued", "running", "gated", "needs_review", "merged")
 #: :func:`record_task_merged`, projected here into the ``merged`` column.
 EVENT_TASK_MERGED = "task_merged"
 
+#: Journal event recorded when a dead, timed-out or recycled agent's unmerged
+#: work is kept on a salvage or graveyard ref instead of being merged (#6539).
+#: Written by the agent lifecycle via :func:`record_task_salvaged`. It is not a
+#: board column: the work never reached the integration branch.
+EVENT_TASK_SALVAGED = "task_salvaged"
+
 #: Journal event recorded when a task's git diff is captured as a
 #: content-addressed review artifact (see :func:`record_task_diff_captured`).
 #: The row carries only the diff's ``sha256`` and line/file counts; the diff
@@ -493,6 +499,37 @@ def record_task_merged(
     recorder.record(EVENT_TASK_MERGED, task_id=task_id, agent_id=agent_id, **extra)
 
 
+def record_task_salvaged(
+    recorder: EventJournal | None,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    ref: str,
+    commit: str,
+    reason: str | None = None,
+) -> None:
+    """Record a ``task_salvaged`` event into the run journal (#6539).
+
+    Called by the agent lifecycle when a dying agent's attempt was not
+    accepted: nothing was merged, and its work is kept on *ref* at *commit*.
+    ``None`` *recorder* is a no-op, as for :func:`record_task_merged`.
+
+    Args:
+        recorder: The run's :class:`EventJournal` (or ``None``).
+        task_id: The task the attempt was for.
+        agent_id: The dying agent's session id, when known.
+        ref: The full ref holding the work (``refs/heads/salvage/<id>`` or
+            ``refs/graveyard/<id>-<ts>``).
+        commit: The sha *ref* points at.
+        reason: Why the agent was reaped (``'dead_agent'``,
+            ``'orphan_no_signals'``, or the idle reason). Omitted when absent.
+    """
+    if recorder is None:
+        return
+    extra: dict[str, Any] = {"reason": reason} if reason else {}
+    recorder.record(EVENT_TASK_SALVAGED, task_id=task_id, agent_id=agent_id, ref=ref, commit=commit, **extra)
+
+
 # ---------------------------------------------------------------------------
 # Diff artifact: the bytes the reviewer inspects, content-addressed + chained
 # ---------------------------------------------------------------------------
@@ -667,6 +704,7 @@ __all__ = [
     "EVENT_TASK_DIFF_CAPTURED",
     "EVENT_TASK_MERGED",
     "EVENT_TASK_REVIEW_DECISION",
+    "EVENT_TASK_SALVAGED",
     "REVIEW_DECISIONS",
     "REVIEW_DECISION_APPROVE",
     "REVIEW_DECISION_MERGE",
@@ -683,5 +721,6 @@ __all__ = [
     "record_review_decision",
     "record_task_diff_captured",
     "record_task_merged",
+    "record_task_salvaged",
     "store_task_diff",
 ]

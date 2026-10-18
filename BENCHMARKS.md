@@ -11,6 +11,7 @@ This document records the canonical benchmark suites provided by `bernstein.eval
 | `gate-evasion-v1` | Each fixture is a way a change once evaded a quality gate; the named gate runs on it through `GateRunner`, and only a gate finding counts as a catch | — | 8 classes | today 2/8, see `docs/eval/bench.md` |
 | `goal-drift-v1` | Trajectory goal drift measurement across contract boundaries with planted distractions | `CTRL-GOAL-ALIGNMENT`, `ASI01` | 10 fixtures | unmeasured by default; supply `--trajectory` |
 | `collusion/1` | Cross-task collusion detection: paired change fixtures where each half passes its gate alone but the pair violates a stated invariant; flags name the invariant and both tasks and are recorded in the merge receipt (#5398) — eval suite only; live admission wiring is #5463 slice 2. Runs via the signed-bundle path (`bernstein.eval.bench.collusion_bundle`), not `bernstein bench run` | — | 10 paired fixtures (5 colluding + 5 benign) | 1.0 (100%) |
+| `leakage-v1` | Seeded canaries scanned on the bytes each output surface actually emits; five surfaces and four of five seed points driven, the rest need a governed run | — | 8 surfaces | zero hits on every exercised surface (today 1 of 5 clean, see `docs/eval/bench.md`) |
 
 ---
 

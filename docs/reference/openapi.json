@@ -2105,7 +2105,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
         "operationId": "patch_task_tasks__task_id__patch",
         "parameters": [
           {
@@ -3214,8 +3214,8 @@
           "401": {
             "description": "Cluster authentication failed"
           },
-          "404": {
-            "description": "Node not registered"
+          "410": {
+            "description": "Node id unknown to this server (e.g. registry lost across a restart); the node must re-register via POST /cluster/nodes"
           },
           "422": {
             "description": "Validation Error",
@@ -7084,7 +7084,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does,\nincluding the soft-delete semantics a client meets on ``DELETE``.",
         "operationId": "service_provider_config_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -11394,7 +11394,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
         "operationId": "patch_task_api_v1_tasks__task_id__patch",
         "parameters": [
           {
@@ -12503,8 +12503,8 @@
           "401": {
             "description": "Cluster authentication failed"
           },
-          "404": {
-            "description": "Node not registered"
+          "410": {
+            "description": "Node id unknown to this server (e.g. registry lost across a restart); the node must re-register via POST /cluster/nodes"
           },
           "422": {
             "description": "Validation Error",
@@ -16373,7 +16373,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does,\nincluding the soft-delete semantics a client meets on ``DELETE``.",
         "operationId": "service_provider_config_api_v1_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -21836,11 +21836,33 @@
               }
             ],
             "title": "Payload"
+          },
+          "agent_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Branch"
+          },
+          "agent_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Sha"
           }
         },
         "type": "object",
         "title": "TaskCompleteRequest",
-        "description": "Body for POST /tasks/{task_id}/complete.\n\n``result_summary`` is the legacy free-form summary and stays accepted\nunchanged. ``payload`` carries a structured terminal payload under the\nworker completion contract (#2244) - either a completion or a typed\nrefusal - and is schema-validated at the API boundary; an invalid\npayload is a typed ``contract_violation`` failure, never a silent\naccept. When ``payload`` is provided, ``result_summary`` is ignored."
+        "description": "Body for POST /tasks/{task_id}/complete.\n\n``result_summary`` is the legacy free-form summary and stays accepted\nunchanged. ``payload`` carries a structured terminal payload under the\nworker completion contract (#2244) - either a completion or a typed\nrefusal - and is schema-validated at the API boundary; an invalid\npayload is a typed ``contract_violation`` failure, never a silent\naccept. When ``payload`` is provided, ``result_summary`` is ignored.\n\nRemote delivery (#6538): a worker node that pushed its agent branch\nto the shared remote sets ``agent_branch`` and ``agent_sha`` so the\ncentral can fetch and merge the work instead of looking for a local\nworktree that does not exist."
       },
       "TaskCountsResponse": {
         "properties": {

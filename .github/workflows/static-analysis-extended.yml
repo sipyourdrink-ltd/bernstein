@@ -150,7 +150,7 @@ jobs:
           category: semgrep-ce
       - name: Upload SARIF as workflow artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: semgrep-sarif
           path: semgrep.sarif
@@ -233,7 +233,7 @@ jobs:
           skip-dirs: "tests/fixtures/scanners/trivy/target,tests/fixtures/scanners/gitleaks/target"
       - name: Upload SARIF as workflow artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: trivy-fs-sarif
           path: trivy-fs.sarif
@@ -297,7 +297,7 @@ jobs:
           exit-code: "1"
       - name: Upload SARIF as workflow artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: trivy-iac-sarif
           path: trivy-iac.sarif
@@ -361,7 +361,7 @@ jobs:
           category: vulture
       - name: Upload SARIF as workflow artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: vulture-sarif
           path: |
@@ -443,7 +443,7 @@ jobs:
           category: refurb
       - name: Upload SARIF as workflow artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: refurb-sarif
           path: |
@@ -512,7 +512,7 @@ jobs:
           category: perflint
       - name: Upload SARIF as workflow artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: perflint-sarif
           path: |
