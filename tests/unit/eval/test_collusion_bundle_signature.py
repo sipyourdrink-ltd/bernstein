@@ -21,6 +21,8 @@ from bernstein.eval.bench.collusion_bundle import (
 )
 from bernstein.eval.bench.collusion_suite import load_cases
 
+pytestmark = pytest.mark.whole_tree_guard
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -80,9 +82,12 @@ def test_collusion_results_replayable_from_signed_bundle():
     benchmarks = (REPO_ROOT / "BENCHMARKS.md").read_text(encoding="utf-8")
     rows = [line for line in benchmarks.splitlines() if line.lstrip().startswith("|") and "collusion" in line]
     assert rows, "BENCHMARKS.md must carry a collusion suite row"
-    # Over all ten cases, not just the colluding half: a benign false
-    # positive would drop pass_rate below 1.0 and fail this check even
-    # though collusion_flagged / collusion_total alone would still be 5/5.
+    # This check owns row/bundle sync: the expected cell is derived from
+    # the bundle's own score, so a hand-typed number (or a row in the old
+    # format) fails here until BENCHMARKS.md is back in sync. It does not
+    # own benign-false-positive detection -- a degraded bundle whose row
+    # was synced to match would pass this line. That case is owned by the
+    # benign_passed / false_positives / pass_rate assertions above.
     rate = score_from_bundle(bundle)["pass_rate"]
     assert any(f"{rate:.1f} ({rate:.0%})" in row for row in rows), (
         "BENCHMARKS.md collusion row must carry the bundle-derived pass rate"
