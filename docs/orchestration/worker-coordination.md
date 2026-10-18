@@ -95,12 +95,15 @@ an acknowledgement removes it:
 .sdd/runtime/worker_outbox.jsonl
 ```
 
-The file is append-only per outcome and fsynced before the first attempt, so a
-report outlives both the failed request and the worker process. Retry state
-(attempt count, next-attempt gate, last status) lives in the record too, so a
-restart resumes the schedule instead of re-hammering an endpoint already in
-trouble. Settled records are dropped by an atomic rewrite, which is what stops
-a delivered outcome replaying after a reboot.
+The file is rewritten whole through the atomic-write helper (temp file, fsync,
+rename, best-effort directory fsync) rather than appended in place, so a report
+outlives both the failed request and the worker process and a crash mid-write
+leaves the previous file rather than a truncated one. Logically the queue is
+still append-only per outcome: a record is added once and never edited in place.
+Retry state (attempt count, next-attempt gate, last status) lives in the record
+too, so a restart resumes the schedule instead of re-hammering an endpoint
+already in trouble. Settled records are dropped by an atomic rewrite, which is
+what stops a delivered outcome replaying after a reboot.
 
 What retires a report is the response, read deliberately:
 
@@ -131,9 +134,12 @@ denied stays in memory and still gets delivered.
 
 The residual risk is stated rather than hidden: a report already in flight still
 gets its full 30s, so a central that accepts the connection and never answers
-can cost this node loop time. It can no longer get the node declared offline --
-30s sits inside the 60s lease, so the next beat still lands -- and a backlog is
-capped by the report phase budget rather than by the length of the queue.
+can cost this node loop time. That makes eviction less likely, not impossible:
+30s leaves 30s of the 60s lease for the rest of the cycle, and a cycle that also
+pays for slow claims, slow heartbeats, or several owed reports can still overrun
+it. Treat the lease as protected in the common case and unprotected under load,
+not as guaranteed. A backlog is capped by the report phase budget rather than by
+the length of the queue.
 Bounding the remaining cost means moving terminal reporting off the loop thread,
 which changes the worker's shape and is left as a maintainer's decision, not
 folded in here.

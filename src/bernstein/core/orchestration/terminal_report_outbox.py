@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import time
 import uuid
@@ -109,6 +110,36 @@ _KNOWN_OUTCOMES = frozenset({OUTCOME_DONE, OUTCOME_FAILED, OUTCOME_UNKNOWN})
 #: Fields that drive the retry schedule, so a string in any of them turns a
 #: harmless-looking record into a ``TypeError`` inside ``due()`` on every cycle.
 _NUMERIC_FIELDS = ("attempts", "first_seen_at", "next_attempt_at", "absences")
+
+#: Of those, the fields that are counts rather than points in time. A count is
+#: integral; a timestamp is not, and conflating the two would reject every
+#: record ever written.
+_COUNT_FIELDS = ("attempts", "absences")
+
+#: Ceiling on a persisted retry count. Getting this high means the central has
+#: been unreachable for days at the maximum backoff, so a larger value is not a
+#: long outage -- it is a corrupt or hand-edited record. Enforced by normalizing
+#: rather than quarantining: the count only picks a delay, and refusing the
+#: record would trade a wrong delay for a lost terminal report.
+_MAX_PERSISTED_ATTEMPTS = 10_000
+
+#: Ceiling on a persisted epoch timestamp. ``json.loads`` accepts both ``NaN`` and
+#: ``Infinity`` as valid JSON, and each wedges the queue in opposite directions:
+#: ``next_attempt_at`` of ``NaN`` fails every comparison and so is due on every
+#: cycle forever, while ``Infinity`` leaves a report owed that no worker can ever
+#: drain. Both are far outside any real clock.
+_MAX_TIMESTAMP_S = 1e11
+
+#: Conservative ref/object-id charset: enough for ``agent/<task-id>`` and for the
+#: abbreviated and full object ids the delivery path actually carries, and none of
+#: the whitespace or control characters a crafted value could smuggle into a log
+#: line, a URL, or a command line. Deliberately not a hex-only SHA pattern: the
+#: delivery contract across this repo accepts short and non-canonical spellings
+#: (``abc123``, ``sha-11``), and refusing those would delete an owed terminal
+#: report over a cosmetic field. Whether a SHA matches its branch is decided
+#: where the remote can be consulted -- see ``_trusted_delivery``.
+_DELIVERY_VALUE_RE = re.compile(r"[A-Za-z0-9._/-]{1,255}")
+
 DEFAULT_BASE_DELAY_S = 1.0
 DEFAULT_MAX_DELAY_S = 300.0
 
@@ -232,6 +263,30 @@ def _parse_record(line: str) -> TerminalReport:
         # too, and rejecting it costs nothing.
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise _MalformedRecord(f"`{name}` is not numeric: {value!r}")
+        if name in _COUNT_FIELDS:
+            # A float that happens to be whole is a hand-edit, not a different
+            # unit, so it is folded back rather than refused.
+            if isinstance(value, float):
+                if not value.is_integer():
+                    raise _MalformedRecord(f"`{name}` is not a whole count: {value!r}")
+                value = int(value)
+            if value < 0:
+                raise _MalformedRecord(f"`{name}` is negative: {value!r}")
+            if name == "attempts" and value > _MAX_PERSISTED_ATTEMPTS:
+                # Normalized, not refused: this field only selects a delay, and
+                # quarantining the line would trade a wrong backoff for a lost
+                # terminal report. The exponent is bounded in :func:`retry_delay_s`
+                # as well, so a value that reaches it by another route is inert.
+                logger.warning(
+                    "clamping an implausible terminal-report attempt count (%r) to %d",
+                    value,
+                    _MAX_PERSISTED_ATTEMPTS,
+                )
+                value = _MAX_PERSISTED_ATTEMPTS
+            raw[name] = value
+        elif not math.isfinite(value) or abs(value) > _MAX_TIMESTAMP_S:
+            # NaN is due forever; Infinity is due never. Neither is a clock.
+            raise _MalformedRecord(f"`{name}` is not a usable timestamp: {value!r}")
 
     node = raw.get("node", "")
     if not isinstance(node, str) or not node:
@@ -239,7 +294,49 @@ def _parse_record(line: str) -> TerminalReport:
         # posts the same outcome once per node.
         raise _MalformedRecord("`node` is missing or empty")
 
+    _validate_delivery(raw)
+
     return TerminalReport.from_dict(raw)
+
+
+def _validate_delivery(raw: dict[str, Any]) -> None:
+    """Check the delivery metadata before anything dereferences it.
+
+    ``_trusted_delivery`` answers a policy question -- is this branch one whose
+    work we may name -- and it does so by calling ``branch.startswith(...)``. On
+    a persisted record that is a method call against input this file has no
+    control over: a numeric ``agent_branch`` raised ``AttributeError`` straight
+    through :meth:`TerminalReportOutbox._load`, whose handler catches
+    ``TypeError`` and ``ValueError`` but not that, so one bad line stopped the
+    worker from loading *any* of its owed reports.
+
+    Absent or null stays absent -- a report with no delivery metadata is what an
+    in-agent completion already looks like, and it is deliverable. A value that
+    is present must be a well-formed string of the right kind, or the record is
+    junk that cannot be posted truthfully either way. Valid values are left
+    byte-for-byte alone; nothing here lowercases, strips, or shortens them.
+    """
+    for name in ("agent_branch", "agent_sha"):
+        value = raw.get(name)
+        if value is None:
+            continue
+        if value == "":
+            # Absent spelled as empty. Today that already means "no delivery
+            # metadata" downstream, so it is normalized rather than refused:
+            # refusing would trade a deliverable outcome for an empty string.
+            raw[name] = None
+            continue
+        if not isinstance(value, str):
+            # This is the crash: `_trusted_delivery` dereferences the branch, and
+            # `_load` does not catch AttributeError, so one such line used to stop
+            # the worker loading any of its owed reports.
+            raise _MalformedRecord(f"`{name}` is {type(value).__name__}, expected a string")
+        if _DELIVERY_VALUE_RE.fullmatch(value) is None:
+            raise _MalformedRecord(f"`{name}` is not a usable ref or object id: {value!r}")
+        if name == "agent_branch" and value == _AGENT_BRANCH_PREFIX:
+            # The bare prefix names no branch at all. (Not ``strip``: the prefix
+            # is a character set there, so it would eat a ref like ``agent/a``.)
+            raise _MalformedRecord(f"`{name}` is an empty ref: {value!r}")
 
 
 def _is_safe_task_id(task_id: object) -> bool:
@@ -278,6 +375,27 @@ def _trusted_delivery(
     return branch, sha
 
 
+def _saturating_exponent(base_delay_s: float, max_delay_s: float) -> int:
+    """Smallest exponent whose uncapped delay already reaches *max_delay_s*.
+
+    ``compute_backoff`` evaluates ``base_delay_s * 2 ** attempt`` and only then
+    applies the cap, so it is the exponent that overflows rather than the result:
+    at 1025 attempts the power alone exceeds the largest representable float and
+    raises ``OverflowError``, and a count a few orders of magnitude worse spends
+    seconds building an integer the cap was about to discard. Every exponent past
+    saturation produces exactly *max_delay_s* regardless, which is what clamping
+    to this value returns -- so a real attempt count sees the identical schedule,
+    cap and full jitter included.
+    """
+    if not (base_delay_s > 0 and max_delay_s > 0):
+        return 0
+    if not (math.isfinite(base_delay_s) and math.isfinite(max_delay_s)):
+        return 0
+    if base_delay_s >= max_delay_s:
+        return 0
+    return math.ceil(math.log2(max_delay_s / base_delay_s))
+
+
 def retry_delay_s(
     attempts: int,
     base_delay_s: float,
@@ -303,7 +421,19 @@ def retry_delay_s(
     # CLI's import graph, which does not otherwise need it.
     from bernstein.core.server.http_retry import compute_backoff
 
-    return compute_backoff(max(attempts - 1, 0), base_delay_s, max_delay_s)
+    try:
+        exponent = max(int(attempts) - 1, 0)
+    except (OverflowError, ValueError):
+        # A nan or an infinity that arrived by some route other than the loader,
+        # which refuses both. Treated as "maxed out", not as zero: the report is
+        # still owed, and the sane reading of an unreadable count is that it has
+        # been retried a great deal.
+        exponent = _MAX_PERSISTED_ATTEMPTS
+    return compute_backoff(
+        min(exponent, _saturating_exponent(base_delay_s, max_delay_s)),
+        base_delay_s,
+        max_delay_s,
+    )
 
 
 class TerminalReportOutbox:
