@@ -86,6 +86,13 @@ ACTIVE_UNFINISHED_STATUSES: frozenset[str] = frozenset({"open", "claimed", "in_p
 
 #: Terminal statuses. Their presence means the normal quiescence self-stop
 #: path applies and this module is not consulted.
+#:
+#: Second consumer (#5112): ``bernstein.core.worktrees.task_status`` imports
+#: this set to decide whether a worktree's owning task is done, for the
+#: leaked-worktree sweep. That is a *listing* decision today, not a reap
+#: gate, but if it ever becomes one this set is doing double duty across two
+#: modules with different stakes for getting it wrong -- widening or
+#: narrowing it here moves both.
 TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "closed", "cancelled"})
 
 #: Env overrides, checked ahead of the ``OrchestratorConfig`` fields.
