@@ -1348,6 +1348,10 @@ class TaskStore:
             return False
         task.result_summary = None
         task.terminal_reason = None
+        # See batch_ops._retry_task: returning a task to the pool ends the claim
+        # that was held on it, and a token left behind would keep validating the
+        # dead holder's reports against a task nobody has claimed yet.
+        task.claim_token = None
         if isinstance(task.metadata, dict):
             task.metadata.pop("blocking_task_id", None)
         task.version += 1

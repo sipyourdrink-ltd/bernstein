@@ -44,7 +44,7 @@ from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.persistence.file_locks import LockTimeout, cross_process_lock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,14 @@ _ABSENT_STATUS = "task-absent"
 _TASK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 #: The only branch namespace a worker's own work lands in (see ``_push_agent_work``).
 _AGENT_BRANCH_PREFIX = "agent/"
+
+#: Outcomes a record is allowed to carry. Anything else is junk or a newer
+#: worker's vocabulary, and either way this worker cannot deliver it.
+_KNOWN_OUTCOMES = frozenset({OUTCOME_DONE, OUTCOME_FAILED, OUTCOME_UNKNOWN})
+
+#: Fields that drive the retry schedule, so a string in any of them turns a
+#: harmless-looking record into a ``TypeError`` inside ``due()`` on every cycle.
+_NUMERIC_FIELDS = ("attempts", "first_seen_at", "next_attempt_at", "absences")
 DEFAULT_BASE_DELAY_S = 1.0
 DEFAULT_MAX_DELAY_S = 300.0
 
@@ -173,6 +181,65 @@ class TerminalReport:
         kwargs.setdefault("task_id", "")
         kwargs.setdefault("outcome", OUTCOME_UNKNOWN)
         return cls(**kwargs)  # type: ignore[arg-type]
+
+
+class _MalformedRecord(ValueError):
+    """A line that parsed but cannot be a report this worker should act on.
+
+    Subclasses :class:`ValueError` so the existing "skip this line" handling is
+    the handling, and the reason is carried rather than inferred from a stack
+    trace: the whole point is that one bad line is data, not a crash.
+    """
+
+
+def _parse_record(line: str) -> TerminalReport:
+    """Build one record from a JSONL line, refusing anything malformed.
+
+    ``from_dict`` rebuilds a record without checking its shape and deliberately
+    ignores unknown keys, which is right for a newer writer and wrong for a
+    corrupt one: ``from_dict(json.loads("1"))`` raises ``AttributeError``, a
+    non-numeric ``next_attempt_at`` survives until ``due()`` raises ``TypeError``
+    on every cycle, and a missing ``report_id`` is silently re-minted on each load
+    so the record can never be settled or acknowledged. Each of those kills the
+    worker loop or wedges the queue, which is worse than dropping the line.
+
+    The file is world-writable in practice -- ``.sdd/`` is shared with every agent
+    on the node, and this module's own docstring says so -- so its contents are
+    input to validate, not state to trust.
+
+    Raises:
+        _MalformedRecord: The line is not a report, or is a report whose fields
+            would crash or wedge a later step.
+        json.JSONDecodeError: The line is not JSON at all.
+    """
+    raw = json.loads(line)
+    if not isinstance(raw, dict):
+        raise _MalformedRecord(f"expected an object, got {type(raw).__name__}")
+
+    report_id = raw.get("report_id")
+    if not isinstance(report_id, str) or not report_id:
+        # Minting one here would give the same line a fresh identity on every
+        # load, which is how a record becomes permanently unsettled.
+        raise _MalformedRecord("`report_id` is missing or not a string")
+
+    outcome = raw.get("outcome")
+    if outcome not in _KNOWN_OUTCOMES:
+        raise _MalformedRecord(f"`outcome` is not a known outcome: {outcome!r}")
+
+    for name in _NUMERIC_FIELDS:
+        value = raw.get(name, 0)
+        # bool is an int subclass, but a flag where a count belongs is malformed
+        # too, and rejecting it costs nothing.
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise _MalformedRecord(f"`{name}` is not numeric: {value!r}")
+
+    node = raw.get("node", "")
+    if not isinstance(node, str) or not node:
+        # An unowned record is drained by every node sharing the directory, which
+        # posts the same outcome once per node.
+        raise _MalformedRecord("`node` is missing or empty")
+
+    return TerminalReport.from_dict(raw)
 
 
 def _is_safe_task_id(task_id: object) -> bool:
@@ -368,8 +435,15 @@ class TerminalReportOutbox:
             with cross_process_lock(self._lock_path, timeout=_LOCK_TIMEOUT_S):
                 self._load()
                 records = self._merged()
-        except LockTimeout as exc:
-            logger.warning("terminal-report outbox lock busy, deferring this cycle: %s", exc)
+        except (OSError, LockTimeout) as exc:
+            # OSError belongs here alongside LockTimeout for the same reason the
+            # lock-busy case is handled: the lock file is opened for read-write,
+            # so a read-only remount or an unreadable mode raises PermissionError
+            # on the way *in*. Letting it escape would kill the worker loop over a
+            # queue it could still drain from memory, and ENOSPC was already
+            # treated as survivable -- a read-only filesystem is the other common
+            # disk failure and deserves the same answer.
+            logger.warning("terminal-report outbox lock unusable, deferring this cycle: %s", exc)
             records = dict(self._volatile)
         return sorted(records.values(), key=lambda r: r.first_seen_at)
 
@@ -507,12 +581,18 @@ class TerminalReportOutbox:
             self._volatile.pop(report_id, None)
 
     def _load(self) -> None:
-        """Hydrate :attr:`_records` from disk, skipping unreadable lines.
+        """Hydrate :attr:`_records` from disk, refusing and quarantining bad lines.
 
         Lock-free on purpose: every writer swaps the whole file through
         ``os.replace``, so a reader sees either the old or the new file -- never
         a torn mix. The skip keeps one hand-edited or truncated line from
         blinding the worker to every report behind it.
+
+        Refused lines are copied to ``<outbox>.corrupt`` before the next rewrite
+        drops them. They are the evidence of *why* an outcome went undelivered,
+        and a rewrite that quietly deleted them would remove the only trace of a
+        hand-edited or half-written queue -- which is what an operator reaches for
+        when a task sits claimed with nothing in the log.
         """
         self._records = {}
         if not self._path.is_file():
@@ -522,13 +602,15 @@ class TerminalReportOutbox:
         except OSError as exc:
             logger.warning("could not read terminal-report outbox %s: %s", self._path, exc)
             return
+        rejected: list[str] = []
         for line in raw.splitlines():
             if not line.strip():
                 continue
             try:
-                record = TerminalReport.from_dict(json.loads(line))
+                record = _parse_record(line)
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 logger.warning("skipping malformed terminal-report record in %s: %s", self._path, exc)
+                rejected.append(line)
                 continue
             if not _is_safe_task_id(record.task_id):
                 # Covers the missing id and the path-shaped one. Such a record is
@@ -540,9 +622,36 @@ class TerminalReportOutbox:
                     record.task_id,
                     self._path,
                 )
+                rejected.append(line)
                 continue
             record.agent_branch, record.agent_sha = _trusted_delivery((record.agent_branch, record.agent_sha))
             self._records[record.report_id] = record
+        if rejected:
+            self._quarantine(rejected)
+
+    def _quarantine(self, lines: Sequence[str]) -> None:
+        """Keep the records this loader refused, for whoever has to explain them.
+
+        Written whole rather than appended: this runs on every load, so appending
+        would reprint the same lines forever. Refusing to write at all would be
+        the silent deletion this method exists to replace, so a failure here is
+        logged and ignored -- losing the evidence is bad, but it must never become
+        a reason to lose the queue.
+        """
+        path = self._path.with_name(f"{self._path.name}.corrupt")
+        try:
+            write_atomic_text(path, "".join(f"{line}\n" for line in lines))
+        except OSError as exc:
+            logger.warning(
+                "could not quarantine %d malformed terminal-report record(s) to %s: %s", len(lines), path, exc
+            )
+            return
+        logger.error(
+            "moved %d malformed terminal-report record(s) out of %s into %s; they will not be delivered",
+            len(lines),
+            self._path,
+            path,
+        )
 
 
 __all__ = [

@@ -142,7 +142,7 @@ def _advancing_clock(*, step: float) -> Callable[[], float]:
     """A monotonic clock that burns *step* seconds on every read.
 
     The report phase's wall-clock budget cannot be exercised by making the
-    central genuinely slow (that is a 75s test), so time itself is the knob. One
+    central genuinely slow (that is a 30s test), so time itself is the knob. One
     large step makes "the budget is spent" a fact the code can observe instead of
     a race the test would lose.
     """
@@ -430,11 +430,16 @@ class TestTransientFailuresKeepTheReport:
         assert len(client.posted("t-slow", "complete")) == 1, "the central must not fetch the ref twice"
         assert _queued(loop) == []
 
-    def test_the_terminal_report_timeout_outlives_the_servers_fetch(self, tmp_path: Path) -> None:
-        """The timeout must sit above the work the server does before answering.
+    def test_the_terminal_report_timeout_stays_inside_the_nodes_lease(self, tmp_path: Path) -> None:
+        """N4: the timeout is bounded by the heartbeat, not by the server's fetch.
 
-        Below it, every slow fetch turns into the amplification above; the guard is
-        the number itself, so it is asserted rather than trusted to the comment.
+        This assertion used to read ``> 60.0`` -- outlive the central's fetch so a
+        slow fetch would not look like a failure. That was the wrong bound, because
+        the call blocks the thread that beats every 15s while the central marks a
+        node offline at 60s and clears the token on every task it holds. A report
+        allowed to outlive that loses every report the node has, not just its own.
+        Overlapping fetches are now prevented by the retry hold below, which costs
+        a number on a record instead of thread time.
         """
         loop = _make_loop(tmp_path)
         loop._outbox.append("t-timeout", OUTCOME_DONE, "done")
@@ -443,22 +448,46 @@ class TestTransientFailuresKeepTheReport:
 
         loop._report_finished(client)
 
-        # 60s is the server's own git-fetch budget (task_crud._fetch_remote_agent_branch).
-        assert worker_cmd._TERMINAL_REPORT_TIMEOUT_S > 60.0
+        # 60s is how long a node may go without beating before it is evicted.
+        assert worker_cmd._TERMINAL_REPORT_TIMEOUT_S < 60.0
         assert client.timeouts == [worker_cmd._TERMINAL_REPORT_TIMEOUT_S]
+
+    def test_a_lost_response_holds_the_retry_past_the_servers_fetch(self, tmp_path: Path) -> None:
+        """N4's other half: the ordering that the long timeout bought is still bought.
+
+        A slow fetch is dangerous because a second /complete can land while the
+        first is still fetching the same ref and auto-committing it. Losing the
+        response is not the problem; re-posting too soon is. So the retry waits out
+        the fetch rather than the request sitting on the thread waiting for it.
+        """
+        loop = _make_loop(tmp_path)
+        loop._outbox.append("t-hold", OUTCOME_DONE, "done")
+        client = FakeCentral()
+        client.script(f"{SERVER}/tasks/t-hold/complete", httpx.ReadTimeout("timed out"))
+        client.script(f"{SERVER}/tasks/t-hold", _task("t-hold", "claimed"))
+
+        loop._report_finished(client)
+
+        (report,) = _queued(loop)
+        assert report.last_status == "transport-failure:claimed"
+        # Past the central's own 60s fetch budget (task_crud._fetch_remote_agent_branch).
+        assert worker_cmd._TRANSPORT_HOLD_S > 60.0
+        assert report.next_attempt_at > time.time() + 60.0, "the retry must not land mid-fetch"
+        assert len(client.posted("t-hold", "complete")) == 1
 
     def test_a_report_backlog_cannot_hog_the_loop(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """F13: the report phase shares this thread with the heartbeats.
 
-        F8 raised the terminal-report timeout to 75s because a slow /complete is
-        legitimately slow. That budget is spent once *per report*, and the loop
-        that spends it is the one that heartbeats every 15s and claims tasks.
-        Against a central that accepts the connection and does not answer, an
-        unbounded backlog becomes N x 75s before the next beat: the node is
-        evicted, its tasks reopen, and the reports replay against claims it no
-        longer holds. The phase therefore gets a wall-clock budget.
+        F8 first raised the terminal-report timeout above the worker's ordinary
+        request budget because a slow /complete is legitimately slow. That budget
+        is spent once *per report*, and the loop that spends it is the one that
+        heartbeats every 15s and claims tasks. Against a central that accepts the
+        connection and does not answer, an unbounded backlog becomes N x the
+        report timeout before the next beat: the node is evicted, its tasks
+        reopen, and the reports replay against claims it no longer holds. The
+        phase therefore gets a wall-clock budget.
         """
         loop = _make_loop(tmp_path)
         _retry_now(loop)

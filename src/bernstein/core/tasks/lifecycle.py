@@ -179,6 +179,15 @@ def check_claim_fence(task: Task, claim_token: str | None) -> None:
     """
     if claim_token is None:
         return
+    # An OPEN task has no live claim to report against, whatever it happens to
+    # carry in the token column. Checking the token alone was not enough: a
+    # FAILED->OPEN batch retry or a dependency unblock returns the task to the
+    # pool without issuing a new claim, so the old token is still sitting there
+    # and matches itself. The holder of a released claim is by definition not the
+    # one who will run the retried task, so its report is stale no matter what it
+    # matches -- which is the whole content of the fence.
+    if task.status is TaskStatus.OPEN:
+        raise ClaimFenceError(task.id, task.status.value)
     current = task.claim_token
     if current is not None and hmac.compare_digest(str(current), str(claim_token)):
         return

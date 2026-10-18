@@ -130,22 +130,27 @@ this node gone, and losing that race is safe anyway, since a record the lock
 denied stays in memory and still gets delivered.
 
 The residual risk is stated rather than hidden: a report already in flight still
-gets its full 75s, so a central that accepts the connection and never answers
-can cost one worker one missed beat. Bounding that means moving terminal
-reporting off the loop thread, which changes the worker's shape and is left as a
-maintainer's decision, not folded in here.
+gets its full 30s, so a central that accepts the connection and never answers
+can cost this node loop time. It can no longer get the node declared offline --
+30s sits inside the 60s lease, so the next beat still lands -- and a backlog is
+capped by the report phase budget rather than by the length of the queue.
+Bounding the remaining cost means moving terminal reporting off the loop thread,
+which changes the worker's shape and is left as a maintainer's decision, not
+folded in here.
 
 A report that gets no answer is not a report the central ignored. `POST
 /tasks/{id}/complete` fetches the agent branch and runs the pre-complete
 auto-commit synchronously before it replies, and that fetch carries its own
-60s budget, so the terminal-report timeout is set above it (75s) rather than
-at the worker's ordinary 10s request budget. Below that line every slow fetch
-looks like a transport failure, and the first retry - which full jitter puts
-within a second - lands while the original is still running, making the central
-fetch the same ref and auto-commit twice. Even past the ceiling the worker asks
-`GET /tasks/{id}` before re-posting, so a completion the central did apply is
-retired as a duplicate instead of replayed, and a report that never arrived is
-still owed. That ask costs one GET; the alternative is a duplicate merge
+60s budget. The report timeout sits deliberately *below* that budget (30s,
+inside the node's 60s lease) rather than above it: a request that outlives the
+lease costs the node its identity and every claim it holds, which is a worse
+failure than one lost response. What keeps a re-post from overlapping the fetch
+is the re-ask delay, not the timeout - after a lost response the worker holds
+the report for 65s, longer than the central's fetch can run, before it asks
+`GET /tasks/{id}` again. A slow fetch therefore costs a number on a record, not
+a second auto-commit on the same ref. Asking before re-posting means a
+completion the central did apply is retired as a duplicate instead of replayed,
+and a report that never arrived is still owed. That ask costs one GET; the alternative is a duplicate merge
 attempt per slow fetch.
 
 A duplicate is matched on the outcome alone, because the task record keeps no
@@ -240,10 +245,19 @@ written hours earlier can transition a task a *different* node now owns -
 including failing work that node already delivered.
 
 Each claim grant mints an opaque `claim_token` and returns it on the task
-payload. It is rotated on re-claim, cleared on every surrender path in the
-receipt table above, and deliberately **preserved across terminal transitions** -
-that preservation is what lets the node still holding the claim post a late
-correction. `/complete`, `/fail` and the typed refusal accept it, and the server
+payload. It is rotated on re-claim and cleared when a path hands the task back to
+the pool - release, the graceful-unregister and heartbeat-reaper paths, janitor
+reopen, batch retry, and the failed-dependency unblock cascade - and it is
+deliberately **preserved across terminal transitions**: that preservation is what
+lets the node still holding the claim post a late correction. The clearing is
+defence in depth, not the defence. A token left behind on an `OPEN` task cannot be
+reused, because the check refuses any supplied token while the task is `OPEN`,
+whatever the column holds - left to itself the stale token would match the value
+still sitting there and the replay would be accepted. That was the hole batch
+retry and the unblock cascade walked into, since neither goes through `release`;
+both are reproduced in `TestRequeueRetiresAClaim`.
+
+`/complete`, `/fail` and the typed refusal accept it, and the server
 compares it **inside the store lock at transition time**. A `GET` before the
 `POST` is not sufficient and is not what is implemented: check-then-act is not
 atomic, and the claim can be released and re-granted between the two calls.
@@ -258,8 +272,12 @@ atomic, and the claim can be released and re-granted between the two calls.
 A fenced caller is also excluded from the auto-claim-on-`OPEN` convenience: an
 `OPEN` task has no live claim, so a report naming a token cannot come from the
 current holder, and adopting it would be the exact hole the fence closes. The
-fence is enforced by both store backends; a check that existed in only one would
-be bypassable by choosing the other.
+fence is enforced in the shared transition path, so the JSONL store the server
+runs by default enforces it, and the Postgres backend carries an equivalent guard
+inside its own `UPDATE` - a check that existed in only one backend would be
+bypassable by choosing the other. That Postgres arm is not reachable from this
+repo's server wiring (`create_store` has no caller under `src/`), so it is not
+exercised by the suite here; read it as code review, not as evidence.
 
 The worker persists the token in its outbox record alongside the outcome.
 Durability is the reason a stale report is possible at all, so the fence has to
@@ -273,11 +291,43 @@ reconciling would retry a report that can never succeed.
 pre-fence client - an older worker, an in-agent completion `curl`, an
 integration - and is still accepted, because refusing them would break every
 existing deployment. Such a report is unfenced and can still land on a newer
-claim, so the guarantee is only as strong as the fleet's upgrade: **upgrade
-every worker to a build that echoes the grant token to get it.** The unfenced
+claim. Upgrading the fleet narrows that hole without closing it: a current worker
+echoes the token on the reports its *wrapper* posts, while a completion an agent
+`curl`s from inside its own session still sends none, and no worker upgrade
+changes that. The fence therefore covers wrapper-driven terminal reports, not
+every writer to the endpoint. The unfenced
 path is asserted as a tested property in `tests/unit/test_task_claim_fence.py`
 (`TestUnfencedClientsStayAccepted`) rather than left as an accident, so removing
 it later is a visible decision with a test that fails.
+
+### A restarted coordinator drops what it was doing
+
+The central keeps no in-flight queue across a restart, so work it had accepted
+but not finished is simply gone from its side while the node still believes it
+was delivered. Two outcomes follow, and which one you get depends on the caller:
+
+* A **fenced** report that arrives after the restart is met with `409
+  claim_superseded` if the task was reclaimed meanwhile. The node retires the
+  record rather than retrying it, so the operator sees one log line and a task
+  owned by somebody else - not a stuck outbox.
+* An **unfenced** report from the same window is still accepted, because an
+  accepted `200` and a lost record are indistinguishable from the node's side.
+  A coordinator restart is therefore the concrete window in which the residual
+  risk above actually bites; it is not hypothetical.
+
+Reconciling that window needs the central to remember deliveries it has already
+applied, which it does not do today.
+
+### A late failure takes its dependents with it
+
+`DONE -> FAILED` stays legal for the claim that produced it, so a correction that
+lands hours after a task "succeeded" is not inert: the failed-dependency cascade
+runs from it, and a dependent that is already `CLAIMED` and running moves to
+`BLOCKED_BY_FAILED_DEP`. The dependent's own worker is not stopped mid-flight -
+it finishes and its report is then fenced against a task in a state it never
+claimed from. Treat a late `FAILED` on a task with downstream work as an
+intervention, not a status update: check what the cascade stranded before
+re-running the plan.
 
 ### A departing worker stays registered while it still owes a report
 

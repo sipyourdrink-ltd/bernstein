@@ -259,6 +259,80 @@ class TestSameClaimCorrectionIsAccepted:
             assert _status(client, task_id) == "refused"
 
 
+class TestRequeueRetiresAClaim:
+    """N1: a requeued task is a fresh start, so the report that requeued it is spent.
+
+    Two paths move a task back to OPEN without going through ``release``, so
+    before this fix they left the old ``claim_token`` sitting in the column. An
+    OPEN task carries no live claim, yet the stale token matched itself and the
+    replayed report was accepted -- it could re-fail a task a retry had just put
+    back in the pool, or one a *different* node had since picked up.
+
+    Both paths are reproduced because they are separate callers of separate
+    code: batch retry mutates the task in ``batch_ops``, the unblock cascade
+    mutates it in the task store. Only the first was visible in the report.
+    """
+
+    def test_a_replayed_failure_cannot_land_on_a_batch_retried_task(self, tmp_path: Path) -> None:
+        with _client(tmp_path) as client:
+            task_id = _new_task(client)
+            token = _claim(client, task_id)
+
+            # The report lands, but the acknowledgement is lost on the way back,
+            # so the node's outbox still considers it owed and will replay it.
+            failed = client.post(f"/tasks/{task_id}/fail", json={"reason": "agent exited 71", "claim_token": token})
+            assert failed.status_code == 200, failed.text
+            assert _status(client, task_id) == "failed"
+
+            # An operator (or the janitor) retries it back into the pool.
+            resp = client.post("/tasks/batch-ops", json={"ids": [task_id], "action": "retry"})
+            assert resp.status_code == 200, resp.text
+            assert _status(client, task_id) == "open"
+
+            replay = client.post(f"/tasks/{task_id}/fail", json={"reason": "agent exited 71", "claim_token": token})
+            assert replay.status_code == 409, f"a spent claim must not re-fail a requeued task: {replay.text}"
+            assert replay.json()["detail"]["error"] == "claim_superseded"
+            assert _status(client, task_id) == "open", "the retried task must stay queued for whoever picks it up next"
+
+    def test_a_replayed_failure_cannot_land_on_a_task_unblocked_by_its_dependency(self, tmp_path: Path) -> None:
+        """The unblock cascade is the same hole reached from the other direction."""
+        with _client(tmp_path) as client:
+            upstream = _new_task(client)
+            assert client.post(f"/tasks/{upstream}/complete", json={"result_summary": "first pass"}).status_code == 200
+
+            created = client.post("/tasks", json={**_TASK, "title": "Downstream", "depends_on": [upstream]})
+            assert created.status_code == 201, created.text
+            downstream = str(created.json()["id"])
+
+            # The dependent is only claimable once its dependency is done, so the
+            # live claim necessarily post-dates the upstream's first success.
+            token = _claim(client, downstream, node="node-a")
+
+            # Upstream is corrected to FAILED (a legal DONE -> FAILED), which
+            # strands the in-flight dependent.
+            assert (
+                client.post(f"/tasks/{upstream}/fail", json={"reason": "upstream result was bogus"}).status_code == 200
+            )
+            assert _status(client, downstream) == "blocked_by_failed_dep"
+
+            # Upstream is retried and succeeds, cascading the dependent back to
+            # OPEN -- a fresh start that retires node-a's spent claim.
+            retry = client.post("/tasks/batch-ops", json={"ids": [upstream], "action": "retry"})
+            assert retry.status_code == 200, retry.text
+            completed = client.post(f"/tasks/{upstream}/complete", json={"result_summary": "fixed on the second pass"})
+            assert completed.status_code == 200, completed.text
+            assert _status(client, downstream) == "open"
+
+            replay = client.post(
+                f"/tasks/{downstream}/fail", json={"reason": "late replay from node-a", "claim_token": token}
+            )
+            assert replay.status_code == 409, (
+                f"a spent claim must not re-fail a task the unblock cascade just reopened: {replay.text}"
+            )
+            assert replay.json()["detail"]["error"] == "claim_superseded"
+            assert _status(client, downstream) == "open"
+
+
 class TestUnfencedClientsStayAccepted:
     """Backward compatibility is deliberate; the residual risk is asserted, not implied.
 

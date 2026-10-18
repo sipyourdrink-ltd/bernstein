@@ -83,18 +83,30 @@ _AUTH_HOLD_S = 300.0
 _GONE_HOLD_S = 900.0
 _GONE_CONFIRMATIONS = 3
 
-#: How long a terminal report may take to come back before this worker gives up
-#: on it. Deliberately far above the ordinary 10s request budget, because
-#: ``/complete`` is not an ordinary request: it runs a synchronous ``git fetch``
-#: of the agent branch with its own 60s timeout
-#: (:func:`bernstein.core.routes.task_crud._fetch_remote_agent_branch`) and then
-#: an auto-commit before it answers. A short client timeout turns every slow
-#: fetch into a false transport failure, and the first retry - which full jitter
-#: puts within a second - lands while the original is still running, so the
-#: central fetches the same ref and auto-commits twice. A report that genuinely
-#: outlives this ceiling is not retried blind either; see
-#: :meth:`WorkerLoop._settle_from_response`.
-_TERMINAL_REPORT_TIMEOUT_S = 75.0
+#: Cap on a terminal report's own request, and it is set by the heartbeat, not by
+#: the server: this call blocks the thread that beats every 15s, and the central
+#: marks a node offline at 60s and reopens its tasks, clearing the claim token on
+#: every one of them. A report allowed to run past that does not just delay its
+#: own task -- the node loses every in-flight report it holds, which is the
+#: failure this whole module exists to prevent.
+#:
+#: It used to be 75s, chosen to outlive the central's own 60s branch fetch
+#: (:func:`bernstein.core.routes.task_crud._fetch_remote_agent_branch`) plus its
+#: auto-commit, so a slow fetch would not read as a transport failure. That job
+#: moved: a report whose response is lost is now reconciled against the task
+#: record before it is posted again (see :meth:`WorkerLoop._settle_from_response`)
+#: and, if the task is still live, held off for
+#: :data:`_TRANSPORT_HOLD_S`. Overlapping fetches are therefore prevented by the
+#: retry delay, which costs no thread time, instead of by the timeout, which does.
+_TERMINAL_REPORT_TIMEOUT_S = 30.0
+
+#: How long to wait before re-attempting a report whose response was lost while
+#: the task is still live. It has to exceed the central's 60s fetch, because the
+#: reason a slow fetch is dangerous is not the missing answer, it is a second
+#: request arriving while the first is still fetching the same ref and
+#: auto-committing it. The hold is a number on a record, so it buys that ordering
+#: without occupying the loop.
+_TRANSPORT_HOLD_S = 65.0
 
 #: States that cannot legally accept a terminal report from this node, and will
 #: not become able to by being asked again. These are distinct from the racing
@@ -126,13 +138,13 @@ _PARKED_ESCALATION_ATTEMPTS = 12
 #: loop back. This is not about throughput: a due report can block for the whole
 #: :data:`_TERMINAL_REPORT_TIMEOUT_S`, and the thread that blocks is the one that
 #: heartbeats every 15s and claims tasks. Unbounded, a central that accepts the
-#: connection and does not answer turns a backlog into N x 75s per cycle, the
-#: node stops beating, gets evicted, its tasks reopen, and the reports replay
-#: against claims it no longer holds.
+#: connection and does not answer turns a backlog into N x the report timeout per
+#: cycle, the node stops beating, gets evicted, its tasks reopen, and the reports
+#: replay against claims it no longer holds.
 #:
 #: This bounds the multiplication, not the single worst case: one report already
 #: in flight still gets its full timeout, because cutting that would reinstate
-#: the slow-fetch amplification above. Making the last 75s impossible means
+#: the slow-fetch amplification above. Making the last timeout impossible means
 #: moving reports off this thread, which is a change to the worker's shape rather
 #: than a number, and is reported as a decision for the maintainer instead of one
 #: made quietly here.
@@ -1153,6 +1165,23 @@ class WorkerLoop:
 
         if status in _PARKED_STATES:
             self._escalate_parked_report(report, context, status)
+            return
+
+        if context == "transport-failure":
+            # The request was made and its answer never arrived, and the task is
+            # still live -- which is what a slow central looks like from here
+            # before it finishes. Re-posting on the ordinary backoff would land
+            # while the original is still fetching the same ref and auto-committing
+            # it, so the second request is held past that fetch instead of the
+            # first being given a longer timeout to sit through.
+            logger.info(
+                "task %s is still %s after a lost response; holding its %s report for %ds before asking again",
+                for_log(report.task_id),
+                for_log(status),
+                report.outcome,
+                int(_TRANSPORT_HOLD_S),
+            )
+            self._outbox.note_attempt(report.report_id, f"{context}:{status}", retry_after_s=_TRANSPORT_HOLD_S)
             return
 
         # Still open/claimed: the 409 came from a version conflict or the

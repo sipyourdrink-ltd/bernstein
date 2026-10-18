@@ -694,7 +694,10 @@ class PostgresTaskStore(BaseTaskStore):
                    result_summary = $2,
                    version        = version + 1
             WHERE  id = $1
-            AND    ($4::text IS NULL OR claim_token IS NOT DISTINCT FROM $4::text)
+            AND    (
+                       $4::text IS NULL
+                       OR (status <> 'open' AND claim_token IS NOT DISTINCT FROM $4::text)
+                   )
             RETURNING *
             """,
             task_id,

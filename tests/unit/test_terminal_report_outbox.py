@@ -592,3 +592,138 @@ class TestRecordShape:
         assert report.node == ""
         assert report.agent_branch is None and report.agent_sha is None
         assert report.next_attempt_at == pytest.approx(report.first_seen_at, abs=1.0)
+
+
+class TestMalformedRecordsAreRefusedNotLoaded:
+    """A record is input to validate, not state to trust -- ``.sdd/`` is shared.
+
+    ``from_dict`` checked nothing, so the shapes below either raised out of the
+    worker loop or wedged the queue: the loader is the only place that can tell a
+    record from a rock, and it used to hand both to the caller. Each test here is
+    one of the reviewer's reproductions, and the assertion is always the same
+    pair -- the good record behind it still loads, and the bad one is not acted on.
+    """
+
+    def _write(self, tmp_path: Path, *lines: str) -> None:
+        outbox = _outbox(tmp_path)
+        outbox.append("t-good", OUTCOME_DONE, "done")
+        path = outbox.path
+        path.write_text(path.read_text(encoding="utf-8") + "".join(f"{line}\n" for line in lines), encoding="utf-8")
+
+    def test_a_line_that_is_not_an_object_does_not_stop_construction(self, tmp_path: Path) -> None:
+        """R1: a bare ``1`` used to raise AttributeError and make the worker unconstructable."""
+        self._write(tmp_path, "1")
+
+        assert [r.task_id for r in _outbox(tmp_path).pending()] == ["t-good"]
+
+    def test_a_non_numeric_retry_gate_does_not_raise_from_due(self, tmp_path: Path) -> None:
+        """R2: ``"next_attempt_at": "soon"`` raised TypeError on every cycle, killing run()."""
+        self._write(
+            tmp_path,
+            json.dumps(
+                {"report_id": "r-bad", "task_id": "t-x", "outcome": "done", "node": "node-a", "next_attempt_at": "soon"}
+            ),
+        )
+
+        due = _outbox(tmp_path).due()
+
+        assert [r.task_id for r in due] == ["t-good"]
+
+    def test_a_record_without_a_report_id_is_not_re_minted_on_every_load(self, tmp_path: Path) -> None:
+        """A fresh uuid per load means settle and note_attempt can never find it."""
+        self._write(tmp_path, json.dumps({"task_id": "t-orphan", "outcome": "done", "node": "node-a"}))
+
+        reloaded = _outbox(tmp_path)
+        assert [r.task_id for r in reloaded.pending()] == ["t-good"]
+        assert [r.task_id for r in _outbox(tmp_path).pending()] == ["t-good"]
+
+    def test_a_record_without_timestamps_is_not_owed_forever(self, tmp_path: Path) -> None:
+        """R8: never due but still owed, so the node could never unregister."""
+        self._write(
+            tmp_path,
+            json.dumps(
+                {"report_id": "r-no-ts", "task_id": "t-x", "outcome": "done", "node": "node-a", "first_seen_at": None}
+            ),
+        )
+
+        assert [r.task_id for r in _outbox(tmp_path).owed_here()] == ["t-good"]
+
+    def test_a_record_naming_no_node_is_not_drained_by_every_node(self, tmp_path: Path) -> None:
+        """R6: an unowned record was posted once per node sharing the directory."""
+        self._write(tmp_path, json.dumps({"report_id": "r-no-node", "task_id": "t-x", "outcome": "done", "node": ""}))
+
+        assert [r.task_id for r in _outbox(tmp_path, node="node-a").pending()] == ["t-good"]
+        assert [r.task_id for r in _outbox(tmp_path, node="node-b").pending()] == ["t-good"]
+
+    def test_an_unknown_outcome_is_refused(self, tmp_path: Path) -> None:
+        self._write(tmp_path, json.dumps({"report_id": "r-x", "task_id": "t-x", "outcome": "maybe", "node": "node-a"}))
+
+        assert [r.task_id for r in _outbox(tmp_path).pending()] == ["t-good"]
+
+    def test_refused_records_are_kept_for_diagnosis_not_silently_deleted(self, tmp_path: Path) -> None:
+        """The rewrite drops these lines, so without a copy the evidence is gone.
+
+        An operator chasing a task that stayed claimed needs to know the queue
+        held a record that could not be read; a loader that quietly deletes it
+        leaves a clean file and no explanation.
+        """
+        bad = json.dumps({"report_id": "r-bad", "task_id": "t-x", "outcome": "maybe", "node": "node-a"})
+        self._write(tmp_path, bad)
+
+        outbox = _outbox(tmp_path)
+        assert outbox.pending()
+        corrupt = outbox.path.with_name(f"{outbox.path.name}.corrupt")
+
+        # The rewrite that follows any settle is what would have lost the line.
+        outbox.settle(outbox.pending()[0].report_id, "acked")
+        assert corrupt.is_file(), "refused records have to outlive the rewrite that drops them"
+        assert bad in corrupt.read_text(encoding="utf-8")
+
+    def test_a_healthy_file_writes_no_quarantine(self, tmp_path: Path) -> None:
+        outbox = _outbox(tmp_path)
+        outbox.append("t-1", OUTCOME_DONE, "done")
+
+        outbox.pending()
+
+        assert not outbox.path.with_name(f"{outbox.path.name}.corrupt").exists()
+
+
+class TestAnUnusableLockFileStillDelivers:
+    """N3: the lock file can fail to open at all, and that is not fatal either.
+
+    ``cross_process_lock`` opens its file read-write, so a read-only remount or an
+    unreadable mode raises on the way in -- the same errno class as EROFS, which is
+    the other common disk failure after the ENOSPC that was already handled. Only
+    LockTimeout was caught, so the queue that F7 was built to keep delivering could
+    still kill the loop.
+    """
+
+    def test_a_lock_file_that_cannot_be_opened_still_returns_the_volatile_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _unusable(*_args: object, **_kwargs: object) -> object:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(outbox_mod, "cross_process_lock", _unusable)
+        outbox = _outbox(tmp_path)
+
+        outbox.append("t-volatile", OUTCOME_DONE, "done")
+
+        assert [r.task_id for r in outbox.pending()] == ["t-volatile"]
+        assert [r.task_id for r in outbox.due()] == ["t-volatile"]
+        assert outbox.owed_here(), "shutdown still knows it owes this"
+
+    def test_a_read_only_filesystem_costs_a_cycle_not_the_worker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The disk copy is unreachable, so the durable record is simply not read."""
+        outbox = _outbox(tmp_path)
+        outbox.append("t-durable", OUTCOME_DONE, "done")
+        monkeypatch.setattr(
+            outbox_mod,
+            "cross_process_lock",
+            lambda *a, **k: (_ for _ in ()).throw(OSError(30, "Read-only file system")),
+        )
+
+        assert _outbox(tmp_path).pending() == []
+        assert outbox.due() == []

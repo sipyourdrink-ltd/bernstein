@@ -119,6 +119,10 @@ async def _retry_task(store: TaskStore, task_id: str) -> None:
     transition_task(task, TaskStatus.OPEN, actor="batch_ops", reason="batch retry")
     task.assigned_agent = None
     task.result_summary = None
+    # The retry starts a new execution, so the previous one's claim identity dies
+    # here. Leaving it set left an OPEN task carrying a token that matched itself,
+    # which a replayed report from that dead execution could satisfy.
+    task.claim_token = None
     task.retry_count += 1
     task.version += 1
     store._index_add(task)
