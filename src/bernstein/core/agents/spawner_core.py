@@ -3154,7 +3154,11 @@ class AgentSpawner:
             from bernstein.core.security.audit import AuditLog as _AuditLog
             from bernstein.core.security.role_adapter_policy import (
                 DEFAULT_POLICY_PATH,
+            )
+            from bernstein.core.security.role_adapter_policy import (
                 enforce as _enforce_role_adapter,
+            )
+            from bernstein.core.security.role_adapter_policy import (
                 load_policy_file as _load_policy_file,
             )
 
