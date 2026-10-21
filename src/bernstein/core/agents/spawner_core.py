@@ -3152,14 +3152,29 @@ class AgentSpawner:
         """
         if role is not None:
             from bernstein.core.security.audit import AuditLog as _AuditLog
-            from bernstein.core.security.role_adapter_policy import enforce as _enforce_role_adapter
+            from bernstein.core.security.role_adapter_policy import (
+                DEFAULT_POLICY_PATH,
+                enforce as _enforce_role_adapter,
+                load_policy_file as _load_policy_file,
+            )
 
             audit_log: _AuditLog | None = None
             try:
                 audit_log = _AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
             except Exception as exc:
                 logger.debug("role_adapter_policy: audit ctor failed (%s); deny will not be logged", exc)
-            _enforce_role_adapter(role, adapter_name, audit_log=audit_log)
+            # Load the policy for this specific workdir so that a persisted
+            # allow-list is honoured at runtime — not just by the CLI.  Pass it
+            # explicitly rather than relying on the process-global default, which
+            # starts empty (unrestricted) and is never seeded from disk (#6648).
+            _workdir_policy_path = self._workdir / DEFAULT_POLICY_PATH
+            _workdir_policy = _load_policy_file(_workdir_policy_path)
+            logger.debug(
+                "role_adapter_policy: loaded from %s (roles configured: %s)",
+                _workdir_policy_path,
+                sorted(_workdir_policy.per_role_allowlists),
+            )
+            _enforce_role_adapter(role, adapter_name, audit_log=audit_log, policy=_workdir_policy)
 
         cached = self._adapter_cache.get(adapter_name)
         if cached is not None:
