@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
 
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99  # v0.6.3
+        uses: zizmorcore/zizmor-action@f9597c869b2e67095f9b527070297a13a6efe928  # v0.7.0
         with:
           # Upload SARIF to Code Scanning even on findings; CI does not fail
           # the build on findings, GH Security tab is the source of truth.
