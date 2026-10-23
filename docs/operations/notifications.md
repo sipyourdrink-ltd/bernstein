@@ -31,7 +31,7 @@ Code anchors:
 - Schema: `core/notifications/config.py:118-156`
 - Bridge wiring: `core/lifecycle/notify_bridge.py:75-202`
 - Retry/dedup/dead-letter: `core/notifications/bridge.py:46-67, 232-396`
-- Driver registry: `core/notifications/registry.py:42-282`
+- Driver registry: `core/notifications/registry.py:42-293`
 - CLI: `cli/commands/notify_cmd.py:63-160`
 
 State directory layout:
@@ -339,7 +339,7 @@ precedence.
 - `src/bernstein/core/notifications/config.py:46-156` - pydantic schema, validators
 - `src/bernstein/core/notifications/bridge.py:94-229` - `DedupCache`, `DeadLetter`
 - `src/bernstein/core/notifications/bridge.py:232-396` - `NotificationDispatcher`
-- `src/bernstein/core/notifications/registry.py:42-282` - first-party kinds + entry-point loader
+- `src/bernstein/core/notifications/registry.py:42-293` - first-party kinds + entry-point loader
 - `src/bernstein/core/notifications/sinks/slack.py` - Slack
 - `src/bernstein/core/notifications/sinks/telegram.py` - Telegram
 - `src/bernstein/core/notifications/sinks/discord.py` - Discord
