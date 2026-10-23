@@ -1397,8 +1397,9 @@ async def create_fix_tasks(
         "scope": task.scope.value,
         "complexity": task.complexity.value,
         "estimated_minutes": task.estimated_minutes,
-        "depends_on": [],
+        "depends_on": list(task.depends_on),
         "owned_files": task.owned_files,
+        "completion_signals": [{"type": signal.type, "value": signal.value} for signal in task.completion_signals],
     }
 
     try:
@@ -1661,8 +1662,9 @@ async def _create_judge_fix_task(
         "scope": task.scope.value,
         "complexity": task.complexity.value,
         "estimated_minutes": task.estimated_minutes,
-        "depends_on": [],
+        "depends_on": list(task.depends_on),
         "owned_files": task.owned_files,
+        "completion_signals": [{"type": signal.type, "value": signal.value} for signal in task.completion_signals],
     }
 
     try:

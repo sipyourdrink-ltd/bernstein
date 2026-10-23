@@ -33,7 +33,6 @@ from bernstein.evolution._shared import (
 from bernstein.evolution._shared import (
     ExperimentResult,
     infer_risk_level,
-    make_fast_track_sandbox_result,
 )
 from bernstein.evolution._shared import (
     log_deferred as _log_deferred_impl,
@@ -474,43 +473,33 @@ class EvolutionLoop:
             self._flush_governance_log()
             return result
 
-        # Step 7 - Sandbox validation.
-        # Fast-tracked proposals (composite_risk < 0.3) bypass the sandbox.
-        # High-risk proposals (composite_risk > 0.6) are always sandbox-verified.
-        if risk_route == "fast_track":
-            logger.info(
-                "Proposal %s fast-tracked (composite_risk=%.2f) - skipping sandbox",
-                proposal.id,
-                risk_score.composite_risk,
+        # Step 7 - Sandbox validation. Every proposal is validated regardless of risk route.
+        try:
+            sandbox_result = self._sandbox.validate(
+                proposal_id=proposal.id,
+                diff=proposal.proposed_change,
+                baseline_score=baseline_score,
             )
-            sandbox_result = self._make_fast_track_sandbox_result(proposal.id, baseline_score)
-        else:
-            try:
-                sandbox_result = self._sandbox.validate(
-                    proposal_id=proposal.id,
-                    diff=proposal.proposed_change,
-                    baseline_score=baseline_score,
-                )
-            except Exception as exc:
-                raise SandboxValidationError(str(exc)) from exc
+        except Exception as exc:
+            raise SandboxValidationError(str(exc)) from exc
 
-            if not sandbox_result.passed:
-                self._breaker.record_sandbox_failure(proposal.id)
-                result = ExperimentResult(
-                    proposal_id=proposal.id,
-                    title=proposal.title,
-                    risk_level=risk_level.value,
-                    baseline_score=baseline_score,
-                    candidate_score=sandbox_result.candidate_score,
-                    delta=sandbox_result.delta,
-                    accepted=False,
-                    reason=f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}",
-                    cost_usd=_COST_PER_PROPOSAL_USD,
-                    duration_seconds=time.time() - cycle_start,
-                )
-                self._log_experiment(result)
-                self._flush_governance_log()
-                return result
+        if not sandbox_result.passed:
+            self._breaker.record_sandbox_failure(proposal.id)
+            result = ExperimentResult(
+                proposal_id=proposal.id,
+                title=proposal.title,
+                risk_level=risk_level.value,
+                baseline_score=baseline_score,
+                candidate_score=sandbox_result.candidate_score,
+                delta=sandbox_result.delta,
+                accepted=False,
+                reason=f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}",
+                cost_usd=_COST_PER_PROPOSAL_USD,
+                duration_seconds=time.time() - cycle_start,
+            )
+            self._log_experiment(result)
+            self._flush_governance_log()
+            return result
 
         # Step 7b - Eval gate (eval-gated evolution #516).
         # After sandbox passes, run the eval harness and compare against baseline.
@@ -1004,15 +993,25 @@ class EvolutionLoop:
             # Asked BEFORE the rollback, which writes `rolled_back` to history
             # and would flip the answer.
             changed_something = self._executor.was_applied(proposal.id)
+            if changed_something:
+                # Recorded BEFORE the rollback runs, not after it. The rollback
+                # writes `rolled_back` to history and retires the manifest, so
+                # anything that fails or is killed from here on - a full disk
+                # while writing the receipt, say - would otherwise leave the
+                # tree restored, the evidence gone, and the breaker closed.
+                # Failing closed costs one halt on a change that was in fact
+                # reverted; failing open lets evolution carry on after one.
+                self._breaker.record_rollback(proposal.id)
             try:
                 self._executor.rollback_upgrade(proposal)
             except RollbackError:
                 # NOT swallowed. A failed apply whose rollback also failed
                 # leaves the tree in a state nobody declared, and continuing the
                 # loop over it would apply the next proposal on top. The breaker
-                # is tripped first so the failure is recorded even though this
-                # does not return.
-                self._breaker.record_rollback(proposal.id)
+                # is tripped even when no apply was evidenced, so the failure is
+                # recorded although this does not return.
+                if not changed_something:
+                    self._breaker.record_rollback(proposal.id)
                 logger.exception("Proposal %s rollback FAILED; the tree is in an undeclared state", proposal.id)
                 raise
             # Only a real revert is a rollback. `execute_upgrade` answers False
@@ -1023,9 +1022,7 @@ class EvolutionLoop:
             # `record_rollback` trips the breaker on ANY rollback inside 48h,
             # so one no-op was enough, and the halt reason read "Rollback
             # detected" for a tree nothing had touched.
-            if changed_something:
-                self._breaker.record_rollback(proposal.id)
-            else:
+            if not changed_something:
                 logger.info("Proposal %s changed nothing, so there was nothing to roll back", proposal.id)
 
         return success
@@ -1202,19 +1199,17 @@ class EvolutionLoop:
         Thresholds:
           - composite_risk > 0.6 → ``sandbox_verify``  (forced sandbox)
           - composite_risk 0.3-0.6 → ``standard``       (normal flow)
-          - composite_risk < 0.3 → ``fast_track``       (skip sandbox)
+          - composite_risk < 0.3 → ``standard``         (low risk, still sandbox-verified)
 
         Args:
             composite_risk: Composite risk score in [0.0, 1.0].
 
         Returns:
-            One of ``"sandbox_verify"``, ``"standard"``, or ``"fast_track"``.
+            One of ``"sandbox_verify"`` or ``"standard"``.
         """
         if composite_risk > 0.6:
             return "sandbox_verify"
-        if composite_risk > 0.3:
-            return "standard"
-        return "fast_track"
+        return "standard"
 
     def _flush_governance_log(self) -> None:
         """Write accumulated per-cycle governance state to governance_log.jsonl."""
@@ -1231,14 +1226,6 @@ class EvolutionLoop:
                 outcome_metrics=self._cycle_outcome_metrics,
             )
         )
-
-    def _make_fast_track_sandbox_result(
-        self,
-        proposal_id: str,
-        baseline_score: float,
-    ) -> SandboxResult:
-        """Return a synthetic passed SandboxResult for fast-tracked proposals."""
-        return make_fast_track_sandbox_result(proposal_id, baseline_score)
 
     # ------------------------------------------------------------------
     # Cycle helpers

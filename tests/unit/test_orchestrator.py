@@ -7,7 +7,6 @@ import json
 import logging
 import subprocess
 import time
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -43,7 +42,6 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
-from bernstein.core.agents import spawner_core
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
@@ -2130,9 +2128,14 @@ class TestFileOwnership:
             _mock_transport({"GET /tasks": httpx.Response(200, json=[_task_as_dict(task)])}),
             adapter=adapter,
         )
+        # The tick releases locks no live session holds, so the owner is a live session.
+        owner = AgentSession(id="qa-owner", role="qa", pid=7, task_ids=["T-owner"])
+        owner.status = "working"
+        owner.heartbeat_ts = time.time()
+        orch._agents[owner.id] = owner
         orch._lock_manager.acquire(
             ["src/locked.py"],
-            agent_id="backend-owner",
+            agent_id="qa-owner",
             task_id="T-owner",
             task_title="Owns locked file",
         )
@@ -2140,7 +2143,7 @@ class TestFileOwnership:
         orch.tick()
 
         prompt = adapter.spawn.call_args.kwargs["prompt"]
-        assert "src/locked.py (by backend-owner)" in prompt
+        assert "src/locked.py (by qa-owner)" in prompt
 
 
 # --- Feature 3: Metrics Emission ---
@@ -3204,19 +3207,7 @@ class TestDeadAgentFileOwnershipEdgeCases:
     def test_file_overlap_cleared_after_dead_agent_allows_respawn(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Spawn is blocked while an agent owns a file; after it dies the next tick spawns.
-
-        The dead agent's crash now correctly records a per-adapter failure
-        timestamp (#5875), which would otherwise put every subsequent spawn
-        on the same adapter into a 5-minute cooldown. That cooldown is
-        orthogonal to what this test exercises (file-ownership release), so
-        it is disabled here to isolate the behavior under test.
-        """
-        monkeypatch.setattr(
-            spawner_core,
-            "SPAWN",
-            replace(spawner_core.SPAWN, spawn_failure_cooldown_s=0.0),
-        )
+        """Spawn is blocked while an agent owns a file; after it dies the next tick spawns."""
         task1 = _make_task(id="T-owner", role="backend")
         task1.owned_files = ["src/shared.py"]
         task2 = _make_task(id="T-waiter", role="qa")

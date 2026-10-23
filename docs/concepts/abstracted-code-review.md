@@ -19,31 +19,33 @@ read.
 
 ## How to use it
 
-It is on by default. PRs opened via `bernstein` carry the Intent
-section automatically. Disable per run:
-
-```bash
-# bernstein.yaml
-review:
-  abstract_diff: false
-```
-
-Or per repo:
+The abstraction is enabled by default at the library level
+(`ABSTRACT_DIFF_ENABLED = True`), but no shipped PR path calls it yet:
+`bernstein pr` and the orchestrator's PR body do not include the Intent
+section. Tooling that wants it calls
+`bernstein.core.review_responder.pr_gen.build_pr_body` (or
+`summarize_diff` + `render_pr_body`) directly. The switch is the module
+constant `bernstein.core.defaults.ABSTRACT_DIFF_ENABLED`; there is no
+`bernstein.yaml` key for it. `abstract_diff` copies the value at import,
+so reassigning `defaults.ABSTRACT_DIFF_ENABLED` after that module is
+loaded has no effect. To disable per call, pass `enabled=False` to
+`summarize_diff` (or `build_pr_body`):
 
 ```python
-# defaults override
-ABSTRACT_DIFF_ENABLED = False
+summaries = await summarize_diff(diff, task_context, enabled=False)
 ```
 
 Programmatic API for custom tooling:
 
 ```python
 from bernstein.core.quality.review_pipeline.abstract_diff import (
+    TaskContext,
     summarize_diff,
     pseudo_for_function,
 )
 
 # summarize_diff is async and returns one IntentSummary per file
+task_context = TaskContext(title="Fix retry loop")
 summaries = await summarize_diff(diff_text, task_context)
 for summary in summaries:
     print(summary.path)

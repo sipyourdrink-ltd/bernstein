@@ -124,3 +124,51 @@ def test_default_construction_still_works(tmp_path) -> None:
     and must get the gate rather than bypassing it."""
     executor = FileUpgradeExecutor(tmp_path / "state")
     assert executor._admission is not None
+
+
+# ---------------------------------------------------------------------------
+# Issue #5408 – rollback_upgrade uses proposal and persists a receipt
+# ---------------------------------------------------------------------------
+
+
+def test_rollback_of_unapplied_proposal_persists_receipt(tmp_path) -> None:
+    """Nothing applied: rollback succeeds and leaves a hash-anchored receipt."""
+    import json
+
+    state_dir = tmp_path / "state"
+    executor = FileUpgradeExecutor(state_dir)
+    proposal = _proposal()
+
+    assert executor.rollback_upgrade(proposal) is True
+
+    receipt = json.loads((state_dir / "upgrades" / "rollbacks" / f"{proposal.id}.json").read_text(encoding="utf-8"))
+    assert receipt["proposal_id"] == proposal.id
+    assert receipt["restored_files"] == []
+    assert receipt["receipt_hash"]
+
+
+def test_rollback_does_not_use_ignored_proposal_argument() -> None:
+    """The _proposal rename to proposal means the signature now accepts and uses it."""
+    import inspect
+
+    from bernstein.evolution.applicator import FileUpgradeExecutor
+
+    sig = inspect.signature(FileUpgradeExecutor.rollback_upgrade)
+    params = list(sig.parameters)
+    # First param is 'self'; second must be 'proposal', not '_proposal'.
+    assert params[1] == "proposal", f"parameter is still named {params[1]!r}"
+
+
+def test_rollback_restores_backup_files(tmp_path) -> None:
+    """After rollback the backed-up file contents are back in config/."""
+    state_dir = tmp_path / "state"
+    proposal = _proposal()
+    applying = FileUpgradeExecutor(state_dir)
+    config_file = state_dir / "config" / "policies.yaml"
+    config_file.write_text("original: true\n", encoding="utf-8")
+    applying._backup_file("policies.yaml", proposal.id)
+    config_file.write_text("broken: yes\n", encoding="utf-8")
+    applying._record_history(proposal, "applied")
+
+    assert FileUpgradeExecutor(state_dir).rollback_upgrade(proposal) is True
+    assert config_file.read_text(encoding="utf-8") == "original: true\n"

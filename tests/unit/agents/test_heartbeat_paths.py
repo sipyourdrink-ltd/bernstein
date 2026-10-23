@@ -13,14 +13,17 @@ tests so the real escalation code runs end to end.
 from __future__ import annotations
 
 import json
-import os
+import shutil
 import subprocess
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import psutil
+import pytest
 from bernstein.core.models import AgentSession, ModelConfig, ProgressSnapshot
 
 from bernstein.core.agents.agent_log_aggregator import AgentLogSummary
@@ -360,6 +363,11 @@ def test_inject_heartbeat_instructions_is_self_terminating(tmp_path: Path) -> No
     assert "echo $!" in snippet  # records loop pid for belt-and-braces reap
 
 
+@pytest.mark.skipif(
+    shutil.which("sh") is None,
+    reason="generated heartbeat snippet is POSIX shell with host-native paths; "
+    "hosts without sh cannot execute the real artifact (#5787)",
+)
 def test_heartbeat_loop_actually_self_terminates_on_stop_marker(tmp_path: Path) -> None:
     """End-to-end: run the real generated snippet, request stop, prove no leaked process.
 
@@ -370,7 +378,9 @@ def test_heartbeat_loop_actually_self_terminates_on_stop_marker(tmp_path: Path) 
     snippet = monitor.inject_heartbeat_instructions("SID-2")
 
     # Run the exact generated snippet the way an agent shell would.
-    subprocess.run(["/bin/sh", "-c", snippet], check=True, timeout=10)
+    sh = shutil.which("sh")
+    assert sh is not None  # guaranteed by the skipif above
+    subprocess.run([sh, "-c", snippet], check=True, timeout=10)
 
     pid_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-2.pid"
     heartbeat_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-2.json"
@@ -383,12 +393,7 @@ def test_heartbeat_loop_actually_self_terminates_on_stop_marker(tmp_path: Path) 
     pid = int(pid_path.read_text(encoding="utf-8").strip())
 
     def _alive(p: int) -> bool:
-        try:
-            os.kill(p, 0)
-        except ProcessLookupError:
-            return False
-        else:
-            return True
+        return psutil.pid_exists(p)
 
     assert _alive(pid), "loop pid should still be running before STOP is requested"
 
@@ -407,9 +412,15 @@ def _spawn_fake_heartbeat_loop(tmp_path: Path, session_id: str) -> subprocess.Po
     heartbeat loop (it references the session's stop-marker path), so the reap
     identity check recognizes it as the real loop."""
     stop_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / f"{session_id}.stop"
-    return subprocess.Popen(
-        ["sh", "-c", f"while [ ! -f '{stop_path}' ]; do sleep 1; done"],
+    # The stop path travels as argv, not embedded source: repr()-style embedding
+    # would double Windows backslashes and break the reap's identity match.
+    code = (
+        "import pathlib, sys, time\n"
+        "stop_marker = pathlib.Path(sys.argv[1])\n"
+        "while not stop_marker.exists():\n"
+        "    time.sleep(1)\n"
     )
+    return subprocess.Popen([sys.executable, "-c", code, str(stop_path)])
 
 
 def test_reap_heartbeat_loop_kills_recorded_pid(tmp_path: Path) -> None:
@@ -442,7 +453,7 @@ def test_reap_heartbeat_loop_spares_recycled_foreign_pid(tmp_path: Path) -> None
     monitor = HeartbeatMonitor(tmp_path)
 
     # A foreign process that has nothing to do with this session's heartbeat.
-    proc = subprocess.Popen(["sleep", "30"])
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
         pid_path = tmp_path / ".sdd" / "runtime" / "heartbeats" / "SID-FOREIGN.pid"
         pid_path.parent.mkdir(parents=True, exist_ok=True)

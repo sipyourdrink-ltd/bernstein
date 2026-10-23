@@ -2105,7 +2105,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
         "operationId": "patch_task_tasks__task_id__patch",
         "parameters": [
           {
@@ -2816,6 +2816,118 @@
         }
       }
     },
+    "/tasks/{task_id}/ask": {
+      "post": {
+        "summary": "Ask Task",
+        "description": "Block ``task_id`` cooperatively until its mailbox rendezvous closes.",
+        "operationId": "ask_task_tasks__task_id__ask_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAskResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{task_id}/rendezvous/reply": {
+      "post": {
+        "summary": "Reply To Rendezvous",
+        "description": "Append the answer and close for a rendezvous awaited by ``task_id``.",
+        "operationId": "reply_to_rendezvous_tasks__task_id__rendezvous_reply_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskRendezvousReplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRendezvousReplyResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tasks/{task_id}/artifacts": {
       "post": {
         "summary": "Post Task Artifact",
@@ -3102,8 +3214,8 @@
           "401": {
             "description": "Cluster authentication failed"
           },
-          "404": {
-            "description": "Node not registered"
+          "410": {
+            "description": "Node id unknown to this server (e.g. registry lost across a restart); the node must re-register via POST /cluster/nodes"
           },
           "422": {
             "description": "Validation Error",
@@ -6084,7 +6196,7 @@
           "approvals"
         ],
         "summary": "Approve Task",
-        "description": "Approve a pending approval request.\n\nWrites a .approved decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Approve a pending approval request.\n\nWrites a signed ``.approved`` decision record (source ``web``, attributed\nto the authenticated principal, bound to the open request's nonce) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "approve_task_approvals__task_id__approve_post",
         "parameters": [
           {
@@ -6125,8 +6237,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -6147,7 +6265,7 @@
           "approvals"
         ],
         "summary": "Reject Task",
-        "description": "Reject a pending approval request.\n\nWrites a .rejected decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Reject a pending approval request.\n\nWrites a signed ``.rejected`` decision record (source ``web``) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "reject_task_approvals__task_id__reject_post",
         "parameters": [
           {
@@ -6188,8 +6306,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -6960,7 +7084,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does,\nincluding the soft-delete semantics a client meets on ``DELETE``.",
         "operationId": "service_provider_config_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -7264,7 +7388,7 @@
           "scim"
         ],
         "summary": "Update a user via PATCH operations",
-        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
+        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nOnly the deactivation operation (``replace`` of ``active`` with ``false``)\nis supported; any other operation is rejected with 400 ``invalidValue``.",
         "operationId": "patch_user_scim_v2_Users__user_id__patch",
         "parameters": [
           {
@@ -8242,9 +8366,9 @@
         "tags": [
           "governance"
         ],
-        "summary": "Verify Receipt",
+        "summary": "Verify Receipt Endpoint",
         "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
-        "operationId": "verify_receipt_governance_verify_receipt_post",
+        "operationId": "verify_receipt_endpoint_governance_verify_receipt_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -11270,7 +11394,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
         "operationId": "patch_task_api_v1_tasks__task_id__patch",
         "parameters": [
           {
@@ -11981,6 +12105,118 @@
         }
       }
     },
+    "/api/v1/tasks/{task_id}/ask": {
+      "post": {
+        "summary": "Ask Task",
+        "description": "Block ``task_id`` cooperatively until its mailbox rendezvous closes.",
+        "operationId": "ask_task_api_v1_tasks__task_id__ask_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAskResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/rendezvous/reply": {
+      "post": {
+        "summary": "Reply To Rendezvous",
+        "description": "Append the answer and close for a rendezvous awaited by ``task_id``.",
+        "operationId": "reply_to_rendezvous_api_v1_tasks__task_id__rendezvous_reply_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskRendezvousReplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRendezvousReplyResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Task scope mismatch"
+          },
+          "404": {
+            "description": "Task not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks/{task_id}/artifacts": {
       "post": {
         "summary": "Post Task Artifact",
@@ -12267,8 +12503,8 @@
           "401": {
             "description": "Cluster authentication failed"
           },
-          "404": {
-            "description": "Node not registered"
+          "410": {
+            "description": "Node id unknown to this server (e.g. registry lost across a restart); the node must re-register via POST /cluster/nodes"
           },
           "422": {
             "description": "Validation Error",
@@ -15249,7 +15485,7 @@
           "approvals"
         ],
         "summary": "Approve Task",
-        "description": "Approve a pending approval request.\n\nWrites a .approved decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Approve a pending approval request.\n\nWrites a signed ``.approved`` decision record (source ``web``, attributed\nto the authenticated principal, bound to the open request's nonce) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to approve.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "approve_task_api_v1_approvals__task_id__approve_post",
         "parameters": [
           {
@@ -15290,8 +15526,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -15312,7 +15554,7 @@
           "approvals"
         ],
         "summary": "Reject Task",
-        "description": "Reject a pending approval request.\n\nWrites a .rejected decision file so the orchestrator poll loop unblocks.\nThe pending file is then removed.\n\nArgs:\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
+        "description": "Reject a pending approval request.\n\nWrites a signed ``.rejected`` decision record (source ``web``) so the\norchestrator poll loop unblocks. The pending file is then removed.\n\nArgs:\n    request: The HTTP request; its credentials name the principal.\n    task_id: Task ID to reject.\n    body: Optional reason metadata.\n\nReturns:\n    Success message.",
         "operationId": "reject_task_api_v1_approvals__task_id__reject_post",
         "parameters": [
           {
@@ -15353,8 +15595,14 @@
           "400": {
             "description": "Invalid task_id format"
           },
+          "401": {
+            "description": "No authenticated principal to attribute the decision to"
+          },
           "404": {
             "description": "No pending approval for task"
+          },
+          "503": {
+            "description": "Decision key unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -16125,7 +16373,7 @@
           "scim"
         ],
         "summary": "SCIM 2.0 service provider configuration",
-        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does. The\nwrite operations are absent rather than advertised-and-unimplemented, and\nthe deletion semantics a client will eventually meet are stated now.",
+        "description": "Return the RFC 7643 §5 discovery document for this service provider.\n\nEverything reported here is what the mounted surface actually does,\nincluding the soft-delete semantics a client meets on ``DELETE``.",
         "operationId": "service_provider_config_api_v1_scim_v2_ServiceProviderConfig_get",
         "responses": {
           "200": {
@@ -16429,7 +16677,7 @@
           "scim"
         ],
         "summary": "Update a user via PATCH operations",
-        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nThis slice implements only the active=false deactivation path. Full PATCH\nsupport for arbitrary attribute updates belongs to a later slice.",
+        "description": "Apply RFC 7644 §3.5.2 PATCH operations to a user.\n\nOnly the deactivation operation (``replace`` of ``active`` with ``false``)\nis supported; any other operation is rejected with 400 ``invalidValue``.",
         "operationId": "patch_user_api_v1_scim_v2_Users__user_id__patch",
         "parameters": [
           {
@@ -17407,9 +17655,9 @@
         "tags": [
           "governance"
         ],
-        "summary": "Verify Receipt",
+        "summary": "Verify Receipt Endpoint",
         "description": "Verify the posted receipt file and return the verdict document.\n\nThe request body is the receipt verbatim -- whatever the operator dropped,\nof whatever content type. Nothing under ``.sdd`` and no key material is\nread: the verifier works from the file's own bytes, so this endpoint\nanswers about the upload and not about the installation serving it.\n\nThe status is always 200 for a request that carried a body. A tampered\nreceipt, a file that is not a receipt, and an empty drop are all verdicts\nabout the evidence rather than failed requests, and each is the answer an\noperator dropped the file to get.\n\nNo key can be pinned through this endpoint, so the pass it reports is\nalways the integrity-only tier and always carries the caveat saying so.\nA key arriving in the same request as the receipt is not an out-of-band\nanchor -- it is the same channel, and treating it as one would report\nprovenance on the strength of the upload rather than of any evidence.",
-        "operationId": "verify_receipt_api_v1_governance_verify_receipt_post",
+        "operationId": "verify_receipt_endpoint_api_v1_governance_verify_receipt_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -21502,6 +21750,50 @@
         "title": "TaskArtifactPost",
         "description": "Body for POST /tasks/{task_id}/artifacts (#2553).\n\nAn agent-posted, journal-anchored artifact. ``artifact_type`` selects the\npayload shape: ``report`` uses ``body`` (markdown); ``table`` uses\n``columns`` and ``rows``; ``link`` uses ``url`` and ``link_kind``\n(``preview`` / ``dashboard`` / ``document``). ``poster`` is the claim\nidentity: a caller may only post against a task whose claim it holds.\n\nThere is deliberately no progress field. Progress is a chain-computed\nprojection of journaled work, never postable."
       },
+      "TaskAskRequest": {
+        "properties": {
+          "awaited_task_id": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Awaited Task Id"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "timeout_s": {
+            "type": "number",
+            "maximum": 3600.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout S",
+            "default": 300.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "awaited_task_id",
+          "question"
+        ],
+        "title": "TaskAskRequest",
+        "description": "One blocking question from the task named in the route."
+      },
+      "TaskAskResponse": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer"
+        ],
+        "title": "TaskAskResponse",
+        "description": "The exact stored UTF-8 answer selected by the rendezvous close."
+      },
       "TaskBlockRequest": {
         "properties": {
           "reason": {
@@ -21544,11 +21836,33 @@
               }
             ],
             "title": "Payload"
+          },
+          "agent_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Branch"
+          },
+          "agent_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Sha"
           }
         },
         "type": "object",
         "title": "TaskCompleteRequest",
-        "description": "Body for POST /tasks/{task_id}/complete.\n\n``result_summary`` is the legacy free-form summary and stays accepted\nunchanged. ``payload`` carries a structured terminal payload under the\nworker completion contract (#2244) - either a completion or a typed\nrefusal - and is schema-validated at the API boundary; an invalid\npayload is a typed ``contract_violation`` failure, never a silent\naccept. When ``payload`` is provided, ``result_summary`` is ignored."
+        "description": "Body for POST /tasks/{task_id}/complete.\n\n``result_summary`` is the legacy free-form summary and stays accepted\nunchanged. ``payload`` carries a structured terminal payload under the\nworker completion contract (#2244) - either a completion or a typed\nrefusal - and is schema-validated at the API boundary; an invalid\npayload is a typed ``contract_violation`` failure, never a silent\naccept. When ``payload`` is provided, ``result_summary`` is ignored.\n\nRemote delivery (#6538): a worker node that pushed its agent branch\nto the shared remote sets ``agent_branch`` and ``agent_sha`` so the\ncentral can fetch and merge the work instead of looking for a local\nworktree that does not exist."
       },
       "TaskCountsResponse": {
         "properties": {
@@ -22179,6 +22493,18 @@
             "minLength": 1,
             "title": "Sender"
           },
+          "acting_task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acting Task Id"
+          },
           "kind": {
             "type": "string",
             "maxLength": 64,
@@ -22211,7 +22537,7 @@
           "body"
         ],
         "title": "TaskMessagePost",
-        "description": "Body for POST /tasks/{task_id}/messages (#2357).\n\nTyped, size-capped worker mailbox payload. ``kind`` must be one of the\nclosed vocabulary (``finding`` / ``artefact_ref`` / ``question``).\nThe message body is capped by the mailbox chain to 4096 UTF-8 bytes\n(see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors\nthis limit so oversized bodies fail validation up front instead of\nbeing rejected downstream. The byte-strict cap remains authoritative\nin the mailbox for multibyte payloads."
+        "description": "Body for POST /tasks/{task_id}/messages (#2357).\n\nTyped, size-capped worker mailbox payload. ``kind`` must be one of the\nclosed vocabulary (``finding`` / ``artefact_ref`` / ``question`` /\n``rendezvous_open`` / ``rendezvous_closed``).\nThe message body is capped by the mailbox chain to 4096 UTF-8 bytes\n(see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors\nthis limit so oversized bodies fail validation up front instead of\nbeing rejected downstream. The byte-strict cap remains authoritative\nin the mailbox for multibyte payloads."
       },
       "TaskMessageResponse": {
         "properties": {
@@ -22483,6 +22809,46 @@
         "type": "object",
         "title": "TaskReleaseRequest",
         "description": "Body for POST /tasks/{task_id}/release."
+      },
+      "TaskRendezvousReplyRequest": {
+        "properties": {
+          "open_entry_hash": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Open Entry Hash"
+          },
+          "answer": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "open_entry_hash",
+          "answer"
+        ],
+        "title": "TaskRendezvousReplyRequest",
+        "description": "Answer one open rendezvous as the task named in the route."
+      },
+      "TaskRendezvousReplyResponse": {
+        "properties": {
+          "reply": {
+            "$ref": "#/components/schemas/TaskMessageResponse"
+          },
+          "close": {
+            "$ref": "#/components/schemas/TaskMessageResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reply",
+          "close"
+        ],
+        "title": "TaskRendezvousReplyResponse",
+        "description": "The reply entry and close entry appended in protocol order."
       },
       "TaskReopenRequest": {
         "properties": {

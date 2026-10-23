@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -117,7 +116,7 @@ def list_tile_segments(audit_dir: Path) -> list[str]:
     return sorted(
         p.name
         for p in tiles_dir.iterdir()
-        if p.is_file() and not p.name.endswith(".tile") and not p.name.endswith(".tmp")
+        if p.is_file() and not p.name.endswith(".tile") and not p.name.endswith(".tmp") and ".tmp." not in p.name
     )
 
 
@@ -169,6 +168,32 @@ def read_hash_tile(audit_dir: Path, segment_name: str) -> dict[str, Any] | None:
     return parsed
 
 
+def render_hash_tile(
+    *,
+    segment: str,
+    leaf_hash: str,
+    byte_len: int,
+    content_sha256: str,
+    scheme: int,
+) -> bytes:
+    """Return the exact bytes of the hash tile describing one sealed prefix.
+
+    Sorted keys, two-space indent, LF line endings and a trailing newline
+    on every platform, so two operators holding identical audit directories
+    publish byte-identical tiles, and a verifier that has authenticated the
+    prefix can re-render the tile and compare it byte for byte.
+    """
+    tile_obj: dict[str, Any] = {
+        "segment": segment,
+        "leaf_hash": leaf_hash,
+        "byte_len": byte_len,
+        "content_sha256": content_sha256,
+        "algorithm": "sha256",
+        "scheme": scheme,
+    }
+    return (json.dumps(tile_obj, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
     """Write content-addressed hash tiles for every leaf in *seal*.
 
@@ -188,9 +213,11 @@ def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
     ``byte_len`` bytes of the segment file (no domain separation). When
     ``byte_len`` is absent the entire file is hashed.
 
-    Tiles are written atomically via ``<name>.tile.tmp`` + ``os.replace``.
-    If a tile already exists with the same ``leaf_hash`` it is left
-    untouched (idempotent). If it exists with a different ``leaf_hash`` a
+    The bytes come from :func:`render_hash_tile` and are published with
+    :func:`~bernstein.core.persistence.atomic_write.write_atomic_bytes`
+    (temp file, fsync, ``os.replace``, directory fsync), so a reader sees the
+    old tile or the new one, never a partial file. If a tile already exists
+    with the same ``leaf_hash`` it is left untouched (idempotent). If it exists with a different ``leaf_hash`` a
     ``ValueError`` is raised and no rewrite occurs.
 
     Args:
@@ -216,6 +243,8 @@ def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
         except (ValueError, TypeError):
             raw_scheme = 2
     scheme: int = int(raw_scheme)
+
+    from bernstein.core.persistence.atomic_write import write_atomic_bytes
 
     tiles_dir = audit_dir / TILES_SUBDIR
     tiles_dir.mkdir(parents=True, exist_ok=True)
@@ -256,15 +285,6 @@ def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
 
         content_sha256 = hashlib.sha256(data).hexdigest()
 
-        tile_obj: dict[str, Any] = {
-            "segment": segment,
-            "leaf_hash": leaf_hash,
-            "byte_len": tile_byte_len,
-            "content_sha256": content_sha256,
-            "algorithm": "sha256",
-            "scheme": scheme,
-        }
-
         if dest.is_file():
             try:
                 existing: dict[str, Any] = json.loads(dest.read_text(encoding="utf-8"))
@@ -288,9 +308,16 @@ def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
             # of a run outright. The tile describes the prefix this seal
             # covers, so the newer seal replaces it.
 
-        tmp_path = dest.parent / (dest.name + ".tmp")
-        tmp_path.write_text(json.dumps(tile_obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(tmp_path, dest)
+        write_atomic_bytes(
+            dest,
+            render_hash_tile(
+                segment=segment,
+                leaf_hash=leaf_hash,
+                byte_len=tile_byte_len,
+                content_sha256=content_sha256,
+                scheme=scheme,
+            ),
+        )
         written.append(dest)
 
     return written
@@ -305,6 +332,7 @@ __all__ = [
     "list_tile_segments",
     "read_hash_tile",
     "read_tile",
+    "render_hash_tile",
     "tile_hash_path",
     "tile_path",
 ]

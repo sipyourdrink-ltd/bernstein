@@ -563,6 +563,13 @@ def plugins_cmd(workdir: str, trust_details: bool) -> None:
     default=False,
     help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
 )
+@click.option(
+    "--unattended",
+    "unattended",
+    is_flag=True,
+    default=False,
+    help="Execute probes through the unattended spawner environment.",
+)
 @click.pass_context
 def doctor(
     ctx: click.Context,
@@ -576,6 +583,7 @@ def doctor(
     endpoint_timeout: float,
     roles: tuple[str, ...],
     failover_drill: bool,
+    unattended: bool = False,
 ) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
@@ -636,7 +644,7 @@ def doctor(
     # the trailing hint to keep the exit code unchanged.
     exit_code = 0
     try:
-        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix)
+        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix, unattended=unattended)
     except SystemExit as exc:  # NOSONAR python:S5754 - captured to add a hint, re-raised below
         exit_code = int(exc.code or 0)
 
@@ -1195,6 +1203,35 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
     _trace_show_task(task_id, traces_dir=traces_dir, as_json=as_json)
 
 
+def _ledger_entries_for_entity(sdd_dir: Path, entity_id: str) -> list[tuple[str, Any]]:
+    """Return ``(run_id, LedgerEntry)`` pairs from every run ledger referencing ``entity_id``.
+
+    A work ledger is scoped per run, under ``<sdd_dir>/runtime/ledger/<run_id>/``.
+    ``entity_id`` may name the run itself (the ledger directory) or a task
+    inside it (``LedgerEntry.task_id``), so both are checked. Deliberately
+    reads the ledger root path directly rather than going through
+    :func:`bernstein.core.persistence.work_ledger.default_ledger_root`, which
+    creates it on first use -- a read-only ``follow`` must not create a
+    ``.sdd/runtime/ledger/`` directory as a side effect of a query that finds
+    nothing.
+    """
+    from bernstein.core.persistence.work_ledger import LedgerReader
+
+    ledger_root = sdd_dir / "runtime" / "ledger"
+    if not ledger_root.is_dir():
+        return []
+    found: list[tuple[str, Any]] = []
+    for run_dir in sorted(p for p in ledger_root.iterdir() if p.is_dir()):
+        reader = LedgerReader(run_dir)
+        if not reader.exists():
+            continue
+        run_matches = run_dir.name == entity_id
+        for entry in reader.entries():
+            if run_matches or entry.task_id == entity_id:
+                found.append((run_dir.name, entry))
+    return found
+
+
 @trace_cmd.command("follow")
 @click.argument("entity_id")
 @click.option(
@@ -1206,13 +1243,15 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
 )
 @click.pass_context
 def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
-    """Show every trace entry that references ENTITY_ID, oldest first.
+    """Show every trace or ledger entry that references ENTITY_ID, oldest first.
 
     `trace show` globs filenames for one task id and prints whichever file
     matches, once. An entity id -- a task, a run, a grant -- appears across
-    several traces, and following it meant exporting and grepping.
+    several journals, and following it meant exporting and grepping each one
+    separately. This joins two of them by that id: the trace store and the
+    work ledger.
 
-    Ordering is by start time, and ties break on trace id, so a finished run
+    Ordering is by timestamp, with a total tie-break, so a finished run
     prints byte-identically on every invocation.
     """
     from bernstein.core.observability.trace_store import ContentAddressedTraceStore
@@ -1232,37 +1271,78 @@ def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
     # same finished run print differently after a rebuild.
     matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
 
-    if not matches:
+    ledger_entries = _ledger_entries_for_entity(traces_path.parent, entity_id)
+
+    if not matches and not ledger_entries:
         console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
         raise SystemExit(1)
 
     if as_json:
-        console.print_json(json.dumps([entry.to_dict() for entry in matches]))
+        rows: list[tuple[float, str, dict[str, Any]]] = [
+            (entry.started_at, f"trace:{entry.trace_id}", {**entry.to_dict(), "source": "trace"}) for entry in matches
+        ]
+        rows.extend(
+            (entry.ts, f"ledger:{run_id}:{entry.seq}", {**entry.to_dict(), "source": "ledger", "run_id": run_id})
+            for run_id, entry in ledger_entries
+        )
+        rows.sort(key=lambda row: (row[0], row[1]))
+        console.print_json(json.dumps([row[2] for row in rows]))
         return
 
     from rich.table import Table
 
-    table = Table(
-        title=f"Traces referencing {entity_id}",
-        show_header=True,
-        header_style="bold cyan",
-    )
-    table.add_column("Started")
-    table.add_column("Trace")
-    table.add_column("Task")
-    table.add_column("Model")
-    table.add_column("Bytes", justify="right")
-    for entry in matches:
-        table.add_row(
-            _trace_timestamp(entry.started_at),
-            entry.trace_id,
-            entry.task_id or "-",
-            entry.model or "-",
-            str(entry.byte_size),
+    if matches:
+        table = Table(
+            title=f"Traces referencing {entity_id}",
+            show_header=True,
+            header_style="bold cyan",
         )
-    console.print(table)
-    suffix = "y" if len(matches) == 1 else "ies"
-    console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
+        table.add_column("Started")
+        table.add_column("Trace")
+        table.add_column("Task")
+        table.add_column("Model")
+        table.add_column("Bytes", justify="right")
+        for entry in matches:
+            table.add_row(
+                _trace_timestamp(entry.started_at),
+                entry.trace_id,
+                entry.task_id or "-",
+                entry.model or "-",
+                str(entry.byte_size),
+            )
+        console.print(table)
+
+    if ledger_entries:
+        ledger_entries_sorted = sorted(ledger_entries, key=lambda pair: (pair[1].ts, pair[0], pair[1].seq))
+        ledger_table = Table(
+            title=f"Ledger entries referencing {entity_id}",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        ledger_table.add_column("Time")
+        ledger_table.add_column("Run")
+        ledger_table.add_column("Seq", justify="right")
+        ledger_table.add_column("Kind")
+        ledger_table.add_column("Task")
+        for run_id, entry in ledger_entries_sorted:
+            ledger_table.add_row(
+                _trace_timestamp(entry.ts),
+                run_id,
+                str(entry.seq),
+                entry.kind,
+                entry.task_id or "-",
+            )
+        console.print(ledger_table)
+
+    if ledger_entries:
+        trace_suffix = "y" if len(matches) == 1 else "ies"
+        ledger_suffix = "y" if len(ledger_entries) == 1 else "ies"
+        console.print(
+            f"[dim]{len(matches)} trace entr{trace_suffix}, {len(ledger_entries)} ledger entr{ledger_suffix}[/dim]"
+        )
+    else:
+        suffix = "y" if len(matches) == 1 else "ies"
+        console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
 
 
 def _trace_timestamp(epoch: float) -> str:
@@ -1436,6 +1516,97 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     )
 
 
+#: ``trace export`` output formats. ``trust-record`` is the historical
+#: behaviour and stays the default; ``ocsf`` is the SIEM projection (#6037).
+_TRACE_EXPORT_FORMATS = ("trust-record", "ocsf")
+
+
+def _resolve_latest_run(sdd_path: Path) -> str | None:
+    """Newest run directory under ``<sdd>/runs`` holding a non-empty journal.
+
+    Every journal path goes through ``contained_run_journal`` rather than being
+    joined by hand. Iterating the runs root yields a name that cannot carry
+    ``..``, but that covers only half the threat: a directory entry with a
+    perfectly ordinary name can be a **symlink** pointing outside the root, and
+    iteration says nothing about what it resolves to. The barrier re-derives
+    through containment and returns ``None`` for an escaping entry, so the
+    sweep skips it and keeps going.
+    """
+    from bernstein.core.replay.journal import JOURNAL_FILENAME, contained_run_journal
+
+    runs_root = sdd_path / "runs"
+    if not runs_root.is_dir():
+        return None
+    candidates: list[tuple[int, str]] = []
+    for entry in runs_root.iterdir():
+        if not entry.is_dir():
+            continue
+        journal = contained_run_journal(runs_root, entry.name, JOURNAL_FILENAME)
+        if journal is None or not journal.is_file() or journal.stat().st_size == 0:
+            continue
+        candidates.append((journal.stat().st_mtime_ns, entry.name))
+    if not candidates:
+        return None
+    return max(candidates)[1]
+
+
+def _trace_export_ocsf(
+    *,
+    run_id: str | None,
+    output: str | None,
+    latest: bool,
+    sdd_dir: str | None,
+    include_proposed: bool,
+    include_audit: bool,
+) -> None:
+    """``bernstein trace export --format ocsf`` (#6037).
+
+    Separate from the trust-record path on purpose: this needs no ``trace``
+    extra and no signing key, because it is a projection of records that are
+    already on disk rather than a new attestation.
+    """
+    from bernstein.core.observability.ocsf_projection import (
+        OCSF_SCHEMA_VERSION,
+        export_ocsf,
+    )
+
+    sdd_path = Path(sdd_dir) if sdd_dir else (Path(".sdd") if Path(".sdd").is_dir() else Path("."))
+    if latest and not run_id:
+        run_id = _resolve_latest_run(sdd_path)
+        if not run_id:
+            console.print("[red]No finished run found under[/red] " + str(sdd_path / "runs"))
+            raise SystemExit(1)
+    if not run_id:
+        console.print("[red]Usage:[/red] bernstein trace export <RUN_ID> --format ocsf [--last]")
+        raise SystemExit(1)
+
+    result = export_ocsf(
+        sdd_path,
+        run_id,
+        include_proposed=include_proposed,
+        include_audit=include_audit,
+    )
+    if not result.events:
+        console.print(f"[red]No journal or audit records found for run[/red] {run_id}")
+        raise SystemExit(1)
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(result.jsonl)
+        console.print(f"Wrote {result.event_count} OCSF {OCSF_SCHEMA_VERSION} event(s) to {out_path}")
+    else:
+        sys.stdout.write(result.jsonl.decode("utf-8"))
+
+    # An unmapped kind is a recorded omission, not a silent drop: the journal
+    # has no central registry of event kinds, so the table is a snapshot.
+    if result.unmapped_kinds:
+        console.print(
+            f"[yellow]{len(result.unmapped_kinds)} journal kind(s) had no mapping "
+            f"and were exported as activity_id=0:[/yellow] " + ", ".join(result.unmapped_kinds)
+        )
+
+
 @trace_cmd.command("export")
 @click.argument("run_id", required=False)
 @click.option(
@@ -1474,6 +1645,31 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     default=None,
     help="Write one record per worker hop (<exec_id>.json) and the run-level aggregate.json into DIR.",
 )
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(_TRACE_EXPORT_FORMATS, case_sensitive=False),
+    default="trust-record",
+    show_default=True,
+    help="Output format. 'ocsf' projects the run journal and audit chain as OCSF events for a SIEM.",
+)
+@click.option(
+    "--include-proposed",
+    "include_proposed",
+    is_flag=True,
+    default=False,
+    help=(
+        "OCSF only: mark fields from the open proposal ocsf/ocsf-schema#1760. "
+        "Off by default so output validates against stock OCSF."
+    ),
+)
+@click.option(
+    "--no-audit",
+    "no_audit",
+    is_flag=True,
+    default=False,
+    help="OCSF only: project the run journal alone, omitting the audit chain (and so the security decisions).",
+)
 def trace_export_cmd(
     run_id: str | None,
     output: str | None,
@@ -1481,6 +1677,9 @@ def trace_export_cmd(
     latest: bool,
     sdd_dir: str | None,
     out_dir: str | None,
+    fmt: str,
+    include_proposed: bool,
+    no_audit: bool,
 ) -> None:
     """Export ``RUN_ID``'s execution evidence as a TRACE 0.2 Trust Record.
 
@@ -1504,8 +1703,27 @@ def trace_export_cmd(
     writes only the run-level aggregate to --out/stdout; the per-hop member
     records require --out-dir.
 
+    \b
+    --format ocsf: project the run journal AND the HMAC audit chain into OCSF
+            1.9.0 events as JSONL, for a SIEM or security data lake. The
+            security decisions (denied tool calls, admission and capability
+            refusals) live in the audit chain, not the journal, so both are
+            read. See docs/observability/ocsf-export.md for the mapping.
+            Needs no trace extra and no signing key.
+
     Exit codes: 0 = exported, 1 = run not found / chain broken / emit error.
     """
+    if fmt.lower() == "ocsf":
+        _trace_export_ocsf(
+            run_id=run_id,
+            output=output,
+            latest=latest,
+            sdd_dir=sdd_dir,
+            include_proposed=include_proposed,
+            include_audit=not no_audit,
+        )
+        return
+
     # Gate on trace extra
     try:
         import agentrust_trace as _trace_lib  # type: ignore[import-untyped, unused-ignore, import-not-found]
@@ -2875,6 +3093,7 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
         console.print("[dim]No quarantined tasks.[/dim]")
         return
 
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(show_header=True, header_style="bold red")
@@ -2886,12 +3105,13 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
 
     for entry in entries:
         fail_style = "bold red" if entry.fail_count >= QUARANTINE_THRESHOLD else "yellow"
+        # Rich parses cells as markup; titles and reasons are free text.
         table.add_row(
-            entry.task_title,
+            escape(entry.task_title),
             f"[{fail_style}]{entry.fail_count}[/{fail_style}]",
             entry.last_failure,
             entry.action,
-            entry.reason,
+            escape(entry.reason),
         )
 
     console.print(table)

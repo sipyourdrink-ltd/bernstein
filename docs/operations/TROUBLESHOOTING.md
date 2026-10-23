@@ -52,6 +52,24 @@ cli: claude   # must match a registered name exactly
 - For third-party adapters, ensure the package exposes a `bernstein.adapters` entry point and is installed in the same virtualenv.
 - For arbitrary CLIs, use `cli: generic` with `cli_command`, `prompt_flag`, and `model_flag` settings.
 
+### 1a. `FATAL: no adapter configured`
+
+**Symptom:** `bernstein -g "<goal>"` exits `1` immediately with `FATAL: no adapter configured. Bernstein does not default to Claude ...`. No task server or watchdog is left running.
+
+**Cause:** Bernstein never falls back to a default adapter, because that would spend a provider's tokens nobody asked it to. An inline goal carries no seed file, so the adapter has to come from one of three places, and none of them is present:
+
+| Source | Lives in |
+|--------|----------|
+| `--cli <adapter>` | the single invocation |
+| `BERNSTEIN_ADAPTER` | the current shell |
+| `cli:` in `bernstein.yaml` | the project directory |
+
+Each one stays behind when you start a run in a fresh checkout or worktree, which is why a new directory is where this shows up first.
+
+**Resolution:** supply any one of the three, for example `bernstein -g "<goal>" --cli codex`. `bernstein integrations list --installed` shows which adapters resolve on this machine.
+
+**Why it exits instead of retrying:** a missing adapter is a configuration error. The next launch would read the same flags, environment and seed and fail the same way, so nothing is retried. Before this was fixed the run reported success and the recovery watchdog relaunched the failing orchestrator every ~5 seconds ([#6126](https://github.com/sipyourdrink-ltd/bernstein/issues/6126)). If the orchestrator subprocess still reaches this failure through another launch path, it writes `.sdd/runtime/spawner-deliberate-stop` (reason `no-adapter-configured`, or `adapter-not-found` when the named adapter does not resolve) so the watchdog stands down, and the next run clears that marker.
+
 ---
 
 ## 2. CLI Binary Not in PATH
@@ -262,7 +280,7 @@ git worktree prune         # removes stale worktree entries
 # If a directory still exists but git lost track:
 git worktree remove <path> --force
 ```
-The orchestrator's janitor attempts this automatically via `_save_partial_work()` before worktree cleanup, but manual intervention is needed when the `.git/worktrees/` metadata is inconsistent.
+The orchestrator's worktree cleanup does this automatically when it reaps an agent, but manual intervention is needed when the `.git/worktrees/` metadata is inconsistent.
 
 ---
 
@@ -338,6 +356,18 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 - Check that `${VAR}` references in MCP server configs resolve to actual env vars (the adapter calls `_resolve_env_vars()` recursively).
 - Not all adapters support runtime MCP injection. Claude, Cursor, and Kilo support `--mcp-config`/`--add-mcp`/`--mcp` flags; others (Kiro, OpenCode, Continue, Tabby, Cody) ignore the `mcp_config` parameter.
 
+**Symptom:** A server you use in an interactive Claude Code session is missing from a spawned `claude` agent, with no error.
+
+**Cause:** Spawned `claude` agents run with `--strict-mcp-config`, so they get only the servers bernstein passes. Servers Claude Code discovers on its own (`claude mcp add` at user or local scope, a repo's `.mcp.json`, plugins, connectors) are not added.
+
+**Resolution:** Declare the server in `bernstein.yaml` `mcp_servers`, or in `~/.claude/mcp.json`. Both are read by bernstein and passed to every spawned `claude` agent.
+
+**Symptom:** A spawned `pi` agent no longer has a tool that a pi extension gives you interactively, such as an MCP server added through an extension.
+
+**Cause:** Spawned `pi` agents run with `--no-extensions`. Pi has no MCP of its own; MCP servers and other tools reach it as extensions, which it discovers in `~/.pi/agent/extensions/` and in the repository's `.pi/extensions/`. Without the flag every spawned agent loaded the operator's personal extensions (#5965).
+
+**Resolution:** None needed for a run bernstein governs: bernstein passes pi no extension of its own. Use an adapter that takes `mcp_config` (for example `claude`) when a task needs an MCP server.
+
 ---
 
 ## 12. Agent Timeout (Watchdog Kill)
@@ -354,7 +384,8 @@ grep -i "timeout" .sdd/runtime/<session>.log
 **Resolution:**
 - Increase `timeout_seconds` per-agent or in the orchestrator config.
 - Break large tasks into smaller scopes (small/medium).
-- The watchdog sends SIGTERM first, waits 30s for graceful shutdown, then SIGKILL. Partial work is committed via `_save_partial_work()` before worktree cleanup.
+- The watchdog sends SIGTERM first, waits 30s for graceful shutdown, then SIGKILL.
+- A timed-out, crashed or recycled agent's work is merged only when its task was already accepted (`done`). Otherwise nothing reaches the run branch: uncommitted edits are kept on `salvage/<session>`, unmerged commits under `refs/graveyard/<session>-<ts>`, and the task's progress log names the ref and sha. Inspect with `git log -p salvage/<session>`; reuse with `git cherry-pick` or `git checkout salvage/<session> -- <path>`.
 - If agents consistently time out, the task scope or complexity rating may be wrong.
 
 ---
@@ -412,6 +443,8 @@ cat .sdd/runtime/<session>.log   # usually contains the CLI's error message
 - Read the log file. The CLI's stderr is captured there.
 - Common fixes: set API key, fix model name (check `_MODEL_MAP` in the adapter), install missing dependencies.
 - If the CLI requires interactive setup (e.g., `opencode auth login`), run it manually first.
+
+**Related - `Spawn deferred ... is in cooldown after recent failure`:** after an agent of an adapter dies with an adapter-level failure (for example the provider kept answering 429), the adapter backs off for `spawn_failure_cooldown_s` (5 min); the adapter health monitor can trip the same way. This is not a task failure: the orchestrator hands the claimed tasks back to the open pool (`POST /tasks/{id}/release`) without spending their retry budget, and claims them again once the backoff ends. If tasks keep cycling through deferrals, the cause is upstream capacity (provider quotas or rate limits), not the tasks.
 
 ---
 
@@ -604,6 +637,44 @@ fails verification with the cause named.
   conflicted merge (see also issue #2756).
 - Verify delivery manually: the path in the detail message is repo-relative;
   check it exists in your checkout after the run.
+
+---
+
+## 23. QA Tasks Fail with "Failed to spawn: ruff" in a Non-Python Repository
+
+**Symptom:** Every QA-role task in a repository that is not Python (for
+example TypeScript on Bun) fails, is retried, and fails identically. The agent
+log shows `error: Failed to spawn: ruff` or `command not found`. See issue
+[#6138](https://github.com/sipyourdrink-ltd/bernstein/issues/6138).
+
+**Cause:** The built-in QA role prompt (`templates/roles/qa/`) used to tell
+every QA agent to run `uv run ruff check src/` unconditionally. In a
+repository without Python or `ruff` the agent followed that instruction, the
+spawn failed, and nothing about the code under test was wrong. The QA prompt
+now tells the agent to find and use the repository's own lint, format and test
+commands, and names `ruff` and `scripts/run_tests.py` only when the repository
+uses them.
+
+**Diagnosis:**
+```bash
+grep -n "ruff\|uv run" .sdd/runtime/<session>.log   # which command was run
+```
+
+**Resolution:**
+- Upgrade to a release that includes the neutral QA prompt.
+- The other built-in role prompts (`backend`, `frontend`, `devops`, ...) still
+  name the Python toolchain. If an agent in one of those roles fails the same
+  way, add a `critical` entry to `.sdd/recommendations.yaml` that names the
+  repository's real toolchain; it reaches every role:
+  ```yaml
+  recommendations:
+    - id: toolchain
+      category: verification
+      severity: critical
+      text: 'This repository is TypeScript on Bun. Never run ruff, uv or pytest; use bun.'
+      applies_to: []   # empty = every role
+  ```
+  The top-level `recommendations:` key is required; a bare list is ignored.
 
 ---
 

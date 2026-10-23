@@ -56,7 +56,7 @@ Both shapes are versioned via an explicit `schema_version` field.
 | `workers[].worktree_id` | string | Worktree the worker is running in. |
 | `workers[].last_heartbeat_age_s` | float \| null | Seconds since the last heartbeat; `null` when none recorded. |
 | `workers[].is_stuck` | bool | True iff at least one detector classifies the row as stuck. |
-| `workers[].stall_reason` | string | One of `manager_no_children`, `watchdog_model_question`, `respawn_budget_exhausted`, `heartbeat_stale`, `no_progress`, or `unknown`. |
+| `workers[].stall_reason` | string | One of `manager_no_children`, `watchdog_model_question`, `respawn_budget_exhausted`, `heartbeat_stale`, `no_progress`, or `unknown`. Receipts additionally accept `intent_drift` and `cohort_laggard`. |
 | `workers[].recommended_action` | string | One of `respawn`, `escalate`, `park`, `inspect`. Deterministic over the chain slice (see below). |
 | `workers[].respawn_budget_remaining` | integer | Respawns remaining under the session's budget. |
 | `workers[].stuck_since_ts` | float \| null | Unix timestamp the stall first fired; `null` when not known. |
@@ -142,9 +142,11 @@ smuggled a leak past assembly fails verification.
 
 ### Verification
 
-The standalone verifier loads only the public side of the install
-Ed25519 keypair (`<workdir>/.sdd/runtime/supervisor/install.key.pub`,
-PEM-encoded). It
+The verifier (`verify_supervisor_receipt`) takes only the public side of the
+install Ed25519 keypair. The private seed is stored at
+`<workdir>/.sdd/runtime/supervisor/install.key` (override with
+`BERNSTEIN_SUPERVISOR_SIGNING_KEY`); the public key is derived from it.
+It
 
 1. recomputes `payload_digest` over the canonical signing bytes and
    asserts byte-equality with the receipt's `payload_digest`,

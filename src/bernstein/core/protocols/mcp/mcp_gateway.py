@@ -54,6 +54,10 @@ from bernstein.core.security.claude_tool_result_injection import ToolResultInjec
 
 logger = logging.getLogger(__name__)
 
+# Shared by ``_send_request`` and the timeout ``toolcall.effect`` duration so
+# a later change cannot lie in the chain.
+_CONNECTOR_REQUEST_TIMEOUT_S = 30.0
+
 
 # ---------------------------------------------------------------------------
 # ToolMetrics
@@ -420,8 +424,20 @@ class MCPGateway:
                 await self._send_upstream(message)
             return None
 
-        await self._prepare_tool_dispatch(message, method, params, req_id)
-        response, latency_ms = await self._send_request(message, req_id)
+        prepared = await self._prepare_tool_dispatch(message, method, params, req_id)
+        try:
+            response, latency_ms = await self._send_request(message, req_id)
+        except TimeoutError:
+            await self._record_tool_effect(prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout")
+            raise
+        from bernstein.core.security.toolcall_interlock import toolcall_effect_outcome
+
+        await self._record_tool_effect(
+            prepared,
+            response,
+            latency_ms,
+            toolcall_effect_outcome(response),
+        )
 
         self._record_wal_and_metrics(method, params, req_id, response, latency_ms)
         record = self._anchor_proxied_call(method, params)
@@ -464,10 +480,10 @@ class MCPGateway:
         method: str,
         params: dict[str, Any],
         req_id: Any,
-    ) -> None:
+    ) -> tuple[Any, Any] | None:
         """Cross the attestation interlock before live connector I/O."""
         if method != "tools/call" or self._attestation_interlock is None:
-            return
+            return None
         from bernstein.core.security.toolcall_interlock import ToolCallIntent
 
         intent = ToolCallIntent.from_request(
@@ -479,7 +495,27 @@ class MCPGateway:
             span_id=request_span_id(message),
             arguments=params.get("arguments", {}),
         )
-        await self._attestation_interlock.before_dispatch(intent)
+        evidence = await self._attestation_interlock.before_dispatch(intent)
+        return intent, evidence
+
+    async def _record_tool_effect(
+        self,
+        prepared: tuple[Any, Any] | None,
+        response: dict[str, Any] | None,
+        duration_ms: float,
+        outcome: str,
+    ) -> None:
+        """Write ``toolcall.effect`` after the connector returns (#6270)."""
+        if prepared is None or self._attestation_interlock is None:
+            return
+        intent, evidence = prepared
+        await self._attestation_interlock.after_dispatch(
+            intent,
+            evidence,
+            response=response,
+            duration_ms=duration_ms,
+            outcome=outcome,
+        )
 
     async def _send_request(self, message: dict[str, Any], req_id: Any) -> tuple[dict[str, Any], float]:
         """Send one JSON-RPC request upstream and await its response.
@@ -493,7 +529,7 @@ class MCPGateway:
         t0 = time.monotonic()
         try:
             await self._send_upstream(message)
-            response: dict[str, Any] = await asyncio.wait_for(asyncio.shield(fut), timeout=30.0)
+            response: dict[str, Any] = await asyncio.wait_for(asyncio.shield(fut), timeout=_CONNECTOR_REQUEST_TIMEOUT_S)
         finally:
             self._pending.pop(req_id, None)
         return response, (time.monotonic() - t0) * 1000.0
@@ -534,8 +570,20 @@ class MCPGateway:
         retried = build_retry_request(message, pre.payment_ref)
         retried_id = retried.get("id")
         retried_params: dict[str, Any] = retried.get("params") or {}
-        await self._prepare_tool_dispatch(retried, "tools/call", retried_params, retried_id)
-        settled, latency_ms = await self._send_request(retried, retried_id)
+        retried_prepared = await self._prepare_tool_dispatch(retried, "tools/call", retried_params, retried_id)
+        try:
+            settled, latency_ms = await self._send_request(retried, retried_id)
+        except TimeoutError:
+            await self._record_tool_effect(retried_prepared, None, _CONNECTOR_REQUEST_TIMEOUT_S * 1000.0, "timeout")
+            raise
+        from bernstein.core.security.toolcall_interlock import toolcall_effect_outcome
+
+        await self._record_tool_effect(
+            retried_prepared,
+            settled,
+            latency_ms,
+            toolcall_effect_outcome(settled),
+        )
         wal_entry = self._record_wal_and_metrics("tools/call", retried_params, retried_id, settled, latency_ms)
         self._anchor_proxied_call("tools/call", retried_params)
 

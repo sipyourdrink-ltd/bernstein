@@ -3,7 +3,7 @@
 The orchestrator's tick loop self-stops from exactly one place: the
 quiescence settle-window check in ``Orchestrator._tick_internal`` step 8b.
 That check is gated on at least one task having reached a terminal state
-(``done`` or ``failed``), because reading ``open == agents == 0`` on tick #1
+(``done``, ``failed`` or ``closed``), because reading ``open == agents == 0`` on tick #1
 means "nothing has been scheduled yet", not "the run finished". The gate is
 correct for startup and wrong for the rest of the run: when a run reaches
 quiescence having produced **zero** terminal tasks, the gate is never
@@ -26,7 +26,7 @@ Criterion
 A run is declared stalled only when **every** one of these holds:
 
 1. The caller is inside a confirmed quiescent tick with zero terminal tasks
-   (``open_tasks == active_agents == 0`` and ``done == failed == 0``). The
+   (``open_tasks == active_agents == 0`` and ``done == failed == closed == 0``). The
    orchestrator establishes this before calling in; it is the structural
    precondition, not something this module can observe.
 2. At least one task is declared **and** at least one of them is in an

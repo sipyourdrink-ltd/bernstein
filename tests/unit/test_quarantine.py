@@ -19,7 +19,12 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from bernstein.core.quarantine import QUARANTINE_THRESHOLD, QuarantineEntry, QuarantineStore
+from bernstein.core.quarantine import (
+    QUARANTINE_EXPIRY_DAYS,
+    QUARANTINE_THRESHOLD,
+    QuarantineEntry,
+    QuarantineStore,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -133,6 +138,46 @@ def test_record_failure_updates_reason_and_date(tmp_path: Path) -> None:
     assert entry is not None
     assert entry.reason == "second reason"
     assert entry.last_failure == _today()
+
+
+def test_agent_authored_spawn_failed_reason_still_records(tmp_path: Path) -> None:
+    """A reason an agent wrote through /fail cannot forge the exemption.
+
+    The marker-bearing ``Spawn failed`` summary reaches ``record_failure``
+    verbatim when a task fails itself, so recording must key on the store's
+    excused marker (spawn-loop written), never on the stored text.
+    """
+    store = _store(tmp_path)
+    reason = "Spawn failed: my test harness ran out of memory, giving up"
+    for _ in range(QUARANTINE_THRESHOLD):
+        assert store.record_failure("burns-tokens-every-run", reason) is True
+    assert store.is_quarantined("burns-tokens-every-run")
+
+
+def test_excused_marker_expires_like_an_entry(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.excuse_failure("T-stale-1", "host resource exhaustion during spawn: no space left on device")
+    excused_file = tmp_path / "quarantine.excused.json"
+    stale = json.loads(excused_file.read_text())
+    # an entry stays live until strictly past the window, so the marker must cover the edge
+    stale["T-stale-1"]["recorded_at"] = _days_ago(QUARANTINE_EXPIRY_DAYS)
+    excused_file.write_text(json.dumps(stale))
+    assert store.is_excused("T-stale-1") is True
+    stale["T-stale-1"]["recorded_at"] = _days_ago(QUARANTINE_EXPIRY_DAYS + 1)
+    excused_file.write_text(json.dumps(stale))
+    assert store.is_excused("T-stale-1") is False
+    assert store.record_failure("old-title", "Agent died", task_id="T-stale-1") is True
+
+
+def test_spawn_failure_without_host_markers_still_records(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    reason = (
+        "Spawn failed 3 consecutive times (AdapterNotInstalledError): "
+        "Adapter binary not found: command not found: claude"
+    )
+    for _ in range(QUARANTINE_THRESHOLD):
+        store.record_failure("task A", reason)
+    assert store.is_quarantined("task A")
 
 
 def test_record_failure_separate_tasks_tracked_independently(tmp_path: Path) -> None:

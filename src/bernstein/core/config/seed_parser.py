@@ -21,6 +21,7 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+from bernstein.core.config.config_schema import LayerValidationError
 from bernstein.core.config.run_overlay import (
     RunOverlayError,
     resolve_effective_mapping,
@@ -2259,7 +2260,7 @@ def _parse_mcp_signing_mode(data: dict[str, object]) -> Literal["warn", "strict"
     return cast("Literal['warn', 'strict', 'off']", candidate)
 
 
-def _parse_data_class(raw: object) -> str | None:
+def _parse_data_class(raw: object) -> Literal["restricted", "internal", "confidential", "public"] | None:
     """Parse the optional ``data_class`` field.
 
     Allowed values: restricted, internal, confidential, public.
@@ -2275,7 +2276,7 @@ def _parse_data_class(raw: object) -> str | None:
     allowed = {"restricted", "internal", "confidential", "public"}
     if raw not in allowed:
         raise SeedError(f"data_class must be one of {sorted(allowed)}, got: {raw!r}")
-    return raw
+    return cast("Literal['restricted', 'internal', 'confidential', 'public']", raw)
 
 
 # Every top-level key ``parse_seed`` consumes, directly or via a helper
@@ -2337,6 +2338,7 @@ _PARSED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "smtp",
         "storage",
         "team",
+        "tier_adapters",
         "team_manifest",
         "tenants",
         "test_agent",
@@ -2460,7 +2462,7 @@ def parse_seed(path: Path) -> SeedConfig:
     # a setup that edits the committed file directly behaves as it always did.
     try:
         data: dict[str, object] = cast("_StrObjDict", resolve_effective_mapping(committed, config_path=path))
-    except RunOverlayError as exc:
+    except (RunOverlayError, LayerValidationError) as exc:
         raise SeedError(str(exc)) from exc
 
     _warn_unknown_top_level_keys(data)
@@ -2571,6 +2573,12 @@ def parse_seed(path: Path) -> SeedConfig:
     judge_provider_raw = _parse_optional_str_field(data, "judge_provider")
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
     provider_availability = _parse_provider_availability(data.get("provider_availability"))
+    _raw_tier_adapters = data.get("tier_adapters")
+    tier_adapters: dict[str, str] = {}
+    if _raw_tier_adapters is not None:
+        if not isinstance(_raw_tier_adapters, dict):
+            raise SeedError(f"tier_adapters must be a mapping, got: {type(_raw_tier_adapters).__name__}")
+        tier_adapters = {str(k): str(v) for k, v in _raw_tier_adapters.items()}
     cost_tags = _parse_cost_tags(data.get("cost_tags", {}))
     cost_autopilot_raw = _validate_optional_bool(data, "cost_autopilot", False)
     cost_envelopes = _parse_cost_envelopes(data)
@@ -2639,6 +2647,7 @@ def parse_seed(path: Path) -> SeedConfig:
         judge_provider=cast("str | None", judge_provider_raw),
         model_fallback=model_fallback,
         provider_availability=provider_availability,
+        tier_adapters=tier_adapters,
         cost_tags=cost_tags,
         cost_autopilot=cost_autopilot_raw,
         cost_envelopes=cost_envelopes,

@@ -70,7 +70,7 @@ Where the identity is wired in:
 
 | Surface | File |
 |---|---|
-| README header | `README.md` (`<picture>` of the two wordmarks); `banner-readme.webp` stays as the hero |
+| README header | `README.md` (`<picture>` of the two wordmarks); `docs/assets/banner-readme.webp` stays as the hero |
 | Docs site logo + favicon | `mkdocs.yml` (`theme.logo`, `theme.favicon` → `assets/brand/bernstein-mark.svg`) |
 | Docs `og:image` | `docs/overrides/main.html`, `docs/benchmarks/leaderboard.html` |
 | Operator GUI favicon | `web/index.html` (inline SVG data URI of the mark) |

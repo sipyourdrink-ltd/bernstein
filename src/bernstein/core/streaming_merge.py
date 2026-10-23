@@ -26,8 +26,13 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from bernstein.core.replay.read_paths import TaskReadSet
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +48,25 @@ class IncrementalChunk:
     Attributes:
         chunk_id: Unique identifier for this chunk.
         task_id: The parent task this chunk belongs to.
-        files: Files produced or modified in this chunk.
+        files: Files produced or modified in this chunk -- the write set.
         quality_gate_passed: Whether quality checks passed for this chunk.
         is_final: Whether this is the last chunk for the task.
+        read_set: Worktree-relative POSIX paths the task *read*, sorted.
+            In-tree paths only -- :func:`with_read_set` drops the derived
+            set's ``out_of_tree`` entries, because a chunk read set exists to
+            be intersected against diff paths and a path outside the worktree
+            can never appear in one. The out-of-tree reads stay on the
+            :class:`~bernstein.core.replay.read_paths.TaskReadSet` for a
+            caller that wants them.
+
+            Empty unless a set has been attached with :func:`with_read_set`.
+            Chunk detection never fills this in: ``files`` is scraped from the
+            agent's own prose, and a read set scraped from the same place
+            would be worth nothing, since the failure it exists to catch is a
+            task being wrong about its own assumptions. This is a plain
+            field, so nothing stops a caller assigning it directly -- what
+            makes a read set trustworthy is the ``journal_head`` recorded
+            alongside it in the admission receipt, not the type.
     """
 
     chunk_id: str
@@ -53,6 +74,7 @@ class IncrementalChunk:
     files: tuple[str, ...]
     quality_gate_passed: bool
     is_final: bool = False
+    read_set: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -72,6 +94,44 @@ class StreamingMergeState:
     chunks_pending: int
     files_merged: tuple[str, ...]
     is_complete: bool
+
+
+# ---------------------------------------------------------------------------
+# Read-set attachment
+# ---------------------------------------------------------------------------
+
+
+def with_read_set(chunk: IncrementalChunk, read_set: TaskReadSet) -> IncrementalChunk:
+    """Return *chunk* carrying *read_set*'s journal-derived paths.
+
+    The parameter is a
+    :class:`~bernstein.core.replay.read_paths.TaskReadSet` rather than a list
+    of strings so that the paths arrive already classified and sorted. It is
+    not a provenance check: that type is an ordinary dataclass, a hand-built
+    one is accepted here, and ``read_set`` can be assigned on the chunk
+    directly. A read set is trusted because it can be re-derived from the
+    ``journal_head`` it carries, never because of the type it arrived in.
+
+    Only ``read_paths`` reaches the chunk. ``out_of_tree`` is dropped: chunk
+    read sets are intersected against diff paths, and a path outside the
+    worktree cannot occur in a diff.
+
+    Args:
+        chunk: The chunk to annotate.
+        read_set: The task's derived read set. Its ``task_id`` must match the
+            chunk's.
+
+    Returns:
+        A new chunk; the input is frozen and left untouched.
+
+    Raises:
+        ValueError: If the read set belongs to a different task. Attaching
+            one task's reads to another's chunk would make every check built
+            on the pair answer about the wrong task.
+    """
+    if read_set.task_id != chunk.task_id:
+        raise ValueError(f"read set for task {read_set.task_id!r} cannot annotate a chunk of task {chunk.task_id!r}")
+    return replace(chunk, read_set=tuple(sorted(read_set.read_paths)))
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +257,7 @@ def _extract_file_references(text: str) -> list[str]:
     files: list[str] = []
     for match in matches:
         if isinstance(match, tuple):
-            files.extend(m for m in match if m)
+            files.extend(m for m in cast("tuple[Any, ...]", match) if m)
         elif isinstance(match, str) and match:
             files.append(match)
 
@@ -215,6 +275,13 @@ def _extract_file_references(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Task eligibility
 # ---------------------------------------------------------------------------
+
+
+def _recorded_len(value: object) -> int:
+    """Length of a task field that should hold a sequence; 0 for anything else."""
+    if isinstance(value, (list, tuple)):
+        return len(cast("Sequence[Any]", value))
+    return 0
 
 
 def should_stream(task: dict[str, Any]) -> bool:
@@ -235,13 +302,11 @@ def should_stream(task: dict[str, Any]) -> bool:
         return True
 
     # Check step count
-    steps = task.get("steps")
-    if isinstance(steps, (list, tuple)) and len(steps) >= 3:
+    if _recorded_len(task.get("steps")) >= 3:
         return True
 
     # Check file count
-    files = task.get("files")
-    if isinstance(files, (list, tuple)) and len(files) >= 3:
+    if _recorded_len(task.get("files")) >= 3:
         return True
 
     # Check keywords in description and title

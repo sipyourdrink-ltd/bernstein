@@ -175,16 +175,20 @@ class HeartbeatMonitor:
     def _pid_cmdline(self, pid: int) -> str | None:
         """Best-effort process command line for *pid*, or None if unavailable.
 
-        Reads ``/proc/<pid>/cmdline`` on Linux; falls back to ``ps`` on
-        platforms without procfs (e.g. macOS). Returns None when the process
-        is gone or the command line cannot be read, so the caller can decide
-        conservatively.
+        Reads ``/proc/<pid>/cmdline`` on Linux; falls back to ``psutil`` and
+        then ``ps`` on platforms without procfs (macOS, Windows). Returns None
+        when the process is gone or the command line cannot be read, so the
+        caller can decide conservatively.
         """
         proc_cmdline = Path("/proc") / str(pid) / "cmdline"
         try:
             raw = proc_cmdline.read_bytes()
         except FileNotFoundError:
-            # No procfs (macOS/BSD) or process gone: fall back to ps.
+            # No procfs (macOS/BSD/Windows) or process gone: try psutil
+            # (cross-platform, no output parsing), then ps, before giving up.
+            cmdline = self._cmdline_via_psutil(pid)
+            if cmdline is not None:
+                return cmdline
             try:
                 result = subprocess.run(
                     ["ps", "-p", str(pid), "-o", "command="],
@@ -201,6 +205,28 @@ class HeartbeatMonitor:
             return None
         # /proc cmdline args are NUL-separated.
         return raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip() or None
+
+    @staticmethod
+    def _cmdline_via_psutil(pid: int) -> str | None:
+        """Command line for *pid* via psutil, or None when psutil is
+        unavailable or the process is gone/inaccessible.
+
+        psutil is the only provider that works on Windows, where neither
+        procfs nor ``ps`` exists; without it the reap cannot verify pid
+        identity there and signals unverified pids instead. Imported
+        lazily so environments without psutil degrade to None rather
+        than failing the heartbeat module import.
+        """
+        try:
+            import psutil
+        except ImportError:
+            return None
+
+        try:
+            parts = psutil.Process(pid).cmdline()
+        except psutil.Error:
+            return None
+        return " ".join(parts).strip() or None
 
     def _pid_is_heartbeat_loop(self, pid: int, session_id: str) -> bool | None:
         """Whether *pid* still looks like this session's heartbeat loop.

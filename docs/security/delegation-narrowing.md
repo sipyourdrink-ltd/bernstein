@@ -46,6 +46,7 @@ value, so a child that drops a bound its parent imposed widens on that axis.
 | `task_ids` | allowlist subset (`None` = any task) |
 | `path_prefixes` | POSIX ancestor-or-equal coverage (`/a/b` covers `/a/b/c`, never `/a/bc`) |
 | `not_after` | no later than the parent |
+| `allowed_files` | glob subset (empty set or `None` = no restriction, widest value) |
 | `max_uses` | no greater than the parent |
 | `max_depth` | no greater than the parent |
 

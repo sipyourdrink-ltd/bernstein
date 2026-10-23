@@ -47,7 +47,7 @@ if sys.platform == "win32":
 else:
     import fcntl  # type: ignore[no-redef]
 
-from bernstein.core.lineage.entry import LineageEntry, canonicalise, entry_hash
+from bernstein.core.lineage.entry import LineageEntry, ModelRef, canonicalise, entry_hash
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -349,6 +349,24 @@ def _optional_str_list(raw: object) -> list[str] | None:
     return [str(item) for item in cast("list[object]", raw)]
 
 
+def _optional_model_ref(raw: object) -> ModelRef | None:
+    """Coerce the optional ``model_ref`` JSON object into a ``ModelRef``."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"expected an object, got {type(raw).__name__}")
+    body = cast("dict[str, object]", raw)
+    reported = body.get("model_reported")
+    version = body.get("version")
+    return ModelRef(
+        provider=str(body["provider"]),
+        model_requested=str(body["model_requested"]),
+        model_reported=None if reported is None else str(reported),
+        version=None if version is None else str(version),
+        routing_decision_hash=str(body.get("routing_decision_hash") or ""),
+    )
+
+
 def _entry_from_dict(payload: dict[str, object]) -> LineageEntry:
     """Reconstruct a ``LineageEntry`` from its JSON dict form."""
     # All canonical-field names map 1:1 onto the dataclass kwargs. Cast through
@@ -372,6 +390,17 @@ def _entry_from_dict(payload: dict[str, object]) -> LineageEntry:
         attachment_digests=_optional_str_list(payload.get("attachment_digests")),
         # Additive (issue #5042), same absent -> None round-trip rule.
         sensitivity=(None if payload.get("sensitivity") is None else str(payload["sensitivity"])),
+        # Additive (issues #4962, #5037), same absent -> None round-trip rule.
+        # Dropping either would make the rebuilt entry hash differently from
+        # the one that was written.
+        activity_source=(None if payload.get("activity_source") is None else str(payload["activity_source"])),
+        model_ref=_optional_model_ref(payload.get("model_ref")),
+        # Additive (issue #5937), same rule.
+        external_attestation=(
+            None
+            if payload.get("external_attestation") is None
+            else dict(cast("dict[str, object]", payload["external_attestation"]))
+        ),
     )
 
 

@@ -21,6 +21,7 @@ from bernstein.core.replay import (
     EVENTS_FILENAME,
     RECORD_ENV_VAR,
     GatewayMode,
+    ReplayDivergenceError,
     ReplayGateway,
     ReplayMissError,
     diff_event_logs,
@@ -160,15 +161,15 @@ def test_replay_falls_back_to_fifo_when_key_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the caller's key changed between record and replay, the
-    gateway should still serve responses FIFO-by-kind so jittery hash
-    inputs don't break replay."""
+    """If the caller's key changed between record and replay, lenient mode
+    still serves responses FIFO-by-kind. The default (strict) path raises
+    ReplayDivergenceError instead; see test_replay_divergence.py."""
     monkeypatch.setenv(RECORD_ENV_VAR, "1")
     rec = ReplayGateway("run-fifo", tmp_path)
     rec.dispatch(kind="llm", key="orig-key", invoke=lambda: "first")
     rec.dispatch(kind="llm", key="orig-key-2", invoke=lambda: "second")
 
-    replay = ReplayGateway("run-fifo", tmp_path, mode=GatewayMode.REPLAY)
+    replay = ReplayGateway("run-fifo", tmp_path, mode=GatewayMode.REPLAY, lenient=True)
     # Caller uses *different* keys this time around.
     first = replay.dispatch(kind="llm", key="new-key", invoke=lambda: "WRONG")
     second = replay.dispatch(kind="llm", key="new-key-2", invoke=lambda: "WRONG")
@@ -186,8 +187,10 @@ def test_replay_miss_raises_when_no_fixture(
 
     replay = ReplayGateway("run-miss", tmp_path, mode=GatewayMode.REPLAY)
     replay.dispatch(kind="llm", key="k", invoke=lambda: "WRONG")
-    with pytest.raises(ReplayMissError):
+    with pytest.raises(ReplayDivergenceError) as excinfo:
         replay.dispatch(kind="llm", key="k", invoke=lambda: "WRONG")
+    assert excinfo.value.expected_key is None
+    assert "recording exhausted" in str(excinfo.value)
 
 
 def test_replay_missing_events_file_raises(tmp_path: Path) -> None:
@@ -336,7 +339,7 @@ def test_record_is_thread_safe_under_concurrent_dispatch(
     assert sorted(seqs) == list(range(1, 41)), "seq numbers must be unique 1..N"
 
     # Replay must drain all 40 fixtures by FIFO without raising.
-    replay = ReplayGateway("run-race", tmp_path, mode=GatewayMode.REPLAY)
+    replay = ReplayGateway("run-race", tmp_path, mode=GatewayMode.REPLAY, lenient=True)
     seen: set[int] = set()
     for _ in range(40):
         out = replay.dispatch(

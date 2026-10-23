@@ -9,7 +9,7 @@ import pytest
 from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.mistral import MistralAdapter
-from bernstein.adapters.plugin_sdk import AdapterCapability
+from bernstein.adapters.plugin_sdk import AdapterCapability, SamplingParamsRefusal, ensure_sampling_params_supported
 from tests.unit._adapter_test_helpers import inner_cmd, make_popen_mock
 
 if TYPE_CHECKING:
@@ -58,9 +58,16 @@ class TestMistralAdapterName:
 
 
 class TestMistralAdapterPluginInfo:
-    def test_declares_temperature_only(self) -> None:
+    def test_declares_no_sampling_capability(self) -> None:
+        """vibe 2.26 has no sampling flag: ``--temperature`` is answered with
+        "unrecognized arguments" and exit 1."""
         info = MistralAdapter().plugin_info()
-        assert set(info.capabilities) == {AdapterCapability.SUPPORTS_TEMPERATURE}
+        assert AdapterCapability.SUPPORTS_TEMPERATURE not in info.capabilities
+        assert info.capabilities == ()
+
+    def test_a_requested_temperature_is_refused_before_spawn(self) -> None:
+        with pytest.raises(SamplingParamsRefusal, match="temperature"):
+            ensure_sampling_params_supported(MistralAdapter(), {"temperature": 0.4})
 
     def test_does_not_declare_coarse_or_others(self) -> None:
         info = MistralAdapter().plugin_info()
@@ -71,9 +78,9 @@ class TestMistralAdapterPluginInfo:
 
 
 class TestMistralAdapterSamplingParams:
-    """mcp_config temperature must reach the built CLI argv."""
+    """No sampling key ever reaches vibe's argv: vibe rejects the flags."""
 
-    def test_temperature_reaches_argv(self, tmp_path: Path) -> None:
+    def test_temperature_never_reaches_argv(self, tmp_path: Path) -> None:
         adapter = MistralAdapter()
         proc_mock = make_popen_mock(pid=701)
         with patch("bernstein.adapters.mistral.subprocess.Popen", return_value=proc_mock) as popen:
@@ -85,8 +92,8 @@ class TestMistralAdapterSamplingParams:
                 mcp_config={"temperature": 0.4},
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert "--temperature" in inner
-        assert inner[inner.index("--temperature") + 1] == "0.4"
+        assert "--temperature" not in inner
+        assert inner == ["vibe", "--auto-approve", "--prompt", "fix the bug"]
 
     def test_no_mcp_config_omits_temperature_flag(self, tmp_path: Path) -> None:
         adapter = MistralAdapter()

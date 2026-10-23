@@ -13,6 +13,7 @@ from bernstein.core.security.audit_chain import (
     EVENT_TOOLCALL_ATTESTATION,
     EVENT_TOOLCALL_ENFORCED_DISPATCH,
     AuditChainStore,
+    record_toolcall_effect,
 )
 from bernstein.core.security.toolcall_identity import (
     TOOLCALL_IDENTITY_DOMAIN,
@@ -25,10 +26,12 @@ from bernstein.core.security.toolcall_identity import (
 from bernstein.core.security.toolcall_interlock import (
     ToolCallIntent,
     VerifiedDispatchEvidence,
+    canonical_effect_digest,
+    effect_digest_for_connector_response,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from bernstein.core.security.audit import ChainScanCursor
     from bernstein.core.security.identity_spawn_anchor import AnchoredRunIdentity
@@ -267,6 +270,38 @@ class NativeToolCallEvidenceProvider:
             dispatch_ref="hmac:" + dispatch.hmac,
             intent_digest=intent_digest,
         )
+
+    async def record_effect(
+        self,
+        intent: ToolCallIntent,
+        evidence: VerifiedDispatchEvidence,
+        *,
+        response: Mapping[str, Any] | None,
+        duration_ms: float,
+        outcome: str,
+        patch: str | None = None,
+    ) -> None:
+        """Append ``toolcall.effect`` bound to the same intent digest (#6270)."""
+        if evidence.intent_digest != intent.digest():
+            raise ValueError("effect evidence is bound to a different tool-call intent")
+        if patch is not None:
+            effect_digest = canonical_effect_digest(patch)
+        else:
+            effect_digest = effect_digest_for_connector_response(response)
+        event = record_toolcall_effect(
+            chain=self.chain,
+            intent_digest=evidence.intent_digest,
+            effect_digest=effect_digest,
+            outcome=outcome,
+            duration_ms=round(float(duration_ms), 2),
+            attestation_ref=evidence.attestation_ref,
+            dispatch_ref=evidence.dispatch_ref,
+            actor=self.actor,
+            resource_id=intent.scope_id,
+        )
+        if self._identity_enabled():
+            self._known_chain_head = event.hmac
+            self._seen_event_hmacs.add(event.hmac)
 
 
 __all__ = ["NativeToolCallEvidenceProvider"]

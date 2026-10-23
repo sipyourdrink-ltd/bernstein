@@ -109,6 +109,18 @@ def _build_receipt(tmp_path: Path) -> Path:
     return receipt.receipt_path
 
 
+def _trusted_pem(tmp_path: Path) -> Path:
+    """The signer's public key, held out of band as an auditor would hold it."""
+    public = Ed25519PrivateKey.from_private_bytes(b"i" * 32).public_key()
+    pem_path = tmp_path / "trusted.pub.pem"
+    pem_path.write_bytes(
+        public.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    )
+    return pem_path
+
+
 def _run_verifier(py: Path, receipt: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
@@ -140,9 +152,11 @@ class TestStandaloneReceiptVerifierInstall:
 
     def test_verify_receipt_in_clean_venv(self, tmp_path: Path, isolated_python: Path) -> None:
         receipt = _build_receipt(tmp_path)
-        proc = _run_verifier(isolated_python, receipt)
+        pin = str(_trusted_pem(tmp_path))
+        proc = _run_verifier(isolated_python, receipt, "--public-key", pin)
         assert proc.returncode == 0, f"stderr={proc.stderr!r} stdout={proc.stdout!r}"
         assert "OVERALL: PASS" in proc.stdout
+        assert "[PASS] public_key - pinned-pem" in proc.stdout
         assert "[PASS] cose" in proc.stdout
         assert "[PASS] intoto" in proc.stdout
         assert "[PASS] transparency" in proc.stdout
@@ -151,21 +165,32 @@ class TestStandaloneReceiptVerifierInstall:
         self, tmp_path: Path, isolated_python: Path
     ) -> None:
         receipt = _build_receipt(tmp_path)
+        pin = str(_trusted_pem(tmp_path))
         # Prove PASS first, then mutate exactly one underlying chain entry.
-        assert _run_verifier(isolated_python, receipt).returncode == 0
+        assert _run_verifier(isolated_python, receipt, "--public-key", pin).returncode == 0
 
         data = json.loads(receipt.read_text())
         data["events"][1]["actor"] = "mallory"
         tampered = tmp_path / "tampered.json"
         tampered.write_text(json.dumps(data))
 
-        proc = _run_verifier(isolated_python, tampered)
+        proc = _run_verifier(isolated_python, tampered, "--public-key", pin)
         assert proc.returncode == 1
         assert "OVERALL: FAIL" in proc.stdout
         assert "[FAIL] subject_binding" in proc.stdout
         assert "[FAIL] cose" in proc.stdout
         assert "[FAIL] intoto" in proc.stdout
         assert "[FAIL] transparency" in proc.stdout
+
+    def test_unpinned_receipt_fails_in_clean_venv(
+        self, tmp_path: Path, isolated_python: Path
+    ) -> None:
+        receipt = _build_receipt(tmp_path)
+        proc = _run_verifier(isolated_python, receipt)
+        assert proc.returncode == 1, proc.stdout
+        assert "trust-on-first-use" in proc.stdout
+        opted_in = _run_verifier(isolated_python, receipt, "--allow-unpinned-key")
+        assert opted_in.returncode == 0, opted_in.stdout
 
     def test_verifier_runs_without_bernstein(self, tmp_path: Path, isolated_python: Path) -> None:
         receipt = _build_receipt(tmp_path)

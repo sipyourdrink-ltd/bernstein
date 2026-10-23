@@ -477,6 +477,9 @@ class SeedConfig:
     # fallback chains + conformance floors + probe TTL). Validated at parse
     # time; consumed by the spawner's availability failover path.
     provider_availability: dict[str, Any] | None = None
+    # Issue #6554: maps DispatchTier values (edge/search/research/sandbox) to
+    # adapter (cli) names.  Consumed by the spawner's tier-aware routing path.
+    tier_adapters: dict[str, str] = field(default_factory=dict)
     cost_tags: dict[str, str] = field(default_factory=dict)
     cost_autopilot: bool = False
     # Per-quota-envelope budgets (issue #1405). Parsed from the

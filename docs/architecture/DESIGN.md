@@ -18,17 +18,17 @@ This document describes the current architecture of Bernstein as implemented in 
 
 ```text
 CLI (src/bernstein/cli/)
-  -> Task server (src/bernstein/core/server.py shim -> core/server/)
+  -> Task server (src/bernstein/core/server/)
     -> Route modules (src/bernstein/core/routes/)
       -> Store + lifecycle + orchestration (core/ sub-packages)
         -> Adapter-based process spawning (adapters/)
 ```
 
-Since v1.6, `core/` is organized into ~60 sub-packages. Top-level modules like `core/server.py`, `core/orchestrator.py`, `core/spawner.py`, `core/task_lifecycle.py`, and `core/models.py` are thin re-export shims that redirect to their sub-packages.
+Since v1.6, `core/` is organized into 68 sub-packages. Old top-level module names like `core/server.py`, `core/orchestrator.py`, `core/spawner.py`, `core/task_lifecycle.py`, and `core/models.py` no longer exist as files; imports of them are redirected to the sub-packages by the finder in `core/__init__.py`.
 
 Primary orchestration modules:
 
-- `src/bernstein/core/orchestrator.py` (shim) -> `src/bernstein/core/orchestration/orchestrator.py`
+- `src/bernstein/core/orchestration/orchestrator.py` (legacy `core.orchestrator` imports redirect here)
 - `src/bernstein/core/orchestration/tick_pipeline.py`
 - `src/bernstein/core/tasks/task_lifecycle.py`
 - `src/bernstein/core/agents/agent_lifecycle.py`
@@ -37,7 +37,7 @@ Key runtime subsystems (in sub-packages):
 
 - Routing/cost: `core/routing/router.py`, `core/routing/cascade_router.py`, `core/cost/cost.py`, `core/cost/cost_history.py`, `core/cost/cost_anomaly.py`
 - Reliability: `core/agents/heartbeat.py`, `core/cost/completion_budget.py`, `core/observability/loop_detector.py`
-- Verification: `core/quality/janitor.py`, `core/quality/quality_gates.py`, `core/security/approval.py`, `core/quality/reviewer.py`
+- Verification: `core/quality/janitor.py`, `core/quality/quality_gates.py`, `core/security/approval.py`, `core/quality/review_pipeline/`
 - Context and memory: `core/agents/spawn_prompt.py`, `core/tokens/context.py`, `core/knowledge/lessons.py`, `core/knowledge/knowledge_base.py`, `core/knowledge/rag.py`
 
 ---
@@ -160,7 +160,7 @@ Boundary:
 
 Common active paths:
 
-- `.sdd/backlog/open|claimed|closed/`
+- `.sdd/backlog/open|claimed|done|closed/`
 - `.sdd/runtime/`
 - `.sdd/metrics/`
 - `.sdd/traces/`
@@ -182,7 +182,7 @@ explicit table; illegal moves raise `IllegalTransitionError` and emit a typed
 See [LIFECYCLE.md](LIFECYCLE.md) for the full state tables, transition metadata,
 `TransitionReason`/`AbortReason` enumerations, and abort-chain hierarchy.
 
-### Task FSM (12 states)
+### Task FSM (17 states)
 
 ```mermaid
 stateDiagram-v2
@@ -191,10 +191,12 @@ stateDiagram-v2
 
     PLANNED --> OPEN : approved
     PLANNED --> CANCELLED : rejected
+    PLANNED --> FAILED : batch stage failure
 
     OPEN --> CLAIMED : agent claims task
     OPEN --> WAITING_FOR_SUBTASKS : decomposed before claim
     OPEN --> CANCELLED : manual cancel
+    OPEN --> FAILED : batch stage failure
 
     CLAIMED --> IN_PROGRESS : agent starts work
     CLAIMED --> OPEN : unclaim / force-reassign
@@ -218,24 +220,40 @@ stateDiagram-v2
 
     BLOCKED --> OPEN : dependency resolved
     BLOCKED --> CANCELLED : manual cancel
+    BLOCKED --> FAILED : batch stage failure
 
     WAITING_FOR_SUBTASKS --> DONE : all subtasks completed
     WAITING_FOR_SUBTASKS --> BLOCKED : subtask timeout escalation
     WAITING_FOR_SUBTASKS --> CANCELLED : manual cancel
+    WAITING_FOR_SUBTASKS --> FAILED : batch stage failure
 
     FAILED --> OPEN : retry (within max_retries)
 
     DONE --> CLOSED : janitor verified + merged
     DONE --> FAILED : verification rejected
+    DONE --> OPEN : janitor reopen (bounded)
+
+    PENDING_APPROVAL --> DONE : approval recorded
+
+    %% Abandon, refusal and failed-dependency edges are summarised here;
+    %% LIFECYCLE.md lists each source state.
+    OPEN --> ABANDONED : agent abandons (also from CLAIMED, IN_PROGRESS, WAITING_FOR_SUBTASKS, BLOCKED, ORPHANED)
+    OPEN --> REFUSED : typed refusal (also from CLAIMED, IN_PROGRESS)
+    OPEN --> BLOCKED_BY_ABANDON : dependency abandoned (also from CLAIMED, IN_PROGRESS, WAITING_FOR_SUBTASKS)
+    OPEN --> BLOCKED_BY_FAILED_DEP : dependency failed (also from CLAIMED, IN_PROGRESS, WAITING_FOR_SUBTASKS)
+    BLOCKED_BY_ABANDON --> OPEN : requeued
+    BLOCKED_BY_FAILED_DEP --> OPEN : requeued
 
     CLOSED --> [*]
     CANCELLED --> [*]
+    ABANDONED --> [*]
+    REFUSED --> [*]
 
-    %% PENDING_APPROVAL has no FSM-managed transitions - set directly by the approval subsystem.
-    PENDING_APPROVAL --> [*]
+    %% SUSPENDED is set by the suspension subsystem and has no FSM-managed transitions.
+    SUSPENDED --> [*]
 ```
 
-> **Note - `PENDING_APPROVAL`:** Set directly by the approval subsystem; has no entry or exit in `TASK_TRANSITIONS`. See [LIFECYCLE.md](LIFECYCLE.md#terminal-states) for details.
+> **Note - `PENDING_APPROVAL` and `SUSPENDED`:** `PENDING_APPROVAL` is set by the approval subsystem; its only FSM-managed exit is `-> DONE`. `SUSPENDED` is set by the suspension subsystem and has no entry in `TASK_TRANSITIONS`. See [LIFECYCLE.md](LIFECYCLE.md#terminal-states) for details.
 
 ### Agent FSM (4 states)
 

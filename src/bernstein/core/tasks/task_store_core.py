@@ -26,6 +26,7 @@ from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
@@ -50,7 +51,7 @@ from bernstein.core.tasks.unreachable import (
 from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.tasks.contracts import ContractViolation, WorkerCompletion, WorkerRefusal
@@ -74,6 +75,9 @@ CLAIM_HELD_STATUSES: frozenset[TaskStatus] = frozenset(
         TaskStatus.WAITING_FOR_SUBTASKS,
         TaskStatus.BLOCKED,
         TaskStatus.ORPHANED,
+        # Cooperative mailbox waits retain the worker, process, sandbox and
+        # claim; SUSPENDED is not a surrender in this path.
+        TaskStatus.SUSPENDED,
     }
 )
 
@@ -2046,6 +2050,7 @@ class TaskStore:
         tenant_id: str | None = None,
         claimed_by_session: str | None = None,
         parent_session_id: str | None = None,
+        task_ids: Collection[str] | None = None,
     ) -> Task | None:
         """Claim the highest-priority open task for *role*.
 
@@ -2060,6 +2065,11 @@ class TaskStore:
                 matches this value. Workers from a coordinator should pass their
                 coordinator's session ID here so they never steal tasks belonging to
                 a different orchestrator namespace.
+            task_ids: If set, only tasks whose id is in this collection are
+                candidates; an empty collection makes nothing claimable.  The
+                claim-next route passes a task-scoped caller's scope here so
+                an out-of-scope task is never chosen.  Skipped candidates stay
+                queued for callers whose scope includes them.
 
         Returns:
             The claimed Task, or None if nothing is available.
@@ -2088,6 +2098,11 @@ class TaskStore:
                     blocked_entries.append((priority, task_id))
                     continue
                 if parent_session_id is not None and candidate.parent_session_id != parent_session_id:
+                    blocked_entries.append((priority, task_id))
+                    continue
+                # Checked before the stranding pass below so an out-of-scope
+                # candidate is left exactly as it was, not transitioned.
+                if task_ids is not None and task_id not in task_ids:
                     blocked_entries.append((priority, task_id))
                     continue
                 # A dependency that ended without delivering makes this
@@ -2164,9 +2179,7 @@ class TaskStore:
                     f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
             if agent_role is not None and task.role != agent_role:
-                raise ValueError(
-                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
-                )
+                raise role_mismatch_error(task_id, task.role, agent_role)
             if task.status != TaskStatus.OPEN:
                 # never silently re-return an already-claimed or
                 # terminal task - that enables double-claim. Raise so the
@@ -2911,6 +2924,113 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             return task
 
+    async def suspend_for_rendezvous(self, task_id: str, open_entry_hash: str) -> TaskStatus:
+        """Persist cooperative suspension and return the state to restore.
+
+        This is deliberately smaller than :func:`park_task`: the worker,
+        process and sandbox remain allocated.  The referenced mailbox open
+        entry is the durable reason for the state change.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            resume_status = task.status
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"task {task_id!r} cannot ask while {resume_status.value}")
+            self._index_remove(task)
+            transition_task(
+                task,
+                TaskStatus.SUSPENDED,
+                actor="mailbox_rendezvous",
+                reason=open_entry_hash,
+            )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return resume_status
+
+    async def resume_from_rendezvous(
+        self,
+        task_id: str,
+        *,
+        resume_status: TaskStatus,
+        close_entry_hash: str,
+    ) -> Task:
+        """Persist cooperative resumption after a mailbox close is observed."""
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status != TaskStatus.SUSPENDED:
+                raise ValueError(f"task {task_id!r} is not suspended")
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"invalid rendezvous resume status {resume_status.value!r}")
+            self._index_remove(task)
+            if resume_status == TaskStatus.CLAIMED:
+                transition_task(
+                    task,
+                    TaskStatus.CLAIMED,
+                    actor="mailbox_rendezvous",
+                    reason=close_entry_hash,
+                )
+            elif resume_status == TaskStatus.IN_PROGRESS:
+                transition_task(
+                    task,
+                    TaskStatus.IN_PROGRESS,
+                    actor="mailbox_rendezvous",
+                    reason=close_entry_hash,
+                )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return task
+
+    async def recover_rendezvous_wait(
+        self,
+        task_id: str,
+        *,
+        resume_status: TaskStatus,
+        open_entry_hash: str,
+    ) -> Task:
+        """Restore a cooperative waiter after its live wait exits abnormally.
+
+        No mailbox close is invented here.  The referenced open remains
+        unresolved in the authoritative mailbox chain; this transition only
+        prevents a cancelled or locally failed request from retaining the
+        task's live claim in ``SUSPENDED`` forever.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status != TaskStatus.SUSPENDED:
+                raise ValueError(f"task {task_id!r} is not suspended")
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"invalid rendezvous recovery status {resume_status.value!r}")
+            self._index_remove(task)
+            if resume_status == TaskStatus.CLAIMED:
+                transition_task(
+                    task,
+                    TaskStatus.CLAIMED,
+                    actor="mailbox_rendezvous_recovery",
+                    reason=open_entry_hash,
+                )
+            elif resume_status == TaskStatus.IN_PROGRESS:
+                transition_task(
+                    task,
+                    TaskStatus.IN_PROGRESS,
+                    actor="mailbox_rendezvous_recovery",
+                    reason=open_entry_hash,
+                )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return task
+
     async def _complete_parent_if_ready(self, parent_task_id: str | None) -> None:
         """Complete a waiting ancestor chain when all descendant subtasks are done.
 
@@ -3065,6 +3185,7 @@ class TaskStore:
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.BLOCKED,
                 TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.SUSPENDED,
                 TaskStatus.PLANNED,
             }
             if task.status not in _cancellable:
@@ -3199,6 +3320,7 @@ class TaskStore:
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.BLOCKED,
                 TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.SUSPENDED,
                 TaskStatus.PLANNED,
             }
             for tid in to_cancel:

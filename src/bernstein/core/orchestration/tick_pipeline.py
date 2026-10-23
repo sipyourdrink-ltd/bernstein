@@ -189,7 +189,9 @@ def fetch_all_tasks(
         client: httpx client.
         base_url: Server base URL.
         statuses: Status keys to include in the result dict.  Defaults to
-            ["open", "claimed", "done", "failed"].
+            ["open", "claimed", "done", "failed", "closed"].  Every task is
+            fetched regardless; this only decides which keys are guaranteed
+            present (possibly empty) in the result.
 
     Returns:
         Dict mapping status string -> list of Tasks.  Always includes keys for
@@ -198,7 +200,11 @@ def fetch_all_tasks(
         that need the dependency-filtered view should apply their own dep check.
     """
     if statuses is None:
-        statuses = ["open", "claimed", "done", "failed"]
+        # "closed" is in the default set so the key always exists rather than
+        # appearing only when the run happens to have archived something. A
+        # caller that reads it to decide whether any task reached a terminal
+        # state cannot tell an absent key from an empty one (#5968).
+        statuses = ["open", "claimed", "done", "failed", "closed"]
     by_status: dict[str, list[Task]] = {s: [] for s in statuses}
 
     offset = 0
@@ -245,6 +251,21 @@ def fail_task(client: httpx.Client, base_url: str, task_id: str, reason: str) ->
         reason: Why the task failed.
     """
     client.post(f"{base_url}/tasks/{task_id}/fail", json={"reason": reason}).raise_for_status()
+
+
+def release_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -> None:
+    """POST /tasks/{task_id}/release to hand a claimed task back to the open pool.
+
+    Unlike :func:`fail_task` the task is not failed: no retry is created and
+    its retry budget is untouched.
+
+    Args:
+        client: httpx client.
+        base_url: Server base URL.
+        task_id: ID of the claimed task.
+        reason: Why the claim is handed back.
+    """
+    client.post(f"{base_url}/tasks/{task_id}/release", json={"reason": reason}).raise_for_status()
 
 
 def block_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -> None:

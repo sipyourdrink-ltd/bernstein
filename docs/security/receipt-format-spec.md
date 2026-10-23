@@ -211,6 +211,54 @@ reads an unrecognised `hash_profile` value fails closed (`status:
 - Under legacy schema `1.0.0`, only `audit_range_head_sha256` is bound. Legacy
   receipts verify with a warning (`"audit window unbound in schema 1.0.0"`).
 
+#### COSE_Sign1 sidecar: `run-receipt.cose`
+
+A run receipt is also written as a COSE_Sign1 envelope beside the JSON, so an
+evidence pipeline that speaks COSE — a transparency service registering signed
+statements, a generic COSE verifier, an HSM that only signs COSE — can ingest a
+run receipt and not only an audit receipt. The JSON envelope, its binding and
+its signature are unchanged; the `.cose` is purely additive, and absent when no
+signing key is configured.
+
+| | `run-receipt.json` | `run-receipt.cose` |
+|---|---|---|
+| Envelope | detached Ed25519 signature | COSE_Sign1, RFC 9052 tag 18 |
+| Signed over | `pae(payload_type, binding_bytes)` (DSSE PAE) | the RFC 9052 `Sig_structure` |
+| Payload | the binding block, as the document's own fields | the **same binding bytes**, embedded |
+| `content_type` / `kid` | `signing.payload_type` / `signing.key_id` | protected header labels `3` / `4` |
+
+The payload is the *binding bytes themselves*, not a digest of them — unlike the
+audit receipt's COSE, whose payload is the raw 32-byte `head_sha256`. That makes
+a third-party statement about `run-receipt.cose` a statement about the journal
+head and the spine head rather than about a filename: edit one journal event
+after the fact and the registered statement no longer matches what the artefacts
+recompute to, with no Bernstein code in the verifying loop. The JSON's
+`subject.digest.sha256` is `sha256(binding_bytes)`, so the two can be checked
+against each other without parsing CBOR.
+
+**Embedded, not detached.** A `nil`-payload envelope would keep one copy of the
+binding, but it cannot be registered with a transparency service on its own.
+The cost of embedding is that two copies of the binding exist, so they are
+compared rather than trusted: `verify_run_receipt(..., cose_bytes=...)` fails
+with `status: "tampered"` when the envelope's payload differs from the
+recomputed subject binding, when its `content_type` is not the run-receipt type,
+or when its signature does not verify under the receipt's own key.
+
+`cose_bytes` is passed in as bytes rather than discovered next to the JSON:
+`verify_run_receipt` verifies from its inputs alone — no `.sdd/`, no HMAC key,
+no filesystem — and is not given a path to search. The CLI holds the path and
+reads the sidecar. The result's `cose_verified` is therefore tri-state: `True`
+when an envelope was supplied and agreed, `None` when none was supplied. A
+JSON-only pass must not be readable as "the COSE envelope checked out".
+
+The wire encoding is shared with the audit receipt
+(`bernstein.core.security.cose`), so there is one implementation of the RFC and
+one deterministic-CBOR call. `tests/fixtures/receipt-vectors/cose-vector-run-receipt.{json,cose}`
+is a committed vector: CI re-mints it from a fixed seed and requires byte
+equality, so a change to the headers, the CBOR mode or the binding
+canonicalization fails the build rather than silently invalidating a receipt
+already handed to an auditor.
+
 ## Signing key
 
 Every format signs with the same Ed25519 key, embedded in the receipt as an
@@ -508,15 +556,17 @@ verification tiers:
 
 | Tier | How reached | What it proves |
 |---|---|---|
-| **Integrity-only** (trust-on-first-use) | No pin supplied; the embedded `signing.public_key_jwk` is used as-is. | The bytes were signed by the embedded key — internal self-consistency. It does **not** prove the signer is a known, trusted party. A forged receipt+key pair verifies against itself. |
+| **Integrity-only** (trust-on-first-use) | No pin supplied and `--allow-unpinned-key` given; the embedded `signing.public_key_jwk` is used as-is. Without the flag an unpinned receipt fails. | The bytes were signed by the embedded key — internal self-consistency. It does **not** prove the signer is a known, trusted party. A forged receipt+key pair verifies against itself. |
 | **Provenance** | A trusted key is pinned out-of-band via `--jwk` or `--public-key`; the embedded key must match it. | The bytes were signed by a known, trusted key. This is the regulator-grade property: the auditor supplies the key, so a forged embedded key cannot pass. |
 
 Pinning is what stops a swapped-key attack. Without a pin, verification
-establishes integrity only; with a pin, it establishes provenance. The
-verifier names the tier it reached on the `public_key` line (`pinned-pem`,
-`pinned-jwk`, or `trust-on-first-use`), so a caller gating on provenance
-supplies the pin and reads that line rather than inferring it from the exit
-code (see [Exit-code contract](#exit-code-contract)).
+establishes integrity only; with a pin, it establishes provenance. An
+unpinned receipt therefore fails by default: the `public_key` check reports
+`FAIL - trust-on-first-use` and the exit code is `1`. A caller that wants the
+integrity-only tier opts in with `--allow-unpinned-key`, and the overall line
+then reads `OVERALL: PASS (unpinned key: integrity only)`. The verifier always
+names the tier it reached on the `public_key` line (`pinned-pem`,
+`pinned-jwk`, or `trust-on-first-use`), with or without `--verbose`.
 
 ## Exit-code contract
 
@@ -526,8 +576,8 @@ surface and the auditor's standalone surface share one contract:
 
 | Code | Meaning |
 |---|---|
-| `0` | **Verified** — every enabled check passed (either tier). |
-| `1` | **Failed** — a check failed: unreadable or unparseable receipt body, missing or invalid signing key, embedded key that does not match the pin, recomputed head that does not match the signed subject, a signature that does not verify, a Merkle root or inclusion proof mismatch, or no recognised format present. |
+| `0` | **Verified** — every enabled check passed, with a pinned key, or unpinned with `--allow-unpinned-key`. |
+| `1` | **Failed** — a check failed: unreadable or unparseable receipt body, missing or invalid signing key, no pinned key without `--allow-unpinned-key`, embedded key that does not match the pin, recomputed head that does not match the signed subject, a signature that does not verify, a Merkle root or inclusion proof mismatch, or no recognised format present. |
 | `2` | **Bad arguments** — a path argument is missing or unreadable, or `--jwk` is not a JSON object. |
 
 > **Not the run-receipt command.** `bernstein verify receipt <path>` verifies a

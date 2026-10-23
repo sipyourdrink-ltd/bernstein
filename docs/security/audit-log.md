@@ -379,6 +379,58 @@ before and after the upgrade are **not comparable** - re-seal once
 after upgrading, and keep any pinned pre-upgrade root labelled as the
 old scheme. this is a scheme upgrade, not a tamper alert.
 
+### Incremental verification and the published read layout
+
+the writer appends to the live `*.jsonl` segments under the chain lock.
+a seal publishes, beside them, what a reader verifies against:
+
+| path (under `.sdd/audit/`) | written | reader trusts it because |
+|---|---|---|
+| `checkpoints/latest.json` | replaced on every accepted seal (temp file, fsync, rename, directory fsync) | HMAC-signed with the audit key |
+| `checkpoints/checkpoints.jsonl` | appended, never rewritten | each line HMAC-signed and chained to its predecessor |
+| `tiles/<segment>.tile` | by `audit seal` when that segment's sealed prefix changed, same publish path as the pointer | it doesn't: a tile is checked, never trusted |
+
+`AuditLog.verify_incremental()` reads the newest checkpoint (the pointer,
+falling back to the ledger), and for each segment trusts the prefix the
+checkpoint pins only when those bytes still hash to the signed leaf and
+the prefix's first record links to the head the walk has reached. only
+the records appended after the pin are parsed and HMAC-checked, so after
+a seal, appending N records costs a walk of N records. a segment the
+checkpoint does not pin, or whose pinned prefix no longer reproduces, is
+walked in full, and every finding names the same `segment:line` a full
+`verify()` names. a log sealed before checkpoints existed has no pin and
+is walked in full.
+
+the pins are evidence about length as well as content. a segment cut back
+to a record boundary, or deleted outright, leaves a chain that still walks
+clean, so `verify()` alone passes it. the incremental verifier reports a
+pinned segment that is gone, shorter than its pin, or whose pinned prefix
+changed under a chain that still verifies, naming the segment, with the
+same wording the checkpoint pillar of `bernstein audit verify` uses. an
+`ack-tear` acknowledgement for that checkpoint clears it, exactly as it
+does for the checkpoint pillar. records appended after the newest seal
+are pinned by nothing, so removing them is not detectable from this
+directory alone; that is what external anchors and witness co-signatures
+(below) are for.
+
+a tile is unsigned, so editing a segment and rewriting its tile to match
+buys nothing: the edit fails the signed leaf and the segment is walked.
+each tile is compared byte for byte with the tile the seal would publish
+for the bytes this run authenticated, so a flipped byte in a tile is
+reported as `tiles/<segment>.tile: ...` rather than passing unnoticed.
+tiles are rendered with LF line endings on every platform, so identical
+directories publish identical tile bytes; tiles written by earlier
+releases with CRLF on Windows still verify.
+
+the run takes no lock and needs no write access: it works against a
+read-only copy while a writer appends to the live directory. its one write,
+the tile-read counter behind `last_tile_read_count()`, is best-effort and
+never part of the verdict.
+
+not yet covered: `bernstein audit verify` still walks every segment, the
+unchanged prefixes are still read once to be hashed, and a seal over a
+segment that grew since the last seal replaces that segment's tile.
+
 ### Tears: crash damage at the chain tail
 
 a crashed append is not a clean truncation. file size can be

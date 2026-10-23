@@ -101,7 +101,7 @@ class FastPathStats:
 # Classification rules
 # ---------------------------------------------------------------------------
 
-# Regex patterns for L0 (trivial) tasks - matched against lowercased title+description
+# Regex patterns for L0 (trivial) tasks - matched against the lowercased title only
 # These are lowercase because they are reassigned by load_fast_path_config().
 _l0_patterns: list[tuple[re.Pattern[str], FastPathAction, str]] = [
     (re.compile(r"\b(format|formatting|auto-?format|black|prettier)\b"), FastPathAction.RUFF_FORMAT, "formatting"),
@@ -159,9 +159,13 @@ def classify_task(task: Task) -> ClassificationResult:
 
     text = f"{task.title} {task.description}".lower()
 
-    # Check L0 patterns
+    # Check L0 patterns against the title alone. An L0 match replaces the agent
+    # with a deterministic tool, so it must describe what the task *is*; a
+    # description routinely mentions tools as context ("lint is disabled",
+    # "format the line plainly") without asking for them to run.
+    title = task.title.lower()
     for pattern, action, rule_name in _l0_patterns:
-        if pattern.search(text):
+        if pattern.search(title):
             return ClassificationResult(
                 level=TaskLevel.L0,
                 action=action,

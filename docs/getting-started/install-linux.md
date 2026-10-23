@@ -50,7 +50,7 @@ installation and no `pipx`/`uv` on the host. On RHEL 9 / EPEL 9 it pulls
 ## Homebrew (Linux or macOS)
 
 ```bash
-brew install chernistry/homebrew-tap/bernstein
+brew install chernistry/tap/bernstein
 ```
 
 Bernstein is not in `homebrew-core`; the tap is published from PyPI on each release.

@@ -33,19 +33,6 @@ class UpgradeExecutor(Protocol):
         """Rollback an upgrade. Returns True if successful."""
         ...
 
-    def was_applied(self, proposal_id: str) -> bool:
-        """Did this proposal ever change anything that is still in place?
-
-        On the Protocol because the CALLER needs it. `execute_upgrade`
-        returning False covers three different situations - admission refused
-        it, the category had no sink, or an apply genuinely failed - and only
-        the third is something to roll back. A caller that cannot tell them
-        apart treats a proposal that never touched the tree as a reverted
-        change, which is how the circuit breaker came to halt evolution on the
-        first proposal it ever saw.
-        """
-        ...
-
 
 class FileUpgradeExecutor:
     """
@@ -162,13 +149,14 @@ class FileUpgradeExecutor:
         restored: list[str] = []
         try:
             for filename in wanted:
-                backup_path = self.upgrades_dir / recorded[filename]
+                backup_path = self._contained(self.upgrades_dir, recorded[filename], proposal.id)
+                target_path = self._contained(self.config_dir, filename, proposal.id)
                 if not backup_path.exists():
                     raise RollbackError(
                         f"proposal {proposal.id} recorded a backup for {filename!r} at "
                         f"{backup_path}, and it is not there"
                     )
-                shutil.copy2(backup_path, self.config_dir / filename)
+                shutil.copy2(backup_path, target_path)
                 restored.append(filename)
         except OSError as exc:
             # Partial restore named rather than hidden: the operator has to know
@@ -176,8 +164,23 @@ class FileUpgradeExecutor:
             # unknown to everyone.
             raise RollbackError(f"proposal {proposal.id} rollback failed after restoring {restored}: {exc}") from exc
 
-        self._record_history(proposal, "rolled_back")
-        self._write_rollback_receipt(proposal, restored=restored, note="restored from the apply-time manifest")
+        # The files are back. What follows is bookkeeping, and a failure in it
+        # must not escape as a bare OSError: the caller only knows to fail
+        # closed on RollbackError, and this is a revert it must hear about.
+        try:
+            self._record_history(proposal, "rolled_back")
+            self._write_rollback_receipt(proposal, restored=restored, note="restored from the apply-time manifest")
+            # Last, and the commit point: until the backup is retired a repeat
+            # call restores the same bytes again, which is harmless. After it,
+            # the manifest no longer claims an un-reverted change, so a later
+            # apply that reuses this proposal id (ids restart at UPG-0001 in
+            # every process) starts from a clean slate instead of being
+            # masked by this one.
+            self._retire_backup(proposal.id)
+        except OSError as exc:
+            raise RollbackError(
+                f"proposal {proposal.id} files were restored ({restored}) but the rollback could not be recorded: {exc}"
+            ) from exc
         return True
 
     # ------------------------------------------------------------------
@@ -190,7 +193,49 @@ class FileUpgradeExecutor:
         The old path embedded ``int(time.time())``, which made a backup
         un-addressable by anything but the in-memory map that recorded it.
         """
-        return self.upgrades_dir / "backups" / proposal_id
+        return self.upgrades_dir / "backups" / self._path_segment(proposal_id)
+
+    @staticmethod
+    def _path_segment(proposal_id: str) -> str:
+        """*proposal_id* as a single path component, or :class:`RollbackError`.
+
+        The id is joined into ``backups/<id>`` and ``rollbacks/<id>.json``. The
+        generators in this package mint ``UPG-0001``-style ids, but the executor
+        accepts any proposal, and an id carrying a separator or ``..`` would
+        write outside ``upgrades/``.
+        """
+        if (
+            not proposal_id
+            or proposal_id in {".", ".."}
+            or "/" in proposal_id
+            or "\\" in proposal_id
+            or "\0" in proposal_id
+        ):
+            raise RollbackError(f"proposal id {proposal_id!r} is not usable as a path component")
+        return proposal_id
+
+    @staticmethod
+    def _contained(root: Path, relative: str, proposal_id: str) -> Path:
+        """``root / relative``, refused unless it resolves inside *root*.
+
+        Manifest keys and values come off disk. A restore that follows a ``..``
+        or an absolute path in one overwrites a file the apply never touched.
+        """
+        candidate = (root / relative).resolve()
+        if not candidate.is_relative_to(root.resolve()):
+            raise RollbackError(
+                f"proposal {proposal_id} manifest entry {relative!r} resolves outside {root}; refusing to restore it"
+            )
+        return candidate
+
+    def _retire_backup(self, proposal_id: str) -> None:
+        """Move a restored proposal's backups aside so the id is free again.
+
+        Renamed rather than deleted: the bytes that were restored stay available
+        to whoever wants to know what the rollback overwrote.
+        """
+        backup_dir = self._backup_dir(proposal_id)
+        backup_dir.rename(backup_dir.with_name(f"{backup_dir.name}.rolled-back-{time.time_ns()}"))
 
     def _backup_manifest_path(self, proposal_id: str) -> Path:
         return self._backup_dir(proposal_id) / "manifest.json"
@@ -227,42 +272,57 @@ class FileUpgradeExecutor:
         return sorted(recorded)
 
     def was_applied(self, proposal_id: str) -> bool:
-        """Did any history row for this proposal record an APPLIED change?
+        """Is there evidence of a change under this proposal id that was not reverted?
 
         Read rather than remembered, so this answers the same way in a process
-        that did not perform the apply.
+        that did not perform the apply. Two records count as evidence: an
+        ``applied`` history row not followed by a ``rolled_back`` one, or a
+        backup manifest. The manifest is written by ``_backup_file`` BEFORE a
+        file is mutated, so it is the only record a partial apply (one that
+        raised midway and never reached an ``applied`` row) leaves behind
+        (#6317).
+
+        A manifest means a mutation was ATTEMPTED, not that bytes changed: a
+        failure between the backup and the write counts, and trips the breaker
+        for a tree that is byte-identical. That is the fail-closed direction.
+
+        ``rollback_upgrade`` retires the manifest once the files are restored,
+        so a manifest present here is always an un-reverted backup. That is what
+        keeps an earlier rollback from masking a later apply under a reused id.
         """
         history_file = self.upgrades_dir / "history.jsonl"
-        if not history_file.exists():
-            return False
         applied = False
-        for line in history_file.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                # A torn final line is not evidence either way, and refusing to
-                # read the whole file because of one would turn a truncated
-                # journal into an un-rollbackable tree.
-                continue
-            if row.get("proposal_id") != proposal_id:
-                continue
-            status = row.get("status")
-            if status == "applied":
-                applied = True
-            elif status == "rolled_back":
-                applied = False
-        return applied
+        if history_file.exists():
+            for line in history_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    # A torn final line is not evidence either way, and refusing to
+                    # read the whole file because of one would turn a truncated
+                    # journal into an un-rollbackable tree.
+                    continue
+                if row.get("proposal_id") != proposal_id:
+                    continue
+                status = row.get("status")
+                if status == "applied":
+                    applied = True
+                elif status == "rolled_back":
+                    applied = False
+        return applied or self._backup_manifest_path(proposal_id).exists()
 
     def _write_rollback_receipt(self, proposal: UpgradeProposal, *, restored: list[str], note: str) -> Path:
-        """Persist a hash-anchored record of what this rollback did.
+        """Persist a record of what this rollback did, with a checksum over it.
 
         The same shape the verdict receipt uses (``change_contract_replay``):
-        a body, and a sha256 over its canonical JSON, so a reader holding only
-        the file can tell whether it has been edited since it was written.
-        Rollback used to record nothing at all, so "was this rolled back, and
-        what did that restore" had no answer after the process exited.
+        a body, and a sha256 over its canonical JSON. The checksum is keyless,
+        so it catches accidental corruption of the file; it is NOT tamper
+        evidence, because anyone who edits the body can recompute it.
+
+        Never overwrites: the first receipt for an id is ``<id>.json`` and a
+        later one is ``<id>.<n>.json``, so a repeat rollback (or a reused id)
+        cannot erase the record of the one that restored files.
         """
         body: dict[str, Any] = {
             "proposal_id": proposal.id,
@@ -274,8 +334,14 @@ class FileUpgradeExecutor:
         }
         canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
         receipt = body | {"receipt_hash": hashlib.sha256(canonical).hexdigest()}
-        out_path = self.upgrades_dir / "rollbacks" / f"{proposal.id}.json"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        segment = self._path_segment(proposal.id)
+        out_dir = self.upgrades_dir / "rollbacks"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{segment}.json"
+        n = 1
+        while out_path.exists():
+            n += 1
+            out_path = out_dir / f"{segment}.{n}.json"
         write_atomic_text(out_path, json.dumps(receipt, indent=2, ensure_ascii=False))
         return out_path
 
@@ -329,6 +395,12 @@ class FileUpgradeExecutor:
         path is derived from the proposal id and the mapping is written to a
         manifest beside it, which is what lets `rollback_upgrade` work in a
         process that did not perform the apply.
+
+        Two limits, both stated rather than papered over. A file that does not
+        exist yet is not recorded (there is nothing to copy), so an apply that
+        CREATES a config file leaves no manifest and a rollback cannot remove
+        it. And the manifest is written before the caller mutates anything, so
+        it records an intent to change, not a change.
         """
         source_path = self.config_dir / filename
         if not source_path.exists():

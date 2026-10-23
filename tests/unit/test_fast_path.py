@@ -107,6 +107,19 @@ class TestClassifyTask:
         assert result.level == TaskLevel.L0
         assert result.action == FastPathAction.RUFF_FIX
 
+    def test_l0_ignores_tool_names_mentioned_in_the_description(self) -> None:
+        """A docs task whose context mentions lint must reach an agent, not ruff."""
+        task = _make_task(
+            title="Add hello line to README.md",
+            description="Context: quality gates (lint, type_check, tests) are disabled; format the line plainly.",
+            role="docs",
+            complexity=Complexity.LOW,
+            scope=Scope.SMALL,
+        )
+        result = classify_task(task)
+        assert result.level != TaskLevel.L0
+        assert result.action is None
+
     def test_autofix_classified_l0(self) -> None:
         task = _make_task(title="Run autofix on codebase", complexity=Complexity.LOW)
         result = classify_task(task)

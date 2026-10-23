@@ -18,6 +18,23 @@ core_reviewers = ["vaibhav8a", "thegoodengineer", "tenequm", "Phoenix1504e", "Ch
 # Approve; two approvals of any kind form the quorum when one is a core one.
 committers = ["Silentpartnercoding"]
 
+# Triage only: labels, assignments, milestones, closing duplicates. No
+# approval weight; a triager never counts toward a quorum.
+triagers = []
+
+# Approve. Core only on a pull request wholly inside their area, a plain
+# committer anywhere else. Keys: adapters, web, tui, docs, packaging.
+# Example: { adapters = ["login"] }
+area_reviewers = {}
+
+# Terms. Any entry in core_reviewers, committers, triagers or area_reviewers
+# may be a table instead of a bare login:
+#   { login = "x", expires = "2027-03-31" }
+#   { login = "x", granted = "2026-10-01" }   # lapses six months after
+# An expired entry counts as absent. A bare login never lapses, so the lists
+# above keep their meaning. Only the maintainer edits this file (charter,
+# "Roles and terms").
+
 # Accounts that merge their own changes on green CI (charter, section 1).
 # Their reviews never count toward a human quorum.
 automation = ["bernstein-the-conductor[bot]", "renovate[bot]", "dependabot[bot]"]

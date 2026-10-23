@@ -141,7 +141,7 @@ class TestStandaloneReceiptVerifier:
 
     def test_pass_path(self, tmp_path: Path, isolated_python: Path) -> None:
         receipt = _build_receipt(tmp_path)
-        proc = _run_verifier(isolated_python, receipt)
+        proc = _run_verifier(isolated_python, receipt, "--allow-unpinned-key")
         assert proc.returncode == 0, f"stderr={proc.stderr!r} stdout={proc.stdout!r}"
         assert "OVERALL: PASS" in proc.stdout
         assert "[PASS] cose" in proc.stdout
@@ -151,14 +151,14 @@ class TestStandaloneReceiptVerifier:
     def test_tamper_one_entry_fails_all_formats(self, tmp_path: Path, isolated_python: Path) -> None:
         receipt = _build_receipt(tmp_path)
         # Prove PASS first, then mutate exactly one underlying chain entry.
-        assert _run_verifier(isolated_python, receipt).returncode == 0
+        assert _run_verifier(isolated_python, receipt, "--allow-unpinned-key").returncode == 0
 
         data = json.loads(receipt.read_text())
         data["events"][1]["actor"] = "mallory"
         tampered = tmp_path / "tampered.json"
         tampered.write_text(json.dumps(data))
 
-        proc = _run_verifier(isolated_python, tampered)
+        proc = _run_verifier(isolated_python, tampered, "--allow-unpinned-key")
         assert proc.returncode == 1
         assert "OVERALL: FAIL" in proc.stdout
         assert "[FAIL] subject_binding" in proc.stdout

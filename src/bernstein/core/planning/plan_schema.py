@@ -273,7 +273,7 @@ _REPO_SCHEMA: dict[str, Any] = {
 
 PLAN_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://bernstein.dev/schemas/plan.json",
+    "$id": "bernstein://plan/v1",
     "title": "Bernstein Plan",
     "description": "Schema for Bernstein multi-stage project plan YAML files.",
     "type": "object",

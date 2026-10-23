@@ -48,6 +48,9 @@ class SecretFinding:
         redacted_match: Up to 60 chars around the match with the secret replaced
             by ``***``.  Raw secrets are never stored.
         description: Human-readable explanation of the finding.
+        block_merge: True when this finding must block the ``pii_scan`` gate:
+            every ``"high"`` secret, plus the regulated-data rules in
+            ``BLOCKING_PII_RULES``, whatever their severity.
     """
 
     rule: str
@@ -55,6 +58,15 @@ class SecretFinding:
     line_number: int
     redacted_match: str
     description: str
+    block_merge: bool = False
+
+
+#: PII rules that block although they are graded ``"medium"``: a US Social
+#: Security number or a payment card number in a diff is a compliance incident,
+#: not a quality note. The ``pii_scan`` gate keyed its verdict on
+#: ``severity == "high"`` alone, so both passed while a private key blocked
+#: (#6191). Email addresses and phone numbers stay warnings.
+BLOCKING_PII_RULES: frozenset[str] = frozenset({"ssn", "credit_card_number"})
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +341,7 @@ def _scan_line(
                     line_number=line_num,
                     redacted_match=redacted,
                     description=description,
+                    block_merge=severity == "high" or rule_label in BLOCKING_PII_RULES,
                 )
             )
             seen_matches.add(match_key)

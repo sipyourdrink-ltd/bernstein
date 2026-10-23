@@ -28,6 +28,7 @@ import { formatUSD } from '@/lib/format';
 import { useTheme } from './ThemeProvider';
 import { CommandPalette } from './CommandPalette';
 import { BrandMark } from './BrandMark';
+import { AuthTokenPrompt } from './AuthTokenPrompt';
 
 type GuiMeta = { version: string; commit: string; build_time: string };
 
@@ -475,6 +476,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
           </header>
+
+          {/* One prompt for a refused token, instead of a dead end per screen */}
+          <AuthTokenPrompt />
 
           {/* Page body */}
           <div className="flex-1 min-h-0 overflow-auto">{children}</div>

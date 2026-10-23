@@ -50,7 +50,7 @@ This means you can run Bernstein with **zero Claude Code dependency** - use `qwe
 | `continue` | Multi | Anthropic/OpenAI/Google | Inherited from model | $–$$$ | Full | No | Teams with existing Continue.dev configurations |
 | `opencode` | Multi | Any configured provider | Inherited from model | $–$$$ | Full | JSON (`--format json`) | No | Multi-provider setups; single CLI interface |
 | `kiro` | AWS | AWS-managed models | ★★★ | $$ | Full | No | AWS-centric teams using AWS AI services |
-| `kilo` | Stackblitz | Any (via provider routing) | Inherited from model | $–$$$ | Full | No | Web development; Stackblitz-integrated teams |
+| `kilo` | Kilo Code | Any (via provider routing) | Inherited from model | $–$$$ | Full | No | Teams already using Kilo Code |
 | `kimchi` | Open-weight / Hosted | Open-weight, Ollama, hosted | ★★★★ | $–$$$ | Full | ACP (`--mode acp`) | No | Open-weight or Ollama-hosted models; unattended runs completing on a commit |
 | `iac` | N/A | N/A (Terraform/Pulumi) | N/A | N/A | IaC plan+apply | No | Infrastructure tasks - pair with LLM adapter for codegen |
 | `generic` | Any | Pass-through | Depends on CLI | Varies | Depends on CLI | No | Unlisted CLIs; prototyping new adapters |
@@ -83,7 +83,9 @@ npm install -g @anthropic-ai/claude-code
 - `--permission-mode bypassPermissions` for autonomous execution
 - `--agents` flag for per-task subagent definitions
 - `--append-system-prompt` for orchestration context injection
-- MCP config injection from `~/.claude/mcp.json` + project overrides
+- MCP config injection from `~/.claude/mcp.json` + project overrides, passed with
+  `--strict-mcp-config` so Claude Code does not add the servers it discovers itself
+  (`claude mcp add` scopes, a repo's `.mcp.json`, plugins, connectors)
 - Stream-JSON output format for real-time parsing
 
 **Model mapping:**
@@ -107,7 +109,7 @@ npm install -g @openai/codex
 ```
 
 **Unique features:**
-- Full-auto mode (`--full-auto`)
+- Unattended mode via `--sandbox workspace-write` (or `--dangerously-bypass-approvals-and-sandbox` when the dangerous-mode strategy is declared `always-on` or host isolation is declared as `container` or `vm`)
 - JSON output with `--json`
 - Output written to a `.last-message.txt` file
 - Tier detection from API key format (`sk-proj` = Pro, `sk-` = Plus, other = Free)
@@ -180,15 +182,15 @@ npm install -g @google/gemini-cli
 
 **Best for:** Free tier users (generous free quota). Cost-effective for medium-complexity tasks. Good as a tertiary provider for rate-limit resilience.
 
-**Lane split:** the `gemini` key also resolves the `antigravity` binary; the same adapter discovers `antigravity` first on PATH and falls back to `gemini`. The `gemini`/`antigravity` keys cover the enterprise / API-key lane; consumer-lane operators should route through the separate `agy` adapter (see [agy.md](agy.md)).
+**Lane split:** the `gemini` key covers the enterprise / API-key lane; consumer-lane operators should route through the separate `agy` adapter (see [agy.md](agy.md)), which is also registered as `antigravity`.
 
 ---
 
 ### agy (Google Antigravity successor CLI)
 
 Successor CLI for the discontinued non-enterprise hosted Gemini backend. A
-separate registry entry from `gemini`/`antigravity`, which stay on the
-dual-binary enterprise / API-key lane. See [agy.md](agy.md) for the full
+separate adapter from `gemini`, which stays on the enterprise / API-key
+lane. The `antigravity` registry key is an alias of `agy`. See [agy.md](agy.md) for the full
 split and configuration knobs.
 
 ---
@@ -203,7 +205,7 @@ pipx install aider-chat
 ```
 
 **Unique features:**
-- Non-interactive mode via `--message` + `--yes`
+- Non-interactive mode via `--message` + `--yes-always`
 - Auto-commits each change (clean worktree history)
 - Larger repo map (`--map-tokens 2048`) for better codebase navigation
 - No auto-lint (orchestrator handles linting)
@@ -312,7 +314,7 @@ pip install aider-chat
 | `deepseek-v4-pro` | `deepseek-v4-pro` (vLLM tensor-parallel) |
 | `phi4` | `phi4` |
 
-**Env vars:** None required. `OLLAMA_BASE_URL` / `OLLAMA_API_BASE` (optional, default `http://localhost:11434`). For `deepseek-v4-pro`, point either env var at the vLLM `/v1` endpoint - aider/litellm treats Ollama and vLLM interchangeably over the OpenAI-compatible wire format.
+**Env vars:** None required. The adapter sets `OLLAMA_API_BASE` and `OLLAMA_HOST` for the aider child from its `base_url` constructor argument (default `http://localhost:11434`), overwriting any value in the parent environment. To reach a remote Ollama or a vLLM `/v1` endpoint (for example for `deepseek-v4-pro`), register an `OllamaAdapter(base_url=...)` instance with `register_adapter`; setting the env vars alone has no effect. aider/litellm treats Ollama and vLLM interchangeably over the OpenAI-compatible wire format.
 
 **Prerequisites:** `ollama` running locally + `aider-chat` installed + model pulled (`ollama pull qwen2.5-coder:7b`).
 
@@ -337,11 +339,11 @@ npm install -g @sourcegraph/cody
 
 ### cursor
 
-**Install:** Download from [cursor.com](https://cursor.com). The `cursor` CLI is bundled with the desktop app.
+**Install:** `curl https://cursor.com/install -fsS | bash` (macOS/Linux/WSL). The binary on PATH is `cursor-agent`.
 
 **Unique features:**
-- Session isolation via separate `--user-data-dir` per agent
-- MCP config injection via `--add-mcp`
+- Print mode driven by `cursor-agent -p` with `--trust` and `--approve-mcps`
+- MCP config injection by writing `<workdir>/.cursor/mcp.json` (there is no `--add-mcp` flag)
 - Auth via OAuth session in `~/.cursor/` (no env vars needed)
 
 **Best for:** Teams with Cursor subscriptions who want to use Cursor's model routing and built-in context features without managing API keys per agent.
@@ -352,13 +354,13 @@ npm install -g @sourcegraph/cody
 
 **Install:**
 ```bash
-curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash
-# or via Homebrew
-brew install block/tap/goose
+curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash
+# or via Homebrew (macOS)
+brew install --cask block-goose
 ```
 
 **Unique features:**
-- Session mode (`--session`) for stateful multi-turn execution
+- Headless `goose run --text` with `--no-session` and a `--max-turns` cap derived from effort
 - Provider configured via `~/.config/goose/config.yaml`
 - Supports extensions/plugins via goose's built-in extension system
 
@@ -393,7 +395,7 @@ pip install 'bernstein[openai]'
 
 **Install:**
 ```bash
-npm install -g @continuedev/continue
+npm install -g @continuedev/cli
 ```
 
 **Unique features:**
@@ -442,20 +444,24 @@ npm install -g opencode-ai
 
 ---
 
-### kilo (Stackblitz)
+### kilo (Kilo Code)
 
 **Install:**
 ```bash
-npm install -g kilocode
+npm install -g @kilocode/cli
 ```
+
+(The `kilocode` package on npm is an empty placeholder with no binary.)
+
+**Invocation:** `kilo run --model <provider/model> --auto -- '<prompt>'`.
 
 **Unique features:**
 - ACP/MCP protocol support
-- MCP config injection via `--mcp` flag
-- Auto-approve mode (`--yes`)
-- Provider routing via Stackblitz's model infrastructure
+- MCP servers come from Kilo's own configuration (`kilo mcp`); `kilo run` has no flag that takes them, so servers passed for a task are logged as not delivered
+- Auto-approve mode (`--auto`)
+- Provider routing through the providers configured in Kilo
 
-**Best for:** Web development workflows and Stackblitz-integrated teams. Kilo's ACP support means it can participate in Bernstein's agent-to-agent communication protocols.
+**Best for:** Teams already using Kilo Code. Kilo's ACP support means it can participate in Bernstein's agent-to-agent communication protocols.
 
 ---
 
@@ -481,21 +487,9 @@ npm install -g kilocode
 
 ---
 
-### cloudflare (Cloudflare Agents SDK)
+### cloudflare (removed)
 
-**Install:**
-```bash
-npm install -g wrangler
-wrangler login
-```
-
-**Unique features:**
-- Spawns agents via `npx wrangler dev` with Cloudflare Workers
-- Task prompt, model, and session passed as Worker `--var` flags
-- Environment filtered to Cloudflare-specific keys only (credential isolation)
-- Requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
-
-**Best for:** Teams running agent infrastructure on Cloudflare Workers. Development and testing with wrangler dev server.
+The Cloudflare Agents SDK adapter (registry key `cloudflare`) was removed: it refused every spawn and had no working invocation path. Configuring `cli: cloudflare` now fails with an error that points to the supported path below. See [Cloudflare adapters](../cloudflare/cloudflare-adapters.md).
 
 ---
 
@@ -585,7 +579,7 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 **Install:** `npm install -g @augmentcode/auggie`
 
-**Env vars:** `AUGMENT_API_KEY`, `AUGMENT_TOKEN`.
+**Env vars:** `AUGMENT_SESSION_AUTH` (the JSON `auggie login` writes to `~/.augment/session.json`), or `AUGMENT_API_TOKEN` with `AUGMENT_API_URL`. Spawned with `--print`, so a missing login fails at once instead of waiting for a terminal.
 
 **Best for:** Monorepos using Augment's context engine for repo-scale retrieval.
 
@@ -593,7 +587,13 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 ### kimi (Moonshot)
 
-**Install:** `uv tool install kimi-cli`
+**Install:** `uv tool install kimi-cli==1.51.0`
+
+kimi-cli is archived upstream. Its final release, 1.52.0, no longer runs the
+agent: `kimi --yolo -c <prompt>` prints a deprecation notice and exits 0, so a
+worker on 1.52.0 does nothing and reports success. Pin 1.51.0, the last
+release that runs. Moonshot's successor is Kimi Code CLI, which this adapter
+does not drive yet (#6264).
 
 **Env vars:** `KIMI_API_KEY`, `MOONSHOT_API_KEY`.
 
@@ -739,7 +739,7 @@ Note what that means for containment. Bernstein gives each task its own worktree
 
 **Env vars:** `LETTA_API_KEY`, `LETTA_BASE_URL`, plus `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` for the underlying model.
 
-**Invocation:** `letta --yolo -p '<prompt>'`. The `-p` flag is the documented one-off prompt mode; `--yolo` bypasses most permission prompts.
+**Invocation:** `letta --output-format stream-json --permission-mode unrestricted -p '<prompt>' --new-agent --conversation <id>`. The `-p` flag is the documented one-off prompt mode; `--permission-mode unrestricted` is passed on every spawn because the adapter declares its dangerous-mode strategy as `cli-flag`.
 
 **Caveats:** Letta Code's signature feature is cross-task memory via Letta Cloud. **Bernstein wraps Letta as a leaf-node one-shot agent** - Bernstein does not coordinate Letta's memory across tasks. Cross-task memory still works in Letta's own backend; it's just opaque to Bernstein's accounting and routing.
 
@@ -853,7 +853,7 @@ JSON-RPC lifecycle events over the client transport with no text parser at all.
 "my_agent": AdapterStrategy(event_channel=EventChannel.ACP),
 ```
 
-`kilo` and `goose`, whose upstream CLIs expose ACP, ship on this channel.
+`kilo` and `kimchi` declare this channel in `STRATEGY_MATRIX`. `kimchi` is spawned through `run_acp_channel` (`--mode acp`); `kilo`'s spawn path still runs `kilo run --prompt ... --yes` without the ACP transport.
 
 **What the channel does.** The upstream CLI is spawned as an ACP subprocess
 speaking line-delimited JSON-RPC. Every inbound frame is validated at the

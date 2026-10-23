@@ -3,8 +3,8 @@
 The [feature contract](feature-contract.md) describes acceptance
 criteria as free-text steps. The `spec_assertions` module turns those
 steps into **executable assertions** (file-exists / import-resolves /
-regex-in-file / test-passes), runs them after each stage drain, and
-routes failures back as auto-fix tasks or human-review bulletins.
+regex-in-file / test-passes) and runs them against the repo,
+reporting a per-assertion pass/fail result.
 
 ## Why it exists
 
@@ -42,10 +42,10 @@ Assertions are derived from the feature contract at
 (with `.assertions`, `.unparsed`, and `.skipped_features`). The
 `acceptance_check` becomes a `test_passes` assertion; each parseable
 step becomes a `file_exists` / `import_resolves` / `regex_in_file`
-assertion. `run_assertions(assertions, repo_root)` executes them after
-every stage drain; `verify_contract()` is the top-level entry point.
-Failures post a bulletin and create an auto-fix task targeting the
-offending feature.
+assertion. `run_assertions(assertions, repo_root)` executes them (pass
+`allow_subprocess=True` for `test_passes` assertions to actually run;
+otherwise they are reported as failed); `verify_contract()` is the
+top-level entry point.
 
 You can emit the assertions as a real pytest file for CI:
 
@@ -68,7 +68,7 @@ The step grammar parsed out of `acceptance_steps`:
 
 | Step syntax | Kind | Predicate |
 |---|---|---|
-| `exists <path>` (or `file exists <path>`) | `file_exists` | path resolves to a regular file |
+| `exists <path>` (or `file exists <path>`) | `file_exists` | path, resolved relative to the repo root, exists (file or directory) |
 | `import <module>` | `import_resolves` | dotted import succeeds in the project venv |
 | `contains <path> /<regex>/` | `regex_in_file` | regex matches at least once in the file's bytes |
 | (the feature's `acceptance_check`) | `test_passes` | the command / pytest selector exits 0 |
@@ -78,11 +78,10 @@ than running.
 
 ## Configuration
 
-| Knob | Default | Controls |
-|---|--:|---|
-| `spec_assertions.enabled` | `true` | Master switch (CLI: `--no-spec-test`). |
-| `spec_assertions.run_on_drain` | `true` | Run after every stage drain. |
-| `spec_assertions.emit_pytest` | `false` | Also write pytest files to `tests/spec/`. |
+There are no user-facing configuration knobs, and the module is not
+wired into the stage-drain path or a CLI flag: callers invoke
+`verify_contract()` / `run_assertions()` directly. `run_assertions` takes
+`allow_subprocess` (default `False`) and `timeout_s` (default `30.0`).
 
 ## Limitations
 
@@ -92,12 +91,10 @@ than running.
   `acceptance_steps` / `acceptance_check`; no separate spec format.
 - The pytest emitter writes synchronous tests; async-only test suites
   need a custom runner wrap.
-- Failures attach an auto-fix task but never block merge by themselves
-  - the existing janitor + quality gates remain the merge gate.
+- Failures are only reported; they never block merge by themselves -
+  the existing janitor + quality gates remain the merge gate.
 
 ## Related
 
 - Source: `src/bernstein/core/planning/spec_assertions.py`
-- Drain hook: `src/bernstein/core/orchestration/drain.py`
-- Run flag: `src/bernstein/cli/run_cmd.py`
 - PR #1003

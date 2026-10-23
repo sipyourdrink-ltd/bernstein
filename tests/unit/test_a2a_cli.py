@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -223,7 +224,15 @@ def test_publish_writes_verifiable_records(runner: CliRunner, tmp_path: Path) ->
 
     result = runner.invoke(
         a2a_group,
-        ["publish", "--endpoint", "https://node.example/a2a", "--output-dir", str(out_dir)],
+        [
+            "publish",
+            "--endpoint",
+            "https://node.example/a2a",
+            "--card",
+            str(tmp_path / "published-card.json"),
+            "--output-dir",
+            str(out_dir),
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -243,6 +252,8 @@ def test_publish_can_target_a_single_surface(runner: CliRunner, tmp_path: Path) 
             "publish",
             "--endpoint",
             "https://node.example/a2a",
+            "--card",
+            str(tmp_path / "published-card.json"),
             "--output-dir",
             str(out_dir),
             "--surface",
@@ -285,6 +296,224 @@ def test_publish_output_is_deterministic(runner: CliRunner, tmp_path: Path) -> N
         assert (first_dir / f"{surface}.json").read_text(encoding="utf-8") == (
             second_dir / f"{surface}.json"
         ).read_text(encoding="utf-8")
+
+
+def test_publish_reissues_an_expired_persisted_card(runner: CliRunner, tmp_path: Path) -> None:
+    from bernstein.core.interop.a2a_card import (
+        DEFAULT_CARD_TTL_SECONDS,
+        SignedCapabilityCard,
+        card_public_key_fingerprint,
+        issue_capability_card,
+        resolve_advertised_card_policies,
+        verify_capability_card,
+    )
+
+    card_path = tmp_path / "published-card.json"
+    key_path = card_path.with_suffix(card_path.suffix + ".key.pem")
+
+    signed, private_key_pem = issue_capability_card(
+        issuer="bernstein",
+        name="bernstein",
+        description="stale node",
+        advertised_tools=["task_orchestration"],
+        policies=resolve_advertised_card_policies(),
+        now=time.time() - 2 * DEFAULT_CARD_TTL_SECONDS,
+    )
+    assert signed.card.is_expired()
+    card_path.write_text(signed.to_json(), encoding="utf-8")
+    key_path.write_bytes(private_key_pem)
+    card_path.chmod(0o640)
+
+    args = ["publish", "--endpoint", "https://node.example/a2a", "--card", str(card_path)]
+    result = runner.invoke(a2a_group, [*args, "--output-dir", str(tmp_path / "publish")])
+
+    assert result.exit_code == 0, result.output
+    record = json.loads((tmp_path / "publish" / "a2a-card.json").read_text(encoding="utf-8"))
+    fingerprint = card_public_key_fingerprint(signed.card.public_key_pem)
+    assert record["publisher"]["fingerprint"] == f"ed25519/{fingerprint}"
+    reissued = SignedCapabilityCard.from_dict(record["capabilityCard"])
+    assert verify_capability_card(reissued, check_expiry=True)
+    assert reissued.card.issuer == signed.card.issuer
+    assert reissued.card.name == signed.card.name
+    assert reissued.card.description == signed.card.description
+    assert reissued.card.advertised_tools == signed.card.advertised_tools
+    assert reissued.card.policies == signed.card.policies
+    assert key_path.read_bytes() == private_key_pem
+    assert card_path.stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.parametrize(
+    ("key_setup", "refusal"),
+    [
+        pytest.param(None, "no key file beside it", id="missing-key"),
+        pytest.param("mismatched", "does not match the expired card", id="mismatched-key"),
+    ],
+)
+def test_publish_refuses_an_expired_card_without_a_usable_key(
+    runner: CliRunner, tmp_path: Path, key_setup: str | None, refusal: str
+) -> None:
+    from bernstein.core.interop.a2a_card import (
+        DEFAULT_CARD_TTL_SECONDS,
+        issue_capability_card,
+        resolve_advertised_card_policies,
+    )
+
+    card_path = tmp_path / "published-card.json"
+    key_path = card_path.with_suffix(card_path.suffix + ".key.pem")
+    signed, _original_key = issue_capability_card(
+        issuer="bernstein",
+        name="bernstein",
+        description="stale node",
+        advertised_tools=["task_orchestration"],
+        policies=resolve_advertised_card_policies(),
+        now=time.time() - 2 * DEFAULT_CARD_TTL_SECONDS,
+    )
+    card_path.write_text(signed.to_json(), encoding="utf-8")
+    if key_setup == "mismatched":
+        _other_card, other_key = issue_capability_card(
+            issuer="other",
+            name="other",
+            description="unrelated",
+            advertised_tools=["code_review"],
+            policies=resolve_advertised_card_policies(),
+        )
+        key_path.write_bytes(other_key)
+    before = card_path.read_text(encoding="utf-8")
+
+    result = runner.invoke(
+        a2a_group,
+        [
+            "publish",
+            "--endpoint",
+            "https://node.example/a2a",
+            "--card",
+            str(card_path),
+            "--output-dir",
+            str(tmp_path / "publish"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert refusal in result.output
+    assert card_path.read_text(encoding="utf-8") == before
+
+
+def test_publish_refuses_to_reissue_a_tampered_expired_card(runner: CliRunner, tmp_path: Path) -> None:
+    from bernstein.core.interop.a2a_card import (
+        DEFAULT_CARD_TTL_SECONDS,
+        issue_capability_card,
+        resolve_advertised_card_policies,
+    )
+
+    card_path = tmp_path / "published-card.json"
+    key_path = card_path.with_suffix(card_path.suffix + ".key.pem")
+    signed, private_key_pem = issue_capability_card(
+        issuer="bernstein",
+        name="bernstein",
+        description="stale node",
+        advertised_tools=["task_orchestration"],
+        policies=resolve_advertised_card_policies(),
+        now=time.time() - 2 * DEFAULT_CARD_TTL_SECONDS,
+    )
+    card_path.write_text(signed.to_json(), encoding="utf-8")
+    key_path.write_bytes(private_key_pem)
+    body = json.loads(signed.to_json())
+    body["card"]["advertised_tools"] = ["task_orchestration", "code_review"]
+    tampered = json.dumps(body, indent=2, sort_keys=True)
+    card_path.write_text(tampered, encoding="utf-8")
+
+    result = runner.invoke(
+        a2a_group,
+        [
+            "publish",
+            "--endpoint",
+            "https://node.example/a2a",
+            "--card",
+            str(card_path),
+            "--output-dir",
+            str(tmp_path / "publish"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "does not verify" in result.output
+    assert "refusing to re-sign" in result.output
+    assert card_path.read_text(encoding="utf-8") == tampered
+
+
+def test_publish_first_mint_reuses_an_orphaned_key(runner: CliRunner, tmp_path: Path) -> None:
+    from bernstein.core.interop.a2a_card import (
+        card_public_key_fingerprint,
+        issue_capability_card,
+        resolve_advertised_card_policies,
+    )
+
+    card_path = tmp_path / "published-card.json"
+    key_path = card_path.with_suffix(card_path.suffix + ".key.pem")
+    _seed_card, orphan_key = issue_capability_card(
+        issuer="gone",
+        name="gone",
+        description="card deleted, key kept",
+        advertised_tools=["task_orchestration"],
+        policies=resolve_advertised_card_policies(),
+    )
+    key_path.write_bytes(orphan_key)
+
+    result = runner.invoke(
+        a2a_group,
+        [
+            "publish",
+            "--endpoint",
+            "https://node.example/a2a",
+            "--card",
+            str(card_path),
+            "--output-dir",
+            str(tmp_path / "publish"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    record = json.loads((tmp_path / "publish" / "a2a-card.json").read_text(encoding="utf-8"))
+    assert record["publisher"]["fingerprint"] == (
+        f"ed25519/{card_public_key_fingerprint(_seed_card.card.public_key_pem)}"
+    )
+    assert key_path.read_bytes() == orphan_key
+    assert card_path.stat().st_mode & 0o777 == 0o644
+
+
+def test_publish_reuses_a_never_expiring_card(runner: CliRunner, tmp_path: Path) -> None:
+    from bernstein.core.interop.a2a_card import issue_capability_card, resolve_advertised_card_policies
+
+    card_path = tmp_path / "published-card.json"
+    key_path = card_path.with_suffix(card_path.suffix + ".key.pem")
+    signed, private_key_pem = issue_capability_card(
+        issuer="bernstein",
+        name="bernstein",
+        description="forever node",
+        advertised_tools=["task_orchestration"],
+        policies=resolve_advertised_card_policies(),
+        ttl_seconds=0,
+    )
+    assert not signed.card.is_expired()
+    card_path.write_text(signed.to_json(), encoding="utf-8")
+    key_path.write_bytes(private_key_pem)
+    before = card_path.read_text(encoding="utf-8")
+
+    result = runner.invoke(
+        a2a_group,
+        [
+            "publish",
+            "--endpoint",
+            "https://node.example/a2a",
+            "--card",
+            str(card_path),
+            "--output-dir",
+            str(tmp_path / "publish"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert card_path.read_text(encoding="utf-8") == before
 
 
 def test_publish_agntcy_ads_writes_a_verifiable_record(runner: CliRunner, tmp_path: Path) -> None:

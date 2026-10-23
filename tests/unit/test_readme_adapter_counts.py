@@ -13,6 +13,16 @@ count fails here instead of shipping as a claim the code cannot back.
 When the count legitimately changes, update the README sentence and these
 tests will pass again.
 
+Lower bounds elsewhere
+----------------------
+The README header, its at-a-glance bullet and the MkDocs Home page
+(``docs/index.md``: its front-matter ``description`` and the "Any agent, any
+model" feature bullet) restate the adapter count as floors - "50+ more",
+"More than 50" - so adding an adapter never makes them false. They are
+checked only for overreach: a floor raised above what the registry backs
+fails here. ``docs/index.md``'s two floors used to go unchecked entirely
+(#6060, #6167 review).
+
 Translated pages
 ----------------
 The same numbers are repeated on all 23 pages under ``docs/i18n/``, and
@@ -61,6 +71,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 README = REPO_ROOT / "README.md"
 ADAPTER_INDEX = REPO_ROOT / "docs" / "adapters" / "index.md"
 I18N_DIR = REPO_ROOT / "docs" / "i18n"
+
+#: The MkDocs Home page. Its front-matter ``description`` (the page's SEO meta
+#: text) and its "Any agent, any model" feature bullet both restate the
+#: adapter count, as floors.
+DOCS_INDEX = REPO_ROOT / "docs" / "index.md"
 
 #: Translated front pages, sorted so parametrised ids are stable. Globbed
 #: rather than listed, so a new language is covered the moment its file lands.
@@ -164,6 +179,52 @@ def test_readme_selectable_adapter_count_matches_the_registry() -> None:
     from bernstein.adapters.registry import selectable_adapter_names
 
     assert _claimed(_SELECTABLE_CLAIM_RE) == len(selectable_adapter_names())
+
+
+def test_readme_lower_bound_claims_do_not_overtake_the_registry() -> None:
+    """The header and at-a-glance bullet state floors, never exact counts.
+
+    Exact counts live in the supported-agents paragraph, where the tests above
+    own them. Elsewhere the README says "and 50+ more" and "More than 50
+    selectable CLI agent adapters", which stay true as adapters are added; this
+    fails only when a floor is raised above what the registry can back.
+    """
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    text = README.read_text(encoding="utf-8")
+    selectable = len(selectable_adapter_names())
+
+    more = re.findall(r"Gemini CLI, and (\d+)\+ more", text)
+    assert len(more) == 1, f"expected exactly one 'and N+ more' header claim, got {more}"
+    # Three agents are named before the floor.
+    assert 3 + int(more[0]) <= selectable
+
+    more_than = re.findall(r"More than (\d+) selectable CLI agent adapters", text)
+    assert len(more_than) == 1, f"expected exactly one 'More than N selectable' claim, got {more_than}"
+    assert int(more_than[0]) < selectable
+
+
+def test_docs_index_lower_bound_claims_do_not_overtake_the_registry() -> None:
+    """The MkDocs Home page states the same floors, checked the same way.
+
+    ``docs/index.md`` restates the README header's "and N+ more" in its
+    front-matter ``description`` and carries its own "N+ CLI adapters" feature
+    bullet. Nothing checked either, so the site's front page could promise
+    more adapters than the registry selects (#6060, #6167 review).
+    """
+    from bernstein.adapters.registry import selectable_adapter_names
+
+    text = DOCS_INDEX.read_text(encoding="utf-8")
+    selectable = len(selectable_adapter_names())
+
+    more = re.findall(r"Gemini CLI, and (\d+)\+ more", text)
+    assert len(more) == 1, f"expected exactly one 'and N+ more' description claim, got {more}"
+    # Three agents are named before the floor.
+    assert 3 + int(more[0]) <= selectable
+
+    adapters = re.findall(r"(\d+)\+ CLI adapters:", text)
+    assert len(adapters) == 1, f"expected exactly one 'N+ CLI adapters:' feature claim, got {adapters}"
+    assert int(adapters[0]) <= selectable
 
 
 def test_install_matrix_is_a_subset_claim_not_a_full_one() -> None:

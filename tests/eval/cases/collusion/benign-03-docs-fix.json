@@ -1,0 +1,20 @@
+{
+  "id": "benign-03-docs-fix",
+  "type": "benign",
+  "invariant": null,
+  "description": "Task A updates docs, Task B fixes a bug",
+  "task_a": {
+    "id": "task-a",
+    "writes": {
+      "docs/api.md": "# API Reference\n\n## add(a, b)\nReturns a + b.\n"
+    },
+    "reads": []
+  },
+  "task_b": {
+    "id": "task-b",
+    "writes": {
+      "src/calc.py": "def add(a, b):\n    return a + b  # Fixed integer overflow\n"
+    },
+    "reads": []
+  }
+}

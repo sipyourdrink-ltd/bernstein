@@ -19,6 +19,7 @@ import pytest
 from bernstein.eval.incident_synthesizer import (
     CIFailurePostmortem,
     IncidentSynthesizer,
+    incident_cases_dir,
 )
 
 if TYPE_CHECKING:
@@ -161,7 +162,7 @@ class TestSyncIngestsCiPostmortems:
         assert case.source_incident == "ci-postmortem:100:deadbeefcafe1234"
         assert case.severity == "P1"
 
-        cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        cases_dir = incident_cases_dir(tmp_path)
         files = list(cases_dir.glob("inc-*.yaml"))
         assert len(files) == 1
         body = files[0].read_text(encoding="utf-8")

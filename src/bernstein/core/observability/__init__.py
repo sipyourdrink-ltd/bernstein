@@ -20,6 +20,45 @@ explicitly and add it to ``__all__`` below.
 
 from __future__ import annotations
 
+from bernstein.core.observability.hosted_inference_ingest import (
+    ATTR_CERTIFIED_ROLES,
+    ATTR_COMPLETION_TOKENS,
+    ATTR_ENDPOINT_BASE_URL,
+    ATTR_ENDPOINT_FINGERPRINT,
+    ATTR_MODEL,
+    ATTR_OPERATION,
+    ATTR_PRINCIPAL_ID,
+    ATTR_PROMPT_TOKENS,
+    ATTR_REQUEST_DIGEST,
+    ATTR_RESPONSE_DIGEST,
+    ATTR_ROLE_CERTIFIED,
+    ATTR_TOTAL_TOKENS,
+    GenAIActivity,
+    HostedInferenceIngestAdapter,
+    HostedInferenceIngestError,
+    HostedInferencePayload,
+    IngestCallResult,
+    ingest_payload,
+)
+
 __all__: list[str] = [
+    "ATTR_CERTIFIED_ROLES",
+    "ATTR_COMPLETION_TOKENS",
+    "ATTR_ENDPOINT_BASE_URL",
+    "ATTR_ENDPOINT_FINGERPRINT",
+    "ATTR_MODEL",
+    "ATTR_OPERATION",
+    "ATTR_PRINCIPAL_ID",
+    "ATTR_PROMPT_TOKENS",
+    "ATTR_REQUEST_DIGEST",
+    "ATTR_RESPONSE_DIGEST",
+    "ATTR_ROLE_CERTIFIED",
+    "ATTR_TOTAL_TOKENS",
+    "GenAIActivity",
+    "HostedInferenceIngestAdapter",
+    "HostedInferenceIngestError",
+    "HostedInferencePayload",
+    "IngestCallResult",
+    "ingest_payload",
     "otlp_ingest",
 ]

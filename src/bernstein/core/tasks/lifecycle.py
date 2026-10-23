@@ -165,6 +165,7 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.CLAIMED, TaskStatus.CANCELLED): _always,
     (TaskStatus.CLAIMED, TaskStatus.WAITING_FOR_SUBTASKS): _always,  # agent splits work
     (TaskStatus.CLAIMED, TaskStatus.BLOCKED): _always,
+    (TaskStatus.CLAIMED, TaskStatus.SUSPENDED): _always,
     # Work progression from IN_PROGRESS
     (TaskStatus.IN_PROGRESS, TaskStatus.DONE): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.FAILED): _always,
@@ -173,6 +174,14 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.IN_PROGRESS, TaskStatus.OPEN): _always,  # force-claim / requeue
     (TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.ORPHANED): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.SUSPENDED): _always,
+    # Cooperative mailbox rendezvous restores the exact state that entered
+    # suspension; the live worker/session remains allocated throughout.
+    (TaskStatus.SUSPENDED, TaskStatus.CLAIMED): _always,
+    (TaskStatus.SUSPENDED, TaskStatus.IN_PROGRESS): _always,
+    # Operator escape hatch when a cooperative waiter cannot be recovered by
+    # its live request (for example process loss during cleanup).
+    (TaskStatus.SUSPENDED, TaskStatus.CANCELLED): _always,
     # Recovery from orphaned
     (TaskStatus.ORPHANED, TaskStatus.DONE): _always,
     (TaskStatus.ORPHANED, TaskStatus.FAILED): _always,

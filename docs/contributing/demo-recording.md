@@ -27,10 +27,12 @@ Run it from anywhere inside the checkout. It:
 1. mints a fresh Ed25519 keypair (the private key lives in a temp dir
    wiped at exit; only the public key is published);
 2. records a real `bernstein demo` orchestration under asciinema with
-   `BERNSTEIN_AUDIT=1` and receipt signing configured, so the run being
-   filmed is the run that signs the receipt;
-3. copies that run's `run-receipt.json` out of the demo project (the
-   `.sdd/` path it lands in is never committable);
+   `BERNSTEIN_AUDIT=1` and receipt signing configured (a take that does
+   not fully succeed is discarded and re-recorded, up to three attempts);
+3. builds the receipt for that exact run with `bernstein verify run`,
+   signed with the minted key, from the journal the run left in the demo
+   project (the `.sdd/` path it lives in is never committable), and checks
+   the staged receipt and key verify before publishing them together;
 4. records the offline verification of the just-published receipt as
    the closing segment, so the frame the gif loop rests on is the
    proof;

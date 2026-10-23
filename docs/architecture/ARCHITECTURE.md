@@ -42,6 +42,65 @@ graph TD
     WT1 & WT2 & WT3 --> QG --> Janitor --> Git
 ```
 
+## Governance and evidence view
+
+The diagram above follows one coding task. This one shows where governance decisions are made and where the record of a run ends up. Every store in the evidence group is hash-chained or content-addressed, so the offline verifier checks it without a running server.
+
+```mermaid
+flowchart TD
+    operator(("Operator"))
+
+    subgraph surfaces["Operator surfaces"]
+        cli["bernstein CLI<br/>cli/main.py"]
+        web["Web dashboard<br/>web/src/App.tsx"]
+        sdk["Python SDK<br/>sdk/python/bernstein_sdk"]
+        jira["Jira webhook<br/>integrations/jira_webhook"]
+    end
+
+    subgraph execution["Run execution"]
+        server["Task server<br/>core/server/"]
+        sched["Deterministic scheduler<br/>orchestration/tick_pipeline.py"]
+        tracker["Tracker handoffs<br/>orchestration/tracker_pipeline.py"]
+        adapters["Agent adapters<br/>adapters/"]
+    end
+
+    subgraph governance["Governance"]
+        policy["Policy engine<br/>security/policy_engine.py"]
+        admission["Admission control<br/>core/admission/"]
+        gates["Quality gates<br/>quality/quality_gates.py"]
+    end
+
+    subgraph evidence["Evidence"]
+        audit[("HMAC audit chain<br/>security/audit_chain.py")]
+        ledger[("Work ledger<br/>persistence/work_ledger.py")]
+        lineage[("Lineage receipts<br/>core/lineage/")]
+        datasrc["Content-hashed queries<br/>datasources/engine.py"]
+        compliance["Compliance evidence<br/>compliance/"]
+    end
+
+    verify["Offline verifier<br/>verify_cli/bernstein_verify"]
+
+    operator --> cli & web
+    cli & web -->|task API| server
+    sdk & jira -->|task API| server
+    server --> sched
+    sched -->|claim, comment, transition| tracker
+    sched -->|spawn| adapters
+    policy -.->|allow / ask / deny| sched
+    admission -->|lease grants| sched
+    adapters -->|output| gates
+    gates -->|pass / fail| sched
+    sched -->|every decision| audit
+    sched -->|task graph transitions| ledger
+    sched -->|artifact provenance| lineage
+    admission -.->|mirrored rows| audit
+    datasrc -->|result hash| lineage
+    compliance -.->|reads| audit & lineage
+    audit & ledger & lineage --> verify
+```
+
+Paths are relative to `src/bernstein/` unless they start with a top-level directory.
+
 ---
 
 ## Why file-based state
@@ -59,14 +118,14 @@ Runtime state (`.sdd/runtime/`) is ephemeral - PIDs, logs, signals. Never commit
 
 ## Package structure
 
-Since v1.6, `core/` is organized into sub-packages (63 at time of writing) rather than flat files. The old flat module paths (`bernstein.core.server`, `bernstein.core.orchestrator`, `bernstein.core.spawner`, ...) no longer exist as files. They keep importing anyway: `core/__init__.py` registers a custom module finder on `sys.meta_path` whose `_REDIRECT_MAP` maps each old module name to its new sub-package location and imports the real module on demand. Import paths stay stable, and each subsystem can grow independently.
+Since v1.6, `core/` is organized into sub-packages (68 at time of writing) rather than flat files. The old flat module paths (`bernstein.core.server`, `bernstein.core.orchestrator`, `bernstein.core.spawner`, ...) no longer exist as files. They keep importing anyway: `core/__init__.py` registers a custom module finder on `sys.meta_path` whose `_REDIRECT_MAP` maps each old module name to its new sub-package location and imports the real module on demand. Import paths stay stable, and each subsystem can grow independently.
 
 The table below is a selection of the most load-bearing sub-packages, not the full list:
 
 | Sub-package | Responsibility |
 |-------------|----------------|
 | `core/agents/` | Spawner, agent lifecycle, heartbeat, signals, discovery, turn state |
-| `core/communication/` | Bulletin board, notifications, desktop notify, scratchpad |
+| `core/communication/` | Bulletin board, notifications, signals, task mailbox, voting, whiteboard |
 | `core/config/` | Seed parsing, config validation, hot reload, migration |
 | `core/cost/` | Cost tracking, anomaly detection, budgets, forecasting |
 | `core/evidence/` | Content-addressed evidence bundles, completion gate, output diff |
@@ -75,7 +134,7 @@ The table below is a selection of the most load-bearing sub-packages, not the fu
 | `core/identity/` | Install-rev identity fingerprint, delegation grants, HTTP signing, SPIFFE |
 | `core/knowledge/` | Knowledge base, lessons, RAG, semantic cache, embeddings |
 | `core/lineage/` | Lineage spine (Merkle+HMAC), signed-write path (Ed25519), lineage CI gate |
-| `core/memory/` | SQLite-backed memory store |
+| `core/memory/` | SQLite-backed memory plus append-only MemoryChain provenance |
 | `core/observability/` | Metrics, circuit breaker, loop detector, log redact, telemetry |
 | `core/orchestration/` | Orchestrator, tick pipeline, manager, evolution, preflight |
 | `core/persistence/` | Task store, session, file locks, WAL, store backends |
@@ -324,13 +383,12 @@ Two first-party surfaces sit on top of the REST API. The Textual TUI (`src/berns
 
 Bernstein can execute agents on Cloudflare's edge infrastructure in addition to local processes. The integration provides:
 
-- **RuntimeBridge** (`bridges/cloudflare.py`) - spawn agents on Workers + Durable Objects
-- **WorkflowBridge** (`bridges/cloudflare_workflow.py`) - durable multi-step workflows with auto-retry and approval gates
+- **CloudflareBridge** (`bridges/cloudflare.py`) - spawn agents on Workers + Durable Objects
+- **CloudflareWorkflowBridge** (`bridges/cloudflare_workflow.py`) - durable multi-step workflows with auto-retry and approval gates
 - **BrowserRenderingBridge** (`bridges/browser_rendering.py`) - headless web browsing for agents
 - **R2WorkspaceSync** (`bridges/r2_sync.py`) - content-addressed workspace file sync via R2
-- **WorkersAIProvider** (`core/routing/cloudflare_ai.py`) - free-tier LLM models for planning
 
-The cloud bridges implement the same `RuntimeBridge` interface as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](../cloudflare/cloudflare-overview.md) for architecture diagrams and setup instructions.
+The cloud bridges implement the same `RuntimeBridge` interface (`bridges/base.py`) as local execution, so the orchestrator remains agnostic to where agents run. See the [Cloudflare Overview](../cloudflare/cloudflare-overview.md) for architecture diagrams and setup instructions.
 
 ---
 

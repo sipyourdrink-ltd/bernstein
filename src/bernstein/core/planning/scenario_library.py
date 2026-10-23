@@ -2,15 +2,40 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from importlib import resources
+from pathlib import Path
+from typing import Any, cast
 
 import yaml
 
 from bernstein.core.tasks.artifacts import ArtifactSpec
 
-if TYPE_CHECKING:
-    from pathlib import Path
+logger = logging.getLogger(__name__)
+
+#: Where the wheel carries the packaged scenarios (``pyproject.toml``
+#: force-include ``templates/scenarios``), relative to the ``bernstein`` package.
+PACKAGED_SCENARIOS_RELPATH = ("_default_templates", "scenarios")
+
+
+def packaged_scenarios_dir() -> Path:
+    """Directory holding the scenarios that ship with Bernstein.
+
+    An installed wheel carries them inside the package; a source checkout keeps
+    them in the repository's ``templates/scenarios``. The path used to be
+    computed only for the checkout (walking up from this file), so on a pip
+    install it pointed outside the package, the loader skipped it, and
+    ``bernstein scenario list`` showed nothing.
+    """
+    bundled = resources.files("bernstein").joinpath(*PACKAGED_SCENARIOS_RELPATH)
+    if isinstance(bundled, Path) and bundled.is_dir():
+        return bundled
+    checkout = Path(__file__).resolve().parents[4] / "templates" / "scenarios"
+    if checkout.is_dir():
+        return checkout
+    logger.warning("Packaged scenarios not found (looked in %s and %s)", bundled, checkout)
+    return checkout
 
 
 @dataclass(frozen=True)
@@ -146,7 +171,7 @@ def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
             artifact_spec = ArtifactSpec()
         else:
             try:
-                artifact_spec = ArtifactSpec.from_dict(artifact_spec_raw)
+                artifact_spec = ArtifactSpec.from_dict(cast("dict[str, Any]", artifact_spec_raw))
             except (KeyError, TypeError, ValueError):
                 # Invalid artifact spec falls back to default (code_diff)
                 artifact_spec = ArtifactSpec()

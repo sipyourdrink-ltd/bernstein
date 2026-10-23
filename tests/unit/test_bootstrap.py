@@ -347,6 +347,16 @@ def test_bootstrap_from_seed_timeout_message_derives_from_ready_constant(
     assert "10.0s" not in printed[0], f"rendered message {printed[0]!r} still has the stale literal"
 
 
+def _autowrite_seed(workdir: Path) -> None:
+    """Stand-in for ``auto_write_bernstein_yaml`` that leaves the seed the real one writes.
+
+    The no-adapter pre-flight (#6126) runs right after that step and relies on the
+    seed being there, so a stub that writes nothing would exercise a state the real
+    function never produces.
+    """
+    (workdir / "bernstein.yaml").write_text("cli: auto\n")
+
+
 def test_bootstrap_from_goal_autowrites_seed_on_first_run(
     tmp_path: Path,
     invariants_module: types.ModuleType,
@@ -367,7 +377,9 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
         stack.enter_context(patch("bernstein.core.server_launch._detect_project_type", return_value="python"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.preflight_checks"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap.ensure_sdd", return_value=True))
-        mock_autowrite = stack.enter_context(patch("bernstein.core.orchestration.bootstrap.auto_write_bernstein_yaml"))
+        mock_autowrite = stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.auto_write_bernstein_yaml", side_effect=_autowrite_seed)
+        )
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._clean_stale_runtime"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._discover_catalog"))
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._build_codebase_index"))
@@ -483,7 +495,9 @@ def test_goal_readiness_error_reports_the_timeout_the_wait_actually_uses(
         stack.enter_context(patch("bernstein.core.orchestration.bootstrap._acquire_pid_lock"))
         stack.enter_context(patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery))
         stack.enter_context(patch("bernstein.core.server_launch._detect_project_type", return_value="python"))
-        stack.enter_context(patch("bernstein.core.orchestration.bootstrap.auto_write_bernstein_yaml"))
+        stack.enter_context(
+            patch("bernstein.core.orchestration.bootstrap.auto_write_bernstein_yaml", side_effect=_autowrite_seed)
+        )
         stack.enter_context(_patched_timeout(47.5))
         with pytest.raises(SystemExit):
             bootstrap_from_goal("Ship the parser", tmp_path, port=8123, cli="auto")

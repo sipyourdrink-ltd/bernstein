@@ -1,0 +1,13 @@
+{
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "result": {
+      "ok": true,
+      "echoed_at": "2026-09-27T10:00:00Z"
+    }
+  },
+  "effect_digest": "sha256:4a5e6eb79bbaebbaf19c4bfa938bada5c42d1f24443ac76762fc7c1f9bac25af",
+  "patch": "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
+  "patch_effect_digest": "sha256:ac5508cfa1aac007fba6c6899cb381133ac3f9628c1de1b71bd62dbe9cceabce"
+}

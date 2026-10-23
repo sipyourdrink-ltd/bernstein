@@ -1,0 +1,24 @@
+# Contract for the Pi coding agent CLI (adapter: pi).
+#
+# Always-passed flags from src/bernstein/adapters/pi.py. `--model` is passed
+# only when a model other than `auto` is selected, so it is left to the unit
+# suite (tests/unit/test_adapter_pi.py). `--no-extensions` keeps the
+# operator's own pi extensions (and the MCP servers they add) out of a
+# spawned agent (#5965); a pi release that drops it must fail here.
+adapter: pi
+binary: pi
+install:
+  method: npm
+  spec: "@mariozechner/pi-coding-agent@latest"
+auth:
+  # ``pi --help`` works without authentication.
+  required_for_help: false
+  required_for_models: false
+  secret_env:
+  basis: api_key
+required_flags:
+  - "--no-extensions"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

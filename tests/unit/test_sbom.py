@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -254,6 +255,152 @@ def test_parse_osv_scanner_empty_string_returns_empty() -> None:
 
 def test_parse_osv_scanner_invalid_json_returns_empty() -> None:
     assert _parse_osv_scanner_output("not-json", "serial-1") == []
+
+
+# ---------------------------------------------------------------------------
+# osv-scanner severity, as the scanner and the OSV schema actually emit it
+# ---------------------------------------------------------------------------
+
+_CRITICAL_VECTOR = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"  # base score 9.8
+
+
+def _osv_output(
+    vulnerabilities: list[dict[str, object]],
+    groups: list[dict[str, object]] | None = None,
+) -> str:
+    """Wrap OSV records in the ``osv-scanner --format=json`` envelope."""
+    package: dict[str, object] = {
+        "package": {"name": "pkg", "version": "1.0.0", "ecosystem": "PyPI"},
+        "vulnerabilities": vulnerabilities,
+    }
+    if groups is not None:
+        package["groups"] = groups
+    return json.dumps({"results": [{"source": {"path": "sbom.json", "type": "sbom"}, "packages": [package]}]})
+
+
+def _ghsa(vuln_id: str, rating: str, vector: str = _CRITICAL_VECTOR) -> dict[str, object]:
+    """A GitHub advisory as OSV publishes it: CVSS vectors in ``severity``, its rating as a string."""
+    return {
+        "id": vuln_id,
+        "severity": [{"type": "CVSS_V3", "score": vector}],
+        "database_specific": {"severity": rating, "github_reviewed": True},
+    }
+
+
+def _scan_result(stdout: str) -> SBOMScanResult:
+    return SBOMScanResult(
+        sbom_serial="serial-1",
+        scanned_at=0.0,
+        scanner="osv-scanner",
+        findings=_parse_osv_scanner_output(stdout, "serial-1"),
+    )
+
+
+class TestOsvScannerSeverity:
+    """A critical advisory reported by osv-scanner must reach the gate as critical."""
+
+    def test_a_critical_github_advisory_blocks_the_default_gate(self) -> None:
+        result = _scan_result(_osv_output([_ghsa("GHSA-aaaa-bbbb-cccc", "CRITICAL")]))
+
+        assert [f.severity for f in result.findings] == [SBOMVulnSeverity.CRITICAL]
+        assert not SBOMVulnerabilityGate().passes(result)
+
+    @pytest.mark.parametrize(
+        ("rating", "expected"),
+        [
+            ("CRITICAL", SBOMVulnSeverity.CRITICAL),
+            ("HIGH", SBOMVulnSeverity.HIGH),
+            ("MODERATE", SBOMVulnSeverity.MEDIUM),
+            ("LOW", SBOMVulnSeverity.LOW),
+        ],
+    )
+    def test_github_advisory_ratings(self, rating: str, expected: SBOMVulnSeverity) -> None:
+        findings = _parse_osv_scanner_output(_osv_output([_ghsa("GHSA-aaaa-bbbb-cccc", rating)]), "serial-1")
+
+        assert [f.severity for f in findings] == [expected]
+
+    def test_the_scanner_group_score_rates_a_record_without_an_advisory_rating(self) -> None:
+        pysec: dict[str, object] = {
+            "id": "PYSEC-2099-1",
+            "aliases": ["CVE-2099-1"],
+            "severity": [{"type": "CVSS_V3", "score": _CRITICAL_VECTOR}],
+        }
+        stdout = _osv_output([pysec], groups=[{"ids": ["CVE-2099-1", "PYSEC-2099-1"], "max_severity": "9.8"}])
+        result = _scan_result(stdout)
+
+        assert [f.severity for f in result.findings] == [SBOMVulnSeverity.CRITICAL]
+        assert not SBOMVulnerabilityGate().passes(result)
+
+    def test_the_higher_of_group_score_and_advisory_rating_wins(self) -> None:
+        stdout = _osv_output(
+            [_ghsa("GHSA-low-rated", "LOW"), _ghsa("GHSA-crit-rated", "CRITICAL")],
+            groups=[
+                {"ids": ["GHSA-low-rated"], "max_severity": "9.1"},
+                {"ids": ["GHSA-crit-rated"], "max_severity": "7.5"},
+            ],
+        )
+        findings = _parse_osv_scanner_output(stdout, "serial-1")
+
+        assert {f.vuln_id: f.severity for f in findings} == {
+            "GHSA-low-rated": SBOMVulnSeverity.CRITICAL,
+            "GHSA-crit-rated": SBOMVulnSeverity.CRITICAL,
+        }
+
+    @pytest.mark.parametrize(
+        ("score", "expected"),
+        [
+            ("10.0", SBOMVulnSeverity.CRITICAL),
+            ("9.0", SBOMVulnSeverity.CRITICAL),
+            ("8.9", SBOMVulnSeverity.HIGH),
+            ("7.0", SBOMVulnSeverity.HIGH),
+            ("6.9", SBOMVulnSeverity.MEDIUM),
+            ("4.0", SBOMVulnSeverity.MEDIUM),
+            ("3.9", SBOMVulnSeverity.LOW),
+            ("0.1", SBOMVulnSeverity.LOW),
+            ("0.0", SBOMVulnSeverity.NONE),
+            ("", SBOMVulnSeverity.UNKNOWN),
+            ("n/a", SBOMVulnSeverity.UNKNOWN),
+            ("nan", SBOMVulnSeverity.UNKNOWN),
+            ("11.0", SBOMVulnSeverity.UNKNOWN),
+        ],
+    )
+    def test_group_score_uses_the_cvss_rating_scale(self, score: str, expected: SBOMVulnSeverity) -> None:
+        stdout = _osv_output([{"id": "OSV-1"}], groups=[{"ids": ["OSV-1"], "max_severity": score}])
+
+        assert [f.severity for f in _parse_osv_scanner_output(stdout, "serial-1")] == [expected]
+
+    def test_a_record_with_no_rating_anywhere_stays_unknown(self) -> None:
+        stdout = _osv_output(
+            [{"id": "OSV-1", "summary": "no severity data"}], groups=[{"ids": ["OSV-1"], "max_severity": ""}]
+        )
+
+        assert [f.severity for f in _parse_osv_scanner_output(stdout, "serial-1")] == [SBOMVulnSeverity.UNKNOWN]
+
+    def test_a_null_database_specific_does_not_abort_the_parse(self) -> None:
+        stdout = _osv_output([{"id": "OSV-1", "database_specific": None}, _ghsa("GHSA-aaaa-bbbb-cccc", "CRITICAL")])
+
+        findings = _parse_osv_scanner_output(stdout, "serial-1")
+
+        assert [f.severity for f in findings] == [SBOMVulnSeverity.UNKNOWN, SBOMVulnSeverity.CRITICAL]
+
+    def test_scan_through_osv_scanner_blocks_a_critical_advisory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stdout = _osv_output(
+            [_ghsa("GHSA-aaaa-bbbb-cccc", "CRITICAL")], groups=[{"ids": ["GHSA-aaaa-bbbb-cccc"], "max_severity": "9.8"}]
+        )
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/osv-scanner" if name == "osv-scanner" else None)
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda args, **_: subprocess.CompletedProcess(args, 1, stdout=stdout, stderr=""),
+        )
+
+        result = SBOMGenerator(tmp_path).scan(_make_sbom())
+
+        assert result.scanner == "osv-scanner"
+        assert result.has_critical
+        with pytest.raises(SBOMGateError):
+            SBOMVulnerabilityGate().check(result)
 
 
 # ---------------------------------------------------------------------------

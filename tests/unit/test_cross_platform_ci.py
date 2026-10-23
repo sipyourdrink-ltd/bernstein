@@ -150,22 +150,16 @@ class TestCIWorkflowExists:
                 f"docs_pattern={docs_pattern}, observability_pattern={observability_pattern}"
             )
 
-    def test_pull_request_test_job_fetches_base_commit_for_impacted_tests(self) -> None:
-        """The base is fetched by sha, so shards that start apart still agree.
-
-        The shards of one run are not scheduled together - slot contention has
-        staggered them by hours - and each one resolves this base and re-runs
-        the selector itself. A base branch *name* therefore resolves to
-        different commits in different shards, which makes each shard partition
-        a different affected set; see
-        ``tests/unit/scripts/test_run_tests_affected_base_pinned.py``.
-        """
+    def test_pull_request_planner_fetches_base_commit_for_impacted_tests(self) -> None:
+        """The shared planner fetches one run-pinned base commit."""
         data = _load_ci_workflow()
-        steps = _ci_test_steps(data)
+        jobs = cast("dict[str, Any]", data["jobs"])
+        planner = cast("dict[str, Any]", jobs["plan-affected-tests"])
+        steps = cast("list[dict[str, Any]]", planner["steps"])
         fetch_steps = [step for step in steps if step.get("name") == "Fetch base commit for impacted-test selection"]
         assert len(fetch_steps) == 1
         fetch_step = fetch_steps[0]
-        assert fetch_step.get("if") == "github.event_name == 'pull_request' && runner.os != 'Windows'"
+        assert fetch_step.get("if") == "github.event_name == 'pull_request'"
         env = fetch_step.get("env") or {}
         assert env.get("BASE_SHA") == "${{ github.event.pull_request.base.sha }}", (
             "BASE_SHA must be bound via env: to avoid template injection (zizmor)"
@@ -198,18 +192,13 @@ class TestCIWorkflowExists:
         )
         run_script = fetch_step.get("run", "")
         assert "${HEAD_SHA}:refs/remotes/origin/pr-head" in run_script
-        # A step of its own, not folded into the base-commit fetch above:
-        # test_run_tests_affected_base_pinned.py pins that step to writing
-        # exactly one ref for --affected to read.
-        base_fetch = next(step for step in steps if step.get("name") == "Fetch base commit for impacted-test selection")
-        assert "HEAD_SHA" not in (base_fetch.get("env") or {})
+        assert all(step.get("name") != "Fetch base commit for impacted-test selection" for step in steps)
 
-    def test_pull_request_test_job_uses_affected_runner_with_fallback(self) -> None:
+    def test_pull_request_test_job_consumes_the_shared_plan(self) -> None:
         data = _load_ci_workflow()
         steps = _ci_test_steps(data)
         run_steps = [step for step in steps if (step.get("name") or "").startswith("Run isolated test suite")]
         assert run_steps, "expected at least one 'Run isolated test suite' step"
-        # The Linux/macOS variant carries the --affected fallback logic.
         unix_steps = [step for step in run_steps if "Linux/macOS" in (step.get("name") or "")]
         assert len(unix_steps) == 1
         env = unix_steps[0].get("env") or {}
@@ -218,9 +207,47 @@ class TestCIWorkflowExists:
         )
         assert "BASE_REF" not in env, "the affected base must come from the run-pinned base sha, not a branch name"
         run_script = unix_steps[0].get("run", "")
-        assert "--affected refs/remotes/origin/pr-base" in run_script
+        assert ".sdd/affected-test-plan/selected.txt" in run_script
+        assert "--affected" not in run_script
         assert "uv run python scripts/run_tests.py" in run_script
         assert "--parallel 6" in run_script
+
+    def test_merge_queue_runs_the_whole_list(self) -> None:
+        """A merge group never plans, so every shard runs the full list.
+
+        The group is the last check before main. A tree-wide gate fails on a
+        change no file-level slice maps to it: #5743 passed a sliced group and
+        broke main on the unreachable-controls gate.
+        """
+        data = _load_ci_workflow()
+        jobs = cast("dict[str, Any]", data["jobs"])
+        planner = cast("dict[str, Any]", jobs["plan-affected-tests"])
+        steps = cast("list[dict[str, Any]]", planner["steps"])
+        by_name = {step.get("name"): step for step in steps}
+
+        assert "Resolve the merge-queue batch root" not in by_name
+        assert "merge_group" not in yaml.safe_dump(steps)
+
+        plan = by_name["Compute affected-test plan"]
+        assert plan.get("if") == "github.event_name == 'pull_request'"
+        assert "planned=true" in plan.get("run", "")
+        assert planner["outputs"]["planned"] == "${{ steps.plan.outputs.planned }}"
+
+    def test_merge_queue_test_job_keys_on_the_plan_not_the_event(self) -> None:
+        """Shards select whenever a plan exists, and run the full list when one does not."""
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        by_name = {step.get("name"): step for step in steps}
+        planned = "needs.plan-affected-tests.outputs.planned == 'true'"
+
+        assert by_name["Download affected-test plan"].get("if") == f"{planned} && runner.os != 'Windows'"
+        assert by_name["Select affected-test shard"].get("if") == f"{planned} && runner.os != 'Windows'"
+        run = by_name["Run isolated test suite (Linux/macOS)"]
+        assert "needs.plan-affected-tests.outputs.planned != 'true'" in run.get("if", "")
+        assert (run.get("env") or {}).get("PLANNED") == "${{ needs.plan-affected-tests.outputs.planned }}"
+        script = run.get("run", "")
+        assert '[ "${PLANNED}" = "true" ]' in script
+        assert '--shard "${SHARD}/${SHARD_COUNT}"' in script, "no plan still runs the full list, sharded"
 
     def test_coverage_reporting_only_runs_on_push(self) -> None:
         data = _load_ci_workflow()

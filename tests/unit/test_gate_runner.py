@@ -464,6 +464,89 @@ def test_dead_code_gate_runs_to_completion_instead_of_crashing(tmp_path: Path) -
     assert result.status in ("pass", "fail", "warn")
 
 
+def test_every_valid_gate_name_is_dispatchable(tmp_path: Path) -> None:
+    """General invariant behind #6156: every name in ``VALID_GATE_NAMES``
+    must resolve to a real handler in ``GateRunner._execute_gate`` and never
+    fall through to the plugin-registry fallback, which raises
+    ``ValueError: Unsupported gate name`` for any built-in name (plugin
+    registration refuses names that collide with ``VALID_GATE_NAMES``).
+
+    Each handler is stubbed so this test isolates *dispatch* (did routing
+    find a handler) from gate *behaviour* (did the gate's own logic pass or
+    fail). Exercising every gate's real logic here would mean spinning up
+    subprocesses (ruff/mypy/pytest/bandit/mutmut) and -- per #6156's own
+    report -- risking a real network call for ``intent_verification``
+    (``OPENROUTER_API_KEY_PAID``). That is exactly the flakiness this
+    regression test must not introduce.
+    """
+    from bernstein.core.gate_runner import GateResult
+
+    from bernstein.core.quality.gate_pipeline import VALID_GATE_NAMES
+
+    config = QualityGatesConfig(cache_enabled=False)
+    runner = GateRunner(config, tmp_path)
+    task = _make_task()
+
+    stub_result = GateResult(
+        name="stub",
+        status="pass",
+        required=False,
+        blocked=False,
+        cached=False,
+        duration_ms=0,
+        details="stubbed for dispatch test",
+        metadata={},
+    )
+
+    def _sync_stub(*_args: object, **_kwargs: object) -> GateResult:
+        return stub_result
+
+    async def _async_stub(*_args: object, **_kwargs: object) -> GateResult:
+        return stub_result
+
+    # Every handler name referenced by GateRunner._execute_gate's dispatch
+    # tables (`_sync_cf_gates` / `_sync_no_cf_gates` / `_async_gates`).
+    # Instance-attribute assignment shadows the bound method, and the
+    # dispatch dicts look up `self.<name>` fresh on every call, so this
+    # reaches the exact same routing code the real run does.
+    sync_handler_names = [
+        "_run_auto_format_gate_sync",
+        "_run_complexity_gate_sync",
+        "_run_dead_code_gate_sync",
+        "_run_comment_quality_gate_sync",
+        "_run_import_cycle_gate_sync",
+        "_run_coverage_delta_gate_sync",
+        "_run_merge_conflict_gate_sync",
+        "_run_large_file_gate_sync",
+        "_run_run_config_gate_sync",
+        "_run_benchmark_gate_sync",
+        "_run_migration_reversibility_gate_sync",
+        "_run_test_expansion_gate_sync",
+    ]
+    async_handler_names = [
+        "_execute_lint_gate",
+        "_execute_type_check_gate",
+        "_run_tests_gate",
+        "_execute_security_scan_gate",
+        "_execute_scan_gate",
+        "_execute_mutation_gate",
+        "_execute_intent_gate",
+        "_execute_dep_audit_gate",
+        "_run_integration_test_gen_gate",
+        "_run_review_rubric_gate",
+        "_run_behavior_probe_gate",
+    ]
+    for name in sync_handler_names:
+        setattr(runner, name, _sync_stub)
+    for name in async_handler_names:
+        setattr(runner, name, _async_stub)
+
+    for name in sorted(VALID_GATE_NAMES):
+        step = GatePipelineStep(name=name, required=False, condition="always")
+        result = asyncio.run(runner.run_gate(step, task, tmp_path, []))
+        assert result is stub_result, f"{name}: did not reach a stubbed dispatch handler"
+
+
 def _dead_code_report(tmp_path: Path, *, output: str, exit_code: int, required: bool = False):
     """Run the dead-code gate with one scripted command result."""
     src = tmp_path / "src"
@@ -560,3 +643,63 @@ def test_a_clean_run_is_still_a_pass(tmp_path: Path) -> None:
     report = _dead_code_report(tmp_path, output="(no output)", exit_code=0)
 
     assert report.results[0].status in ("pass", "warn")
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True, encoding="utf-8"
+    ).stdout.strip()
+
+
+def _run_branch_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """A repo whose only branch is ``fleet/work`` (no ``main``), holding a file that
+    trips the DLP license check, and an agent worktree that adds one new file."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "fleet/work")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "commit.gpgsign", "false")
+    (repo / "NOTICE.md").write_text("Vendored notes. All rights reserved.\n", encoding="utf-8")
+    _git(repo, "add", "NOTICE.md")
+    _git(repo, "commit", "-m", "seed")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-b", "agent/A-1", str(worktree))
+    (worktree / "src").mkdir()
+    (worktree / "src" / "new.py").write_text("x = 1\n", encoding="utf-8")
+    _git(worktree, "add", "src/new.py")
+    _git(worktree, "commit", "-m", "agent: add new.py")
+    return repo, worktree
+
+
+def test_missing_base_ref_falls_back_to_the_run_branch(tmp_path: Path) -> None:
+    """The default base ``main`` does not exist here: the diff is taken against the branch
+    the agent forked from and merges into, not dropped in favour of a whole-tree scan."""
+    repo, worktree = _run_branch_repo(tmp_path)
+    runner = GateRunner(QualityGatesConfig(cache_enabled=False), repo)
+
+    assert runner._base_ref == "fleet/work"
+    assert runner._resolve_changed_files_sync(_make_task(), worktree) == ["src/new.py"]
+
+
+def test_existing_base_ref_is_kept(tmp_path: Path) -> None:
+    repo, _ = _run_branch_repo(tmp_path)
+    _git(repo, "branch", "main")
+
+    assert GateRunner(QualityGatesConfig(cache_enabled=False), repo)._base_ref == "main"
+
+
+def test_dlp_gate_reads_only_the_agent_change_when_base_ref_is_missing(tmp_path: Path) -> None:
+    """Text already on the run branch must not block an agent whose change is clean."""
+    repo, worktree = _run_branch_repo(tmp_path)
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="dlp_scan", required=True)],
+        cache_enabled=False,
+    )
+
+    report = asyncio.run(GateRunner(config, repo).run_all(_make_task(), worktree))
+
+    assert report.changed_files == ["src/new.py"]
+    assert [(r.name, r.status, r.blocked) for r in report.results] == [("dlp_scan", "pass", False)]

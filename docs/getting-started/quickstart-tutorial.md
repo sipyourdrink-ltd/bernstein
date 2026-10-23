@@ -38,7 +38,7 @@ bernstein --version
 You should see something like:
 
 ```
-bernstein, version 3.17.0
+bernstein, version 3.20.0
 ```
 
 > **If you see "command not found"**: Make sure your tool bin directory is on `$PATH`.
@@ -58,12 +58,10 @@ bernstein doctor
 Example output:
 
 ```
-Check           Category  Status  Detail                   Remediation
-adapter:claude  adapter   ✗ FAIL  Binary `claude` not in PATH  Install via the adapter's vendor instructions or remove `claude` from bernstein.yaml
-adapter:codex   adapter   ✗ FAIL  Binary `codex` not in PATH   Install via the adapter's vendor instructions or remove `codex` from bernstein.yaml
-adapter:gemini  adapter   ✗ FAIL  Binary `gemini` not in PATH  Install via the adapter's vendor instructions or remove `gemini` from bernstein.yaml
-adapter:qwen    adapter   ✗ FAIL  Binary `qwen` not in PATH    Install via the adapter's vendor instructions or remove `qwen` from bernstein.yaml
-adapter:aider   adapter   ✗ FAIL  Binary `aider` not in PATH   Install via the adapter's vendor instructions or remove `aider` from bernstein.yaml
+Check             Status  Detail        Fix
+Adapter: claude   ✗       not in PATH   Install claude CLI - see docs
+Adapter: codex    ✗       not in PATH   Install codex CLI - see docs
+Adapter: gemini   ✗       not in PATH   Install gemini CLI - see docs
 ```
 
 You need at least one adapter row to turn ✓ (`doctor` also checks auth, ports,
@@ -194,7 +192,7 @@ Inspect a specific task's changes:
 ```bash
 bernstein diff <task-id>     # Git diff produced by the agent
 bernstein trace <task-id>    # Decision trace (which rules fired, what was approved)
-bernstein logs tail -a <task-id>  # Full agent output
+bernstein logs tail -a <session-id>  # Agent output for one session
 ```
 
 ---
@@ -259,9 +257,8 @@ Set a per-run budget limit in `bernstein.yaml`:
 budget: "$5"
 ```
 
-For a hard stop that refuses further agent spawns past the cap, configure a
-cost envelope with `hard_budget_usd` (see
-[CONFIG.md](../operations/CONFIG.md)).
+For a hard stop that refuses further agent spawns past the cap, pass
+`--hard-budget` to `bernstein run` (for example `--hard-budget '$10'`).
 
 ---
 
@@ -270,7 +267,7 @@ cost envelope with `hard_budget_usd` (see
 While Bernstein is running, open the dashboard in your browser:
 
 ```
-http://127.0.0.1:8052/dashboard
+http://127.0.0.1:8052/ui/
 ```
 
 The dashboard shows:
@@ -337,7 +334,7 @@ Another Bernstein instance is running, or another process has the port:
 
 ```bash
 lsof -i :8052                    # Find what's using the port
-BERNSTEIN_PORT=8053 bernstein run # Use a different port
+bernstein run --port 8053       # Use a different port
 ```
 
 ### "Task failed: permission denied"
@@ -348,15 +345,9 @@ The agent tried to modify a file outside its role's allowed paths. Check which f
 bernstein trace <task-id>   # Shows which permission rule fired
 ```
 
-To allow it, add the path to the role's allowed paths in `bernstein.yaml`:
-
-```yaml
-roles:
-  backend:
-    allowed_paths:
-      - "src/**"
-      - "config/**"   # Add this
-```
+Per-role path permissions are built-in defaults (`DEFAULT_ROLE_PERMISSIONS`
+in `core/security/permissions.py`); `bernstein.yaml` has no override for them
+today.
 
 ### "Agent stalled / no heartbeat"
 

@@ -350,3 +350,29 @@ def test_salvage_refuses_a_plain_directory_that_resolves_to_the_operator_branch(
     assert (result.patch_path / "diff.patch").is_file()
     assert (result.patch_path / "untracked.json").is_file()
     assert (result.patch_path / "README.txt").is_file()
+
+
+def test_salvage_branch_leaves_out_backup_and_editor_files(
+    repo_with_worktree: tuple[Path, Path, str],
+) -> None:
+    """Backup and editor leftovers (``*.bak``, ``*.orig``, ``*~``) never reach the salvage commit (#6539)."""
+    repo_root, worktree_path, session_id = repo_with_worktree
+    _dirty_the_worktree(worktree_path)
+    (worktree_path / "README.md.bak").write_text("seed\n", encoding="utf-8")
+    (worktree_path / "pkg").mkdir()
+    (worktree_path / "pkg" / "mod.py.orig").write_text("old\n", encoding="utf-8")
+    (worktree_path / "pkg" / "mod.py~").write_text("older\n", encoding="utf-8")
+
+    result = salvage_worktree(repo_root, worktree_path, session_id, push=False)
+
+    assert result.branch == f"salvage/{session_id}"
+    tree = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", result.branch],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.splitlines()
+    assert "new_feature.py" in tree
+    assert {"README.md.bak", "pkg/mod.py.orig", "pkg/mod.py~"}.isdisjoint(tree)

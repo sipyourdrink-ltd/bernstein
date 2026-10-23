@@ -646,3 +646,105 @@ def test_bernstein_signed_entry_verifies_in_verify_cli():
     our_payload = jcs_canonicalise(asdict(entry))
     assert our_payload == payload  # canonicalisation must match
     assert verify_jws_detached(our_payload, jws, pub, expected_kid="key-001") is True
+
+
+def test_verify_manifest_anchor_dispatches_transparency_log():
+    """A runtime-built transparency-log seal-anchor record dispatches through
+    ``_verify_manifest_anchor`` to the inclusion-proof check, never to the
+    pack ``output_hash`` contract."""
+    import base64
+
+    from bernstein.core.persistence.merkle import _leaf_digest as runtime_leaf
+    from bernstein.core.security.audit_receipt import _merkle_root_and_path
+    from bernstein.core.security.seal_anchor import transparency_log_leaf
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from bernstein_verify.verify import _leaf_digest, _verify_manifest_anchor
+
+    head = "ab" * 32
+    leaf = transparency_log_leaf(head)
+    assert leaf == _leaf_digest(bytes.fromhex(head))
+    leaves = [runtime_leaf(f"pad-{i}".encode()) for i in range(4)] + [leaf]
+    root, incl = _merkle_root_and_path(leaves, 4)
+    key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex("11" * 32))
+    sth = {"root_hash": root, "tree_size": 5}
+    signature = key.sign(json.dumps(sth, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    record = {
+        "anchor_kind": "transparency-log",
+        "head_sha256": head,
+        "leaf_hash": leaf,
+        "tree_size": 5,
+        "audit_path": [{"hash": h, "left": left} for h, left in incl],
+        "signed_tree_head": {
+            **sth,
+            "signature_b64": base64.b64encode(signature).decode("ascii"),
+        },
+        "log_public_key": key.public_key().public_bytes_raw().hex(),
+    }
+    pinned = [record["log_public_key"]]
+    assert _verify_manifest_anchor(record, trusted_log_keys=pinned) == []
+
+    unpinned_errors = _verify_manifest_anchor(record)
+    assert unpinned_errors and all(err.startswith("transparency-log:") for err in unpinned_errors)
+    assert not any("output_hash" in err for err in unpinned_errors)
+
+    # A float tree_size equal to the int one, signed by the pinned key, must
+    # still fail: equality is not a type check.
+    float_sth = {"root_hash": root, "tree_size": 5.0}
+    float_sig = key.sign(
+        json.dumps(float_sth, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    float_record = {
+        **record,
+        "signed_tree_head": {
+            **float_sth,
+            "signature_b64": base64.b64encode(float_sig).decode("ascii"),
+        },
+    }
+    float_errors = _verify_manifest_anchor(float_record, trusted_log_keys=pinned)
+    assert any("not a positive integer" in err for err in float_errors)
+
+    other = Ed25519PrivateKey.from_private_bytes(bytes.fromhex("22" * 32))
+    forged_errors = _verify_manifest_anchor(
+        record,
+        trusted_log_keys=[other.public_key().public_bytes_raw().hex()],
+    )
+    assert any("pin set" in err for err in forged_errors)
+
+
+# ---------- RFC 6962 copy agrees with the runtime ----------
+
+
+def test_merkle_copy_and_runtime_agree_on_a_root():
+    """The standalone RFC 6962 copy and the runtime hashing produce one root.
+
+    ``bernstein_verify`` must not import ``bernstein.*``, so the leaf/internal
+    hashing is a copy of the receipt verifier. This test is the lockstep
+    proof that the copy and :mod:`bernstein.core.persistence.merkle` still
+    agree, including odd-node promotion on a 5-leaf tree.
+    """
+    from bernstein.core.persistence.merkle import _combine_internal as runtime_combine
+    from bernstein.core.persistence.merkle import _leaf_digest as runtime_leaf
+    from bernstein.core.security.audit_receipt import _merkle_root_and_path
+
+    from bernstein_verify.verify import (
+        _combine_internal,
+        _leaf_digest,
+        _merkle_root,
+        _root_from_inclusion,
+    )
+
+    payloads = [f"leaf-{index}".encode() for index in range(5)]
+    runtime_leaves = [runtime_leaf(p) for p in payloads]
+    copy_leaves = [_leaf_digest(p) for p in payloads]
+    assert copy_leaves == runtime_leaves
+
+    runtime_root, path = _merkle_root_and_path(runtime_leaves, 3)
+    copy_root = _merkle_root(copy_leaves)
+    assert copy_root == runtime_root
+
+    audit_path = [{"hash": sibling, "left": is_left} for sibling, is_left in path]
+    assert _root_from_inclusion(copy_leaves[3], audit_path) == runtime_root
+    assert _combine_internal(copy_leaves[0], copy_leaves[1]) == runtime_combine(
+        runtime_leaves[0], runtime_leaves[1]
+    )

@@ -20,7 +20,7 @@ two independent things in the same class: file-edit loops (a separate
 feature - an agent editing the same file too many times in a window - not
 covered on this page) and file-lock waits. For deadlocks specifically:
 
-- `record_lock_wait(waiting_agent_id, wanted_files, held_by, lock_timestamps=None)`
+- `record_lock_wait(waiting_agent_id, wanted_files, held_by, *, lock_timestamps=None)`
   records that an agent is blocked on files held by other agents, and
   remembers when each blocking lock was acquired.
 - `detect_deadlocks(lock_mgr)` builds a directed wait-for graph
@@ -41,7 +41,8 @@ tick. For deadlocks it calls `detector.detect_deadlocks(lock_mgr)`, and for
 every `DeadlockDetection` returned, releases the victim's lock
 (`lock_mgr.release(victim_agent_id)`) and clears its wait-for state. This is
 wired into the main tick loop in `orchestrator.py` (step "2d. Detect loops
-and deadlocks", right before idle-agent recycling).
+and deadlocks", right before idle-agent recycling; it is also called again
+later in the tick after budget-violation checks).
 
 ## The Wait-For Graph
 

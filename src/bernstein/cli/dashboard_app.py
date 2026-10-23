@@ -289,7 +289,8 @@ class BernsteinApp(App[None]):
         self._task_titles: dict[str, str] = {}
         self._task_progress: dict[str, int] = {}
         self._activity_summaries: dict[str, str] = {}
-        self._last_activity: list[str] = []
+        # What each agent's log tail held at the previous poll, as raw lines.
+        self._last_activity: dict[str, list[str]] = {}
         self._compare_mark: str | None = None  # first task ID for compare
         self._resize_timer: object | None = None  # type: ignore[assignment]  # debounce timer handle (TUI-001)
         # Activity log file (--activity-log flag)
@@ -996,29 +997,35 @@ class BernsteinApp(App[None]):
     def _update_activity(self, agents: list[dict[str, Any]]) -> None:
         log = self.query_one(_ACTIVITY_LOG_SELECTOR, RichLog)
 
-        new_lines: list[str] = []
+        # Compared as RAW tail lines per agent, never as formatted ones. The
+        # formatted line starts with the poll time, so it differed on every tick
+        # and the same tail was re-written with a marching timestamp until it
+        # left the buffer: one POST rendered as ten, which reads as an agent
+        # stuck in a loop (#6139).
+        seen_now: dict[str, list[str]] = {}
         for a in agents:
             if a.get("status") == "dead":
                 continue
             aid = a.get("id", "")
             role = a.get("role", "?")
             lines = _tail_log(aid, 2, log_path=a.get("log_path", ""))
+            seen_now[aid] = lines
+            already_shown = self._last_activity.get(aid, [])
             for line in lines:
+                if line in already_shown:
+                    continue
                 # UX-007: Filter routine/noisy events from activity log
                 lower = line.lower()
                 if any(noise in lower for noise in self._NOISE_PATTERNS):
                     continue
-                new_lines.append(_format_activity_line(str(role), line))
-
-        for line in new_lines:
-            if line not in self._last_activity:
-                log.write(line)
+                formatted = _format_activity_line(str(role), line)
+                log.write(formatted)
                 # Write to activity log file if configured
                 if self._activity_log_file:
-                    plain = re.sub(r"\[/?[^\]]+\]", "", line)
+                    plain = re.sub(r"\[/?[^\]]+\]", "", formatted)
                     self._activity_log_file.write(plain + "\n")
                     self._activity_log_file.flush()
-        self._last_activity = new_lines
+        self._last_activity = seen_now
 
     # -- Actions --
 

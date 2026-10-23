@@ -199,19 +199,18 @@ def _write_bom(snapshot: dict[str, Any], *, fmt: str, out_path: str | None) -> N
     "from_lineage",
     is_flag=True,
     default=False,
-    help="Re-derive the projection from .sdd/lineage/<run>/ and fail closed on any mismatch.",
+    help="Re-derive the BOM from .sdd/lineage/<run>/ and fail on any difference from the document.",
 )
 @click.option(
     "--run",
     "run_id",
     default=None,
-    help="Run identifier used to resolve the lineage spine. Required with --from-lineage.",
+    help="Run identifier used to resolve the lineage spine. Only valid with --from-lineage, where it is required.",
 )
 @click.option(
     "--workdir",
-    default=".",
-    show_default=True,
-    help="Project root (used to resolve .sdd/lineage when --from-lineage is given).",
+    default=None,
+    help="Project root used to resolve .sdd/lineage (default: the current directory). Only valid with --from-lineage.",
 )
 @click.option(
     "--quiet",
@@ -219,24 +218,34 @@ def _write_bom(snapshot: dict[str, Any], *, fmt: str, out_path: str | None) -> N
     default=False,
     help="Only emit exit code; suppress the verification report.",
 )
-def verify_cmd(bom_path: str, from_lineage: bool, run_id: str | None, workdir: str, quiet: bool) -> None:
+def verify_cmd(bom_path: str, from_lineage: bool, run_id: str | None, workdir: str | None, quiet: bool) -> None:
     """Verify a previously emitted AI-BOM.
 
-    Without ``--from-lineage`` the check is structural. With it, each line
-    item's hash is resolved against the run's lineage spine and the chain
-    head anchor is compared, so the document is proven a faithful projection
-    of what actually ran.
+    Without ``--from-lineage`` the check is structural only: it does not look
+    at the run's lineage spine, so it cannot tell a faithful BOM from a
+    hand-edited one. With ``--from-lineage --run <id>`` the BOM is recomputed
+    from the run's lineage spine and compared field by field; any difference
+    (a missing, extra or renamed component, a different hash or count, a
+    different head anchor) or a chain that does not verify fails the check.
     """
     from bernstein.core.compliance.ai_bom import BOMError, verify_bom
 
     raw = Path(bom_path).read_bytes()
+
+    if not from_lineage and (run_id is not None or workdir is not None):
+        click.echo(
+            "error: --run and --workdir only apply with --from-lineage; "
+            "without it the check is structural and never reads the lineage spine",
+            err=True,
+        )
+        raise SystemExit(2)
 
     if from_lineage:
         if not run_id:
             click.echo("error: --from-lineage requires --run", err=True)
             raise SystemExit(2)
         try:
-            report = _verify_against_spine(raw, run_id=run_id, workdir=workdir)
+            report = _verify_against_spine(raw, run_id=run_id, workdir=workdir or ".")
         except BOMError as exc:
             click.echo(f"error: {exc}", err=True)
             raise SystemExit(1) from None
@@ -247,7 +256,8 @@ def verify_cmd(bom_path: str, from_lineage: bool, run_id: str | None, workdir: s
         raise SystemExit(0 if report.ok else 1)
 
     if report.ok:
-        click.echo(f"PASS: checked {report.checked_count} element(s)")
+        scope = "" if from_lineage else " (structural only; not compared with the lineage spine)"
+        click.echo(f"PASS{scope}: checked {report.checked_count} element(s)")
     else:
         click.echo(f"FAIL: {len(report.errors)} error(s); checked {report.checked_count} element(s)")
         for err in report.errors:

@@ -1,11 +1,31 @@
 """bernstein-bench: runnable, reproducibility-gated evaluation harness."""
 
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult, harness_fingerprint
+from bernstein.eval.bench.ci import (
+    BenchScorecard,
+    evaluate_ci_scorecard,
+    post_bench_check_run,
+)
+from bernstein.eval.bench.compare import (
+    CompareResult,
+    TaskComparison,
+    compare_bundles,
+)
 from bernstein.eval.bench.contamination import (
     ContaminationVerdict,
     admit_task,
     check_solution_contamination,
     extract_ngrams,
+)
+from bernstein.eval.bench.goal_drift_suite import (
+    DriftContract,
+    DriftStepMeasurement,
+    DriftTrajectoryCurve,
+    GoalDriftReplayAdapter,
+    GoalDriftTask,
+    build_goal_drift_suite,
+    evaluate_trajectory_drift,
+    get_goal_drift_task_map,
 )
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
 from bernstein.eval.bench.leaderboard import Leaderboard, LeaderboardEntry
@@ -38,6 +58,7 @@ from bernstein.eval.bench.runner import (
     ReplayAdapter,
     StochasticMockReplayAdapter,
 )
+from bernstein.eval.bench.sarif import bundle_to_sarif
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
 from bernstein.eval.bench.tool_surface_suite import (
     ToolSurfaceReplayAdapter,
@@ -52,11 +73,18 @@ from bernstein.eval.bench.verifier import (
 
 __all__ = [
     "BenchRunner",
+    "BenchScorecard",
     "BenchSuite",
     "BenchTask",
     "BenchVerifier",
     "BundleVerificationResult",
+    "CompareResult",
     "ContaminationVerdict",
+    "DriftContract",
+    "DriftStepMeasurement",
+    "DriftTrajectoryCurve",
+    "GoalDriftReplayAdapter",
+    "GoalDriftTask",
     "HoldoutBenchRunner",
     "HoldoutIsolationError",
     "InstallIdentityReliabilitySigner",
@@ -74,6 +102,7 @@ __all__ = [
     "StochasticMockReplayAdapter",
     "StubReliabilitySigner",
     "SubmissionBundle",
+    "TaskComparison",
     "TaskReliabilityResult",
     "TaskReliabilityVerification",
     "TaskResult",
@@ -81,15 +110,22 @@ __all__ = [
     "ToolSurfaceReplayAdapter",
     "VerificationStatus",
     "admit_task",
+    "build_goal_drift_suite",
     "build_golden_suite_v1",
     "build_tool_surface_suite",
+    "bundle_to_sarif",
     "check_solution_contamination",
     "check_suite_saturation",
+    "compare_bundles",
     "coordination_hash",
     "coordination_projection",
+    "evaluate_ci_scorecard",
+    "evaluate_trajectory_drift",
     "extract_ngrams",
     "first_divergent_coordination_field",
+    "get_goal_drift_task_map",
     "harness_fingerprint",
+    "post_bench_check_run",
     "reliability_check",
     "validate_run_receipt",
 ]

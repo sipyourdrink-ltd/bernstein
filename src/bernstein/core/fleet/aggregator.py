@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
 
     from bernstein.core.fleet.config import ProjectConfig
 
@@ -191,6 +191,7 @@ class FleetAggregator:
         backoff_max_s: float = 30.0,
         client: httpx.AsyncClient | None = None,
         cost_window_days: int = 7,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         """Build the aggregator.
 
@@ -203,6 +204,12 @@ class FleetAggregator:
             backoff_max_s: Maximum reconnect delay after repeated failures.
             client: Optional pre-built ``httpx.AsyncClient``. Useful for tests.
             cost_window_days: How many daily samples to keep per project.
+            headers: Sent on every request to every project, the status poll
+                and the event stream alike: the bearer token and any
+                access-proxy headers the task servers require. A task server
+                with authentication on answers ``/status`` and ``/events``
+                with 401 to a request without them. Ignored when ``client``
+                is given; that client carries its own headers.
         """
         self._projects: dict[str, ProjectConfig] = {p.name: p for p in projects}
         self._poll_interval_s = poll_interval_s
@@ -211,7 +218,7 @@ class FleetAggregator:
         self._backoff_max_s = backoff_max_s
         self._cost_window_days = cost_window_days
         self._owned_client = client is None
-        self._client = client or httpx.AsyncClient(timeout=http_timeout_s)
+        self._client = client or httpx.AsyncClient(timeout=http_timeout_s, headers=dict(headers or {}))
         self._snapshots: dict[str, ProjectSnapshot] = {name: ProjectSnapshot(name=name) for name in self._projects}
         self._tasks: list[asyncio.Task[None]] = []
         self._event_queue: asyncio.Queue[AggregatorEvent] = asyncio.Queue(maxsize=1024)

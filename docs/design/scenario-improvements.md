@@ -1,7 +1,9 @@
 ## Scenario Command Improvements and Layered Library Loading
 
+Status: implemented — `bernstein scenario list/run` (`scenario_cmd.py`, registered in `cli/main.py`), `load_layered_scenario_library`, and `ScenarioTaskTemplate.artifact_spec` exist; `tests/unit/test_scenario_cmd.py` was not added.
+
 ### Problem Statement
-Currently, Bernstein scenarios cannot be run end-to-end from the CLI, and scenario tasks always default to code_diff artifact specifications regardless of the intended deliverable. Additionally, there are two separate scenario roots (workspace and packaged) that are not properly layered.
+Before this change, Bernstein scenarios could not be run end-to-end from the CLI, and scenario tasks always defaulted to code_diff artifact specifications regardless of the intended deliverable. Additionally, there were two separate scenario roots (workspace and packaged) that were not properly layered.
 
 ### Solution Overview
 1. Add a top-level `bernstein scenario` command group with `list` and `run` subcommands
@@ -13,7 +15,7 @@ Currently, Bernstein scenarios cannot be run end-to-end from the CLI, and scenar
 ### Detailed Changes
 
 #### 1. CLI Command Structure
-Add a new scenario command group in `src/bernstein/cli/main.py`:
+Add a new scenario command group (defined in `src/bernstein/cli/commands/scenario_cmd.py` and registered in `src/bernstein/cli/main.py`):
 ```
 bernstein scenario list    # List all available scenarios with source indicators
 bernstein scenario run <id> # Run a scenario end-to-end, emitting tasks

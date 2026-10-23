@@ -20,8 +20,8 @@ day one.
 
 ## How to use it
 
-The primitive is a single dataclass with `write` / `read` / `keys`
-methods. No third-party dependencies, no schema migrations, no
+The primitive is a single dataclass with `write` / `read` / `list_keys`
+(and `clear`) methods. No third-party dependencies, no schema migrations, no
 locking primitives beyond what the POSIX append gives.
 
 ```python
@@ -37,7 +37,7 @@ log.write("manager.lessons", {"task": "T-1", "lesson": "guard imports"})
 entries = log.read("manager.lessons")
 
 # Enumerate every key currently tracked under root
-keys = log.keys()
+keys = log.list_keys()
 ```
 
 Each key maps to exactly one file: `<root>/<key>.jsonl`. Keys are
@@ -61,9 +61,9 @@ a tail-corruption only loses the last record.
 - No retrieval, scoring, or decay. Use the SQLite store for that.
 - No cross-process locking beyond what append-write to a POSIX file
   gives. Callers needing strict serialisation should use SQLite.
-- Off-by-default in the orchestrator. Nothing reads or writes here
-  yet without explicit opt-in. Spawner-injection wiring is a
-  follow-up.
+- Off-by-default in the orchestrator. The only consumer is the
+  spawner's lessons injection, which reads the `lessons` key when
+  `BERNSTEIN_MEMORY_AUTO_INJECT=1`; nothing writes to it automatically.
 - Key length is capped at 128 characters; key vocabulary is
   alphanumerics plus `.`, `_`, `-`.
 
@@ -71,4 +71,4 @@ a tail-corruption only loses the last record.
 
 - Source: `src/bernstein/core/memory/jsonl_log.py`
 - Companion store: `src/bernstein/core/memory/sqlite_store.py`
-- CLI surface: `src/bernstein/cli/commands/memory_cmd.py`
+- Spawner consumer: `src/bernstein/core/agents/spawn_prompt.py`

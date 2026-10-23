@@ -2,8 +2,8 @@
 
 Implements the *incident-to-eval-synthesis* pattern. Each terminally
 failed task, orchestrator post-mortem, or CI-failure post-mortem
-becomes one minimal, reproducible eval case under
-``src/bernstein/eval/cases/incidents/``. The next agent must pass
+becomes one minimal, reproducible eval case in the project's incident
+corpus (see :func:`incident_cases_dir`). The next agent must pass
 these cases or the quality gate blocks merge.
 
 Pipeline
@@ -65,6 +65,7 @@ __all__ = [
     "IncidentSyncResult",
     "IncidentSynthesizer",
     "Severity",
+    "incident_cases_dir",
     "run_incident_eval_gate",
 ]
 
@@ -187,6 +188,42 @@ class IncidentSyncResult:
 
 
 # ---------------------------------------------------------------------------
+# Corpus location
+# ---------------------------------------------------------------------------
+
+
+def incident_cases_dir(workdir: Path) -> Path:
+    """Return the incident eval-case corpus directory for *workdir*.
+
+    Bernstein's own source tree keeps its corpus checked in under
+    ``src/bernstein/eval/cases/incidents/``, and that directory is used when
+    it already exists there. Every other project gets
+    ``.sdd/eval/cases/incidents/``, next to the rest of the run state: the
+    synthesiser runs against whatever project the orchestrator manages, and
+    that project's source tree must not receive orchestrator state. A bare
+    ``src/bernstein/eval/cases/incidents/`` outside a Bernstein source tree
+    (left behind by an earlier version that always wrote there) is not
+    extended.
+
+    The synthesiser, :func:`run_incident_eval_gate` and the ``incident:``
+    diagnose signal all resolve the corpus here, so the writer and its
+    readers agree in every layout.
+
+    Args:
+        workdir: Project root.
+
+    Returns:
+        The corpus directory. It may not exist yet; the synthesiser creates
+        it on first write.
+    """
+    package_root = workdir / "src" / "bernstein"
+    checked_in = package_root / "eval" / "cases" / "incidents"
+    if checked_in.is_dir() and (package_root / "__init__.py").is_file():
+        return checked_in
+    return workdir / ".sdd" / "eval" / "cases" / "incidents"
+
+
+# ---------------------------------------------------------------------------
 # Synthesiser
 # ---------------------------------------------------------------------------
 
@@ -195,16 +232,15 @@ class IncidentSynthesizer:
     """Read incidents and emit YAML eval cases.
 
     Args:
-        workdir: Project root containing the ``.sdd/`` state and the
-            ``src/bernstein/eval/cases/incidents/`` corpus directory.
+        workdir: Project root containing the ``.sdd/`` state.
         cases_dir: Override for the corpus directory. Defaults to
-            ``<workdir>/src/bernstein/eval/cases/incidents``.
+            :func:`incident_cases_dir` of *workdir*.
     """
 
     def __init__(self, workdir: Path, cases_dir: Path | None = None) -> None:
         self._workdir = workdir
         self._sdd = workdir / ".sdd"
-        self._cases_dir = cases_dir or workdir / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        self._cases_dir = cases_dir if cases_dir is not None else incident_cases_dir(workdir)
 
     # ------------------------------------------------------------------ public
 
@@ -502,7 +538,9 @@ class IncidentSynthesizer:
 def run_incident_eval_gate(workdir: Path) -> tuple[bool, str, dict[str, int]]:
     """Run all P0 incident eval cases as a blocking quality gate.
 
-    P1 / P2 cases are surfaced as warnings only.
+    P1 / P2 cases are surfaced as warnings only. The cases are read from
+    :func:`incident_cases_dir` of *workdir*, the directory the synthesiser
+    writes to.
 
     Returns:
         ``(passed, detail, counts)``. ``passed`` is False when any P0
@@ -510,7 +548,7 @@ def run_incident_eval_gate(workdir: Path) -> tuple[bool, str, dict[str, int]]:
         present but the harness cannot prove regression status. The gate
         fails closed: missing harness data on a P0 incident blocks merge.
     """
-    cases_dir = workdir / "src" / "bernstein" / "eval" / "cases" / "incidents"
+    cases_dir = incident_cases_dir(workdir)
     counts = {"P0": 0, "P1": 0, "P2": 0}
     if not cases_dir.is_dir():
         return True, "no incident eval cases", counts

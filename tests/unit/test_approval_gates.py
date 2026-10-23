@@ -188,24 +188,56 @@ class TestApprovalGateReview:
 
 
 class TestApprovalGateReviewFilePoll:
-    def test_default_poller_reads_approved_decision_file(self, tmp_path: Path) -> None:
+    @staticmethod
+    def _signed(task_id: str, outcome: str, nonce: str) -> dict[str, object]:
+        from bernstein.core.approval.models import local_shell_principal
+        from bernstein.core.security.approval_decision import build_decision_record
+
+        return build_decision_record(
+            task_id=task_id,
+            outcome=outcome,  # type: ignore[arg-type]
+            source="cli",
+            principal=local_shell_principal().to_dict(),
+            nonce=nonce,
+        )
+
+    def test_default_poller_reads_approved_decision_record(self, tmp_path: Path) -> None:
         from bernstein.core.approval import _default_poll_decision
+        from bernstein.core.security.approval_decision import write_decision_record
 
         approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
         approvals_dir.mkdir(parents=True)
-        (approvals_dir / "T-poll.approved").write_text("approved")
+        write_decision_record(approvals_dir / "T-poll.approved", self._signed("T-poll", "approved", "n1"))
 
-        decision = _default_poll_decision("T-poll", approvals_dir, poll_interval_s=0.01, max_wait_s=1.0)
+        decision = _default_poll_decision(
+            "T-poll", approvals_dir, expected_nonce="n1", poll_interval_s=0.01, max_wait_s=1.0
+        )
         assert decision == "approved"
 
-    def test_default_poller_reads_rejected_decision_file(self, tmp_path: Path) -> None:
+    def test_default_poller_reads_rejected_decision_record(self, tmp_path: Path) -> None:
+        from bernstein.core.approval import _default_poll_decision
+        from bernstein.core.security.approval_decision import write_decision_record
+
+        approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
+        approvals_dir.mkdir(parents=True)
+        write_decision_record(approvals_dir / "T-rejpoll.rejected", self._signed("T-rejpoll", "rejected", "n2"))
+
+        decision = _default_poll_decision(
+            "T-rejpoll", approvals_dir, expected_nonce="n2", poll_interval_s=0.01, max_wait_s=1.0
+        )
+        assert decision == "rejected"
+
+    def test_default_poller_rejects_a_plain_approved_file(self, tmp_path: Path) -> None:
+        """A file that is not a decision record never approves the review."""
         from bernstein.core.approval import _default_poll_decision
 
         approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
         approvals_dir.mkdir(parents=True)
-        (approvals_dir / "T-rejpoll.rejected").write_text("rejected")
+        (approvals_dir / "T-plain.approved").write_text("approved")
 
-        decision = _default_poll_decision("T-rejpoll", approvals_dir, poll_interval_s=0.01, max_wait_s=1.0)
+        decision = _default_poll_decision(
+            "T-plain", approvals_dir, expected_nonce="n3", poll_interval_s=0.01, max_wait_s=1.0
+        )
         assert decision == "rejected"
 
     def test_default_poller_reports_timed_out_on_expiry(self, tmp_path: Path) -> None:
@@ -220,7 +252,9 @@ class TestApprovalGateReviewFilePoll:
         approvals_dir.mkdir(parents=True)
 
         # No file written - should time out and report "timed_out"
-        decision = _default_poll_decision("T-timeout", approvals_dir, poll_interval_s=0.01, max_wait_s=0.05)
+        decision = _default_poll_decision(
+            "T-timeout", approvals_dir, expected_nonce="n4", poll_interval_s=0.01, max_wait_s=0.05
+        )
         assert decision == "timed_out"
 
 

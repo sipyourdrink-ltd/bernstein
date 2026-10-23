@@ -4,8 +4,8 @@ How Bernstein detects, quarantines, and recovers from flaky tests.
 
 ## TL;DR
 
-- One piece of CI machinery: the ctrf-io test reporter (per-PR
-  markdown summary). Quarantine itself is a manual operator action.
+- There is no flake-specific CI machinery. Detection and quarantine
+  are both manual operator actions.
 - There is no automated flake detector. The scheduled `pytest-xflaky`
   hunter was removed after 67 fires produced 0 completed runs and 0
   quarantine decisions; see "Detecting a flake" for the manual
@@ -21,20 +21,12 @@ How Bernstein detects, quarantines, and recovers from flaky tests.
 
 ## Pipeline
 
-### 1. Per-PR test summary (ctrf)
+### 1. Per-PR test summary
 
-`ctrf-io/github-test-reporter` runs as a step in `ci.yml::test` after
-the JUnit producer step. It consumes the same `junit.xml` that
-mikepenz/action-junit-report already publishes and:
-
-- Writes a markdown summary to the workflow Step Summary tab.
-- Posts (or updates) a sticky comment on the triggering PR with the
-  same content.
-- Uploads the converted CTRF JSON as the `ctrf-report` workflow
-  artifact (7-day retention, sized to the xflaky look-back window).
-
-The reporter highlights failed tests, slowest tests, and previously-
-flaky tests when present.
+`ci.yml` does not run a flake reporter: no ctrf step, no sticky PR
+comment, no flake-specific artifact. A flaky failure shows up as an
+ordinary red shard of the `test` job, and the way to tell it from a
+real regression is the manual procedure below.
 
 ### 2. Flake detection (manual, pytest-xflaky)
 
@@ -90,14 +82,15 @@ workflow never surfaced.
    ```
    uv run pytest path/to/test_file.py --randomly-seed=<seed-from-report>
    ```
-4. Reproduce under parallel execution (if parallel-safe):
+4. Reproduce under parallel execution (needs `pytest-xdist`, which
+   is not a project dependency - install it locally first):
    ```
    uv run pytest path/to/test_file.py -n auto
    ```
 5. Common root causes for our codebase:
    - Shared mutable global state across the agent registry.
    - Hidden network calls (use `respx` to make them deterministic).
-   - Time-of-day assumptions (use `freezegun`).
+   - Time-of-day assumptions (patch the clock in the test).
    - Filesystem races on `tmp_path` cleanup.
    - Event-loop bleed between async tests (check pytest-asyncio mode).
 6. Fix the root cause, remove the decorator, push.
@@ -132,5 +125,5 @@ Both knobs are flags on the commands above. Pass them per invocation.
   (XPASS noise vs. real recovery); tracked as a separate ticket.
 - BuildPulse / flaky.io paid SaaS. Free-tier-only constraint.
 - Test isolation primitives (`pytest-randomly` as a global dev dep).
-  pytest-randomly stays local to the nightly job for the reason
-  above.
+  pytest-randomly stays local to manual detection runs for the
+  reason above.

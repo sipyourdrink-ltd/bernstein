@@ -7,6 +7,18 @@ search:
 
 These are honest workflow patterns pulled from Bernstein's own docs and CLI surface. No invented companies, no fake testimonials - just the jobs teams reach for when they want orchestration, isolation, and verification in one tool.
 
+## Worked examples
+
+Each page below starts from an operator problem and walks through real commands with the output they printed:
+
+| Use case | The question it answers |
+|---|---|
+| [Reproducible nightly runs](use-cases/reproducible-nightly-runs.md) | Did last night's scheduled run dispatch what the schedule says, would another host have dispatched the same, and was the record edited? |
+| [Tamper-evident audit trail](use-cases/tamper-evident-audit-trail.md) | Can a reviewer confirm offline that the orchestrator's log was not changed after the fact? |
+| [Signed results from workers you do not control](use-cases/signed-worker-results.md) | Who produced this patch, are the patch and test log the ones they signed, under which policy, and does it follow their last submission? |
+
+Step-by-step versions are in [Tutorials](tutorials/index.md).
+
 ## Who this is for
 
 Specific shapes where the value lands:

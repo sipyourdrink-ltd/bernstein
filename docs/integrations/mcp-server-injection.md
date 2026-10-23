@@ -97,6 +97,19 @@ auto-detected (plugin-provided + catalog) servers.
 In the merged JSON, your plugin's server appears under
 `mcpServers["<plugin_name>__<server_name>"]`.
 
+For the `claude` adapter the merged JSON is the whole set. It is passed with
+`--strict-mcp-config`, so Claude Code does not add the servers it would
+otherwise discover on its own: ones registered with `claude mcp add` (user or
+local scope), a `.mcp.json` checked into the target repo, plugin-provided
+servers, account connectors, and subagent servers referenced by name. To give a
+spawned agent one of those, declare it in `bernstein.yaml` `mcp_servers` or in
+`~/.claude/mcp.json`, which bernstein reads itself.
+
+The `pi` adapter takes no `mcp_config`: pi has no MCP of its own and reaches
+MCP servers only through extensions. It is spawned with `--no-extensions`, so
+the extensions in the operator's `~/.pi/agent/extensions/` (and a repo's
+`.pi/extensions/`) do not load into a spawned agent (#5965).
+
 ---
 
 ## Worked example

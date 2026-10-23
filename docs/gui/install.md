@@ -44,7 +44,7 @@ URL after launch: `http://127.0.0.1:8052/ui/`.
 
 ## First-run notes
 
-1. **Auth token.** If `BERNSTEIN_AUTH_TOKEN` is unset, the server auto-generates one for the session and logs it to stderr. Copy it into the browser:
+1. **Auth token.** If `BERNSTEIN_AUTH_TOKEN` is unset, the server auto-generates one for the session and logs it to stderr. When the browser has no token or a stale one, the UI shows a banner under the top bar: paste the token there and press **Save** (the same field is under **Settings → Auth token**). From devtools instead:
 
     ```js
     localStorage.setItem("bernstein_token", "<token>")

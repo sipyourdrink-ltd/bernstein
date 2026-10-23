@@ -9,6 +9,11 @@
 > subcommands are `bernstein volunteer verify`, `browse` and `hub`; the rest of
 > this guide describes the shape the runner is being built to, so a donor can
 > tell in advance what it will and will not be allowed to do on their machine.
+>
+> Bare `bernstein volunteer` explains the flow and exits non-zero without
+> recording consent. A consent receipt binds your key to one project's manifest
+> digest and sandbox profile digest, so it is written once a task source exists
+> to pick a project - not before.
 
 ```bash
 bernstein volunteer run https://github.com/owner/project/issues/123

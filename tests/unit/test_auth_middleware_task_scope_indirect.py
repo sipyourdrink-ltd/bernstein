@@ -91,10 +91,10 @@ def _operator_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {_OPERATOR_TOKEN}"}
 
 
-def _agent_headers(application: FastAPI, session: str, task_ids: list[str]) -> dict[str, str]:
-    """Mint an agent identity token scoped to *task_ids*."""
+def _agent_headers(application: FastAPI, session: str, task_ids: list[str], role: str = "backend") -> dict[str, str]:
+    """Mint an agent identity token of *role* scoped to *task_ids*."""
     identity_store: Any = application.state.identity_store
-    _, token = identity_store.create_identity(session, "backend", task_ids=task_ids)
+    _, token = identity_store.create_identity(session, role, task_ids=task_ids)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -455,7 +455,7 @@ def test_cluster_steal_is_unrestricted_for_an_unscoped_token(app: FastAPI, monke
 
     donor = _register_node(app, 36, "overloaded-mgr", slots=1)
     receiver = _register_node(app, 37, "idle-mgr", slots=8)
-    headers = _agent_headers(app, "session-steal-manager", [])
+    headers = _agent_headers(app, "session-steal-manager", [], role="manager")
 
     response = _client(app, 38).post(
         "/cluster/steal",
@@ -595,7 +595,7 @@ def test_operator_credential_is_unaffected_by_the_indirect_checks(app: FastAPI) 
 def test_unscoped_agent_token_is_unaffected_by_the_indirect_checks(app: FastAPI) -> None:
     """A manager token (``task_ids == []``) stays unrestricted, as on the path gate."""
     victim_id = _create_task(app, 41, "manager-parent")
-    headers = _agent_headers(app, "session-manager-indirect", [])
+    headers = _agent_headers(app, "session-manager-indirect", [], role="manager")
 
     response = _client(app, 42).post(
         "/tasks",

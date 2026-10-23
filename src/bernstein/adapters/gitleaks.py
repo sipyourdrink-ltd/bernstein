@@ -26,7 +26,7 @@ from bernstein.adapters.scanner import (
     ScannerCategory,
     ScanResult,
     ScanScope,
-    normalize_finding_path,
+    normalize_report_path,
 )
 from bernstein.adapters.scanner_finding import Finding
 
@@ -267,7 +267,7 @@ def parse_gitleaks_sarif(report: str | bytes, *, target_root: Path | None = None
             path = str(artifact.get("uri") or "").replace("\\", "/")
             if not path:
                 raise ValueError(f"results[{result_index}] is missing artifactLocation.uri")
-            normalized_path = normalize_finding_path(path, target_root)
+            normalized_path = normalize_report_path(path, target_root)
 
             region = _mapping(physical.get("region"), "region")
             snippet = str(_mapping(region.get("snippet"), "region.snippet").get("text") or "")

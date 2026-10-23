@@ -218,11 +218,20 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="audit_pack",
         source="src/bernstein/core/security/audit_pack.py",
-        tests=("tests/unit/security/test_audit_pack_staged_write.py",),
+        tests=(
+            "tests/unit/security/test_audit_pack_staged_write.py",
+            "tests/unit/security/test_audit_pack_tail_digest.py",
+            "tests/unit/security/test_audit_pack_hmac_tail_digest.py",
+            "tests/unit/security/test_audit_pack_mutation_kill.py",
+        ),
         threshold=0.70,
         budget_seconds=900,
         max_candidates=60,
-        note="Staged atomic write for audit packs preventing reader truncation (6 tests).",
+        note=(
+            "SOC 2 evidence pack: resolvers, staleness, rendering and staged write. "
+            "Gated against the staged-write tests alone it scored 2/60, since nothing "
+            "else in the file was reached (#6471)."
+        ),
     ),
     Module(
         key="journal_verify",

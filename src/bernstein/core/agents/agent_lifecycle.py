@@ -4,8 +4,9 @@ Methods extracted from the Orchestrator class that deal with agent state
 management: refreshing statuses, handling orphaned tasks, reaping timed-out
 agents, and emitting metrics for dead agents.
 
-Includes ``_save_partial_work()`` which commits and merges uncommitted agent
-work before worktree destruction - preventing data loss on timeout kills.
+A dying agent's work reaches the run branch only as an accepted attempt
+(``_save_partial_work()``); any other dead, timed-out or recycled agent's work is
+kept on a salvage or graveyard ref by worktree cleanup, never merged (#6539).
 """
 
 from __future__ import annotations
@@ -26,10 +27,12 @@ import httpx
 from bernstein.core import defaults as _defaults
 from bernstein.core import heartbeat as heartbeat_protocol  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.cost import price_model_usage
+from bernstein.core.git.salvage import SALVAGE_EXCLUDE_PATHSPECS
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import AbortReason, AgentSession, Task, TaskStatus, TransitionReason
 from bernstein.core.task_lifecycle import (
+    _write_retry_checkpoint,
     collect_completion_data,
     retry_or_fail_task,
 )
@@ -192,6 +195,21 @@ _EXPECTED_ABORT_REASONS: frozenset[AbortReason] = frozenset(
 )
 
 
+def _is_adapter_failure_exit(session: AgentSession, abort_reason: AbortReason) -> bool:
+    """Return True when a dead agent's exit should start the adapter spawn cooldown.
+
+    The per-adapter spawn cooldown exists to stop respawning onto an adapter
+    that just crashed. ``_handle_dead_agent`` also runs for agents that
+    finished their task and exited cleanly, so it must not cool those down.
+    Only a known, non-zero exit that is not a deliberate stop counts: exit
+    code 0, an unknown exit status (liveness fallbacks that never see one)
+    and user/shutdown/cascaded aborts do not.
+    """
+    if session.exit_code is None or session.exit_code == 0:
+        return False
+    return abort_reason not in _EXPECTED_ABORT_REASONS
+
+
 def _capture_agent_crash(
     session: AgentSession,
     abort_reason: AbortReason,
@@ -286,15 +304,33 @@ def _preserve_runner_logs(orch: Any, session: Any) -> Path | None:
         return None
 
 
-def _save_partial_work(spawner: Any, session: Any) -> bool:
-    """Commit and merge uncommitted agent work before worktree destruction.
+def _save_partial_work(
+    spawner: Any,
+    session: Any,
+    *,
+    recorder: Any = None,
+    reason: str = "dead_agent",
+) -> bool:
+    """Commit and merge an accepted attempt's work before worktree destruction.
 
-    Called before ``cleanup_worktree()`` to prevent data loss on timeout
-    kills and agent crashes.  Stages all changes, creates a ``[WIP]``
-    commit, then attempts to merge the branch back to main via
+    The merge path for the completion-marker reap and for a dying agent
+    whose task was accepted (see :func:`_dispose_dead_worktree`, which
+    every dead, timed-out and recycled agent goes through).  Stages all
+    changes except backup and editor files, creates a ``[WIP]`` commit,
+    then attempts to merge the branch back to main via
     ``reap_completed_agent()``.
 
     All errors are suppressed so the cleanup path is never interrupted.
+
+    Args:
+        recorder: Run journal recorder. When given, a successful salvage
+            merge is recorded as ``task_merged`` for every task on the
+            session (#5271); ``None`` records nothing.
+        reason: Why the merge is a recovery merge, written on the journal
+            row. Every production caller passes its own -- ``dead_agent``,
+            ``orphan_no_signals``, ``completed``, or the idle reason that
+            recycled the agent. The default only serves callers with no
+            recorder, where nothing reads it.
 
     Returns:
         True if a WIP commit was created, False otherwise.
@@ -305,9 +341,10 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
 
     wt = str(worktree_path)
     committed = False
+    salvaged_commit = ""
     try:
         subprocess.run(
-            ["git", "add", "-A"],
+            ["git", "add", "-A", "--", ".", *SALVAGE_EXCLUDE_PATHSPECS],
             cwd=wt,
             capture_output=True,
             timeout=10,
@@ -319,6 +356,16 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
             timeout=10,
         )
         committed = result.returncode == 0
+        if committed:
+            rev_r = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=wt,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if rev_r.returncode == 0:
+                salvaged_commit = rev_r.stdout.strip()
     except Exception:
         logger.exception(
             "Partial-work WIP commit failed during reap (session_id=%s role=%s worktree=%s) - reap continues",
@@ -328,8 +375,9 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
         )
 
     # Try to merge the branch before cleanup
+    merge_result: Any = None
     try:
-        spawner.reap_completed_agent(session, skip_merge=False)
+        merge_result = spawner.reap_completed_agent(session, skip_merge=False)
     except Exception:
         logger.exception(
             "reap_completed_agent (merge) failed during partial-work save "
@@ -341,7 +389,184 @@ def _save_partial_work(spawner: Any, session: Any) -> bool:
 
     if committed:
         logger.info("Saved partial work for agent %s", session.id)
+
+    # If merge succeeded and we have a recorder, record task_merged for all associated tasks
+    if merge_result is not None and getattr(merge_result, "success", False):
+        from bernstein.core.replay.review_board import record_task_merged
+
+        merge_commit = getattr(merge_result, "merge_commit", "")
+        task_ids = getattr(session, "task_ids", []) or []
+        for tid in task_ids:
+            record_task_merged(
+                recorder,
+                task_id=tid,
+                agent_id=session.id,
+                merge_commit=merge_commit or None,
+                salvaged_commit=salvaged_commit or None,
+                reason=reason,
+            )
+
     return committed
+
+
+def _has_accepted_task(orch: Any, session: AgentSession) -> bool:
+    """Return True when a task of *session* is ``done`` on the task server.
+
+    ``done`` is the one state in which an attempt was accepted - by the
+    agent's own ``/complete`` or by the orphan auto-complete - and its merge
+    has not run yet. Any other state (failed, sent back to the queue, closed
+    after the gate merged it) means the worktree holds work nobody accepted.
+    A task that cannot be read counts as not accepted: its work is kept on a
+    salvage ref rather than merged unverified.
+    """
+    for task_id in session.task_ids:
+        try:
+            resp = orch._client.get(f"{orch._config.server_url}/tasks/{task_id}")
+            resp.raise_for_status()
+            if Task.from_dict(resp.json()).status == TaskStatus.DONE:
+                return True
+        except Exception as exc:
+            logger.warning(
+                "Could not read task %s of dying agent %s (%s); its attempt counts as not accepted",
+                task_id,
+                session.id,
+                exc,
+            )
+    return False
+
+
+def _session_repo_root(spawner: Any, session: AgentSession) -> Path | None:
+    """Return the repository root of *session*'s worktree, or None.
+
+    Read before cleanup removes the worktree, so the salvage or graveyard ref
+    that cleanup leaves behind can be resolved afterwards.
+    """
+    try:
+        worktree_path = spawner.get_worktree_path(session.id)
+        if worktree_path is None:
+            return None
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        common_dir = result.stdout.strip()
+        return Path(common_dir).parent if result.returncode == 0 and common_dir else None
+    except Exception:
+        return None
+
+
+def _salvage_ref(repo_root: Path, session_id: str) -> tuple[str, str] | None:
+    """Return ``(ref, sha)`` of the ref holding a reaped session's unmerged work.
+
+    Worktree cleanup keeps uncommitted edits on ``salvage/<session>`` and
+    committed-but-unmerged commits under ``refs/graveyard/<session>-<ts>``.
+    """
+    try:
+        ref = f"refs/heads/salvage/{session_id}"
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", ref],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return ref, result.stdout.strip()
+        result = subprocess.run(
+            [
+                "git",
+                "for-each-ref",
+                "--sort=-refname",
+                "--count=1",
+                "--format=%(refname) %(objectname)",
+                f"refs/graveyard/{session_id}-*",
+            ],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        fields = result.stdout.split()
+        if result.returncode == 0 and len(fields) == 2:
+            return fields[0], fields[1]
+    except Exception:
+        logger.debug("Salvage ref lookup failed for session %s", session_id, exc_info=True)
+    return None
+
+
+def _record_salvage(orch: Any, session: AgentSession, repo_root: Path, *, reason: str) -> None:
+    """Record where a dying agent's unmerged work was kept (#6539).
+
+    One ``task_salvaged`` journal row per task and a progress entry on the
+    task naming the ref and sha. Best effort: never raises.
+    """
+    found = _salvage_ref(repo_root, session.id)
+    if found is None:
+        return
+    ref, sha = found
+    logger.info("Kept unmerged work of agent %s on %s at %s (not merged)", session.id, ref, sha)
+    from bernstein.core.replay.review_board import record_task_salvaged
+
+    for task_id in session.task_ids:
+        try:
+            record_task_salvaged(
+                getattr(orch, "_recorder", None),
+                task_id=task_id,
+                agent_id=session.id,
+                ref=ref,
+                commit=sha,
+                reason=reason,
+            )
+        except Exception as exc:
+            logger.warning("Journal row for the salvage of task %s failed: %s", task_id, exc)
+        try:
+            orch._client.post(
+                f"{orch._config.server_url}/tasks/{task_id}/progress",
+                json={"message": f"unmerged work kept on {ref} at {sha}"},
+            )
+        except Exception as exc:
+            logger.warning("Progress entry for the salvage of task %s failed: %s", task_id, exc)
+
+
+def _dispose_dead_worktree(orch: Any, session: AgentSession, *, reason: str) -> None:
+    """Reap a dead, timed-out or recycled agent; merge its work only when accepted (#6539).
+
+    An accepted attempt (a task of the session is ``done``) still merges
+    through :func:`_save_partial_work`. Any other attempt merges nothing: the
+    process is reaped with ``skip_merge``, a worktree kept for a resume stays
+    as it is, and cleanup keeps the rest off the run branch - uncommitted
+    edits on ``salvage/<session>``, committed-but-unmerged commits under
+    ``refs/graveyard/`` - recorded on the journal and the task's progress log.
+
+    Args:
+        orch: Orchestrator instance.
+        session: The agent session being disposed of.
+        reason: Why the agent is reaped, written on the merge or salvage row.
+    """
+    spawner = orch._spawner
+    try:
+        worktree_path = spawner.get_worktree_path(session.id)
+        has_worktree = worktree_path is not None and Path(worktree_path).is_dir()
+    except Exception:
+        has_worktree = False
+    merged = has_worktree and _has_accepted_task(orch, session)
+    if merged:
+        _save_partial_work(spawner, session, recorder=getattr(orch, "_recorder", None), reason=reason)
+    elif has_worktree:
+        try:
+            spawner.reap_completed_agent(session, skip_merge=True, defer_cleanup=True)
+        except Exception:
+            logger.exception("reap_completed_agent (no merge) failed for session %s - cleanup continues", session.id)
+    preserved = getattr(orch, "_preserved_worktrees", {})
+    if any(spawner.get_worktree_path(session.id) == preserved.get(tid) for tid in session.task_ids):
+        return
+    repo_root = None if merged else _session_repo_root(spawner, session)
+    spawner.cleanup_worktree(session.id)
+    if repo_root is not None:
+        _record_salvage(orch, session, repo_root, reason=reason)
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +583,7 @@ def _handle_orphaned_task_guarded(
     """Orphan handling for one task, isolated from the rest of the cleanup.
 
     An exception here used to propagate out of the tick, skipping
-    ``_save_partial_work`` and worktree cleanup, so the dying agent's
+    ``_dispose_dead_worktree`` and worktree cleanup, so the dying agent's
     uncommitted work was lost.
     """
     try:
@@ -390,7 +615,7 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     )
     _capture_agent_crash(session, abort_reason, abort_detail)
     _propagate_abort_to_children(orch, session.id)
-    if session.role:
+    if session.role and _is_adapter_failure_exit(session, abort_reason):
         adapter_name = getattr(session, "endpoint_adapter_name", "") or "unknown"
         orch._agent_failure_timestamps[adapter_name] = time.time()
 
@@ -400,17 +625,15 @@ def _handle_dead_agent(orch: Any, session: AgentSession, tasks_snapshot: dict[st
     if _rl_tracker is not None and session.provider:
         _rl_tracker.decrement_active(session.provider)
     _preserve_runner_logs(orch, session)
+    # issue #5844: record the checkpointed-retry reference before any of this
+    # session's tasks reach a retry decision below, and before _dispose_dead_worktree
+    # touches the worktree.
+    _write_retry_checkpoint(orch, session, detector="crash")
     for task_id in session.task_ids:
         orch._crash_counts[task_id] = orch._crash_counts.get(task_id, 0) + 1
         _maybe_preserve_worktree(orch, session, task_id)
         _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
-    _save_partial_work(orch._spawner, session)
-    _preserved = getattr(orch, "_preserved_worktrees", {})
-    _session_preserved = any(
-        orch._spawner.get_worktree_path(session.id) == _preserved.get(tid) for tid in session.task_ids
-    )
-    if not _session_preserved:
-        orch._spawner.cleanup_worktree(session.id)
+    _dispose_dead_worktree(orch, session, reason="dead_agent")
     with contextlib.suppress(OSError):
         orch._signal_mgr.clear_signals(session.id)
 
@@ -439,6 +662,13 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
     # above, so this is the only place left that can still fail a task whose
     # deferral was never followed by real progress (issue #4222).
     _reevaluate_pending_death_judgments(orch, tasks_snapshot)
+
+    # spawner.kill() marks a session dead itself, so the loop above never runs
+    # _handle_dead_agent (and its lock release) for a killed session, and a
+    # lock persisted by an earlier orchestrator process names a session this
+    # one never tracked. Either would refuse every retry of the task until the
+    # lock TTL expires.
+    _release_orphaned_file_locks(orch)
 
     # Purge dead agents to prevent unbounded dict growth (memory leak fix)
     purge_dead_agents(orch)
@@ -2007,9 +2237,10 @@ def _handle_orphan_no_signals(
         # is committed state. An agent that wrote its deliverable and died
         # before committing is not an agent that decided nothing needed
         # changing. Auto-completing it records a verified deliverable for
-        # work no one verified, while the actual bytes reach the branch a
-        # few lines later through ``_save_partial_work``'s ``[WIP]`` commit,
-        # which no journal row accounts for (#5271). Measured 2026-09-03.
+        # work no one verified, while the actual bytes reached the branch
+        # through ``_save_partial_work``'s ``[WIP]`` commit, which no journal
+        # row accounted for (#5271). Measured 2026-09-03. A failed attempt's
+        # bytes now stay on a salvage ref (#6539).
         _uncommitted = _uncommitted_work_paths(worktree_path)
         if _uncommitted:
             logger.warning(
@@ -2696,8 +2927,17 @@ _ORCHESTRATOR_WORKTREE_FILES: frozenset[str] = frozenset(
         ".env",
         "bernstein.yaml",
         "bernstein.yml",
+        # aider writes these into every worktree it runs in; none of them is a
+        # deliverable (measured 2026-10-17: nine clean exits in a row read dirty).
+        ".aider.conf.yml",
+        ".aider.chat.history.md",
+        ".aider.input.history",
+        ".aider.llm.history",
     }
 )
+# aider's own caches, never part of the target repo's work.
+_ADAPTER_WORKTREE_DIRS: tuple[str, ...] = (".aider.tags.cache.v4/", ".aider/")
+_ADAPTER_GITIGNORE_PREFIX = ".aider"
 # Keep this scoped to ``.sdd/``: identities land in ``.sdd/auth`` and
 # attestations in ``.sdd/attestations``, both covered here.  Bare ``auth/``
 # or ``attestations/`` prefixes hide legitimate target-repo work and can cause
@@ -2757,8 +2997,49 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
             continue
         if path in _ORCHESTRATOR_WORKTREE_FILES or path.startswith(_ORCHESTRATOR_WORKTREE_DIRS):
             continue
+        if path.startswith(_ADAPTER_WORKTREE_DIRS):
+            continue
+        if path == ".gitignore" and _gitignore_change_is_adapter_noise(worktree_path):
+            continue
         paths.append(path)
     return paths
+
+
+def _gitignore_change_is_adapter_noise(worktree_path: Path) -> bool:
+    """True when the only lines added to ``.gitignore`` are aider's ``.aider*`` entries.
+
+    aider appends ``.aider*`` to the target repo's ``.gitignore`` on start-up
+    (``--gitignore``, default on). An agent that then exited cleanly with no
+    other change was failed as "deliverable written but never committed" on
+    that single path - nine times in a row on one central, 2026-10-17. A
+    ``.gitignore`` edit with any other added line is still the agent's work.
+    Unreadable diffs are not noise: the caller then counts the path.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD", "--unified=0", "--", ".gitignore"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    added = [
+        line[1:].strip() for line in result.stdout.splitlines() if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added and not result.stdout:
+        # Untracked .gitignore: the whole file is the addition.
+        try:
+            added = [ln.strip() for ln in (worktree_path / ".gitignore").read_text(encoding="utf-8").splitlines()]
+        except OSError:
+            return False
+    added = [ln for ln in added if ln]
+    return bool(added) and all(ln.startswith(_ADAPTER_GITIGNORE_PREFIX) for ln in added)
 
 
 def _has_git_commits_on_branch(worktree_path: Path, since_ts: float) -> bool:
@@ -2920,15 +3201,12 @@ def _reap_wall_clock_timeout(
     with contextlib.suppress(OSError):
         orch._signal_mgr.clear_signals(session.id)
     _preserve_runner_logs(orch, session)
+    # issue #5844: same ordering guarantee as the crash path in _handle_dead_agent,
+    # before any retry decision and before _dispose_dead_worktree touches the worktree.
+    _write_retry_checkpoint(orch, session, detector="wall_clock_timeout")
     for task_id in session.task_ids:
         _handle_orphaned_task_guarded(orch, task_id, session, tasks_snapshot)
-    _save_partial_work(orch._spawner, session)
-    _preserved = getattr(orch, "_preserved_worktrees", {})
-    _session_preserved = any(
-        orch._spawner.get_worktree_path(session.id) == _preserved.get(tid) for tid in session.task_ids
-    )
-    if not _session_preserved:
-        orch._spawner.cleanup_worktree(session.id)
+    _dispose_dead_worktree(orch, session, reason="orphan_no_signals")
 
 
 def _reap_heartbeat_timeout(
@@ -2970,6 +3248,9 @@ def _reap_heartbeat_timeout(
     orch._record_provider_health(session, success=False)
     with contextlib.suppress(OSError):
         orch._signal_mgr.clear_signals(session.id)
+    # issue #5844: same ordering guarantee as the other two reap paths, before
+    # the retry_or_fail_task call below reaches its checkpoint-retry decision.
+    _write_retry_checkpoint(orch, session, detector="heartbeat_timeout")
     for task_id in session.task_ids:
         _wal_r = getattr(orch, "_wal_writer", None)
         if _wal_r is not None:
@@ -3162,6 +3443,24 @@ def _release_file_ownership(orch: Any, agent_id: str) -> None:
     lock_manager = getattr(orch, "_lock_manager", None)
     if lock_manager is not None:
         lock_manager.release(agent_id)
+
+
+def _release_orphaned_file_locks(orch: Any) -> None:
+    """Release every file lock no live session holds.
+
+    Batch-API sessions are tracked outside ``_agents`` and count as holders.
+
+    Args:
+        orch: Orchestrator instance.
+    """
+    lock_manager = getattr(orch, "_lock_manager", None)
+    if lock_manager is None:
+        return
+    sessions = [*orch._agents.values(), *getattr(orch, "_batch_sessions", {}).values()]
+    live = {session.id for session in sessions if session.status != "dead"}
+    released = lock_manager.release_all_except(live)
+    if released:
+        logger.info("Released %d file lock(s) held by no live session: %s", len(released), sorted(released))
 
 
 def _release_task_to_session(orch: Any, task_ids: list[str]) -> None:

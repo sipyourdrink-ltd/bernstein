@@ -436,7 +436,8 @@ def resolve_signal(
         workdir: Project root; defaults to ``sdd_dir.parent``. Used for the
             incident case corpus default location.
         cases_dir: Override for the incident case corpus (defaults to
-            ``<workdir>/src/bernstein/eval/cases/incidents``).
+            :func:`bernstein.eval.incident_synthesizer.incident_cases_dir`
+            of *workdir*, the directory the synthesiser writes to).
         lineage_cards_dir: Agent-card directory for the lineage gate the
             artefact signal runs (defaults to ``<sdd>/agents``, matching
             ``bernstein audit taint``).
@@ -471,12 +472,11 @@ def resolve_signal(
     if kind == SIGNAL_KIND_INCIDENT:
         if not argument:
             raise DiagnoseError("--signal incident requires a case id: incident:<case-id>")
-        resolved_cases = (
-            cases_dir
-            if cases_dir is not None
-            else resolved_workdir / "src" / "bernstein" / "eval" / "cases" / "incidents"
-        )
-        return incident_signal(argument, cases_dir=resolved_cases)
+        if cases_dir is None:
+            from bernstein.eval.incident_synthesizer import incident_cases_dir
+
+            cases_dir = incident_cases_dir(resolved_workdir)
+        return incident_signal(argument, cases_dir=cases_dir)
 
     raise DiagnoseError(
         f"unknown --signal {spec!r}; expected gate[:RECEIPT_HASH], artefact:<path>, incident:<case-id>, or replay"

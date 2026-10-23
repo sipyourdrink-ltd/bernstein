@@ -192,3 +192,92 @@ def test_the_file_records_why_the_rules_come_from_the_default_branch() -> None:
     assert "organization ruleset" in text, "the file must keep naming what makes it non-forgeable"
     assert "BASE commit" not in text, "the comment must not still describe the recorded base commit"
     assert SCRIPT.exists(), "the script the gate runs must be on the default branch"
+
+
+# ---------------------------------------------------------------------------
+# The sweep's invocation surface (#5788)
+# ---------------------------------------------------------------------------
+
+RERUN = Path(".github/workflows/quorum-rerun.yml")
+
+
+def _rerun_job() -> dict[str, Any]:
+    doc = yaml.safe_load(RERUN.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict), f"{RERUN} is not a mapping"
+    jobs = cast("dict[str, Any]", doc).get("jobs")
+    assert isinstance(jobs, dict), f"{RERUN} must define jobs"
+    job = jobs.get("rerun")
+    assert isinstance(job, dict), f"{RERUN} must define the `rerun` job"
+    return cast("dict[str, Any]", job)
+
+
+def _rerun_step(name: str) -> dict[str, Any]:
+    steps = _rerun_job().get("steps")
+    assert isinstance(steps, list), "the `rerun` job must define steps"
+    matches = [s for s in steps if isinstance(s, dict) and s.get("name") == name]
+    assert len(matches) == 1, f"the `rerun` job must have exactly one {name!r} step"
+    return cast("dict[str, Any]", matches[0])
+
+
+def test_the_sweep_asks_the_check_which_paths_are_governed() -> None:
+    """One authority for the list, enforced rather than reviewed into place.
+
+    The sweep used to restate the governance paths as a jq literal, so a path
+    added to `quorum_check.py` was covered by the objection window and then
+    never swept once the window closed: the pull request sat red until somebody
+    pushed to it. Asking the check removes the second copy.
+
+    Pinned here because the 72-hour window is a REVIEW gate, not a test. Without
+    this assertion a merged revert to an inline literal breaks the invariant
+    silently, and the only thing standing between the repo and that is somebody
+    remembering this thread.
+    """
+    run = str(_rerun_step("Re-run quorum").get("run", ""))
+    assert "--governance-paths" in run, (
+        "the sweep must read the path list from the check rather than carrying its own copy"
+    )
+    assert "quorum_check.py" in run
+
+
+def test_the_sweep_fails_closed_when_the_check_reports_no_paths() -> None:
+    """An empty list would sweep nothing and report success doing it.
+
+    Same shape as `test_a_run_that_applied_no_rule_fails` above: "no rule was
+    applied" and "the rule was satisfied" must never be the same result.
+    """
+    run = str(_rerun_step("Re-run quorum").get("run", ""))
+    assert "-gt 0" in run, "the sweep must refuse an empty governance-path list"
+
+
+def test_the_sweeps_checkout_carries_no_credentials() -> None:
+    """It runs on a schedule with write scopes; the scripts it reads are all it needs.
+
+    `persist-credentials: false` keeps the token out of the checked-out tree,
+    so nothing the sweep runs can reach it.
+    """
+    checkout = _rerun_step("Check out the scripts")
+    assert str(checkout.get("uses", "")).startswith("actions/checkout@")
+    with_block = checkout.get("with")
+    assert isinstance(with_block, dict), "the checkout must configure itself"
+    assert with_block.get("persist-credentials") is False
+
+
+def test_the_sweep_runs_under_bash_so_mapfile_exists() -> None:
+    """`mapfile` is a bash builtin and not POSIX sh.
+
+    The reader above takes the path list with `mapfile`, which is silently
+    absent under `sh` — the array would be empty and the fail-closed guard
+    would fire on every sweep. GitHub's default shell on Linux is bash, so this
+    holds as long as nothing overrides it; asserted because the override is a
+    one-line change in a file nobody re-reads.
+    """
+    doc = yaml.safe_load(RERUN.read_text(encoding="utf-8"))
+    job = _rerun_job()
+    for scope in (cast("dict[str, Any]", doc), job):
+        defaults = scope.get("defaults")
+        if isinstance(defaults, dict):
+            shell = cast("dict[str, Any]", defaults).get("run", {})
+            if isinstance(shell, dict):
+                assert shell.get("shell", "bash") == "bash", "mapfile needs bash"
+    step_shell = _rerun_step("Re-run quorum").get("shell", "bash")
+    assert step_shell == "bash", "mapfile needs bash"

@@ -6,7 +6,7 @@ This guide walks through provisioning the Cloudflare resources needed for Bernst
 
 ## Prerequisites
 
-- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is sufficient for Workers AI and basic Workers)
+- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is sufficient for basic Workers)
 - [Node.js](https://nodejs.org/) 18+ (for wrangler CLI)
 - **wrangler v3.0+** installed. Earlier wrangler 2.x releases use a different command surface (notably for D1 and Workers AI) and will not match the commands below.
 
@@ -23,7 +23,7 @@ wrangler login
 
 ## 1. Get your account ID
 
-Your account ID appears in the Cloudflare dashboard URL and is required by every module.
+Your account ID appears in the Cloudflare dashboard URL and is required by every bridge config.
 
 ```bash
 wrangler whoami
@@ -48,14 +48,14 @@ For full Bernstein integration, the token needs these permissions:
 
 | Permission | Scope | Used by |
 |-----------|-------|---------|
-| Workers Scripts: Edit | Account | RuntimeBridge, WorkflowBridge, Agents adapter |
-| Workers AI: Run | Account | Workers AI provider |
-| D1: Edit | Account | D1 Analytics |
+| Workers Scripts: Edit | Account | RuntimeBridge, WorkflowBridge |
+| Workers AI: Run | Account | Workers AI (no Bernstein provider ships yet) |
+| D1: Edit | Account | D1 analytics (not yet used by Bernstein) |
 | R2: Edit | Account | R2 Workspace Sync |
 | Browser Rendering: Run | Account | Browser Rendering bridge |
 
 !!! tip "Least-privilege tokens"
-    If you only need a subset of features (e.g., just Workers AI for free LLM planning), create a token with only those permissions.
+    If you only need a subset of features (e.g., just the Browser Rendering bridge), create a token with only those permissions.
 
 ```bash
 export CLOUDFLARE_API_TOKEN="cf_token_..."
@@ -99,13 +99,13 @@ config = R2Config(
 
 ## 4. Create a D1 database (analytics & billing)
 
-D1 is Cloudflare's serverless SQLite. Bernstein uses it for usage metering, billing tier enforcement, and cost reporting.
+D1 is Cloudflare's serverless SQLite. No shipped Bernstein module uses it yet (see [Analytics & Billing](cloudflare-analytics.md)); this step only provisions a database for the planned integration.
 
 ```bash
 wrangler d1 create bernstein-analytics
 ```
 
-Note the `database_id` from the output. The schema is created automatically on first use.
+Note the `database_id` from the output.
 
 ---
 
@@ -115,7 +115,7 @@ Note the `database_id` from the output. The schema is created automatically on f
 
 
 
-If you want to run agents on Cloudflare Workers (not just use Workers AI locally), scaffold and deploy the agent worker. `bernstein cloud init` writes a free-tier `wrangler.toml` and a runnable `src/index.js` entry point (this works from the published wheel, which does not ship the repo `templates/` directory):
+If you want to run agents on Cloudflare Workers, scaffold and deploy the agent worker. `bernstein cloud init` writes a free-tier `wrangler.toml` and a minimal `src/index.js` that answers every request with a static status (this works from the published wheel, which does not ship the repo `templates/` directory). To drive it with `CloudflareBridge`, replace the handler with one that implements `POST /agents/spawn`, `GET /agents/{id}/status`, `POST /agents/{id}/cancel` and `GET /agents/{id}/logs`:
 
 ```bash
 bernstein cloud init                 # writes wrangler.toml + src/index.js
@@ -133,10 +133,12 @@ run against your own Cloudflare account.
 !!! warning "Hosted service is experimental"
     The hosted Bernstein Cloud service at `api.bernstein.run` is experimental
     and **not currently available** (the host does not resolve in DNS). The
-    `bernstein cloud login/run/status/runs/cost` commands target it and will
-    report that the service is not reachable. Everything else in this guide
-    (Workers AI, R2, D1, worker deployment) works against your own Cloudflare
-    account and does not depend on the hosted service.
+    `bernstein cloud run/status/runs/cost` commands target it and will
+    report that the service is not reachable; `bernstein cloud login` only
+    stores the key in `~/.config/bernstein/cloud-token.json`. Everything else
+    in this guide (R2, worker deployment, and provisioning the Workers AI and
+    D1 resources) works against your own Cloudflare account and does not
+    depend on the hosted service.
 
 For the hosted Bernstein Cloud service (when available):
 
@@ -155,11 +157,11 @@ Credentials are stored in `~/.config/bernstein/cloud-token.json` (mode 0600).
 
 | Variable | Required by | Description |
 |----------|-------------|-------------|
-| `CLOUDFLARE_ACCOUNT_ID` / `CF_ACCOUNT_ID` | All modules | Cloudflare account identifier |
-| `CLOUDFLARE_API_TOKEN` / `CF_API_TOKEN` | All modules | API token with appropriate permissions |
-| `CLOUDFLARE_API_KEY` | Agents adapter (legacy) | Global API key (prefer token) |
-| `CLOUDFLARE_EMAIL` | Agents adapter (legacy) | Account email (only with global key) |
-| `WRANGLER_SEND_METRICS` | Agents adapter | Control wrangler telemetry |
+| `CLOUDFLARE_ACCOUNT_ID` / `CF_ACCOUNT_ID` | wrangler; your own code | Cloudflare account identifier (no Bernstein module reads it; pass it into the bridge configs) |
+| `CLOUDFLARE_API_TOKEN` / `CF_API_TOKEN` | wrangler; your own code | API token with appropriate permissions (no Bernstein module reads it; pass it into the bridge configs) |
+| `CLOUDFLARE_API_KEY` | wrangler (legacy) | Global API key (prefer token) |
+| `CLOUDFLARE_EMAIL` | wrangler (legacy) | Account email (only with global key) |
+| `WRANGLER_SEND_METRICS` | wrangler | Control wrangler telemetry |
 | `BERNSTEIN_CLOUD_API_KEY` | Cloud CLI | API key for bernstein.run hosted service |
 
 ---

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import logging
 import os
 import platform
 import subprocess
@@ -207,6 +208,42 @@ def _no_git_background_maintenance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_CONFIG_COUNT", str(start + 2))
 
 
+def _is_pytest_capture_handler(handler: logging.Handler) -> bool:
+    """pytest's own capture handlers, which it adds and removes around each phase."""
+    return type(handler).__module__.startswith("_pytest")
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logging() -> Iterator[None]:
+    """Give every test the root logging state it found, whatever the last test did (#6296).
+
+    ``bernstein --quiet`` runs ``logging.basicConfig(level=logging.ERROR, force=True)``,
+    which is right for a program and wrong to leave behind in a test process: it sets
+    the ROOT level to ERROR and nothing restores it. Every ``bernstein.*`` logger is a
+    plain ``getLogger(__name__)`` that inherits that level, so a later test on the same
+    worker asserting on a WARNING record read an empty ``caplog`` against correct code.
+
+    Level and ``logging.disable`` are restored as found. Handlers are compared without
+    pytest's per-phase capture handlers, which pytest attaches and detaches itself: one
+    a test added (``basicConfig``'s stderr handler) is removed, and one it removed is put
+    back.
+    """
+    root = logging.getLogger()
+    level = root.level
+    disabled = logging.root.manager.disable
+    handlers = [h for h in root.handlers if not _is_pytest_capture_handler(h)]
+    yield
+    root.setLevel(level)
+    logging.disable(disabled)
+    for handler in list(root.handlers):
+        if not _is_pytest_capture_handler(handler) and handler not in handlers:
+            root.removeHandler(handler)
+            handler.close()
+    for handler in handlers:
+        if handler not in root.handlers:
+            root.addHandler(handler)
+
+
 @pytest.fixture(autouse=True)
 def _memory_guard():
     """Reclaim as RSS approaches the cap; abort the session once it exceeds it."""
@@ -342,6 +379,34 @@ def _restore_network_posture_env() -> Iterator[None]:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
+def _restore_bernstein_logger_state() -> Iterator[None]:
+    """Put the ``bernstein`` logger's level/handlers/propagate back after every test.
+
+    A CLI command run with ``--verbose``/``--quiet`` (directly, or through
+    ``CliRunner.invoke``) reconfigures the ``bernstein`` logger for the rest
+    of the process -- there is no counterpart call that undoes it, by design:
+    a real CLI invocation is its own process, so nothing needs to restore
+    state before it exits (#6184). A pytest worker is not a fresh process per
+    test, so without this, a test earlier in the same worker that ran a
+    ``--quiet`` command leaves every later test's ``caplog`` assertion on a
+    ``bernstein.*`` logger seeing an empty record list -- indistinguishable
+    from "the code did not log", which is how a real regression ships green.
+    Belt-and-braces alongside the production fix that scopes the
+    reconfiguration off the process-wide root logger in the first place.
+    """
+    logger = logging.getLogger("bernstein")
+    saved_level = logger.level
+    saved_handlers = list(logger.handlers)
+    saved_propagate = logger.propagate
+    try:
+        yield
+    finally:
+        logger.level = saved_level
+        logger.handlers = saved_handlers
+        logger.propagate = saved_propagate
 
 
 @pytest.fixture(autouse=True)
