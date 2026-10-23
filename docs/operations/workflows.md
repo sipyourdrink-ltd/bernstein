@@ -102,6 +102,10 @@ which point the run raises rather than silently truncating.
 
 ## Resuming workflows
 
+Agent dispatch currently does not wait for verified completion before releasing
+dependent nodes. The [completion boundary proposal](../architecture/workflow-agent-completion-proposal.md)
+records the unresolved execution and resume guarantees tracked in #6639.
+
 Workflow runs can be resumed after interruption (Ctrl+C, crash, kill) using:
 
 ```bash
