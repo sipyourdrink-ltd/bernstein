@@ -14,20 +14,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from bernstein.core.security.role_adapter_policy import (
-    RoleAdapterDenied,
-    RolePolicy,
     DEFAULT_POLICY_PATH,
+    PolicyFileCorrupt,
+    RoleAdapterDenied,
+    load_policy_file,
     reset_policy,
-    save_policy_file,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,3 +168,26 @@ class TestRoleAdapterPolicyRuntime:
             pytest.raises(RoleAdapterDenied),
         ):
             spawner._get_adapter_by_name("aider", role="frontend")
+
+    def test_corrupt_policy_file_raises_policy_file_corrupt(self, tmp_path: Path) -> None:
+        """load_policy_file raises PolicyFileCorrupt when file exists but is malformed."""
+        path = tmp_path / DEFAULT_POLICY_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write a valid file then truncate it (simulate torn write)
+        path.write_bytes(b'{"docs": ["claude"')  # unterminated JSON
+
+        with pytest.raises(PolicyFileCorrupt):
+            load_policy_file(path)
+
+    def test_corrupt_policy_file_denies_spawn(self, tmp_path: Path) -> None:
+        """A corrupt policy file causes spawner to deny the adapter (fail-closed)."""
+        path = tmp_path / DEFAULT_POLICY_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'{"docs": ["claude"')  # unterminated JSON
+
+        spawner = _make_spawner(tmp_path)
+        spawner._adapter_cache["codex"] = object()
+
+        # A corrupt policy file must not silently permit all adapters.
+        with pytest.raises(RoleAdapterDenied):
+            spawner._get_adapter_by_name("codex", role="docs")

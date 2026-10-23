@@ -49,6 +49,15 @@ logger = logging.getLogger(__name__)
 ADAPTER_DENY_EVENT_TYPE: str = "role.adapter.denied"
 
 
+class PolicyFileCorrupt(OSError):
+    """Raised when a policy file exists but cannot be read or parsed.
+
+    Distinct from the not-found case (which returns the permit-all default) so
+    callers on the security-enforcement path can fail closed rather than
+    silently lifting all restrictions.
+    """
+
+
 class RoleAdapterDenied(RuntimeError):
     """Raised when a role attempts to spawn an adapter outside its allow-list.
 
@@ -152,26 +161,31 @@ DEFAULT_POLICY_PATH: Path = Path(".sdd/security/role_adapter_policy.json")
 
 
 def load_policy_file(path: Path = DEFAULT_POLICY_PATH) -> RolePolicy:
-    """Load a policy from disk; return the empty policy when no file exists.
+    """Load a policy from disk; return the empty (permit-all) policy when no file exists.
 
     Args:
         path: JSON file with the ``{role: [adapter, ...]}`` shape.
 
     Returns:
-        A :class:`RolePolicy`. An unreadable / malformed file logs a warning
-        and falls back to the empty policy so a corrupt config never bricks
-        the orchestrator.
+        A :class:`RolePolicy`. Returns the empty policy when the file does not
+        exist — that means no restrictions were ever configured.
+
+    Raises:
+        PolicyFileCorrupt: When the file *exists* but cannot be read or parsed.
+            "Missing" and "unreadable" are different security postures: missing
+            means no policy was set; unreadable means a policy *was* set and we
+            cannot enforce it — callers on the spawn path should fail closed.
     """
     if not path.is_file():
         return RolePolicy()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("role_adapter_policy: failed to load %s - %s", path, exc)
-        return RolePolicy()
+        raise PolicyFileCorrupt(
+            f"role_adapter_policy: policy file {path} exists but cannot be read or parsed: {exc}"
+        ) from exc
     if not isinstance(data, dict):
-        logger.warning("role_adapter_policy: %s does not contain a JSON object", path)
-        return RolePolicy()
+        raise PolicyFileCorrupt(f"role_adapter_policy: policy file {path} does not contain a JSON object")
     return RolePolicy.from_dict(data)
 
 

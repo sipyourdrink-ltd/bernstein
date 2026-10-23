@@ -3156,6 +3156,12 @@ class AgentSpawner:
                 DEFAULT_POLICY_PATH,
             )
             from bernstein.core.security.role_adapter_policy import (
+                PolicyFileCorrupt as _PolicyFileCorrupt,
+            )
+            from bernstein.core.security.role_adapter_policy import (
+                RoleAdapterDenied as _RoleAdapterDenied,
+            )
+            from bernstein.core.security.role_adapter_policy import (
                 enforce as _enforce_role_adapter,
             )
             from bernstein.core.security.role_adapter_policy import (
@@ -3172,7 +3178,17 @@ class AgentSpawner:
             # explicitly rather than relying on the process-global default, which
             # starts empty (unrestricted) and is never seeded from disk (#6648).
             _workdir_policy_path = self._workdir / DEFAULT_POLICY_PATH
-            _workdir_policy = _load_policy_file(_workdir_policy_path)
+            try:
+                _workdir_policy = _load_policy_file(_workdir_policy_path)
+            except _PolicyFileCorrupt as _exc:
+                # A policy file that exists but cannot be read means restrictions
+                # were configured and we cannot enforce them — fail closed rather
+                # than silently lifting all restrictions (#6648).
+                raise _RoleAdapterDenied(
+                    role or "<unknown>",
+                    adapter_name,
+                    allowed=(),
+                ) from _exc
             logger.debug(
                 "role_adapter_policy: loaded from %s (roles configured: %s)",
                 _workdir_policy_path,
