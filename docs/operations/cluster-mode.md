@@ -453,6 +453,67 @@ Governed workloads' OTLP spans reach the ingest boundary under the source label
 spans came from. Nothing here sits in a workload's data path, and there is no
 admission webhook: a workload is never blocked from starting.
 
+## Proposed remote delivery and base contract (not implemented)
+
+Issue #6538 is partially implemented on main: workers already push an agent
+branch and report its SHA, and the coordinator has a remote verification path.
+The remaining contract needs a public claim-schema and repository-identity
+decision. `WorkerLoop._claim_task` accepts the task dictionary without a run
+base or repository check; `_spawn_agent` passes it to the ordinary spawner.
+`WorktreeManager.create` consequently branches from the worker's local HEAD,
+which can predate accepted work on the coordinator.
+
+Proposed boundary for review:
+
+- Add a versioned execution context to a remote claim, binding run, task,
+  attempt, configured repository identity, base ref and exact base SHA.
+  Decide the durable repository identifier and compatibility policy first;
+  a matching root commit alone does not distinguish forks or separate runs.
+- Fetch only from the worker's configured trusted remote, verify repository
+  identity and the supplied ref/SHA relationship, then create the task
+  worktree at that exact SHA. Never execute a URL supplied in a claim.
+- Bind the delivered branch and SHA to that claim context. Require the
+  coordinator to resolve and verify the delivered commit before accepting a
+  remote code-diff report. Existing quality, approval, tenant and merge gates
+  still govern final acceptance; a process exit code is not their substitute.
+- Define old-worker/old-coordinator behavior explicitly. Missing context must
+  not silently fall back to local HEAD for claims requiring this contract.
+- Use ordinary pushes and commit hooks, with no force-push or verification
+  bypass. Preserve the existing artifact-mode completion contract and the
+  distinction between a reported `done` task and verified/merged `closed` work.
+
+Numbered implementation test matrix (proposed, not shipped tests):
+
+1. `test_remote_task_worktree_includes_the_coordinator_latest_commit`:
+   advance the coordinator after cloning the worker; a real task worktree
+   contains the exact claimed base SHA and the accepted upstream change.
+2. `test_repository_mismatch_refuses_claim_before_agent_spawn`:
+   two synthetic repositories cannot exchange work under a valid credential.
+3. `test_claimed_base_ref_must_resolve_to_the_claimed_sha`:
+   moved, unavailable or inconsistent refs cannot start an agent.
+4. `test_remote_completion_requires_the_delivered_branch_and_exact_sha`:
+   a clean exit produces a resolvable delivery; failed delivery never reports
+   successful completion. Use local bare repositories, with no external calls.
+5. `test_remote_delivery_cannot_replace_existing_branch_history`:
+   conflicting branch history and failing hooks stop delivery without a force
+   update or hook bypass.
+6. `test_remote_delivery_remains_pending_until_native_acceptance`:
+   the actual coordinator rejects failed signals, approvals or merge gates;
+   accepted work becomes a commit on the run branch before final closure.
+7. `test_stale_remote_attempt_cannot_complete_a_reclaimed_task`:
+   bind the report to its run/task/attempt and reject stale or duplicate reports
+   according to the existing completion fencing contract.
+8. `test_legacy_remote_claims_follow_the_approved_compatibility_policy`:
+   missing context, artifact-mode tasks and coordinator restarts preserve the
+   chosen compatibility and recovery behavior without guessing a base.
+
+Evidence on main at `b80e0aa71`: a pytest fixture cloned a synthetic local Git
+repository, advanced the coordinator, and called the same
+`WorktreeManager.create` used by the worker spawner. The worktree retained the
+old commit, failing the first property. This isolates the Git base defect; it
+does not claim end-to-end worker or repository-authentication coverage. No
+production code is changed by this proposal.
+
 ## Code pointers
 
 | Concern                          | File                                                                            |
