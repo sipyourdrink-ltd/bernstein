@@ -174,6 +174,59 @@ behind one proxy IP do not share one budget. Heartbeats without an
 `Authorization` header stay keyed by client IP. Invalid or non-positive
 values fall back to the defaults.
 
+#### Proposed authenticated request buckets (not implemented)
+
+The remaining part of issue #6609 needs an identity trust decision before
+implementation. The RPM environment variables above already exist. Ordinary
+task writes still share the resolved peer-IP bucket, including workers with a
+valid cluster credential. `RequestRateLimitMiddleware` runs before
+`SSOAuthMiddleware`, so authenticated request state is not available at that
+point. A client-selected `x-bernstein-agent-id` is not proof of identity: even
+a valid fleet-wide secret does not bind its holder to one particular agent.
+
+Proposed boundary for review:
+
+- Keep a pre-authentication IP budget for invalid or anonymous traffic.
+- Add an identity budget only after the existing authenticator validates the
+  credential. Derive its key from the authenticated tenant and principal;
+  reject a conflicting agent-id header rather than trusting it.
+- Retain peer-IP accounting for legacy/shared credentials until a server-side
+  binding from credential to worker is approved. This means the proposal
+  does not yet satisfy the shared-secret interpretation of the 50-worker
+  acceptance case. Decide whether that case requires individual credentials
+  or a new registered-worker credential binding; a header alone is insufficient.
+- Decide the outer IP ceiling and whether it applies to verified traffic
+  before moving middleware. Simply retaining the current 30-write ceiling
+  outside authentication would still reject the 250-write acceptance case.
+- Preserve current RPM defaults, trusted-proxy resolution, route permissions,
+  seed-specific buckets, heartbeat accounting and SSE concurrency limits.
+  Do not change any of them as a side effect of this proposal.
+
+Numbered implementation test matrix (proposed, not shipped tests):
+
+1. `test_authenticated_workers_do_not_share_the_proxy_write_budget`:
+   50 distinct authenticated principals, five writes each from one peer,
+   produce 250 accepted requests with the approved outer-ceiling policy.
+2. `test_rotating_worker_headers_with_invalid_credentials_retains_ip_budget`:
+   invalid credentials and 50 rotated headers share the original IP budget.
+3. `test_authenticated_worker_cannot_select_another_principal_bucket`:
+   a valid credential with a conflicting header cannot select another bucket.
+4. `test_shared_cluster_secret_does_not_mint_unbounded_worker_buckets`:
+   rotating headers under one shared secret obeys the approved binding policy.
+5. `test_tenants_do_not_share_authenticated_worker_buckets`: equal local agent
+   identifiers from different authenticated tenants remain distinct.
+6. `test_request_rpm_environment_overrides_preserve_defaults_and_validation`:
+   cover unset, positive, invalid and non-positive read/write values.
+7. `test_authenticated_rate_limits_preserve_proxy_and_seed_bucket_policy`:
+   exercise trusted/untrusted XFF, seed buckets, heartbeat and SSE limits
+   through the production middleware stack.
+
+Evidence on main at `b80e0aa71`: an in-process ASGI pytest fixture using the
+real authenticator and limiter produced 30 successful task writes and 220
+HTTP 429 responses for 50 valid-credential header identities. Its invalid-token
+control produced 30 HTTP 401 responses and 220 HTTP 429 responses. No external
+server was contacted. This is a failing reproduction, not a completed fix.
+
 ### Workspace preflight
 
 Before it registers or accepts any claim, the worker verifies its workspace is
