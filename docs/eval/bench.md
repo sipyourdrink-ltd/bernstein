@@ -303,6 +303,8 @@ API call failed) or only one of the two flags was given, the command says
 so on stderr rather than leaving the operator to notice the missing check.
 `--ci` exits 1 on `failure`; `neutral` exits 0 and relies on the
 check-run conclusion to keep the merge gate from reading it as green.
+A neutral scorecard records that no authenticated baseline comparison was
+completed; a zero exit status alone does not establish a verified comparison.
 `--regression-threshold` must be zero or positive.
 
 `--baseline`, `--repo` and `--head-sha` each ask for the comparison
