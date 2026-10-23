@@ -321,6 +321,16 @@ via `build_bridge_from_config`
 
 ---
 
+## Registration diagnostics
+
+The notification registry has separate namespaces for driver kinds and live
+sink IDs. Duplicate registrations raise `ValueError` without replacing the
+first value. This slice brings its duplicate diagnostics onto the shared
+`DuplicateGuard`, naming the modules responsible for both registrations.
+Unregistering a live sink permits a later registration of the same ID.
+Built-in and entry-point loading keep their existing first-registration
+precedence.
+
 ## Code pointers
 
 - `src/bernstein/core/notifications/protocol.py:1-22` - design rationale
