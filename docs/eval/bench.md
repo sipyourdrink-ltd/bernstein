@@ -287,14 +287,23 @@ summary, never a green:
 
 A `--baseline` path that does not exist is a configuration error and the
 command refuses, rather than reporting neutral for a comparison it was
-asked to make. A non-stub signature is checked for **presence only** —
-nothing in the bench layer can verify one yet (#5856), and the check
-establishes that a signature is there, not who made it — and the summary
-says so for that baseline. The baseline must therefore come from a channel
-you trust (the default branch's own artefact, not an upload): the
-signature check catches alteration after signing, not fabrication, and the
-stub key is public. The current run's bundle is not re-verified — it was
-produced in-process a moment earlier; only the baseline is.
+asked to make.
+
+Python callers of `evaluate_ci_scorecard` can authenticate an install-identity
+baseline by passing `trusted_keys`, a mapping from signer fingerprints to trusted
+public PEM bytes, and supplying a `BenchVerifier` configured with those keys.
+The scorecard verifies the detached Ed25519 signature before comparing the
+baseline, even if the supplied verifier skips its own signature check. Unknown
+signers, wrong keys and invalid signatures produce **neutral** with the reason
+in the summary; a valid signature still requires receipt verification and replay.
+The scorecard does not choose or discover trusted keys.
+
+`bench run --baseline` does not currently accept trusted keys, so install-identity
+baselines remain **neutral** through that CLI path. Stub baselines require the
+existing `--stub-signer` opt-in and must come from a channel you trust (the
+default branch's own artefact, not an upload): the stub key is public and proves
+no origin. The current run's bundle is not re-verified — it was produced
+in-process a moment earlier; only the baseline is.
 
 With `--repo` and `--head-sha` the scorecard is also published as a
 GitHub check run named `bernstein / bench scorecard` with the same
