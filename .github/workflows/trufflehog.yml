@@ -43,7 +43,7 @@ jobs:
           persist-credentials: false
 
       - name: Run trufflehog
-        uses: trufflesecurity/trufflehog@005b692bdfd0764e5da402887d9ab9196f8023dc  # v3.99.1
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9  # v3.99.2
         with:
           # The `uses:` SHA above pins the action, which is a shell wrapper;
           # the wrapper runs `ghcr.io/trufflesecurity/trufflehog:${version}`,
