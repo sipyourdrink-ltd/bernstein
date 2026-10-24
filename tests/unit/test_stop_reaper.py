@@ -358,3 +358,61 @@ def test_disappearing_session_remains_pending(tmp_path, monkeypatch):
     assert result.reaped == ["s"] and len(confirmed) == 1
     reap_stop_requests(orch, result, {"stop_req": []})
     assert not orch._stop_reaper._session_objects
+
+
+def test_initial_dead_status_requires_liveness_observation(tmp_path, monkeypatch):
+    initial = session()
+    initial.status = "dead"
+    orch, result, now, living, sent, killed, _shutdown, confirmed = driver(tmp_path, monkeypatch, [initial])
+    probes = []
+
+    def check_alive(current):
+        probes.append(current.id)
+        return living[current.id]
+
+    orch._spawner.check_alive = check_alive
+    snapshot = {"stop_req": [SimpleNamespace(id="t", title="Task")]}
+    reap_stop_requests(orch, result, snapshot)
+    assert probes == ["s"]
+    assert not confirmed and not result.reaped and not killed
+    now[0] = 5
+    reap_stop_requests(orch, result, snapshot)
+    assert sent == [(987654, signal.SIGINT)] and not confirmed
+    living["s"] = False
+    reap_stop_requests(orch, result, snapshot)
+    assert result.reaped == ["s"] and len(confirmed) == 1
+
+
+def test_initial_dead_status_observed_gone_finalizes_once(tmp_path, monkeypatch):
+    initial = session()
+    initial.status = "dead"
+    orch, result, _now, living, sent, killed, shutdown, confirmed = driver(tmp_path, monkeypatch, [initial])
+    living["s"] = False
+    snapshot = {"stop_req": [SimpleNamespace(id="t", title="Task")]}
+    reap_stop_requests(orch, result, snapshot)
+    assert result.reaped == ["s"] and killed == ["s"] and not sent
+    assert len(shutdown) == 1 and len(confirmed) == 1
+    chain = AuditChainStore(tmp_path / ".sdd/audit")
+    receipts = chain.query(event_type="process.reap_receipt")
+    assert len(receipts) == 1 and receipts[0].details["confirmed_dead"]
+    assert chain.verify()[0]
+    reap_stop_requests(orch, result, snapshot)
+    assert result.reaped == ["s"] and killed == ["s"]
+    assert len(chain.query(event_type="process.reap_receipt")) == 1
+    reap_stop_requests(orch, result, {"stop_req": []})
+    reaper = orch._stop_reaper
+    assert not reaper.entries and not reaper._sessions and not reaper._session_objects
+    assert not reaper._finalized and not reaper._receipted
+
+
+def test_initial_dead_unsafe_group_refused(tmp_path, monkeypatch):
+    initial = session(pgid=0)
+    initial.status = "dead"
+    orch, result, _now, _living, sent, killed, _shutdown, confirmed = driver(tmp_path, monkeypatch, [initial])
+    snapshot = {"stop_req": [SimpleNamespace(id="t", title="Task")]}
+    reap_stop_requests(orch, result, snapshot)
+    reap_stop_requests(orch, result, snapshot)
+    assert not confirmed and not result.reaped and not killed and not sent
+    assert orch._stop_reaper.entries["t"].outcome == StopOutcome.REFUSED
+    reap_stop_requests(orch, result, {"stop_req": []})
+    assert not orch._stop_reaper.entries and not orch._stop_reaper._sessions

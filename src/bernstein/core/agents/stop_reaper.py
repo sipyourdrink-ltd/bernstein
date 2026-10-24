@@ -256,11 +256,9 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
     pending = 0
     unverified = []
     for task in tasks:
-        sessions = [
-            s
-            for s in known_sessions.values()
-            if task.id in s.task_ids and (s.status != "dead" or s.id in reaper._sessions)
-        ]
+        # A bookkeeping status can precede OS death (for example, a failed
+        # kill). Every known matching session needs independent observation.
+        sessions = [s for s in known_sessions.values() if task.id in s.task_ids]
         all_gone = True
         tier = StopTier.NOTIFY
         for session in sessions:
