@@ -90,7 +90,7 @@ alias).
 | `effort` | enum | - | Effort knob: `low`, `normal`, `high`, `max`. |
 | `estimated_minutes` | int | `30` | Used by the duration predictor and plan cost estimate. |
 | `mode` | string | - | Execution mode (e.g. `batch`). |
-| `cli` | string | - | Override adapter for this step only (the loader honours it, but the plan schema does not list it, so `plan validate` warns about it). |
+| `cli` | string | - | Override adapter for this step only; recognized by both the loader and plan schema. |
 | `repo` | string | - | Multi-repo: route this step to a named repo. Falls back to stage-level `repo`. |
 | `depends_on_repo` | string | - | Cross-repo dependency: another repo must complete first. |
 | `files` | list[string] | `[]` | File ownership for conflict detection - agents declare which files they will touch. Must be a list: a scalar value fails the load with `PlanLoadError` (#3534); an explicit `null` loads as `[]`. `plan validate` rejects non-string items; the load path currently coerces them to strings instead of rejecting (#3556). |
