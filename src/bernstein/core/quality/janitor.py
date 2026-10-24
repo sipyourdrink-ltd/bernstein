@@ -378,7 +378,7 @@ def evaluate_artifact_signals(
     lineage_root: Path | None = None,
     operator_secret: bytes | None = None,
 ) -> list[tuple[str, bool, str]]:
-    """Evaluate a task's artifact-mode completion signals against ``artifact``.
+    """Evaluate declared artifact criteria and completion signals against ``artifact``.
 
     ``artifact`` is the raw produced artifact (str / bytes / list / mapping, or
     a :class:`~bernstein.core.tasks.figures.ReportBundle` for a figures report);
@@ -400,17 +400,21 @@ def evaluate_artifact_signals(
     from bernstein.core.tasks.artifacts import evaluate_criterion
 
     kind = task.artifact_spec.kind
+    criteria: list[tuple[str, str]] = [(criterion.type, criterion.value) for criterion in task.artifact_spec.criteria]
+    criteria.extend(
+        (signal.type, signal.value) for signal in task.completion_signals if signal.type in _ARTIFACT_SIGNAL_TYPES
+    )
     results: list[tuple[str, bool, str]] = []
-    for signal in task.completion_signals:
-        if signal.type not in _ARTIFACT_SIGNAL_TYPES:
-            continue
-        desc = f"{signal.type}: {signal.value}"
-        if signal.type == "figures_grounded":
+    # Stable union: a contract need not be repeated in completion_signals,
+    # and a repeated gate must not run twice or inflate the result count.
+    for criterion_type, value in dict.fromkeys(criteria):
+        desc = f"{criterion_type}: {value}"
+        if criterion_type == "figures_grounded":
             passed, detail = _evaluate_figures_grounded_signal(
-                artifact, signal.value, lineage_root=lineage_root, operator_secret=operator_secret
+                artifact, value, lineage_root=lineage_root, operator_secret=operator_secret
             )
         else:
-            passed, detail = evaluate_criterion(signal.type, signal.value, artifact=artifact, kind=kind)
+            passed, detail = evaluate_criterion(criterion_type, value, artifact=artifact, kind=kind)
         results.append((desc, passed, detail))
     return results
 

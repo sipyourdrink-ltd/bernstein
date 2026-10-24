@@ -252,6 +252,15 @@ and no `stages:`) is refused with a message naming `--seed`:
 6. **Post to `/tasks`** - each task is `POST`ed to the running Bernstein
    server (one HTTP call per step, with a 10 s timeout).
 
+The planner and manager use the shared `core/tasks/task_body.py` builder
+for this request. Declared completion signals and `metadata.context_files`
+survive both paths; backlog tickets use the same signal serializer for
+their `janitor_signals`. A field-classification test requires each new
+`TaskCreate` field to be forwarded or explicitly excluded with a reason.
+Administrative `run_id` membership remains an explicit REST caller choice;
+these producers do not select a run or forward administrative membership
+from arbitrary task metadata.
+
 From here the run looks identical to a free-text goal: the orchestrator
 ticks, the spawner picks up `OPEN` tasks whose `depends_on` are all
 `DONE`, and the janitor verifies completion signals.
