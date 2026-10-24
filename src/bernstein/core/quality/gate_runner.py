@@ -48,6 +48,7 @@ from bernstein.core.quality.gate_pipeline import (
     is_dep_file as _is_dep_file,
 )
 from bernstein.core.quality.run_config_gate import check_paths
+from bernstein.core.quality.test_expansion import find_uncovered_source_modules
 from bernstein.core.telemetry import start_span
 
 #: A runner that could not START, in the two shapes the platform reports it.
@@ -338,7 +339,7 @@ class GateRunner:
         run_dir: Path,
         changed_files: list[str],
     ) -> GateResult:
-        from bernstein.core import quality_gates as qg
+        from bernstein.core.quality import quality_gates as qg
 
         gate_fn = qg.run_pii_gate_sync if step.name == "pii_scan" else qg.run_dlp_gate_sync
         scan_result = await asyncio.to_thread(
@@ -366,7 +367,7 @@ class GateRunner:
         run_dir: Path,
         _changed_files: list[str],
     ) -> GateResult:
-        from bernstein.core import quality_gates as qg
+        from bernstein.core.quality import quality_gates as qg
 
         if step.name == "agent_test_mutation":
             ok, detail, score, evidence_status = await asyncio.to_thread(
@@ -412,7 +413,7 @@ class GateRunner:
         run_dir: Path,
         _changed_files: list[str],
     ) -> GateResult:
-        from bernstein.core import quality_gates as qg
+        from bernstein.core.quality import quality_gates as qg
 
         verdict, blocked = await asyncio.to_thread(
             qg.run_intent_gate_sync,
@@ -556,7 +557,7 @@ class GateRunner:
         *,
         pass_detail: str | None = None,
     ) -> GateResult:
-        from bernstein.core import quality_gates as qg
+        from bernstein.core.quality import quality_gates as qg
 
         result = await asyncio.to_thread(qg.run_command_sync, command, run_dir, timeout_s)
         ok, detail, exit_code = result
@@ -596,7 +597,7 @@ class GateRunner:
         changed_files: list[str],
     ) -> GateResult:
         """Run the tests gate, optionally recording flaky-test telemetry."""
-        from bernstein.core import quality_gates as qg
+        from bernstein.core.quality import quality_gates as qg
         from bernstein.core.quality.flaky_detector import FlakyDetector, parse_pytest_output
 
         command = self._tests_command(step, run_dir, changed_files)
@@ -711,7 +712,7 @@ class GateRunner:
         :mod:`bernstein.core.dead_code_detector`.
         """
         from bernstein.core import dead_code_detector  # type: ignore[attr-defined]  # meta-path redirect
-        from bernstein.core import quality_gates as qg
+        from bernstein.core.quality import quality_gates as qg
 
         python_files = self._python_files(changed_files)
         if not python_files:
@@ -1418,7 +1419,7 @@ class GateRunner:
 
     def _run_command_and_capture(self, command: str, run_dir: Path) -> tuple[bool, str, int]:
         """Execute a command gate synchronously and capture its output."""
-        from bernstein.core import quality_gates as qg
+        from bernstein.core.quality import quality_gates as qg
 
         return qg.run_command_sync(command, run_dir, self._config.timeout_s)
 
@@ -1935,7 +1936,7 @@ class GateRunner:
     ) -> str | None:
         if step.name not in VALID_GATE_NAMES:
             return None
-        if step.name in {"coverage_delta", "complexity_check", "merge_conflict"}:
+        if step.name in {"coverage_delta", "complexity_check", "merge_conflict", "test_expansion"}:
             return None
         if step.name == "tests" and self._config.flaky_detection:
             return None
@@ -2032,43 +2033,33 @@ class GateRunner:
         run_dir: Path,
         changed_files: list[str],
     ) -> GateResult:
-        """Check whether agent-modified source files have corresponding test coverage.
+        """Check module import reachability from tests in the same change.
 
-        Identifies source files without matching test files and reports them
-        as uncovered. This is a non-blocking advisory gate.
+        Static imports do not prove symbol calls, data flow, execution or dynamic imports.
         """
         source_files = [f for f in changed_files if not self._is_test_path(f) and f.endswith(".py")]
-        uncovered: list[str] = []
-        for src in source_files:
-            # Derive expected test path: src/foo/bar.py → tests/unit/test_bar.py
-            src_path = Path(src)
-            expected_test = Path("tests") / "unit" / f"test_{src_path.stem}.py"
-            if not (run_dir / expected_test).exists() and expected_test.as_posix() not in changed_files:
-                uncovered.append(src)
-
         if not source_files:
             return self._skipped(step, "No Python source files changed.")
 
-        # Always pass - this is an advisory gate. Record uncovered files in metadata
-        # and write needs_coverage.json for downstream consumers.
+        uncovered = find_uncovered_source_modules(run_dir, source_files, changed_files)
+        coverage_file = run_dir / ".sdd" / "runtime" / "needs_coverage.json"
         if uncovered:
-            import json as _json
-
-            coverage_file = run_dir / ".sdd" / "runtime" / "needs_coverage.json"
             coverage_file.parent.mkdir(parents=True, exist_ok=True)
             entries = [{"source_file": f, "expected_test": f"tests/unit/test_{Path(f).stem}.py"} for f in uncovered]
-            coverage_file.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+            coverage_file.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+        else:
+            coverage_file.unlink(missing_ok=True)
 
         details = (
-            f"{len(uncovered)} source file(s) without test coverage: {', '.join(uncovered[:5])}"
+            f"{len(uncovered)} source module(s) not imported from changed tests: {', '.join(uncovered[:5])}"
             if uncovered
-            else f"All {len(source_files)} source file(s) have corresponding tests."
+            else f"All {len(source_files)} source module(s) reachable from changed tests."
         )
         return GateResult(
             name=step.name,
-            status="pass",
+            status="fail" if uncovered else "pass",
             required=step.required,
-            blocked=False,
+            blocked=bool(uncovered and step.required),
             cached=False,
             duration_ms=0,
             details=details,

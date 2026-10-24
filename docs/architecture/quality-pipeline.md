@@ -141,6 +141,23 @@ an explicit `quality_gates.pipeline` fails with
 A failing **required** gate hard-blocks merge. A failing **optional** gate
 is reported but does not block.
 
+The optional `test_expansion` gate checks whether each changed Python source
+module has a static import path from a test file changed in the same task.
+It does not prove that the test calls or executes any changed symbol, and
+cannot observe dynamic imports. A placeholder that imports an unrelated symbol
+from a module reaching the changed module can still pass; the gate-evasion
+fixture measures the narrower no-module-import case.
+
+A bounded process-local import index is keyed by the complete source/test scope
+and file contents, including unchanged intermediate imports and newly added or
+deleted modules. Warm calls reuse the parsed graph, not the gate result. A fresh
+process still pays the cold build cost; there is no persisted index format or
+write to the test selector's CLI cache. Flat-layout scans prune hidden,
+virtualenv, dependency and build directories before parsing. A local macOS /
+Python 3.14 check of the real repository measured 26.30 s cold and 0.75 s
+warm across two runner instances, with one graph build. These timings are
+observations, not a timeout guarantee; the cold build has no hard deadline.
+
 `behavior_probe` is the only gate that executes the changed code against
 inputs the worker did not choose (`behavior_probe.py`). It walks the diff with
 `ast`, turns each parameter annotation into a fixed list of boundary values

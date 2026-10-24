@@ -476,6 +476,12 @@ def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
             if result.status not in ("fail", "pass"):
                 # The gate did not even get to run pytest.
                 caught, verdict, basis, note = False, result.status, "gate_verdict", ""
+        elif gate == "test_expansion":
+            uncovered = result.metadata.get("uncovered_files", [])
+            if result.status == "fail" and uncovered:
+                caught, verdict, basis, note = True, "fail", "finding_signature", ""
+            else:
+                caught, verdict, basis, note = False, result.status, "gate_verdict", ""
         elif result.status != "fail":
             caught, verdict, basis, note = False, result.status, "gate_verdict", ""
         elif (signature := _FINDING_SIGNATURE.get(gate)) is not None:

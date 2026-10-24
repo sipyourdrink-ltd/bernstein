@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # every existing entry potentially short of edges even though its file hashes
 # still match.
 _ANALYZER_CACHE_VERSION = "5"
-_COMPAT_CACHE_VERSION = "6"
+_COMPAT_CACHE_VERSION = "7"
 _WORKFLOW_PATH_PREFIX = ".github/workflows/"
 
 # Upper bound on a harvested path literal. Long strings in a test are prose,
@@ -180,6 +180,7 @@ def _collect_imports_from_node(
     *,
     current_module: str | None = None,
     is_package_init: bool = False,
+    importable_modules: set[str] | None = None,
 ) -> set[str]:
     """Collect project-scoped import names from a single AST node.
 
@@ -197,6 +198,7 @@ def _collect_imports_from_node(
                 imports.add(alias.name)
     elif isinstance(node, ast.ImportFrom):
         module = node.module or ""
+        resolved: str | None = None
         if node.level and current_module:
             resolved = _resolve_relative_import(
                 current_module=current_module,
@@ -204,18 +206,25 @@ def _collect_imports_from_node(
                 level=node.level,
                 module=module or None,
             )
-            if resolved:
-                top = resolved.split(".", 1)[0]
-                if top in package_prefixes:
-                    imports.add(resolved)
         elif module:
-            top = module.split(".", 1)[0]
-            if top in package_prefixes:
-                imports.add(module)
+            resolved = module
+        if resolved and resolved.split(".", 1)[0] in package_prefixes:
+            imports.add(resolved)
+            if importable_modules:
+                # from pkg import child can load a real pkg.child module.
+                imports.update(
+                    child for alias in node.names if (child := f"{resolved}.{alias.name}") in importable_modules
+                )
     return imports
 
 
-def extract_project_imports(path: Path, package_prefixes: set[str], *, current_module: str | None = None) -> set[str]:
+def extract_project_imports(
+    path: Path,
+    package_prefixes: set[str],
+    *,
+    current_module: str | None = None,
+    importable_modules: set[str] | None = None,
+) -> set[str]:
     """Extract imported project module names from a Python file.
 
     ``current_module`` is the dotted module name ``path`` corresponds to
@@ -239,6 +248,7 @@ def extract_project_imports(path: Path, package_prefixes: set[str], *, current_m
                 package_prefixes,
                 current_module=current_module,
                 is_package_init=is_package_init,
+                importable_modules=importable_modules,
             )
         )
     return imports
@@ -393,21 +403,25 @@ def _real_module_names(src_root: Path) -> set[str]:
     return names
 
 
-def discover_module_aliases(src_root: Path) -> dict[str, str]:
+def discover_module_aliases(src_root: Path, *, source_files: list[Path] | None = None) -> dict[str, str]:
     """Return legacy dotted module names mapped to the module they resolve to.
 
     The tables are read from the package ``__init__`` files that declare them
     rather than imported, so discovery has no import side effects and works on
     any source tree. An alias whose legacy name is also a real module on disk
     is dropped: the redirect finders are appended to ``sys.meta_path``, so the
-    real module wins the import and no rewrite is warranted.
+    real module wins the import and no rewrite is warranted. ``source_files``
+    lets scoped callers supply the exact project files without scanning vendor trees.
     """
     if not src_root.exists():
         return {}
 
-    real_modules = _real_module_names(src_root)
+    files = source_files if source_files is not None else sorted(src_root.rglob("*.py"))
+    real_modules = (
+        _real_module_names(src_root) if source_files is None else {_path_to_module(path, src_root) for path in files}
+    )
     aliases: dict[str, str] = {}
-    for init_file in sorted(src_root.rglob("__init__.py")):
+    for init_file in (path for path in files if path.name == "__init__.py"):
         package = _path_to_module(init_file, src_root)
         if not package:
             continue
@@ -445,13 +459,21 @@ def build_compat_dep_map(
     src_root: Path,
     test_dirs: list[Path],
     package_prefixes: set[str] | None = None,
+    extra_source_files: list[Path] | None = None,
+    *,
+    source_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
-    """Build the legacy dependency-map shape used by ``scripts/test_impact.py``."""
+    """Build the legacy map, optionally from an already scoped source list."""
     prefixes = package_prefixes or _iter_project_packages(src_root)
     # A test that imports a module under a legacy alias records the alias, not
     # the file that actually backs it. Resolving the alias here is what puts
     # the edge from the real source file into the map at all.
-    aliases = discover_module_aliases(src_root)
+    paths = source_paths if source_paths is not None else sorted(src_root.rglob("*.py"))
+    aliases = discover_module_aliases(src_root, source_files=paths)
+    source_files = [(path, src_root) for path in paths]
+    source_files.extend((path, root) for path in (extra_source_files or []) if path.is_file())
+    importable_modules = {_path_to_module(path, module_root) for path, module_root in source_files}
+    importable_modules.update(aliases)
     test_deps: dict[str, dict[str, Any]] = {}
     for test_dir in test_dirs:
         if not test_dir.exists():
@@ -460,23 +482,31 @@ def build_compat_dep_map(
             rel = test_file.relative_to(root).as_posix()
             test_deps[rel] = {
                 "hash": _file_hash(test_file),
-                "imports": sorted(resolve_module_aliases(extract_project_imports(test_file, prefixes), aliases)),
+                "imports": sorted(
+                    resolve_module_aliases(
+                        extract_project_imports(test_file, prefixes, importable_modules=importable_modules), aliases
+                    )
+                ),
                 "paths": sorted(extract_path_literals(test_file)),
             }
 
     source_imports: dict[str, dict[str, Any]] = {}
-    if src_root.exists():
-        for src_file in sorted(src_root.rglob("*.py")):
-            module = _path_to_module(src_file, src_root)
-            if not module:
-                continue
-            source_imports[module] = {
-                "hash": _file_hash(src_file),
-                "imports": sorted(
-                    resolve_module_aliases(extract_project_imports(src_file, prefixes, current_module=module), aliases)
-                ),
-                "paths": sorted(extract_path_literals(src_file)),
-            }
+    for src_file, module_root in source_files:
+        module = _path_to_module(src_file, module_root)
+        if not module:
+            continue
+        source_imports[module] = {
+            "hash": _file_hash(src_file),
+            "imports": sorted(
+                resolve_module_aliases(
+                    extract_project_imports(
+                        src_file, prefixes, current_module=module, importable_modules=importable_modules
+                    ),
+                    aliases,
+                )
+            ),
+            "paths": sorted(extract_path_literals(src_file)),
+        }
 
     return {
         "version": _COMPAT_CACHE_VERSION,
