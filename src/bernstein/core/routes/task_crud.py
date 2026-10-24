@@ -2493,7 +2493,9 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
     An agent token may not move a task between roles: a ``role`` in the
     body must equal the token's role *and* the task's current role, so a
     worker cannot re-label a task into its own role and then claim it.
-    Role reassignment stays with operator credentials.
+    Role reassignment stays with operator credentials. Task-scoped agents
+    cannot set ``cli`` or the ladder-position fields; those changes require
+    operator credentials or an unscoped run-root identity.
     """
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
@@ -2514,7 +2516,25 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
                     f"role mismatch: token is issued for role '{agent_role}'; agent tokens cannot reassign task roles"
                 ),
             )
-        task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
+        ladder_fields = body.model_fields_set & {"cli", "escalation_ladder_step", "escalation_ladder_attempts"}
+        if ladder_fields and agent_task_scope(request) is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"task-scoped agent tokens cannot update {', '.join(sorted(ladder_fields))}; "
+                    "escalation ladder changes require operator or run-root credentials"
+                ),
+            )
+        task = await store.update(
+            task_id,
+            role=body.role,
+            priority=body.priority,
+            model=body.model,
+            cli=body.cli,
+            meta_messages=body.meta_messages,
+            escalation_ladder_step=body.escalation_ladder_step,
+            escalation_ladder_attempts=body.escalation_ladder_attempts,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
