@@ -195,6 +195,7 @@ class TaskStatus(Enum):
     BLOCKED = "blocked"
     WAITING_FOR_SUBTASKS = "waiting_for_subtasks"
     CANCELLED = "cancelled"
+    STOP_REQ = "stop_req"  # cancel requested while a worker is still running; resolved to CANCELLED after the reaper observes the worker group gone.
     ORPHANED = "orphaned"  # Agent crashed mid-task; pending crash recovery
     SUSPENDED = "suspended"  # Operator-parked mid-session; infra released, resumable from an attested receipt (#2552)
     PENDING_APPROVAL = "pending_approval"  # Completed; awaiting human approval before taking effect
@@ -1271,6 +1272,7 @@ class AgentSession:
     endpoint_model: str = ""  # model served
     endpoint_base_url: str = ""  # normalized base_url (no secrets)
     endpoint_profile_name: str = ""  # local_endpoints profile name
+    pgid: int | None = None  # process group id recorded at spawn; None when the session has no local process group of its own.
 
 
 class IsolationMode(StrEnum):
