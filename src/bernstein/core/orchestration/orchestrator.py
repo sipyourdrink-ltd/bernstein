@@ -49,6 +49,7 @@ from bernstein.core.agent_recycling import (
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.agents.context_attachments import CONTEXT_FILES_ATTACHED_EVENT
 from bernstein.core.agents.injected_skills_event import SKILLS_INJECTED_EVENT
+from bernstein.core.agents.stop_reaper import reap_stop_requests
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.batch_api import ProviderBatchManager
@@ -2329,6 +2330,12 @@ class Orchestrator:
 
         # 5. Reap dead/stale agents and fail their tasks
         reap_dead_agents(self, result, tasks_by_status)
+
+        # 5a. Cooperative cancel: drive STOP_REQ tasks through the stop ladder.
+        try:
+            reap_stop_requests(self, result, tasks_by_status)
+        except Exception:
+            logger.warning("Stop reaper pass failed; STOP_REQ tasks stay pending", exc_info=True)
 
         # 5b. Retry any pushes that failed in previous ticks (normal cadence)
         if _run_normal:
