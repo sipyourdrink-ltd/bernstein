@@ -135,7 +135,7 @@ flowchart LR
 每個節點由角色獲該階段允許的代理認領;無論代理在任務內做什麼,角色圍欄與核准閘門始終有效。程式碼節點在自己的 git worktree 裡、合併閘門之後完成。上面這些節點的完成方式不同:[工件契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(報告、資料集、掃描、操作日誌),節點以簽章的 lineage 收據而非提交收尾。同一個排程器、同一份日誌、同樣的離線驗證 - 無論圖裡裝的是程式碼、研究、維運變更,還是三者混合。面向軟體、研究、文件、企業與貢獻者工作流的現成圖都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI 在每次推送到 main 時重新驗證已提交的收據——並證明被竄改的副本會失敗——因此已發布的證據不會腐化成裝飾性檔案。`scripts/record_demo.sh` 從一次全新的真實執行重新產生錄影、收據和金鑰；終端機裡沒有任何內容是合成的。
+已儲存的收據可隨時用上述指令重新驗證；遭竄改的副本無法通過同樣的檢查。 `scripts/record_demo.sh` 從一次全新的真實執行重新產生錄影、收據和金鑰；終端機裡沒有任何內容是合成的。
 
 執行中的任務可從任一操作介面觀看。兩者讀取同一個任務 API，因此彼此都不是對方的落後鏡像。
 
@@ -231,7 +231,7 @@ Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goo
 在同一執行中混用代理：用便宜的本地模型處理樣板，用更重的雲端模型處理架構。`bernstein integrations list --installed` 顯示你的機器上可用的內容。
 
 ### 志願算力
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 專案可以把 issue 標記為向志願者開放，任何人都可以在自己的機器上執行其中一個，不需要帳號，也不需要協調者。任務被允許做什麼，由專案在 `volunteer.json` 清單中宣告 —— 沙箱後端、允許存取的網路清單、掛鐘時間與記憶體上限 —— 而捐助者自己的限制只能把它收緊，永遠不能放寬。已完成任務產生的回執把結果綁定到它執行時所依據的隔離決策上，因此維護者在數月之後仍能核對這項工作當時究竟被允許觸碰什麼。
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[捐助者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 講執行 worker 以及你設定的預算，[專案指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 講宣告清單，[威脅模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 說明每一層邊界防護什麼、不防護什麼。單一指令的執行器尚未發布：目前可用的子指令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。
+[捐助者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 講執行 worker 以及你設定的預算，[專案指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 講宣告清單，[威脅模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 說明每一層邊界防護什麼、不防護什麼。單一指令的執行器尚未發布：目前可用的子指令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。 `autopilot` 已註冊，但在實作 `TaskSource` 之前會拒絕執行。
 
 ### 首頁之外
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

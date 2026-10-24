@@ -138,8 +138,8 @@ minutes. State lives in `.sdd/` - no server to provision. Per-agent
 credential scoping keeps your keys out of the client's environment.
 The broad adapter spread means the swarm runs on whichever CLI agent
 the client already trusts (Claude Code, Codex, Gemini CLI, Aider,
-and more). Every step is an HMAC-signed audit record, replayable
-for client compliance review.
+and more). `BERNSTEIN_AUDIT=1` enables the HMAC-chained audit log
+for offline client compliance review.
 
 ## Quick links
 

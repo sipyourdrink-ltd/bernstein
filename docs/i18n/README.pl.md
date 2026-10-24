@@ -135,7 +135,7 @@ flowchart LR
 Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i bramki zatwierdzeń trzymają niezależnie od tego, co agent robi w zadaniu. Węzeł kodowy kończy się za merge gates we własnym git worktree. Węzły powyżej kończą się inaczej: [kontrakt artefaktu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nazywa rezultat (raport, dataset, skan, log działań), a węzeł zamyka podpisany kwit lineage zamiast commita. Ten sam scheduler, ten sam journal, ta sama weryfikacja offline - niezależnie czy graf niesie kod, badania, zmianę ops czy miks wszystkich trzech. Gotowe grafy dla softu, badań, dokumentacji, enterprise i procesów kontrybutorskich leżą w [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-System CI weryfikuje zatwierdzone pokwitowanie przy każdym wypchnięciu do gałęzi main — wykazując, że zmodyfikowana kopia nie przechodzi testu — dzięki czemu opublikowany dowód nie staje się bezużytecznym plikiem. Skrypt `scripts/record_demo.sh` generuje nagranie, pokwitowanie i klucz na nowo z rzeczywistego przebiegu; nic w terminalu nie jest symulowane.
+Zapisane potwierdzenie można ponownie sprawdzić w dowolnej chwili powyższym poleceniem; zmodyfikowana kopia nie przejdzie tej samej weryfikacji. `scripts/record_demo.sh` generuje nagranie, pokwitowanie i klucz na nowo z rzeczywistego przebiegu; nic w terminalu nie jest symulowane.
 
 Trwający przebieg można obserwować w dowolnym interfejsie operatora. Oba korzystają z tego samego API zadań, dzięki czemu żaden nie prezentuje opóźnionego stanu. W `bernstein live` lewa i prawa kolumna przewijają się niezależnie jako całe panele, co zapewnia dostęp do widżetów na mniejszych terminalach.
 
@@ -231,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Możesz łączyć różnych agentów w ramach jednego przebiegu: tańsze modele lokalne do kodu powtarzalnego, bardziej zaawansowane modele chmurowe do architektury. Polecenie `bernstein integrations list --installed` wyświetla narzędzia dostępne w systemie.
 
 ### wolontariacka moc obliczeniowa
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Projekt może oznaczyć zgłoszenia jako otwarte dla wolontariuszy, a każdy może uruchomić jedno z nich na własnej maszynie, bez konta i bez koordynatora. To, co zadaniu wolno robić, projekt deklaruje w manifeście `volunteer.json` - backend piaskownicy, lista dozwolonych adresów sieciowych, limity czasu i pamięci - a własne limity darczyńcy mogą to tylko zawęzić, nigdy poszerzyć. Pokwitowanie ukończonego zadania wiąże wynik z decyzją o izolacji, pod którą powstał, więc opiekun projektu jeszcze po miesiącach może sprawdzić, do czego praca faktycznie miała dostęp.
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[Przewodnik darczyńcy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) opisuje uruchamianie workera i budżet, który ustawiasz, [przewodnik projektu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) - deklarowanie manifestu, a [model zagrożeń](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) mówi, przed czym każda granica chroni, a przed czym nie. Uruchamianie jedną komendą nie zostało jeszcze wydane: dziś działają podkomendy `verify`, `browse`, `budget`, `verify-bundle` i `hub`.
+[Przewodnik darczyńcy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) opisuje uruchamianie workera i budżet, który ustawiasz, [przewodnik projektu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) - deklarowanie manifestu, a [model zagrożeń](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) mówi, przed czym każda granica chroni, a przed czym nie. Uruchamianie jedną komendą nie zostało jeszcze wydane: dziś działają podkomendy `verify`, `browse`, `budget`, `verify-bundle` i `hub`. `autopilot` jest zarejestrowany, ale odmawia uruchomienia, dopóki nie zostanie zaimplementowane `TaskSource`.
 
 ### poza stroną główną
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

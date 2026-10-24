@@ -135,7 +135,7 @@ flowchart LR
 Setiap node diambil oleh agen yang perannya diizinkan fase; pagar peran dan gate persetujuan tetap berlaku apa pun yang dilakukan agen di dalam tugas. Node kode selesai di balik merge gate dalam git worktree-nya sendiri. Node di atas selesai dengan cara lain: [kontrak artefak](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) menamai hasilnya (laporan, dataset, pemindaian, log aksi), dan node ditutup dengan tanda terima lineage yang ditandatangani, bukan commit. Penjadwal yang sama, journal yang sama, verifikasi offline yang sama - entah graf itu membawa kode, riset, perubahan ops, atau campuran ketiganya. Graf siap pakai untuk software, riset, dokumentasi, enterprise, dan alur kontributor ada di [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instal dalam 30 detik
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI memverifikasi ulang tanda terima yang tersimpan pada setiap push ke main — membuktikan salinan yang dimanipulasi akan gagal — sehingga bukti yang dipublikasikan tidak menjadi berkas pajangan. Skrip `scripts/record_demo.sh` membuat ulang rekaman, tanda terima, dan kunci dari eksekusi nyata yang baru; tidak ada simulasi di dalam terminal.
+Tanda terima yang tersimpan dapat diperiksa ulang kapan saja dengan perintah di atas; salinan yang diubah gagal dalam pemeriksaan yang sama. `scripts/record_demo.sh` membuat ulang rekaman, tanda terima, dan kunci dari eksekusi nyata yang baru; tidak ada simulasi di dalam terminal.
 
 Eksekusi yang sedang berjalan dapat dipantau dari salah satu antarmuka operator. Keduanya membaca API tugas yang sama, sehingga tidak ada tampilan yang tertinggal. Di `bernstein live`, kolom kiri dan kanan bergulir secara independen sebagai panel utuh, menjaga widget tetap terjangkau pada terminal yang lebih pendek.
 
@@ -231,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Gabungkan berbagai agen dalam satu eksekusi: model lokal hemat biaya untuk kode repetitif, model cloud berkapasitas besar untuk arsitektur. `bernstein integrations list --installed` menampilkan apa saja yang tersedia di mesin Anda.
 
 ### komputasi sukarela
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Sebuah proyek dapat menandai isu sebagai terbuka bagi relawan, dan siapa pun dapat menjalankan salah satunya di mesin sendiri tanpa akun dan tanpa koordinator. Apa yang boleh dilakukan sebuah tugas dideklarasikan proyek dalam manifes `volunteer.json` - backend sandbox, daftar jaringan yang diizinkan, batas atas waktu dan memori - dan batas milik donor hanya dapat mempersempitnya, tidak pernah memperlebarnya. Tanda terima yang dihasilkan tugas yang selesai mengikat hasilnya pada keputusan pengungkungan tempat ia berjalan, sehingga seorang pengelola dapat memeriksa berbulan-bulan kemudian apa yang sebenarnya boleh disentuh oleh pekerjaan itu.
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi.
+[Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi. `autopilot` sudah terdaftar, tetapi menolak berjalan sampai `TaskSource` diimplementasikan.
 
 ### di luar halaman utama
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

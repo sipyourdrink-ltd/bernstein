@@ -135,7 +135,7 @@ flowchart LR
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI повторно перевіряє збережену квитанцію під час кожного push у main — і доводить, що підроблена копія не проходить перевірку — щоб оприлюднені докази не перетворилися на декоративний файл. Скрипт `scripts/record_demo.sh` генерує запис, квитанцію та ключ заново з чистого реального запуску; нічого в терміналі не синтезується штучно.
+Збережену квитанцію можна повторно перевірити будь-коли командою вище; змінена копія не пройде ту саму перевірку. `scripts/record_demo.sh` генерує запис, квитанцію та ключ заново з чистого реального запуску; нічого в терміналі не синтезується штучно.
 
 За запуском у процесі можна спостерігати з будь-якого інтерфейсу оператора. Обидва зчитують один і той самий API завдань, тому жоден з них не відстає від іншого. У `bernstein live` ліва та права колонки прокручуються незалежно як цілісні панелі, тому віджети залишаються доступними навіть у коротких вікнах термінала.
 
@@ -231,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Комбінуйте агентів в одному запуску: дешеві локальні моделі для шаблонного коду, потужніші хмарні моделі для архітектури. Команда `bernstein integrations list --installed` показує, що доступно на вашому комп'ютері.
 
 ### добровільні обчислення
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Проєкт може позначити задачі як відкриті для добровольців, і будь-хто може виконати одну з них на власній машині без облікового запису та без координатора. Що задачі дозволено робити, проєкт оголошує в маніфесті `volunteer.json` — бекенд пісочниці, перелік дозволених мережевих адрес, стелі за часом і пам'яттю, — а власні ліміти донора можуть лише звузити це, але не розширити. Квитанція завершеної задачі прив'язує результат до рішення про ізоляцію, під яким його отримано, тож супровідник і через місяці може перевірити, до чого робота справді мала доступ.
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`.
+[Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`. `autopilot` зареєстровано, але він відмовляється запускатися, доки не реалізовано `TaskSource`.
 
 ### за межами головної сторінки
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

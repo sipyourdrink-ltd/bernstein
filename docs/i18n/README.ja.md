@@ -135,7 +135,7 @@ flowchart LR
 各ノードは、フェーズが許可するロールを持つエージェントが取ります。ロールの柵と承認ゲートは、エージェントがタスク内で何をしようと保持されます。コードのノードは自分専用の git worktree でマージゲートの先に完了します。上のノードは違う終わり方をします: [アーティファクト契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)が成果物(レポート、データセット、スキャン、アクションログ)を名指しし、ノードはコミットではなく署名付き lineage レシートで閉じます。同じスケジューラ、同じジャーナル、同じオフライン検証 - グラフが運ぶのがコードでも、調査でも、ops 変更でも、その混在でも。ソフトウェア、リサーチ、ドキュメント、エンタープライズ、コントリビューターワークフロー向けの既製グラフは [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) にあります。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI は main への push ごとにコミット済みレシートを再検証し、改竄されたコピーが失敗することも証明する。公開された証拠が飾りのファイルに腐っていかないのはそのためだ。`scripts/record_demo.sh` は録画・レシート・鍵を新しい実際の実行から作り直す。ターミナルの中身に合成されたものはない。
+保存されたレシートは上記のコマンドでいつでも再検証でき、改ざんされたコピーは同じ検証に失敗します。 `scripts/record_demo.sh` は録画・レシート・鍵を新しい実際の実行から作り直す。ターミナルの中身に合成されたものはない。
 
 実行中の様子は、どちらのオペレーター向け画面からも見られる。両者は同じタスク API を読んでいるので、一方が他方の遅れたミラーになることはない。
 
@@ -231,7 +231,7 @@ Claude Code、Codex CLI、Gemini CLI、GitHub Copilot CLI、Cursor、Aider、Goo
 同じ実行の中でエージェントを混ぜられる。定型作業には安価なローカルモデル、設計には重いクラウドモデルというように。`bernstein integrations list --installed` は自分のマシンで使えるものを表示する。
 
 ### ボランティア計算資源
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 プロジェクトは issue をボランティアに開放されているものとして印を付けられ、誰でもその一つを自分のマシンで実行できます。アカウントも調整役も必要ありません。タスクに何を許すかは `volunteer.json` マニフェストで宣言され — サンドボックスのバックエンド、許可するネットワーク先、実時間とメモリの上限 — 提供者自身の制限はそれを狭めることしかできず、広げることはできません。完了したタスクが生む受領書は、結果をそれが動いた封じ込めの決定に結び付けるため、メンテナは数か月後でも、その作業が実際に何に触れることを許されていたかを確認できます。
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。
+[提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。 `autopilot` は登録されていますが、`TaskSource` が実装されるまで実行を拒否します。
 
 ### 表紙の先へ
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

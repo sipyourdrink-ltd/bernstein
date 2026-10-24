@@ -135,7 +135,7 @@ flowchart LR
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-מערכת ה-CI מאמתת מחדש את הקבלה השמורה בכל push ל-main — ומוכיחה כי עותק שעבר שיבוש נכשל — כך שהראיות שפורסמו אינן הופכות לקובץ קישוטי. הסקריפט `scripts/record_demo.sh` מייצר מחדש את ההקלטה, הקבלה והמפתח מתוך ריצה אמיתית חדשה; שום דבר במסוף אינו מסונתז.
+אפשר לבדוק שוב את הקבלה השמורה בכל עת באמצעות הפקודה שלמעלה; עותק ששונה ייכשל באותה בדיקה. `scripts/record_demo.sh` מייצר מחדש את ההקלטה, הקבלה והמפתח מתוך ריצה אמיתית חדשה; שום דבר במסוף אינו מסונתז.
 
 ניתן לצפות בריצה פעילה מכל אחד משני ממשקי המפעיל. שניהם קוראים את אותו API של משימות, כך שאף אחד מהם אינו בבחינת מראה בפיגור. ב-`bernstein live`, העמודות השמאלית והימנית נגללות באופן עצמאי כפאנלים שלמים, כך שווידג'טים בחלק התחתון נשארים נגישים במסופים קצרים.
 
@@ -231,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 שלב סוכנים באותה ריצה: מודלים מקומיים זולים לקוד שגרתי, מודלי ענן חזקים יותר לארכיטקטורה. הפקודה `bernstein integrations list --installed` מציגה מה זמין במחשבך.
 
 ### מחשוב התנדבותי
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 פרויקט יכול לסמן issues כפתוחים למתנדבים, וכל אחד יכול להריץ אחד מהם על המכונה שלו עצמו, בלי חשבון ובלי מתאם. מה שמשימה רשאית לעשות מוצהר על ידי הפרויקט במניפסט `volunteer.json` - קצה עורפי לארגז החול, רשימת רשת מותרת ותקרות של זמן שעון וזיכרון - והמגבלות של התורם עצמו יכולות רק לצמצם זאת, לעולם לא להרחיב. הקבלה שמייצרת משימה שהושלמה קושרת את התוצאה להחלטת ההכלה שתחתיה רצה, כך שמתחזק יכול לבדוק גם חודשים אחר כך במה בדיוק הותר לעבודה לגעת.
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse`, `budget`, `verify-bundle` ו-`hub` הן תת-הפקודות שעובדות.
+[מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse`, `budget`, `verify-bundle` ו-`hub` הן תת-הפקודות שעובדות. `autopilot` רשום, אך מסרב לפעול עד שימומש `TaskSource`.
 
 ### מעבר לעמוד הראשי
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

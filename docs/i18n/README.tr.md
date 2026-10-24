@@ -135,7 +135,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI, main dalına yapılan her push işleminde kaydedilen makbuzu yeniden doğrular — ve tahrif edilmiş bir kopyanın başarısız olduğunu kanıtlar — böylece yayınlanan kanıt dekoratif bir dosyaya dönüşmez. `scripts/record_demo.sh`, kaydı, makbuzu ve anahtarı yeni bir gerçek çalıştırmadan yeniden üretir; terminalin içindeki hiçbir şey yapay olarak oluşturulmamıştır.
+Kaydedilen makbuz yukarıdaki komutla her zaman yeniden doğrulanabilir; değiştirilmiş bir kopya aynı denetimden geçemez. `scripts/record_demo.sh`, kaydı, makbuzu ve anahtarı yeni bir gerçek çalıştırmadan yeniden üretir; terminalin içindeki hiçbir şey yapay olarak oluşturulmamıştır.
 
 Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. Her ikisi de aynı görev API'sini okur, bu nedenle hiçbiri diğerinin gerisinde kalan bir yansıması değildir. `bernstein live` arayüzünde sol ve sağ sütunlar bağımsız paneller olarak kaydırılır, böylece alt kısımdaki bileşenlere daha kısa terminallerde de erişilebilir.
 
@@ -231,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Aynı çalıştırmada ajanları birleştirin: standart şablon kodlar için ucuz yerel modeller, mimari için daha güçlü bulut modelleri. `bernstein integrations list --installed` makinenizde nelerin mevcut olduğunu gösterir.
 
 ### gönüllü işlem gücü
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Bir proje sorunları gönüllülere açık olarak işaretleyebilir ve herkes bunlardan birini kendi makinesinde, hesap ve koordinatör olmadan çalıştırabilir. Bir görevin ne yapmasına izin verildiğini proje bir `volunteer.json` manifestinde bildirir - sanal alan arka ucu, izin verilen ağ listesi, duvar saati ve bellek tavanları - ve bağışçının kendi sınırları bunu yalnızca daraltabilir, asla genişletemez. Tamamlanan bir görevin ürettiği makbuz, sonucu altında çalıştığı sınırlama kararına bağlar; böylece bir bakımcı aylar sonra bile işin gerçekte neye dokunmasına izin verildiğini denetleyebilir.
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse`, `budget`, `verify-bundle` ve `hub`.
+[Bağışçı kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) bir worker çalıştırmayı ve belirlediğiniz bütçeyi, [proje kılavuzu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) bir manifest bildirmeyi anlatır, [tehdit modeli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ise her sınırın neyi koruyup neyi korumadığını belirtir. Tek komutluk çalıştırıcı henüz yayımlanmadı: bugün çalışan alt komutlar `verify`, `browse`, `budget`, `verify-bundle` ve `hub`. `autopilot` kayıtlıdır ancak bir `TaskSource` uygulanana kadar çalışmayı reddeder.
 
 ### ön sayfanın ötesinde
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

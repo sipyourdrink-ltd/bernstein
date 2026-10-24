@@ -135,7 +135,7 @@ flowchart LR
 كل عقدة يأخذها وكيل تسمح المرحلة بدوره؛ وتبقى أسوار الأدوار وبوابات الموافقة قائمة مهما فعل الوكيل داخل المهمة. عقدة الكود تكتمل خلف بوابات الدمج في git worktree خاص بها. العقد أعلاه تكتمل بشكل مختلف: [عقد المخرجات](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) يسمّي الناتج (تقرير، مجموعة بيانات، فحص، سجل إجراءات)، وتُغلق العقدة بإيصال lineage موقّع بدل commit. المجدوِل نفسه، السجل نفسه، التحقق دون اتصال نفسه - سواء حمل المخطط كودًا أو بحثًا أو تغيير عمليات أو مزيجًا من الثلاثة. مخططات جاهزة للبرمجيات والبحث والوثائق والمؤسسات ومسارات المساهمين في [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### التثبيت في 30 ثانية
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-يعيد نظام CI التحقق من الإيصال المعتمد مع كل push إلى main — ويثبت أن النسخة التي تم العبث بها تفشل — حتى لا تتحول الأدلة المنشورة إلى مجرد ملفات ديكورية. يعيد `scripts/record_demo.sh` إنشاء التسجيل والإيصال والمفتاح من تشغيل حقيقي جديد؛ لا يوجد شيء اصطناعي داخل الطرفية.
+يمكن إعادة التحقق من الإيصال المحفوظ في أي وقت باستخدام الأمر أعلاه؛ وتفشل النسخة المعدّلة في الاختبار نفسه. `scripts/record_demo.sh` إنشاء التسجيل والإيصال والمفتاح من تشغيل حقيقي جديد؛ لا يوجد شيء اصطناعي داخل الطرفية.
 
 يمكن متابعة التشغيل الجاري من أي من واجهتي المشغل. تقرأ كلتاهما نفس واجهة برمجة تطبيقات المهام، لذا لا تعد أي منهما انعكاساً متأخراً للأخرى. في `bernstein live`، يتم التمرير في العمودين الأيسر والأيمن بشكل مستقل كلوحات كاملة، مما يحافظ على إمكانية الوصول إلى العناصر في الطرفيات القصيرة.
 
@@ -231,7 +231,7 @@ Claude Code وCodex CLI وGemini CLI وGitHub Copilot CLI وCursor وAider وGoo
 امزج بين الوكلاء في نفس التشغيل: نماذج محلية منخفضة التكلفة للأكواد النمطية، ونماذج سحابية أقوى للأمور المعمارية. يعرض `bernstein integrations list --installed` ما هو متاح على جهازك.
 
 ### الحوسبة التطوعية
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 يمكن لمشروع أن يضع على مسائله علامة تفيد بأنها مفتوحة للمتطوعين، ويمكن لأي شخص تشغيل واحدة منها على جهازه الخاص دون حساب ودون منسّق. يعلن المشروع ما يُسمح للمهمة بفعله في بيان `volunteer.json` - الخلفية المستخدمة للعزل، وقائمة الشبكة المسموح بها، وسقفا الزمن والذاكرة - ولا تستطيع حدود المتبرع نفسه إلا تضييق ذلك، لا توسيعه أبدًا. يربط الإيصال الذي تنتجه مهمة منتهية النتيجةَ بقرار الاحتواء الذي جرت تحته، فيستطيع المشرف بعد أشهر أن يتحقق مما كان مسموحًا للعمل فعليًا أن يمسّه.
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`budget` و`verify-bundle` و`hub`.
+يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`budget` و`verify-bundle` و`hub`. الأمر `autopilot` مسجّل، لكنه يرفض التشغيل إلى أن يُنفّذ `TaskSource`.
 
 ### ما وراء الصفحة الرئيسية
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
