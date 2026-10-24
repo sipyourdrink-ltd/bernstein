@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlparse
 
 from bernstein.adapters.base import RateLimitMeter, record_rate_limit_hit
 
@@ -110,16 +111,25 @@ def normalize_report_path(path: str, target_root: Path | None) -> str:
     relativised against whatever drive the process happens to be on.
 
     Args:
-        path: The path as the scanner reported it. Backslashes are accepted;
+        path: The path or file URI as the scanner reported it. Backslashes are accepted;
             a report produced on Windows uses them.
-        target_root: The scan root, or ``None`` to normalise separators only.
+        target_root: The scan root, or ``None`` to normalise without relativising.
 
     Returns:
-        The path relative to ``target_root`` when it lies underneath it, else
-        the path with separators normalised and nothing else changed. A path
+        The decoded file-URI path (or input path), with normalised separators,
+        relative to ``target_root`` when it lies underneath it. A path
         OUTSIDE the scan target is reported as-is on purpose: silently
         relativising it would claim the finding is somewhere it is not.
     """
+    if path.startswith("file:"):
+        uri = urlparse(path)
+        path = unquote(uri.path)
+        if uri.netloc and uri.netloc.lower() != "localhost":
+            path = f"//{uri.netloc}{path}"
+        elif len(path) >= 4 and path[0] == "/" and path[1].isalpha() and path[2:4] == ":/":
+            # RFC file URIs add a slash before a Windows drive. Strip it
+            # independently of the host parsing this recorded report.
+            path = path[1:]
     text = path.replace("\\", "/")
     candidate = PurePosixPath(text)
     if target_root is None or not _is_rooted(text):
