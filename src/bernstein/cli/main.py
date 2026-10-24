@@ -1515,3 +1515,10 @@ cli.add_command(volunteer_group, "volunteer")
 from bernstein.cli.commands.adopt_cmd import adopt_cmd  # noqa: E402
 
 cli.add_command(adopt_cmd, "adopt")
+
+# Same defect as #3139 above: the skeleton was documented in
+# src/bernstein/cli/AGENTS.md, but no ``add_command`` call ever made it
+# reachable (#5880).
+from bernstein.cli.commands.insights_cmd import insights  # noqa: E402
+
+cli.add_command(insights, "insights")

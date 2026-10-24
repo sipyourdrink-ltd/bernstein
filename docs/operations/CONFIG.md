@@ -111,6 +111,11 @@ When `cli: auto` is set at the top level, the orchestrator picks the best availa
 
 A per-role `cli:` accepts any adapter registry name that `bernstein adapters list` reports - `ollama`, `aider`, `opencode` and the rest, not only the handful that also answer to a provider alias. The value is resolved by name; a `cli:` that names no registered adapter refuses the spawn and lists the adapters that would have worked, instead of quietly running the role on the run-level adapter.
 
+Within a role, file-affinity batching respects conflicting per-task `cli`,
+`model`, and preferred-agent hints. A task with no routing hint that touches
+files from two groups cannot combine those groups when their explicit hints
+conflict. Compatible groups can still share a batch up to `max_tasks_per_agent`.
+
 ### Escalation ladder (opt-in)
 
 `role_model_policy.<role>.ladder` declares an ordered, evidence-gated

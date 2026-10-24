@@ -74,10 +74,10 @@ dependencies = [
     "pluggy>=1.5",
     "mcp>=1.30.0,<2",
     "watchdog>=4.0",
-    "opentelemetry-api>=1.41.1",
+    "opentelemetry-api>=1.45.1",
     "opentelemetry-sdk>=1.41.1",
     "opentelemetry-exporter-otlp>=1.41.1",
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     "pyfiglet>=1.0",
     "terminaltexteffects>=0.11",
     "websockets>=14.0",
@@ -435,6 +435,9 @@ packages = ["src/bernstein"]
 # .sdd/ MUST stay out of the repo (Repo hygiene CI gate); the operator
 # override path .sdd/eval/golden/<tier>/*.md is still consulted first.
 artifacts = [
+    # Offline hardware trust anchors and their DER fingerprint provenance.
+    "src/bernstein/core/identity/hardware_roots/*.pem",
+    "src/bernstein/core/identity/hardware_roots/manifest.json",
     "src/bernstein/eval/golden_data/**/*.md",
     # Recipe golden traces - YAML fixtures that pin the resolved
     # workflow shape for each bundled recipe.  Loaded by the eval

@@ -41,11 +41,12 @@
 Bernstein es la capa de gobernanza open source para agentes de IA. Funciona con policy as code: tú escribes la política - quién puede hacer qué, qué necesita aprobación, qué debe quedar registrado - y Bernstein la aplica y produce el registro verificable. Un planificador determinista - sin modelo en el bucle de coordinación - ejecuta agentes en paralelo, filtra lo que producen con gates y registra cada paso, de modo que una ejecución puede verificarse a posteriori, offline, solo con los artefactos. Los agentes CLI de código funcionan de serie (Claude Code, Codex, Gemini CLI y 50+ más), y la misma capa gobierna cualquier carga agéntica: el entregable puede ser un diff, un informe de investigación, un dataset o un paquete de evidencias de auditoría. Perfil de instalación air-gap incluido. Apache-2.0.
 
 ### de un vistazo
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Cuatro cosas lo diferencian; todo lo demás son detalles.
+Cinco cosas lo distinguen; el resto son detalles.
 
 - **Sin LLM en el bucle de coordinación.** La planificación es Python puro, por lo que una ejecución es reproducible de extremo a extremo. Reproduce el plan de ayer y obtén el grafo de tareas de ayer.
+- **Evidencia de claves físicas.** Los verificadores sin conexión de custodia PIV y aprobación FIDO2 comparten el protocolo de recibos, con confianza fijada y tiempo explícito. La custodia del token no eleva los niveles de confianza TRACE. [Evidencia de claves físicas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Verificable a posteriori.** El journal de reproducción registra cada ejecución, y la columna vertebral de linaje siempre activa registra cada paso con linaje; el registro de auditoría opcional encadenado con HMAC (`BERNSTEIN_AUDIT=1`) añade recibos que puedes verificar offline. El no determinismo se manifiesta como una discrepancia de hash en el paso exacto, no como una reejecución inestable. Los entregables que no son código reciben el mismo tratamiento: una tarea puede declarar un contrato de artefactos (informe, conjunto de datos, registro de acciones, resultado de ops) y se completa con un recibo de linaje firmado en lugar de un commit de git.
 - **Aislado por diseño.** Cada tarea de codificación obtiene su propio git worktree tras puertas de merge; las tareas en modo artefacto obtienen un directorio de trabajo bajo `.sdd/workspaces/`. Los agentes no comparten ningún espacio de trabajo mutable por defecto; el único estado compartido es el backlog de tareas, que se reclama de forma atómica. La aplicación más estricta del sistema de archivos es opcional, desde los [backends de sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Desactiva los worktrees y cada tarea se ejecuta en el checkout compartido.
 - **Amplio y local.** Más de 53 adaptadores de agentes CLI más un contenedor genérico `--prompt`, estado basado en archivos, sin saltos SaaS, sin plano de datos de terceros.
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 La [guía del donante](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cubre la ejecución de un worker y el presupuesto que fijas, la [guía del proyecto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cubre la declaración de un manifiesto, y el [modelo de amenazas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indica qué protege y qué no cada frontera. El ejecutor de un solo comando aún no se ha publicado: hoy `verify`, `browse`, `budget`, `verify-bundle` y `hub` son los subcomandos que funcionan.
 
 ### más allá de la portada
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Todo lo profundo vive en el [sitio de documentación](https://docs.bernstein.run/):
 
 | página | lo que cubre |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | la lista completa de capacidades: modo servidor MCP, tarjetas de agente firmadas, backends de sandbox, sumideros de artefactos, mapeos regulatorios |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | dónde reside el valor y dónde Bernstein es la herramienta equivocada |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs declarativos en YAML de nodos de agente / comando / bucle |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel de navegador sobre la misma API que utiliza la TUI |
@@ -287,6 +289,6 @@ Los metadatos de citación viven en [CITATION.cff](https://github.com/sipyourdri
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->
