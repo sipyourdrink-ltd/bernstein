@@ -1,0 +1,482 @@
+{
+  "soc2-cc6-01": {
+    "name": "Logical Access Controls",
+    "framework": "soc2",
+    "control_id": "CC6.1",
+    "severity": "critical",
+    "description": "Access to systems is restricted using RBAC and MFA.",
+    "remediation": "Enable RBAC and MFA. Set rbac_enabled=true and mfa_enabled=true in compliance config."
+  },
+  "soc2-cc6-02": {
+    "name": "Credential Rotation",
+    "framework": "soc2",
+    "control_id": "CC6.1",
+    "severity": "high",
+    "description": "Secrets and credentials are rotated at least every 90 days.",
+    "remediation": "Configure secrets rotation to ≤90 days. Set secrets_rotation_days=90."
+  },
+  "soc2-cc6-03": {
+    "name": "Session Timeout",
+    "framework": "soc2",
+    "control_id": "CC6.1",
+    "severity": "medium",
+    "description": "Operator sessions expire after at most 60 minutes of inactivity.",
+    "remediation": "Set session_timeout_minutes=60 in the server configuration."
+  },
+  "soc2-cc6-04": {
+    "name": "Agent Token Expiry",
+    "framework": "soc2",
+    "control_id": "CC6.1",
+    "severity": "high",
+    "description": "Agent tokens expire within 24 hours.",
+    "remediation": "Set agent_token_expiry_hours=24. Rotate agent tokens per run."
+  },
+  "soc2-cc6-05": {
+    "name": "Minimum Credential Length",
+    "framework": "soc2",
+    "control_id": "CC6.1",
+    "severity": "medium",
+    "description": "Passwords and passphrases must be at least 12 characters.",
+    "remediation": "Enforce password_min_length=12 in the authentication configuration."
+  },
+  "soc2-cc7-01": {
+    "name": "Security Event Audit Logging",
+    "framework": "soc2",
+    "control_id": "CC7.1",
+    "severity": "critical",
+    "description": "All security-relevant events are captured in an append-only audit log.",
+    "remediation": "Enable audit_logging=true. Use CompliancePreset.STANDARD or higher."
+  },
+  "soc2-cc7-02": {
+    "name": "Tamper-Evident Audit Log",
+    "framework": "soc2",
+    "control_id": "CC7.2",
+    "severity": "high",
+    "description": "Audit log entries are HMAC-chained so tampering is detectable.",
+    "remediation": "Enable audit_hmac_chain=true. CompliancePreset.REGULATED enables this."
+  },
+  "soc2-cc7-03": {
+    "name": "Audit Log Retention",
+    "framework": "soc2",
+    "control_id": "CC7.2",
+    "severity": "medium",
+    "description": "Audit logs are retained for at least 365 days.",
+    "remediation": "Retain audit segments for 365 days; the check reads the oldest segment on disk."
+  },
+  "soc2-cc7-04": {
+    "name": "Log Integrity Protection",
+    "framework": "soc2",
+    "control_id": "CC7.2",
+    "severity": "high",
+    "description": "Log files are protected against unauthorised modification.",
+    "remediation": "Enable log_integrity=true. Use signed WAL (wal_signed=true)."
+  },
+  "soc2-cc7-05": {
+    "name": "Incident Response Plan",
+    "framework": "soc2",
+    "control_id": "CC7.5",
+    "severity": "high",
+    "description": "A documented incident response plan is in place.",
+    "remediation": "Document and store an incident response runbook under docs/incident-response.md."
+  },
+  "soc2-cc8-01": {
+    "name": "Change Approval Gates",
+    "framework": "soc2",
+    "control_id": "CC8.1",
+    "severity": "high",
+    "description": "High-risk tasks require human approval before execution.",
+    "remediation": "Enable change_approval_gates=true in compliance config."
+  },
+  "soc2-cc9-01": {
+    "name": "Agent Sandbox Isolation",
+    "framework": "soc2",
+    "control_id": "CC9.1",
+    "severity": "high",
+    "description": "Agents run inside containers to limit blast radius of compromise.",
+    "remediation": "Enable container sandboxing. Use --sandbox flag or set sandbox_enabled=true."
+  },
+  "soc2-cc9-02": {
+    "name": "Syscall Filtering",
+    "framework": "soc2",
+    "control_id": "CC9.1",
+    "severity": "medium",
+    "description": "Seccomp-BPF profiles restrict agent processes to a minimal syscall allowlist.",
+    "remediation": "Enable seccomp_enabled=true. Apply AgentSeccompProfile via SecurityProfile."
+  },
+  "soc2-cc9-03": {
+    "name": "Vulnerability Scanning",
+    "framework": "soc2",
+    "control_id": "CC9.2",
+    "severity": "high",
+    "description": "Dependencies and container images are scanned for known CVEs.",
+    "remediation": "Enable Trivy or Grype in CI/CD pipeline. Set vulnerability_scanning=true."
+  },
+  "soc2-cc9-04": {
+    "name": "SBOM Generation",
+    "framework": "soc2",
+    "control_id": "CC9.2",
+    "severity": "low",
+    "description": "A Software Bill of Materials is produced for each task run.",
+    "remediation": "Enable sbom_enabled=true in compliance config. Uses CycloneDX format."
+  },
+  "iso27001-a5-01": {
+    "name": "Information Security Policy",
+    "framework": "iso27001",
+    "control_id": "A.5.1",
+    "severity": "high",
+    "description": "An information security policy is documented and enforced.",
+    "remediation": "Document a security policy and enforce it through RBAC and audit logging."
+  },
+  "iso27001-a8-01": {
+    "name": "Asset Inventory (SBOM)",
+    "framework": "iso27001",
+    "control_id": "A.8.1",
+    "severity": "medium",
+    "description": "All software assets are inventoried via SBOM generation.",
+    "remediation": "Enable sbom_enabled=true to generate CycloneDX SBOMs per run."
+  },
+  "iso27001-a8-02": {
+    "name": "Data Classification",
+    "framework": "iso27001",
+    "control_id": "A.8.2",
+    "severity": "high",
+    "description": "Sensitive data is classified and handled according to its classification.",
+    "remediation": "Implement data_classification=true. Tag tasks containing PII/secrets."
+  },
+  "iso27001-a9-01": {
+    "name": "Access Control Policy",
+    "framework": "iso27001",
+    "control_id": "A.9.1",
+    "severity": "critical",
+    "description": "Role-based access control enforces least privilege.",
+    "remediation": "Enable RBAC. Assign minimal roles to agents and operators."
+  },
+  "iso27001-a9-02": {
+    "name": "User Registration and Deprovisioning",
+    "framework": "iso27001",
+    "control_id": "A.9.2",
+    "severity": "medium",
+    "description": "Access rights reviews are conducted at regular intervals (≤90 days).",
+    "remediation": "Set access_review_days=90. Schedule quarterly access reviews."
+  },
+  "iso27001-a9-03": {
+    "name": "Multi-Factor Authentication",
+    "framework": "iso27001",
+    "control_id": "A.9.4",
+    "severity": "high",
+    "description": "MFA is required for all operator accounts.",
+    "remediation": "Enable MFA for all operator identities. Set mfa_enabled=true."
+  },
+  "iso27001-a10-01": {
+    "name": "Cryptographic Controls",
+    "framework": "iso27001",
+    "control_id": "A.10.1",
+    "severity": "critical",
+    "description": "Encryption is applied to data at rest and in transit.",
+    "remediation": "Enable encrypt_at_rest=true and encrypt_in_transit=true (TLS 1.3)."
+  },
+  "iso27001-a10-02": {
+    "name": "TLS Enforcement",
+    "framework": "iso27001",
+    "control_id": "A.10.1",
+    "severity": "high",
+    "description": "All external API calls use TLS 1.2 or higher.",
+    "remediation": "Set tls_enforced=true. Reject plaintext HTTP connections."
+  },
+  "iso27001-a12-01": {
+    "name": "Operational Security Logging",
+    "framework": "iso27001",
+    "control_id": "A.12.4",
+    "severity": "high",
+    "description": "Security events are logged and protected against tampering.",
+    "remediation": "Enable audit_logging=true and log_integrity=true."
+  },
+  "iso27001-a12-02": {
+    "name": "Malware and Vulnerability Protection",
+    "framework": "iso27001",
+    "control_id": "A.12.2",
+    "severity": "high",
+    "description": "Container images and dependencies are scanned for vulnerabilities.",
+    "remediation": "Add vulnerability scanning to CI/CD. Enable vulnerability_scanning=true."
+  },
+  "iso27001-a12-03": {
+    "name": "Backup and Recovery",
+    "framework": "iso27001",
+    "control_id": "A.12.3",
+    "severity": "high",
+    "description": "Encrypted backups are configured with a tested recovery procedure.",
+    "remediation": "Enable backup_enabled=true and backup_encryption=true. Test restoration."
+  },
+  "iso27001-a14-01": {
+    "name": "Secure Development",
+    "framework": "iso27001",
+    "control_id": "A.14.2",
+    "severity": "high",
+    "description": "SAST and dependency scanning are integrated into the CI/CD pipeline.",
+    "remediation": "Integrate Semgrep/Bandit (sast_in_ci=true) and Trivy (vulnerability_scanning=true)."
+  },
+  "iso27001-a14-02": {
+    "name": "Dependency Integrity",
+    "framework": "iso27001",
+    "control_id": "A.14.2",
+    "severity": "medium",
+    "description": "Dependencies are pinned to exact versions and verified via lock files.",
+    "remediation": "Pin all dependencies. Use uv.lock / poetry.lock / package-lock.json."
+  },
+  "iso27001-a16-01": {
+    "name": "Incident Management Process",
+    "framework": "iso27001",
+    "control_id": "A.16.1",
+    "severity": "high",
+    "description": "An incident response procedure is documented and practiced.",
+    "remediation": "Document incident response procedure. Set incident_response_plan=true."
+  },
+  "iso27001-a17-01": {
+    "name": "Business Continuity and DR",
+    "framework": "iso27001",
+    "control_id": "A.17.1",
+    "severity": "medium",
+    "description": "Recovery Time Objective is ≤4 hours with tested DR procedures.",
+    "remediation": "Define and test DR runbooks. Set dr_rto_hours=4."
+  },
+  "pci-req2-01": {
+    "name": "Secure System Configuration",
+    "framework": "pci_dss",
+    "control_id": "Req 2.2",
+    "severity": "high",
+    "description": "System components are hardened and unnecessary services are disabled.",
+    "remediation": "Enable container sandboxing with dropped Linux capabilities."
+  },
+  "pci-req3-01": {
+    "name": "Encryption of Stored Cardholder Data",
+    "framework": "pci_dss",
+    "control_id": "Req 3.4",
+    "severity": "critical",
+    "description": "Sensitive data stored at rest is encrypted using strong cryptography.",
+    "remediation": "Enable encrypt_at_rest=true. Use AES-256-GCM for state files."
+  },
+  "pci-req4-01": {
+    "name": "TLS for Data in Transit",
+    "framework": "pci_dss",
+    "control_id": "Req 4.2",
+    "severity": "critical",
+    "description": "Cardholder data is transmitted only over encrypted connections.",
+    "remediation": "Enforce TLS 1.2+. Set tls_enforced=true and encrypt_in_transit=true."
+  },
+  "pci-req6-01": {
+    "name": "Vulnerability Management",
+    "framework": "pci_dss",
+    "control_id": "Req 6.3",
+    "severity": "high",
+    "description": "Known vulnerabilities are identified and remediated promptly.",
+    "remediation": "Run Trivy/Grype in CI. Set vulnerability_scanning=true."
+  },
+  "pci-req6-02": {
+    "name": "SAST in Development Pipeline",
+    "framework": "pci_dss",
+    "control_id": "Req 6.3",
+    "severity": "high",
+    "description": "Static analysis is integrated into the development pipeline.",
+    "remediation": "Integrate Semgrep or Bandit into CI. Set sast_in_ci=true."
+  },
+  "pci-req7-01": {
+    "name": "Least Privilege Access",
+    "framework": "pci_dss",
+    "control_id": "Req 7.1",
+    "severity": "critical",
+    "description": "Access to system components is limited to the minimum required.",
+    "remediation": "Enable RBAC and drop container capabilities to minimum required."
+  },
+  "pci-req8-01": {
+    "name": "Multi-Factor Authentication",
+    "framework": "pci_dss",
+    "control_id": "Req 8.4",
+    "severity": "critical",
+    "description": "MFA is required for all access to the cardholder data environment.",
+    "remediation": "Enforce MFA for all operator authentication. Set mfa_enabled=true."
+  },
+  "pci-req8-02": {
+    "name": "Password Complexity",
+    "framework": "pci_dss",
+    "control_id": "Req 8.3",
+    "severity": "high",
+    "description": "Passwords must be at least 12 characters.",
+    "remediation": "Set password_min_length=12 or higher."
+  },
+  "pci-req10-01": {
+    "name": "Audit Logging of All Access",
+    "framework": "pci_dss",
+    "control_id": "Req 10.2",
+    "severity": "critical",
+    "description": "All access to system components is logged.",
+    "remediation": "Enable audit_logging=true and audit_hmac_chain=true."
+  },
+  "pci-req10-02": {
+    "name": "Audit Log Retention (12 months)",
+    "framework": "pci_dss",
+    "control_id": "Req 10.5",
+    "severity": "high",
+    "description": "Audit logs are retained for at least 12 months.",
+    "remediation": "Retain audit segments for 365 days; the check reads the oldest segment on disk."
+  },
+  "pci-req11-01": {
+    "name": "Penetration Testing and Scanning",
+    "framework": "pci_dss",
+    "control_id": "Req 11.3",
+    "severity": "high",
+    "description": "Penetration testing and vulnerability scanning are conducted regularly.",
+    "remediation": "Run automated vulnerability scanning and schedule periodic penetration tests."
+  },
+  "pci-req11-02": {
+    "name": "WAF Deployment",
+    "framework": "pci_dss",
+    "control_id": "Req 6.4",
+    "severity": "high",
+    "description": "A web application firewall is deployed in front of public-facing systems.",
+    "remediation": "Deploy a WAF (e.g. AWS WAF, Cloudflare) in front of the task server API."
+  },
+  "nist-ac-02": {
+    "name": "Account Management",
+    "framework": "nist_800_53",
+    "control_id": "AC-2",
+    "severity": "high",
+    "description": "User accounts are managed with defined roles and reviewed periodically.",
+    "remediation": "Enable RBAC and configure quarterly access reviews."
+  },
+  "nist-ac-03": {
+    "name": "Access Enforcement",
+    "framework": "nist_800_53",
+    "control_id": "AC-3",
+    "severity": "critical",
+    "description": "Access enforcement mechanisms prevent unauthorised operations.",
+    "remediation": "Enable RBAC. Enforce deny-by-default access policy."
+  },
+  "nist-ac-06": {
+    "name": "Least Privilege",
+    "framework": "nist_800_53",
+    "control_id": "AC-6",
+    "severity": "high",
+    "description": "Processes are granted only the minimum privileges required.",
+    "remediation": "Drop container capabilities. Enable seccomp filtering."
+  },
+  "nist-ac-17": {
+    "name": "Remote Access Security",
+    "framework": "nist_800_53",
+    "control_id": "AC-17",
+    "severity": "high",
+    "description": "Remote access requires MFA and encrypted sessions.",
+    "remediation": "Require MFA for remote access. Enforce TLS on all connections."
+  },
+  "nist-au-02": {
+    "name": "Audit Event Selection",
+    "framework": "nist_800_53",
+    "control_id": "AU-2",
+    "severity": "high",
+    "description": "The organisation defines and logs auditable events.",
+    "remediation": "Enable audit_logging=true and define which events to capture."
+  },
+  "nist-au-03": {
+    "name": "Audit Record Content",
+    "framework": "nist_800_53",
+    "control_id": "AU-3",
+    "severity": "high",
+    "description": "Audit records contain sufficient information to reconstruct events.",
+    "remediation": "Enable HMAC-chained audit logging for tamper-evident records."
+  },
+  "nist-au-09": {
+    "name": "Audit Record Protection",
+    "framework": "nist_800_53",
+    "control_id": "AU-9",
+    "severity": "high",
+    "description": "Audit records are protected from unauthorised modification.",
+    "remediation": "Enable log_integrity=true with signed WAL."
+  },
+  "nist-au-11": {
+    "name": "Audit Record Retention",
+    "framework": "nist_800_53",
+    "control_id": "AU-11",
+    "severity": "medium",
+    "description": "Audit logs are retained for a minimum of 3 years for federal contexts.",
+    "remediation": "Retain audit logs for at least 365 days (extend to 1095 for federal)."
+  },
+  "nist-cm-02": {
+    "name": "Baseline Configuration",
+    "framework": "nist_800_53",
+    "control_id": "CM-2",
+    "severity": "medium",
+    "description": "A baseline configuration is established and maintained.",
+    "remediation": "Pin all dependencies to exact versions. Use reproducible builds."
+  },
+  "nist-cm-07": {
+    "name": "Least Functionality",
+    "framework": "nist_800_53",
+    "control_id": "CM-7",
+    "severity": "high",
+    "description": "Systems are configured to provide only essential capabilities.",
+    "remediation": "Enable container sandbox, seccomp filtering, and network isolation."
+  },
+  "nist-ia-02": {
+    "name": "User Identification and Authentication",
+    "framework": "nist_800_53",
+    "control_id": "IA-2",
+    "severity": "critical",
+    "description": "Users and agents are uniquely identified and authenticated.",
+    "remediation": "Enforce MFA and RBAC for all identities."
+  },
+  "nist-ia-05": {
+    "name": "Authenticator Management",
+    "framework": "nist_800_53",
+    "control_id": "IA-5",
+    "severity": "high",
+    "description": "Credentials are rotated, of sufficient complexity, and protected.",
+    "remediation": "Rotate secrets ≤90 days. Enforce minimum credential length of 12."
+  },
+  "nist-ra-05": {
+    "name": "Vulnerability Monitoring",
+    "framework": "nist_800_53",
+    "control_id": "RA-5",
+    "severity": "high",
+    "description": "Systems are scanned for vulnerabilities on a regular basis.",
+    "remediation": "Integrate automated vulnerability scanning into CI/CD."
+  },
+  "nist-sc-08": {
+    "name": "Transmission Confidentiality and Integrity",
+    "framework": "nist_800_53",
+    "control_id": "SC-8",
+    "severity": "high",
+    "description": "Data transmitted over networks is protected against disclosure and modification.",
+    "remediation": "Enforce TLS 1.3. Set tls_enforced=true and encrypt_in_transit=true."
+  },
+  "nist-sc-28": {
+    "name": "Protection of Information at Rest",
+    "framework": "nist_800_53",
+    "control_id": "SC-28",
+    "severity": "high",
+    "description": "Information stored at rest is protected using encryption.",
+    "remediation": "Enable encrypt_at_rest=true. Use AES-256-GCM."
+  },
+  "nist-si-02": {
+    "name": "Flaw Remediation",
+    "framework": "nist_800_53",
+    "control_id": "SI-2",
+    "severity": "high",
+    "description": "Security flaws are identified and corrected in a timely manner.",
+    "remediation": "Run automated SAST and vulnerability scanning. Remediate within SLA."
+  },
+  "nist-si-03": {
+    "name": "Malicious Code Protection",
+    "framework": "nist_800_53",
+    "control_id": "SI-3",
+    "severity": "high",
+    "description": "Mechanisms protect against malicious code at appropriate locations.",
+    "remediation": "Container sandboxing and seccomp filtering limit malicious code execution."
+  },
+  "nist-si-10": {
+    "name": "Information Input Validation",
+    "framework": "nist_800_53",
+    "control_id": "SI-10",
+    "severity": "high",
+    "description": "The system validates information inputs to prevent injection attacks.",
+    "remediation": "Deploy WAF and validate all agent task inputs before execution."
+  }
+}

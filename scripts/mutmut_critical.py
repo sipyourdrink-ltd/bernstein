@@ -209,11 +209,18 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="compliance_policies",
         source="src/bernstein/core/security/compliance_policies.py",
-        tests=("tests/unit/test_compliance_policies.py",),
+        tests=(
+            "tests/unit/test_compliance_policies.py",
+            "tests/unit/security/test_compliance_policies_mutation_kill.py",
+        ),
         threshold=0.70,
         budget_seconds=1200,
         max_candidates=80,
-        note="Compliance policy library with 50+ Rego rules across frameworks (22 tests).",
+        note=(
+            "Compliance policy library with 50+ Rego rules across frameworks. Scored 3/80 on the"
+            " catalogue-shape tests alone (#6471); the kill file pins input defaults, every check's"
+            " conjunction and thresholds, the retention observer and the catalogue text."
+        ),
     ),
     Module(
         key="audit_pack",
