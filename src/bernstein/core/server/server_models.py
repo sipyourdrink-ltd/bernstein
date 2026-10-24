@@ -331,6 +331,11 @@ class TaskResponse(BaseModel):
     # contract serialises as kind=code_diff), so a declared contract survives
     # the wire round-trip instead of being dropped at the response boundary.
     artifact_spec: dict[str, Any] | None = None
+    # Issue #6640: governance and claim-identity fields that were previously
+    # omitted from the serialiser.  None means "not set / not applicable".
+    approval_spec: dict[str, Any] | None = None
+    sensitivity: str = "internal"
+    claimed_by_session: str | None = None
 
 
 class WebhookTaskResponse(BaseModel):
