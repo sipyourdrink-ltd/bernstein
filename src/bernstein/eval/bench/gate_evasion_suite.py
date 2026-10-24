@@ -94,6 +94,9 @@ _FINDING_SIGNATURE: dict[str, re.Pattern[str]] = {
     "lint": re.compile(r"^Found \d+ errors?\.$", re.MULTILINE),
     # vulture has no summary line; each finding is "path:line: unused ...".
     "dead_code": re.compile(r"^\S+:\d+: unused ", re.MULTILINE),
+    # dlp_scan is in-process, so "could not run" surfaces as an exception, not
+    # a fail; a fail it returns lists each blocking finding as "  [BLOCK] ...".
+    "dlp_scan": re.compile(r"^\s+\[BLOCK\] \[", re.MULTILINE),
 }
 
 #: Attributes of pytest's ``<testsuite>`` element. Read with a regex rather
