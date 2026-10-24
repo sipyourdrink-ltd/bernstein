@@ -29,6 +29,7 @@ plus lineage exposes all of them.
     bernstein_approve       - approve a pending/blocked task
     bernstein_complete      - complete a task the caller is executing
     bernstein_create_task   - create a bare backlog task without orchestration
+    bernstein_subscribe     - wait for a role task creation over authenticated SSE
     load_skill              - return skill pack file contents; never execute
 
 Registered from sibling modules by the same ``create_mcp_server`` call:
@@ -56,6 +57,7 @@ Deprecated aliases (#3087), callable but never advertised, removed in
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import copy
@@ -564,6 +566,39 @@ async def _status_impl(server_url: str, *, status: str | None = None, detail: bo
         )
 
 
+async def _subscribe_impl(server_url: str, role: str, timeout_seconds: float = 30) -> str:
+    """Wait once on SSE; context managers close on return, deadline or cancellation."""
+    err = _validate_or_error("bernstein_subscribe", {"role": role, "timeout_seconds": timeout_seconds})
+    if err is not None:
+        return _validation_error_response(err)
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async with (
+                httpx.AsyncClient(timeout=None) as client,
+                client.stream(
+                    "GET",
+                    f"{server_url}/events/tasks",
+                    params={"role": role},
+                    headers=_auth_headers(),
+                ) as response,
+            ):
+                response.raise_for_status()
+                event = ""
+                async for line in response.aiter_lines():
+                    if not line:
+                        event = ""
+                    elif line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:") and event == "task.created":
+                        notification: dict[str, Any] = json.loads(line[5:])
+                        return json.dumps({"notifications": [notification], "timed_out": False})
+        return json.dumps({"error": "Task event stream ended before a notification"})
+    except TimeoutError:
+        return json.dumps({"notifications": [], "timed_out": True})
+    except (httpx.HTTPError, ValueError) as exc:
+        return _error_response(exc)
+
+
 async def _tasks_alias_impl(server_url: str, status: str | None = None) -> str:
     """Historical ``bernstein_tasks`` body: the raw task list."""
     try:
@@ -662,6 +697,20 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             parent_task_id=parent_task_id,
             ctx=ctx,
         )
+
+    @mcp.tool()
+    async def bernstein_subscribe(  # pyright: ignore[reportUnusedFunction]
+        role: str,
+        timeout_seconds: float = 30,
+    ) -> str:
+        """Wait for the first new task for a role using SSE, then unsubscribe.
+
+        This bounded call receives future task_id/title notifications only.
+        Timeout (1-60 seconds) returns an empty list. Cancellation or session
+        disconnect closes the stream. Call again to listen further; this does
+        not install a background listener or wake a dormant chat.
+        """
+        return await _subscribe_impl(server_url, role, timeout_seconds)
 
     @mcp.tool()
     async def bernstein_status(  # pyright: ignore[reportUnusedFunction]

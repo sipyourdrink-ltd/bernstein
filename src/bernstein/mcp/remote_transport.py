@@ -358,6 +358,19 @@ def _jsonrpc_result(
 
 _TOOL_DEFS: list[dict[str, Any]] = [
     {
+        "name": "bernstein_subscribe",
+        "description": "Wait once for a role task creation via SSE; closes on timeout or cancellation.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["role"],
+            "properties": {
+                "role": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$"},
+                "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 60, "default": 30},
+            },
+        },
+    },
+    {
         "name": "bernstein_run",
         "description": (
             "Start an orchestration run by posting a task. Pass "
@@ -1272,6 +1285,13 @@ class StreamableHTTPTransport:
             from bernstein.mcp.server import _deprecated_alias_payload  # pyright: ignore[reportPrivateUsage]
 
             return _deprecated_alias_payload(name, await self._execute_deprecated_tool(name, arguments))
+
+        if name == "bernstein_subscribe":
+            from bernstein.mcp.server import _subscribe_impl  # pyright: ignore[reportPrivateUsage]
+
+            return await _subscribe_impl(
+                self._server_url, arguments.get("role", ""), arguments.get("timeout_seconds", 30)
+            )
 
         if name == "bernstein_status":
             return await self._folded_status(arguments)

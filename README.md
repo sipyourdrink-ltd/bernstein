@@ -279,3 +279,5 @@ Citation metadata lives in [CITATION.cff](https://github.com/sipyourdrink-ltd/be
 [Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->
+
+New backlog tasks can be received through `bernstein_subscribe(role, timeout_seconds=30)` over authenticated SSE. Each bounded call returns the first matching task ID/title and closes its subscription; see [role task notifications](docs/operations/notifications.md#role-task-subscriptions-sse).
