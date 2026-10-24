@@ -1,7 +1,8 @@
 """EU AI Act Compliance Engine - Annex III risk classification, Annex IV tech docs, conformity assessment.
 
 Implements the EU Artificial Intelligence Act (Regulation (EU) 2024/1689).
-Mandatory for high-risk AI systems from August 2027 (Article 111(2)).
+When each obligation applies is set by Article 113 and differs by obligation
+and category; the dates live in one table, :data:`AI_ACT_DEADLINES`.
 
 Key Articles implemented:
   - Article 5: Prohibited practices (unacceptable risk)
@@ -17,16 +18,20 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path  # noqa: TC003
-from typing import Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any
 
 from bernstein.system_description import (
     DEPLOYMENT_CONTEXT,
     INTENDED_USE,
     SYSTEM_DESCRIPTION,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _NOT_APPLICABLE = "Not applicable"
 
@@ -67,6 +72,189 @@ class AnnexIIIDomain(StrEnum):
 
 
 # ---------------------------------------------------------------------------
+# When each obligation applies
+# ---------------------------------------------------------------------------
+
+
+class AIActObligation(StrEnum):
+    """An AI Act obligation whose application date Article 113 sets separately."""
+
+    ARTICLE_50_TRANSPARENCY = "article_50_transparency"
+    HIGH_RISK_ANNEX_III = "high_risk_annex_iii"
+    HIGH_RISK_ANNEX_I = "high_risk_annex_i"
+    GENERAL_PURPOSE_AI_MODELS = "general_purpose_ai_models"
+
+
+@dataclass(frozen=True)
+class AIActTransitionalRule:
+    """A rule for systems or models already on the market, kept apart from the date.
+
+    Attributes:
+        applies_to: Which systems or models the rule covers.
+        rule: What the rule requires.
+        comply_by: The date it sets, or ``None`` when the rule is conditional
+            and sets none (Article 111(2): covered only on a significant change).
+        reference: Article of Regulation (EU) 2024/1689, as amended.
+    """
+
+    applies_to: str
+    rule: str
+    comply_by: date | None
+    reference: str
+
+
+@dataclass(frozen=True)
+class AIActDeadline:
+    """When one obligation starts to apply, with its legal reference.
+
+    Attributes:
+        obligation: The obligation this row is for.
+        label: Short name used in reports.
+        scope: The provisions and systems it covers.
+        applies_from: The date the obligation applies from.
+        reference: Article of Regulation (EU) 2024/1689, as amended, that sets it.
+        transitional: Rules for systems or models already on the market.
+    """
+
+    obligation: AIActObligation
+    label: str
+    scope: str
+    applies_from: date
+    reference: str
+    transitional: tuple[AIActTransitionalRule, ...] = ()
+
+    def render(self) -> str:
+        """The date, the obligation and the article that sets it, on one line."""
+        return f"{format_ai_act_date(self.applies_from)} - {self.label} ({self.reference})"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "obligation": self.obligation.value,
+            "label": self.label,
+            "applies_from": self.applies_from.isoformat(),
+            "reference": self.reference,
+            "source": AI_ACT_SOURCE,
+            "as_of": AI_ACT_DATES_AS_OF.isoformat(),
+            "transitional": [
+                {
+                    "applies_to": r.applies_to,
+                    "rule": r.rule,
+                    "comply_by": None if r.comply_by is None else r.comply_by.isoformat(),
+                    "reference": r.reference,
+                }
+                for r in self.transitional
+            ],
+        }
+
+
+def format_ai_act_date(value: date) -> str:
+    """Render a date the way the Official Journal writes it, day month year."""
+    return f"{value.day} {value:%B %Y}"
+
+
+_TABLE_BEGIN = "# >>> AI Act application dates: the only place they are written"
+_TABLE_END = "# <<< end of AI Act application dates"
+
+# >>> AI Act application dates: the only place they are written
+#
+# Copied from the authentic Official Journal texts, read on the "as of" date:
+# Regulation (EU) 2024/1689 (OJ L, 2024/1689, 12.7.2024) and the amending
+# Regulation (EU) 2026/1744, the Digital Omnibus on AI (OJ L, 2026/1744,
+# 24.7.2026; in force 27 July 2026). The omnibus replaced Article 113, third
+# paragraph, point (c) and Article 111(2), and added Article 111(4); Article 50
+# keeps the general date. tests/unit/compliance/test_ai_act_deadlines.py quotes
+# the text each row comes from, and fails if a date is written anywhere else.
+
+AI_ACT_SOURCE = (
+    "Regulation (EU) 2024/1689, as amended by Regulation (EU) 2026/1744 "
+    "(OJ L, 2026/1744, 24.7.2026, ELI: http://data.europa.eu/eli/reg/2026/1744/oj)"
+)
+AI_ACT_DATES_AS_OF = date(2026, 10, 20)
+
+_HIGH_RISK_ALREADY_ON_MARKET = (
+    AIActTransitionalRule(
+        applies_to="high-risk AI systems placed on the market or put into service before this date",
+        rule="covered only if, as from this date, they are subject to significant changes in their designs",
+        comply_by=None,
+        reference="Article 111(2)",
+    ),
+    AIActTransitionalRule(
+        applies_to=(
+            "high-risk AI systems intended to be used by public authorities, "
+            "placed on the market or put into service before this date"
+        ),
+        rule="providers and deployers comply with the requirements and obligations of the Regulation",
+        comply_by=date(2030, 8, 2),
+        reference="Article 111(2)",
+    ),
+)
+
+AI_ACT_DEADLINES: Mapping[AIActObligation, AIActDeadline] = MappingProxyType(
+    {
+        AIActObligation.ARTICLE_50_TRANSPARENCY: AIActDeadline(
+            obligation=AIActObligation.ARTICLE_50_TRANSPARENCY,
+            label="Article 50 transparency",
+            scope="Transparency obligations for providers and deployers of certain AI systems (Article 50)",
+            applies_from=date(2026, 8, 2),
+            reference="Article 113, second paragraph",
+            transitional=(
+                AIActTransitionalRule(
+                    applies_to=(
+                        "providers of AI systems, including general-purpose AI systems, generating synthetic "
+                        "audio, image, video or text content, placed on the market before this date"
+                    ),
+                    rule="comply with Article 50(2) (machine-readable marking of AI-generated content)",
+                    comply_by=date(2026, 12, 2),
+                    reference="Article 111(4)",
+                ),
+            ),
+        ),
+        AIActObligation.HIGH_RISK_ANNEX_III: AIActDeadline(
+            obligation=AIActObligation.HIGH_RISK_ANNEX_III,
+            label="High-risk, Annex III",
+            scope=(
+                "Chapter III, Sections 1 to 3 (including Article 12 record-keeping), except Article 6(5), "
+                "for AI systems classified as high-risk pursuant to Article 6(2) and Annex III"
+            ),
+            applies_from=date(2027, 12, 2),
+            reference="Article 113, third paragraph, point (c)(i)",
+            transitional=_HIGH_RISK_ALREADY_ON_MARKET,
+        ),
+        AIActObligation.HIGH_RISK_ANNEX_I: AIActDeadline(
+            obligation=AIActObligation.HIGH_RISK_ANNEX_I,
+            label="High-risk, Annex I",
+            scope=(
+                "Chapter III, Sections 1 to 3 (including Article 12 record-keeping), except Article 6(5), "
+                "for AI systems classified as high-risk pursuant to Article 6(1) and Annex I. For products "
+                "under Section B of Annex I only Article 6(1), Article 60a and Articles 102 to 112 apply "
+                "(Article 2(2))"
+            ),
+            applies_from=date(2028, 8, 2),
+            reference="Article 113, third paragraph, point (c)(ii)",
+            transitional=_HIGH_RISK_ALREADY_ON_MARKET,
+        ),
+        AIActObligation.GENERAL_PURPOSE_AI_MODELS: AIActDeadline(
+            obligation=AIActObligation.GENERAL_PURPOSE_AI_MODELS,
+            label="General-purpose AI models",
+            scope="Obligations for providers of general-purpose AI models (Chapter V)",
+            applies_from=date(2025, 8, 2),
+            reference="Article 113, third paragraph, point (b)",
+            transitional=(
+                AIActTransitionalRule(
+                    applies_to="providers of general-purpose AI models placed on the market before this date",
+                    rule="comply with the obligations of the Regulation",
+                    comply_by=date(2027, 8, 2),
+                    reference="Article 111(3)",
+                ),
+            ),
+        ),
+    }
+)
+
+# <<< end of AI Act application dates
+
+
+# ---------------------------------------------------------------------------
 # Descriptors
 # ---------------------------------------------------------------------------
 
@@ -89,6 +277,9 @@ class SystemDescriptor:
         used_in_law_enforcement: Policing, crime prediction, evidence evaluation.
         used_in_migration: Visa decisions, border control, asylum.
         used_in_justice: Judicial decisions, democratic processes.
+        annex_i_section_a_product: Safety component of (or itself) a product
+            under Section A of Annex I that requires third-party conformity
+            assessment, making it high-risk under Article 6(1).
         real_time_biometric_public: Real-time remote biometric ID in public spaces.
         subliminal_techniques: Exploits subconscious/subliminal techniques.
         exploits_vulnerabilities: Targets protected-characteristic vulnerabilities.
@@ -127,6 +318,13 @@ class SystemDescriptor:
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # Article 6(1): a safety component of a product, or itself a product,
+    # covered by the Union harmonisation legislation in Section A of Annex I
+    # and required to undergo third-party conformity assessment under it.
+    # (Section B products are governed through their own sectoral law,
+    # Article 2(2), and are not modelled here.)
+    annex_i_section_a_product: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Classification result
@@ -146,6 +344,8 @@ class ClassificationResult:
         justification: Narrative explanation of the classification.
         classified_at: ISO-8601 timestamp of classification.
         classification_hash: Deterministic SHA-256 of inputs (for audit).
+        annex_i_section_a_product: Whether the system is high-risk under
+            Article 6(1) and Annex I (as well as, or instead of, Annex III).
     """
 
     system_name: str
@@ -156,6 +356,7 @@ class ClassificationResult:
     justification: str
     classified_at: str
     classification_hash: str
+    annex_i_section_a_product: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -403,13 +604,24 @@ class _AnnexIIIClassifier:
                 f"Triggers: {'; '.join(article5_triggers)}. "
                 "Deployment is not permitted under the EU AI Act."
             )
-        elif annex_iii_domain != AnnexIIIDomain.NOT_APPLICABLE:
+        elif annex_iii_domain != AnnexIIIDomain.NOT_APPLICABLE or descriptor.annex_i_section_a_product:
             risk_category = RiskCategory.HIGH
-            justification = (
-                f"System '{descriptor.name}' is HIGH RISK under Annex III. "
-                f"{annex_iii_justification}. "
-                "Full conformity assessment, technical documentation (Annex IV), "
+            bases = []
+            if annex_iii_domain != AnnexIIIDomain.NOT_APPLICABLE:
+                bases.append(f"under Annex III. {annex_iii_justification}.")
+            if descriptor.annex_i_section_a_product:
+                bases.append(
+                    "under Article 6(1): a safety component of, or itself, a product covered by "
+                    "Section A of Annex I that requires third-party conformity assessment."
+                )
+            registration_phrase = (
                 "CE marking, and EU database registration required before deployment."
+                if annex_iii_domain not in (AnnexIIIDomain.NOT_APPLICABLE, AnnexIIIDomain.CRITICAL_INFRASTRUCTURE)
+                else "and CE marking required before deployment."
+            )
+            justification = (
+                f"System '{descriptor.name}' is HIGH RISK {' Also '.join(bases)} "
+                f"Full conformity assessment, technical documentation (Annex IV), {registration_phrase}"
             )
         elif article50_triggers:
             risk_category = RiskCategory.LIMITED
@@ -427,6 +639,16 @@ class _AnnexIIIClassifier:
             )
 
         # Deterministic audit hash: SHA-256 of all classification inputs
+        flags = {
+            attr: getattr(descriptor, attr, False)
+            for attr, *_ in (
+                self._ARTICLE5_CHECKS + [(a, d, j) for a, d, j in self._ANNEX_III_CHECKS] + self._ARTICLE50_CHECKS
+            )
+        }
+        # Added after evidence packages were already being written: hashed only
+        # when set, so every hash computed without it stays reproducible.
+        if descriptor.annex_i_section_a_product:
+            flags["annex_i_section_a_product"] = True
         hash_payload = json.dumps(
             {
                 "name": descriptor.name,
@@ -434,14 +656,7 @@ class _AnnexIIIClassifier:
                 "description": descriptor.description,
                 "intended_use": descriptor.intended_use,
                 "deployment_context": descriptor.deployment_context,
-                "flags": {
-                    attr: getattr(descriptor, attr, False)
-                    for attr, *_ in (
-                        self._ARTICLE5_CHECKS
-                        + [(a, d, j) for a, d, j in self._ANNEX_III_CHECKS]
-                        + self._ARTICLE50_CHECKS
-                    )
-                },
+                "flags": flags,
             },
             sort_keys=True,
         ).encode()
@@ -456,7 +671,54 @@ class _AnnexIIIClassifier:
             justification=justification,
             classified_at=now,
             classification_hash=classification_hash,
+            annex_i_section_a_product=descriptor.annex_i_section_a_product,
         )
+
+
+def requires_article49_registration(classification: ClassificationResult) -> bool:
+    """Whether high-risk registration in the Article 71 EU database (Article 49) applies.
+
+    Under Article 49(1), registration in the EU database applies to systems
+    classified as high-risk under Annex III, except for point 2 (critical
+    infrastructure). Under Article 49(5), Annex I systems shall not be
+    registered in the Article 71 EU database; sectoral product registration
+    applies where required under the sectoral legislation.
+    """
+    if classification.risk_category != RiskCategory.HIGH:
+        return False
+    return classification.annex_iii_domain not in (
+        AnnexIIIDomain.NOT_APPLICABLE,
+        AnnexIIIDomain.CRITICAL_INFRASTRUCTURE,
+    )
+
+
+def applicable_obligations(classification: ClassificationResult) -> list[AIActObligation]:
+    """The obligations, and so the dates, that apply to a classified system.
+
+    A prohibited system has none: it may not be deployed at all, so no
+    application date is relevant to it. A high-risk system can be both Annex
+    III and Annex I, and any system can also carry Article 50 duties; each
+    keeps its own date.
+    """
+    if classification.risk_category == RiskCategory.UNACCEPTABLE:
+        return []
+    obligations: list[AIActObligation] = []
+    if classification.risk_category == RiskCategory.HIGH:
+        if classification.annex_iii_domain != AnnexIIIDomain.NOT_APPLICABLE:
+            obligations.append(AIActObligation.HIGH_RISK_ANNEX_III)
+        if classification.annex_i_section_a_product:
+            obligations.append(AIActObligation.HIGH_RISK_ANNEX_I)
+    if classification.article50_triggers:
+        obligations.append(AIActObligation.ARTICLE_50_TRANSPARENCY)
+    return obligations
+
+
+def _high_risk_deadlines(classification: ClassificationResult) -> list[AIActDeadline]:
+    return [
+        AI_ACT_DEADLINES[o]
+        for o in applicable_obligations(classification)
+        if o in (AIActObligation.HIGH_RISK_ANNEX_III, AIActObligation.HIGH_RISK_ANNEX_I)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -625,22 +887,71 @@ class TechDocGenerator:
         d: SystemDescriptor,
         c: ClassificationResult,
     ) -> str:
-        procedure = (
-            "Conformity Assessment Procedure: Annex VI (Internal Control)\n"
-            "OR Third-party assessment by notified body if biometric identification system "
-            "(Annex VII/VIII as applicable)"
-            if c.risk_category == RiskCategory.HIGH
-            else "No conformity assessment required for this risk category."
-        )
+        if c.risk_category != RiskCategory.HIGH:
+            procedure = "No conformity assessment required for this risk category."
+        elif c.annex_i_section_a_product and c.annex_iii_domain == AnnexIIIDomain.NOT_APPLICABLE:
+            procedure = (
+                "Conformity Assessment Procedure: Relevant sectoral conformity assessment "
+                "procedure under applicable Union harmonisation legislation listed in Annex I, "
+                "Section A (Article 43(3)), with Chapter III, Section 2 requirements incorporated "
+                "into that assessment (third-party assessment by notified body designated under "
+                "sectoral law)"
+            )
+        elif c.annex_i_section_a_product and c.annex_iii_domain != AnnexIIIDomain.NOT_APPLICABLE:
+            procedure = (
+                "Conformity Assessment Procedure: Relevant sectoral conformity assessment "
+                "procedure under applicable Union harmonisation legislation listed in Annex I, "
+                "Section A (Article 43(3)), incorporating Chapter III, Section 2 requirements "
+                "into a single assessment (third-party assessment by notified body designated "
+                "under sectoral law);\n"
+                "Annex III basis: Annex VI (Internal Control) or Annex VII/VIII notified body "
+                "if applicable (integrated into sectoral assessment per Article 43(3))"
+            )
+        else:
+            procedure = (
+                "Conformity Assessment Procedure: Annex VI (Internal Control)\n"
+                "OR Third-party assessment by notified body if biometric identification system "
+                "(Annex VII/VIII as applicable)"
+            )
+
+        if "eu_db_registration" in d.metadata:
+            db_status = d.metadata["eu_db_registration"]
+        elif requires_article49_registration(c):
+            db_status = "PENDING - required before deployment (Article 49)"
+        elif (
+            c.risk_category == RiskCategory.HIGH
+            and c.annex_i_section_a_product
+            and c.annex_iii_domain == AnnexIIIDomain.NOT_APPLICABLE
+        ):
+            db_status = (
+                "NOT APPLICABLE - Annex I systems are exempt from EU AI Act database registration "
+                "(Article 49(5)); sectoral product registration applies where required under applicable "
+                "Union harmonisation legislation"
+            )
+        elif c.risk_category == RiskCategory.HIGH and c.annex_iii_domain == AnnexIIIDomain.CRITICAL_INFRASTRUCTURE:
+            db_status = (
+                "NOT APPLICABLE - Exempt from EU database registration under Article 49(1) "
+                "(Annex III, point 2 critical infrastructure)"
+            )
+        else:
+            db_status = "NOT APPLICABLE"
+
         return (
             f"{procedure}\n"
             f"Harmonised Standards Applied: {d.metadata.get('harmonised_standards', 'NOT SPECIFIED')}\n"
             f"Notified Body: {d.metadata.get('notified_body', 'NOT YET ASSIGNED')}\n"
             f"CE Marking: {d.metadata.get('ce_marking_status', 'PENDING')}\n"
-            f"EU Database Registration: {d.metadata.get('eu_db_registration', 'PENDING - required before deployment (Article 49)')}\n"
+            f"EU Database Registration: {db_status}\n"
             f"Declaration of Conformity: {d.metadata.get('declaration_of_conformity', 'NOT YET ISSUED')}\n"
-            "DEADLINE: August 2027 (Article 111(2) transitional provision for high-risk AI systems)."
+            f"{_conformity_deadline_line(c)}"
         )
+
+
+def _conformity_deadline_line(c: ClassificationResult) -> str:
+    high_risk = _high_risk_deadlines(c)
+    if not high_risk:
+        return "DEADLINE: N/A (no Chapter III high-risk obligations apply to this classification)."
+    return "DEADLINE: Chapter III obligations apply from " + "; ".join(d.render() for d in high_risk) + "."
 
 
 # ---------------------------------------------------------------------------
@@ -969,6 +1280,7 @@ class ComplianceEngine:
                 "justification": classification.justification,
                 "classified_at": classification.classified_at,
                 "classification_hash": classification.classification_hash,
+                "annex_i_section_a_product": classification.annex_i_section_a_product,
             }
         }
 
@@ -1009,12 +1321,13 @@ class ComplianceEngine:
         c: ClassificationResult,
         r: ConformityResult,
     ) -> dict[str, Any]:
-        deadline = "August 2027 (Article 111(2))" if c.risk_category == RiskCategory.HIGH else "N/A"
+        deadlines = [AI_ACT_DEADLINES[o] for o in applicable_obligations(c)]
         return {
             "risk_category": c.risk_category.value,
             "overall_conformity": r.overall_status,
             "mandatory_gaps_count": r.failed,
-            "deadline": deadline,
+            "deadline": "; ".join(d.render() for d in deadlines) or "N/A",
+            "deadlines": [d.to_dict() for d in deadlines],
             "action_required": r.failed > 0 or c.risk_category == RiskCategory.UNACCEPTABLE,
             "next_steps": self._next_steps(c, r),
         }
@@ -1036,17 +1349,20 @@ class ComplianceEngine:
                 steps.append(f"Address {r.failed} mandatory gap(s) listed in conformity checks.")
             if r.partial > 0:
                 steps.append(f"Complete {r.partial} partial requirement(s) in technical documentation.")
+            if requires_article49_registration(c):
+                steps.append("Register system in EU AI Act database (Article 49) before deployment.")
             steps += [
-                "Register system in EU AI Act database (Article 49) before deployment.",
                 "Obtain CE marking after successful conformity assessment.",
                 "Establish post-market monitoring system (Article 72).",
-                "Deadline: August 2027 (Article 111(2)).",
             ]
+            steps += [f"Applies from: {d.render()}." for d in (AI_ACT_DEADLINES[o] for o in applicable_obligations(c))]
             return steps
         if c.risk_category == RiskCategory.LIMITED:
+            article50 = AI_ACT_DEADLINES[AIActObligation.ARTICLE_50_TRANSPARENCY]
             return [
                 "Implement transparency/disclosure obligations per Article 50.",
                 "No conformity assessment or CE marking required.",
+                f"Applies from: {article50.render()}.",
             ]
         return ["No mandatory action required. Consider voluntary code of conduct adherence."]
 

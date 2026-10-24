@@ -22,6 +22,27 @@ The Article 12 bundle is the smallest viable artefact that satisfies
 those requirements. Source:
 `src/bernstein/core/security/article12_bundle.py`.
 
+### When Article 12 applies
+
+Article 12 is in Chapter III, Section 2. As of 20 October 2026, Article 113,
+third paragraph, point (c), as replaced by Regulation (EU) 2026/1744 (the
+Digital Omnibus on AI, OJ L, 2026/1744, 24.7.2026, ELI:
+http://data.europa.eu/eli/reg/2026/1744/oj), applies Chapter III,
+Sections 1 to 3 from:
+
+- **2 December 2027** for systems that are high-risk under Article 6(2) and
+  Annex III;
+- **2 August 2028** for systems that are high-risk under Article 6(1) and
+  Annex I (Section A products; for Section B products only the provisions in
+  Article 2(2) apply).
+
+A high-risk system already on the market before its date is covered only if
+its design changes significantly from then on (Article 111(2)); one intended
+for use by public authorities must comply by 2 August 2030 either way. The
+operations guide carries the full table, including the Article 50 and
+general-purpose AI dates:
+[When each obligation applies](../operations/compliance.md#when-each-obligation-applies).
+
 ## What the bundle contains
 
 The bundle is a single deterministic zip with four entries. Same input
