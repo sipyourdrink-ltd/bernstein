@@ -278,6 +278,11 @@ Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案�
 
 </details>
 
+### 管理執行
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 建立經稽核的空容器，不啟動規劃器或代理程序。透過 `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` 加入手動任務，並用 `bernstein_run_status(run_id="admin-...")` 查詢狀態。成員任務可透過一般認領 API 領取，但不會自動編排。非空執行在所有成員的狀態均為 `done`、`closed` 或 `cancelled` 時結束；空執行保持開放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### 貢獻、支援與授權
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

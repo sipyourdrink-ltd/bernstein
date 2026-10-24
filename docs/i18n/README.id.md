@@ -278,6 +278,11 @@ Daftar pemantauan lengkap, termasuk setiap entri daftar awesome, katalog, rujuka
 
 </details>
 
+### Eksekusi administratif
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Gunakan `bernstein_run(template="administrative", goal="Weekly sprint")` untuk membuat wadah kosong dengan jejak audit tanpa perencana atau proses agen. Tambahkan tugas manual melalui `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` dan periksa status dengan `bernstein_run_status(run_id="admin-...")`. Tugas tetap dapat diambil melalui API klaim biasa, tetapi dikecualikan dari orkestrasi otomatis. Eksekusi yang berisi tugas selesai setelah setiap tugas berstatus `done`, `closed`, atau `cancelled`; eksekusi kosong tetap terbuka. [Alur operator](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### kontribusi, dukungan, lisensi
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

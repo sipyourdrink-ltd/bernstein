@@ -268,6 +268,16 @@ The full tracked list, including every awesome-list entry, catalog listing, prio
 
 </details>
 
+### Administrative runs
+
+Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
+empty, audited container without a planner or agent process. Add manual work with
+`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`
+and poll `bernstein_run_status(run_id="admin-...")`. Members are claimable through
+the usual claim API and excluded from automatic orchestration. A nonempty run
+completes when every member has status `done`, `closed`, or `cancelled`; an empty run
+stays open. See [the operator workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### contributing, support, license
 
 PRs welcome; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) has setup and code style. Security reports go through [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry). Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
@@ -279,13 +289,3 @@ Citation metadata lives in [CITATION.cff](https://github.com/sipyourdrink-ltd/be
 [Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->
-
-### Administrative runs
-
-Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
-empty, audited container without a planner or agent process. Add manual work with
-`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`
-and poll `bernstein_run_status(run_id="admin-...")`. Members are claimable through
-the usual claim API and excluded from automatic orchestration. A nonempty run
-completes when every member is done, verified/closed, or cancelled; an empty run
-stays open. See [the operator workflow](docs/operations/administrative-runs.md).

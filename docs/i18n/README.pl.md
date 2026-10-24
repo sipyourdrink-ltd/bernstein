@@ -278,6 +278,11 @@ Pełna lista publikacji, w tym wpisy w spisach awesome, katalogach oraz wzmianki
 
 </details>
 
+### Uruchomienia administracyjne
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Użyj `bernstein_run(template="administrative", goal="Weekly sprint")`, aby utworzyć pusty kontener z audytem, bez planera i procesów agentów. Dodawaj zadania ręczne przez `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` i sprawdzaj stan przez `bernstein_run_status(run_id="admin-...")`. Zadania można przejmować przez zwykłe API, ale nie podlegają automatycznej orkiestracji. Niepuste uruchomienie kończy się, gdy każde zadanie ma status `done`, `closed` lub `cancelled`; puste pozostaje otwarte. [Instrukcja obsługi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### współpraca, wsparcie, licencja
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

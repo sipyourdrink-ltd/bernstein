@@ -278,6 +278,11 @@ Die vollständige Übersicht aller Awesome-List-Einträge, Katalogeinträge, Zit
 
 </details>
 
+### Administrative Läufe
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Mit `bernstein_run(template="administrative", goal="Weekly sprint")` entsteht ein leerer, auditierter Container ohne Planer oder Agentenprozesse. Manuelle Aufgaben werden mit `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` hinzugefügt; `bernstein_run_status(run_id="admin-...")` liefert den Status. Aufgaben bleiben über die übliche Claim-API abrufbar, sind aber von der automatischen Orchestrierung ausgeschlossen. Ein nicht leerer Lauf endet, sobald jede Aufgabe den Status `done`, `closed` oder `cancelled` hat; ein leerer Lauf bleibt offen. [Bedienungsablauf](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### mitwirken, support, lizenz
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

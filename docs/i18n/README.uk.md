@@ -278,6 +278,11 @@ Bernstein названо на честь Леонарда Бернстайна, 
 
 </details>
 
+### адміністративні запуски
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Створіть порожній контейнер з аудитом без планувальника та процесів агентів: `bernstein_run(template="administrative", goal="Weekly sprint")`. Додавайте ручні завдання через `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` і перевіряйте стан через `bernstein_run_status(run_id="admin-...")`. Завдання можна брати через звичайний API призначення, але автоматична оркестрація їх не запускає. Непорожній запуск завершується, коли кожне завдання має статус `done`, `closed` або `cancelled`; порожній залишається відкритим. [Порядок роботи](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### участь, підтримка, ліцензія
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

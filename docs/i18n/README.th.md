@@ -278,6 +278,11 @@ Bernstein ตั้งชื่อตาม Leonard Bernstein วาทยกร
 
 </details>
 
+### การรันงานบริหาร
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+ใช้ `bernstein_run(template="administrative", goal="Weekly sprint")` เพื่อสร้างคอนเทนเนอร์ว่างที่มีบันทึกตรวจสอบ โดยไม่เริ่มตัววางแผนหรือโพรเซสเอเจนต์ เพิ่มงานด้วยตนเองผ่าน `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` และตรวจสอบสถานะด้วย `bernstein_run_status(run_id="admin-...")` งานยังรับผ่าน API ตามปกติได้ แต่จะไม่ถูกจัดการอัตโนมัติ การรันที่มีงานจะเสร็จเมื่อทุกงานมีสถานะ `done`, `closed` หรือ `cancelled` ส่วนการรันที่ว่างจะยังเปิดอยู่ [ขั้นตอนการปฏิบัติงาน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### การมีส่วนร่วม, การสนับสนุน, ลิขสิทธิ์
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

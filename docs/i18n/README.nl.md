@@ -278,6 +278,11 @@ De volledige overzichtslijst, inclusief elke vermelding op awesome-lijsten, in c
 
 </details>
 
+### Administratieve runs
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Maak met `bernstein_run(template="administrative", goal="Weekly sprint")` een lege container met auditregistratie, zonder planner of agentprocessen. Voeg handmatige taken toe met `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` en bekijk de status met `bernstein_run_status(run_id="admin-...")`. Taken blijven via de gebruikelijke claim-API beschikbaar, maar zijn uitgesloten van automatische orkestratie. Een niet-lege run eindigt wanneer elke taak de status `done`, `closed` of `cancelled` heeft; een lege run blijft open. [Werkwijze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### bijdragen, ondersteuning, licentie
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

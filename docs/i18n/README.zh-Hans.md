@@ -278,6 +278,11 @@ Bernstein 得名于美国指挥家、作曲家 Leonard Bernstein。这个项目�
 
 </details>
 
+### 管理运行
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 创建经过审计的空容器，不启动规划器或代理进程。通过 `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` 添加手动任务，并用 `bernstein_run_status(run_id="admin-...")` 查询状态。成员任务可通过常规认领 API 领取，但不会自动编排。非空运行在所有成员的状态均为 `done`、`closed` 或 `cancelled` 时结束；空运行保持开放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### 贡献、支持与许可
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

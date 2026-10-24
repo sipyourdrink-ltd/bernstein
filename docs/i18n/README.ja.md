@@ -278,6 +278,11 @@ awesome リストの項目、カタログ掲載、先行研究としての引用
 
 </details>
 
+### 管理用の実行
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+`bernstein_run(template="administrative", goal="Weekly sprint")` で、プランナーやエージェントのプロセスを起動せずに監査付きの空のコンテナを作成します。`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` で手動タスクを追加し、`bernstein_run_status(run_id="admin-...")` で状態を確認します。タスクは通常の取得 API から取得できますが、自動オーケストレーションの対象外です。空でない実行は全タスクの状態が `done`、`closed`、または `cancelled` のいずれかになると完了します。空の実行は開いたままです。 [運用手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### コントリビュート、サポート、ライセンス
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

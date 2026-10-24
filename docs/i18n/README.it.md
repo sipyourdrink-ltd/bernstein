@@ -278,6 +278,11 @@ L'elenco completo monitorato, comprendente ogni voce in elenchi awesome, catalog
 
 </details>
 
+### esecuzioni amministrative
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Usa `bernstein_run(template="administrative", goal="Weekly sprint")` per creare un contenitore vuoto e verificabile senza pianificatore né processi agente. Aggiungi attività manuali con `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` e consulta `bernstein_run_status(run_id="admin-...")`. Le attività restano assegnabili tramite la normale API, ma sono escluse dall’orchestrazione automatica. Un’esecuzione non vuota termina quando ogni attività ha lo stato `done`, `closed` o `cancelled`; una vuota resta aperta. [Procedura operativa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### contribuzione, supporto, licenza
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

@@ -278,6 +278,11 @@ Täydellinen seurantalista, mukaan lukien jokainen awesome-listan merkintä, lue
 
 </details>
 
+### Hallinnolliset ajot
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Luo tyhjä, auditoitu säilö ilman suunnittelijaa tai agenttiprosesseja kutsulla `bernstein_run(template="administrative", goal="Weekly sprint")`. Lisää käsin tehtäviä kutsulla `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ja tarkista tila kutsulla `bernstein_run_status(run_id="admin-...")`. Tehtävät ovat varattavissa tavallisen API:n kautta, mutta ne on rajattu automaattisen orkestroinnin ulkopuolelle. Ei-tyhjä ajo valmistuu, kun jokaisen tehtävän tila on `done`, `closed` tai `cancelled`; tyhjä ajo pysyy avoinna. [Käyttöohje](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### osallistuminen, tuki, lisenssi
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

@@ -278,6 +278,11 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 
 </details>
 
+### প্রশাসনিক রান
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+`bernstein_run(template="administrative", goal="Weekly sprint")` দিয়ে প্ল্যানার বা এজেন্ট প্রক্রিয়া চালু না করেই নিরীক্ষিত খালি কনটেইনার তৈরি করুন। `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` দিয়ে ম্যানুয়াল কাজ যোগ করুন এবং `bernstein_run_status(run_id="admin-...")` দিয়ে অবস্থা দেখুন। সাধারণ ক্লেইম API দিয়ে কাজ নেওয়া যায়, তবে সেগুলো স্বয়ংক্রিয় অর্কেস্ট্রেশনের বাইরে থাকে। প্রতিটি কাজের অবস্থা `done`, `closed` বা `cancelled` হলে অখালি রান সম্পূর্ণ হয়; খালি রান খোলা থাকে। [পরিচালনার নির্দেশনা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### অবদান, সহায়তা, লাইসেন্স
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

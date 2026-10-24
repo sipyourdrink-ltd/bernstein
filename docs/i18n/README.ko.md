@@ -278,6 +278,11 @@ awesome 리스트 항목, 카탈로그 등재, 선행 연구로서의 인용, �
 
 </details>
 
+### 관리용 실행
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+`bernstein_run(template="administrative", goal="Weekly sprint")`으로 계획기나 에이전트 프로세스를 시작하지 않고 감사 기록이 있는 빈 컨테이너를 만듭니다. `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`으로 수동 작업을 추가하고 `bernstein_run_status(run_id="admin-...")`으로 상태를 확인합니다. 작업은 일반 할당 API로 가져올 수 있지만 자동 오케스트레이션에서는 제외됩니다. 비어 있지 않은 실행은 모든 작업의 상태가 `done`, `closed` 또는 `cancelled` 중 하나이면 완료됩니다. 빈 실행은 열린 상태로 유지됩니다. [운영 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### 기여, 지원, 라이선스
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

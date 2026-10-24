@@ -278,6 +278,11 @@ bernstein volunteer browse --budget 60
 
 </details>
 
+### عمليات التشغيل الإدارية
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+استخدم `bernstein_run(template="administrative", goal="Weekly sprint")` لإنشاء حاوية فارغة مسجلة للتدقيق دون تشغيل مخطط أو عمليات وكلاء. أضف مهام يدوية باستخدام `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` واستعلم عن الحالة باستخدام `bernstein_run_status(run_id="admin-...")`. يمكن استلام المهام عبر واجهة الاستلام المعتادة، لكنها مستبعدة من التنسيق التلقائي. تنتهي العملية غير الفارغة عندما تكون حالة كل مهمة `done` أو `closed` أو `cancelled`؛ وتبقى العملية الفارغة مفتوحة. [دليل التشغيل](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### المساهمة، الدعم، الترخيص
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

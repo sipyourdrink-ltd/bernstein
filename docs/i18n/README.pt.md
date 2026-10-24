@@ -278,6 +278,11 @@ A lista completa monitorada, incluindo cada entrada em listas awesome, catálogo
 
 </details>
 
+### execuções administrativas
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Use `bernstein_run(template="administrative", goal="Weekly sprint")` para criar um contêiner vazio e auditado sem planejador nem processos de agentes. Adicione tarefas manuais com `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` e consulte `bernstein_run_status(run_id="admin-...")`. As tarefas podem ser reivindicadas pela API habitual, mas ficam fora da orquestração automática. Uma execução com tarefas termina quando cada tarefa tem o estado `done`, `closed` ou `cancelled`; uma execução vazia permanece aberta. [Fluxo operacional](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### contribuição, suporte, licença
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

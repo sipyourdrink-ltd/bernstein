@@ -278,6 +278,11 @@ Her awesome listesi girdisi, katalog kaydı, önceki çalışma atıfı ve bült
 
 </details>
 
+### Yönetim çalıştırmaları
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+`bernstein_run(template="administrative", goal="Weekly sprint")` ile planlayıcı veya ajan süreçleri başlatmadan denetlenebilir boş bir kapsayıcı oluşturun. `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ile elle görev ekleyin ve `bernstein_run_status(run_id="admin-...")` ile durumu sorgulayın. Görevler normal sahiplenme API’si ile alınabilir ancak otomatik orkestrasyona dahil edilmez. Boş olmayan bir çalıştırma, her görevin durumu `done`, `closed` veya `cancelled` olduğunda biter; boş çalıştırma açık kalır. [İşletim akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### katkıda bulunma, destek, lisans
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

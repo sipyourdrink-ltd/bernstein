@@ -278,6 +278,11 @@ Den fullständiga listan, inklusive varje awesome-list-post, kataloglistning, ti
 
 </details>
 
+### Administrativa körningar
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Skapa en tom, revisionsloggad behållare utan planerare eller agentprocesser med `bernstein_run(template="administrative", goal="Weekly sprint")`. Lägg till manuella uppgifter med `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` och kontrollera status med `bernstein_run_status(run_id="admin-...")`. Uppgifterna kan hämtas via det vanliga claim-API:et men undantas från automatisk orkestrering. En körning med uppgifter avslutas när varje uppgift har status `done`, `closed` eller `cancelled`; en tom körning förblir öppen. [Operatörsflöde](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### bidra, support, licens
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

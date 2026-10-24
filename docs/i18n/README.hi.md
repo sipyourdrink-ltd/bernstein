@@ -278,6 +278,11 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 
 </details>
 
+### प्रशासनिक रन
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+`bernstein_run(template="administrative", goal="Weekly sprint")` से प्लानर या एजेंट प्रक्रिया शुरू किए बिना ऑडिट वाला खाली कंटेनर बनाएँ। `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` से मैनुअल कार्य जोड़ें और `bernstein_run_status(run_id="admin-...")` से स्थिति देखें। सामान्य क्लेम API से कार्य लिए जा सकते हैं, लेकिन वे स्वचालित ऑर्केस्ट्रेशन से बाहर रहते हैं। गैर-खाली रन तब पूरा होता है जब हर कार्य की स्थिति `done`, `closed` या `cancelled` हो; खाली रन खुला रहता है। [संचालन प्रक्रिया](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### योगदान, सहायता, लाइसेंस
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

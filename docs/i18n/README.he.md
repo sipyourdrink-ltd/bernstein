@@ -278,6 +278,11 @@ Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח 
 
 </details>
 
+### הרצות מנהלתיות
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+השתמשו ב־`bernstein_run(template="administrative", goal="Weekly sprint")` ליצירת מכולה ריקה עם רישום ביקורת, ללא מתכנן או תהליכי סוכנים. הוסיפו משימות ידניות דרך `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ובדקו מצב דרך `bernstein_run_status(run_id="admin-...")`. אפשר לקבל משימות דרך ממשק הקצאת המשימות הרגיל, אך הן מוחרגות מתזמור אוטומטי. הרצה שאינה ריקה מסתיימת כשלכל משימה יש סטטוס `done`, `closed` או `cancelled`; הרצה ריקה נשארת פתוחה. [תהליך התפעול](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### תרומה, תמיכה, רישיון
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

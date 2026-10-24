@@ -278,6 +278,11 @@ Danh sách theo dõi đầy đủ, bao gồm mọi mục trong danh sách awesom
 
 </details>
 
+### Lượt chạy quản trị
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Dùng `bernstein_run(template="administrative", goal="Weekly sprint")` để tạo vùng chứa rỗng có nhật ký kiểm toán mà không khởi động bộ lập kế hoạch hay tiến trình tác tử. Thêm tác vụ thủ công bằng `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` và xem trạng thái bằng `bernstein_run_status(run_id="admin-...")`. Tác vụ vẫn có thể được nhận qua API thông thường nhưng không được điều phối tự động. Lượt chạy có tác vụ hoàn tất khi mỗi tác vụ có trạng thái `done`, `closed` hoặc `cancelled`; lượt chạy rỗng vẫn mở. [Quy trình vận hành](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### đóng góp, hỗ trợ, giấy phép
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 

@@ -278,6 +278,11 @@ La liste complète des mentions dans les listes awesome, catalogues, référence
 
 </details>
 
+### exécutions administratives
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Utilisez `bernstein_run(template="administrative", goal="Weekly sprint")` pour créer un conteneur vide et audité sans planificateur ni processus agent. Ajoutez des tâches manuelles avec `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` et consultez `bernstein_run_status(run_id="admin-...")`. Les tâches restent accessibles via l’API habituelle de prise en charge, mais sont exclues de l’orchestration automatique. Une exécution non vide se termine lorsque chaque tâche a le statut `done`, `closed` ou `cancelled` ; une exécution vide reste ouverte. [Procédure opérateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### contribution, support, licence
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
