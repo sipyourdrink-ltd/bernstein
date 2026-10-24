@@ -905,6 +905,7 @@ class TaskCountsResponse(BaseModel):
     blocked_by_failed_dep: int = 0
     refused: int = 0
     suspended: int = 0
+    stop_req: int = 0
     total: int = 0
 
 

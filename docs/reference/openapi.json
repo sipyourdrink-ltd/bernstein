@@ -21637,6 +21637,11 @@
             "title": "Suspended",
             "default": 0
           },
+          "stop_req": {
+            "type": "integer",
+            "title": "Stop Req",
+            "default": 0
+          },
           "total": {
             "type": "integer",
             "title": "Total",
