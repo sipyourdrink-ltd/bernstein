@@ -11,7 +11,7 @@ import binascii
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import IntEnum
 from pathlib import Path
@@ -103,7 +103,7 @@ class HardwarePolicy:
     """
 
     at: datetime | None = None
-    root_sha256: frozenset[str] = frozenset()
+    root_sha256: frozenset[str] = field(default_factory=lambda: bundled_root_pins())
     f9_sha256: frozenset[str] = frozenset()
     rp_id: str = ""
     origins: frozenset[str] = frozenset()
@@ -130,7 +130,7 @@ def _unb64(value: Any) -> bytes:
 
 
 def _spki(key: Any) -> bytes:
-    return key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    return cast("bytes", key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo))
 
 
 def _cert(value: Any) -> x509.Certificate:

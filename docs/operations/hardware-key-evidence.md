@@ -14,7 +14,9 @@ schema changes and does not produce runtime attestation.
 
 ## Trust configuration and deterministic time
 
-Configure `HardwarePolicy` independently from the evidence being checked:
+Configure `HardwarePolicy` independently from the evidence being checked. By default,
+root pins load from the bundled vendor certificates after manifest verification.
+Pass `root_sha256` explicitly to replace these pins; an empty set trusts no roots:
 
 ```python
 from datetime import datetime, timezone

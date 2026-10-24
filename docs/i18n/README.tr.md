@@ -41,11 +41,12 @@
 Bernstein, AI ajanları için açık kaynak governance katmanıdır. policy as code üzerinde çalışır: politikayı sen yazarsın - kim neyi yapabilir, ne onay ister, ne kayıt altına alınmalı - Bernstein da bunu uygular ve doğrulanabilir kaydı üretir. Deterministik bir zamanlayıcı - koordinasyon döngüsünde model yok - ajanları paralel çalıştırır, ürettiklerini kapılardan geçirir ve her adımı kaydeder; böylece bir çalıştırma sonradan, çevrimdışı, yalnızca artefaktlardan doğrulanabilir. CLI kod ajanları kutudan çıktığı gibi çalışır (Claude Code, Codex, Gemini CLI ve 50+ daha), ve aynı katman her ajan iş yükünü governe eder: çıktı bir diff, bir araştırma raporu, bir veri kümesi ya da bir denetim kanıt paketi olabilir. Air-gap kurulum profili dahildir. Apache-2.0.
 
 ### bir bakışta
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Dört özellik onu farklı kılar; gerisi ayrıntıdır.
+Beş şey onu farklı kılar; gerisi ayrıntıdır.
 
 - **Koordinasyon döngüsünde LLM yok.** Çizelgeleme saf Python'dur, bu nedenle bir çalıştırma baştan sona yeniden üretilebilirdir. Dünün planını yeniden oynatın ve dünün görev grafiğini elde edin.
+- **Donanım anahtarı kanıtları.** Çevrimdışı PIV muhafaza ve FIDO2 onay doğrulayıcıları, sabitlenmiş güven ve açık zaman ile aynı makbuz protokolünü kullanır. Token muhafazası TRACE güven seviyelerini yükseltmez. [Donanım anahtarı kanıtları](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Sonradan doğrulanabilir.** Yeniden oynatma günlüğü (replay journal) her çalıştırmayı kaydeder ve her zaman açık olan soy kütüğü omurgası (lineage spine) soy kütüğü oluşturan her adımı kaydeder; isteğe bağlı HMAC zincirli denetim günlüğü (`BERNSTEIN_AUDIT=1`) çevrimdışı doğrulayabileceğiniz makbuzlar (receipts) ekler. Deterministik olmama durumu, kararsız bir yeniden çalıştırma yerine tam adımda bir karma (hash) uyuşmazlığı olarak ortaya çıkar. Kod dışı çıktılar da aynı muameleyi görür: bir görev bir yapıt sözleşmesi (rapor, veri seti, eylem günlüğü, operasyon sonucu) bildirebilir ve bir git işlemesi (commit) yerine imzalı bir soy kütüğü makbuzu ile tamamlanır.
 - **Tasarım gereği yalıtılmış.** Her kodlama görevi, birleştirme kapılarının arkasında kendi git worktree'sini alır; yapıt modundaki görevler `.sdd/workspaces/` altında bir çalışma dizini alır. Ajanlar varsayılan olarak değiştirilebilir çalışma alanını paylaşmaz; tek paylaşılan durum, atomik olarak talep edilen görev birikimidir. Daha katı dosya sistemi denetimi [sandbox arka uçlarından](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) isteğe bağlıdır. Worktree'leri devre dışı bırakırsanız her görev paylaşılan çalışma kopyasında çalışır.
 - **Geniş ve yerel.** 53'ten fazla CLI ajan adaptörü artı genel bir `--prompt` sarmalayıcısı, dosya tabanlı durum, SaaS aktarımı yok, üçüncü taraf veri düzlemi yok.

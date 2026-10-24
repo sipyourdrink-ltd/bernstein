@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -408,6 +410,29 @@ def test_fido2_assertion_counter_warning(fido, count, previous):
     )
     result = verify_receipt(envelope, context=policy)
     assert result.ok and result.warnings
+
+
+def test_attestation_policy_defaults_to_verified_bundled_roots():
+    assert HardwarePolicy().root_sha256 == bundled_root_pins()
+    assert HardwarePolicy(root_sha256=frozenset()).root_sha256 == frozenset()
+    custom_pins = frozenset({"operator-provided-root"})
+    assert HardwarePolicy(root_sha256=custom_pins).root_sha256 == custom_pins
+
+
+def test_attestation_kinds_load_in_fresh_interpreter():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from bernstein.core.receipts.protocol import registered_kinds; "
+            "assert {'key-attestation/piv', 'approval/fido2-assertion'} <= set(registered_kinds()); "
+            "assert registered_kinds() == registered_kinds()",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_attestation_bundled_vendor_roots():

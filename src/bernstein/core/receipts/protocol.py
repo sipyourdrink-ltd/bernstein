@@ -128,8 +128,15 @@ def _load_kinds() -> None:
     for module_name in RECEIPT_KIND_MODULES:
         if module_name in _LOADED_KIND_MODULES:
             continue
+        # Mark before import: kind registration can re-enter this loader.
         _LOADED_KIND_MODULES.add(module_name)
-        importlib.import_module(module_name)
+        if module_name == "bernstein.core.identity.hardware_attestation":
+            from bernstein.core.identity import hardware_attestation
+
+            loaded_module = hardware_attestation
+        else:
+            loaded_module = importlib.import_module(module_name)
+        _LOADED_KIND_MODULES.add(loaded_module.__name__)
 
 
 def registered_kinds() -> tuple[str, ...]:
