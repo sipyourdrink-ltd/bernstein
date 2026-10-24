@@ -1758,6 +1758,7 @@ class AgentSpawner:
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
         self._file_ownership_provider: Callable[[], dict[str, str]] | None = None
+        self._cost_anomaly_spawn_observer: Callable[[list[Task], ModelConfig], None] | None = None
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         # Per-session baseline of operator-checkout untracked paths, captured
         # at manager/planning spawn so the reap-time sweep can quarantine any
@@ -4263,6 +4264,12 @@ class AgentSpawner:
                 logger.warning("Router failed to select provider, using fallback: %s", exc)
         return model_config, provider_name, "heuristic"
 
+    def _notify_cost_anomaly_spawn(self, tasks: list[Task], model_config: ModelConfig) -> None:
+        """Report the resolved model without changing routing or task pins."""
+        observer = getattr(self, "_cost_anomaly_spawn_observer", None)
+        if observer is not None:
+            observer(tasks, model_config)
+
     def _spawn_for_tasks_internal(self, tasks: list[Task], model_override: str | None = None) -> AgentSession:
         """Actual spawn implementation."""
         if self._shutdown_event is not None and self._shutdown_event.is_set():
@@ -4574,6 +4581,7 @@ class AgentSpawner:
             base_config.model,
         )
 
+        self._notify_cost_anomaly_spawn(tasks, model_config)
         provider_for_rate_limit = provider_name or self._adapter.name()
         try:
             self._spawn_rate_limiter.acquire(provider_for_rate_limit)
@@ -5173,6 +5181,7 @@ class AgentSpawner:
                 if _bridge_sampling_keys:
                     raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
                 try:
+                    self._notify_cost_anomaly_spawn(tasks, model_config)
                     remote_spawned = self._spawn_via_runtime_bridge(
                         session=session,
                         prompt=prompt,
@@ -5349,6 +5358,7 @@ class AgentSpawner:
 
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
+                        self._notify_cost_anomaly_spawn(tasks, model_config)
                         target_adapter.set_resource_limits(self._resource_limits)
                         spawn_start = time.perf_counter()
                         if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
@@ -5907,6 +5917,7 @@ class AgentSpawner:
                 max_tokens=model_config.max_tokens,
                 is_batch=model_config.is_batch,
             )
+        self._notify_cost_anomaly_spawn(tasks, model_config)
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
