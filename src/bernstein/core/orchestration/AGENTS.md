@@ -7,7 +7,7 @@ Deterministic tick loop: watch tasks, spawn agents, verify completion, repeat. C
 | File | Purpose |
 |---|---|
 | `orchestrator.py` | Public facade; single-threaded `while self._running` tick loop |
-| `tick_pipeline.py` | Pure helpers: task fetching, batching, server interaction |
+| `tick_pipeline.py` | Helpers for task fetching, batching, and server interaction |
 | `run_stall.py` | Pure decision function for zero-terminal run quiescence |
 | `quiescence.py` | Probes recorded session process groups for residual members before finalization (#5272); `verified=False, method="unsupported"` where it cannot look, never a silent true |
 | `controller_state.py` | `.sdd/runtime/controllers.json` sidecar: adaptive parallelism and claim-conflict cooldowns survive a restart; expired cooldowns are pruned on load |

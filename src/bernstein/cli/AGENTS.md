@@ -16,7 +16,7 @@ The top-level `bernstein` command (`pyproject.toml` `[project.scripts]` maps it 
 | `commands/seal_cmd.py` | `bernstein seal`: anchors a run's sealed head outside this install (#4205) |
 | `commands/identity_review_cmd.py` | `bernstein identity review` access review commands, registered by `commands/identity_cmd.py` |
 | `commands/identity_attest_cmd.py` | `bernstein identity attest` run attestation CLI commands |
-| `commands/insights_cmd.py` | Analytics read out of task traces. Not registered in `main.py` yet (#5880) |
+| `commands/insights_cmd.py` | Registered `bernstein insights` skeleton; echoes the requested window as text or JSON without computing analytics |
 
 ## Invariants
 
