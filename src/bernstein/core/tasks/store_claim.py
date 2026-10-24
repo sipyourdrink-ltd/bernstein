@@ -55,10 +55,10 @@ async def claim_store_entry(
             claimed = await store.claim_by_id(
                 task.id, expected_version=task.version, agent_role=claim_filter.role, claimed_by_session=claimer_id
             )
-        except ValueError:
-            # Another worker acquired it, or an authoritative dependency/file
-            # ownership gate refused it. Caller-supplied completed_ids cannot
-            # override the store's dependency state.
+        except (KeyError, ValueError):
+            # A staged candidate rolled back, another worker acquired it,
+            # or an authoritative dependency/file ownership gate refused it.
+            # Caller-supplied completed_ids cannot override dependency state.
             continue
         return task_claim_entry(claimed)
     return None

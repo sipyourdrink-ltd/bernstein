@@ -81,3 +81,39 @@ the two existing large modules. Full output is retained locally at
 modules pass the separately scoped zero-error check. The original full-src
 Pyright invocation is still running; it is not treated as a passing gate.
 No claim is made that repository-wide type checking is clean.
+
+## Parent-coordinated full-suite baseline
+
+`$PY scripts/run_tests.py -x` completed after 655.8 seconds with 108 files
+passing and 1 file failing. The failure was
+`tests/unit/cli/test_advanced_cmd_trace.py::test_trace_export_needs_trace_extra`:
+it expects `The trace extra is required`, but receives
+`No such run: test-run-123`. Parent independently reproduced this exact failure
+on clean detached base `62aaed0c5` in `/tmp/bernstein-0004-baseline` with the same
+interpreter and base-specific PYTHONPATH (1 failed, 1 warning, 3.00 seconds).
+The unrelated CLI behavior was not changed. The full suite is not reported green.
+
+The original full-src Pyright run without explicit --pythonpath was terminated
+with SIGTERM on its own wrapper/node PIDs after the corrected explicit run
+completed. It never produced a completed result and is not a passing gate.
+
+## Quality-review concurrency follow-up
+
+The quality review identified a legitimate stale-candidate removal case:
+`create_gate_with_edges` exposes a staged gate while holding the store lock,
+then removes that gate if journal flush fails. A receipt claimer that selected
+the gate while awaiting the same lock must skip its disappearance.
+
+The new deterministic test uses the real TaskStore, actual asyncio lock,
+actual gate rollback and an injected journal-flush failure; CAS is not mocked.
+Before the fix, `$PY scripts/run_tests.py tests/unit/tasks/test_store_claim.py`
+failed with `KeyError: 'vanishing-gate'` at `claim_by_id` (1 failure, 1 pass).
+The bounded fix catches `KeyError` alongside existing `ValueError` and moves
+to the next candidate. The parameterized test covers next-task and refusal
+results. A competing-claims test queues two actual lock contenders and
+requires exactly one acquisition of the same task.
+
+GREEN: `$PY scripts/run_tests.py tests/unit/tasks/test_store_claim.py tests/unit/test_task_claim_receipt_route.py`
+passed 3 + 16 tests (20.3 seconds). Ruff and formatting checks for both
+follow-up files pass. Explicit-interpreter Pyright over store_claim.py and
+task_claim_receipt.py passes with zero errors, warnings or information items.
