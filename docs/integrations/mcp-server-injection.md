@@ -238,3 +238,75 @@ spawn-time write all line up.
 - `integrations/hook-system.md` - wider hook lifecycle.
 - `architecture/state-persistence.md` - where the merged MCP config
   lands on disk.
+
+## Proposed HTTP catalog contract (#6456)
+
+**Design proposal only: unimplemented.** This section records the boundary
+for [issue #6456](https://github.com/sipyourdrink-ltd/bernstein/issues/6456);
+it does not enable HTTP catalog entries or claim passing runtime tests.
+The issue remains assigned to `georgeatparallel`, who accepted the scoped
+contributor handoff. This proposal does not replace that assignment.
+
+The accepted goal is optional `url` and `headers` support in the saved
+`.sdd/config/mcp_servers.yaml` catalog, preserving stdio entries and the
+existing per-task selection path. Compatible adapters must receive the
+selected HTTP configuration; incompatible adapters must refuse it clearly.
+Credential header values must come from the environment rather than be
+stored in the catalog. No vendor entry is added to the bundled marketplace,
+and offline verification and air-gapped operation keep their current behavior.
+The separate fetched/signed catalog described in
+[MCP Catalog](../reference/mcp-catalog.md) is outside this proposal.
+
+Today `MCPServerEntry` requires a package and serializes command/args;
+URL-only entries are rejected and HTTP fields cannot round-trip.
+`MCPServerConfig` separately infers SSE from a URL and cannot retain headers.
+Lower-level HTTP transports exist, but that does not establish saved-catalog
+handoff or adapter compatibility.
+
+### Unresolved boundaries
+
+1. **Transport and invalid combinations.** Decide the meaning of URL-only
+   entries, preserve explicit SSE separately from streamable HTTP, and define
+   saved/emitted transport spelling and command/URL mutual exclusion. No
+   transport default or schema extension is selected by this proposal.
+2. **Credential reference and lifecycle.** Decide the header-reference shape,
+   permitted literal headers, sensitive-header classification, missing-env
+   refusal, resolution timing and handling of runtime config files. Expanded
+   credentials must not enter saved catalogs, previews, errors or audit output.
+   This proposal does not select a resolver or credential-storage API.
+3. **Capability and refusal ownership.** Decide where evidence-backed remote
+   transport support is enforced, which adapters are supported, and how retry
+   and resume preserve the refusal. A generic MCP-client capability is not
+   evidence of HTTP support. No new capability API is selected here.
+
+### Future acceptance matrix
+
+These are proposed property names and required observations, not implemented
+or executed tests. They become actionable after the boundaries above are agreed.
+
+1. `test_saved_http_endpoint_survives_catalog_round_trip`: preserve URL/header
+   references through load/save/reload without a dummy package; retain legacy
+   stdio command/args/env and explicit selection behavior.
+2. `test_invalid_transport_combinations_refuse_before_catalog_write`: reject
+   malformed or ambiguous definitions under the agreed contract and preserve
+   the distinction between SSE and streamable HTTP.
+3. `test_selected_remote_config_survives_registry_manager_and_spawn_handoff`:
+   exercise real task selection, base precedence, manager layering and an inert
+   compatible-adapter invocation without dropping URL, transport or headers.
+4. `test_unsupported_adapter_refuses_selected_remote_server_before_spawn`:
+   unsupported or unknown support refuses clearly before child creation,
+   including retry/resume; stdio and no-MCP controls retain their behavior.
+5. `test_credential_header_reference_is_resolved_without_persisting_secret`:
+   synthetic credentials reach only the approved runtime consumer, remain
+   absent from persisted/preview/error/audit surfaces, and missing environment
+   values refuse before connection or child creation; safe headers survive.
+6. `test_plugin_namespacing_preserves_remote_endpoint_and_headers`: retain
+   remote fields and collision behavior when the shared entry type is copied
+   for plugin registration, without an unrelated plugin-schema expansion.
+7. `test_remote_selection_respects_existing_network_and_offline_boundaries`:
+   use inert fixtures to prove denied policies never connect and unused
+   entries, stdio tasks and offline verification add no network requirement.
+8. `test_saved_http_support_does_not_add_bundled_vendor_or_mutate_signed_catalog`:
+   preserve bundled reference entries and the separate signed-catalog path;
+   document only implemented transports, adapters and credential-reference
+   behavior in the eventual implementation and release note.
