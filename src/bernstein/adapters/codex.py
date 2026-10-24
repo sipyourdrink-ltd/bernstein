@@ -133,6 +133,19 @@ _TIERS_REPLACING_VENDOR_SANDBOX = frozenset({"container", "vm"})
 #: isolation, so every vendor sandbox stays on.
 _UNDECLARED_HOST_ISOLATION = "none"
 
+#: Effort values the Codex CLI accepts via ``--reasoning-effort``.
+#: Values outside this set are unsupported and are rejected before spawn.
+_CODEX_SUPPORTED_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "max", "xhigh", "ultra"})
+
+#: Bernstein-only effort names that need translation before being forwarded to
+#: Codex.  Values already in ``_CODEX_SUPPORTED_EFFORTS`` are passed through
+#: unchanged; only Bernstein-internal names absent from Codex's vocabulary are
+#: listed here.  ``None`` / empty string means the operator did not specify an
+#: effort; ``--reasoning-effort`` is omitted and the CLI's own default applies.
+_EFFORT_MAP: dict[str, str] = {
+    "normal": "medium",
+}
+
 
 def _worktree_gitdir_roots(workdir: Path) -> list[str]:
     """Return the git dirs ``codex exec`` must be able to write in *workdir*.
@@ -231,6 +244,30 @@ def _codex_model(model: str) -> str:
         )
         return _DEFAULT_CODEX_MODEL
     return model
+
+
+def _codex_reasoning_effort_args(effort: str | None) -> list[str]:
+    """Return ``["--reasoning-effort", "<value>"]`` for a supported effort, or ``[]``.
+
+    ``None`` / empty string means the operator did not request a specific effort
+    level; the Codex CLI's own default applies and the flag is omitted.
+
+    Raises ``ValueError`` for a non-empty effort value that is neither in the
+    Bernstein-to-Codex mapping nor already a supported Codex effort name, so the
+    worker is refused before the subprocess starts rather than silently using the
+    wrong setting (#6641).
+    """
+    if not effort:
+        return []
+    # Translate Bernstein-internal names; values already in Codex's vocabulary pass through.
+    codex_effort = _EFFORT_MAP.get(effort, effort)
+    if codex_effort not in _CODEX_SUPPORTED_EFFORTS:
+        raise ValueError(
+            f"CodexAdapter: effort {effort!r} is not supported. "
+            f"Bernstein names that translate: {sorted(_EFFORT_MAP)}. "
+            f"Codex native values: {sorted(_CODEX_SUPPORTED_EFFORTS)}."
+        )
+    return ["--reasoning-effort", codex_effort]
 
 
 #: Bubblewrap's refusal when the kernel disallows unprivileged user namespaces.
@@ -438,12 +475,14 @@ class CodexAdapter(CLIAdapter):
             )
 
         model = _codex_model(model_config.model)
+        effort_args = _codex_reasoning_effort_args(getattr(model_config, "effort", None))
         cmd = [
             "codex",
             "exec",
             *self._sandbox_args(),
             "-m",
             model,
+            *effort_args,
             "--json",
             "-o",
             str(output_path),
