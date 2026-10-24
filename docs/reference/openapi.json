@@ -2671,7 +2671,7 @@
     "/tasks/claim-receipt": {
       "post": {
         "summary": "Claim Receipt",
-        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.",
+        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.\n\nLegacy backlog rows retain precedence in the default tenant. Otherwise\nthis route acquires the original tenant-scoped TaskStore row atomically.\nTaskStore receipts include backlogSource=\"task_store\" and a hash-bound,\ncaller-scoped backlogSnapshot for independent offline verification.",
         "operationId": "claim_receipt_tasks_claim_receipt_post",
         "requestBody": {
           "content": {
@@ -11960,7 +11960,7 @@
     "/api/v1/tasks/claim-receipt": {
       "post": {
         "summary": "Claim Receipt",
-        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.",
+        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.\n\nLegacy backlog rows retain precedence in the default tenant. Otherwise\nthis route acquires the original tenant-scoped TaskStore row atomically.\nTaskStore receipts include backlogSource=\"task_store\" and a hash-bound,\ncaller-scoped backlogSnapshot for independent offline verification.",
         "operationId": "claim_receipt_api_v1_tasks_claim_receipt_post",
         "requestBody": {
           "content": {

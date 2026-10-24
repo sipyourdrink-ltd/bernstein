@@ -242,13 +242,14 @@ bernstein volunteer browse --budget 60
 [מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse`, `budget`, `verify-bundle` ו-`hub` הן תת-הפקודות שעובדות.
 
 ### מעבר לעמוד הראשי
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 כל החומר המעמיק נמצא ב[אתר התיעוד](https://docs.bernstein.run/):
 
 | עמוד | מה הוא מכסה |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | רשימת היכולות המלאה: מצב שרת MCP, כרטיסי סוכן חתומים, מנועי sandbox, יעדי שמירת ארטיפקטים, מיפוי רגולטורי |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | היכן נוצר הערך ומתי Bernstein אינו הכלי המתאים |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | גרפי DAG הצהרתיים ב-YAML המורכבים מצומתי סוכן / פקודה / לולאה |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | לוח בקרה בדפדפן המבוסס על אותו API בו משתמש ה-TUI |

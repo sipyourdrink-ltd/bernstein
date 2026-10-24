@@ -1176,6 +1176,26 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
                 )
 
         task = await store.create(effective_body)
+        # The server owns an install-local HMAC chain even when no orchestrator
+        # has wired the optional process-global lifecycle audit listener.
+        chain = getattr(request.app.state, "audit_chain", None)
+        if chain is not None:
+            chain.log_with_prev_digest(
+                event_type="task.created",
+                actor="task_server",
+                resource_type="task",
+                resource_id=task.id,
+                details={
+                    "task_id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "role": task.role,
+                    "priority": task.priority,
+                    "scope": task.scope.value,
+                    "depends_on": list(task.depends_on),
+                    "tenant_id": task.tenant_id,
+                },
+            )
         append_assessment_log(
             request.app.state.sdd_dir,
             build_log_record(task.id, task, assessment),

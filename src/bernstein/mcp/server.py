@@ -1163,6 +1163,9 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             payload["model"] = model
         if effort is not None:
             payload["effort"] = effort
+        err = _validate_or_error("bernstein_create_task", payload)
+        if err is not None:
+            return _validation_error_response(err)
         try:
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.post(

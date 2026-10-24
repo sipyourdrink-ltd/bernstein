@@ -242,13 +242,14 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse`, `budget`, `verify-bundle` và `hub` là các lệnh con hoạt động.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
 | trang | nội dung bao quát |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | toàn bộ danh mục năng lực: chế độ MCP server, thẻ tác tử có chữ ký, sandbox backends, nơi lưu tạo tác, ánh xạ tuân thủ quy định |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | nơi giá trị được phát huy và trường hợp Bernstein không phải là công cụ phù hợp |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | các DAG YAML khai báo gồm các nút tác tử / lệnh / vòng lặp |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | bảng điều khiển trình duyệt chạy trên cùng API mà TUI sử dụng |

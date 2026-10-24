@@ -242,13 +242,14 @@ bernstein volunteer browse --budget 60
 يغطي [دليل المتبرع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) تشغيل العامل والميزانية التي تحددها، ويغطي [دليل المشروع](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) إعلان البيان، ويوضح [نموذج التهديد](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) ما يحميه كل حد وما لا يحميه. لم يُصدر بعد المشغّل ذو الأمر الواحد: الأوامر الفرعية العاملة اليوم هي `verify` و`browse` و`budget` و`verify-bundle` و`hub`.
 
 ### ما وراء الصفحة الرئيسية
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 كل التفاصيل المعمقة متوفرة على [موقع التوثيق](https://docs.bernstein.run/):
 
 | الصفحة | ما تغطيه |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | قائمة الإمكانيات الكاملة: وضع خادم MCP، بطاقات الوكلاء الموقعة، خلفيات الحماية، مصارف النواتج، التوافق التنظيمي |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | أين تكمن القيمة ومتى يكون Bernstein أداة غير مناسبة |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | مخططات DAG تعريفية بصيغة YAML من عقد الوكيل / الأمر / الحلقة |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | لوحة تحكم في المتصفح تعتمد على نفس API المستخدم في TUI |

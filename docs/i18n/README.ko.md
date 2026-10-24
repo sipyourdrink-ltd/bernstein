@@ -242,13 +242,14 @@ bernstein volunteer browse --budget 60
 [기여자 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md)는 워커 실행과 직접 정하는 예산을, [프로젝트 가이드](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md)는 매니페스트 선언을, [위협 모델](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md)은 각 경계가 무엇을 막고 무엇을 막지 않는지를 다룹니다. 한 번의 명령으로 실행하는 러너는 아직 출시되지 않았습니다. 오늘 동작하는 하위 명령은 `verify`, `browse`, `budget`, `verify-bundle`, `hub` 입니다.
 
 ### 표지 너머
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 깊이 들어가는 내용은 모두 [문서 사이트](https://docs.bernstein.run/)에 있다:
 
 | 페이지 | 다루는 내용 |
 |---|---|
 | [기능](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | 전체 기능 목록: MCP 서버 모드, 서명된 에이전트 카드, 샌드박스 백엔드, 아티팩트 싱크, 규제 대응 매핑 |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [누구를 위한 것인가](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 가치가 나오는 지점과 Bernstein이 맞지 않는 경우 |
 | [워크플로](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 에이전트 / 커맨드 / 루프 노드로 이루어진 선언적 YAML DAG |
 | [웹 UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI와 같은 API 위에서 도는 브라우저 대시보드 |

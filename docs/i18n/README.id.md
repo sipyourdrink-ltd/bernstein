@@ -242,13 +242,14 @@ bernstein volunteer browse --budget 60
 [Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi.
 
 ### di luar halaman utama
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstein.run/):
 
 | halaman | cakupan materi |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | daftar kemampuan lengkap: mode server MCP, kartu agen bertanda tangan, backend sandbox, penampung artefak, kepatuhan regulasi |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | di mana nilai gunanya dan kapan Bernstein bukan alat yang tepat |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAG YAML deklaratif dari node agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | dasbor peramban berbasis API yang sama dengan TUI |
