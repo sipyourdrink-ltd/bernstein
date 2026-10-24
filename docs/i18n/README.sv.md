@@ -41,11 +41,12 @@
 Bernstein är governance-lagret med öppen källkod för AI-agenter. Det körs på policy as code: du skriver policyn - vem som får göra vad, vad som kräver godkännande, vad som måste loggas - och Bernstein tillämpar den och tar fram det verifierbara beviset. En deterministisk schemaläggare - ingen modell i koordinationsloopen - kör agenter parallellt, grindar det de producerar och loggar varje steg, så att en körning kan verifieras i efterhand, offline, enbart från artefakterna. CLI-kodagenter fungerar direkt (Claude Code, Codex, Gemini CLI och 50+ till), och samma lager governar vilken agentlast som helst: leveransen kan vara en diff, en forskningsrapport, ett dataset eller ett paket med revisionsbevis. Air-gap-installationsprofil ingår. Apache-2.0.
 
 ### i korthet
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Fyra saker skiljer den från mängden; resten är detaljer.
+Fem saker skiljer det från andra; resten är detaljer.
 
 - **Ingen LLM i koordineringsloopen.** Schemaläggningen sker i ren Python, vilket gör en körning reproducerbar från början till slut. Återuppspela gårdagens plan och få exakt samma uppgiftsgraf.
+- **Bevis för hårdvarunycklar.** Offlineverifierare för PIV-förvaring och FIDO2-godkännanden delar kvittoprotokollet, med fastlagd tillit och explicit tid. Tokenförvaring höjer inte TRACE:s tillitsnivåer. [Bevis för hårdvarunycklar](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Verifierbar i efterhand.** Replay-journalen registrerar varje körning, och den ständigt aktiva lineage-ryggraden loggar varje spårbarhetspunkt; den valfria HMAC-kedjade granskningsloggen (`BERNSTEIN_AUDIT=1`) lägger till kvitton (receipts) som du kan verifiera offline. Icke-determinism visar sig som en hash-avvikelse vid det exakta steget, inte som ett instabilt testfel vid omkörning. Leverabler som inte är kod behandlas på samma sätt: en uppgift kan deklarera ett artefaktkontrakt (rapport, dataset, åtgärdslogg, ops-resultat) och slutförs med ett signerat lineage-kvitto istället för en git-commit.
 - **Isolerad genom konstruktion.** Varje kodningsuppgift får ett eget git worktree bakom merge gates; uppgifter i artefaktläge får en arbetskatalog under `.sdd/workspaces/`. Agenter delar som standard ingen föränderlig arbetsyta; det enda delade tillståndet är uppgiftskön, som reserveras atomärt. Striktare filsystemsbegränsningar är valfria via [sandbox-backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Inaktivera worktrees så körs varje uppgift i den delade arbetskatalogen.
 - **Bred och lokal.** Över 53 CLI-agentadaptrar plus en generisk `--prompt`-wrapper, filbaserat tillstånd, inga SaaS-mellanled, inget externt dataplan.
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [Givarguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) täcker hur du kör en worker och budgeten du sätter, [projektguiden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) täcker att deklarera ett manifest, och [hotmodellen](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) anger vad varje gräns skyddar mot och inte. Körning med ett enda kommando är ännu inte släppt: i dag är `verify`, `browse`, `budget`, `verify-bundle` och `hub` de underkommandon som fungerar.
 
 ### bortom förstasidan
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 All fördjupad information finns på [dokumentationswebbplatsen](https://docs.bernstein.run/):
 
 | sida | vad den täcker |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | hela funktionslistan: MCP-serverläge, signerade agentkort, sandbox-backends, artefaktsänkor, regulatoriska mappningar |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | var värdet finns och när Bernstein är fel verktyg |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklarativa YAML-DAG:ar av agent- / kommando- / loop-noder |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | webbläsardashboard baserad på samma API som TUI använder |
@@ -287,6 +289,6 @@ Citeringsmetadata finns i [CITATION.cff](https://github.com/sipyourdrink-ltd/ber
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

@@ -2105,7 +2105,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials. Task-scoped agents\ncannot set ``cli`` or the ladder-position fields; those changes require\noperator credentials or an unscoped run-root identity.",
         "operationId": "patch_task_tasks__task_id__patch",
         "parameters": [
           {
@@ -2671,7 +2671,7 @@
     "/tasks/claim-receipt": {
       "post": {
         "summary": "Claim Receipt",
-        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.",
+        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.\n\nLegacy backlog rows retain precedence in the default tenant. Otherwise\nthis route acquires the original tenant-scoped TaskStore row atomically.\nTaskStore receipts include backlogSource=\"task_store\" and a hash-bound,\ncaller-scoped backlogSnapshot for independent offline verification.",
         "operationId": "claim_receipt_tasks_claim_receipt_post",
         "requestBody": {
           "content": {
@@ -3847,6 +3847,49 @@
               "text/event-stream": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/tasks": {
+      "get": {
+        "summary": "Task Events",
+        "description": "Stream future task.created notifications for an authorized role and tenant.\n\nInitial heartbeat acknowledges registration. No replay; disconnect ends the subscription.",
+        "operationId": "task_events_events_tasks_get",
+        "parameters": [
+          {
+            "name": "role",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "title": "Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream. The response body does not terminate.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -11394,7 +11437,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials.",
+        "description": "Update mutable task fields (role, priority, model) - manager corrections.\n\nUsed by the operator, the orchestrator or the dashboard to correct\nmis-assigned tasks, adjust priority, or change model without\ninterrupting the orchestrator.\n\nAn agent token may not move a task between roles: a ``role`` in the\nbody must equal the token's role *and* the task's current role, so a\nworker cannot re-label a task into its own role and then claim it.\nRole reassignment stays with operator credentials. Task-scoped agents\ncannot set ``cli`` or the ladder-position fields; those changes require\noperator credentials or an unscoped run-root identity.",
         "operationId": "patch_task_api_v1_tasks__task_id__patch",
         "parameters": [
           {
@@ -11960,7 +12003,7 @@
     "/api/v1/tasks/claim-receipt": {
       "post": {
         "summary": "Claim Receipt",
-        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.",
+        "description": "Claim the next eligible backlog row and return a signed claim receipt.\n\nThe dependency gate is enforced by :class:`ClaimFilter`: a row is offered\nonly when its ``depends_on`` are all in ``completed_ids``. The granted\nclaim is mirrored into the audit chain via the existing\n``record_task_claim_receipt`` (no new event type), and the returned\nreceipt embeds that event's chain head so the claim verifies offline. A\nfilter matching no eligible row returns a signed refusal receipt.\n\nLegacy backlog rows retain precedence in the default tenant. Otherwise\nthis route acquires the original tenant-scoped TaskStore row atomically.\nTaskStore receipts include backlogSource=\"task_store\" and a hash-bound,\ncaller-scoped backlogSnapshot for independent offline verification.",
         "operationId": "claim_receipt_api_v1_tasks_claim_receipt_post",
         "requestBody": {
           "content": {
@@ -13136,6 +13179,49 @@
               "text/event-stream": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/tasks": {
+      "get": {
+        "summary": "Task Events",
+        "description": "Stream future task.created notifications for an authorized role and tenant.\n\nInitial heartbeat acknowledges registration. No replay; disconnect ends the subscription.",
+        "operationId": "task_events_api_v1_events_tasks_get",
+        "parameters": [
+          {
+            "name": "role",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "title": "Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream. The response body does not terminate.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -22647,11 +22733,64 @@
               }
             ],
             "title": "Model"
+          },
+          "cli": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cli"
+          },
+          "meta_messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta Messages"
+          },
+          "escalation_ladder_step": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalation Ladder Step"
+          },
+          "escalation_ladder_attempts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalation Ladder Attempts"
           }
         },
         "type": "object",
         "title": "TaskPatchRequest",
-        "description": "Body for PATCH /tasks/{task_id} - manager corrections."
+        "description": "Body for PATCH /tasks/{task_id} - manager corrections.\n\n``meta_messages``, ``cli``, ``escalation_ladder_step`` and\n``escalation_ladder_attempts`` carry an evidence-gated escalation hop\n(issue #4855): the context line, the step's adapter, and the ladder\nposition. ``model`` is the step's model id, unmodified.\n\nThere is deliberately no free-form ``metadata`` here. The ladder's\nevidence is resolved from the audit chain and its spend from the cost\nledger, so no PATCH body can fabricate either. The route restricts\n``cli`` and both ladder-position fields to operator credentials and\nunscoped run-root identities."
       },
       "TaskProgressRequest": {
         "properties": {

@@ -41,11 +41,12 @@
 Bernstein হলো AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার। এটি policy as code হিসেবে কাজ করে: আপনি নীতি লেখেন - কে কী করতে পারবে, কীসের জন্য অনুমোদন লাগবে, কী রেকর্ড করতে হবে - আর Bernstein তা প্রয়োগ করে যাচাইযোগ্য রেকর্ড তৈরি করে। একটি ডিটারমিনিস্টিক শিডিউলার - কো-অর্ডিনেশন লুপে কোনো মডেল নেই - এজেন্টদের সমান্তরালে চালায়, তাদের আউটপুট গেট দিয়ে যাচাই করে এবং প্রতিটি ধাপ রেকর্ড করে, তাই একটি রান পরে, অফলাইনে, শুধু আর্টিফ্যাক্ট থেকেই যাচাই করা যায়। CLI কোডিং এজেন্ট সরাসরি কাজ করে (Claude Code, Codex, Gemini CLI ও আরও 50+), আর একই লেয়ার যেকোনো এজেন্ট ওয়ার্কলোড গভর্ন করে: ডেলিভারেবল হতে পারে একটি diff, রিসার্চ রিপোর্ট, ডেটাসেট বা অডিট এভিডেন্স প্যাক। Air-gap ইনস্টল প্রোফাইল অন্তর্ভুক্ত। Apache-2.0.
 
 ### এক নজরে
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-চারটি জিনিস একে আলাদা করে; এরপরের সবই বিস্তারিত।
+পাঁচটি বিষয় একে আলাদা করে; বাকিটা বিশদ।
 
 - **কোঅর্ডিনেশন লুপে কোনো LLM নেই।** শিডিউলিং সাদামাটা Python, তাই একটি রান শুরু থেকে শেষ পর্যন্ত পুনরুৎপাদনযোগ্য। গতকালের প্ল্যান রিপ্লে করুন, গতকালের টাস্ক গ্রাফই পাবেন।
+- **হার্ডওয়্যার কী-এর প্রমাণ.** অফলাইন PIV হেফাজত ও FIDO2 অনুমোদন যাচাইকারী নির্দিষ্ট বিশ্বাস ও স্পষ্ট সময়সহ একই রসিদ প্রোটোকল ব্যবহার করে। টোকেনের হেফাজত TRACE-এর বিশ্বাসের স্তর বাড়ায় না। [হার্ডওয়্যার কী-এর প্রমাণ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **পরে যাচাই করা যায়।** রিপ্লে জার্নাল প্রতিটি রান লিখে রাখে, আর সবসময় চালু লিনিয়েজ স্পাইন প্রতিটি লিনিয়েজ-বাহী ধাপ লিখে রাখে; অপ্ট-ইন HMAC-চেইন অডিট লগ (`BERNSTEIN_AUDIT=1`) এমন রসিদ যোগ করে যা আপনি অফলাইনে যাচাই করতে পারেন। নন-ডিটারমিনিজম ঠিক যে ধাপে ঘটেছে সেখানেই হ্যাশ অমিল হয়ে সামনে আসে, অস্থির রি-রান হিসেবে নয়। কোড নয় এমন ডেলিভারেবলও একই আচরণ পায়: একটি টাস্ক আর্টিফ্যাক্ট কনট্র্যাক্ট (রিপোর্ট, ডেটাসেট, অ্যাকশন লগ, অপ্‌স ফলাফল) ঘোষণা করতে পারে এবং git কমিটের বদলে স্বাক্ষরিত লিনিয়েজ রসিদে সম্পূর্ণ হয়।
 - **গঠনগতভাবেই বিচ্ছিন্ন।** প্রতিটি কোডিং টাস্ক মার্জ গেটের পিছনে নিজস্ব git worktree পায়; আর্টিফ্যাক্ট-মোডের টাস্ক `.sdd/workspaces/` এর নিচে একটি ওয়ার্কিং ডিরেক্টরি পায়। ডিফল্টে এজেন্টরা পরিবর্তনযোগ্য কোনো ওয়ার্কস্পেস ভাগ করে না; ভাগ করা অবস্থা কেবল টাস্ক ব্যাকলগ, যা অ্যাটমিকভাবে দাবি করা হয়। এর চেয়ে কড়া ফাইল-সিস্টেম নিয়ন্ত্রণ অপ্ট-ইন, [স্যান্ডবক্স ব্যাকএন্ড](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) থেকে বেছে নিয়ে। worktree বন্ধ করে দিলে প্রতিটি টাস্ক ভাগ করা চেকআউটেই চলবে।
 - **বিস্তৃত এবং লোকাল।** 53টির বেশি CLI এজেন্ট অ্যাডাপ্টার, সঙ্গে একটি জেনেরিক `--prompt` র‍্যাপার, ফাইল-ভিত্তিক স্টেট, কোনো SaaS হপ নেই, কোনো থার্ড-পার্টি ডেটা প্লেন নেই।
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড।
 
 ### প্রথম পাতার বাইরে
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 গভীরের সবকিছু থাকে [ডকুমেন্টেশন সাইটে](https://docs.bernstein.run/):
 
 | পাতা | কী আছে |
 |---|---|
 | [ক্যাপাবিলিটি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | পূর্ণ ক্যাপাবিলিটি তালিকা: MCP সার্ভার মোড, স্বাক্ষরিত এজেন্ট কার্ড, স্যান্ডবক্স ব্যাকএন্ড, আর্টিফ্যাক্ট সিংক, নিয়ন্ত্রক ম্যাপিং |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [এটি কাদের জন্য](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | কোথায় এর মূল্য দাঁড়ায়, আর কোথায় Bernstein ভুল হাতিয়ার |
 | [ওয়ার্কফ্লো](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | এজেন্ট / কমান্ড / লুপ নোডের ডিক্লারেটিভ YAML DAG |
 | [ওয়েব UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI যে API ব্যবহার করে, সেই একই API-র উপর ব্রাউজার ড্যাশবোর্ড |
@@ -287,6 +289,6 @@ PR স্বাগত; সেটআপ ও কোড স্টাইল আছ�
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

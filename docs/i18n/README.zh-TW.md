@@ -41,11 +41,12 @@
 Bernstein 是面向 AI 代理的開源治理層。它運作在 policy as code 之上:你撰寫政策——誰可以做什麼、什麼需要核准、什麼必須被記錄——Bernstein 據此執行並產生可驗證的紀錄。確定性排程器 - 協調迴圈中沒有模型 - 平行執行代理,以閘門把關它們的產出,並記錄每一步,因此一次執行可以事後離線驗證,僅憑工件本身。CLI 編碼代理開箱即用(Claude Code、Codex、Gemini CLI 及 50+ 款),同一治理層治理任何代理工作負載:交付物可以是 diff、研究報告、資料集,或一份稽核證據包。附帶 air-gap 安裝設定。Apache-2.0。
 
 ### 一覽
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-有四件事讓它與眾不同；其餘都是細節。
+五點使它與眾不同；其餘都是細節。
 
 - **協調迴圈中沒有 LLM。** 排程是純 Python，因此執行可以端到端重現。重播昨天的計畫，得到昨天的任務圖。
+- **硬體金鑰證據.** 離線 PIV 保管證明與 FIDO2 核准驗證器共用收據協定，使用固定信任與明確時間。權杖保管不會提升 TRACE 信任等級。 [硬體金鑰證據](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **事後可核查。** 重播日誌記錄每一次執行，常駐的血統脊柱記錄每個產生血統的步驟；選用的 HMAC 鏈式稽核日誌（`BERNSTEIN_AUDIT=1`）增加了可離線驗證的收據。不確定性會在精確步驟處以雜湊失配的形式浮出水面，而不是一次偶發的重跑。非程式碼交付物也享有同樣待遇：任務可以宣告產物契約（報告、資料集、動作日誌、維運結果），並以簽署的血統收據而非 git 提交來宣告完成。
 - **構造上即隔離。** 每個編碼任務在合併門禁之後獲得自己的 git worktree；產物模式任務在 `.sdd/workspaces/` 下獲得工作目錄。代理之間預設不共享可變的工作區；唯一共享的狀態是任務積壓，並以原子方式認領。更嚴格的檔案系統強制是選用的，來自[沙箱後端](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)（停用 worktree 會在共享檢出中執行每個任務）。
 - **廣泛且本地。** 53 多個 CLI 代理介面卡，外加通用的 `--prompt` 包裝器、基於檔案的狀態、無 SaaS 跳轉、無第三方資料平面。
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [捐助者指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) 講執行 worker 以及你設定的預算，[專案指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) 講宣告清單，[威脅模型](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) 說明每一層邊界防護什麼、不防護什麼。單一指令的執行器尚未發布：目前可用的子指令是 `verify`、`browse`、`budget`、`verify-bundle` 和 `hub`。
 
 ### 首頁之外
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 所有深入內容都在[文件網站](https://docs.bernstein.run/)上：
 
 | 頁面 | 內容 |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | 完整能力清單：MCP 伺服器模式、簽署的代理卡片、沙箱後端、產物儲存、監管對映 |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 價值落在哪裡，以及 Bernstein 何時是錯誤工具 |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | 代理/命令/迴圈節點的宣告式 YAML DAG |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | 與 TUI 使用同一 API 的瀏覽器儀表板 |
@@ -287,6 +289,6 @@ Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案�
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

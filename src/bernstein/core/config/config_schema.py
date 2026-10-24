@@ -341,8 +341,9 @@ class RoleModelPolicyEntry(BaseModel):
     # instead of a single model; ``model``/``base_url``/``api_key_env`` above
     # are then ignored in favor of the council's own per-candidate endpoints.
     council: CouncilConfig | None = None
-    # Ordered escalation ladder (issue #4855). Unset preserves today's
-    # single-hop cascade behaviour in agent_lifecycle until PR2 wires it.
+    # Ordered escalation ladder (issue #4855). Unset preserves the cascade
+    # one-hop on compaction retries. When set, the retry patch reads
+    # decide_ladder_advance and does not stamp a model without evidence.
     ladder: list[EscalationLadderStep] | None = None
     # Deprecated sugar for a two-step ladder; mutually exclusive with
     # ``ladder``. Prefer an explicit ``ladder`` in new configs.

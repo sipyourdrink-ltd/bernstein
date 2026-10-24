@@ -73,10 +73,7 @@ src/bernstein/core/security/audit_chain.py::record_cache_miss                   
 src/bernstein/core/security/audit_chain.py::record_capability_authorization                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_capability_delta                            # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_delegation_minted                           # exported in the module's __all__ as public surface; no in-tree caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_budget_stop               # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_exhaustion                # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_hop                       # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_refusal                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_escalation_ladder_failure_evidence          # #4855 producer API; failure paths (gate, loop detector, degraded terminal) wire it in a follow-up
 src/bernstein/core/security/audit_chain.py::record_expectation_expired                         # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_capsule                              # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_drift                                # exported in the module's __all__ and exercised by tests; no production caller

@@ -41,11 +41,12 @@
 Bernstein — опенсорсний governance-шар для AI-агентів. Працює на policy as code: ти пишеш політику — хто що може робити, що потребує погодження, що має фіксуватися — а Bernstein застосовує її і формує запис, який можна перевірити. Детермінований планувальник — без моделі в циклі координації — запускає агентів паралельно, перевіряє результат на гейтах і записує кожен крок, тож запуск можна верифікувати постфактум, офлайн, лише за артефактами. CLI-агенти для коду працюють з коробки (Claude Code, Codex, Gemini CLI і ще 50+), і той самий шар говернить будь-яке агентне навантаження: результатом може бути диф, дослідницький звіт, датасет або пакет аудиторських свідчень. Профіль установки для air-gap у комплекті. Apache-2.0.
 
 ### короткий огляд
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Чотири речі виділяють його з-поміж інших; решта — деталі.
+Його вирізняють п’ять речей; решта — деталі.
 
 - **Жодних LLM у циклі координації.** Планування здійснюється чистою мовою Python, тому виконання є повністю відтворюваним від початку до кінця. Відтворіть учорашній план і отримайте вчорашній граф завдань.
+- **Свідчення апаратного ключа.** Офлайн-перевірки володіння PIV та схвалень FIDO2 використовують спільний протокол квитанцій із закріпленою довірою та явним часом. Володіння токеном не підвищує рівні довіри TRACE. [Свідчення апаратного ключа](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Перевірка постфактум.** Журнал відтворення записує кожне виконання, а завжди активний хребет походження (lineage spine) фіксує кожен крок, що несе історію походження; опціональний журнал аудиту, зв'язаний через HMAC (`BERNSTEIN_AUDIT=1`), додає квитанції (receipts), які можна верифікувати офлайн. Недетермінізм виявляється як розбіжність хешу на конкретному кроці, а не як нестабільність повторного запуску. Результати, що не є кодом, проходять таку саму перевірку: завдання може оголосити контракт на артефакт (звіт, набір даних, журнал дій, результат операцій) і завершується підписаною квитанцією походження замість git-коміту.
 - **Ізольованість за конструкцією.** Кожне завдання з кодування отримує власний git worktree за гейтами злиття; завдання в режимі артефактів отримують робочий каталог у `.sdd/workspaces/`. За замовчуванням агенти не мають спільного змінного робочого простору; єдиним спільним станом є беклог завдань, що резервується атомарно. Більш суворі обмеження файлової системи є опціональними завдяки [бекендам пісочниці](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Якщо вимкнути worktree, кожне завдання виконуватиметься у спільному робочому каталозі.
 - **Широкий та локальний.** Понад 53 адаптерів для CLI-агентів плюс універсальна обгортка `--prompt`, стан на основі файлів, без проміжних SaaS-сервісів, без сторонніх платформ обробки даних.
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [Посібник донора](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) описує запуск воркера та бюджет, який ви задаєте, [посібник проєкту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) — оголошення маніфесту, а [модель загроз](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) — що кожна межа захищає, а що ні. Запуск однією командою ще не випущено: сьогодні працюють підкоманди `verify`, `browse`, `budget`, `verify-bundle` та `hub`.
 
 ### за межами головної сторінки
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Усі докладні відомості розміщено на [сайті документації](https://docs.bernstein.run/):
 
 | сторінка | що вона охоплює |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | повний список можливостей: режим MCP-сервера, підписані картки агентів, бекенди пісочниці, приймачі артефактів, регуляторна відповідність |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | де виникає цінність і коли Bernstein не є потрібним інструментом |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | декларативні YAML DAG із вузлів agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | браузерна панель на тому ж API, який використовує TUI |
@@ -287,6 +289,6 @@ Bernstein названо на честь Леонарда Бернстайна, 
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

@@ -264,7 +264,7 @@ async def _open_stream_until_first_event(method: str, path: str) -> tuple[int, s
         "scheme": "http",
         "path": path,
         "raw_path": path.encode(),
-        "query_string": b"",
+        "query_string": b"role=backend" if path in {"/events/tasks", "/api/v1/events/tasks"} else b"",
         "root_path": "",
         "headers": [(b"host", b"testserver"), (b"accept", b"text/event-stream")],
         "client": (peer, 1234),
