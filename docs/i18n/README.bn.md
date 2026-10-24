@@ -135,7 +135,7 @@ flowchart LR
 প্রতিটি নোড সেই এজেন্ট নেয় যার রোল ফেজটি অনুমোদন করে; এজেন্ট টাস্কের ভেতরে যা-ই করুক, রোলের বেড়া আর অনুমোদনের গেট বহাল থাকে। কোড নোড নিজের git worktree-তে merge গেটের পেছনে সম্পূর্ণ হয়। উপরের নোডগুলো অন্যভাবে শেষ হয়: [আর্টিফ্যাক্ট চুক্তি](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ডেলিভারেবলের নাম দেয় (রিপোর্ট, ডেটাসেট, স্ক্যান, অ্যাকশন লগ), আর নোডটি কমিটের বদলে স্বাক্ষরিত lineage রসিদে বন্ধ হয়। একই শিডিউলার, একই জার্নাল, একই অফলাইন যাচাই - গ্রাফ কোড বহন করুক, রিসার্চ, ops পরিবর্তন বা তিনটির মিশ্রণ। সফটওয়্যার, রিসার্চ, ডকস, এন্টারপ্রাইজ ও কন্ট্রিবিউটর ওয়ার্কফ্লোর তৈরি গ্রাফ আছে [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)-এ।
 
 ### 30 সেকেন্ডে ইনস্টল
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-main-এ প্রতিটি push-এ CI কমিট করা রসিদটি আবার যাচাই করে — এবং প্রমাণ করে যে হাত-লাগানো কপি ব্যর্থ হয় — যাতে প্রকাশিত প্রমাণ পচে গিয়ে সাজসজ্জার ফাইল হয়ে না যায়। `scripts/record_demo.sh` রেকর্ডিং, রসিদ ও কি একটি নতুন সত্যিকারের রান থেকে আবার বানায়; টার্মিনালের ভিতরে কিছুই বানানো নয়।
+সংরক্ষিত রসিদটি উপরের কমান্ড দিয়ে যেকোনো সময় আবার যাচাই করা যায়; পরিবর্তিত অনুলিপি একই পরীক্ষায় ব্যর্থ হয়। `scripts/record_demo.sh` রেকর্ডিং, রসিদ ও কি একটি নতুন সত্যিকারের রান থেকে আবার বানায়; টার্মিনালের ভিতরে কিছুই বানানো নয়।
 
 চলমান রান দুটি অপারেটর সারফেসের যেকোনোটি থেকেই দেখা যায়। দুটোই একই টাস্ক API পড়ে, তাই একটি অন্যটির পিছিয়ে থাকা মিরর নয়।
 
@@ -231,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 একই রানে এজেন্ট মেশান: বয়লারপ্লেটের জন্য সস্তা লোকাল মডেল, আর্কিটেকচারের জন্য ভারী ক্লাউড মডেল। `bernstein integrations list --installed` দেখায় আপনার মেশিনে কী কী আছে।
 
 ### স্বেচ্ছাসেবী কম্পিউট
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 একটি প্রকল্প issue-গুলিকে স্বেচ্ছাসেবকদের জন্য খোলা হিসেবে চিহ্নিত করতে পারে, আর যে কেউ তার একটি নিজের মেশিনে চালাতে পারেন - অ্যাকাউন্ট ছাড়া, সমন্বয়কারী ছাড়া। কোনো কাজকে কী করার অনুমতি আছে, প্রকল্প তা `volunteer.json` ম্যানিফেস্টে ঘোষণা করে - স্যান্ডবক্স ব্যাকএন্ড, অনুমোদিত নেটওয়ার্ক তালিকা, ওয়াল-ক্লক ও মেমরির সর্বোচ্চ সীমা - আর দাতার নিজের সীমা কেবল সেটিকে সংকীর্ণ করতে পারে, কখনও প্রসারিত নয়। সম্পন্ন কাজ যে রসিদ তৈরি করে তা ফলাফলকে সেই সীমাবদ্ধতার সিদ্ধান্তের সঙ্গে বেঁধে দেয় যার অধীনে সেটি চলেছিল, ফলে রক্ষণাবেক্ষণকারী মাসখানেক পরেও যাচাই করতে পারেন কাজটি আসলে কী স্পর্শ করার অনুমতি পেয়েছিল।
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড।
+[দাতা নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) ওয়ার্কার চালানো ও আপনার নির্ধারিত বাজেট, [প্রকল্প নির্দেশিকা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) ম্যানিফেস্ট ঘোষণা, এবং [হুমকি মডেল](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) প্রতিটি সীমানা কী রক্ষা করে আর কী করে না তা বর্ণনা করে। এক-কমান্ডের রানার এখনও প্রকাশিত হয়নি: আজ `verify`, `browse`, `budget`, `verify-bundle` ও `hub` কার্যকর সাব-কমান্ড। `autopilot` নিবন্ধিত আছে, কিন্তু `TaskSource` বাস্তবায়িত না হওয়া পর্যন্ত চলতে অস্বীকার করে।
 
 ### প্রথম পাতার বাইরে
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

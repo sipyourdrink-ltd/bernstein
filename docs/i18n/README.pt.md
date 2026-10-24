@@ -135,7 +135,7 @@ flowchart LR
 Cada nó é reivindicado por um agente cujo papel a fase permite; cercas de papel e gates de aprovação valem independente do que o agente faça dentro da tarefa. Um nó de código termina atrás de merge gates no seu próprio git worktree. Os nós acima terminam diferente: um [contrato de artefato](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomeia a entrega (relatório, dataset, varredura, log de ações) e o nó fecha com um recibo de lineage assinado em vez de um commit. Mesmo escalonador, mesmo journal, mesma verificação offline - leve o grafo código, pesquisa, uma mudança de ops ou uma mistura dos três. Grafos prontos para software, pesquisa, docs, enterprise e fluxos de contribuição vivem em [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalação em 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -155,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-O CI reverifica o recibo comitado a cada push para a main — e prova que uma cópia adulterada falha — para que a evidência publicada não apodreça como um arquivo decorativo. `scripts/record_demo.sh` regenera a gravação, o recibo e a chave a partir de uma nova execução real; nada no terminal é sintetizado.
+O recibo guardado pode ser verificado novamente a qualquer momento com o comando acima; uma cópia adulterada falha na mesma verificação. `scripts/record_demo.sh` regenera a gravação, o recibo e a chave a partir de uma nova execução real; nada no terminal é sintetizado.
 
 Uma execução em andamento pode ser assistida a partir de qualquer uma das interfaces de operador. Ambas leem a mesma API de tarefas, portanto nenhuma é um espelho defasado da outra. No `bernstein live`, as colunas esquerda e direita rolam de forma independente como painéis inteiros, mantendo widgets abaixo da dobra acessíveis em terminais menores.
 
@@ -231,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Misture agentes na mesma execução: modelos locais econômicos para código repetitivo, modelos em nuvem mais potentes para arquitetura. `bernstein integrations list --installed` mostra o que está disponível na sua máquina.
 
 ### computação voluntária
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Um projeto pode marcar issues como abertas a voluntários, e qualquer pessoa pode executar uma na própria máquina sem conta e sem coordenador. O projeto declara o que uma tarefa tem permissão de fazer num manifesto `volunteer.json` - backend de sandbox, lista de rede permitida, tetos de tempo de relógio e memória - e os limites do próprio doador só podem estreitar isso, nunca ampliar. O recibo que uma tarefa concluída produz liga o resultado à decisão de contenção sob a qual ela rodou, de modo que um mantenedor pode verificar meses depois a que o trabalho realmente teve permissão de tocar.
 
@@ -240,7 +240,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-O [guia do doador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cobre a execução de um worker e o orçamento que você define, o [guia do projeto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cobre a declaração de um manifesto, e o [modelo de ameaças](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) diz o que cada fronteira protege e o que não protege. O executor de um único comando ainda não foi lançado: hoje `verify`, `browse`, `budget`, `verify-bundle` e `hub` são os subcomandos que funcionam.
+O [guia do doador](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) cobre a execução de um worker e o orçamento que você define, o [guia do projeto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) cobre a declaração de um manifesto, e o [modelo de ameaças](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) diz o que cada fronteira protege e o que não protege. O executor de um único comando ainda não foi lançado: hoje `verify`, `browse`, `budget`, `verify-bundle` e `hub` são os subcomandos que funcionam. `autopilot` está registado, mas recusa executar até que seja implementado um `TaskSource`.
 
 ### além da página inicial
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
