@@ -1,0 +1,14 @@
+{
+  "certificates": [
+    {
+      "file": "yubico-ca-1.pem",
+      "source": "https://developers.yubico.com/PKI/yubico-ca-1.pem",
+      "sha256_der": "62760c6a6ef91679f454c8902b80fd009825b3f25da90f1fbace2ec6586cd5a8"
+    },
+    {
+      "file": "yubico-piv-ca-1.pem",
+      "source": "https://developers.yubico.com/PKI/yubico-piv-ca-1.pem",
+      "sha256_der": "63ece914e54dd87915f34033c85af4c0696ba1512f8add66ced738331207b546"
+    }
+  ]
+}
