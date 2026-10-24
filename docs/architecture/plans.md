@@ -119,9 +119,19 @@ keys depend on `type`:
 | `file_contains` | `path`, `contains` | File must exist and include the substring. |
 | `llm_review` | `value` (criteria) | LLM judge applies the given criteria. |
 | `llm_judge` | `value` | Free-form LLM judgement. |
+| `schema_valid` | `value` (JSON Schema) | Validate the produced artifact's canonical bytes. |
+| `criteria_match` | `value` (predicate JSON) | Apply the closed artifact predicate set. |
+| `hash_stable` | `value` (content hash) | Check the artifact's canonical content hash. |
+| `figures_grounded` | `value` (`strict` or `warn`) | Check report figures against their lineage anchors. |
 | `absence_verified` | `value` (tool_call_id) | The named tool call reported "nothing found" and its anchored coverage record proves what it searched. |
 
-Source: `plan_schema.py` (`COMPLETION_SIGNAL_TYPES`), `plan_loader.py`.
+Artifact checks require a non-`code_diff` `artifact_spec` so the existing
+artifact evaluator has the produced bytes in scope. Values and the existing
+`path`/`command` aliases must be non-empty strings; malformed declared gates
+fail validation and raise `PlanLoadError` during direct loading.
+
+Source: `core/tasks/models.py` (`CompletionSignalType`), `plan_schema.py`,
+`plan_loader.py`, `core/quality/janitor.py`.
 
 ---
 
@@ -234,8 +244,8 @@ and no `stages:`) is refused with a message naming `--seed`:
      (cross-stage dependency expansion in `plan_loader.py`).
    - `owned_files` from the step's `files` list - used by the conflict
      detector so two parallel agents can't clobber each other.
-   - `completion_signals` parsed and validated (invalid entries are
-     logged and dropped, not fatal).
+   - `completion_signals` parsed and validated against the native task
+     signal types; malformed declared gates raise `PlanLoadError` before dispatch.
 5. **Resolve title→ID** - once all tasks have server-assigned IDs, the
    manager parser's `_resolve_depends_on` rewrites titles to UUIDs so the
    orchestrator can join.

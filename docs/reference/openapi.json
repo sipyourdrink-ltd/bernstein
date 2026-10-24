@@ -20167,7 +20167,12 @@
               "test_passes",
               "file_contains",
               "llm_review",
-              "llm_judge"
+              "llm_judge",
+              "schema_valid",
+              "criteria_match",
+              "hash_stable",
+              "figures_grounded",
+              "absence_verified"
             ],
             "title": "Type"
           },

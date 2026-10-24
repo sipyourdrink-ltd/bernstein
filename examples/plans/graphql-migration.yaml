@@ -146,8 +146,8 @@ stages:
         completion_signals:
           - type: path_exists
             path: "tests/graphql"
-          - type: command
-            run: "pytest tests/graphql/ -x -q"
+          - type: test_passes
+            command: "pytest tests/graphql/ -x -q"
 
   # ── Stage 3: Client SDK and Docs ──
   - name: "Clients"

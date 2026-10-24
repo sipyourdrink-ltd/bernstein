@@ -284,6 +284,21 @@ class UpgradeProposalDetails:
     performance_impact: str = ""
 
 
+CompletionSignalType = Literal[
+    "path_exists",
+    "glob_exists",
+    "test_passes",
+    "file_contains",
+    "llm_review",
+    "llm_judge",
+    "schema_valid",
+    "criteria_match",
+    "hash_stable",
+    "figures_grounded",
+    "absence_verified",
+]
+
+
 @dataclass(frozen=True)
 class CompletionSignal:
     """Janitor signal for automatic task verification.
@@ -314,19 +329,7 @@ class CompletionSignal:
     :func:`bernstein.core.quality.absence_coverage.verify_anchored_absence_claim`.
     """
 
-    type: Literal[
-        "path_exists",
-        "glob_exists",
-        "test_passes",
-        "file_contains",
-        "llm_review",
-        "llm_judge",
-        "schema_valid",
-        "criteria_match",
-        "hash_stable",
-        "figures_grounded",
-        "absence_verified",
-    ]
+    type: CompletionSignalType
     # path, glob, test command, search string, review instruction,
     # criterion payload, severity, or tool_call_id
     value: str
