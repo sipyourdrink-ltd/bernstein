@@ -289,3 +289,101 @@ def test_watchdog_server_recovery_keeps_selected_seed(
     assert dict(os.environ) == before
     assert len(launch_harness.launches) == 1
     assert launch_harness.launches[0].env["BERNSTEIN_SEED_PATH"] == str(selected)
+
+
+@pytest.mark.parametrize("launcher", ["supervisor", "direct"])
+@pytest.mark.parametrize("valid", [False, True])
+def test_selected_initial_launch_validates_before_spawning(
+    tmp_path: Path,
+    launch_harness: _Harness,
+    launcher: str,
+    valid: bool,
+) -> None:
+    (tmp_path / ".sdd/runtime").mkdir(parents=True)
+    selected = _seed(tmp_path / "selected.yaml")
+    if not valid:
+        selected.write_text("goal: [synthetic-secret-marker", encoding="utf-8")
+    launch = server_supervisor.supervised_server if launcher == "supervisor" else server_launch._start_server
+    if valid:
+        launch(tmp_path, 8052, seed_path=selected)
+        assert launch_harness.launches[0].env["BERNSTEIN_SEED_PATH"] == str(selected)
+    else:
+        with pytest.raises(SeedError, match="Cannot load selected seed") as error:
+            launch(tmp_path, 8052, seed_path=selected)
+        assert str(selected) in str(error.value)
+        assert "synthetic-secret-marker" not in str(error.value)
+        assert launch_harness.launches == []
+
+
+def test_launch_validation_preserves_parent_tuning_while_public_parser_still_applies_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    launch_harness: _Harness,
+) -> None:
+    from bernstein.core import defaults
+    from bernstein.core.config.seed import parse_seed
+
+    (tmp_path / ".sdd/runtime").mkdir(parents=True)
+    selected = _seed(tmp_path / "tuned.yaml")
+    changed_interval = defaults.ORCHESTRATOR.tick_interval_s + 17
+    selected.write_text(
+        selected.read_text(encoding="utf-8") + f"tuning:\n  orchestrator:\n    tick_interval_s: {changed_interval}\n",
+        encoding="utf-8",
+    )
+    original = defaults.ORCHESTRATOR
+    # Restore even if the public parser compatibility assertion fails.
+    monkeypatch.setattr(defaults, "ORCHESTRATOR", original)
+    server_supervisor.supervised_server(tmp_path, 8052, seed_path=selected)
+    assert defaults.ORCHESTRATOR is original
+    server_supervisor._launch_server(launch_harness.states[0])
+    assert defaults.ORCHESTRATOR is original
+    server_launch._start_server(tmp_path, 8053, seed_path=selected)
+    assert defaults.ORCHESTRATOR is original
+    parse_seed(selected)
+    assert defaults.ORCHESTRATOR.tick_interval_s == changed_interval
+
+
+def test_supervisor_snapshot_reads_old_state_and_round_trips_selected_path(tmp_path: Path) -> None:
+    from bernstein.core.runtime_state import read_supervisor_state, write_supervisor_state
+
+    runtime = tmp_path / ".sdd/runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "supervisor_state.json").write_text(
+        json.dumps({"started_at": 1.0, "restart_count": 2, "current_pid": 123}), encoding="utf-8"
+    )
+    legacy = read_supervisor_state(tmp_path / ".sdd")
+    assert legacy is not None
+    assert legacy.seed_path is None
+    state = server_supervisor._SupervisorState(
+        tmp_path, 8052, "127.0.0.1", False, None, False, seed_path=tmp_path / "selected.yaml"
+    )
+    write_supervisor_state(tmp_path, state.snapshot())
+    restored = read_supervisor_state(tmp_path / ".sdd")
+    assert restored == state.snapshot()
+
+
+def test_watchdog_spawner_recovery_preserves_selected_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    launch_harness: _Harness,
+) -> None:
+    selected = _seed(tmp_path / "selected.yaml")
+    monkeypatch.setattr(bootstrap, "_supervisor_should_stand_down", lambda workdir: None)
+    monkeypatch.setattr(bootstrap, "classify_pidfile_liveness", lambda path, **kw: (bootstrap.LIVENESS_GONE, None))
+    monkeypatch.setattr(bootstrap, "_read_pid", lambda path: 123)
+    monkeypatch.setattr(bootstrap, "_is_alive", lambda pid: True)
+
+    def recover_spawner(**kwargs: Any) -> tuple[None, int, bool]:
+        if kwargs["name"] == "Server":
+            return None, 0, False
+        kwargs["restart_fn"]()
+        raise _WatchdogCycleFinished
+
+    monkeypatch.setattr(bootstrap, "_watchdog_check_process", recover_spawner)
+    with pytest.raises(_WatchdogCycleFinished):
+        bootstrap.run_watchdog(tmp_path, 8052, poll_s=0, seed_path=selected, adapter="codex", model="synthetic")
+    assert launch_harness.spawner.call_args.kwargs == {
+        "seed_path": selected,
+        "adapter": "codex",
+        "model": "synthetic",
+    }

@@ -21,6 +21,7 @@ from bernstein.core.process_utils import is_process_alive
 from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
 from bernstein.core.runtime_state import rotate_log_file
 from bernstein.core.seed import SeedConfig, seed_to_initial_task
+from bernstein.core.server.seed_selection import _apply_selected_seed
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -277,6 +278,7 @@ def _start_server(
     auth_token: str | None = None,
     evolve_mode: bool = False,
     cluster_tls: TLSConfig | None = None,
+    seed_path: Path | None = None,
 ) -> int:
     """Launch the task server as a background process.
 
@@ -292,6 +294,8 @@ def _start_server(
             (file writes → restart → dropped HTTP connections → WAL
             replay duplicate claims). The flag no longer affects the
             launched uvicorn argv.
+        seed_path: Explicit selected seed. Validate before launch and pass
+            only to the child; None preserves ordinary discovery.
 
     Returns:
         PID of the server process.
@@ -320,6 +324,7 @@ def _start_server(
     # cluster-specific and storage vars so the server's module-level app
     # factory picks them up.
     env = os.environ.copy()
+    _apply_selected_seed(env, seed_path)
     if cluster_enabled:
         env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
     env["BERNSTEIN_BIND_HOST"] = bind_host
