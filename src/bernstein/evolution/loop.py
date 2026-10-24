@@ -992,7 +992,7 @@ class EvolutionLoop:
             logger.warning("Proposal %s application failed - attempting rollback", proposal.id)
             # Asked BEFORE the rollback, which writes `rolled_back` to history
             # and would flip the answer.
-            changed_something = self._executor.was_applied(proposal.id)
+            changed_something = self._executor.was_applied(proposal)
             if changed_something:
                 # Recorded BEFORE the rollback runs, not after it. The rollback
                 # writes `rolled_back` to history and retires the manifest, so
