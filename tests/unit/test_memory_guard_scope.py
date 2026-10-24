@@ -247,19 +247,35 @@ def test_diagnostic_session_runs_without_resource_module(tmp_path: Path) -> None
     shim = tmp_path / "windows_shim"
     shim.mkdir()
     (shim / "sitecustomize.py").write_text(
-        "import builtins\nimport platform\n"
-        "platform.system = lambda: 'Windows'\n"
+        "import builtins\nfrom types import SimpleNamespace\n"
         "original_import = builtins.__import__\n"
-        "def without_resource(name, *args, **kwargs):\n"
-        "    if name == 'resource':\n"
-        "        raise ModuleNotFoundError('No module named resource')\n"
-        "    return original_import(name, *args, **kwargs)\n"
+        "def without_resource(name, globals=None, locals=None, fromlist=(), level=0):\n"
+        "    if globals and globals.get('__name__') == 'tests.conftest':\n"
+        "        if name == 'resource':\n"
+        "            raise ModuleNotFoundError('No module named resource')\n"
+        "        if name == 'platform':\n"
+        "            return SimpleNamespace(system=lambda: 'Windows')\n"
+        "    return original_import(name, globals, locals, fromlist, level)\n"
         "builtins.__import__ = without_resource\n",
         encoding="utf-8",
     )
     proc = _session(
         tmp_path,
-        'def test_thread_failure():\n    raise RuntimeError("can\'t start new thread")\n',
+        f"""
+        import platform
+        import sys
+        import pytest
+        from tests import conftest as guard
+
+        def test_thread_failure():
+            assert guard.platform.system() == "Windows"
+            assert platform.system() == {platform.system()!r}
+            if sys.platform != "win32":
+                import resource
+            with pytest.raises(ModuleNotFoundError):
+                exec("import resource", vars(guard))
+            raise RuntimeError("can't start new thread")
+        """,
         extra_path=str(shim),
     )
     assert proc.returncode == 1, proc.stdout + proc.stderr
