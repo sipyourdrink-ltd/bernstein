@@ -7,6 +7,7 @@ The verification layer between a worker's diff and merge or human review: a conf
 | File | Purpose |
 |---|---|
 | `gate_pipeline.py` | `VALID_GATE_NAMES` registry, `GateStatus`, `GateResult`, and `VerificationScope` (what a gate exercised and what it could not, #5397) |
+| `merge_receipt.py` | Signed merge-admission receipt binds head/base SHAs, gate results, ruleset and coverage sets; canonical JSON bytes shared with `gate_pipeline.py` |
 | `gate_runner.py` | Gate dispatch and execution (subprocess discipline, timeouts) |
 | `quality_gates.py` | `QualityGatesConfig` plus the core gate implementations |
 | `janitor.py` | Claim verification: did the agent do what its result claims |
@@ -31,4 +32,4 @@ The verification layer between a worker's diff and merge or human review: a conf
 
 Single files only, e.g. `uv run pytest tests/unit/test_quality_gates.py -x -q`; runner and pipeline behaviour lives in the `test_gate_*.py` files, and the collusion gate in `tests/unit/quality/test_cross_task_collusion_gate.py`.
 
-<!-- Reviewed 2026-10-16 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->

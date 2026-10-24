@@ -9,31 +9,32 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 | `audit.py` | Immutable HMAC-chained audit log; daily JSONL rotation; chain crosses file boundaries |
 | `audit_chain.py` | `AuditChainStore` facade plus the `EVENT_*` type constants |
 | `audit_receipt.py` | Offline-verifiable receipt projection (COSE / in-toto) over a chain range |
-| `agent_card_keystore.py` | Ed25519 install-identity keystore |
+| `agent_card_keystore.py` | Persistent Ed25519 keystore for A2A agent-card signing |
 | `intent_capsule.py` | Signed task-goal capsules with drift escalation |
 | `sigstore_attestation.py` | Rekor attestation with a local Ed25519 fallback; verifies local bundles |
 | `result_receipt_bundle.py` | Result receipt bundle with offline DSSE verification |
-| `capability_delta.py` | Detects capability-widening changes across workflows and permission configs |
-| `surface_grant_delta.py` | Lineage gate grant analysis across diffs |
+| `capability_delta.py` | Pure `AgentPermissions` grant comparison; no production caller yet |
+| `surface_grant_delta.py` | Pure workflow/Dockerfile/Compose grant diffs; no production caller yet |
+| `key_custody.py` | Ed25519 signing custody protocol with file/env implementations; HSM integration is a subclassable stub |
 | `key_derivation.py` | HKDF-SHA256 per-store key derivation with scheme versioning |
 | `approval_decision.py` | Signed, nonce-bound decision records read by the task approval gates |
+| `dlp_scanner.py` | `DLPScanner` behind the `dlp_scan` gate: secrets and regulated data in changed files, with value-scoped allowlisting |
 
 ## Invariants
 
-- The HMAC key lives OUTSIDE the audit log directory at mode `0600`; anything more readable is a hard error at load time (`audit.py`).
-- Stores never share a key: each derives its own from the master by HKDF-SHA256 under a domain tag that is also prefixed into the chain hash preimage, so one store's record cannot be replayed against another (`key_derivation.py` v2).
+- The default HMAC master key lives outside audit logs at mode `0600`; POSIX loaders reject group/world access, while mode enforcement is skipped on Windows (`audit.py`).
+- Scheme v2 separates store keys with HKDF-SHA256 and prefixes domain tags into chain preimages. Legacy v1 records use the raw master key without that prefix and remain readable (`key_derivation.py`).
 - An approval decision file counts only as a signed record bound to the task and the open request nonce; anything else in a decision slot rejects (`approval_decision.py`).
 - Event-type constants are append-only: add `EVENT_*` names, never edit or reuse existing ones (`audit_chain.py`).
 - Chain helpers take the chain as a parameter (no singletons) and log through `log_with_prev_digest`, so `prev_chain_digest` is in the payload before the HMAC.
-- The audit chain is opt-in at runtime (`BERNSTEIN_AUDIT=1`, read in `../orchestration/orchestrator.py`); features degrade without it.
+- Runtime audit mode is enabled by `BERNSTEIN_AUDIT=1` or compliance `audit_logging` (`../orchestration/orchestrator.py`); features degrade without it.
 - Untrusted paths are opened, never compared: a comparison validates one lookup while the open performs another (`sigstore_attestation.py`).
-- Same rule for tenant writes: the whole subtree is created and opened through
-  `TenantPaths.anchor` (`../persistence/anchored_write.py`), rotation included. It
-  needs `dir_fd` + `O_NOFOLLOW`; lacking either, the refusal narrows to the final
-  component or vanishes, never weakens (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
+- Where supported, tenant writes and rotation walk the subtree through `TenantPaths.anchor` (`../persistence/anchored_write.py`). Descriptor walks require `dir_fd`, `O_NOFOLLOW` and `O_DIRECTORY`; platform fallbacks do not provide equivalent symlink containment (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
+- `AuditLog.verify_incremental()` trusts only signed or HMAC-chained material. The signed checkpoint pins sealed prefixes by hash and length; missing or truncated segments are reported unless covered by a checkpoint-bound `ack-tear` record. Unsigned hash tiles are checked against the bytes, never used to skip them (#6435, #6443).
+- DLP allowlist entries mark a *value* as benign, not the line: a rule skips only a match that overlaps an allowlisted span. Only operator `allowlist_patterns` suppress a whole line (`dlp_scanner.py`, #6430).
 
 ## Testing
 
 Single files only: `uv run pytest tests/unit/test_audit.py -x -q`.
 
-<!-- Reviewed 2026-08-27 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->
