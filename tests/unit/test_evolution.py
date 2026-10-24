@@ -547,7 +547,7 @@ class TestFileUpgradeExecutor:
         applying = FileUpgradeExecutor(tmp_path)
         config_file = applying.config_dir / "test.yaml"
         config_file.write_text("original content", encoding="utf-8")
-        applying._backup_file("test.yaml", proposal.id)
+        applying._backup_file("test.yaml", proposal)
         config_file.write_text("changed content", encoding="utf-8")
         applying._record_history(proposal, "applied")
 

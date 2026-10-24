@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -76,6 +78,33 @@ class UpgradeProposal:
     #: proposer; ``to_task`` below sets ``role="manager"`` for routing, which
     #: identifies the executor and is deliberately not the same thing.
     produced_by: str = ""
+
+    @property
+    def storage_key(self) -> str:
+        """The key this proposal's on-disk state is filed under, distinct from its label (#6186).
+
+        ``id`` is a label: ``ProposalGenerator`` mints it from a counter that starts at
+        zero in every process, so the first proposal of every run is ``UPG-0001``. Keyed
+        on that, a second run's rollback receipt replaced the first's, and a never-applied
+        proposal could restore a different proposal's backup. This is a short sha256 over
+        the fields that identify the proposal, ``created_at`` included, so two runs'
+        ``UPG-0001`` never share a key, and the key can be recomputed from the proposal
+        itself in a process that did not create it. ``status`` and ``applied_at`` are left
+        out because they change over the proposal's life and the key must not.
+        """
+        body = {
+            "id": self.id,
+            "title": self.title,
+            "category": self.category.value,
+            "description": self.description,
+            "current_state": self.current_state,
+            "proposed_change": self.proposed_change,
+            "created_at": self.created_at,
+            "triggered_by": self.triggered_by.value,
+            "produced_by": self.produced_by,
+        }
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return f"{self.id}-{hashlib.sha256(canonical).hexdigest()[:12]}"
 
     def to_task(self) -> Task:
         """Convert upgrade proposal to a Task."""
