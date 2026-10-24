@@ -1,11 +1,11 @@
 # Task server API
 
-Base URL: **http://127.0.0.1:8052**
+Use the base URL given in your system prompt (the task server URL it states) wherever `<base-url>` appears below; do not assume a fixed host or port.
 
 ## Create a task
 
 ```bash
-curl -s -X POST http://127.0.0.1:8052/tasks \
+curl -s -X POST <base-url>/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Implement feature X",
@@ -31,7 +31,7 @@ every id in `depends_on` reaches `done` - a note in `description` alone
 does not gate anything:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8052/tasks \
+curl -s -X POST <base-url>/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Unit tests for feature X",
