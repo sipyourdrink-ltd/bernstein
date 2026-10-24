@@ -1901,6 +1901,23 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
             "pii_allowlist_prefixes",
             ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST"],
         ),
+        # DLP keys: documented beside pii_scan in docs/architecture/quality-pipeline.md
+        # and read nowhere until #6615 -- a ``dlp_scan: false`` was accepted by the
+        # schema (extra="allow") and then dropped, so the gate could not be
+        # configured or disabled from a seed. Defaults mirror QualityGatesConfig.
+        dlp_scan=_qg_bool("dlp_scan", True),
+        dlp_check_license_violations=_qg_bool("dlp_check_license_violations", True),
+        dlp_check_regulated_data=_qg_bool("dlp_check_regulated_data", True),
+        dlp_check_proprietary_data=_qg_bool("dlp_check_proprietary_data", True),
+        dlp_block_license_violations=_qg_bool("dlp_block_license_violations", True),
+        dlp_block_regulated_data=_qg_bool("dlp_block_regulated_data", True),
+        dlp_block_proprietary_data=_qg_bool("dlp_block_proprietary_data", False),
+        dlp_internal_url_patterns=_qg_str_list("dlp_internal_url_patterns", []),
+        dlp_ignore_paths=_qg_str_list("dlp_ignore_paths", []),
+        dlp_allowlist_prefixes=_qg_str_list(
+            "dlp_allowlist_prefixes",
+            ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "MOCK", "SAMPLE"],
+        ),
         run_config=_qg_bool("run_config", True),
         security_scan=_qg_bool("security_scan", False),
         security_scan_command=_qg_optional_str("security_scan_command"),
