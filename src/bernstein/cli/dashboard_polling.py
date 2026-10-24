@@ -140,8 +140,10 @@ def _fetch_all() -> dict[str, Any]:
     # One resolution for the whole batch: see _get.
     url = server_url()
 
-    # Fast path: local files (instant, no HTTP)
-    agents = _load_agents()
+    # Fast path: local files (instant, no HTTP). A remote central's agents are
+    # not in this machine's agents.json - whatever is there belongs to some
+    # other, local run - so a remote view does not read it at all.
+    agents = _load_agents() if is_loopback(url) else []
     quarantine = _load_quarantine()
     guardrails = _load_guardrail_violations()
     cache_stats = _load_cache_stats()
@@ -172,6 +174,7 @@ def _fetch_all() -> dict[str, Any]:
 
     return {
         "server_unreachable": server_unreachable,
+        "cluster": _load_cluster_view(url, tasks),
         "tasks": tasks,
         "status": status,
         "agents": agents,
@@ -185,6 +188,87 @@ def _fetch_all() -> dict[str, Any]:
         "verification_nudge": verification_nudge,
         "activity_summaries": activity_summaries,
     }
+
+
+#: Task states in which a worker node is holding the task.
+_NODE_HELD_STATUSES = frozenset({"claimed", "in_progress"})
+
+
+def _load_cluster_view(url: str, tasks: Any, now: float | None = None) -> dict[str, Any] | None:
+    """Project the central's node registry and claims into the AGENTS panel.
+
+    Worker nodes run their agents on their own machines, so nothing about them
+    reaches this machine's ``agents.json``; the central only knows them through
+    ``GET /cluster/status`` and the ``claimed_by_session`` each worker stamps on
+    the tasks it claims. Returns ``None`` when this is not a cluster view - a
+    loopback server with no registered nodes - so the panel keeps its local
+    behaviour. A remote server is always a cluster view, even when the read
+    fails: falling back to local files there would show another run's agents.
+
+    Read-only: one GET, plus the task list the caller already fetched.
+    """
+    status = _get("/cluster/status", url)
+    raw_nodes = status.get("nodes") if isinstance(status, dict) else None
+    nodes: list[dict[str, Any]] = [n for n in raw_nodes if isinstance(n, dict)] if isinstance(raw_nodes, list) else []
+    if is_loopback(url) and not nodes:
+        return None
+
+    held: dict[str, list[dict[str, Any]]] = {}
+    for task in tasks if isinstance(tasks, list) else []:
+        if not isinstance(task, dict) or task.get("status") not in _NODE_HELD_STATUSES:
+            continue
+        owner = task.get("claimed_by_session")
+        if owner:
+            held.setdefault(str(owner), []).append(task)
+
+    from bernstein.cli.commands.cluster_cmd import _node_display_fields
+
+    now = time.time() if now is None else now
+    view_nodes: list[dict[str, Any]] = []
+    for node in nodes:
+        fields: dict[str, Any] = dict(_node_display_fields(node, now))
+        labels = node.get("labels") or {}
+        fields["model"] = str(labels.get("model") or "") if isinstance(labels, dict) else ""
+        fields["tasks"] = [
+            {
+                "id": str(task.get("id", "")),
+                "role": str(task.get("role", "")),
+                "title": str(task.get("title", "")),
+                "elapsed_s": int(now - claimed_at)
+                if isinstance(claimed_at := task.get("claimed_at"), (int, float))
+                else None,
+            }
+            for task in held.get(fields["id"], [])
+        ]
+        view_nodes.append(fields)
+    return {"nodes": view_nodes, "reachable": isinstance(status, dict)}
+
+
+def _format_cluster_view(view: dict[str, Any]) -> str:
+    """Render a cluster view as markup: one line per node, its claimed tasks under it."""
+    nodes: list[dict[str, Any]] = view.get("nodes") or []
+    if not nodes:
+        if not view.get("reachable"):
+            return "[yellow]Cluster status unavailable[/]"
+        return "[dim]No worker nodes registered with this server[/]"
+    lines = [f"[bold]CLUSTER[/] [dim]{len(nodes)} node(s)[/]"]
+    for node in nodes:
+        status = node["status"]
+        style = "green" if status == "online" else "dim" if status == "offline" else "yellow"
+        model = f" {escape(node['model'])}" if node.get("model") else ""
+        lines.append(
+            f"[{style}]\u25cf[/] [bold]{escape(node['name'])}[/] [{style}]{escape(status)}[/] "
+            f"[dim]{escape(node['adapter'])}{model} \u00b7 {node['claimed']} claimed \u00b7 "
+            f"slots {node['slots']} \u00b7 hb {node['heartbeat']}[/]"
+        )
+        for task in node["tasks"]:
+            elapsed = _format_elapsed_label(task["elapsed_s"]) if task["elapsed_s"] is not None else "-"
+            title = task["title"] if len(task["title"]) <= 48 else task["title"][:47] + "\u2026"
+            lines.append(
+                f"  [dim]{escape(task['id'][:8])}[/] [{role_color(task['role'])}]{escape(task['role'].upper())}[/] "
+                f"{escape(title)} [dim]{elapsed}[/]"
+            )
+    return "\n".join(lines)
 
 
 def _load_agents() -> list[dict[str, Any]]:
