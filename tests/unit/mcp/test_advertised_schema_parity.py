@@ -100,6 +100,7 @@ def schema_disagreements(
 _SEEDS: dict[str, list[dict[str, Any]]] = {
     "bernstein_health": [{}],
     "bernstein_status": [{}],
+    "bernstein_subscribe": [{"role": "backend"}, {"role": "backend", "timeout_seconds": 1}],
     "bernstein_cost": [{}],
     "bernstein_scenarios": [{}],
     "bernstein_run": [
