@@ -306,6 +306,9 @@ def test_conformance_replays_two_identical_bandit_runs(tmp_path: Path) -> None:
         ("file:///C:/checkout/project/app.py", "C:/checkout/project"),
         ("file://server/share/project/app.py", "//server/share/project"),
         ("file:///checkout/project/app.py", "/checkout/project"),
+        ("FILE:///C:/checkout/project/app.py", "C:/checkout/project"),
+        ("File://server/share/project/app.py", "//server/share/project"),
+        ("fIlE:///checkout/project/app.py", "/checkout/project"),
     ],
 )
 def test_file_uri_findings_have_the_same_identity_as_relative_findings(uri: str, root: str) -> None:

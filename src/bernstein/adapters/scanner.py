@@ -121,7 +121,7 @@ def normalize_report_path(path: str, target_root: Path | None) -> str:
         OUTSIDE the scan target is reported as-is on purpose: silently
         relativising it would claim the finding is somewhere it is not.
     """
-    if path.startswith("file:"):
+    if path[:5].lower() == "file:":
         uri = urlparse(path)
         path = unquote(uri.path)
         if uri.netloc and uri.netloc.lower() != "localhost":
