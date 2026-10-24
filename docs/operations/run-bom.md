@@ -16,8 +16,8 @@ from it. Without the flag, `--run` reads a hand-assembled
 `.sdd/runs/<run>/bom_snapshot.json` instead — useful when a snapshot comes from
 another system, but nothing in Bernstein writes that file.
 
-`--format` accepts `json` (default), `cyclonedx` and `spdx`; `--out <path>`
-writes to a file instead of stdout.
+`--format` accepts `json` (default), `cyclonedx` (CycloneDX 1.6) and `spdx`
+(SPDX 2.3); `--out <path>` writes to a file instead of stdout.
 
 ## What the projection carries
 
@@ -93,6 +93,27 @@ the document field by field. It fails closed when:
 Each failure names the offending line item. A BOM emitted from a hand-written
 `--snapshot` therefore does not verify against lineage. The audit key the chain
 was written under is loaded read-only and never minted.
+
+## CycloneDX 1.6 and ML-BOM fields
+
+The CycloneDX encoder emits specification version 1.6. Each
+`machine-learning-model` component carries a `modelCard` block, which is a
+first-class field in 1.6 (replacing the `properties`-only idiom from 1.5).
+The run already records the model identifier, provider, and invocation count;
+these are projected into `modelCard.properties`. `modelCard.quantitativeAnalysis`
+and evaluation-result fields will be populated once evaluation results are
+captured in the lineage spine.
+
+The `serialNumber` field is a deterministic UUID5 derived from the run-id
+under a fixed Bernstein namespace, so it is RFC 4122-compliant and stable
+across re-derives of the same run.
+
+**SPDX 3.0 AI profile** — deferred. The SPDX encoder emits SPDX 2.3. SPDX 3.0
+introduced an AI profile with fields that overlap CycloneDX 1.6's `modelCard`.
+Adding a 3.0 encoder is deferred until procurement questionnaires converge on
+which standard to require; a CycloneDX 1.6 document already satisfies the
+current set. Reopen this decision when SPDX 3.0 adoption in tooling reaches
+parity with 2.3.
 
 ## Determinism
 
