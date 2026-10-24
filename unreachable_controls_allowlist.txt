@@ -314,6 +314,7 @@ src/bernstein/core/security/promptware_ingest.py::build_lifecycle_payload       
 src/bernstein/core/security/promptware_ingest.py::get_default_detector                         # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/promptware_ingest.py::quarantine_untrusted_payload                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/promptware_ingest.py::scan_tool_output                             # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/quarantine_journal.py::QuarantineJournal                           # #5108: wiring to SkillLoader call sites is a follow-up slice
 src/bernstein/core/security/quarantined_parser.py::QuarantinedExtract                          # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/quarantined_parser.py::extract_structured                          # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/rbac.py::RBACEnforcer                                              # no production caller and no test reference; baseline entry from the first scan
