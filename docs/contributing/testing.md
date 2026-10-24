@@ -414,6 +414,13 @@ uv run python scripts/check_empty_test_modules.py
 
 ## Sharded unit suite
 
+For a failed subprocess, the runner reports its native exit code or signal.
+A signal takes precedence over any pytest-like summary printed by a nested
+process. Ordinary assertion failures retain their FAILURES and short-summary
+sections; when those sections are absent, the job log retains the complete
+captured stdout and stderr under separate labels. These diagnostics do not
+establish the cause of an unexplained process exit.
+
 `scripts/run_tests.py` runs each `tests/unit/test_*.py` file in its own
 subprocess (the OOM-avoidance model: a single `pytest --cov` over all
 files in one process exceeds the 7 GB runner ceiling). Each subprocess

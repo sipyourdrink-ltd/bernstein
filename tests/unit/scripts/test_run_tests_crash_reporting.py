@@ -11,6 +11,9 @@ anywhere, leaving a red shard with nothing to read (issue #6039).
 from __future__ import annotations
 
 import importlib.util
+import os
+import signal
+import subprocess
 import sys
 from collections.abc import Generator
 from pathlib import Path
@@ -90,10 +93,104 @@ def test_format_exit_status_describes_both_ways_a_process_can_end(run_tests_modu
 # --- reporting -------------------------------------------------------------
 
 
-def test_crash_report_names_the_exit_status_instead_of_trailing_stdout(
+@pytest.mark.skipif(os.name != "posix", reason="POSIX return codes identify termination signals")
+def test_signal_death_survives_nested_pytest_summary(
     run_tests_module: ModuleType, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The reason the shard is red is in the report, not thirty unrelated lines."""
+    """Incidental child summaries cannot hide the process's actual signal."""
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os, signal, sys\n"
+                "print('1 passed in 0.01s', flush=True)\n"
+                "print('fatal child stderr evidence', file=sys.stderr, flush=True)\n"
+                "for i in range(40): print(f'debug stderr {i}', file=sys.stderr, flush=True)\n"
+                "os.kill(os.getpid(), signal.SIGTERM)\n"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert child.returncode == -signal.SIGTERM
+    outcome = run_tests_module._report_file_result(
+        "signal child", child.returncode, 0.1, child.stdout + child.stderr, child.stderr
+    )
+    captured = capsys.readouterr().out
+    assert outcome == run_tests_module.OUTCOME_CRASHED
+    assert "SIGTERM" in captured
+    assert "fatal child stderr evidence" in captured
+    assert "1 passed in 0.01s" in captured
+    assert "debug stderr 39" in captured
+
+
+def test_nonzero_exit_retains_stdout_and_stderr_without_failure_sections(
+    run_tests_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A noisy stderr tail cannot erase the failed child's earlier evidence."""
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "print('decisive stdout evidence', flush=True)\n"
+                "print('1 passed in 0.01s', flush=True)\n"
+                "print('decisive stderr evidence', file=sys.stderr, flush=True)\n"
+                "for i in range(40): print(f'debug stderr {i}', file=sys.stderr, flush=True)\n"
+                "sys.exit(7)\n"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert child.returncode == 7
+    outcome = run_tests_module._report_file_result(
+        "exit child", child.returncode, 0.1, child.stdout + child.stderr, child.stderr
+    )
+    captured = capsys.readouterr().out
+    assert outcome == run_tests_module.OUTCOME_FAILED
+    assert "exit code 7" in captured
+    assert "stdout:" in captured and "stderr:" in captured
+    assert "decisive stdout evidence" in captured
+    assert "decisive stderr evidence" in captured
+    assert "debug stderr 39" in captured
+
+
+def test_native_assertion_failure_keeps_failure_sections(
+    run_tests_module: ModuleType, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A real pytest assertion retains its ordinary report and exit status."""
+    test_file = tmp_path / "test_actual_failure.py"
+    test_file.write_text("def test_actual_failure():\n    assert 1 == 2\n")
+    child = subprocess.run(
+        [sys.executable, "-m", "pytest", "-c", os.devnull, "--noconftest", "-q", str(test_file)],
+        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert child.returncode == 1
+    outcome = run_tests_module._report_file_result(
+        "assertion child", child.returncode, 0.1, child.stdout + child.stderr, child.stderr
+    )
+    captured = capsys.readouterr().out
+    assert outcome == run_tests_module.OUTCOME_FAILED
+    assert "exit code 1" in captured
+    assert "FAILURES" in captured and "short test summary info" in captured
+    assert "assert 1 == 2" in captured
+
+
+def test_crash_report_retains_exit_status_and_both_streams(
+    run_tests_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The status and early stderr remain visible alongside complete stdout."""
     outcome = run_tests_module._report_file_result(
         "[24/41] tests/unit/test_orchestrator.py",
         -11,
@@ -108,7 +205,9 @@ def test_crash_report_names_the_exit_status_instead_of_trailing_stdout(
     assert "signal 11" in captured
     assert "SIGSEGV" in captured
     assert "Fatal Python error: Segmentation fault" in captured
-    assert "[SPAWNER-DEBUG]" not in captured
+    assert NOISY_STDOUT.splitlines()[0] in captured
+    assert NOISY_STDOUT.splitlines()[-1] in captured
+    assert captured.index("stdout:") < captured.index("stderr:")
 
 
 def test_crash_report_says_so_when_there_was_no_stderr(
@@ -120,7 +219,8 @@ def test_crash_report_says_so_when_there_was_no_stderr(
     captured = capsys.readouterr().out
     assert "signal 9" in captured
     assert "stderr" in captured
-    assert "[SPAWNER-DEBUG]" not in captured
+    assert "it wrote nothing to stderr" in captured
+    assert NOISY_STDOUT.splitlines()[0] in captured
 
 
 def test_an_assertion_failure_is_reported_exactly_as_before(
