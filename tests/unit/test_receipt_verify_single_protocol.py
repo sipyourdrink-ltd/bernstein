@@ -216,9 +216,40 @@ def _batch_pass_payload() -> dict[str, Any]:
     )
 
 
+def _rendezvous_deadlock_payload() -> dict[str, Any]:
+    from bernstein.core.communication.deadlock_receipt import build_deadlock_payload
+    from bernstein.core.communication.rendezvous import RENDEZVOUS_OPEN_KIND, encode_open_body
+    from bernstein.core.communication.task_mailbox import MailboxMessage
+
+    def opened(waiter: str, awaited: str, seq: int) -> MailboxMessage:
+        body = encode_open_body(
+            question_entry_hash=f"hmac-sha256:q{seq}",
+            waiter_task_id=waiter,
+            awaited_task_id=awaited,
+        )
+        return MailboxMessage(
+            seq=seq,
+            task_id=awaited,
+            sender="worker",
+            sender_card_fingerprint="unregistered",
+            kind=RENDEZVOUS_OPEN_KIND,
+            body=body,
+            body_hash=f"sha256:body-{seq}",
+            redaction_count=0,
+            timestamp=float(seq),
+            prev_entry_hash="mailbox-genesis",
+            entry_hash=f"hmac-sha256:open-{seq}",
+        )
+
+    payload = build_deadlock_payload([opened("task-a", "task-b", 0), opened("task-b", "task-a", 1)])
+    assert payload is not None
+    return payload
+
+
 #: One payload fixture per registered kind. A kind registered without a fixture
 #: fails ``test_every_registered_kind_round_trips``.
 KIND_PAYLOADS: dict[str, Any] = {
+    "coordination.rendezvous_deadlock": _rendezvous_deadlock_payload,
     "security.change": _change_payload,
     "planning.recovery": _recovery_payload,
     "batch.pass": _batch_pass_payload,

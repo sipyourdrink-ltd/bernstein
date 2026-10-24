@@ -42,6 +42,11 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.communication.deadlock_receipt import emit_deadlock_receipt
+from bernstein.core.communication.rendezvous import RENDEZVOUS_OPEN_KIND, encode_open_body
+from bernstein.core.communication.task_mailbox import TaskMailbox
+from bernstein.core.receipts.protocol import verify_receipt
+from bernstein.core.security.audit import load_or_create_audit_key
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
@@ -259,6 +264,42 @@ def _build_orchestrator(
     spawner = AgentSpawner(adp, templates_dir, tmp_path, default_model=default_model)
     client = httpx.Client(transport=_paginated_transport(transport), base_url="http://testserver")
     return Orchestrator(cfg, spawner, tmp_path, client=client)
+
+
+def _authenticated_mailbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskMailbox:
+    """Open the runtime mailbox under the same audit key as the orchestrator."""
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    return TaskMailbox(
+        tmp_path / ".sdd" / "runtime" / "mailbox.jsonl",
+        hmac_key=load_or_create_audit_key(),
+        identity_dir=tmp_path / ".sdd" / "identity",
+    )
+
+
+def _post_two_task_wait_cycle(mailbox: TaskMailbox) -> None:
+    """Append the smallest durable two-task rendezvous cycle."""
+    question_a = mailbox.post(task_id="task-b", sender="worker-a", kind="question", body="ask b")
+    mailbox.post(
+        task_id="task-b",
+        sender="worker-a",
+        kind=RENDEZVOUS_OPEN_KIND,
+        body=encode_open_body(
+            question_entry_hash=question_a.entry_hash,
+            waiter_task_id="task-a",
+            awaited_task_id="task-b",
+        ),
+    )
+    question_b = mailbox.post(task_id="task-a", sender="worker-b", kind="question", body="ask a")
+    mailbox.post(
+        task_id="task-a",
+        sender="worker-b",
+        kind=RENDEZVOUS_OPEN_KIND,
+        body=encode_open_body(
+            question_entry_hash=question_b.entry_hash,
+            waiter_task_id="task-b",
+            awaited_task_id="task-a",
+        ),
+    )
 
 
 # --- Task.from_dict ---
@@ -1173,6 +1214,121 @@ class TestOrchestratorTick:
 
         assert len(result.errors) == 1
         assert "fetch_all" in result.errors[0]
+
+    def test_tick_checks_durable_mailbox_for_rendezvous_deadlocks(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Repeated ticks persist one receipt for the same durable cycle."""
+        monkeypatch.setenv("BERNSTEIN_CONFIDENCE_DB", str(tmp_path / "confidence.db"))
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        orch = _build_orchestrator(tmp_path, transport)
+        mailbox = _authenticated_mailbox(tmp_path, monkeypatch)
+        _post_two_task_wait_cycle(mailbox)
+
+        with patch(
+            "bernstein.core.communication.deadlock_receipt.emit_deadlock_receipt",
+            wraps=emit_deadlock_receipt,
+        ) as emit:
+            orch.tick()
+            orch.tick()
+
+        receipts = list((tmp_path / ".sdd" / "runtime" / "deadlock-receipts").glob("*.json"))
+        assert len(receipts) == 1
+        assert emit.call_count == 1
+
+    def test_tick_retries_deadlock_receipt_after_emission_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A transient receipt failure must not mark the mailbox as processed."""
+        monkeypatch.setenv("BERNSTEIN_CONFIDENCE_DB", str(tmp_path / "confidence.db"))
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        orch = _build_orchestrator(tmp_path, transport)
+        mailbox = _authenticated_mailbox(tmp_path, monkeypatch)
+        mailbox.post(task_id="task-b", sender="worker-a", kind="question", body="ask b")
+
+        with patch(
+            "bernstein.core.communication.deadlock_receipt.emit_deadlock_receipt",
+            side_effect=OSError("transient write failure"),
+        ) as emit:
+            orch.tick()
+            orch.tick()
+
+        assert emit.call_count == 2
+
+    def test_tick_rejects_mailbox_not_authenticated_by_the_audit_key(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Forged HMAC-chain entries never become signed deadlock evidence."""
+        monkeypatch.setenv("BERNSTEIN_CONFIDENCE_DB", str(tmp_path / "confidence.db"))
+        monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+        load_or_create_audit_key()
+        mailbox = TaskMailbox(
+            tmp_path / ".sdd" / "runtime" / "mailbox.jsonl",
+            hmac_key=b"not-the-install-audit-key",
+            identity_dir=tmp_path / ".sdd" / "identity",
+        )
+        _post_two_task_wait_cycle(mailbox)
+        orch = _build_orchestrator(tmp_path, _mock_transport({"GET /tasks": httpx.Response(200, json=[])}))
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch("bernstein.core.communication.deadlock_receipt.emit_deadlock_receipt") as emit,
+        ):
+            orch.tick()
+            orch.tick()
+
+        emit.assert_not_called()
+        failures = [
+            record.message for record in caplog.records if "mailbox chain verification failed" in record.message
+        ]
+        assert len(failures) == 1
+        assert "entry hash mismatch" in failures[0]
+
+    def test_tick_suppresses_unchanged_corrupt_receipt_but_retries_after_repair(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Corruption logs once, while replacing the receipt unblocks emission."""
+        monkeypatch.setenv("BERNSTEIN_CONFIDENCE_DB", str(tmp_path / "confidence.db"))
+        mailbox = _authenticated_mailbox(tmp_path, monkeypatch)
+        _post_two_task_wait_cycle(mailbox)
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        emit_deadlock_receipt(messages=mailbox.all_messages(), sdd_dir=tmp_path / ".sdd")
+        receipt_path = next((tmp_path / ".sdd" / "runtime" / "deadlock-receipts").glob("*.json"))
+        valid_receipt = receipt_path.read_bytes()
+        receipt_path.write_text("{", encoding="utf-8")
+
+        restarted_orchestrator = _build_orchestrator(tmp_path, transport)
+        with (
+            caplog.at_level(logging.WARNING),
+            patch(
+                "bernstein.core.communication.deadlock_receipt.emit_deadlock_receipt",
+                wraps=emit_deadlock_receipt,
+            ) as emit,
+        ):
+            restarted_orchestrator.tick()
+            restarted_orchestrator.tick()
+            assert emit.call_count == 1
+
+            receipt_path.write_bytes(valid_receipt)
+            restarted_orchestrator.tick()
+            assert emit.call_count == 2
+
+        failures = [
+            record.message for record in caplog.records if "existing deadlock receipt is invalid JSON" in record.message
+        ]
+        assert len(failures) == 1
+        repaired = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert verify_receipt(repaired).ok is True
 
     def test_tracks_agents_across_ticks(self, tmp_path: Path) -> None:
         tasks_tick1 = [_make_task(id="T-1")]
