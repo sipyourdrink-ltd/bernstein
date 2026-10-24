@@ -37,6 +37,7 @@ class SupervisorStateSnapshot:
     restart_count: int
     current_pid: int
     last_restart_at: float | None = None
+    seed_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the snapshot for JSON persistence."""
@@ -143,6 +144,7 @@ def read_supervisor_state(sdd_dir: Path) -> SupervisorStateSnapshot | None:
             restart_count=int(raw.get("restart_count", 0)),
             current_pid=int(raw.get("current_pid", 0)),
             last_restart_at=(float(raw["last_restart_at"]) if raw.get("last_restart_at") is not None else None),
+            seed_path=str(raw["seed_path"]) if raw.get("seed_path") is not None else None,
         )
     except (TypeError, ValueError):
         return None

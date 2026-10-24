@@ -2454,6 +2454,11 @@ def parse_seed(path: Path) -> SeedConfig:
     Raises:
         SeedError: If the file is missing, unreadable, or has invalid content.
     """
+    return _parse_seed(path, apply_tuning=True)
+
+
+def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
+    """Share parsing with launch validation without rebinding parent tuning."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
 
@@ -2609,7 +2614,8 @@ def parse_seed(path: Path) -> SeedConfig:
     metrics = _parse_metrics(data.get("metrics"))
     mcp_signing_mode = _parse_mcp_signing_mode(data)
     data_class = _parse_data_class(data.get("data_class"))
-    _parse_tuning(data)
+    if apply_tuning:
+        _parse_tuning(data)
 
     return SeedConfig(
         goal=goal,
