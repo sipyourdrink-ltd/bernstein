@@ -137,6 +137,37 @@ jobs:
           uv run --with playwright python scripts/capture_webui_renders.py
           uv run python scripts/bind_webui_renders.py --update
 
+      - name: Record frontend tests and build inputs
+        id: evidence
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .build-evidence
+          git rev-parse HEAD > .build-evidence/source-commit.txt
+          git ls-tree -r HEAD -- web src/bernstein/gui > .build-evidence/source-tree.txt
+          set +e
+          (cd web && npm test) > .build-evidence/npm-test.log 2>&1
+          TEST_EXIT=$?
+          (cd web && npm run type-check) > .build-evidence/type-check.log 2>&1
+          TYPE_EXIT=$?
+          set -e
+          printf 'npm-test=%s\ntype-check=%s\n' "$TEST_EXIT" "$TYPE_EXIT" > .build-evidence/exits.txt
+          find src/bernstein/gui/static -type f -print0 | sort -z | xargs -0 sha256sum > .build-evidence/bundle-sha256.txt
+          test "$TEST_EXIT" -eq 0 && test "$TYPE_EXIT" -eq 0
+
+      - name: Upload the built bundle and explicit test receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pass4-web-build-evidence
+          path: |
+            src/bernstein/gui/static/
+            .build-evidence/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Report what changed
         id: diff
         if: always()
