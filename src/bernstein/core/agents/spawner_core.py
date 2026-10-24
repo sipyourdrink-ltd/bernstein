@@ -150,7 +150,7 @@ from bernstein.templates.renderer import TemplateError, render_role_prompt
 
 if TYPE_CHECKING:
     import subprocess
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from bernstein.adapters.base import CLIAdapter
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
@@ -6431,7 +6431,7 @@ class AgentSpawner:
             # falls back to the direct adapter spawn, mirroring the
             # ContainerError fallback in _spawn_in_sandbox.
             try:
-                sbx_session = self._provision_sandbox_session(session_id)
+                sbx_session = self._provision_sandbox_session(session_id, task_ids=session.task_ids)
             except Exception as exc:
                 explicit_runtime = self._explicit_container_runtime()
                 if explicit_runtime is not None:
@@ -6643,7 +6643,7 @@ class AgentSpawner:
         """
         return AgentSpawner._explicit_container_runtime() is not None
 
-    def _provision_sandbox_session(self, session_id: str) -> SandboxSession:
+    def _provision_sandbox_session(self, session_id: str, *, task_ids: Sequence[str] = ()) -> SandboxSession:
         """Provision a dedicated sandbox session for one spawn (issue #2162).
 
         One session per agent means one container per agent: an exec
@@ -6654,6 +6654,9 @@ class AgentSpawner:
             session_id: Agent session identifier, recorded in the audit
                 event for correlation. The backend allocates its own
                 sandbox session id.
+            task_ids: Tasks this spawn runs. Recorded in the create event
+                so a session that is never destroyed can be traced to the
+                task that owned it (``bernstein sandbox leaks``, #5112).
 
         Returns:
             The freshly created :class:`SandboxSession`.
@@ -6684,6 +6687,7 @@ class AgentSpawner:
                 "image": self._sandbox_options.get("image"),
                 "backend": backend_name,
                 "agent_session_id": session_id,
+                "task_ids": list(task_ids),
             },
         )
         self._check_task_server_reachability(sbx_session)

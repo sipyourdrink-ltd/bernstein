@@ -258,6 +258,15 @@ TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
     s for s in TaskStatus if s not in {frm for (frm, _to), _guard in TASK_TRANSITIONS.items()}
 )
 
+# Resource hygiene (#5112): has the task finished, so that a lane provisioned
+# for it (a worktree, a sandbox session) is no longer needed? Every status with
+# no outbound transition, plus DONE and FAILED. Those two keep a recovery edge
+# back to OPEN, but they are finished until an operator reopens them, and a
+# reopen is recorded and read back, which makes the task live again.
+# ABANDONED and REFUSED can never run again, so they count; ORPHANED (pending
+# crash recovery), SUSPENDED (resumable) and the blocked states do not.
+LANE_FINISHED_STATUSES: frozenset[TaskStatus] = TERMINAL_TASK_STATUSES | {TaskStatus.DONE, TaskStatus.FAILED}
+
 
 # ---------------------------------------------------------------------------
 # Dependency-satisfaction classification (#3452)

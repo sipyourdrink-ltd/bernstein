@@ -2954,6 +2954,7 @@ class AuditLog:
         until: str | None = None,
         resource_id: str | None = None,
         include_archived: bool = False,
+        unreadable: list[str] | None = None,
     ) -> list[AuditEvent]:
         """Filter audit events by type, actor, resource, and/or time range.
 
@@ -2982,6 +2983,11 @@ class AuditLog:
                 a live-only read makes an intact chain look broken. Reading
                 archives costs a decompress per segment, so it belongs on the
                 paths that need completeness, not on every query.
+            unreadable: When given, one message per segment the query could
+                not read is appended to it (a corrupt ``*.jsonl.gz``, or a live
+                segment unreadable in both forms). A caller that pairs events
+                across segments needs this: a record lost with its segment can
+                make a closed thing look open, and the query alone cannot say so.
 
         Returns:
             List of matching AuditEvent instances (chronological order).
@@ -2994,7 +3000,13 @@ class AuditLog:
         if include_archived:
             discarded: list[str] = []
             sources.extend(_read_archived_segment(gz, discarded) for gz in _archived_segment_paths(self._audit_dir))
-        sources.extend(_read_live_segment(path, self._audit_dir) for path in sorted(self._audit_dir.glob(_JSONL_GLOB)))
+            if unreadable is not None:
+                unreadable.extend(discarded)
+        for path in sorted(self._audit_dir.glob(_JSONL_GLOB)):
+            live = _read_live_segment(path, self._audit_dir)
+            if live is None and unreadable is not None:
+                unreadable.append(f"{path.name}: unreadable live segment")
+            sources.append(live)
 
         for blob in sources:
             if blob is None:
