@@ -79,6 +79,301 @@ mapped to the worker that delivered it, and the guarantee it does carry is
 that no task is ever mapped to one claimant while another node holds it,
 because every path back to the pool records a release first.
 
+## Durable terminal reports
+
+A remote worker owns the terminal transition of the task it executes: the
+in-agent completion call may never fire (crash, kill, wrong URL), so when the
+worker reaps the agent process it reports the outcome itself. In 3.22.0 that
+report was held in memory and cleared before the response was read, so an
+HTTP 500, a 409, or a dead socket discarded the outcome as thoroughly as never
+posting it, and the task sat `claimed` with no live agent behind it.
+
+The outcome is now written to an outbox *before* any delivery attempt, and only
+an acknowledgement removes it:
+
+```text
+.sdd/runtime/worker_outbox.jsonl
+```
+
+The file is rewritten whole through the atomic-write helper (temp file, fsync,
+rename, best-effort directory fsync) rather than appended in place, so a report
+outlives both the failed request and the worker process and a crash mid-write
+leaves the previous file rather than a truncated one. Logically the queue is
+still append-only per outcome: a record is added once and never edited in place.
+Retry state (attempt count, next-attempt gate, last status) lives in the record
+too, so a restart resumes the schedule instead of re-hammering an endpoint
+already in trouble. Settled records are dropped by an atomic rewrite, which is
+what stops a delivered outcome replaying after a reboot.
+
+What retires a report is the response, read deliberately:
+
+| Central answers | Worker does |
+| --- | --- |
+| `200`/`201` naming this task id | Delivered - record dropped |
+| `200` whose body is not this task | Not an ack; retried (a cache or proxy page must not retire a real outcome) |
+| `409` tagged `claim_superseded` | Retired immediately - the claim it answers is dead and no retry can revive it |
+| `409`/`422`/`404` | Reconciled against `GET /tasks/{id}`, never blind-retried |
+| `404` that names this task | Held, and dropped only after it repeats (see below) |
+| `429` | Held for the response's `Retry-After` |
+| `401`/`403` | Held at the capped interval; a token fix recovers it without a restart |
+| `5xx` | Retried on a bounded, jittered backoff |
+| No response at all | Reconciled against `GET /tasks/{id}` first, then retried on the same backoff |
+| `409` on a parked task | Retried and escalated: still owed, and the wedge is logged (see below) |
+
+Retries are bounded in delay, never in count - capping the count is the same
+silent discard by another name. Reporting shares its thread with the heartbeats
+and claims, so it is bounded in two ways rather than allowed to consume the
+loop. A report that is not due yet is simply absent from the due set, so nothing
+sleeps. And because a due report can still block for the full terminal-report
+timeout, one cycle stops *starting* reports after 5s of report work and logs how
+many it deferred; a deferred report stays queued and due and goes out on the
+next cycle. The outbox's own peer lock is capped at 2s for the same reason -
+waiting out a wedged peer is a bet that it recovers before the central declares
+this node gone, and losing that race is safe anyway, since a record the lock
+denied stays in memory and still gets delivered.
+
+The residual risk is stated rather than hidden: a report already in flight still
+gets its full 30s, so a central that accepts the connection and never answers
+can cost this node loop time. That makes eviction less likely, not impossible:
+30s leaves 30s of the 60s lease for the rest of the cycle, and a cycle that also
+pays for slow claims, slow heartbeats, or several owed reports can still overrun
+it. Treat the lease as protected in the common case and unprotected under load,
+not as guaranteed. A backlog is capped by the report phase budget rather than by
+the length of the queue.
+Bounding the remaining cost means moving terminal reporting off the loop thread,
+which changes the worker's shape and is left as a maintainer's decision, not
+folded in here.
+
+A report that gets no answer is not a report the central ignored. `POST
+/tasks/{id}/complete` fetches the agent branch and runs the pre-complete
+auto-commit synchronously before it replies, and that fetch carries its own
+60s budget. The report timeout sits deliberately *below* that budget (30s,
+inside the node's 60s lease) rather than above it: a request that outlives the
+lease costs the node its identity and every claim it holds, which is a worse
+failure than one lost response. The re-ask delay reduces how often a re-post can
+overlap that fetch; it does not order the two. After a lost response the worker
+holds the report for 65s -- longer than the central's fetch can run -- and then
+asks `GET /tasks/{id}`.
+
+That ask is a probability reducer, not a guard. When it answers, a completion the
+central did apply is retired as a duplicate; when it does not -- no answer, or a
+status the worker cannot interpret -- the record simply stays owed and is posted
+again once its hold expires. **Delivery here is at-least-once with
+reconciliation, not exactly-once execution**: a second fetch and a second
+auto-commit on the same ref remain possible, and the duplicates that survive are
+the ones the central cannot see. The alternative -- re-posting immediately with
+no ask at all -- produces those duplicates on every slow fetch instead of only on
+the ones the ask cannot resolve.
+
+A duplicate is matched on the outcome alone, because the task record keeps no
+branch or SHA - delivery exists only on the completion request. So a `DONE`
+that arrived carrying a delivery is retired on the same evidence as one that
+didn't, and those two are not the same event: an agent can self-complete over
+curl without naming a branch, leaving this node's pushed branch refused and
+unmerged while the task is legitimately `done`. Retiring it stays correct (the
+central owns the status, and re-posting cannot un-complete the task), but the
+worker logs the branch and SHA at WARNING first, because retiring the record
+removes the only copy of an artifact the central never saw. Recovering that
+work goes through the janitor's posted-artefact merge preview (#6612), which
+starts from the branch name in that line.
+
+A `404` saying "no such task" is the one rejection that would delete an
+outcome, so it is the one that gets the most suspicion. It is not proof of
+deletion: a token scoped to the wrong tenant is answered with the same
+`Task '<id>' not found` body as a task that really was deleted, and an
+unknown tenant or a misrouted ingress answer 404 as well. The worker therefore
+holds the report and believes the verdict only after it has repeated across
+three reads spaced fifteen minutes apart, with the count kept in the outbox
+record so neither the hold nor a process restart resets it. Any other answer
+about the task clears the count, and a `404` that does not even name the task
+-an ingress answering for a path it does not route - never increments it at
+all. The residual risk is a token that stays pointed at the wrong tenant for
+over half an hour: its reports are then dropped, which is why each hold is
+logged.
+
+A `409` from a *parked* task is the opposite case: nothing is wrong with the
+report, and the task simply cannot accept one - `planned` awaits plan approval,
+`blocked` and the two `blocked_by_*` states await another task,
+`waiting_for_subtasks` awaits its children, `suspended` awaits an operator's
+resume. Retrying is correct and the outcome stays owed; settling it would
+discard a true outcome because the central was temporarily unwilling to take it,
+which is the defect the outbox exists to fix. What was missing is that the loop
+was invisible - one `409` and one `GET` every few minutes, indefinitely. The
+worker now raises an ERROR once the refusals pass twelve attempts (inside about
+half an hour at the 300s backoff cap, then roughly hourly) naming the task, the
+outcome still owed, and the state blocking it. Nothing recovers automatically
+from here: the task has to be resumed, unblocked, or ended on the central.
+
+Reconciling a `409` is not optional, because the status code is genuinely
+ambiguous: it is equally true when this worker's own earlier attempt landed
+(a duplicate to retire) and when the janitor or an operator ended the task
+differently (a conflict that must not be overwritten). The task record tells
+them apart. On a conflict the central is authoritative - the worker logs it and
+posts nothing further, so a node that believes a task succeeded can never paper
+over a server-side failure.
+
+That last guarantee is a property of this one worker's decision, not of the
+API: the reconcile path stops *this* report, but a worker that gave up and
+posted `/fail` directly used to be able to rewrite the outcome anyway, because
+`DONE -> FAILED` is a legal transition. The fence below is what makes it a
+server-side guarantee rather than a convention.
+
+Two outcomes deliberately are not treated as success. A clean agent exit whose
+push to the shared remote failed is reported as a failure: work that never left
+the node is not delivered. And a task the worker holds no process handle for is
+recorded as `unknown` and decided from the server's task state, because an exit
+status nobody observed proves nothing. That happens when the worker restarted
+into a workdir whose agent it never spawned, or when the backend runs the agent
+in a container or sandbox that gives it no local child. It deliberately does
+*not* happen for an agent this worker spawned: the worker keeps that handle and
+reads the exit status from it, because `subprocess` may have reaped the child
+first and left the status on the handle and nowhere else. An unknown outcome
+never reaches `/complete`, and it never releases the task either: releasing
+invites a second execution of work that may already be done.
+
+Delivery coordinates itself across a shared workdir. Each record carries the
+node that produced it and only that node drains it, every mutation is a locked
+load-modify-save, and the reported `(branch, sha)` pair is frozen at reap time
+and replayed verbatim, so a retry can never move HEAD out from under the merge
+preview that verifies it.
+
+For an operator, the file is the whole queue - `cat` it to see what a node
+still owes and why each attempt failed:
+
+```bash
+cat .sdd/runtime/worker_outbox.jsonl
+```
+
+A record that will not drain is a central that will not acknowledge it, not a
+worker that forgot.
+
+### Claim fencing on terminal reports
+
+Durable replay is what makes a stale report dangerous. Three server behaviours
+combine: a departing node's in-flight claims are reopened (graceful unregister
+and the heartbeat reaper), `/complete` and `/fail` auto-claim a task that has
+reverted to `OPEN`, and `DONE -> FAILED` is legal. Without a fence, a report
+written hours earlier can transition a task a *different* node now owns -
+including failing work that node already delivered.
+
+Each claim grant mints an opaque `claim_token` and returns it on the task
+payload. It is rotated on re-claim and cleared when a path hands the task back to
+the pool - release, the graceful-unregister and heartbeat-reaper paths, janitor
+reopen, batch retry, and the failed-dependency unblock cascade - and it is
+deliberately **preserved across terminal transitions**: that preservation is what
+lets the node still holding the claim post a late correction. The clearing is
+defence in depth, not the defence. A token left behind on an `OPEN` task cannot be
+reused, because the check refuses any supplied token while the task is `OPEN`,
+whatever the column holds - left to itself the stale token would match the value
+still sitting there and the replay would be accepted. That was the hole batch
+retry and the unblock cascade walked into, since neither goes through `release`;
+both are reproduced in `TestRequeueRetiresAClaim`.
+
+`/complete`, `/fail` and the typed refusal accept it, and the server
+compares it **inside the store lock at transition time**. A `GET` before the
+`POST` is not sufficient and is not what is implemented: check-then-act is not
+atomic, and the claim can be released and re-granted between the two calls.
+
+| Caller | Result |
+| --- | --- |
+| Token matches the live claim | Accepted, including `DONE -> FAILED` on its own completion |
+| Token names a superseded, released or reopened claim | `409` with `detail.error = "claim_superseded"`; the task is untouched |
+| Token supplied but wrong | Refused, not ignored - a truncated token must not downgrade to the unfenced path |
+| No token | Accepted unchanged (see residual risk below) |
+
+A fenced caller is also excluded from the auto-claim-on-`OPEN` convenience: an
+`OPEN` task has no live claim, so a report naming a token cannot come from the
+current holder, and adopting it would be the exact hole the fence closes. The
+fence is enforced in the shared transition path, so the JSONL store the server
+runs by default enforces it, and the Postgres backend carries an equivalent guard
+inside its own `UPDATE` - a check that existed in only one backend would be
+bypassable by choosing the other. That Postgres arm is not reachable from this
+repo's server wiring (`create_store` has no caller under `src/`), so it is not
+exercised by the suite here; read it as code review, not as evidence.
+
+The worker persists the token in its outbox record alongside the outcome.
+Durability is the reason a stale report is possible at all, so the fence has to
+be as durable as the report it guards - a token that lived only in memory would
+come back `None` after a restart and silently disarm the check. A
+`claim_superseded` answer retires the record rather than reconciling it: the
+task is legitimately live under a newer claim, which reads as non-terminal, so
+reconciling would retry a report that can never succeed.
+
+**Residual risk, accepted deliberately.** A caller that sends no token is a
+pre-fence client - an older worker, an in-agent completion `curl`, an
+integration - and is still accepted, because refusing them would break every
+existing deployment. Such a report is unfenced and can still land on a newer
+claim. Upgrading the fleet narrows that hole without closing it: a current worker
+echoes the token on the reports its *wrapper* posts, while a completion an agent
+`curl`s from inside its own session still sends none, and no worker upgrade
+changes that. The fence therefore covers wrapper-driven terminal reports, not
+every writer to the endpoint. The unfenced
+path is asserted as a tested property in `tests/unit/test_task_claim_fence.py`
+(`TestUnfencedClientsStayAccepted`) rather than left as an accident, so removing
+it later is a visible decision with a test that fails.
+
+### A restarted coordinator retires every claim it was holding
+
+Startup recovery (`TaskStore.recover_stale_claimed_tasks`) walks the tasks that
+were `CLAIMED` or `IN_PROGRESS` when the process died, moves them back to `OPEN`,
+and clears `claimed_by_session` **and `claim_token`** with the release path
+`restart_recovery`. Clearing the token is deliberate: with no live claim there is
+no report authorized to land on the task, so leaving the token in place would let
+a dead agent's terminal report still match after the restart.
+
+The consequence is that a **fenced report from a pre-restart execution is refused
+even if nobody reclaimed the task** -- the fence it was measured against no longer
+exists. The worker reads the `409 claim_superseded` and retires the record rather
+than retrying it, so the operator sees one log line and a task back in the pool,
+not a stuck outbox. Note that this is recovery, not the store's serialization:
+`claim_token` *is* written to the JSONL record and restored on replay, so a task
+recovery does not touch (one already at `DONE`) keeps the token its reporter
+holds.
+
+Two things follow for an operator:
+
+* A report the node *believed* was delivered before the restart is not owed again
+  -- it was already applied, or it is now refused. Restart is therefore not a
+  replay hazard for fenced reports; it is a **silent retirement** of them.
+* An **unfenced** report from the same window is still accepted, because an
+  accepted `200` and a lost record are indistinguishable from the node's side.
+  A coordinator restart is the concrete window in which the residual risk above
+  actually bites; it is not hypothetical.
+
+Reconciling that window needs the central to remember deliveries it has already
+applied, which it does not do today.
+
+### A late failure takes its dependents with it
+
+`DONE -> FAILED` stays legal for the claim that produced it, so a correction that
+lands hours after a task "succeeded" is not inert: the failed-dependency cascade
+runs from it, and a dependent that is already `CLAIMED` and running moves to
+`BLOCKED_BY_FAILED_DEP`. The dependent's own worker is not stopped mid-flight -
+it finishes and its report is then fenced against a task in a state it never
+claimed from. Treat a late `FAILED` on a task with downstream work as an
+intervention, not a status update: check what the cascade stranded before
+re-running the plan.
+
+### A departing worker stays registered while it still owes a report
+
+`DELETE /cluster/nodes/{id}` is not a goodbye, it is a write: it reopens every
+task that node claimed. On a stop signal the worker therefore flushes its outbox
+and unregisters **only if the flush left nothing owed**. Departing with a report
+still queued is this node handing another node work it has already finished: the
+reopen puts the task back in the pool, and when this node's report finally lands
+the fence refuses it as `claim_superseded`, so the outcome is discarded and the
+work is redone. The fence keeps that from corrupting the newer claim; skipping
+the departure is what keeps it from happening at all.
+
+Staying registered cannot strand anything. A node that really is gone is evicted
+by the heartbeat reaper, whose path reopens the same tasks, so the only thing the
+worker buys is a race against the reaper's clock - and it usually wins. A restart
+that returns inside that window drains the queue against the claim it never lost,
+with no reopen at all, which is the ordinary case and precisely the case the old
+unconditional unregister guaranteed to break. A node that leaves this way logs a
+WARNING naming the owed tasks, so a registration that outlives its worker is
+explained by the log rather than mysterious.
+
 ## Worker mailbox
 
 `POST /tasks/{task_id}/messages` hands a structured payload to a worker's

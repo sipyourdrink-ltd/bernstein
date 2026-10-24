@@ -296,7 +296,7 @@ Every primitive is one HTTP POST. The server-side handlers all live in
 | **Uncordon a node**             | `POST /cluster/nodes/{id}/uncordon`             | Restores `ONLINE` status from `CORDONED` or `DRAINING` (`cluster.py:165-174`). |
 | **Drain a node**                | `POST /cluster/nodes/{id}/drain`                | Sets status to `DRAINING`. Equivalent to cordon + signal - agents finish their current tasks but no new work is assigned (`cluster.py:176-184`). |
 | **Trigger task stealing**       | `POST /cluster/steal`                           | Server runs `TaskStealPolicy.find_steal_pairs()` and resets eligible tasks back to `open` so quieter nodes can claim them (`task_cluster.py:197-246`, `cluster.py:340-393`). |
-| **Unregister (graceful exit)**  | `DELETE /cluster/nodes/{id}`                    | Removes the node from the registry. Workers call this on `SIGINT` / `SIGTERM` (`worker_cmd.py:310-322`). |
+| **Unregister (graceful exit)**  | `DELETE /cluster/nodes/{id}`                    | Removes the node from the registry **and reopens its in-flight claims**. Workers call this on `SIGINT` / `SIGTERM`, but only once their terminal-report outbox is empty -- leaving while a report is still owed would hand the finished work to another node (`worker-coordination.md`: *A departing worker stays registered*). |
 
 Task stealing thresholds (`cluster.py:351-358`):
 

@@ -312,6 +312,11 @@ class TaskResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: float
     claimed_at: float | None = None
+    # Identity of the current execution claim, issued with the grant. A worker
+    # echoes it back on /complete and /fail so a report that outlived its own
+    # claim can be refused instead of landing on whoever holds the task now.
+    # None once the claim is surrendered (release, reopen, node departure).
+    claim_token: str | None = None
     completed_at: float | None = None
     closed_at: float | None = None
     deadline: float | None = None
@@ -361,12 +366,20 @@ class TaskCompleteRequest(BaseModel):
     to the shared remote sets ``agent_branch`` and ``agent_sha`` so the
     central can fetch and merge the work instead of looking for a local
     worktree that does not exist.
+
+    Claim fencing: a worker that received a ``claim_token`` with its grant
+    echoes it back here, and the central refuses the report if that claim has
+    since been superseded. Omitting it is the pre-fence call and is still
+    accepted, so older workers and in-agent completion curls keep working; the
+    report is then unfenced and can land on a newer claim (see
+    ``docs/orchestration/worker-coordination.md``).
     """
 
     result_summary: str = ""
     payload: dict[str, Any] | None = None
     agent_branch: str | None = None
     agent_sha: str | None = None
+    claim_token: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -383,9 +396,17 @@ class TaskCompleteRequest(BaseModel):
 
 
 class TaskFailRequest(BaseModel):
-    """Body for POST /tasks/{task_id}/fail."""
+    """Body for POST /tasks/{task_id}/fail.
+
+    ``claim_token`` fences the report to the execution claim that produced it;
+    see :class:`TaskCompleteRequest`. It is what lets a *legitimate* late failure
+    from the still-live claim correct a task that already reads DONE, while a
+    report whose claim was superseded is refused rather than overwriting the
+    newer outcome.
+    """
 
     reason: str = ""
+    claim_token: str | None = None
 
     @field_validator("reason")
     @classmethod
