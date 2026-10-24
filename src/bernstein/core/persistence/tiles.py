@@ -135,19 +135,6 @@ def list_hash_tiles(audit_dir: Path) -> list[str]:
     return sorted(p.name for p in tiles_dir.iterdir() if p.is_file() and p.name.endswith(".tile"))
 
 
-def has_hash_tile(audit_dir: Path, segment_name: str) -> bool:
-    """Return whether a hash tile exists for *segment_name*.
-
-    Args:
-        audit_dir: The audit directory.
-        segment_name: Live segment file name.
-
-    Returns:
-        True when ``<segment>.tile`` exists.
-    """
-    return tile_hash_path(audit_dir, segment_name).is_file()
-
-
 def read_hash_tile(audit_dir: Path, segment_name: str) -> dict[str, Any] | None:
     """Read the hash tile JSON for *segment_name*, or ``None`` if absent.
 
@@ -326,7 +313,6 @@ def generate_tiles(audit_dir: Path, seal: dict[str, Any]) -> list[Path]:
 __all__ = [
     "TILES_SUBDIR",
     "generate_tiles",
-    "has_hash_tile",
     "has_tile",
     "list_hash_tiles",
     "list_tile_segments",

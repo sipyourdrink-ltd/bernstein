@@ -19,6 +19,10 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.audit_cmd import audit_group
 from bernstein.core.security.audit import AUDIT_KEY_ENV, AuditLog, load_or_create_audit_key
+from tests.unit.test_audit_tile_verification import (  # pyright: ignore[reportPrivateUsage, reportUnknownVariableType]
+    _append,
+    _seal,
+)
 
 
 @pytest.fixture
@@ -194,3 +198,213 @@ def test_verify_needs_no_write_access_and_no_writer_lock(project: Path) -> None:
 
     assert attempts == []
     assert damaged.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# The published hash tiles are part of what `audit verify` attests (#3160).
+# ---------------------------------------------------------------------------
+
+
+def _sealed_tile(project: Path) -> Path:
+    assert _run("seal").exit_code == 0
+    _close_the_run(project)
+    tiles = sorted((project / ".sdd" / "audit" / "tiles").glob("*.tile"))
+    assert len(tiles) == 1
+    return tiles[0]
+
+
+def _flip_hex_digit(data: bytes, field: bytes) -> bytes:
+    at = data.index(b'"' + field + b'": "') + len(field) + 5
+    flipped = bytearray(data)
+    flipped[at] = ord("0") if flipped[at] != ord("0") else ord("1")
+    return bytes(flipped)
+
+
+_TILE_DAMAGE: dict[str, Callable[[bytes], bytes]] = {
+    "flipped content_sha256": lambda data: _flip_hex_digit(data, b"content_sha256"),
+    "flipped leaf_hash": lambda data: _flip_hex_digit(data, b"leaf_hash"),
+    "truncated": lambda data: data[: len(data) // 2],
+    "renamed segment field": lambda data: data.replace(b'"segment": "', b'"segment": "x'),
+    "empty": lambda data: b"",
+}
+
+
+def test_verify_passes_and_reports_an_intact_tile(project: Path) -> None:
+    _sealed_tile(project)
+
+    result = _run("verify")
+
+    assert result.exit_code == 0, result.output
+    assert "Hash Tile Verification Passed" in result.output
+
+
+@pytest.mark.parametrize("damage", sorted(_TILE_DAMAGE))
+def test_a_damaged_tile_fails_verify_naming_the_tile(project: Path, damage: str) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(_TILE_DAMAGE[damage](tile.read_bytes()))
+
+    result = _run("verify")
+
+    assert result.exit_code == 1, result.output
+    assert f"tiles/{tile.name}:" in result.output
+    failing = result.output.split("Failing pillar(s):", 1)[1]
+    assert "Hash Tiles" in failing
+    assert "HMAC Chain" not in failing
+
+
+@pytest.mark.parametrize("narrow", ["--hmac-only", "--merkle-only"])
+def test_a_damaged_tile_fails_the_narrow_forms_too(project: Path, narrow: str) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(_TILE_DAMAGE["flipped content_sha256"](tile.read_bytes()))
+
+    result = _run("verify", narrow)
+
+    assert result.exit_code == 1, result.output
+    assert f"tiles/{tile.name}:" in result.output
+
+
+def test_a_tile_beside_a_damaged_segment_is_not_blamed(project: Path) -> None:
+    """The segment is the finding; a tile that disagrees with damaged bytes proves nothing."""
+    tile = _sealed_tile(project)
+    segment = project / ".sdd" / "audit" / tile.name.removesuffix(".tile")
+    data = bytearray(segment.read_bytes())
+    data[40] ^= 0x01
+    segment.write_bytes(bytes(data))
+
+    result = _run("verify")
+
+    assert result.exit_code == 1
+    failing = result.output.split("Failing pillar(s):", 1)[1]
+    assert "HMAC Chain" in failing
+    assert "Hash Tiles" not in failing
+    assert f"tiles/{tile.name}:" not in result.output
+    # Skipped on purpose, and said so: never counted as checked.
+    assert "Hash Tiles Not Judged" in result.output
+    assert "Hash Tile Verification Passed" not in result.output
+    assert "checked against authenticated segment bytes" not in result.output
+    assert "1 tile(s) beside a segment that failed verification were not judged" in result.output
+
+
+def test_verify_counts_only_the_tiles_it_judged(project: Path) -> None:
+    _sealed_tile(project)
+
+    result = _run("verify")
+
+    assert result.exit_code == 0, result.output
+    assert "1 tile(s) checked against authenticated segment bytes." in result.output
+    assert "not judged" not in result.output
+
+
+def test_a_tile_naming_no_segment_is_reported_as_not_judged(project: Path) -> None:
+    """A tile left behind for a segment that is gone is not counted as checked."""
+    tile = _sealed_tile(project)
+    tile.rename(tile.with_name("2001-01-01.jsonl.tile"))
+
+    result = _run("verify")
+
+    assert "Hash Tiles Not Judged" in result.output
+    assert "1 tile(s) name no segment in the audit log and were not judged." in result.output
+    assert "checked against authenticated segment bytes" not in result.output
+
+
+def test_a_layout_without_tiles_still_verifies(project: Path) -> None:
+    """The orchestrator's shutdown seal publishes no tiles; that is not damage."""
+    tile = _sealed_tile(project)
+    tile.unlink()
+
+    result = _run("verify")
+
+    assert result.exit_code == 0, result.output
+
+
+def test_a_tile_written_with_windows_line_endings_still_verifies(project: Path) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(tile.read_bytes().replace(b"\n", b"\r\n"))
+
+    assert _run("verify").exit_code == 0
+
+
+def test_a_damaged_tile_is_reported_with_writes_and_the_lock_forbidden(project: Path) -> None:
+    tile = _sealed_tile(project)
+    tile.write_bytes(_TILE_DAMAGE["flipped leaf_hash"](tile.read_bytes()))
+
+    with pytest.MonkeyPatch.context() as patch:
+        attempts = _forbid_writes_and_the_writer_lock(patch, project / ".sdd")
+        result = _run("verify")
+
+    assert attempts == []
+    assert result.exit_code == 1
+    assert f"tiles/{tile.name}:" in result.output
+
+
+def test_concurrent_seal_before_verifier_snapshot_reports_no_negative_tile_count(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case A: a concurrent append and seal lands before the verifier's snapshot.
+
+    The initial CLI accounting must not disagree with the verifier's single snapshot,
+    producing negative tile counts or reporting tiles outside the snapshot.
+    """
+    _sealed_tile(project)
+    audit_dir = project / ".sdd" / "audit"
+    key = load_or_create_audit_key()
+
+    real_verify = AuditLog.verify_incremental
+    sealed_mid_run: list[bool] = []
+
+    def _seal_then_verify(self: AuditLog, *args: Any, **kwargs: Any) -> Any:
+        if not sealed_mid_run:
+            sealed_mid_run.append(True)
+            _append(audit_dir, key, day="2026-10-25", count=2)
+            _seal(audit_dir, key)
+        return real_verify(self, *args, **kwargs)
+
+    monkeypatch.setattr(AuditLog, "verify_incremental", _seal_then_verify)
+    result = _run("verify")
+
+    assert sealed_mid_run
+    assert result.exit_code == 0, result.output
+    assert "-1" not in result.output
+    assert "2 tile(s) checked against authenticated segment bytes." in result.output
+    assert "name no segment in the audit log" not in result.output
+    assert "Hash Tile Verification Passed" in result.output
+    assert "Audit Verification: PASSED" in result.output
+
+
+def test_concurrent_seal_with_existing_orphan_retains_orphan_report(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case B: an existing orphan tile remains reported when a concurrent seal lands.
+
+    Clamping counts at zero hides negative values but omits the orphan. Deriving
+    all counts from the verifier's snapshot preserves both the orphan report and
+    correct checked counts.
+    """
+    tile = _sealed_tile(project)
+    audit_dir = project / ".sdd" / "audit"
+    key = load_or_create_audit_key()
+
+    # Create a stable orphan tile that names no segment in the log.
+    orphan = audit_dir / "tiles" / "2001-01-01.jsonl.tile"
+    orphan.write_bytes(tile.read_bytes())
+
+    real_verify = AuditLog.verify_incremental
+    sealed_mid_run: list[bool] = []
+
+    def _seal_then_verify(self: AuditLog, *args: Any, **kwargs: Any) -> Any:
+        if not sealed_mid_run:
+            sealed_mid_run.append(True)
+            _append(audit_dir, key, day="2026-10-25", count=2)
+            _seal(audit_dir, key)
+        return real_verify(self, *args, **kwargs)
+
+    monkeypatch.setattr(AuditLog, "verify_incremental", _seal_then_verify)
+    result = _run("verify")
+
+    assert sealed_mid_run
+    assert result.exit_code == 0, result.output
+    assert "-1" not in result.output
+    assert "2 tile(s) checked against authenticated segment bytes." in result.output
+    assert "1 tile(s) name no segment in the audit log and were not judged." in result.output
+    assert "Hash Tile Verification Passed" in result.output
+    assert "Audit Verification: PASSED" in result.output
