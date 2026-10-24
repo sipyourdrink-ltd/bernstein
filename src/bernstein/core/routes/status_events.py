@@ -9,7 +9,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
@@ -91,6 +91,55 @@ def sse_events(request: Request) -> StreamingResponse:
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/events/tasks", response_class=StreamingResponse, responses=SSE_RESPONSES)
+async def task_events(
+    request: Request,
+    role: str = Query(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$"),
+) -> StreamingResponse:
+    """Stream future task.created notifications for an authorized role and tenant.
+
+    Initial heartbeat acknowledges registration. No replay; disconnect ends the subscription.
+    """
+    from bernstein.core.routes.task_crud import _resolve_request_tenant_scope  # pyright: ignore[reportPrivateUsage]
+
+    tenant = _resolve_request_tenant_scope(request)
+    identity = getattr(request.state, "agent_identity", None)
+    if identity is not None and identity.role != role:
+        raise HTTPException(status_code=403, detail="Agent may subscribe only to its own role")
+    bus = _get_sse_bus(request)
+    try:
+        queue = bus.subscribe(
+            client_ip=request.client.host if request.client else "unknown",
+            task_role=role,
+            tenant_id=tenant,
+            task_ids=frozenset(getattr(identity, "task_ids", None) or ()),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=429, detail="SSE reconnect rate limit exceeded") from exc
+
+    async def generate() -> AsyncGenerator[str, None]:
+        try:
+            yield 'event: heartbeat\ndata: {"connected": true}\n\n'
+            while not await request.is_disconnected():
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=15)
+                except TimeoutError:
+                    message = "event: heartbeat\ndata: {}\n\n"
+                bus.mark_read(queue)
+                yield message
+        finally:
+            bus.unsubscribe(queue)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )

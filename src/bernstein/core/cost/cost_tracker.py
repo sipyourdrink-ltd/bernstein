@@ -614,6 +614,7 @@ class CostTracker:
     _warned: bool = field(default=False, init=False, repr=False)
     _critical_warned: bool = field(default=False, init=False, repr=False)
     _spent_by_agent: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
+    _spent_by_task: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
     _spent_by_model: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
     # Per-agent analytics accumulator: total cost, invocation count, and
     # per-model breakdown. Populated incrementally so that analytics stay
@@ -820,6 +821,7 @@ class CostTracker:
             self._total_usages_recorded += 1
             self._spent_usd += cost_usd
             self._spent_by_agent[agent_id] = self._spent_by_agent.get(agent_id, 0.0) + cost_usd
+            self._spent_by_task[task_id] = self._spent_by_task.get(task_id, 0.0) + cost_usd
             self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
             self._spent_by_envelope[envelope] = self._spent_by_envelope.get(envelope, 0.0) + cost_usd
             self._calls_by_envelope[envelope] = self._calls_by_envelope.get(envelope, 0) + 1
@@ -1233,6 +1235,13 @@ class CostTracker:
         """Return cumulative spend for one agent session."""
         return self._spent_by_agent.get(agent_id, 0.0)
 
+    def spent_for_task(self, task_id: str) -> float:
+        """Return cumulative spend recorded against one task id.
+
+        Exact across ring-buffer eviction, like :meth:`spent_for_agent`.
+        """
+        return self._spent_by_task.get(task_id, 0.0)
+
     def spent_by_model(self) -> dict[str, float]:
         """Return cumulative spend by model."""
         return self._spent_by_model.copy()
@@ -1384,6 +1393,7 @@ class CostTracker:
                 tracker._spent_by_agent[usage.agent_id] = (
                     tracker._spent_by_agent.get(usage.agent_id, 0.0) + usage.cost_usd
                 )
+                tracker._spent_by_task[usage.task_id] = tracker._spent_by_task.get(usage.task_id, 0.0) + usage.cost_usd
                 tracker._spent_by_model[usage.model] = tracker._spent_by_model.get(usage.model, 0.0) + usage.cost_usd
                 # rebuild running accumulators so breakdowns survive
                 # across reload (otherwise model_breakdowns() returns empty).
