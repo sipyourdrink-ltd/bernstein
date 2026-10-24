@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import yaml
 
 from bernstein.core.models import CompletionSignal, Complexity, Scope, Task, TaskStatus, TaskType
+from bernstein.core.planning.signal_contract import parse_completion_signal
 from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecError, parse_artifact_spec
 
 if TYPE_CHECKING:
@@ -86,71 +87,16 @@ class PlanConfig:
 _MAX_COMPLETION_SIGNALS = 100
 
 
-def _file_contains_value(raw: dict[object, object], context: str) -> str:
-    """The janitor's ``"<path> :: <needle>"`` spec for a ``file_contains`` signal.
-
-    Plans write this signal as ``{type, path, contains}`` (the documented form)
-    or as a pre-composed ``value``. The generic ``value or path or ...`` pick
-    kept ``path`` and dropped ``contains``, and the janitor's
-    ``_check_file_contains`` returns False for any spec without ``" :: "``
-    without reading the file, so a correctly written step could never pass
-    once its signals reached the server (#5960).
-
-    Fail-closed, like ``artifact_spec``: a signal the janitor could never
-    satisfy aborts the load naming the step, rather than failing the task on
-    correct work later.
-    """
-    value = raw.get("value")
-    if value:
-        spec = str(value)
-        if " :: " not in spec:
-            raise PlanLoadError(
-                f"{context}: file_contains value {spec!r} must be '<path> :: <text>' (or give 'path' and 'contains')"
-            )
-        return spec
-    path, contains = raw.get("path"), raw.get("contains")
-    if not path or not contains:
-        raise PlanLoadError(f"{context}: file_contains needs both 'path' and 'contains'")
-    return f"{path} :: {contains}"
-
-
-def _parse_completion_signals(raw_signals: list[object], context: str = "") -> list[CompletionSignal]:
-    """Parse a list of completion signal dicts from YAML into CompletionSignal objects.
-
-    Entries with an unknown type or an empty value are logged and skipped. A
-    ``file_contains`` signal that cannot be turned into the janitor's
-    ``"<path> :: <needle>"`` form raises instead; see ``_file_contains_value``.
-
-    Args:
-        raw_signals: List of raw YAML signal dicts.
-        context: Error-message prefix naming the step.
-
-    Returns:
-        List of valid CompletionSignal instances.
-
-    Raises:
-        PlanLoadError: A ``file_contains`` signal is missing its path or text.
-    """
-    valid_types: set[str] = {"path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"}
+def _parse_completion_signals(raw_signals: object, context: str = "") -> list[CompletionSignal]:
+    """Preserve every declared native gate or reject the plan before dispatch."""
+    if not isinstance(raw_signals, list):
+        raise PlanLoadError(f"{context}: completion_signals must be an array")
     signals: list[CompletionSignal] = []
     for i, raw in enumerate(raw_signals):
-        if not isinstance(raw, dict):
-            logger.warning("completion_signals[%d] is not a mapping - skipping", i)
-            continue
-        sig_type = raw.get("type", "")
-        if sig_type not in valid_types:
-            logger.warning("completion_signals[%d] has invalid type %r - skipping", i, sig_type)
-            continue
-        if sig_type == "file_contains":
-            signal_context = f"{context}: completion_signals[{i}]" if context else f"completion_signals[{i}]"
-            signals.append(CompletionSignal(type="file_contains", value=_file_contains_value(raw, signal_context)))
-            continue
-        # Support 'value' or 'path'/'command' as the signal value
-        sig_value = raw.get("value") or raw.get("path") or raw.get("command") or ""
-        if not sig_value:
-            logger.warning("completion_signals[%d] has empty value - skipping", i)
-            continue
-        signals.append(CompletionSignal(type=sig_type, value=str(sig_value)))  # type: ignore[arg-type]
+        try:
+            signals.append(parse_completion_signal(raw))
+        except ValueError as exc:
+            raise PlanLoadError(f"{context}: completion_signals[{i}]: {exc}") from exc
     return signals
 
 
@@ -441,7 +387,7 @@ def _parse_step(
         else:
             logger.warning("Stage %r depends on unknown stage %r", stage_name, dep_stage)
 
-    raw_signals: list[object] = list(step.get("completion_signals") or [])
+    raw_signals = step.get("completion_signals", [])
     signals = _parse_completion_signals(raw_signals, _step_context(stage_name, step_index))
     # Reject scalar / non-list shapes and non-string items so direct loads
     # match the CLI pre-check (validate_plan) boundary for list[string] fields.

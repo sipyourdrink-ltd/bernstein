@@ -11,13 +11,14 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.tasks.models import CompletionSignalType
 from bernstein.core.tasks.task_store import ProgressEntry
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
 
-_SIGNAL_TYPE = Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
+_SIGNAL_TYPE = CompletionSignalType
 
 
 class CompletionSignalSchema(BaseModel):
