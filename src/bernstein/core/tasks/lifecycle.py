@@ -173,6 +173,10 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.IN_PROGRESS, TaskStatus.OPEN): _always,  # force-claim / requeue
     (TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.ORPHANED): _always,
+    # Cooperative cancellation stays in flight until the worker has stopped.
+    (TaskStatus.CLAIMED, TaskStatus.STOP_REQ): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.STOP_REQ): _always,
+    (TaskStatus.STOP_REQ, TaskStatus.CANCELLED): _always,
     # Recovery from orphaned
     (TaskStatus.ORPHANED, TaskStatus.DONE): _always,
     (TaskStatus.ORPHANED, TaskStatus.FAILED): _always,
@@ -301,6 +305,7 @@ IN_FLIGHT_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
         TaskStatus.OPEN,
         TaskStatus.CLAIMED,
         TaskStatus.IN_PROGRESS,
+        TaskStatus.STOP_REQ,
         TaskStatus.BLOCKED,
         TaskStatus.WAITING_FOR_SUBTASKS,
         TaskStatus.SUSPENDED,
