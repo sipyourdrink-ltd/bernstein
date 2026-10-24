@@ -51,7 +51,7 @@ jobs:
           diagnostic_path="${RUNNER_TEMP}/bernstein-6748-python312-diagnostic.py"
           cat > "$diagnostic_path" <<'PY'
           from __future__ import annotations
-          
+
           import hashlib
           import json
           import os
@@ -61,14 +61,14 @@ jobs:
           import subprocess
           import sys
           import uuid
-          
+
           SOURCE_SHA = "f1e3552c19c66e42e2bf4b7481a9b91bffb1b23d"
           TARGET = "tests/unit/test_orchestrator.py"
           TARGET_BLOB = "5ce7b6843dda5252e40cf749a21e894d2e3b3e09"
           ROOT = Path.cwd().resolve()
           ORIGINAL_SAFE_ENV = {'TEST_SHARD_COUNT': '8', 'BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS': '600', 'EVENT_NAME': 'workflow_dispatch', 'PLANNED': '', 'PYTHON_VERSION': '3.12', 'SHARD': '3', 'SHARD_COUNT': '8'}
-          
-          
+
+
           def memory_snapshot() -> dict[str, object]:
               result: dict[str, object] = {"pid": os.getpid()}
               for relative in ("memory.events", "memory.current", "memory.max"):
@@ -85,8 +85,8 @@ jobs:
               except OSError:
                   result["own_process_memory"] = "unavailable"
               return result
-          
-          
+
+
           def emit_target_output(label: str, code: int, duration: float, output: str, stderr: str = "") -> str:
               if re.search(r"(?:^|\s)tests/unit/test_orchestrator\.py(?:\s|$)", label):
                   # The untouched native returncode is observed BEFORE runner classification.
@@ -106,8 +106,8 @@ jobs:
                       finally:
                           print(f"::{stop_token}::", flush=True)
               return ORIGINAL_REPORT(label, code, duration, output, stderr)
-          
-          
+
+
           if __name__ == "__main__":
               assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == SOURCE_SHA
               assert subprocess.check_output(["git", "status", "--porcelain"], text=True) == ""
@@ -121,7 +121,7 @@ jobs:
               assert {key: os.environ.get(key) for key in ORIGINAL_SAFE_ENV} == ORIGINAL_SAFE_ENV
               sys.path.insert(0, str(ROOT))
               from scripts import run_tests as runner
-          
+
               assert Path(runner.__file__).resolve() == ROOT / "scripts/run_tests.py"
               files = runner.discover_test_files(Path(runner.DEFAULT_TEST_DIR))
               durations = runner.load_shard_durations()
