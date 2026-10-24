@@ -48,6 +48,7 @@ from bernstein.cli.dashboard_polling import (
     _build_runtime_subtitle,
     _fetch_all,
     _format_activity_line,
+    _format_cluster_view,
     _format_gate_report_lines,
     _format_relative_age,
     _get,
@@ -59,6 +60,7 @@ from bernstein.cli.dashboard_polling import (
     _summarize_agent_errors,
     _tail_log,
     _task_retry_count,
+    is_loopback,
     server_url,
 )
 from bernstein.cli.icons import get_icons
@@ -284,6 +286,12 @@ class BernsteinApp(App[None]):
         #: True when the last poll could not reach the task server, so the
         #: header can say so instead of showing an empty run (issue #3444).
         self._server_unreachable = False
+        #: Keep the poll slot through result application, including the gap
+        #: between worker completion and its terminal message being handled.
+        self._poll_worker: Worker[dict[str, Any]] | None = None
+        #: Worker nodes and their claimed tasks from the last poll, or None
+        #: when the server is not a cluster central (see _load_cluster_view).
+        self._cluster_view: dict[str, Any] | None = None
         self._activity_visible = True
         self._expert_mode = False
         self._task_titles: dict[str, str] = {}
@@ -365,8 +373,20 @@ class BernsteinApp(App[None]):
         yield Footer()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Disable single-char bindings when typing in chat input."""
+        """Disable single-char bindings when typing in chat input.
+
+        Hot restart is also off when observing a remote server: it stops the
+        server and re-execs ``bernstein run`` here, which would shut down the
+        central and start a fresh local orchestrator in its place.
+        """
+        if action == "hot_restart" and self._remote_view():
+            return False
         return not (isinstance(self.focused, ChatInput) and action != "focus_chat")
+
+    @staticmethod
+    def _remote_view() -> bool:
+        """Whether this dashboard is observing a server on another machine."""
+        return not is_loopback(server_url())
 
     def on_key(self, event: events.Key) -> None:
         """Prevent single-char keys from reaching app bindings while Input is focused."""
@@ -418,11 +438,14 @@ class BernsteinApp(App[None]):
 
         # Write startup messages to activity log
         self._write_activity("system", "Bernstein starting...")
-        self._write_activity("system", "Connecting to task server on :8052")
+        self._write_activity("system", f"Connecting to task server at {server_url()}")
 
-        # Immediate agent display from local file (no HTTP wait)
-        agents = _load_agents()
-        if agents:
+        # Immediate agent display from local file (no HTTP wait). A remote
+        # server's agents are never in the local file; see _fetch_all.
+        agents = [] if self._remote_view() else _load_agents()
+        if self._remote_view():
+            self._write_activity("system", "Remote server: agents are read from its cluster nodes")
+        elif agents:
             alive = sum(1 for a in agents if a.get("status") != "dead")
             self._write_activity("system", f"{alive} agent(s) active")
             costs: dict[str, Any] = {}
@@ -446,7 +469,9 @@ class BernsteinApp(App[None]):
 
     def _schedule_poll(self) -> None:
         """Kick off data fetch in a background thread so the event loop stays free."""
-        self.run_worker(_fetch_all, thread=True, group="poll", exclusive=True)
+        if self._poll_worker is not None:
+            return
+        self._poll_worker = self.run_worker(_fetch_all, thread=True, group="poll", exclusive=True)
 
     # -- Fast agent updates via file watcher (no HTTP needed) --
 
@@ -454,7 +479,12 @@ class BernsteinApp(App[None]):
     _spawner_size: int = 0
 
     def _check_agents_file(self) -> None:
-        """Check agents.json + spawner.log for real-time updates."""
+        """Check agents.json + spawner.log for real-time updates.
+
+        Both files describe a run on this machine, so a remote view skips them.
+        """
+        if self._remote_view():
+            return
         self._check_agents_json()
         self._check_spawner_log()
 
@@ -507,10 +537,18 @@ class BernsteinApp(App[None]):
         if not self.is_running:
             return
         worker: Worker[dict[str, Any]] = event.worker  # type: ignore[assignment]
-        if worker.group != "poll" or event.state != WorkerState.SUCCESS:
+        if worker.group != "poll" or worker is not self._poll_worker:
+            return
+        if event.state == WorkerState.ERROR:
+            self._poll_worker = None
+            return
+        if event.state != WorkerState.SUCCESS:
+            # Shutdown cancellation can leave the executor thread running.
+            # Keep its slot; cancellation is not permission to overlap it.
             return
         data: dict[str, Any] | None = worker.result
         if not isinstance(data, dict):
+            self._poll_worker = None
             return
         # Save focus + cursor state before data update
         focused = self.focused
@@ -527,6 +565,7 @@ class BernsteinApp(App[None]):
         with contextlib.suppress(Exception):
             if saved_cursor.row < table.row_count:
                 table.move_cursor(row=saved_cursor.row, column=saved_cursor.column)
+        self._poll_worker = None
 
     def _update_expert_panels(self, data: dict[str, Any]) -> None:
         """Refresh expert mode panels with latest fetched data."""
@@ -550,6 +589,7 @@ class BernsteinApp(App[None]):
         tasks = data.get("tasks") or []
         costs: dict[str, Any] = data.get("costs") or {}
         self._activity_summaries = data.get("activity_summaries") or {}
+        self._cluster_view = data.get("cluster")
         self._update_agents(data.get("agents", []), costs)
         if self._expert_mode:
             self._update_expert_panels(data)
@@ -601,8 +641,22 @@ class BernsteinApp(App[None]):
         per_agent: dict[str, float] = (costs or {}).get("per_agent", {})
 
         existing_ids = self._reconcile_agent_widgets(col, alive, alive_ids, per_agent)
+        self._update_cluster_nodes(col)
         self._show_or_hide_boot_log(col, alive, existing_ids, per_agent)
         self._update_agent_errors(col, agents)
+
+    def _update_cluster_nodes(self, col: Any) -> None:
+        """Show worker nodes and their claimed tasks, or drop the section off-cluster."""
+        section = next(iter(col.query("Static#cluster-nodes")), None)
+        if self._cluster_view is None:
+            if isinstance(section, Static):
+                section.remove()
+            return
+        text = _format_cluster_view(self._cluster_view)
+        if isinstance(section, Static):
+            section.update(text)
+        else:
+            col.mount(Static(text, id="cluster-nodes"))
 
     def _reconcile_agent_widgets(
         self,
@@ -618,7 +672,7 @@ class BernsteinApp(App[None]):
                 continue
             if child.has_class("col-header"):
                 continue
-            if isinstance(child, Static) and child.id == "no-agents":
+            if isinstance(child, Static) and child.id in ("no-agents", "cluster-nodes"):
                 continue
             if isinstance(child, AgentWidget):
                 aid = child.agent_data.get("id", "")
@@ -643,8 +697,12 @@ class BernsteinApp(App[None]):
         existing_ids: set[str],
         per_agent: dict[str, float],
     ) -> None:
-        """Show boot log when no agents, mount new agent widgets otherwise."""
-        if not alive:
+        """Show boot log when no agents, mount new agent widgets otherwise.
+
+        A cluster view has no local boot to show - its section already says
+        what the central knows - so the boot log stays off there.
+        """
+        if not alive and self._cluster_view is None:
             boot_text = self._get_boot_log()
             existing_boot = next(iter(col.query("Static#no-agents")), None)
             if isinstance(existing_boot, Static):
@@ -1267,7 +1325,14 @@ class BernsteinApp(App[None]):
             self.notify(f"Failed: {exc}", severity="error", timeout=5)
 
     def action_graceful_quit(self) -> None:
-        """Start graceful drain with progress overlay."""
+        """Start graceful drain with progress overlay.
+
+        Drain acts on this machine's run; a remote server has none here, so
+        observing one just quits the dashboard.
+        """
+        if self._remote_view():
+            self.exit()
+            return
         from bernstein.cli.drain_screen import DrainScreen
 
         self.push_screen(DrainScreen(), callback=self._on_drain_complete)

@@ -321,6 +321,9 @@ class TaskResponse(BaseModel):
     progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
     version: int = 1
     parent_session_id: str | None = None  # Coordinator session that owns this task
+    # Claim owner: the session or cluster worker node id that claimed the task,
+    # so a cluster view can place in-flight tasks under the node running them.
+    claimed_by_session: str | None = None
     # Retry bookkeeping: typed fields are the single source of truth.
     retry_count: int = 0
     max_retries: int = 3
