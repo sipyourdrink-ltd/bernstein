@@ -278,6 +278,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `predicted_delta.py`        | Predicted-delta gate for prompt-evolution proposals |
 | `proposal_scorer.py`        | Proposal risk scoring and routing classification |
 | `proposals.py`              | Upgrade proposal generation |
+| `receipt_admission.py`      | Receipt-bearing admission path for evolve-candidate intake (issue #5437) |
 | `report.py`                 | Evolution observability - history table and static report generation |
 | `report_generator.py`       | Analysis result types, statistical helpers, and Goodhart's Law defenses |
 | `risk.py`                   | Strategic Risk Score (SRS) computation for evolution proposals |
