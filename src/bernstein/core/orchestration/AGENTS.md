@@ -9,7 +9,7 @@ Deterministic tick loop: watch tasks, spawn agents, verify completion, repeat. C
 | `orchestrator.py` | Public facade; single-threaded `while self._running` tick loop |
 | `tick_pipeline.py` | Pure helpers: task fetching, batching, server interaction |
 | `run_stall.py` | Pure decision function for zero-terminal run quiescence |
-| `quiescence.py` | Records whether every process the run started had exited before the seal (#5272); `verified=False, method="unsupported"` where it cannot look, never a silent true |
+| `quiescence.py` | Probes recorded session process groups for residual members before finalization (#5272); `verified=False, method="unsupported"` where it cannot look, never a silent true |
 | `controller_state.py` | `.sdd/runtime/controllers.json` sidecar: adaptive parallelism and claim-conflict cooldowns survive a restart; expired cooldowns are pruned on load |
 | `deterministic.py` | Seeded-run LLM record/replay via `.sdd/runs/` journals |
 | `escalation.py` | Journal-anchored, Ed25519-signed stall escalation receipts |
@@ -37,4 +37,4 @@ Heavy lifting lives in siblings: `../tasks/task_lifecycle.py` (claim, spawn, ret
 
 Single files only: `uv run pytest tests/unit/test_orchestrator.py -x -q`; quiescence lives in `tests/unit/test_run_quiescence.py` and `test_quiescence_*.py`. Never run the full suite (see `tests/AGENTS.md`).
 
-<!-- Reviewed 2026-10-16 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->

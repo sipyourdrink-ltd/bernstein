@@ -10,13 +10,16 @@ One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 
 | `registry.py` | `_ADAPTERS` name -> class map, plus adapters built from capability profiles |
 | `_contract.py` | Loads the per-adapter YAML capability contracts and asserts them |
 | `capability_profile.py`, `draft.py` | Declarative capability profiles; `draft.py` drafts one from probe evidence during onboarding |
+| `admission.py`, `env_isolation.py` | Receipt-gated adapter admission; spawned-agent environment allowlisting and credential filtering |
+| `use_cases.py`, `opencode.py` | Adapter use-case catalogue; OpenCode bare model IDs require one matching provider in the operator's JSONC config |
+| `acp_channel.py` | ACP subprocess frame transport and bridge to the orchestrator event loop |
 | `skills_injector.py` | Copies sanitized skill markdown into the worktree at dispatch |
-| `canary.py` | Nightly conformance canary matrix over adapter contracts |
 | `goose_stream_parser.py` | Parses Goose `--output-format stream-json`; token accounting rides the terminal `envelope` event |
 | `http_429_classifier.py` | Classifies HTTP 429 errors into standing quotas vs. transient rate limits |
-| `onboarding.py` | Interactive probe and capability discovery for newly installed agent CLIs |
+| `canary.py`, `onboarding.py` | Nightly conformance matrix; interactive probe and capability discovery for new agent CLIs |
 | `mock.py` | Mock agent for zero-API-key demos; produces the same completion evidence real agents do (`Modified:` log lines plus a per-fix commit scoped to the mutated file) |
-| `scanner.py`, `scanner_registry.py`, `scanner_conformance.py` | `ScannerAdapter` contract for external analysis tools (semgrep, gitleaks, trivy, nmap), its registry, and golden-transcript conformance |
+| `scanner.py`, `scanner_registry.py`, `scanner_conformance.py` | Scanner contract, registry (semgrep, gitleaks, trivy, nmap built-ins), and golden-transcript conformance; canonical per-finding hashes |
+| `nmap.py`, `semgrep.py` | Nmap XML normalization, host-level network policy and port-syntax validation; Semgrep SARIF normalization and local ruleset digest |
 | `deep_research.py` | Shared machinery for `gpt_researcher.py` and `tongyi_deepresearch.py`: per-agent gateway variables, egress check, standalone runner, digest-checked read-back |
 | `crew_ingest.py`, `directory/`, `digest/` | Ingest of role-and-crew traces as delegation receipts; SCIM directory provisioning; deterministic tool-output digesters |
 
@@ -33,4 +36,4 @@ One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 
 
 Per-adapter unit tests are mostly flat as `tests/unit/test_adapter_<name>.py`, with a growing set under `tests/unit/adapters/` beside the shared subsystem tests. Both layouts are current; follow whichever one an adapter already uses, and run one file at a time. Contract checks live under `tests/contract/`; live-binary conformance is opt-in via the `--live` pytest flag.
 
-<!-- Reviewed 2026-10-16 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->
