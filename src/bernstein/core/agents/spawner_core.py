@@ -8,6 +8,7 @@ import copy
 import inspect
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -103,6 +104,7 @@ from bernstein.core.agents.spawner_worktree import (
 from bernstein.core.agents.spawner_worktree import (
     prune_orphan_worktrees as _prune_orphan_worktrees,
 )
+from bernstein.core.config import platform_compat
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.defaults import SDD_SERVER_PORT, SPAWN
@@ -187,6 +189,22 @@ _read_cached = _project_context.read_cached
 # whole daily log. Module-level (not per-spawner) so multiple spawner
 # instances in one process share the same critical section.
 _SANDBOX_AUDIT_LOCK = threading.Lock()
+
+
+def _leader_pgid(pid: int | None) -> int | None:
+    """Return a process group only when the spawned process leads it safely."""
+    if pid is None:
+        return None
+    if platform_compat.IS_WINDOWS:
+        return pid if pid > 0 else None
+    if os.name != "posix" or pid <= 1:
+        return None
+    try:
+        if os.getpgid(pid) == pid and pid != os.getpgrp():
+            return pid
+    except OSError:
+        return None
+    return None
 
 
 def _list_subdirs_cached(path: Path) -> list[str]:
@@ -5481,6 +5499,7 @@ class AgentSpawner:
             # Post-spawn session setup
             if result is not None:
                 session.pid = result.pid
+                session.pgid = _leader_pgid(result.pid)
                 session.abort_reason = result.abort_reason
                 session.abort_detail = result.abort_detail
                 session.finish_reason = result.finish_reason
@@ -5921,6 +5940,7 @@ class AgentSpawner:
             **_resume_extra,
         )
         session.pid = result.pid
+        session.pgid = _leader_pgid(result.pid)
         session.abort_reason = result.abort_reason
         session.abort_detail = result.abort_detail
         session.finish_reason = result.finish_reason
