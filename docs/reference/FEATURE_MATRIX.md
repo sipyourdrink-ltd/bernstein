@@ -239,6 +239,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein live` | Full | 3 | TUI dashboard. Readiness is the first rendered frame, identified by the `AGENTS` and `TASKS` pane headers; `tests/integration/test_first_run_long_running_surfaces.py` starts it from an empty workspace, waits for that frame, and asserts a traceback-free exit on `SIGINT`. |
 | `bernstein dashboard` | Full | 3 | Web dashboard |
 | `bernstein status` | Full | 3 | Task summary |
+| [`bernstein insights`](cli-reference.md#bernstein-insights) | Full | 1 | **Preview.** Skeleton: echoes the requested window in text or placeholder JSON; computes no analytics yet |
 | `bernstein ps` | Full | 3 | Process list |
 | `bernstein cost` | Full | 4 | Spend breakdown |
 | `bernstein doctor` | Full | 4 | Pre-flight health check |
