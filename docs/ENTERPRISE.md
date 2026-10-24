@@ -11,7 +11,7 @@ Bernstein is a local-first, open-source governance layer for AI agents. No model
 - orchestration state lives on disk under `.sdd/`
 - agents run as separate local processes, usually in per-task git worktrees
 - the API surface is local unless you explicitly expose it
-- audit events are written to an HMAC-chained append-only log
+- the lineage spine and replay journal are always written; the HMAC-chained append-only audit log is written when `BERNSTEIN_AUDIT=1`, `bernstein run --audit`, or a compliance preset is enabled
 - outbound network traffic depends on which adapters, model providers, and cloud features you enable
 
 There is no separate enterprise edition. Auth, RBAC, audit logging, compliance tooling, model policy, and identity controls ship in-tree.
@@ -35,7 +35,7 @@ Bernstein has two security planes:
 
 ### Human plane
 
-Operators authenticate through local auth, OIDC, or SAML and are authorized through RBAC.
+Operators authenticate through local auth, or through OIDC or SAML when enabled in the SSO config (`BERNSTEIN_AUTH_*`, served under `/auth`), and are authorized through RBAC.
 
 Read next:
 - [Security & identity](operations/security-and-identity.md)

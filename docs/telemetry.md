@@ -9,7 +9,9 @@ retention policy.
 ## TL;DR
 
 - Default is **off**.  Nothing is ever sent unless you run
-  `bernstein telemetry on` (or set `BERNSTEIN_TELEMETRY=1`).
+  `bernstein telemetry on` (or set `BERNSTEIN_TELEMETRY=1`), or opt in to
+  the separate maintainer-share consent described under *Maintainer-share
+  consent* below.
 - `DO_NOT_TRACK=1` always wins.  No event is sent and no install id is
   generated.
 - The install id is a 128-bit UUID v4 created lazily, **after** opt-in
@@ -27,9 +29,26 @@ retention policy.
 | `BERNSTEIN_TELEMETRY=1` (or `true/yes/on`)      | on                    |
 | `~/.bernstein/telemetry.yaml` with `enabled: false` | off               |
 | `~/.bernstein/telemetry.yaml` with `enabled: true`  | on                |
+| `BERNSTEIN_TELEMETRY_SHARE=0` (or `false/no/off/""`) | share off (wins over the TOML file) |
+| `BERNSTEIN_TELEMETRY_SHARE=1` (or `true/yes/on`)     | share on (maintainer-share path only) |
+| `$XDG_CONFIG_HOME/bernstein/telemetry.toml` with `share_with_maintainer = true` | share on |
 | None of the above                               | off (default)         |
 
-Precedence: `DO_NOT_TRACK` > `BERNSTEIN_TELEMETRY` > file > default-off.
+Precedence: `DO_NOT_TRACK` > `BERNSTEIN_TELEMETRY` > `telemetry.yaml` > default-off
+for the operator pipeline. The maintainer-share flag has its own precedence:
+`DO_NOT_TRACK` > `BERNSTEIN_TELEMETRY_SHARE` > `telemetry.toml` > default-off.
+Setting `BERNSTEIN_TELEMETRY` does not change the share flag, and the reverse
+is also true.
+
+## Maintainer-share consent
+
+The maintainer-share path (RFC #1719) is separate from the default opt-in
+above. `bernstein telemetry on` does not enable it. It is enabled only by
+`bernstein telemetry enable --share-with-maintainer`, which prints the event
+schema and redaction list and asks for confirmation (skip with `--yes`), and
+it is disabled by `bernstein telemetry disable`. The flag is stored in
+`telemetry.toml`, and the sink stays inert unless
+`BERNSTEIN_TELEMETRY_SHARE_ENDPOINT` is also set.
 
 ## Subcommand surface
 
@@ -38,6 +57,10 @@ bernstein telemetry on          # opt in, write config, generate install id
 bernstein telemetry off         # opt out, delete install id, write off-marker
 bernstein telemetry status      # show current state + which signal won
 bernstein telemetry export      # dump the last 30 days of locally queued events
+bernstein telemetry enable --share-with-maintainer   # maintainer-share consent (RFC #1719)
+bernstein telemetry disable     # revoke maintainer-share consent
+bernstein telemetry tail -n 10  # print the next N events that would be sent, offline
+bernstein telemetry probe       # ship one synthetic event to BERNSTEIN_TELEMETRY_DSN
 ```
 
 ## Closed event set
@@ -171,6 +194,7 @@ they will be purged.
 | Path                                       | Purpose                            |
 |--------------------------------------------|------------------------------------|
 | `~/.bernstein/telemetry.yaml`              | `enabled: <bool>` opt-in state.    |
+| `$XDG_CONFIG_HOME/bernstein/telemetry.toml` | `share_with_maintainer` flag (falls back to `~/.config/bernstein/telemetry.toml`). Separate from `telemetry.yaml`. |
 | `~/.bernstein/install-id`                  | UUID v4 hex.  Created on opt-in.   |
 | `~/.bernstein/first-run-acknowledged`      | Marker.  Created on first run.     |
 | `~/.bernstein/telemetry-queue.jsonl`       | Locally mirrored events (JSONL).   |
