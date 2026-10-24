@@ -2025,6 +2025,10 @@ def _pre_spawn_checks_pass(orch: Any, alive_count: int) -> bool:
         logger.debug("Skipping claim/spawn: orchestrator is shutting down")
         return False
 
+    if getattr(orch, "_stop_spawning", False):
+        logger.warning("Cost anomaly detector halted spawning; skipping all spawns this tick")
+        return False
+
     _adapter = getattr(getattr(orch, "_spawner", None), "_adapter", None)
     if _adapter is not None and _adapter.is_rate_limited():
         logger.warning("Provider rate-limited - skipping all spawns this tick")
@@ -2974,6 +2978,19 @@ def claim_and_spawn_batches(
                 "Bandit routing skipped for multi-task batch %s; static batch escalation keeps attribution clear",
                 [task.id for task in batch],
             )
+
+        # Advisory check: model mismatch detection before spawn.
+        # Signals are advisory (log only); they do not block the spawn.
+        _anomaly_detector = getattr(orch, "_anomaly_detector", None)
+        if _anomaly_detector is not None and len(batch) == 1:
+            _task = batch[0]
+            _complexity = getattr(_task, "complexity", "medium") or "medium"
+            _model = _task.model or ""
+            try:
+                for _sig in _anomaly_detector.check_spawn(_task.id, _complexity, _model):
+                    orch._handle_anomaly_signal(_sig)
+            except Exception:
+                pass
 
         try:
             # Check if any task in this batch has a preserved worktree for resume
@@ -5307,6 +5324,30 @@ def _process_single_completed_task(
             logger.warning("append_decision failed for task %s: %s", task.id, exc)
 
     _record_evolution_completion(orch, task, session, task_m, cost_usd, janitor_passed)
+
+    # Per-task anomaly checks: ceiling, token-ratio, retry-spiral, baseline update.
+    _anomaly_det = getattr(orch, "_anomaly_detector", None)
+    if _anomaly_det is not None:
+        _task_m = task_m
+        _cost = cost_usd
+        _tokens_in = _task_m.tokens_prompt if _task_m else 0
+        _tokens_out = _task_m.tokens_completion if _task_m else 0
+        _complexity = getattr(task, "complexity", "medium") or "medium"
+        _is_retry = task.title.startswith("[RETRY") if task.title else False
+        _orig_id: str | None = getattr(task, "original_task_id", None)
+        try:
+            for _sig in _anomaly_det.check_task_completion(
+                task.id,
+                _complexity,
+                _cost,
+                _tokens_in,
+                _tokens_out,
+                is_retry=_is_retry,
+                original_task_id=_orig_id,
+            ):
+                orch._handle_anomaly_signal(_sig)
+        except Exception:
+            pass
 
     # issue #4463: a scheduled gate repair already reopened this unit of work
     # under a new task id on the preserved branch -- fail this task with a

@@ -775,6 +775,7 @@ class Orchestrator:
         from bernstein.core.cost_anomaly import CostAnomalyDetector
 
         self._anomaly_detector = CostAnomalyDetector(config.cost_anomaly, workdir)
+        self._stop_spawning: bool = False
 
         # Context degradation detector: flags agents whose cross-model review
         # verdicts decline (N consecutive rejects).  Degraded sessions are
@@ -4410,8 +4411,21 @@ class Orchestrator:
         elif signal.action == "stop_spawning":
             logger.warning("Anomaly [%s]: %s - stopping new spawns", signal.rule, signal.message)
             self._stop_spawning = True
+        elif signal.action == "resume_spawning":
+            logger.info("Anomaly [%s]: %s - resuming spawns", signal.rule, signal.message)
+            self._stop_spawning = False
         else:
             logger.info("Anomaly [%s]: %s", signal.rule, signal.message)
+
+    def resume_spawning(self) -> None:
+        """Clear the anomaly-detector stop-spawning flag to allow new agent spawns.
+
+        The cost-anomaly detector sets this flag when burn rate crosses the
+        stop threshold.  Call this once the operator has acknowledged the
+        anomaly and wishes to resume the run.
+        """
+        self._stop_spawning = False
+        logger.info("Spawning resumed by operator call")
 
     def _run_liveness_watchdog(self) -> None:
         """Run one liveness-watchdog pass over current adapter sessions.
