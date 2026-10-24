@@ -47,8 +47,8 @@ is also true.
 The maintainer-share path (RFC #1719) is separate from the default opt-in
 above. `bernstein telemetry on` does not enable it. The CLI enables it with
 `bernstein telemetry enable --share-with-maintainer`, which prints the event
-schema and redaction list and asks for confirmation (skip with `--yes`), and
-it is disabled by `bernstein telemetry disable`. The flag is stored in
+schema and redaction list and asks for confirmation (skip with `--yes`).
+`bernstein telemetry disable` clears the stored consent flag. The flag is stored in
 `telemetry.toml`, and the sink stays inert unless
 `BERNSTEIN_TELEMETRY_SHARE_ENDPOINT` is also set. The environment override
 `BERNSTEIN_TELEMETRY_SHARE=1` can enable consent independently of the CLI.
