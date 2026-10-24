@@ -43,6 +43,24 @@ For a typical 100-task project:
 
 The mixed approach usually delivers the best quality-to-cost ratio.
 
+### MiniMax cost estimates
+
+For new MiniMax text runs through `openai_agents`, select `MiniMax-M3.1-Flash`
+with your configured MiniMax endpoint; `MiniMax-M3` remains available as an
+explicit model choice. Existing saved model IDs are preserved. Direct
+`https://api.minimax.io/v1` runs retain the model's `reasoning_content` across
+tool calls, alongside the assistant text, tool arguments, and tool results.
+
+Flash is estimated at $0.15 per million input tokens and $0.60 per million
+output tokens, independently of the broader M3 model name. Its published
+cache-read rate is $0.015 per million tokens; no cache-write price is assumed.
+See [MiniMax's current pricing](https://platform.minimax.io/docs/guides/pricing-paygo).
+
+The runner currently prices aggregate input/output tokens, so cached input is
+still estimated at the ordinary input rate. Existing M3 estimates retain the
+$0.60/$2.40 rates; they do not distinguish per-request context tiers or priority
+service. Treat these values as budget estimates rather than invoice totals.
+
 ## Prompt caching
 
 Bernstein supports provider prompt caching to reduce token costs on repeated context.
