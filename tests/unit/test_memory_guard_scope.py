@@ -159,6 +159,8 @@ def _session(
     probe_dir.mkdir()
     env = dict(os.environ)
     env.pop("PYTEST_ADDOPTS", None)
+    # These child sessions exercise our guard, not ambient installed plugins.
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     env["RLIMIT_PROBE_DIR"] = str(probe_dir)
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in (str(tree), str(REPO_ROOT), str(REPO_ROOT / "src"), extra_path, env.get("PYTHONPATH", "")) if p
@@ -176,6 +178,7 @@ def _session(
             "no:cacheprovider",
             "-p",
             "tests.conftest",
+            *(["-p", "xdist.plugin"] if "-n" in args else []),
             *(["-p", "rlimit_probe"] if probe else []),
             *args,
             str(tree / "test_probe.py"),
@@ -262,6 +265,27 @@ def test_diagnostic_session_runs_without_resource_module(tmp_path: Path) -> None
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "1 failed" in proc.stdout, proc.stdout + proc.stderr
     assert proc.stdout.count("memory guard: RLIMIT_AS soft limit is") == 1, proc.stdout
+
+
+def test_diagnostic_session_ignores_unrelated_installed_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the guard plugins under test may affect a diagnostic child session."""
+    plugins = tmp_path / "installed_plugins"
+    plugins.mkdir()
+    (plugins / "unrelated_plugin.py").write_text(
+        "def pytest_sessionstart(session):\n    raise RuntimeError('unrelated plugin loaded')\n",
+        encoding="utf-8",
+    )
+    metadata = plugins / "unrelated_plugin-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Name: unrelated-plugin\nVersion: 1.0\n", encoding="utf-8")
+    (metadata / "entry_points.txt").write_text("[pytest11]\nunrelated-plugin = unrelated_plugin\n", encoding="utf-8")
+    monkeypatch.delenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", raising=False)
+    proc = _session(tmp_path, "def test_probe():\n    pass\n", extra_path=str(plugins))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "1 passed" in proc.stdout, proc.stdout + proc.stderr
+    assert "unrelated plugin loaded" not in proc.stdout + proc.stderr
 
 
 def test_child_session_preserves_configured_guard_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
