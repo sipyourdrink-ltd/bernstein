@@ -1664,9 +1664,30 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             if task is None:
                 raise KeyError
             _require_task_access(task, request)
-            # Auto-claim if task reverted to "open" (e.g. after orchestrator
-            # restart reconciliation).  Prevents agents from looping on 409.
-            if task.status.value == "open":
+            # Claim-session fencing (#6644): when the caller supplies
+            # claimed_by_session, reject the completion if the task is held by
+            # a different session.  This prevents a delayed report from a
+            # previously-evicted worker from overwriting a legitimate later
+            # claim.  Callers that omit the field are accepted as before.
+            if body.claimed_by_session is not None and task.claimed_by_session != body.claimed_by_session:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "stale_claim",
+                        "message": (
+                            f"Task '{task_id}' is held by a different session; "
+                            "your completion report is stale."
+                        ),
+                        "task_id": task_id,
+                        "expected_session": body.claimed_by_session,
+                        "actual_session": task.claimed_by_session,
+                    },
+                )
+            # Auto-claim if task reverted to "open" and the caller did NOT
+            # supply a claimed_by_session (legacy path).  When a session is
+            # supplied, an open task is a claim mismatch (None != supplied)
+            # and has already been rejected above.
+            if task.status.value == "open" and body.claimed_by_session is None:
                 logger.info(
                     "task.complete auto-claim: task_id=%s reverted to open, re-claiming before complete",
                     for_log(task_id),

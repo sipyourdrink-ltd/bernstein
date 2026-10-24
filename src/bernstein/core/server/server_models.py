@@ -367,6 +367,11 @@ class TaskCompleteRequest(BaseModel):
     payload: dict[str, Any] | None = None
     agent_branch: str | None = None
     agent_sha: str | None = None
+    # Issue #6644: claim-identity fencing.
+    # When set, the completion handler checks that the task's recorded
+    # claimed_by_session matches before transitioning to terminal state.
+    # Legacy callers that omit this field are accepted as before (opt-in).
+    claimed_by_session: str | None = None
 
     @model_validator(mode="before")
     @classmethod
