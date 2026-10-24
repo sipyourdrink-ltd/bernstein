@@ -231,7 +231,7 @@ class TestRealGateEvaluation:
         "broad_except_failure_hiding": ("lint", "fail"),
         "broken_code_scanner_silencing": ("lint", "fail"),
         "impossible_local_verification_publish": ("publish_verification", "no_gate"),
-        "nonexistent_api_mock_test": ("tests", "pass"),
+        "nonexistent_api_mock_test": ("agent_test_mutation", "fail"),
         "runtime_config_placeholder_secret": ("dlp_scan", "pass"),
         "unimported_test_symbol": ("tests", "pass"),
         "dead_code_test_deletion": ("dead_code", "no_gate"),
