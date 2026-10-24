@@ -396,6 +396,7 @@ class SSEBus:
         self._subscriber_last_read: dict[int, float] = {}
         # map queue id -> owning IP so per-IP accounting works
         self._subscriber_ip: dict[int, str] = {}
+        self._task_subscriptions: dict[int, tuple[str, str, frozenset[str]]] = {}
         self._max_buffer = max_buffer
         self._stale_timeout_s = stale_timeout_s
         self._max_buffer_per_ip = max_buffer_per_ip
@@ -457,7 +458,14 @@ class SSEBus:
 
     # ---- subscribe / unsubscribe ------------------------------------------
 
-    def subscribe(self, *, client_ip: str | None = None) -> asyncio.Queue[str]:
+    def subscribe(
+        self,
+        *,
+        client_ip: str | None = None,
+        task_role: str | None = None,
+        tenant_id: str = "default",
+        task_ids: frozenset[str] = frozenset(),
+    ) -> asyncio.Queue[str]:
         """Create a new subscriber queue.
 
         Args:
@@ -474,6 +482,8 @@ class SSEBus:
             raise PermissionError(f"SSE reconnect rate limit exceeded for {client_ip}")
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._max_buffer)
         self._subscribers.append(queue)
+        if task_role is not None:
+            self._task_subscriptions[id(queue)] = (task_role, tenant_id, task_ids)
         self._subscriber_last_read[id(queue)] = time.time()
         if client_ip is not None:
             self._subscriber_ip[id(queue)] = client_ip
@@ -485,6 +495,7 @@ class SSEBus:
             self._subscribers.remove(queue)
         self._subscriber_last_read.pop(id(queue), None)
         self._subscriber_ip.pop(id(queue), None)
+        self._task_subscriptions.pop(id(queue), None)
 
     def mark_read(self, queue: asyncio.Queue[str]) -> None:
         """Update the last-read timestamp for a subscriber."""
@@ -510,7 +521,15 @@ class SSEBus:
 
     # ---- publish ----------------------------------------------------------
 
-    def publish(self, event_type: str, data: str = "{}") -> None:
+    def publish(
+        self,
+        event_type: str,
+        data: str = "{}",
+        *,
+        task_role: str | None = None,
+        tenant_id: str | None = None,
+        task_id: str | None = None,
+    ) -> None:
         """Push an event to all subscribers (non-blocking).
 
         If a subscriber's queue is full, or pushing would exceed the
@@ -529,6 +548,16 @@ class SSEBus:
         # Snapshot the subscriber list so mutations during publish (tests
         # exercise this) do not raise.
         for queue in self._subscribers.copy():
+            subscription = self._task_subscriptions.get(id(queue))
+            if event_type == "task.created":
+                # Titles only enter an explicitly authorized task subscription.
+                if subscription is None:
+                    continue
+                role, tenant, allowed_ids = subscription
+                if role != task_role or tenant != tenant_id or (allowed_ids and task_id not in allowed_ids):
+                    continue
+            elif subscription is not None and event_type != "heartbeat":
+                continue
             owner = self._subscriber_ip.get(id(queue))
             if owner is not None and per_ip_used[owner] >= self._max_buffer_per_ip:
                 dropped += 1
@@ -1097,6 +1126,19 @@ def create_app(
             json.dumps({"id": task_obj.id, "status": task_obj.status.value}),
         )
 
+    def _publish_task_created(task_obj: Any) -> None:
+        from bernstein.core.server.sse_events import SSEEvent
+
+        event = SSEEvent.task_created(task_obj.id, task_obj.title)
+        sse_bus.publish(
+            event.event.value,
+            json.dumps(event.data),
+            task_role=task_obj.role,
+            tenant_id=task_obj.tenant_id,
+            task_id=task_obj.id,
+        )
+
+    store.add_task_created_listener(_publish_task_created)
     store.add_task_listener(_publish_task_update)
     workdir = (
         jsonl_path.parent.parent.parent
@@ -1163,6 +1205,7 @@ def create_app(
         # The events are journaled beside the spine regardless; this only adds
         # live delivery while a server is up, and the sink is cleared on
         # shutdown so a stopped server never holds a stale bus reference.
+        store.add_task_created_listener(_publish_task_created)
         _install_artifact_event_publisher(sse_bus)
         # Launch the node-stale reaper whenever the /cluster/nodes routes are
         # mounted (always) rather than only when cluster auth is enabled. Node
@@ -1183,6 +1226,7 @@ def create_app(
         if fleet_aggregator is not None:
             app.state.fleet_aggregator = None
             await fleet_aggregator.stop()
+        store.remove_task_created_listener(_publish_task_created)
         _install_artifact_event_publisher(None)
         reaper.cancel()
         sse_heartbeat.cancel()

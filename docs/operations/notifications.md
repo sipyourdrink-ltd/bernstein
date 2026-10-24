@@ -342,3 +342,43 @@ via `build_bridge_from_config`
   (`format_slack`, `format_discord`, `format_telegram`, `format_webhook`,
   `format_pagerduty`) re-exported via `bernstein.core.notifications` for
   backwards compatibility
+
+
+## Role task subscriptions (SSE)
+
+`GET /events/tasks?role=backend` subscribes to **future creations** in that role
+and the authenticated principal's tenant. Supply the usual task-server bearer
+token. `tasks:read` is required; agent identities may select only their own role,
+and task-scoped identities receive only IDs on their allowlist. Tenant overrides
+use the existing operator scope checks. Operators may select any role inside
+their authorized tenant.
+
+The initial `heartbeat` with `{"connected": true}` acknowledges registration.
+After persistence, the stream pushes `event: task.created` and
+`data: {"task_id": "...", "title": "..."}`. Single creates, batch survivors,
+self-created subtasks, planner/integration writes through the same TaskStore,
+clearance gates and refusal follow-ups use a central post-persistence listener.
+Updates and startup replay do not produce creation notifications. If a batch
+later fails during persistence, already committed rows still notify; the failed
+row does not. The existing store does not roll back earlier durable rows. The new
+metadata is never broadcast to unscoped dashboard/WebSocket subscribers.
+
+The standard MCP tier exposes `bernstein_subscribe(role, timeout_seconds=30)`.
+It consumes this stream without status polling, returns the first matching
+notification as `{"notifications": [{"task_id": "...", "title": "..."}],
+"timed_out": false}`, then closes. A deadline returns
+`{"notifications": [], "timed_out": true}`. The 1-60 second deadline covers
+connection setup and reading together; schema execution budget is 65 seconds.
+HTTP/auth failures return the usual tool error. It forwards the task-server
+credential from `BERNSTEIN_AUTH_TOKEN`, exactly as other MCP tools do. On the
+remote facade this is the configured backend credential, not the remote
+client's transport bearer credential.
+
+Disconnect, cancellation, deadline and server shutdown end the subscription.
+Call again to listen further; there is no background listener and no automatic
+wake-up of a dormant chat. Events between calls are not replayed. Delivery on a
+healthy connected stream is immediate (the live HTTP regression checks <5s),
+but this is a best-effort in-process bus, not a durable queue: restart, disconnect
+or buffer overflow can lose events. Existing queue/per-IP budgets, reconnect
+cooldown and heartbeat cleanup apply. Use the task list to reconcile after a
+missed event; continuous status polling is unnecessary.

@@ -470,6 +470,7 @@ class TaskStore:
         metrics_jsonl_path: Path | None = None,
     ) -> None:
         self._task_listeners: list[Callable[[Task], None]] = []
+        self._task_created_listeners: list[Callable[[Task], None]] = []
         self._tasks: dict[str, Task] = {}
         self._agents: dict[str, AgentSession] = {}
         # Secondary indices for O(1) status/role lookups
@@ -527,6 +528,24 @@ class TaskStore:
                 ``None`` to detach.
         """
         self._audit_chain = chain
+
+    def add_task_created_listener(self, listener: Callable[[Task], None]) -> None:
+        """Register a best-effort callback for newly persisted tasks (not replay)."""
+        if listener not in self._task_created_listeners:
+            self._task_created_listeners.append(listener)
+
+    def remove_task_created_listener(self, listener: Callable[[Task], None]) -> None:
+        """Unregister a creation callback when its owning server stops."""
+        if listener in self._task_created_listeners:
+            self._task_created_listeners.remove(listener)
+
+    def _notify_task_created(self, task: Task) -> None:
+        """Creation notifications must never fail a committed store mutation."""
+        for listener in list(self._task_created_listeners):
+            try:
+                listener(task)
+            except Exception:
+                logger.exception("Error in task creation listener for task %s", task.id)
 
     def add_task_listener(self, listener: Callable[[Task], None]) -> None:
         """Register a callback invoked whenever a task's status or record is updated."""
@@ -1608,6 +1627,8 @@ class TaskStore:
             self._parent_index_add(task)
             await self._append_jsonl(self._task_to_record(task))
 
+        self._notify_task_created(task)
+
         # SOC 2 audit: log task creation (not a status transition, so lifecycle doesn't cover it)
         from bernstein.core.tasks.lifecycle import _content_hash, get_audit_log
 
@@ -1686,6 +1707,7 @@ class TaskStore:
             self._index_add(task)
             self._parent_index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+        self._notify_task_created(task)
         return task
 
     async def create_gate_with_edges(
@@ -1822,6 +1844,7 @@ class TaskStore:
                         clearance_task_id,
                     )
 
+        self._notify_task_created(gate)
         return gate, targets
 
     async def inject_dependency(self, task_id: str, depends_on_id: str) -> Task:
@@ -2027,6 +2050,7 @@ class TaskStore:
                 self._index_add(task)
                 self._parent_index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
+                self._notify_task_created(task)
 
                 if dedup_by_title:
                     existing_titles.add(normalised)
@@ -2635,6 +2659,7 @@ class TaskStore:
                 self._index_add(task)
                 self._parent_index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
+                self._notify_task_created(task)
                 created.append(task)
         if created:
             logger.info(
