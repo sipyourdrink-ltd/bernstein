@@ -1430,31 +1430,47 @@ def _bootstrap_from_goal_impl(
     # 0. Pre-startup git hygiene - clean stale worktrees/branches/skip-worktree files from prior runs (#4394)
     _run_git_hygiene(workdir)
 
-    # Issue #6081: inline goals should resolve quality_gates from bernstein.yaml
-    # if present, so run_started journals the same gate_config whether the goal
-    # came from the seed file or from -g. Read the existing config and extract
-    # gate-related fields to merge into the minimal seed.
+    # Issue #6642: inline goals and plan launches should preserve the complete
+    # parsed seed policy from bernstein.yaml.  Earlier code only extracted
+    # quality_gates and formal_verification, silently reverting all other policy
+    # fields (evolution_enabled, gate_repair_enabled, max_agents, constraints,
+    # admission, etc.) to their dataclass defaults.  Use dataclasses.replace so
+    # every field carries through; apply only the explicitly-provided launch
+    # overrides on top, never default argument values (#6081).
+    import dataclasses as _dc
+
     from bernstein.core.config.seed import resolve_seed_path
     from bernstein.core.config.seed_parser import parse_seed
 
-    _existing_gates = None
-    _existing_formal_verification = None
     _seed_path = resolve_seed_path(workdir)
+    _existing_seed: SeedConfig | None = None
     if _seed_path.exists():
         try:
-            _existing = parse_seed(_seed_path)
-            _existing_gates = _existing.quality_gates
-            _existing_formal_verification = _existing.formal_verification
+            # require_goal=False: the goal is supplied by the caller (via -g or
+            # a plan file), so a bernstein.yaml with no goal key is valid here.
+            # We only need the operator settings (evolution_enabled, max_agents,
+            # etc.) from the file (#6604 / #6642).
+            _existing_seed = parse_seed(_seed_path, require_goal=False)
         except Exception as exc:
-            logger.debug("Could not read quality_gates from %s: %s", _seed_path, exc)
+            logger.warning("Could not read seed policy from %s: %s", _seed_path, exc)
 
-    seed = SeedConfig(
-        goal=goal,
-        cli=cli,
-        model=model,
-        quality_gates=_existing_gates,
-        formal_verification=_existing_formal_verification,
-    )  # type: ignore[call-arg]
+    if _existing_seed is not None:
+        # Start from the complete parsed seed, then apply launch-time overrides.
+        # Only replace a field when the caller supplied a non-default value so
+        # that "bernstein -g '...' " with no explicit --cli or --model
+        # preserves what bernstein.yaml configured.
+        _overrides: dict[str, object] = {"goal": goal}
+        if cli != "auto":
+            _overrides["cli"] = cli
+        if model is not None:
+            _overrides["model"] = model
+        seed = _dc.replace(_existing_seed, **_overrides)
+    else:
+        seed = SeedConfig(
+            goal=goal,
+            cli=cli,
+            model=model,
+        )  # type: ignore[call-arg]
 
     # Detect first run: no .sdd/ and no bernstein.yaml yet
     first_run = not (workdir / ".sdd").exists() and not (workdir / "bernstein.yaml").exists()
