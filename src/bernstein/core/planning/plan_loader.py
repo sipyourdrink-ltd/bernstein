@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import yaml
 
 from bernstein.core.models import CompletionSignal, Complexity, Scope, Task, TaskStatus, TaskType
+from bernstein.core.planning.plan_schema import SUPPORTED_SIGNAL_TYPES
 from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecError, parse_artifact_spec
 
 if TYPE_CHECKING:
@@ -131,16 +132,16 @@ def _parse_completion_signals(raw_signals: list[object], context: str = "") -> l
     Raises:
         PlanLoadError: A ``file_contains`` signal is missing its path or text.
     """
-    valid_types: set[str] = {"path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"}
     signals: list[CompletionSignal] = []
     for i, raw in enumerate(raw_signals):
         if not isinstance(raw, dict):
-            logger.warning("completion_signals[%d] is not a mapping - skipping", i)
-            continue
+            raise PlanLoadError(f"{context}: completion_signals[{i}] is not a mapping")
         sig_type = raw.get("type", "")
-        if sig_type not in valid_types:
-            logger.warning("completion_signals[%d] has invalid type %r - skipping", i, sig_type)
-            continue
+        if sig_type not in SUPPORTED_SIGNAL_TYPES:
+            raise PlanLoadError(
+                f"{context}: completion_signals[{i}] has unknown type {sig_type!r}; "
+                f"supported types: {sorted(SUPPORTED_SIGNAL_TYPES)}"
+            )
         if sig_type == "file_contains":
             signal_context = f"{context}: completion_signals[{i}]" if context else f"completion_signals[{i}]"
             signals.append(CompletionSignal(type="file_contains", value=_file_contains_value(raw, signal_context)))
@@ -148,8 +149,10 @@ def _parse_completion_signals(raw_signals: list[object], context: str = "") -> l
         # Support 'value' or 'path'/'command' as the signal value
         sig_value = raw.get("value") or raw.get("path") or raw.get("command") or ""
         if not sig_value:
-            logger.warning("completion_signals[%d] has empty value - skipping", i)
-            continue
+            raise PlanLoadError(
+                f"{context}: completion_signals[{i}] of type {sig_type!r} has no value "
+                f"(provide 'value', 'path' or 'command')"
+            )
         signals.append(CompletionSignal(type=sig_type, value=str(sig_value)))  # type: ignore[arg-type]
     return signals
 

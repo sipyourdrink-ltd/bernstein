@@ -72,6 +72,13 @@ ARTIFACT_KIND_VALUES: list[str] = [k.value for k in ArtifactKind]
 
 ARTIFACT_CRITERION_TYPE_VALUES: list[str] = ["criteria_match", "hash_stable", "schema_valid"]
 
+#: The full set of completion-signal types the loader, janitor, and validator
+#: all agree on.  This is the single source of truth: the loader imports it so
+#: that adding a new type here automatically keeps all three in sync.
+SUPPORTED_SIGNAL_TYPES: frozenset[str] = (
+    frozenset(COMPLETION_SIGNAL_TYPES) | frozenset(ARTIFACT_CRITERION_TYPE_VALUES) | frozenset({"figures_grounded"})
+)
+
 # ---------------------------------------------------------------------------
 # JSON Schema (draft 2020-12)
 # ---------------------------------------------------------------------------

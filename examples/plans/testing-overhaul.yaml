@@ -116,8 +116,8 @@ stages:
             path: "tests/unit/test_auth.py"
           - type: path_exists
             path: "tests/integration/test_auth.py"
-          - type: command
-            run: "pytest tests/unit/test_auth.py tests/integration/test_auth.py -x -q"
+          - type: test_passes
+            command: "pytest tests/unit/test_auth.py tests/integration/test_auth.py -x -q"
 
       - title: "Write data access layer tests"
         role: qa

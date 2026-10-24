@@ -574,8 +574,8 @@ def test_step_completion_signals(tmp_path: Path) -> None:
     assert signals[2].value == "README.md :: Usage"
 
 
-def test_step_invalid_completion_signal_skipped(tmp_path: Path) -> None:
-    """Invalid signal types are skipped with a warning, not a hard failure."""
+def test_step_invalid_completion_signal_raises(tmp_path: Path) -> None:
+    """Unknown signal types raise PlanLoadError (fail-closed, not silent skip)."""
     plan_file = _write_plan(
         tmp_path,
         {
@@ -595,13 +595,12 @@ def test_step_invalid_completion_signal_skipped(tmp_path: Path) -> None:
             ]
         },
     )
-    tasks = load_plan_from_yaml(plan_file)
-    # Only the valid signal survives
-    assert len(tasks[0].completion_signals) == 1
-    assert tasks[0].completion_signals[0].type == "path_exists"
+    with pytest.raises(PlanLoadError, match="unknown type"):
+        load_plan_from_yaml(plan_file)
 
 
-def test_step_empty_signal_value_skipped(tmp_path: Path) -> None:
+def test_step_empty_signal_value_raises(tmp_path: Path) -> None:
+    """A signal with no value raises PlanLoadError (fail-closed, not silent skip)."""
     plan_file = _write_plan(
         tmp_path,
         {
@@ -620,8 +619,8 @@ def test_step_empty_signal_value_skipped(tmp_path: Path) -> None:
             ]
         },
     )
-    tasks = load_plan_from_yaml(plan_file)
-    assert tasks[0].completion_signals == []
+    with pytest.raises(PlanLoadError, match="no value"):
+        load_plan_from_yaml(plan_file)
 
 
 # ---------------------------------------------------------------------------
