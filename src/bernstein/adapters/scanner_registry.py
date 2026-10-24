@@ -11,6 +11,7 @@ import logging
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from bernstein.adapters.bandit import BanditAdapter
 from bernstein.adapters.checkov import CheckovAdapter
 from bernstein.adapters.gitleaks import GitleaksAdapter
 from bernstein.adapters.nmap import NmapAdapter
@@ -155,6 +156,7 @@ def scanner_name_for_provider(provider_name: str | None, model: str) -> str | No
     return None
 
 
+register_scanner(BanditAdapter.registry_name, BanditAdapter)
 register_scanner(CheckovAdapter.registry_name, CheckovAdapter)
 register_scanner(GitleaksAdapter.registry_name, GitleaksAdapter)
 register_scanner(NmapAdapter.registry_name, NmapAdapter)
