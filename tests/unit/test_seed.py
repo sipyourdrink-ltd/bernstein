@@ -992,3 +992,43 @@ class TestParseSeedEvolutionEnabled:
 
         assert not caplog.records
         assert cfg.evolution_enabled is False
+
+
+# ---------------------------------------------------------------------------
+# DLP quality-gate key round-trip (#6615)
+# ---------------------------------------------------------------------------
+
+
+class TestQualityGatesDlpParsing:
+    """dlp_* keys must round-trip through _parse_quality_gates."""
+
+    def test_dlp_scan_false_is_preserved(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "Test"\nquality_gates:\n  dlp_scan: false\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.dlp_scan is False
+
+    def test_dlp_scan_defaults_to_true(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "Test"\nquality_gates:\n  lint: true\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.dlp_scan is True
+
+    def test_dlp_block_license_violations_false(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "Test"\nquality_gates:\n  dlp_block_license_violations: false\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.dlp_block_license_violations is False
+
+    def test_dlp_ignore_paths_roundtrip(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "Test"\nquality_gates:\n  dlp_ignore_paths: ["vendor/", "fixtures/"]\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.dlp_ignore_paths == ["vendor/", "fixtures/"]
+
+    def test_dlp_allowlist_prefixes_roundtrip(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "Test"\nquality_gates:\n  dlp_allowlist_prefixes: ["REDACTED"]\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.dlp_allowlist_prefixes == ["REDACTED"]
+

@@ -1934,6 +1934,19 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         behavior_probe_max_callables=_qg_int("behavior_probe_max_callables", 12),
         behavior_probe_max_probes_per_callable=_qg_int("behavior_probe_max_probes_per_callable", 6),
         benchmark=benchmark_cfg,
+        dlp_scan=_qg_bool("dlp_scan", True),
+        dlp_check_license_violations=_qg_bool("dlp_check_license_violations", True),
+        dlp_check_regulated_data=_qg_bool("dlp_check_regulated_data", True),
+        dlp_check_proprietary_data=_qg_bool("dlp_check_proprietary_data", True),
+        dlp_block_license_violations=_qg_bool("dlp_block_license_violations", True),
+        dlp_block_regulated_data=_qg_bool("dlp_block_regulated_data", True),
+        dlp_block_proprietary_data=_qg_bool("dlp_block_proprietary_data", False),
+        dlp_internal_url_patterns=_qg_str_list("dlp_internal_url_patterns", []),
+        dlp_ignore_paths=_qg_str_list("dlp_ignore_paths", []),
+        dlp_allowlist_prefixes=_qg_str_list(
+            "dlp_allowlist_prefixes",
+            ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "MOCK", "SAMPLE"],
+        ),
     )
 
 
