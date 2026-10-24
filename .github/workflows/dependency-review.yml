@@ -113,11 +113,20 @@ jobs:
           # it at 2.9.1 since the social plugin was enabled; declaring the docs
           # toolchain as a dependency group is what makes the reviewer look at a
           # package the build already used.
+          #
+          # pillow declares "License-Expression: MIT-CMU", the permissive
+          # PIL/HPND-family terms Pillow has always shipped under (copyright
+          # notice and permission text kept, no copyleft). It is a direct
+          # dependency and already in the tree at 12.3.0 under the identical
+          # expression, and license-compliance.yml accepts it. Only the security
+          # bump to 13.0.0 made the reviewer look. Exempted per package rather
+          # than adding MIT-CMU to the allow-list for every dependency.
           allow-dependencies-licenses: >-
             pkg:githubactions/trufflesecurity/trufflehog,
             pkg:pypi/cairosvg,
             pkg:pypi/protobuf,
             pkg:pypi/crosshair-tool,
             pkg:pypi/numpy,
+            pkg:pypi/pillow,
             pkg:pypi/python-telegram-bot,
             pkg:pypi/grimp
