@@ -286,6 +286,9 @@ class BernsteinApp(App[None]):
         #: True when the last poll could not reach the task server, so the
         #: header can say so instead of showing an empty run (issue #3444).
         self._server_unreachable = False
+        #: Keep the poll slot through result application, including the gap
+        #: between worker completion and its terminal message being handled.
+        self._poll_worker: Worker[dict[str, Any]] | None = None
         #: Worker nodes and their claimed tasks from the last poll, or None
         #: when the server is not a cluster central (see _load_cluster_view).
         self._cluster_view: dict[str, Any] | None = None
@@ -466,7 +469,9 @@ class BernsteinApp(App[None]):
 
     def _schedule_poll(self) -> None:
         """Kick off data fetch in a background thread so the event loop stays free."""
-        self.run_worker(_fetch_all, thread=True, group="poll", exclusive=True)
+        if self._poll_worker is not None:
+            return
+        self._poll_worker = self.run_worker(_fetch_all, thread=True, group="poll", exclusive=True)
 
     # -- Fast agent updates via file watcher (no HTTP needed) --
 
@@ -532,10 +537,18 @@ class BernsteinApp(App[None]):
         if not self.is_running:
             return
         worker: Worker[dict[str, Any]] = event.worker  # type: ignore[assignment]
-        if worker.group != "poll" or event.state != WorkerState.SUCCESS:
+        if worker.group != "poll" or worker is not self._poll_worker:
+            return
+        if event.state == WorkerState.ERROR:
+            self._poll_worker = None
+            return
+        if event.state != WorkerState.SUCCESS:
+            # Shutdown cancellation can leave the executor thread running.
+            # Keep its slot; cancellation is not permission to overlap it.
             return
         data: dict[str, Any] | None = worker.result
         if not isinstance(data, dict):
+            self._poll_worker = None
             return
         # Save focus + cursor state before data update
         focused = self.focused
@@ -552,6 +565,7 @@ class BernsteinApp(App[None]):
         with contextlib.suppress(Exception):
             if saved_cursor.row < table.row_count:
                 table.move_cursor(row=saved_cursor.row, column=saved_cursor.column)
+        self._poll_worker = None
 
     def _update_expert_panels(self, data: dict[str, Any]) -> None:
         """Refresh expert mode panels with latest fetched data."""
