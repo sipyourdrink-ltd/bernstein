@@ -64,5 +64,28 @@ async def test_create_task_forwards_run_id():
         201, json={"id": "t1"}, request=httpx.Request("POST", "http://testserver/tasks")
     )
     with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
-        await tool(mcp, "bernstein_create_task")(title="Brief", description="Manual", run_id=run_id)
+        result = await tool(mcp, "bernstein_create_task")(title="Brief", description="Manual", run_id=run_id)
+    payload = json.loads(result)
+    assert payload.get("result", payload) == {"id": "t1"}
     assert client.post.await_args.kwargs["json"]["run_id"] == run_id
+
+
+async def test_create_task_run_id_passes_strict_schema():
+    from bernstein.mcp.input_validation import validate_or_error
+
+    assert (
+        validate_or_error(
+            "bernstein_create_task",
+            {"title": "Brief", "description": "Manual", "run_id": "admin-" + "a" * 32},
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("run_id", ["ordinary-run", "admin-../secret", "admin-" + "a" * 31, "admin-" + "g" * 32])
+async def test_create_task_rejects_malformed_run_id_before_http(run_id):
+    mcp = create_mcp_server(tier="all", server_url="http://testserver")
+    with patch("bernstein.mcp.server.httpx.AsyncClient") as client:
+        result = await tool(mcp, "bernstein_create_task")(title="Brief", description="Manual", run_id=run_id)
+    client.assert_not_called()
+    assert "payload failed schema validation" in str(result)

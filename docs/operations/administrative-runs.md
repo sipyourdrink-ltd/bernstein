@@ -8,7 +8,9 @@ bernstein_create_task(title="Review brief", description="Review the attached bri
 bernstein_run_status(run_id="admin-...")
 ```
 
-Creation returns an `admin-...` run identifier. The optional goal defaults to
+Creation returns an `admin-...` run identifier. The MCP create-task schema
+accepts only `admin-` followed by 32 lowercase hexadecimal characters for `run_id`,
+matching the REST membership contract; malformed identifiers fail before HTTP. The optional goal defaults to
 `Administrative run` for this template only. The normal orchestration template
 continues to require a goal. Administrative runs cannot have a parent task.
 
