@@ -1670,6 +1670,17 @@ def _trace_export_ocsf(
     default=False,
     help="OCSF only: project the run journal alone, omitting the audit chain (and so the security decisions).",
 )
+@click.option(
+    "--anchor-endpoint",
+    "anchor_endpoint",
+    metavar="URL",
+    default=None,
+    help=(
+        "Opt-in: after writing, POST each exported record to this time-anchor service and "
+        "save its receipt. Off unless given; https only (http allowed for loopback). "
+        "See docs/observability/trace-export.md."
+    ),
+)
 def trace_export_cmd(
     run_id: str | None,
     output: str | None,
@@ -1680,6 +1691,7 @@ def trace_export_cmd(
     fmt: str,
     include_proposed: bool,
     no_audit: bool,
+    anchor_endpoint: str | None,
 ) -> None:
     """Export ``RUN_ID``'s execution evidence as a TRACE 0.2 Trust Record.
 
@@ -1711,9 +1723,20 @@ def trace_export_cmd(
             read. See docs/observability/ocsf-export.md for the mapping.
             Needs no trace extra and no signing key.
 
-    Exit codes: 0 = exported, 1 = run not found / chain broken / emit error.
+    \b
+    --anchor-endpoint URL: opt-in. After the records are written, submit
+            each one to URL and write the receipt beside it as
+            <name>.anchor.json (to stderr when the record went to stdout).
+            The receipt must name the record's own RFC 8785 sha256 or the
+            command fails. Nothing is sent unless this option is given.
+
+    Exit codes: 0 = exported, 1 = run not found / chain broken / emit error /
+    anchoring failed (the export itself is still written), 2 = usage error.
     """
     if fmt.lower() == "ocsf":
+        if anchor_endpoint:
+            console.print("[red]--anchor-endpoint applies to Trust Records, not --format ocsf.[/red]")
+            raise SystemExit(2)
         _trace_export_ocsf(
             run_id=run_id,
             output=output,
@@ -1723,6 +1746,15 @@ def trace_export_cmd(
             include_audit=not no_audit,
         )
         return
+
+    if anchor_endpoint:
+        from bernstein.core.observability.time_anchor import TimeAnchorError, check_endpoint
+
+        try:
+            check_endpoint(anchor_endpoint)
+        except TimeAnchorError as e:
+            console.print(f"[red]Invalid --anchor-endpoint:[/red] {e}")
+            raise SystemExit(2) from e
 
     # Gate on trace extra
     try:
@@ -1803,21 +1835,29 @@ def trace_export_cmd(
 
     multi_hop = len(hop_result.records) > 1
 
-    # Output
+    # Output. ``written`` pairs each emitted record with where it went
+    # (None = stdout) so the opt-in anchor step can place its receipts.
+    written: list[tuple[str, Path | None]] = []
     if out_dir:
         out_path = Path(out_dir)
         out_path.mkdir(parents=True, exist_ok=True)
         for hop in hop_result.records:
-            (out_path / f"{hop.exec_id}.json").write_text(hop.record, encoding="utf-8")
-        (out_path / "aggregate.json").write_text(hop_result.aggregate, encoding="utf-8")
+            hop_path = out_path / f"{hop.exec_id}.json"
+            hop_path.write_text(hop.record, encoding="utf-8")
+            written.append((hop.record, hop_path))
+        aggregate_path = out_path / "aggregate.json"
+        aggregate_path.write_text(hop_result.aggregate, encoding="utf-8")
+        written.append((hop_result.aggregate, aggregate_path))
         console.print(f"[green]Exported {len(hop_result.records)} hop record(s) to:[/green] {out_path}")
     elif multi_hop:
         # One decision: write the aggregate only; member records need --out-dir.
         if output:
             Path(output).write_text(hop_result.aggregate, encoding="utf-8")
+            written.append((hop_result.aggregate, Path(output)))
             console.print(f"[green]Exported aggregate to:[/green] {output}")
         else:
             click.echo(hop_result.aggregate)
+            written.append((hop_result.aggregate, None))
         sys.stderr.write(
             "Multi-worker run: per-hop records need --out-dir DIR.\n",
         )
@@ -1825,9 +1865,43 @@ def trace_export_cmd(
         trust_record_json = hop_result.records[0].record
         if output:
             Path(output).write_text(trust_record_json, encoding="utf-8")
+            written.append((trust_record_json, Path(output)))
             console.print(f"[green]Exported trace to:[/green] {output}")
         else:
             click.echo(trust_record_json)
+            written.append((trust_record_json, None))
+
+    if anchor_endpoint:
+        _anchor_exported_records(written, anchor_endpoint)
+
+
+def _anchor_exported_records(written: list[tuple[str, Path | None]], endpoint: str) -> None:
+    """Submit each exported record to ``endpoint`` and save the receipts.
+
+    Runs only when ``--anchor-endpoint`` was given. The export is already on
+    disk (or stdout) by now, so a failure here never loses it: every record
+    is attempted, failures are reported, and the command exits 1 if any
+    record was not anchored.
+    """
+    from bernstein.core.observability.time_anchor import TimeAnchorError, anchor_record
+
+    failures = 0
+    for record_json, path in written:
+        label = str(path) if path is not None else "stdout record"
+        try:
+            receipt = anchor_record(record_json, endpoint)
+        except TimeAnchorError as e:
+            failures += 1
+            sys.stderr.write(f"Anchoring failed for {label}: {e}\n")
+            continue
+        if path is not None:
+            receipt_path = path.with_name(f"{path.stem}.anchor.json")
+            receipt_path.write_text(receipt.to_json(), encoding="utf-8")
+            sys.stderr.write(f"Anchored {label} ({receipt.status}, sha256 {receipt.sha256}): {receipt_path}\n")
+        else:
+            sys.stderr.write(receipt.to_json())
+    if failures:
+        raise SystemExit(1)
 
 
 @trace_cmd.command("verify-projection")
