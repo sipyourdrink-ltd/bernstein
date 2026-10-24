@@ -328,7 +328,7 @@ quality_gates:
   timeout_s: 120
   base_ref: "main"               # base for incremental diff; if it names no commit in the
                                  # repo, the branch checked out in the workdir is used
-  cache_enabled: true            # reuse gate results when diff is unchanged
+  cache_enabled: true            # DLP cache also keys on dlp_* policy settings
   allow_bypass: false            # whether the CLI can skip gates
 
   pii_scan: true
