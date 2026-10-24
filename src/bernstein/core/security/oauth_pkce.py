@@ -373,7 +373,7 @@ class PKCEFlow:
             # that need it for debugging can opt in there.
             from bernstein.core.security.redactor import mask
 
-            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure  # noqa: E501
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.error(
                 "PKCE token exchange failed: %s %s",
                 resp.status_code,

@@ -67,16 +67,16 @@
   ],
   "catch_rate": 0.375,
   "caught_count": 3,
-  "content_sha256": "ed8ff3cdc606bf4e3ada1a905d89142b8572910792d38845dec832889c2e31dd",
+  "content_sha256": "531737814c9bd3819cb4dccdf353d8f67cf2f48ef8d9793bef29da9aae049480",
   "corpus_sha256": "0083910223efd1e7fea28dc1411fc650087be90e98085873d059dd4e591f50f7",
   "schema_version": 1,
   "suite_hash": "f364fb175823c25586842830fd2a37d858258b7cc37cd490aa4bc02556a48f65",
   "suite_version": "gate-evasion-v1",
   "tools": {
     "pytest": "9.1.1",
-    "ruff": "0.16.10",
+    "ruff": "0.17.1",
     "vulture": "2.16"
   },
   "total": 8,
-  "update_reason": "test_expansion catches the no-module-import placeholder; narrow fixture wording and remeasure after integration with main (#6151)"
+  "update_reason": "Remeasure reviewed Ruff0.17.1 dependency-tool migration (#6730) with unchanged eight-case corpus"
 }
