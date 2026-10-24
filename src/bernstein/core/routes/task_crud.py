@@ -10,7 +10,7 @@ import subprocess
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -1819,7 +1819,13 @@ async def close_task(task_id: str, request: Request) -> TaskResponse:
     "/tasks/{task_id}/cancel",
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
-async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -> TaskResponse:
+async def cancel_task(
+    task_id: str,
+    body: TaskCancelRequest,
+    request: Request,
+    *,
+    stop_mode: Literal["immediate", "request", "confirm"] = "immediate",
+) -> TaskResponse:
     """Cancel a task and cascade to all of its descendant subtasks.
 
     Walks the subtask tree (``parent_task_id`` references) via
@@ -1833,6 +1839,17 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
+        if stop_mode == "confirm":
+            if existing_task.status.value != "stop_req":
+                raise ValueError(
+                    f"Task '{task_id}' cannot confirm stop from status '{existing_task.status.value}'",
+                )
+            confirmed_task = await store.confirm_stop(task_id, body.reason)
+            sse_bus.publish(
+                "task_update",
+                json.dumps({"id": confirmed_task.id, "status": confirmed_task.status.value}),
+            )
+            return task_to_response(confirmed_task)
         # Preserve the legacy 409 for a root task that is already terminal -
         # ``cancel_cascade`` silently skips terminal tasks, so we check here.
         cancellable = {
@@ -1847,7 +1864,10 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
             raise ValueError(
                 f"Task '{task_id}' cannot be cancelled from status '{existing_task.status.value}'",
             )
-        cancelled_tasks = await store.cancel_cascade(task_id, body.reason)
+        if stop_mode == "request":
+            cancelled_tasks = await store.cancel_cascade(task_id, body.reason, cooperative=True)
+        else:
+            cancelled_tasks = await store.cancel_cascade(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     except ValueError as exc:
@@ -2225,6 +2245,7 @@ def task_counts(
         blocked_by_abandon=counts.get("blocked_by_abandon", 0),
         refused=counts.get("refused", 0),
         suspended=counts.get("suspended", 0),
+        stop_req=counts.get("stop_req", 0),
         total=counts.get("total", 0),
     )
 
