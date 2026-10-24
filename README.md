@@ -239,6 +239,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 | page | what it covers |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | the full capability list: MCP server mode, signed agent cards, sandbox backends, artifact sinks, regulatory mappings |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [MCP server](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mcp/server.md) | local stdio server, plus a hosted read-only endpoint at `mcp.bernstein.run` for receipt verification with no install; questions about this repo can be asked over MCP through [DeepWiki](https://deepwiki.com/sipyourdrink-ltd/bernstein) |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |

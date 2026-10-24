@@ -242,13 +242,14 @@ bernstein volunteer browse --budget 60
 Le [guide du donateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) couvre l'exécution d'un worker et le budget que vous fixez, le [guide du projet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) couvre la déclaration d'un manifeste, et le [modèle de menaces](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indique ce que chaque frontière protège et ne protège pas. Le lanceur en une seule commande n'est pas encore livré : aujourd'hui `verify`, `browse`, `budget`, `verify-bundle` et `hub` sont les sous-commandes qui fonctionnent.
 
 ### au-delà de la page d'accueil
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Toutes les ressources approfondies sont réunies sur le [site de documentation](https://docs.bernstein.run/) :
 
 | page | contenu |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | liste exhaustive des capacités : mode serveur MCP, cartes d'agent signées, moteurs de sandbox, collecteurs d'artefacts, conformité réglementaire |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | cas d'usage pertinents et situations où Bernstein n'est pas adapté |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs déclaratifs en YAML composés de nœuds agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | tableau de bord web reposant sur la même API que la TUI |
