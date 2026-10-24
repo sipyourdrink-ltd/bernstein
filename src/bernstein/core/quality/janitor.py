@@ -1194,17 +1194,23 @@ async def run_janitor(
                         sorted(decomposed),
                     )
                 elif has_nontrivial_pass:
-                    warn_detail = f"empty diff but non-trivial completion signals passed: {attribution_reason}"
-                    signal_results.append(("attribution:empty_diff_warn", True, warn_detail))
-                    logger.warning(
-                        "janitor WARN (empty diff, flagged for review): task=%s task_type=%s -- no "
-                        "changed files attributable to this task (attribution: %s), but non-trivial "
-                        "completion signals passed, so accepting rather than rejecting; stamp the "
-                        "task id into the landing commit or set owned_files to make attribution "
-                        "explicit",
+                    # All completion signals pass and at least one is non-trivial
+                    # (test_passes, file_contains, etc.) — the required state was
+                    # already satisfied on the base before this agent ran (#6606).
+                    # Accept cleanly rather than flagging for review: there is
+                    # verifiable evidence the deliverable exists; the missing commit
+                    # attribution does not undercut it.
+                    satisfied_detail = (
+                        f"empty diff: all completion signals already satisfied on base ({attribution_reason})"
+                    )
+                    signal_results.append(("attribution:already_satisfied", True, satisfied_detail))
+                    logger.info(
+                        "janitor ACCEPT (already satisfied): task=%s task_type=%s -- no changed "
+                        "files attributable to this task, but all non-trivial completion signals "
+                        "passed, so the deliverable was already in place on the base branch; "
+                        "completing as done without retry",
                         task.id,
                         task.task_type.value,
-                        attribution_reason,
                     )
                 else:
                     all_passed = False
