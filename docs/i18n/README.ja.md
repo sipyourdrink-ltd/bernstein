@@ -41,11 +41,12 @@
 Bernstein は AI エージェントのためのオープンソース・ガバナンスレイヤーです。policy as code の上で動きます。誰が何をしてよいか・何に承認が要るか・何を記録すべきかをポリシーとして書けば、Bernstein がそれを適用し、検証可能な記録を作ります。決定論的スケジューラ - 調整ループにモデルは入らない - がエージェントを並列に走らせ、成果物をゲートで検査し、全ステップを記録します。だから実行は事後に、オフラインで、アーティファクトだけから検証できます。CLI コーディングエージェントはそのまま動き(Claude Code、Codex、Gemini CLI ほか 50+)、同じレイヤーがあらゆるエージェントワークロードをガバナンスします: 成果物は diff でも、調査レポートでも、データセットでも、監査エビデンスパックでも構いません。エアギャップ用インストールプロファイル同梱。Apache-2.0。
 
 ### 概要
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-他と違う点は 4 つ。以降はすべて詳細である。
+際立つ点は5つ。あとは詳細です。
 
 - **協調ループに LLM がいない。** スケジューリングは素の Python なので、実行は端から端まで再現できる。昨日のプランをリプレイすれば、昨日のタスクグラフが出てくる。
+- **ハードウェア鍵の証拠.** オフラインの PIV 保管証明と FIDO2 承認検証は、信頼先の固定と明示的な時刻を用い、共通のレシートプロトコルに従います。トークンの保管は TRACE の信頼レベルを引き上げません。 [ハードウェア鍵の証拠](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **事後に検証できる。** リプレイジャーナルがすべての実行を記録し、常時稼働のリネージ・スパインがリネージを持つ各ステップを記録する。オプトインの HMAC チェーン監査ログ（`BERNSTEIN_AUDIT=1`）は、オフラインで検証できるレシートを追加する。非決定性は再実行のゆらぎではなく、該当ステップちょうどでのハッシュ不一致として表面化する。コード以外の成果物も同じ扱いを受ける。タスクはアーティファクト契約（レポート、データセット、アクションログ、運用結果）を宣言でき、git コミットではなく署名済みリネージレシートをもって完了する。
 - **構造として隔離されている。** コーディングタスクはそれぞれマージゲートの背後にある自分の git worktree を得る。アーティファクトモードのタスクは `.sdd/workspaces/` 配下の作業ディレクトリを得る。エージェントは既定で可変ワークスペースを共有しない。共有される状態はタスクバックログだけで、これはアトミックに取得される。より厳しいファイルシステム強制はオプトインで、[サンドボックスバックエンド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md)から選ぶ。worktree を無効にすれば、すべてのタスクは共有チェックアウトで走る。
 - **広く、そしてローカル。** 53 以上の CLI エージェントアダプタに加え、汎用の `--prompt` ラッパー、ファイルベースの状態、SaaS 経由なし、サードパーティのデータプレーンなし。
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [提供者ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) はワーカーの実行と自分で設定する予算を、[プロジェクトガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) はマニフェストの宣言を、[脅威モデル](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) は各境界が何を守り何を守らないかを扱います。単一コマンドのランナーはまだ出荷されていません。現在動くサブコマンドは `verify`、`browse`、`budget`、`verify-bundle`、`hub` です。
 
 ### 表紙の先へ
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 踏み込んだ内容はすべて[ドキュメントサイト](https://docs.bernstein.run/)にある:
 
 | ページ | 扱う内容 |
 |---|---|
 | [ケーパビリティ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | 全機能一覧: MCP サーバーモード、署名済みエージェントカード、サンドボックスバックエンド、アーティファクトシンク、規制対応マッピング |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [誰のためのものか](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | 価値が出る場所と、Bernstein が不適切な場面 |
 | [ワークフロー](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | エージェント / コマンド / ループのノードから成る宣言的 YAML DAG |
 | [Web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | TUI と同じ API 上で動くブラウザダッシュボード |
@@ -278,6 +280,11 @@ awesome リストの項目、カタログ掲載、先行研究としての引用
 
 </details>
 
+### 管理用の実行
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+`bernstein_run(template="administrative", goal="Weekly sprint")` で、プランナーやエージェントのプロセスを起動せずに監査付きの空のコンテナを作成します。`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` で手動タスクを追加し、`bernstein_run_status(run_id="admin-...")` で状態を確認します。タスクは通常の取得 API から取得できますが、自動オーケストレーションの対象外です。空でない実行は全タスクの状態が `done`、`closed`、または `cancelled` のいずれかになると完了します。空の実行は開いたままです。 [運用手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### コントリビュート、サポート、ライセンス
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -287,6 +294,6 @@ PR を歓迎する。セットアップとコードスタイルは [CONTRIBUTING
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

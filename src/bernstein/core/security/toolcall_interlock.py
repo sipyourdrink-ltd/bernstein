@@ -111,11 +111,12 @@ class ToolCallIntent:
 def canonical_effect_digest(payload: Any) -> str:
     """Return the ``sha256:`` digest of one observed tool-call effect.
 
-    Raw connector form (#6270 slice 1): mappings dump with compact separators
-    and ``ensure_ascii=False``, without ``sort_keys`` and without stripping
-    timestamps or echoed ids. A connector that echoes a timestamp therefore
-    produces a different digest. Text and bytes use SHA-256 of the UTF-8 /
-    raw bytes -- the same preimage as ``ResultBundle.patch_sha256``.
+    Bytes hash as-is and text hashes its UTF-8 bytes -- the same preimage as
+    ``ResultBundle.patch_sha256``. Any other value (``None`` on timeout, or
+    a mapping the host did not read off the wire) dumps with compact
+    separators and ``ensure_ascii=False``, without ``sort_keys``. That
+    compact-JSON branch is not the primary form: a live connector return is
+    digested from its received bytes.
     """
     if isinstance(payload, bytes):
         digest = hashlib.sha256(payload).hexdigest()
@@ -127,13 +128,18 @@ def canonical_effect_digest(payload: Any) -> str:
     return "sha256:" + digest
 
 
-def effect_digest_for_connector_response(response: Mapping[str, Any] | None) -> str:
+def effect_digest_for_connector_response(
+    response: Mapping[str, Any] | None,
+    received: bytes | None = None,
+) -> str:
     """Digest the connector return that a ``toolcall.effect`` event binds.
 
     ``None`` (timeout / no body) hashes JSON ``null``.  A string-only
     ``result`` with no JSON-RPC error is hashed as text so a file-changing
     tool's diff matches :attr:`ResultBundle.patch_sha256`.  Every other body
-    is the raw JSON-RPC object, timestamps included.
+    hashes ``received``: the stripped JSON-RPC line exactly as the connector
+    sent it, so key order, whitespace, escapes and echoed timestamps all
+    count.  A response with no received bytes falls back to compact JSON.
     """
     if response is None:
         return canonical_effect_digest(None)
@@ -141,7 +147,25 @@ def effect_digest_for_connector_response(response: Mapping[str, Any] | None) -> 
     error = response.get("error")
     if error is None and isinstance(result, str):
         return canonical_effect_digest(result)
+    if received is not None:
+        return canonical_effect_digest(received)
     return canonical_effect_digest(response)
+
+
+def _accepts_keyword(func: Any, name: str) -> bool:
+    """Whether *func* takes keyword *name*; a slice-1 ``record_effect`` does not."""
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            param.name == name
+            and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        )
+        for param in params
+    )
 
 
 def toolcall_effect_outcome(response: Mapping[str, Any] | None) -> str:
@@ -270,6 +294,7 @@ class ToolCallAttestationInterlock:
         duration_ms: float,
         outcome: str,
         patch: str | None = None,
+        received: bytes | None = None,
     ) -> None:
         """Record the connector effect against the admitted intent.
 
@@ -286,6 +311,9 @@ class ToolCallAttestationInterlock:
         try:
             if evidence.intent_digest != intent.digest():
                 raise ToolCallInterlockError("effect evidence is bound to a different tool-call intent")
+            extra: dict[str, Any] = {}
+            if _accepts_keyword(recorder, "received"):
+                extra["received"] = received
             recorded = recorder(
                 intent,
                 evidence,
@@ -293,6 +321,7 @@ class ToolCallAttestationInterlock:
                 duration_ms=duration_ms,
                 outcome=outcome,
                 patch=patch,
+                **extra,
             )
             if inspect.isawaitable(recorded):
                 await recorded

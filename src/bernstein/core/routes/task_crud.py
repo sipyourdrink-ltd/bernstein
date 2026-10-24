@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
+from bernstein.core.administrative_runs import AdministrativeRunStatus
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, DirectChannel, SignalActionFailure
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
 from bernstein.core.eu_ai_act import (
@@ -1031,6 +1033,18 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     effective_body = body.model_copy(update={"tenant_id": effective_tenant})
     if effective_body.metadata is None:
         effective_body.metadata = {}
+    if "administrative_run_id" in effective_body.metadata:
+        raise HTTPException(status_code=422, detail="Use run_id for administrative membership")
+    if body.run_id is not None:
+        if agent_task_scope(request) is not None:
+            raise HTTPException(status_code=403, detail="Task-scoped tokens cannot add run members")
+        try:
+            request.app.state.administrative_runs.require_open(body.run_id, effective_tenant)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        effective_body.metadata["administrative_run_id"] = body.run_id
     traceparent = request.headers.get("traceparent")
     tracestate = request.headers.get("tracestate")
     baggage = request.headers.get("baggage")
@@ -1176,6 +1190,26 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
                 )
 
         task = await store.create(effective_body)
+        # The server owns an install-local HMAC chain even when no orchestrator
+        # has wired the optional process-global lifecycle audit listener.
+        chain = getattr(request.app.state, "audit_chain", None)
+        if chain is not None:
+            chain.log_with_prev_digest(
+                event_type="task.created",
+                actor="task_server",
+                resource_type="task",
+                resource_id=task.id,
+                details={
+                    "task_id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "role": task.role,
+                    "priority": task.priority,
+                    "scope": task.scope.value,
+                    "depends_on": list(task.depends_on),
+                    "tenant_id": task.tenant_id,
+                },
+            )
         append_assessment_log(
             request.app.state.sdd_dir,
             build_log_record(task.id, task, assessment),
@@ -1206,6 +1240,8 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
     assessments: list[TaskRiskAssessment] = []
     batch_tenant = _resolve_request_tenant_scope(request)
     for task_body in body.tasks:
+        if task_body.run_id is not None or "administrative_run_id" in task_body.metadata:
+            raise HTTPException(status_code=422, detail="Add administrative members individually via POST /tasks")
         effective = task_body.model_copy(update={"tenant_id": batch_tenant})
 
         # Auto-classify role if not specified
@@ -2493,7 +2529,9 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
     An agent token may not move a task between roles: a ``role`` in the
     body must equal the token's role *and* the task's current role, so a
     worker cannot re-label a task into its own role and then claim it.
-    Role reassignment stays with operator credentials.
+    Role reassignment stays with operator credentials. Task-scoped agents
+    cannot set ``cli`` or the ladder-position fields; those changes require
+    operator credentials or an unscoped run-root identity.
     """
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
@@ -2514,7 +2552,25 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
                     f"role mismatch: token is issued for role '{agent_role}'; agent tokens cannot reassign task roles"
                 ),
             )
-        task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
+        ladder_fields = body.model_fields_set & {"cli", "escalation_ladder_step", "escalation_ladder_attempts"}
+        if ladder_fields and agent_task_scope(request) is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"task-scoped agent tokens cannot update {', '.join(sorted(ladder_fields))}; "
+                    "escalation ladder changes require operator or run-root credentials"
+                ),
+            )
+        task = await store.update(
+            task_id,
+            role=body.role,
+            priority=body.priority,
+            model=body.model,
+            cli=body.cli,
+            meta_messages=body.meta_messages,
+            escalation_ladder_step=body.escalation_ladder_step,
+            escalation_ladder_attempts=body.escalation_ladder_attempts,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
@@ -2839,3 +2895,28 @@ def get_channel_responses(query_id: str, request: Request) -> list[ChannelRespon
         )
         for r in responses
     ]
+
+
+class AdministrativeRunCreate(BaseModel):
+    """Create a manual container without planning or spawning agents."""
+
+    goal: str = Field(min_length=1, max_length=8192)
+
+
+@router.post("/administrative-runs", status_code=201, response_model=AdministrativeRunStatus)
+def create_administrative_run(body: AdministrativeRunCreate, request: Request) -> dict[str, Any]:
+    if agent_task_scope(request) is not None:
+        raise HTTPException(status_code=403, detail="Task-scoped tokens cannot create run containers")
+    return request.app.state.administrative_runs.create(body.goal, _resolve_request_tenant_scope(request))
+
+
+@router.get("/administrative-runs/{run_id}", response_model=AdministrativeRunStatus)
+def administrative_run_status(run_id: str, request: Request) -> dict[str, Any]:
+    try:
+        result = request.app.state.administrative_runs.status(run_id, _resolve_request_tenant_scope(request))
+        enforce_agent_task_scope_for_ids(request, [task["id"] for task in result["tasks"]])
+        return result
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

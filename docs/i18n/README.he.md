@@ -41,11 +41,12 @@
 Bernstein הוא שכבת הגברנס בקוד פתוח לסוכני AI. הוא פועל לפי policy as code: אתה כותב את המדיניות - מי רשאי לעשות מה, מה טעון אישור, מה חייב להירשם - ו-Bernstein אוכף אותה ומפיק רשומה שניתנת לאימות. מתזמן דטרמיניסטי - בלי מודל בלולאת התיאום - מריץ סוכנים במקביל, מסנן את התוצרים בשערים ומתעד כל צעד, כך שאפשר לאמת ריצה בדיעבד, אופליין, מהארטיפקטים בלבד. סוכני CLI לקוד עובדים מהקופסה (Claude Code, Codex, Gemini CLI ועוד 50+), ואותה שכבה מנהלת כל עומס סוכני: התוצר יכול להיות diff, דוח מחקר, דאטהסט או חבילת ראיות ביקורת. פרופיל התקנה ל-air-gap כלול. Apache-2.0.
 
 ### במבט חטוף
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-ארבעה דברים מייחדים אותו; כל השאר הם פרטים.
+חמישה דברים מייחדים אותו; כל השאר הוא פרטים.
 
 - **ללא LLM בלולאת התיאום.** התזמון נכתב ב-Python טהור, כך שריצה ניתנת לשחזור מלא מקצה לקצה. הרץ שוב את התוכנית של אתמול וקבל בדיוק את אותו גרף משימות.
+- **ראיות של מפתחות חומרה.** מאמתי החזקה של PIV ואישור FIDO2 פועלים ללא רשת ומשתמשים באותו פרוטוקול קבלות, עם אמון מקובע וזמן מפורש. החזקת הטוקן אינה מעלה את רמות האמון של TRACE. [ראיות של מפתחות חומרה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **ניתן לבדיקה בדיעבד.** יומן השחזור (replay journal) רושם כל ריצה, ועמוד השדרה של השושלת (lineage spine) הפעיל תמיד מתעד כל שלב נושא שושלת; יומן הביקורת האופציונלי המשורשר ב-HMAC (`BERNSTEIN_AUDIT=1`) מוסיף קבלות (receipts) שניתן לאמת במצב לא מקוון. אי-דטרמיניזם צף כאי-התאמת גיבוב (hash mismatch) בשלב המדויק, ולא כחוסר יציבות אקראי בהרצה חוזרת. תוצרים שאינם קוד זוכים לאותו יחס: משימה יכולה להצהיר על חוזה ארטיפקט (דוח, מערך נתונים, יומן פעולות, תוצאת ops) ומסתיימת בקבלת שושלת חתומה במקום ב-commit של git.
 - **מבודד מעצם המבנה.** כל משימת קידוד מקבלת git worktree משלה מאחורי שערי מיזוג; משימות במצב ארטיפקט מקבלות ספריית עבודה תחת `.sdd/workspaces/`. כברירת מחדל, סוכנים אינם חולקים סביבת עבודה הניתנת לשינוי; המצב המשותף היחיד הוא מאגר המשימות (backlog), הנתבע בצורה אטומית. אכיפה מחמירה יותר של מערכת הקבצים היא אופציונלית דרך [מנועי סביבת החול (sandbox)](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). השבת את ה-worktrees וכל משימה תרוץ בסביבת העבודה המשותפת.
 - **רחב ומקומי.** מעל 53 מתאמים לסוכני CLI בתוספת מעטפת `--prompt` גנרית, מצב מבוסס קבצים, ללא תלות ב-SaaS, ללא מישור נתונים של צד שלישי.
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [מדריך התורם](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) מכסה הרצת worker ואת התקציב שאתה קובע, [מדריך הפרויקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) מכסה הצהרה על מניפסט, ו[מודל האיומים](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) מפרט מפני מה כל גבול מגן ומפני מה לא. המריץ בפקודה אחת עדיין לא שוחרר: כיום `verify`, `browse`, `budget`, `verify-bundle` ו-`hub` הן תת-הפקודות שעובדות.
 
 ### מעבר לעמוד הראשי
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 כל החומר המעמיק נמצא ב[אתר התיעוד](https://docs.bernstein.run/):
 
 | עמוד | מה הוא מכסה |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | רשימת היכולות המלאה: מצב שרת MCP, כרטיסי סוכן חתומים, מנועי sandbox, יעדי שמירת ארטיפקטים, מיפוי רגולטורי |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | היכן נוצר הערך ומתי Bernstein אינו הכלי המתאים |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | גרפי DAG הצהרתיים ב-YAML המורכבים מצומתי סוכן / פקודה / לולאה |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | לוח בקרה בדפדפן המבוסס על אותו API בו משתמש ה-TUI |
@@ -278,6 +280,11 @@ Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח 
 
 </details>
 
+### הרצות מנהלתיות
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+השתמשו ב־`bernstein_run(template="administrative", goal="Weekly sprint")` ליצירת מכולה ריקה עם רישום ביקורת, ללא מתכנן או תהליכי סוכנים. הוסיפו משימות ידניות דרך `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ובדקו מצב דרך `bernstein_run_status(run_id="admin-...")`. אפשר לקבל משימות דרך ממשק הקצאת המשימות הרגיל, אך הן מוחרגות מתזמור אוטומטי. הרצה שאינה ריקה מסתיימת כשלכל משימה יש סטטוס `done`, `closed` או `cancelled`; הרצה ריקה נשארת פתוחה. [תהליך התפעול](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### תרומה, תמיכה, רישיון
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -287,6 +294,6 @@ Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח 
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

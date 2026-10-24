@@ -1,0 +1,29 @@
+name: checkov-recorded-sarif
+adapter_class: bernstein.adapters.checkov.CheckovAdapter
+steps:
+  - target: tests/fixtures/scanners/checkov/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/checkov/target
+    expected_finding_hashes:
+      - 6662b2c10dc8e88b4006094aeb58e067b43f781cac7e3d6d877c90075e44bca6
+      - 4899aa125d1059b5682e76d0a09cc7c8d7cdd531b08d4012af4d50ba5e45714c
+      - f5478989b1bc19cfa5aec88d6c0a2f1302bc7dd73d0e6628af8c6bb39d30135c
+      - 8579d9fa57a8df7c7e630d01aeb5c3d4ffa7ed0e302504ef3511a3e6f5affd3a
+      - 739efaea0080910ab16c6d8a41ee7c49a984fe9f4fc0531c5fb73078dd4f4e8d
+      - 64af6eb5f84d31af00eb4ee30bd5a075455fe352cc5558a2afb3ad081da4aba9
+      - 8d113bc43abf517c5c5c66ad94810f9bea23e5cf766cb865d382f3726db75a90
+      - 69a34075acd7a9534859cbe39d9e0d586630e6a36e7ac5d2394b5a1d37fd0360
+  - target: tests/fixtures/scanners/checkov/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/checkov/target
+    expected_finding_hashes:
+      - 6662b2c10dc8e88b4006094aeb58e067b43f781cac7e3d6d877c90075e44bca6
+      - 4899aa125d1059b5682e76d0a09cc7c8d7cdd531b08d4012af4d50ba5e45714c
+      - f5478989b1bc19cfa5aec88d6c0a2f1302bc7dd73d0e6628af8c6bb39d30135c
+      - 8579d9fa57a8df7c7e630d01aeb5c3d4ffa7ed0e302504ef3511a3e6f5affd3a
+      - 739efaea0080910ab16c6d8a41ee7c49a984fe9f4fc0531c5fb73078dd4f4e8d
+      - 64af6eb5f84d31af00eb4ee30bd5a075455fe352cc5558a2afb3ad081da4aba9
+      - 8d113bc43abf517c5c5c66ad94810f9bea23e5cf766cb865d382f3726db75a90
+      - 69a34075acd7a9534859cbe39d9e0d586630e6a36e7ac5d2394b5a1d37fd0360

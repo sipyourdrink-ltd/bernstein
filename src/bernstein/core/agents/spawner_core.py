@@ -150,7 +150,7 @@ from bernstein.templates.renderer import TemplateError, render_role_prompt
 
 if TYPE_CHECKING:
     import subprocess
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from bernstein.adapters.base import CLIAdapter
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
@@ -1758,6 +1758,7 @@ class AgentSpawner:
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
         self._file_ownership_provider: Callable[[], dict[str, str]] | None = None
+        self._cost_anomaly_spawn_observer: Callable[[list[Task], ModelConfig], None] | None = None
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         # Per-session baseline of operator-checkout untracked paths, captured
         # at manager/planning spawn so the reap-time sweep can quarantine any
@@ -4263,6 +4264,12 @@ class AgentSpawner:
                 logger.warning("Router failed to select provider, using fallback: %s", exc)
         return model_config, provider_name, "heuristic"
 
+    def _notify_cost_anomaly_spawn(self, tasks: list[Task], model_config: ModelConfig) -> None:
+        """Report the resolved model without changing routing or task pins."""
+        observer = getattr(self, "_cost_anomaly_spawn_observer", None)
+        if observer is not None:
+            observer(tasks, model_config)
+
     def _spawn_for_tasks_internal(self, tasks: list[Task], model_override: str | None = None) -> AgentSession:
         """Actual spawn implementation."""
         if self._shutdown_event is not None and self._shutdown_event.is_set():
@@ -4574,6 +4581,7 @@ class AgentSpawner:
             base_config.model,
         )
 
+        self._notify_cost_anomaly_spawn(tasks, model_config)
         provider_for_rate_limit = provider_name or self._adapter.name()
         try:
             self._spawn_rate_limiter.acquire(provider_for_rate_limit)
@@ -5173,6 +5181,7 @@ class AgentSpawner:
                 if _bridge_sampling_keys:
                     raise SamplingParamsRefusal(self._runtime_bridge.name(), _bridge_sampling_keys)
                 try:
+                    self._notify_cost_anomaly_spawn(tasks, model_config)
                     remote_spawned = self._spawn_via_runtime_bridge(
                         session=session,
                         prompt=prompt,
@@ -5349,6 +5358,7 @@ class AgentSpawner:
 
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
+                        self._notify_cost_anomaly_spawn(tasks, model_config)
                         target_adapter.set_resource_limits(self._resource_limits)
                         spawn_start = time.perf_counter()
                         if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
@@ -5907,6 +5917,7 @@ class AgentSpawner:
                 max_tokens=model_config.max_tokens,
                 is_batch=model_config.is_batch,
             )
+        self._notify_cost_anomaly_spawn(tasks, model_config)
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
@@ -6431,7 +6442,7 @@ class AgentSpawner:
             # falls back to the direct adapter spawn, mirroring the
             # ContainerError fallback in _spawn_in_sandbox.
             try:
-                sbx_session = self._provision_sandbox_session(session_id)
+                sbx_session = self._provision_sandbox_session(session_id, task_ids=session.task_ids)
             except Exception as exc:
                 explicit_runtime = self._explicit_container_runtime()
                 if explicit_runtime is not None:
@@ -6643,7 +6654,7 @@ class AgentSpawner:
         """
         return AgentSpawner._explicit_container_runtime() is not None
 
-    def _provision_sandbox_session(self, session_id: str) -> SandboxSession:
+    def _provision_sandbox_session(self, session_id: str, *, task_ids: Sequence[str] = ()) -> SandboxSession:
         """Provision a dedicated sandbox session for one spawn (issue #2162).
 
         One session per agent means one container per agent: an exec
@@ -6654,6 +6665,9 @@ class AgentSpawner:
             session_id: Agent session identifier, recorded in the audit
                 event for correlation. The backend allocates its own
                 sandbox session id.
+            task_ids: Tasks this spawn runs. Recorded in the create event
+                so a session that is never destroyed can be traced to the
+                task that owned it (``bernstein sandbox leaks``, #5112).
 
         Returns:
             The freshly created :class:`SandboxSession`.
@@ -6684,6 +6698,7 @@ class AgentSpawner:
                 "image": self._sandbox_options.get("image"),
                 "backend": backend_name,
                 "agent_session_id": session_id,
+                "task_ids": list(task_ids),
             },
         )
         self._check_task_server_reachability(sbx_session)

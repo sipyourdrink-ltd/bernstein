@@ -63,6 +63,8 @@ from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard, meta_task_kind
 from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.tasks.models import (
     AgentSession,
+    Complexity,
+    ModelConfig,
     Task,
     TaskStatus,
 )
@@ -2025,6 +2027,10 @@ def _pre_spawn_checks_pass(orch: Any, alive_count: int) -> bool:
         logger.debug("Skipping claim/spawn: orchestrator is shutting down")
         return False
 
+    if getattr(orch, "_stop_spawning", False):
+        logger.warning("Cost anomaly detector halted spawning; skipping all spawns this tick")
+        return False
+
     _adapter = getattr(getattr(orch, "_spawner", None), "_adapter", None)
     if _adapter is not None and _adapter.is_rate_limited():
         logger.warning("Provider rate-limited - skipping all spawns this tick")
@@ -2398,6 +2404,26 @@ def _spawn_respawn_budget(orch: Any) -> Any:
         max_respawns=max(int(orch._MAX_SPAWN_FAILURES) - 1, 0),
         window_seconds=float(orch._SPAWN_BACKOFF_MAX_S),
     )
+
+
+def _cost_anomaly_complexity(task: Task) -> str:
+    """Translate the task's three ordered levels into the detector's size tiers."""
+    return {Complexity.LOW: "small", Complexity.MEDIUM: "medium", Complexity.HIGH: "large"}.get(
+        task.complexity, "medium"
+    )
+
+
+def _check_spawn_cost_anomalies(orch: Any, batch: list[Task], model_config: ModelConfig) -> None:
+    """Dispatch current log-only checks using the spawner's resolved model."""
+    detector = getattr(orch, "_anomaly_detector", None)
+    if detector is None or len(batch) != 1:
+        return
+    task = batch[0]
+    try:
+        for signal in detector.check_spawn(task.id, _cost_anomaly_complexity(task), model_config.model):
+            orch._handle_anomaly_signal(signal)
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Cost anomaly spawn check failed for task %s (%s)", task.id, type(exc).__name__)
 
 
 def claim_and_spawn_batches(
@@ -2974,6 +3000,12 @@ def claim_and_spawn_batches(
                 "Bandit routing skipped for multi-task batch %s; static batch escalation keeps attribution clear",
                 [task.id for task in batch],
             )
+
+        # The spawner observes its authoritative model after role/default and
+        # provider resolution, including later failover and resume attempts.
+        orch._spawner._cost_anomaly_spawn_observer = lambda tasks, config: _check_spawn_cost_anomalies(
+            orch, tasks, config
+        )
 
         try:
             # Check if any task in this batch has a preserved worktree for resume
@@ -5307,6 +5339,30 @@ def _process_single_completed_task(
             logger.warning("append_decision failed for task %s: %s", task.id, exc)
 
     _record_evolution_completion(orch, task, session, task_m, cost_usd, janitor_passed)
+
+    # Per-task anomaly checks: ceiling, token-ratio, retry-spiral, baseline update.
+    _anomaly_det = getattr(orch, "_anomaly_detector", None)
+    if _anomaly_det is not None:
+        _task_m = task_m
+        _cost = cost_usd
+        _tokens_in = _task_m.tokens_prompt if _task_m else 0
+        _tokens_out = _task_m.tokens_completion if _task_m else 0
+        _complexity = _cost_anomaly_complexity(task)
+        _orig_id = _lineage_id(task)
+        _is_retry = _orig_id != task.id or task.retry_count > 0 or task.title.startswith("[RETRY")
+        try:
+            for _sig in _anomaly_det.check_task_completion(
+                task.id,
+                _complexity,
+                _cost,
+                _tokens_in,
+                _tokens_out,
+                is_retry=_is_retry,
+                original_task_id=_orig_id if _is_retry else None,
+            ):
+                orch._handle_anomaly_signal(_sig)
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            logger.warning("Cost anomaly completion check failed for task %s (%s)", task.id, type(exc).__name__)
 
     # issue #4463: a scheduled gate repair already reopened this unit of work
     # under a new task id on the preserved branch -- fail this task with a

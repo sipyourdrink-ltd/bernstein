@@ -435,6 +435,9 @@ packages = ["src/bernstein"]
 # .sdd/ MUST stay out of the repo (Repo hygiene CI gate); the operator
 # override path .sdd/eval/golden/<tier>/*.md is still consulted first.
 artifacts = [
+    # Offline hardware trust anchors and their DER fingerprint provenance.
+    "src/bernstein/core/identity/hardware_roots/*.pem",
+    "src/bernstein/core/identity/hardware_roots/manifest.json",
     "src/bernstein/eval/golden_data/**/*.md",
     # Recipe golden traces - YAML fixtures that pin the resolved
     # workflow shape for each bundled recipe.  Loaded by the eval

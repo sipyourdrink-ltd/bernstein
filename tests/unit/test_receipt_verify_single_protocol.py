@@ -218,6 +218,10 @@ def _batch_pass_payload() -> dict[str, Any]:
 
 #: One payload fixture per registered kind. A kind registered without a fixture
 #: fails ``test_every_registered_kind_round_trips``.
+CONTEXTUAL_KINDS = {"key-attestation/piv", "approval/fido2-assertion"}
+
+# Full synthetic contextual round trips and external trust negatives live in
+# test_hardware_attestation.py; these cannot verify without operator policy.
 KIND_PAYLOADS: dict[str, Any] = {
     "security.change": _change_payload,
     "planning.recovery": _recovery_payload,
@@ -233,7 +237,7 @@ def _keys() -> tuple[str, str]:
 def test_every_registered_kind_round_trips() -> None:
     """Sign then verify succeeds for every registered kind, one function each."""
     private_pem, public_pem = _keys()
-    assert set(registered_kinds()) == set(KIND_PAYLOADS), (
+    assert set(registered_kinds()) == set(KIND_PAYLOADS) | CONTEXTUAL_KINDS, (
         "every registered receipt kind needs a payload fixture here: "
         f"registered={sorted(registered_kinds())} fixtures={sorted(KIND_PAYLOADS)}"
     )
@@ -342,3 +346,10 @@ def test_canonical_receipt_bytes_is_key_order_stable() -> None:
     payload = _change_payload()
     reordered = dict(reversed(list(payload.items())))
     assert canonical_receipt_bytes(payload) == canonical_receipt_bytes(reordered)
+
+
+def test_contextual_receipt_kinds_require_external_policy() -> None:
+    private_pem, public_pem = _keys()
+    for kind in CONTEXTUAL_KINDS:
+        envelope = sign_receipt(kind, {}, private_key_pem=private_pem, public_key_pem=public_pem)
+        assert verify_receipt(envelope).errors == ("external HardwarePolicy required",)

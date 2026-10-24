@@ -41,11 +41,12 @@
 Bernstein là tầng governance mã nguồn mở cho AI agent. Nó chạy trên policy as code: bạn viết chính sách - ai được làm gì, cái gì cần phê duyệt, cái gì phải được ghi lại - và Bernstein thực thi chính sách đó và tạo ra bản ghi có thể xác minh. Bộ lập lịch tất định - không có model trong vòng lặp điều phối - chạy các agent song song, chặn kiểm những gì chúng tạo ra qua các gate và ghi lại từng bước, nên một lần chạy có thể được xác minh về sau, offline, chỉ từ các artefact. Các CLI coding agent chạy được ngay (Claude Code, Codex, Gemini CLI và hơn 50 agent khác), và cùng tầng đó governe mọi workload agent: sản phẩm có thể là một diff, một báo cáo nghiên cứu, một dataset hay một gói bằng chứng kiểm toán. Kèm sẵn hồ sơ cài đặt air-gap. Apache-2.0.
 
 ### tổng quan nhanh
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Bốn đặc điểm tạo nên sự khác biệt; mọi thứ phía sau chỉ là chi tiết.
+Năm điểm tạo nên sự khác biệt; phần còn lại là chi tiết.
 
 - **Không có LLM trong vòng lặp điều phối.** Việc lập lịch hoàn toàn bằng Python thuần túy, giúp quá trình thực thi có thể tái lập từ đầu đến cuối. Chạy lại kế hoạch hôm qua và nhận được chính xác đồ thị nhiệm vụ của ngày hôm qua.
+- **Bằng chứng khóa phần cứng.** Bộ xác minh ngoại tuyến về lưu giữ PIV và phê duyệt FIDO2 dùng chung giao thức biên nhận, với nguồn tin cậy được ghim và thời gian rõ ràng. Việc giữ token không nâng mức tin cậy TRACE. [Bằng chứng khóa phần cứng](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Có thể kiểm tra lại sau khi thực thi.** Nhật ký phát lại (replay journal) ghi nhận mọi lượt chạy, và trục nguồn gốc (lineage spine) luôn hoạt động ghi lại từng bước mang nguồn gốc; nhật ký kiểm toán chuỗi HMAC tùy chọn (`BERNSTEIN_AUDIT=1`) bổ sung các biên lai (receipts) để bạn xác thực ngoại tuyến. Tính phi tất định biểu hiện dưới dạng sai lệch hàm băm (hash mismatch) tại chính xác bước xảy ra, thay vì lỗi ngẫu nhiên khi chạy lại. Các sản phẩm bàn giao không phải là mã nguồn cũng được xử lý tương tự: một nhiệm vụ có thể khai báo hợp đồng tạo tác (báo cáo, bộ dữ liệu, nhật ký hoạt động, kết quả ops) và hoàn thành bằng biên lai nguồn gốc có chữ ký thay vì một commit git.
 - **Cô lập theo thiết kế.** Mỗi nhiệm vụ viết mã nhận một git worktree riêng biệt phía sau cổng hợp nhất; các nhiệm vụ ở chế độ tạo tác nhận một thư mục làm việc trong `.sdd/workspaces/`. Các tác tử theo mặc định không chia sẻ không gian làm việc có thể ghi; trạng thái chia sẻ duy nhất là danh sách công việc tồn đọng (backlog), được nhận một cách nguyên tử. Việc thực thi bảo mật hệ thống tệp chặt chẽ hơn là tùy chọn thông qua [sandbox backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Vô hiệu hóa worktrees thì mỗi nhiệm vụ sẽ chạy trong không gian làm việc chung.
 - **Rộng rãi và cục bộ.** Hơn 53 bộ điều hợp tác tử CLI cùng lớp bọc `--prompt` tổng quát, lưu trữ trạng thái dựa trên tệp, không qua trung gian SaaS, không có mặt phẳng dữ liệu của bên thứ ba.
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [Hướng dẫn cho người đóng góp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) nói về việc chạy worker và ngân sách bạn đặt, [hướng dẫn cho dự án](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) nói về việc khai báo manifest, còn [mô hình mối đe dọa](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) nêu rõ mỗi ranh giới bảo vệ điều gì và không bảo vệ điều gì. Trình chạy một lệnh chưa được phát hành: hôm nay `verify`, `browse`, `budget`, `verify-bundle` và `hub` là các lệnh con hoạt động.
 
 ### xa hơn trang nhất
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Mọi tài liệu chuyên sâu đều có tại [trang tài liệu](https://docs.bernstein.run/):
 
 | trang | nội dung bao quát |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | toàn bộ danh mục năng lực: chế độ MCP server, thẻ tác tử có chữ ký, sandbox backends, nơi lưu tạo tác, ánh xạ tuân thủ quy định |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | nơi giá trị được phát huy và trường hợp Bernstein không phải là công cụ phù hợp |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | các DAG YAML khai báo gồm các nút tác tử / lệnh / vòng lặp |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | bảng điều khiển trình duyệt chạy trên cùng API mà TUI sử dụng |
@@ -278,6 +280,11 @@ Danh sách theo dõi đầy đủ, bao gồm mọi mục trong danh sách awesom
 
 </details>
 
+### Lượt chạy quản trị
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Dùng `bernstein_run(template="administrative", goal="Weekly sprint")` để tạo vùng chứa rỗng có nhật ký kiểm toán mà không khởi động bộ lập kế hoạch hay tiến trình tác tử. Thêm tác vụ thủ công bằng `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` và xem trạng thái bằng `bernstein_run_status(run_id="admin-...")`. Tác vụ vẫn có thể được nhận qua API thông thường nhưng không được điều phối tự động. Lượt chạy có tác vụ hoàn tất khi mỗi tác vụ có trạng thái `done`, `closed` hoặc `cancelled`; lượt chạy rỗng vẫn mở. [Quy trình vận hành](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### đóng góp, hỗ trợ, giấy phép
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -287,6 +294,6 @@ Siêu dữ liệu trích dẫn nằm tại [CITATION.cff](https://github.com/sip
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

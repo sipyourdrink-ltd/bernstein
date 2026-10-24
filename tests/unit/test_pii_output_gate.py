@@ -4,7 +4,8 @@ Covers:
 - Secret detection: AWS keys, GitHub tokens, Slack tokens, Stripe keys,
   private keys, generic API keys, passwords, connection strings, bearer tokens, JWTs
 - PII detection: emails, phone numbers, SSNs
-- Allowlist filtering: example.com, test@, placeholder, localhost
+- Allowlist filtering: example.com, test@, placeholder, localhost, scoped to the
+  flagged value rather than the line it sits on
 - Diff scanning: only added lines scanned, removals and headers ignored
 - Redaction: raw secrets never stored in findings
 - format_findings output
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
 from bernstein.core.pii_output_gate import (
     SecretFinding,
     format_findings,
@@ -193,6 +195,310 @@ class TestAllowlist:
         text = 'secret_token = "EXAMPLE_AbCdEf1234567890GhIjKlMn"'
         findings = scan_text(text)
         assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# scan_text: the allowlist exempts benign values, not the lines they sit on
+# ---------------------------------------------------------------------------
+
+# Token-shaped values are assembled at runtime so push protection does not
+# read the test file as a leak.
+_GITHUB_TOKEN = "gh" + "p_" + "Ab3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+_STRIPE_KEY = "sk_" + "live_" + "a1B2c3D4e5F6g7H8i9J0"
+_URL_CREDS = "postgres" + "://svc:S3cretPass@"
+_DB_URL = "postgres" + "://admin:S3cretPass@db.prod.internal:5432/app"
+
+#: Every built-in benign marker, written the way it turns up beside real data.
+_BENIGN_MARKERS = [
+    "see https://example.com/docs",
+    "mirror at example.org",
+    "or example.net",
+    "contact test@corp.io",
+    "owner user@corp.io",
+    "escalate to admin@corp.io",
+    "from noreply@corp.io",
+    "from no-reply@corp.io",
+    "replace placeholder later",
+    "changeme",
+    "set your_api_key in CI",
+    "xxxx",
+    "falls back to localhost",
+    "or 127.0.0.1",
+    "binds 0.0.0.0",
+    "password = 'test'",
+    'fixture = "FAKE-USER"',
+    'fixture = "TEST-USER"',
+    'fixture = "EXAMPLE-USER"',
+    'fixture = "DUMMY-USER"',
+    'fixture = "PLACEHOLDER-USER"',
+    'fixture = "LOCALHOST-USER"',
+]
+
+
+def _rules(text: str, **kwargs: object) -> list[str]:
+    return [f.rule for f in scan_text(text, **kwargs)]  # type: ignore[arg-type]
+
+
+class TestAllowlistIsScopedToTheFlaggedValue:
+    """A benign token elsewhere on a line must not hide a real value beside it."""
+
+    @pytest.mark.parametrize("marker", _BENIGN_MARKERS)
+    def test_a_real_ssn_beside_any_marker_still_blocks(self, marker: str) -> None:
+        findings = scan_text(f'{marker}; ssn = "123-45-6789"')
+
+        ssn = [f for f in findings if f.rule == "ssn"]
+        assert len(ssn) == 1
+        assert ssn[0].block_merge
+
+    @pytest.mark.parametrize(
+        ("line", "rule"),
+        [
+            (f'GITHUB_TOKEN = "{_GITHUB_TOKEN}"  # replace placeholder in CI', "github_token"),
+            (f'STRIPE = "{_STRIPE_KEY}"  # docs: https://example.com/billing', "stripe_key"),
+            (f'DATABASE_URL = "{_DB_URL}"  # localhost in dev', "connection_string"),
+            ('{"email": "user@acme.io", "ssn": "123-45-6789"}', "ssn"),
+            ('fixture = "FAKE-USER"; card = "4111 1111 1111 1111"', "credit_card_number"),
+        ],
+    )
+    def test_a_real_secret_or_pii_value_beside_a_marker_is_reported(self, line: str, rule: str) -> None:
+        findings = [f for f in scan_text(line) if f.rule == rule]
+
+        assert len(findings) == 1
+        assert findings[0].block_merge
+
+    def test_a_benign_value_does_not_shadow_a_real_one_of_the_same_rule(self) -> None:
+        findings = scan_text('a = "FAKE-123-45-6789"; b = "987-65-4320"')
+
+        ssn = [f for f in findings if f.rule == "ssn"]
+        assert len(ssn) == 1
+        assert "FAKE" not in ssn[0].redacted_match
+        assert 'b = "***"' in ssn[0].redacted_match
+
+    def test_an_allowlisted_address_does_not_hide_a_real_one(self) -> None:
+        findings = scan_text("cc: test@corp.io, jane.doe@acme.io")
+
+        assert [f.rule for f in findings] == ["email_address"]
+        assert findings[0].redacted_match.endswith(", ***")
+
+    @pytest.mark.parametrize(
+        ("suppressed", "flagged"),
+        [
+            ('ssn = "FAKE-123-45-6789"', 'ssn = "123-45-6789"'),
+            ('url = "postgres://user:pass@localhost:5432/testdb"', f'url = "{_DB_URL}"'),
+            ('api_key = "TEST_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"', 'api_key = "QZ7_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"'),
+            ('api_key = "your_api_key_here"', 'api_key = "kq81_vmP2xr7Tz4LwN9c"'),
+            ("owner user@example.com", "owner jane.doe@acme.io"),
+        ],
+    )
+    def test_a_marker_inside_the_flagged_value_still_exempts_it(self, suppressed: str, flagged: str) -> None:
+        """Each exemption is pinned against a counterpart that is reported."""
+        assert scan_text(suppressed) == []
+        assert scan_text(flagged) != []
+
+    def test_operator_prefixes_scope_the_same_way(self) -> None:
+        assert _rules('ssn = "ACME-123-45-6789"', allowlist_prefixes=["ACME"]) == []
+        assert _rules('fixture = "ACME-SYNTH"; ssn = "123-45-6789"', allowlist_prefixes=["ACME"]) == ["ssn"]
+
+    def test_scan_diff_applies_the_same_scope(self) -> None:
+        diff = '+++ b/customers.json\n@@ -0,0 +1 @@\n+{"email": "user@acme.io", "ssn": "123-45-6789"}\n'
+
+        assert [f.rule for f in scan_diff(diff)] == ["ssn"]
+
+    def test_the_pii_scan_gate_blocks_a_mixed_line(self, tmp_path: Path) -> None:
+        from bernstein.core.quality_gates import QualityGatesConfig, _run_pii_gate
+
+        (tmp_path / "settings.py").write_text(f'GITHUB_TOKEN = "{_GITHUB_TOKEN}"  # replace placeholder\n')
+
+        result = _run_pii_gate(QualityGatesConfig(pii_scan=True), tmp_path, changed_files=["settings.py"])
+
+        assert not result.passed
+        assert result.blocked
+        assert "github_token" in result.detail
+
+    @pytest.mark.parametrize(
+        ("contains_marker", "is_marker", "rule"),
+        [
+            # ``test@`` inside ``latest@``: a real credential in a real URL.
+            (
+                'DATABASE_URL = "postgres://svc:latest@db.prod.internal:5432/app"',
+                'DATABASE_URL = "postgres://svc:pw@localhost:5432/app"',
+                "connection_string",
+            ),
+            # A URL password that *is* a marker: ``svc:admin@`` is a credential.
+            (
+                'DATABASE_URL = "postgres://svc:admin@db.prod.internal:5432/app"',
+                'DATABASE_URL = "postgres://svc:admin@localhost:5432/app"',
+                "connection_string",
+            ),
+            (
+                'DATABASE_URL = "postgres://svc:test@db.prod.internal/app"',
+                'DATABASE_URL = "postgres://svc:test@localhost/app"',
+                "connection_string",
+            ),
+            ("owner sysadmin@acme-corp.io", "owner admin@acme-corp.io", "email_address"),
+            ("owner contact.test@acme-corp.io", "owner test@acme-corp.io", "email_address"),
+            ("owner ceo@counterexample.com", "owner ceo@example.com", "email_address"),
+            (
+                'DATABASE_URL = "postgres://svc:pw9x@db.myexample.org:5432/app"',
+                'DATABASE_URL = "postgres://svc:pw9x@db.example.org:5432/app"',
+                "connection_string",
+            ),
+            # ``.com.au`` is a registrable domain of its own, not example.com.
+            ("owner jane@example.com.au", "owner jane@example.com", "email_address"),
+            # The local-host and placeholder markers are anchored the same way: a
+            # real host, database or path that only contains one is not exempt.
+            (
+                f'DATABASE_URL = "{_URL_CREDS}localhost-proxy.prod.internal:5432/app"',
+                f'DATABASE_URL = "{_URL_CREDS}localhost:5432/app"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}localhost.prod.internal:5432/app"',
+                f'DATABASE_URL = "{_URL_CREDS}localhost:5432/app"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/app_localhost"',
+                f'DATABASE_URL = "{_URL_CREDS}localhost:5432/app"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}10.0.0.0:5432/app"',
+                f'DATABASE_URL = "{_URL_CREDS}0.0.0.0:5432/app"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}127.0.0.10:5432/app"',
+                f'DATABASE_URL = "{_URL_CREDS}127.0.0.1:5432/app"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/placeholders"',
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/placeholder"',
+                "connection_string",
+            ),
+            # ``-`` and ``_`` join words too: a ``placeholder-proxy`` host or an
+            # ``app-changeme-2`` database is a real name that contains a marker,
+            # and the connection-string match covers the whole URL.
+            (
+                f'DATABASE_URL = "{_URL_CREDS}placeholder-proxy.prod.internal:5432/app"',
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/placeholder"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/app-changeme-2"',
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/changeme"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/app_placeholder"',
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/placeholder"',
+                "connection_string",
+            ),
+            # A token that only contains the word is a token; one that starts
+            # with the ``PLACEHOLDER`` value prefix is still a fixture.
+            (
+                'auth_token = "xxx-placeholder-token-xxx"',
+                'auth_token = "placeholder-token"',
+                "generic_api_key",
+            ),
+            # A marker used as a DNS label is a host name, not a marker; the
+            # host marker already reads ``localhost.prod.internal`` that way.
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.changeme.prod.internal:5432/app"',
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/changeme"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}placeholder.prod.internal:5432/app"',
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/placeholder"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.your-api-key.prod.internal:5432/app"',
+                'DATABASE_URL = "postgres://svc:your-api-key@db.prod.internal:5432/app"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}your-api-key.prod.internal:5432/app"',
+                'DATABASE_URL = "postgres://svc:your-api-key@db.prod.internal:5432/app"',
+                "connection_string",
+            ),
+            # A marker embedded in a database or path token is a real token,
+            # not an exempt fixture value.
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/app_your_api_key"',
+                'DATABASE_URL = "postgres://svc:your-api-key@db.prod.internal:5432/app"',
+                "connection_string",
+            ),
+            (
+                f'DATABASE_URL = "{_URL_CREDS}db.prod.internal:5432/app-your-api-key"',
+                'DATABASE_URL = "postgres://svc:your-api-key@db.prod.internal:5432/app"',
+                "connection_string",
+            ),
+        ],
+    )
+    def test_a_value_that_only_contains_a_marker_is_not_exempt(
+        self, contains_marker: str, is_marker: str, rule: str
+    ) -> None:
+        assert rule in _rules(contains_marker)
+        assert rule not in _rules(is_marker)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "contact mailto:test@example.com",
+            "see example.com.",
+            "see https://api.example.com/x",
+            "write to user@example.com.",
+            'bind = "0.0.0.0:8080"  # all interfaces',
+            'API = "http://127.0.0.1:8052/tasks"',
+            "falls back to localhost.",
+            "replace placeholder later",
+            'api_key = "your_api_key_here"',
+            "token = xxxxxxxxxxxxxxxxxxxx",
+            'auth_token = "placeholder-token"',
+            'token = "placeholder"',
+            "SECRET = <changeme>",
+            "replace the placeholder.",
+            "set it to your-api-key.",
+        ],
+    )
+    def test_anchoring_keeps_benign_uses_exempt(self, line: str) -> None:
+        assert _rules(line) == []
+
+    def test_scan_cost_grows_linearly_with_a_marker_dense_line(self) -> None:
+        """One long line dense with markers and matches - a minified bundle or a source map.
+
+        Checking each match against a per-line mask keeps the scan linear;
+        checking it against every benign span made it quadratic, and the gate
+        runs with no timeout. Compared as a ratio, so machine speed cancels out:
+        4x the matches must cost well under the ~16x a quadratic scan pays.
+        """
+        import time
+
+        def best_of_three(count: int) -> float:
+            line = ",".join(['xxxx"4111111111111111"'] * count)
+            timings = []
+            for _ in range(3):
+                started = time.perf_counter()
+                assert len(scan_text(line)) == count
+                timings.append(time.perf_counter() - started)
+            return min(timings)
+
+        small, large = best_of_three(2000), best_of_three(8000)
+
+        assert large < 8 * small + 0.05, (small, large)
+
+    def test_a_test_password_does_not_stretch_over_a_real_token(self) -> None:
+        line = f'connect(password=pw, token="{_GITHUB_TOKEN}", user="admin")'
+
+        assert "github_token" in _rules(line)
+
+    @pytest.mark.parametrize("value", ["test", "password", "changeme", "secret", "admin"])
+    def test_a_known_test_password_is_still_exempt(self, value: str) -> None:
+        assert _rules(f'password = "{value}"') == []
+        assert _rules('password = "hunter2"') == ["password_assignment"]
 
 
 # ---------------------------------------------------------------------------

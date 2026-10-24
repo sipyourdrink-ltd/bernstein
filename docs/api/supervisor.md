@@ -56,7 +56,7 @@ Both shapes are versioned via an explicit `schema_version` field.
 | `workers[].worktree_id` | string | Worktree the worker is running in. |
 | `workers[].last_heartbeat_age_s` | float \| null | Seconds since the last heartbeat; `null` when none recorded. |
 | `workers[].is_stuck` | bool | True iff at least one detector classifies the row as stuck. |
-| `workers[].stall_reason` | string | One of `manager_no_children`, `watchdog_model_question`, `respawn_budget_exhausted`, `heartbeat_stale`, `no_progress`, or `unknown`. Receipts additionally accept `intent_drift` and `cohort_laggard`. |
+| `workers[].stall_reason` | string | One of `manager_no_children`, `watchdog_model_question`, `respawn_budget_exhausted`, `heartbeat_stale`, `no_progress`, or `unknown`. Receipts additionally accept `intent_drift`, `cohort_laggard`, `artefact_no_progress` and `repeated_command`. The two artefact-progress reasons are primitives awaiting lifecycle integration. |
 | `workers[].recommended_action` | string | One of `respawn`, `escalate`, `park`, `inspect`. Deterministic over the chain slice (see below). |
 | `workers[].respawn_budget_remaining` | integer | Respawns remaining under the session's budget. |
 | `workers[].stuck_since_ts` | float \| null | Unix timestamp the stall first fired; `null` when not known. |

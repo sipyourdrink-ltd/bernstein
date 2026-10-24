@@ -470,6 +470,7 @@ class TaskStore:
         metrics_jsonl_path: Path | None = None,
     ) -> None:
         self._task_listeners: list[Callable[[Task], None]] = []
+        self._task_created_listeners: list[Callable[[Task], None]] = []
         self._tasks: dict[str, Task] = {}
         self._agents: dict[str, AgentSession] = {}
         # Secondary indices for O(1) status/role lookups
@@ -510,6 +511,7 @@ class TaskStore:
         # wiring. ``None`` in bare store usage (CLI, tests), where the receipt
         # is skipped rather than the transition refused.
         self._audit_chain: AuditChainStore | None = None
+        self.administrative_runs: Any = None
 
     # -- claim ledger --------------------------------------------------------
 
@@ -526,6 +528,24 @@ class TaskStore:
                 ``None`` to detach.
         """
         self._audit_chain = chain
+
+    def add_task_created_listener(self, listener: Callable[[Task], None]) -> None:
+        """Register a best-effort callback for newly persisted tasks (not replay)."""
+        if listener not in self._task_created_listeners:
+            self._task_created_listeners.append(listener)
+
+    def remove_task_created_listener(self, listener: Callable[[Task], None]) -> None:
+        """Unregister a creation callback when its owning server stops."""
+        if listener in self._task_created_listeners:
+            self._task_created_listeners.remove(listener)
+
+    def _notify_task_created(self, task: Task) -> None:
+        """Creation notifications must never fail a committed store mutation."""
+        for listener in list(self._task_created_listeners):
+            try:
+                listener(task)
+            except Exception:
+                logger.exception("Error in task creation listener for task %s", task.id)
 
     def add_task_listener(self, listener: Callable[[Task], None]) -> None:
         """Register a callback invoked whenever a task's status or record is updated."""
@@ -894,6 +914,7 @@ class TaskStore:
             # Tenant mirror is best-effort during recovery; the authoritative
             # JSONL log above is already durable.
             logger.warning("Failed to mirror recover_stale record to tenant backlog: %s", exc)
+        self._record_administrative_update(record)
 
     _BUFFER_MAX: int = 1
 
@@ -928,6 +949,13 @@ class TaskStore:
         await self._append_tenant_backlog_record(record, line)
         if len(self._write_buffer) >= self._BUFFER_MAX:
             await self._flush_buffer_unlocked()
+        self._record_administrative_update(record)
+
+    def _record_administrative_update(self, record: TaskRecord) -> None:
+        run_id = (record.get("metadata") or {}).get("administrative_run_id")
+        if run_id and self.administrative_runs is not None:
+            task = self._tasks[str(record["id"])]
+            self.administrative_runs.persist_task(str(run_id), task)
 
     async def flush_buffer(self) -> None:
         """Flush any buffered JSONL records to disk (acquires the store lock)."""
@@ -1562,6 +1590,9 @@ class TaskStore:
             max_turns=int(max_turns_raw) if max_turns_raw is not None else None,
         )
         async with self._lock:
+            admin_run_id = task.metadata.get("administrative_run_id")
+            if admin_run_id and self.administrative_runs is not None:
+                self.administrative_runs.require_open(str(admin_run_id), task.tenant_id)
             if task.depends_on:
                 missing = [dep for dep in task.depends_on if dep not in self._tasks]
                 if missing:
@@ -1595,6 +1626,8 @@ class TaskStore:
             self._index_add(task)
             self._parent_index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+
+        self._notify_task_created(task)
 
         # SOC 2 audit: log task creation (not a status transition, so lifecycle doesn't cover it)
         from bernstein.core.tasks.lifecycle import _content_hash, get_audit_log
@@ -1674,6 +1707,7 @@ class TaskStore:
             self._index_add(task)
             self._parent_index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+        self._notify_task_created(task)
         return task
 
     async def create_gate_with_edges(
@@ -1810,6 +1844,7 @@ class TaskStore:
                         clearance_task_id,
                     )
 
+        self._notify_task_created(gate)
         return gate, targets
 
     async def inject_dependency(self, task_id: str, depends_on_id: str) -> Task:
@@ -2015,6 +2050,7 @@ class TaskStore:
                 self._index_add(task)
                 self._parent_index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
+                self._notify_task_created(task)
 
                 if dedup_by_title:
                     existing_titles.add(normalised)
@@ -2623,6 +2659,7 @@ class TaskStore:
                 self._index_add(task)
                 self._parent_index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
+                self._notify_task_created(task)
                 created.append(task)
         if created:
             logger.info(
@@ -3370,17 +3407,30 @@ class TaskStore:
         role: str | None,
         priority: int | None,
         model: str | None = None,
+        cli: str | None = None,
+        meta_messages: list[str] | None = None,
+        escalation_ladder_step: int | None = None,
+        escalation_ladder_attempts: int | None = None,
     ) -> Task:
         """Update mutable task fields (role, priority, model) - manager corrections.
 
         Only open or failed tasks can be reassigned; claimed/in-progress tasks
         are left to finish before the new assignment takes effect.
 
+        ``cli``, ``meta_messages`` and the two ladder-position fields persist
+        an escalation hop onto the retry task (issue #4855). The position is
+        written under its own metadata keys; no other metadata is touched.
+
         Args:
             task_id: Task identifier.
             role: New role if provided.
             priority: New priority if provided.
-            model: New model hint if provided (e.g. "haiku", "sonnet", "opus").
+            model: New model id if provided. Stored unmodified.
+            cli: Adapter name for the new model, when the ladder step names one.
+            meta_messages: Replacement operational nudges, including the
+                escalation-context line.
+            escalation_ladder_step: Ladder rung the retry task runs on.
+            escalation_ladder_attempts: Attempts already spent on that rung.
 
         Returns:
             The updated Task.
@@ -3408,6 +3458,19 @@ class TaskStore:
                 self._index_add(task)
             if model is not None:
                 task.model = model
+            if cli is not None:
+                task.cli = cli
+            if meta_messages is not None:
+                task.meta_messages = list(meta_messages)
+            from bernstein.core.routing.escalation_ladder import (
+                LADDER_ATTEMPTS_METADATA_KEY,
+                LADDER_STEP_METADATA_KEY,
+            )
+
+            if escalation_ladder_step is not None:
+                task.metadata[LADDER_STEP_METADATA_KEY] = escalation_ladder_step
+            if escalation_ladder_attempts is not None:
+                task.metadata[LADDER_ATTEMPTS_METADATA_KEY] = escalation_ladder_attempts
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             return task

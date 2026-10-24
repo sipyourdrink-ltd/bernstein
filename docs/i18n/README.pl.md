@@ -41,11 +41,12 @@
 Bernstein to otwartoźródłowa warstwa governance dla agentów AI. Działa na policy as code: ty piszesz politykę - kto co może robić, co wymaga zatwierdzenia, co musi zostać zapisane - a Bernstein ją egzekwuje i tworzy weryfikowalny zapis. Deterministyczny scheduler - bez modelu w pętli koordynacji - uruchamia agentów równolegle, filtruje ich wyniki bramkami i zapisuje każdy krok, więc przebieg można zweryfikować po fakcie, offline, wyłącznie z artefaktów. Agenci CLI do kodu działają od ręki (Claude Code, Codex, Gemini CLI i 50+ innych), a ta sama warstwa governuje dowolne obciążenie agentowe: rezultatem może być diff, raport badawczy, dataset albo pakiet dowodów audytowych. Profil instalacji air-gap w zestawie. Apache-2.0.
 
 ### w skrócie
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Cztery cechy wyróżniają ten projekt; reszta to szczegóły.
+Wyróżnia go pięć rzeczy; reszta to szczegóły.
 
 - **Brak LLM w pętli koordynacyjnej.** Harmonogramowanie jest napisane w czystym Pythonie, dzięki czemu każdy przebieg jest w pełni powtarzalny. Odtwórz wczorajszy plan i uzyskaj identyczny graf zadań.
+- **Dowody kluczy sprzętowych.** Weryfikatory offline przechowywania PIV i zatwierdzeń FIDO2 współdzielą protokół pokwitowań, z przypiętym zaufaniem i jawnym czasem. Przechowywanie tokena nie podnosi poziomów zaufania TRACE. [Dowody kluczy sprzętowych](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Weryfikowalność po fakcie.** Dziennik powtórzeń (replay journal) rejestruje każdy przebieg, a stale aktywny kręgosłup pochodzenia (lineage spine) zapisuje każdy krok tworzący historię pochodzenia; opcjonalny dziennik audytu powiązany łańcuchem HMAC (`BERNSTEIN_AUDIT=1`) dodaje pokwitowania (receipts), które można zweryfikować w trybie offline. Niedeterminizm ujawnia się jako niezgodność skrótu w konkretnym kroku, a nie jako losowy błąd ponownego uruchomienia. Rezultaty inne niż kod podlegają tym samym regułom: zadanie może zadeklarować kontrakt artefaktu (raport, zbiór danych, dziennik działań, wynik operacyjny) i kończy się podpisanym pokwitowaniem pochodzenia zamiast commita git.
 - **Izolacja na poziomie architektury.** Każde zadanie programistyczne otrzymuje własny git worktree za bramkami scalania (merge gates); zadania w trybie artefaktów otrzymują katalog roboczy w `.sdd/workspaces/`. Domyślnie agenci nie współdzielą modyfikowalnej przestrzeni roboczej; jedynym współdzielonym stanem jest rejestr zadań (backlog), rezerwowany atomowo. Bardziej rygorystyczna ochrona systemu plików jest opcjonalna dzięki [backendom sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Po wyłączeniu worktrees każde zadanie wykonuje się we wspólnym katalogu roboczym.
 - **Szeroki wachlarz i lokalne działanie.** Ponad 53 adapterów agentów CLI oraz ogólny wrapper `--prompt`, stan oparty na plikach, brak zależności od chmury SaaS, brak zewnętrznych platform przetwarzania danych.
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [Przewodnik darczyńcy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) opisuje uruchamianie workera i budżet, który ustawiasz, [przewodnik projektu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) - deklarowanie manifestu, a [model zagrożeń](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) mówi, przed czym każda granica chroni, a przed czym nie. Uruchamianie jedną komendą nie zostało jeszcze wydane: dziś działają podkomendy `verify`, `browse`, `budget`, `verify-bundle` i `hub`.
 
 ### poza stroną główną
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Szczegółowa dokumentacja znajduje się w [serwisie dokumentacji](https://docs.bernstein.run/):
 
 | strona | zakres tematyczny |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | pełna lista możliwości: tryb serwera MCP, podpisane karty agentów, backendy sandbox, miejsca zapisu artefaktów, zgodność regulacyjna |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | gdzie tkwi wartość i w jakich sytuacjach Bernstein nie jest odpowiednim narzędziem |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratywne grafy DAG w formacie YAML złożone z węzłów agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | panel przeglądarkowy korzystający z tego samego API co TUI |
@@ -278,6 +280,11 @@ Pełna lista publikacji, w tym wpisy w spisach awesome, katalogach oraz wzmianki
 
 </details>
 
+### Uruchomienia administracyjne
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Użyj `bernstein_run(template="administrative", goal="Weekly sprint")`, aby utworzyć pusty kontener z audytem, bez planera i procesów agentów. Dodawaj zadania ręczne przez `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` i sprawdzaj stan przez `bernstein_run_status(run_id="admin-...")`. Zadania można przejmować przez zwykłe API, ale nie podlegają automatycznej orkiestracji. Niepuste uruchomienie kończy się, gdy każde zadanie ma status `done`, `closed` lub `cancelled`; puste pozostaje otwarte. [Instrukcja obsługi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### współpraca, wsparcie, licencja
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -287,6 +294,6 @@ Metadane cytowania znajdują się w [CITATION.cff](https://github.com/sipyourdri
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

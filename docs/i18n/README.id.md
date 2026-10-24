@@ -41,11 +41,12 @@
 Bernstein adalah lapisan governance open source untuk agen AI. Berjalan di atas policy as code: kamu menulis kebijakannya - siapa boleh melakukan apa, apa yang butuh persetujuan, apa yang harus dicatat - dan Bernstein menegakkannya serta menghasilkan catatan yang bisa diverifikasi. Penjadwal deterministik - tanpa model di loop koordinasi - menjalankan agen secara paralel, menyaring hasilnya lewat gate, dan mencatat setiap langkah, sehingga sebuah run bisa diverifikasi setelahnya, offline, hanya dari artefaknya. Agen CLI untuk kode langsung jalan (Claude Code, Codex, Gemini CLI, dan 50+ lainnya), dan lapisan yang sama menggoverne beban kerja agen apa pun: hasilnya bisa berupa diff, laporan riset, dataset, atau paket bukti audit. Profil instalasi air-gap disertakan. Apache-2.0.
 
 ### sekilas pandang
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Empat hal membedakannya dari yang lain; selebihnya adalah detail.
+Lima hal membedakannya; selebihnya adalah detail.
 
 - **Tanpa LLM dalam loop koordinasi.** Penjadwalan murni menggunakan Python, sehingga eksekusi dapat direproduksi secara menyeluruh dari awal hingga akhir. Jalankan kembali rencana kemarin dan dapatkan graf tugas yang sama persis.
+- **Bukti kunci perangkat keras.** Pemverifikasi offline penguasaan PIV dan persetujuan FIDO2 berbagi protokol tanda terima, dengan kepercayaan yang dipatok dan waktu eksplisit. Penguasaan token tidak meningkatkan tingkat kepercayaan TRACE. [Bukti kunci perangkat keras](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Dapat diaudit setelah selesai.** Jurnal pemutaran ulang (replay journal) mencatat setiap eksekusi, dan tulang punggung asal-usul (lineage spine) yang selalu aktif merekam setiap langkah bernilai silsilah; log audit berantai HMAC opsional (`BERNSTEIN_AUDIT=1`) menambahkan tanda terima (receipts) yang dapat diverifikasi secara offline. Non-determinisme muncul sebagai ketidakcocokan hash pada langkah yang tepat, bukan sebagai kegagalan acak saat eksekusi ulang. Hasil kerja non-kode diperlakukan sama: tugas dapat mendeklarasikan kontrak artefak (laporan, dataset, log tindakan, hasil ops) dan diselesaikan dengan tanda terima silsilah yang ditandatangani, bukan commit git.
 - **Terisolasi secara terstruktur.** Setiap tugas pengodean mendapatkan git worktree terpisah di balik gerbang penggabungan; tugas mode artefak mendapatkan direktori kerja di bawah `.sdd/workspaces/`. Agen secara default tidak berbagi ruang kerja yang dapat diubah; satu-satunya status bersama adalah backlog tugas, yang diklaim secara atomik. Penegakan sistem berkas yang lebih ketat bersifat opsional melalui [backend sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Nonaktifkan worktree dan setiap tugas akan berjalan di direktori bersama.
 - **Luas dan lokal.** Lebih dari 53 adaptor agen CLI ditambah wrapper `--prompt` generik, status berbasis berkas, tanpa perantara SaaS, tanpa lapisan data pihak ketiga.
@@ -242,13 +243,14 @@ bernstein volunteer browse --budget 60
 [Panduan donor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) membahas menjalankan worker dan anggaran yang Anda tetapkan, [panduan proyek](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) membahas mendeklarasikan manifes, dan [model ancaman](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) menyatakan apa yang dilindungi dan tidak dilindungi setiap batas. Peluncur satu perintah belum dirilis: hari ini `verify`, `browse`, `budget`, `verify-bundle`, dan `hub` adalah subperintah yang berfungsi.
 
 ### di luar halaman utama
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Semua dokumentasi mendalam tersedia di [situs dokumentasi](https://docs.bernstein.run/):
 
 | halaman | cakupan materi |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | daftar kemampuan lengkap: mode server MCP, kartu agen bertanda tangan, backend sandbox, penampung artefak, kepatuhan regulasi |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | di mana nilai gunanya dan kapan Bernstein bukan alat yang tepat |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAG YAML deklaratif dari node agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | dasbor peramban berbasis API yang sama dengan TUI |
@@ -278,6 +280,11 @@ Daftar pemantauan lengkap, termasuk setiap entri daftar awesome, katalog, rujuka
 
 </details>
 
+### Eksekusi administratif
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Gunakan `bernstein_run(template="administrative", goal="Weekly sprint")` untuk membuat wadah kosong dengan jejak audit tanpa perencana atau proses agen. Tambahkan tugas manual melalui `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` dan periksa status dengan `bernstein_run_status(run_id="admin-...")`. Tugas tetap dapat diambil melalui API klaim biasa, tetapi dikecualikan dari orkestrasi otomatis. Eksekusi yang berisi tugas selesai setelah setiap tugas berstatus `done`, `closed`, atau `cancelled`; eksekusi kosong tetap terbuka. [Alur operator](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### kontribusi, dukungan, lisensi
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -287,6 +294,6 @@ Metadata sitasi tersedia di [CITATION.cff](https://github.com/sipyourdrink-ltd/b
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->
