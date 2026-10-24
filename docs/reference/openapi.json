@@ -2668,6 +2668,83 @@
         }
       }
     },
+    "/administrative-runs": {
+      "post": {
+        "summary": "Create Administrative Run",
+        "operationId": "create_administrative_run_administrative_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdministrativeRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministrativeRunStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/administrative-runs/{run_id}": {
+      "get": {
+        "summary": "Administrative Run Status",
+        "operationId": "administrative_run_status_administrative_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministrativeRunStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tasks/claim-receipt": {
       "post": {
         "summary": "Claim Receipt",
@@ -11957,6 +12034,83 @@
         }
       }
     },
+    "/api/v1/administrative-runs": {
+      "post": {
+        "summary": "Create Administrative Run",
+        "operationId": "create_administrative_run_api_v1_administrative_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdministrativeRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministrativeRunStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/administrative-runs/{run_id}": {
+      "get": {
+        "summary": "Administrative Run Status",
+        "operationId": "administrative_run_status_api_v1_administrative_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministrativeRunStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks/claim-receipt": {
       "post": {
         "summary": "Claim Receipt",
@@ -19118,6 +19272,88 @@
         "title": "ACPRunResponse",
         "description": "ACP run in responses."
       },
+      "AdministrativeRunCreate": {
+        "properties": {
+          "goal": {
+            "type": "string",
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Goal"
+          }
+        },
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "AdministrativeRunCreate",
+        "description": "Create a manual container without planning or spawning agents."
+      },
+      "AdministrativeRunStatus": {
+        "properties": {
+          "runId": {
+            "type": "string",
+            "title": "Runid"
+          },
+          "template": {
+            "type": "string",
+            "const": "administrative",
+            "title": "Template",
+            "default": "administrative"
+          },
+          "goal": {
+            "type": "string",
+            "title": "Goal"
+          },
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "working",
+              "completed"
+            ],
+            "title": "Status"
+          },
+          "tasks": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tasks"
+          },
+          "chainHead": {
+            "type": "string",
+            "title": "Chainhead"
+          },
+          "chainVerified": {
+            "type": "boolean",
+            "const": true,
+            "title": "Chainverified"
+          },
+          "receiptHash": {
+            "type": "string",
+            "title": "Receipthash"
+          }
+        },
+        "type": "object",
+        "required": [
+          "runId",
+          "goal",
+          "tenant_id",
+          "status",
+          "tasks",
+          "chainHead",
+          "chainVerified",
+          "receiptHash"
+        ],
+        "title": "AdministrativeRunStatus",
+        "description": "Authenticated task aggregate returned by administrative run surfaces."
+      },
       "AgentIdentityStatus": {
         "type": "string",
         "enum": [
@@ -21963,6 +22199,18 @@
       },
       "TaskCreate": {
         "properties": {
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^admin-[a-f0-9]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
           "id": {
             "anyOf": [
               {
@@ -23762,6 +24010,18 @@
       },
       "WebhookTaskCreate": {
         "properties": {
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^admin-[a-f0-9]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
           "id": {
             "anyOf": [
               {

@@ -510,6 +510,7 @@ class TaskStore:
         # wiring. ``None`` in bare store usage (CLI, tests), where the receipt
         # is skipped rather than the transition refused.
         self._audit_chain: AuditChainStore | None = None
+        self.administrative_runs: Any = None
 
     # -- claim ledger --------------------------------------------------------
 
@@ -894,6 +895,7 @@ class TaskStore:
             # Tenant mirror is best-effort during recovery; the authoritative
             # JSONL log above is already durable.
             logger.warning("Failed to mirror recover_stale record to tenant backlog: %s", exc)
+        self._record_administrative_update(record)
 
     _BUFFER_MAX: int = 1
 
@@ -928,6 +930,13 @@ class TaskStore:
         await self._append_tenant_backlog_record(record, line)
         if len(self._write_buffer) >= self._BUFFER_MAX:
             await self._flush_buffer_unlocked()
+        self._record_administrative_update(record)
+
+    def _record_administrative_update(self, record: TaskRecord) -> None:
+        run_id = (record.get("metadata") or {}).get("administrative_run_id")
+        if run_id and self.administrative_runs is not None:
+            task = self._tasks[str(record["id"])]
+            self.administrative_runs.persist_task(str(run_id), task)
 
     async def flush_buffer(self) -> None:
         """Flush any buffered JSONL records to disk (acquires the store lock)."""
@@ -1562,6 +1571,9 @@ class TaskStore:
             max_turns=int(max_turns_raw) if max_turns_raw is not None else None,
         )
         async with self._lock:
+            admin_run_id = task.metadata.get("administrative_run_id")
+            if admin_run_id and self.administrative_runs is not None:
+                self.administrative_runs.require_open(str(admin_run_id), task.tenant_id)
             if task.depends_on:
                 missing = [dep for dep in task.depends_on if dep not in self._tasks]
                 if missing:

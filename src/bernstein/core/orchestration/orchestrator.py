@@ -1834,6 +1834,7 @@ class Orchestrator:
             if all(dep in done_ids or (t.id, dep) in broken_deps for dep in t.depends_on)
             # Skip tasks with future created_at (retry backoff)
             and t.created_at <= now
+            and not t.metadata.get("administrative_run_id")
         ]
         result.open_tasks = len(open_tasks)
 

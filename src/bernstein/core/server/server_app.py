@@ -1448,6 +1448,10 @@ def create_app(
     # an acquisition-only ledger replays as node A holding a task node B is
     # already running.
     store.attach_audit_chain(_audit_chain)
+    from bernstein.core.administrative_runs import AdministrativeRuns
+
+    application.state.administrative_runs = AdministrativeRuns(_audit_chain, store.get_task, store.list_tasks)
+    store.administrative_runs = application.state.administrative_runs
     application.state.task_mailbox = TaskMailbox(  # type: ignore[attr-defined]
         jsonl_path.parent / "mailbox.jsonl",
         hmac_key=_chain_key,

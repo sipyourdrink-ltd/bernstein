@@ -7030,3 +7030,15 @@ class TestCostPolicyDispatchWiring:
 
         assert result.cost_dispatch_halt is None
         assert len(result.spawned) == 1
+
+
+def test_administrative_members_are_not_spawned(tmp_path: Path) -> None:
+    """Manual container members stay claimable without automatic agent creation."""
+    task = _make_task(id="T-manual")
+    task.metadata["administrative_run_id"] = "admin-" + "a" * 32
+    transport = _mock_transport({"GET /tasks?status=open": httpx.Response(200, json=[task.to_dict()])})
+    adapter = _mock_adapter()
+    orch = _build_orchestrator(tmp_path, transport, adapter=adapter)
+    result = orch.tick()
+    assert result.spawned == []
+    adapter.spawn.assert_not_called()

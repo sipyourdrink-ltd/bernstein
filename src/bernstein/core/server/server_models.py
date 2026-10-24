@@ -136,6 +136,8 @@ def _ensure_relative_owned_files(value: list[str]) -> list[str]:
 class TaskCreate(BaseModel):
     """Body for POST /tasks."""
 
+    run_id: str | None = Field(default=None, pattern=r"^admin-[a-f0-9]{32}$")
+
     # bounded string lengths prevent trivial memory exhaustion.
     id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
     title: str = Field(max_length=_MAX_TITLE_LEN)

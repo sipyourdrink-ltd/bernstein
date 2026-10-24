@@ -279,3 +279,13 @@ Citation metadata lives in [CITATION.cff](https://github.com/sipyourdrink-ltd/be
 [Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->
+
+### Administrative runs
+
+Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
+empty, audited container without a planner or agent process. Add manual work with
+`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`
+and poll `bernstein_run_status(run_id="admin-...")`. Members are claimable through
+the usual claim API and excluded from automatic orchestration. A nonempty run
+completes when every member is done, verified/closed, or cancelled; an empty run
+stays open. See [the operator workflow](docs/operations/administrative-runs.md).

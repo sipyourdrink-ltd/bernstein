@@ -507,6 +507,7 @@ _PERM_SCIM_WRITE = "scim:write"
 
 _ROUTE_PERMISSIONS: dict[str, str] = {
     "/tasks": _PERM_TASKS_WRITE,
+    "/administrative-runs": _PERM_TASKS_WRITE,
     "/agents": "agents:write",
     "/cluster": _PERM_CLUSTER_WRITE,
     "/bulletin": "bulletin:write",

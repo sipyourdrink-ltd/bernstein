@@ -601,13 +601,14 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
 
     @mcp.tool()
     async def bernstein_run(  # pyright: ignore[reportUnusedFunction]
-        goal: str,
+        goal: str = "",
         role: str = "backend",
         priority: int = 2,
         scope: str = "medium",
         complexity: str = "medium",
         estimated_minutes: int = 30,
         parent_task_id: str | None = None,
+        template: str = "orchestration",
         ctx: Context | None = None,
     ) -> str:
         """Start an orchestration run by posting a task to the Bernstein server.
@@ -622,6 +623,9 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
 
         Args:
             goal: Description of what you want Bernstein to accomplish.
+            template: ``administrative`` creates an empty manual container,
+                without planning or agent processes; default ``orchestration``
+                queues normal work. Only administrative runs may omit goal.
             role: Specialist role to assign (backend, frontend, qa, security, …).
             priority: 1=critical, 2=normal, 3=nice-to-have.
             scope: Task scope - small, medium, or large.
@@ -638,6 +642,8 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             params), a Tasks-extension ``CreateTaskResult`` is returned
             instead so the client can poll the run.
         """
+        if template == "administrative" and not goal:
+            goal = "Administrative run"
         args: dict[str, Any] = {
             "goal": goal,
             "role": role,
@@ -646,11 +652,16 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             "complexity": complexity,
             "estimated_minutes": estimated_minutes,
         }
+        args["template"] = template
         if parent_task_id is not None:
             args["parent_task_id"] = parent_task_id
         err = _validate_or_error("bernstein_run", args)
         if err is not None:
             return _validation_error_response(err)
+        if template == "administrative":
+            if parent_task_id is not None:
+                return _error_response(ValueError("Administrative runs cannot have parent_task_id"))
+            return await _administrative_request(server_url, "POST", "/administrative-runs", {"goal": goal})
         return await _run_impl(  # type: ignore[return-value]
             server_url,
             goal=goal,
@@ -839,7 +850,19 @@ async def _run_status_impl(run_id: str, workdir: str = ".", ctx: Context | None 
         return _error_response(exc, hint="Run journal not found")
 
 
-def _register_run_status_tool(mcp: FastMCP[None]) -> None:
+async def _administrative_request(
+    server_url: str, method: str, path: str, payload: dict[str, Any] | None = None
+) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            response = await client.request(method, f"{server_url}{path}", json=payload, headers=_auth_headers())
+            response.raise_for_status()
+            return json.dumps(response.json(), indent=2)
+    except Exception as exc:
+        return _error_response(exc)
+
+
+def _register_run_status_tool(mcp: FastMCP[None], server_url: str) -> None:
     """Register the ``bernstein_run_status`` Tasks-extension polling tool.
 
     The tool reprojects a verifiable run handle from the on-disk run journal
@@ -871,16 +894,20 @@ def _register_run_status_tool(mcp: FastMCP[None]) -> None:
                 the task id slugified into a journal run id, so the two forms
                 reach one journal and project an identical handle. Must be a
                 plain identifier - path separators and traversal are refused.
-            workdir: Project root directory (default: current directory).
+            workdir: Project root for orchestration journals. Administrative
+                ids are read from the authenticated task server instead.
 
         Returns:
-            JSON of the Tasks-extension task-handle body (``taskId``,
+            Administrative runs return an authenticated task aggregate.
+            Other runs return JSON of the Tasks-extension task-handle body (``taskId``,
             ``runId``, ``status``, ``journalHead``, ``chainHead``,
             ``receiptHash``, ``pollToken``, ...).
         """
         err = _validate_or_error("bernstein_run_status", {"run_id": run_id, "workdir": workdir})
         if err is not None:
             return _validation_error_response(err)
+        if run_id.startswith("admin-"):
+            return await _administrative_request(server_url, "GET", f"/administrative-runs/{run_id}")
         return await _run_status_impl(run_id, workdir, ctx)
 
 
@@ -1127,6 +1154,7 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         scope: str = "medium",
         model: str | None = None,
         effort: str | None = None,
+        run_id: str | None = None,
     ) -> str:
         """Create a bare task without triggering orchestration or spawning agents.
 
@@ -1146,6 +1174,8 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             scope: Task scope: ``small``, ``medium``, ``large``.
             model: Optional model hint (``opus``, ``sonnet``, ``haiku``).
             effort: Optional effort hint (``max``, ``high``, ``medium``, ``low``).
+            run_id: Optional open administrative container to hold the task.
+                Members remain manually claimable and are excluded from automatic spawning.
 
         Returns:
             JSON of the created task (``id``, ``title``, ``status``, ...).
@@ -1157,6 +1187,8 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             "priority": priority,
             "scope": scope,
         }
+        if run_id is not None:
+            payload["run_id"] = run_id
         if depends_on:
             payload["depends_on"] = depends_on
         if model is not None:
@@ -1796,12 +1828,14 @@ def _structured_payload_schemas() -> dict[str, dict[str, Any]]:
     :meth:`RunHandle.wire_schema` rather than written by hand, so the
     advertised fields are the fields ``to_wire`` emits.
     """
+    from bernstein.core.administrative_runs import AdministrativeRunStatus
     from bernstein.core.protocols.mcp.tasks_extension import RunHandle
 
+    administrative = AdministrativeRunStatus.model_json_schema()
     return {
-        "bernstein_run": {"anyOf": [_run_success_schema(), _TOOL_ERROR_SCHEMA]},
+        "bernstein_run": {"anyOf": [_run_success_schema(), administrative, _TOOL_ERROR_SCHEMA]},
         "bernstein_status": {"anyOf": [_status_success_schema(), _status_outage_schema(), _TOOL_ERROR_SCHEMA]},
-        "bernstein_run_status": {"anyOf": [RunHandle.wire_schema(), _TOOL_ERROR_SCHEMA]},
+        "bernstein_run_status": {"anyOf": [RunHandle.wire_schema(), administrative, _TOOL_ERROR_SCHEMA]},
     }
 
 
@@ -2416,7 +2450,7 @@ def create_mcp_server(
     register_prompt_resources(mcp)
     _register_query_tools(mcp, server_url)
     _register_action_tools(mcp, server_url)
-    _register_run_status_tool(mcp)
+    _register_run_status_tool(mcp, server_url)
     _register_task_capsule_tool(mcp)
     _register_skill_tools(mcp)
     _register_tasks_extension(mcp, server_url)

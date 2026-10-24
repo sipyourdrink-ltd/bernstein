@@ -8,6 +8,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 
 | File                        | Purpose |
 |-----------------------------|---------|
+| `administrative_runs.py`    | Administrative containers projected from the existing authenticated audit chain |
 | `compat_redirect_ledger.py` | Compatibility ledger for legacy ``bernstein.core`` redirects |
 | `credential_scoping.py`     | Agent credential scope minimization for least-privilege API keys |
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
