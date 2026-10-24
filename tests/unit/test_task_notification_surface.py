@@ -13,13 +13,27 @@ from bernstein.mcp.remote_transport import RemoteMCPConfig, StreamableHTTPTransp
 from bernstein.mcp.server import create_mcp_server
 
 
+async def advertised_tools(mcp):
+    """Use the actual wire handler, including Bernstein's schema shaping."""
+    from mcp.types import ListToolsRequest
+
+    handler = mcp._mcp_server.request_handlers[ListToolsRequest]
+    response = await handler(ListToolsRequest(method="tools/list"))
+    return response.root.tools
+
+
 @pytest.mark.asyncio
-async def test_subscription_schema_and_tiers():
+async def test_subscription_schema_and_tiers(monkeypatch):
+    import jsonschema
+
     from bernstein.mcp.input_validation import validate_or_error
 
+    monkeypatch.setenv("BERNSTEIN_MCP_COST_METER", "0")
     mcp = create_mcp_server()
-    tool = next(t for t in await mcp.list_tools() if t.name == "bernstein_subscribe")
+    tool = next(t for t in await advertised_tools(mcp) if t.name == "bernstein_subscribe")
     assert tool.inputSchema["required"] == ["role"]
+    assert tool.outputSchema is not None
+    jsonschema.validate({"notifications": [], "timed_out": True}, tool.outputSchema)
     assert TOOL_TIERS[tool.name] == "standard"
     assert all(t.name != tool.name for t in await create_mcp_server(tier="core").list_tools())
     schema = load_registry().get(tool.name)
@@ -116,3 +130,38 @@ async def test_batch_partial_disk_failure_notifies_only_persisted_rows(tmp_path,
     assert received == ["Committed first"]
     assert "Committed first" in (tmp_path / "tasks.jsonl").read_text()
     assert "Failed second" not in (tmp_path / "tasks.jsonl").read_text()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meter", ["0", "1"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"notifications": [{"task_id": "id", "title": "New task"}], "timed_out": False},
+        {"notifications": [], "timed_out": True},
+        {"error": "Unauthorized", "hint": "Task server may be restarting"},
+    ],
+)
+async def test_subscribe_actual_structured_payload_matches_advertised_schema(monkeypatch, meter, payload):
+    import jsonschema
+
+    import bernstein.mcp.server as server
+
+    monkeypatch.setenv("BERNSTEIN_MCP_COST_METER", meter)
+
+    async def subscribe(*args, **kwargs):
+        return json.dumps(payload)
+
+    monkeypatch.setattr(server, "_subscribe_impl", subscribe)
+    mcp = create_mcp_server()
+    definition = next(t for t in await advertised_tools(mcp) if t.name == "bernstein_subscribe")
+    result = await mcp.call_tool("bernstein_subscribe", {"role": "backend"})
+    assert result.structuredContent == json.loads(result.content[0].text)
+    jsonschema.validate(result.structuredContent, definition.outputSchema)
+
+    remote = StreamableHTTPTransport(RemoteMCPConfig(auth_type="none"))
+    definitions = await remote._method_tools_list({})
+    definition = next(t for t in definitions["tools"] if t["name"] == "bernstein_subscribe")
+    result = await remote._method_tools_call({"name": "bernstein_subscribe", "arguments": {"role": "backend"}})
+    assert result["structuredContent"] == json.loads(result["content"][0]["text"])
+    jsonschema.validate(result["structuredContent"], definition["outputSchema"])

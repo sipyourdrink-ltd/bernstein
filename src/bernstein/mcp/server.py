@@ -1837,6 +1837,34 @@ def _status_outage_schema() -> dict[str, Any]:
     }
 
 
+def _subscribe_output_schema() -> dict[str, Any]:
+    """Notification, deadline and error payloads before the optional meter envelope."""
+    notification = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["task_id", "title"],
+        "properties": {"task_id": {"type": "string"}, "title": {"type": "string"}},
+    }
+
+    def result_schema(timed_out: bool) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["notifications", "timed_out"],
+            "properties": {
+                "timed_out": {"const": timed_out},
+                "notifications": {
+                    "type": "array",
+                    "items": notification,
+                    "minItems": 0 if timed_out else 1,
+                    "maxItems": 0 if timed_out else 1,
+                },
+            },
+        }
+
+    return {"anyOf": [result_schema(False), result_schema(True), _TOOL_ERROR_SCHEMA]}
+
+
 def _structured_payload_schemas() -> dict[str, dict[str, Any]]:
     """Payload (pre-envelope) output schemas for the structured tools (#3086).
 
@@ -1851,6 +1879,7 @@ def _structured_payload_schemas() -> dict[str, dict[str, Any]]:
         "bernstein_run": {"anyOf": [_run_success_schema(), _TOOL_ERROR_SCHEMA]},
         "bernstein_status": {"anyOf": [_status_success_schema(), _status_outage_schema(), _TOOL_ERROR_SCHEMA]},
         "bernstein_run_status": {"anyOf": [RunHandle.wire_schema(), _TOOL_ERROR_SCHEMA]},
+        "bernstein_subscribe": _subscribe_output_schema(),
     }
 
 

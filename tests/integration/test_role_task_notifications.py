@@ -216,11 +216,11 @@ async def test_mcp_wait_auth_delivery_timeout_and_cancellation(live_server, monk
         created = await client.post("/tasks", json={"title": "MCP incoming", "description": "x", "role": "backend"})
         assert created.status_code == 201
     result = await wait
-    assert json.loads(result[0][0].text)["notifications"][0]["title"] == "MCP incoming"
+    assert result.structuredContent["notifications"][0]["title"] == "MCP incoming"
     await cleaned(app)
     start = time.monotonic()
     timeout_result = await mcp.call_tool("bernstein_subscribe", {"role": "backend", "timeout_seconds": 1})
-    assert json.loads(timeout_result[0][0].text) == {"notifications": [], "timed_out": True}
+    assert timeout_result.structuredContent == {"notifications": [], "timed_out": True}
     assert time.monotonic() - start < 2
     await cleaned(app)
     waiting = asyncio.create_task(mcp.call_tool("bernstein_subscribe", {"role": "backend", "timeout_seconds": 5}))

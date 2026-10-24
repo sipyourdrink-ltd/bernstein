@@ -690,3 +690,5 @@ the completion route rather than a second client-side check.
 ### Wait for a role task
 
 `bernstein_subscribe(role, timeout_seconds=30)` is a standard-tier, bounded SSE wait for the first future task creation. It returns task ID/title, closes on completion, timeout or cancellation, and does not install a dormant-chat wake mechanism. See [delivery, auth and lifecycle semantics](../operations/notifications.md#role-task-subscriptions-sse).
+
+The tool advertises an output schema for notification, empty timeout and error payloads and returns matching `structuredContent`. With cost metering enabled, both schema and payload include the standard meter envelope on local and remote transports.
