@@ -343,6 +343,7 @@ nav:
       - Run & supervise:
           - Commands overview: operations/commands.md
           - Run: operations/run.md
+          - Cooperative task cancellation: operations/cooperative-cancellation.md
           - Run names: operations/run_names.md
           - Schedule: operations/schedule.md
           - Resume: operations/resume.md
