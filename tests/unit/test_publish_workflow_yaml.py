@@ -359,9 +359,9 @@ def test_npm_missing_token_fails_the_job(workflow: dict[str, Any]) -> None:
     assert "exit " in run
 
 
-def test_github_release_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
+def test_publish_graph_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
     """A GITHUB_TOKEN release emits no `release: published`, so each consumer is dispatched."""
-    dispatched = _dispatches(workflow, "github-release")
+    dispatched = {target: inputs for job in workflow["jobs"] for target, inputs in _dispatches(workflow, job).items()}
 
     for consumer in RELEASE_EVENT_CONSUMERS:
         assert consumer in dispatched, f"{consumer} consumes `release: published` but is never dispatched"
@@ -369,7 +369,7 @@ def test_github_release_dispatches_every_release_event_consumer(workflow: dict[s
 
 def test_dispatched_inputs_match_the_target_workflow_inputs(workflow: dict[str, Any]) -> None:
     """Every `-f name=` passed on dispatch must be an input the target declares."""
-    dispatched = _dispatches(workflow, "github-release")
+    dispatched = {target: inputs for job in workflow["jobs"] for target, inputs in _dispatches(workflow, job).items()}
 
     for workflow_file, passed_inputs in dispatched.items():
         declared = _declared_dispatch_inputs(workflow_file)

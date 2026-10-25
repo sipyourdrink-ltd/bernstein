@@ -329,26 +329,20 @@ jobs:
             exit 1
           fi
 
-      # Three workflows fire on `release: published`, but a release created
+      # Follow-up workflows fire on `release: published`, but a release created
       # with GITHUB_TOKEN does not emit that event (loop-prevention on
       # token-authored events), so none of them would ever run for an
       # automated release. Dispatch each one explicitly. All three keep their
       # native `release: published` trigger for releases created by a human or
       # PAT; workflow_dispatch is exempt from the loop-prevention, and every
       # one of them is idempotent for a repeated run on the same tag (image
-      # push, formula commit, SBOM asset upload).
+      # push, formula commit, SBOM asset upload). Homebrew is dispatched below
+      # only after the PyPI upload also succeeds.
       - name: Dispatch docker publish (release event from GITHUB_TOKEN does not trigger it)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.RELEASE_TAG }}
         run: gh workflow run publish-docker.yml --ref main -f tag="$TAG"
-
-      # publish-homebrew.yml takes the bare version (3.12.0), not the tag.
-      - name: Dispatch Homebrew formula publish (release event from GITHUB_TOKEN does not trigger it)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ env.RELEASE_TAG }}
-        run: gh workflow run publish-homebrew.yml --ref main -f version="${TAG#v}"
 
       # sbom.yml takes the tag as its build ref and attaches both SBOMs to the
       # release it resolves for that ref.
@@ -357,6 +351,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.RELEASE_TAG }}
         run: gh workflow run sbom.yml --ref main -f ref="$TAG"
+
+  # Homebrew hashes the PyPI sdist. Wait for the actual upload, including its
+  # environment approval, rather than spending the propagation budget before
+  # the sdist exists. Normal needs semantics also skip single-channel replays.
+  dispatch-homebrew:
+    name: Dispatch Homebrew after PyPI publication
+    runs-on: ubuntu-latest
+    needs: [publish, github-release]
+    timeout-minutes: 5
+    environment: release-channels
+    permissions:
+      actions: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      # publish-homebrew.yml takes the bare version (3.12.0), not the tag.
+      - name: Dispatch Homebrew formula publish (release event from GITHUB_TOKEN does not trigger it)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: gh workflow run publish-homebrew.yml --ref main -f version="${TAG#v}"
 
   publish-npm:
     name: Publish npm wrapper
