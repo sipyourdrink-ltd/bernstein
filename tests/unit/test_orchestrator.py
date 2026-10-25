@@ -7,6 +7,8 @@ import json
 import logging
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -49,6 +51,29 @@ if TYPE_CHECKING:
     from bernstein.core.bulletin import BulletinBoard
 
 # --- Helpers ---
+
+
+@pytest.fixture(autouse=True)
+def _join_test_owned_executors(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Join every real pool this test creates, including a failed initializer's.
+
+    These tests call tick/helpers directly rather than running the production
+    run-loop's drain. Register cleanup at construction so direct constructors
+    and factory calls share ownership. Passed-in clients remain borrowed.
+    """
+    initialize = Orchestrator.__init__
+    with ExitStack() as resources:
+
+        def initialize_owned(self: Orchestrator, *args: Any, **kwargs: Any) -> None:
+            try:
+                initialize(self, *args, **kwargs)
+            finally:
+                executor = getattr(self, "_executor", None)
+                if executor is not None:
+                    resources.callback(executor.shutdown, wait=True, cancel_futures=True)
+
+        monkeypatch.setattr(Orchestrator, "__init__", initialize_owned)
+        yield
 
 
 def _make_task(
