@@ -103,7 +103,7 @@ def _wire(
     )
     now = [0.0]
     reaper = StopReaper(tmp_path, clock=lambda: now[0], policy=StopEscalationPolicy())
-    setattr(orch, "_stop_reaper", reaper)
+    vars(orch)["_stop_reaper"] = reaper
     session = AgentSession(
         id="owned-worker",
         role="backend",
