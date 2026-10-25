@@ -576,6 +576,13 @@ class Task:
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
     claimed_by_session: str | None = None  # Parent orchestrator session that claimed this task
+    # Identity of the current execution claim: minted when a claim is granted,
+    # rotated on re-claim, cleared when the claim is surrendered. A terminal
+    # report carrying a token that is not this one belongs to a claim that no
+    # longer exists, so it must not move this task -- see ClaimFenceError.
+    # Deliberately opaque: it proves "same execution claim" without exposing
+    # which node or session holds it.
+    claim_token: str | None = None
     parent_session_id: str | None = None  # Coordinator session that created/owns this task (namespace scope)
     execution_mode: str | None = None  # "batch" → delegate to Claude Code /batch skill
     verification_count: int = 0  # Number of verification steps run at completion
@@ -696,6 +703,7 @@ class Task:
             "progress_log": list(self.progress_log),
             "version": self.version,
             "claimed_by_session": self.claimed_by_session,
+            "claim_token": self.claim_token,
             "parent_session_id": self.parent_session_id,
             "execution_mode": self.execution_mode,
             "verification_count": self.verification_count,
@@ -832,6 +840,7 @@ class Task:
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
             claimed_by_session=raw.get("claimed_by_session"),
+            claim_token=raw.get("claim_token"),
             parent_session_id=raw.get("parent_session_id"),
             execution_mode=raw.get("execution_mode"),
             verification_count=raw.get("verification_count", 0),

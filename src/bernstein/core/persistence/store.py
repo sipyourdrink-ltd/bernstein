@@ -175,33 +175,45 @@ class BaseTaskStore(ABC):
         """
 
     @abstractmethod
-    async def complete(self, task_id: str, result_summary: str) -> Task:
+    async def complete(self, task_id: str, result_summary: str, *, claim_token: str | None = None) -> Task:
         """Mark a task done and archive it.
 
         Args:
             task_id: Task identifier.
             result_summary: Human-readable completion summary.
+            claim_token: Terminal-report fence. When supplied it must still
+                identify the task's current execution claim, and the check
+                happens atomically with the transition -- a caller that read
+                the task beforehand cannot be trusted, because the claim may
+                have been released and re-granted in between. ``None`` means
+                an unfenced caller and is accepted unchanged.
 
         Returns:
             The updated :class:`~bernstein.core.models.Task`.
 
         Raises:
             KeyError: Task not found.
+            ClaimFenceError: *claim_token* names a superseded claim.
         """
 
     @abstractmethod
-    async def fail(self, task_id: str, reason: str) -> Task:
+    async def fail(self, task_id: str, reason: str, *, claim_token: str | None = None) -> Task:
         """Mark a task failed and archive it.
 
         Args:
             task_id: Task identifier.
             reason: Failure reason.
+            claim_token: Terminal-report fence, as in :meth:`complete`. It is
+                what stops a replayed failure from a dead claim overwriting an
+                outcome a newer claim already recorded, while still letting the
+                claim that is actually current correct its own ``DONE``.
 
         Returns:
             The updated :class:`~bernstein.core.models.Task`.
 
         Raises:
             KeyError: Task not found.
+            ClaimFenceError: *claim_token* names a superseded claim.
         """
 
     @abstractmethod

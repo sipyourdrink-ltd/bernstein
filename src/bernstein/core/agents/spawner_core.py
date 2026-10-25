@@ -7055,6 +7055,22 @@ class AgentSpawner:
             session.exit_code = container_mgr.get_exit_code(handle)
         return alive
 
+    def session_process(self, session_id: str) -> subprocess.Popen[bytes] | None:
+        """Return the stored handle for one session, or ``None`` if none is held.
+
+        Callers that run *outside* the orchestrator (the remote worker loop) need
+        the handle itself, not just a liveness answer: a ``Popen`` registers
+        itself on ``subprocess._active``, so the next ``Popen`` built anywhere in
+        the process reaps it through ``_cleanup()`` and a raw ``os.waitpid`` on
+        that pid then raises ``ChildProcessError``. Polling the handle instead
+        reads the status whoever got there first recorded on it.
+
+        Returns ``None`` for a session with no local child -- an in-process,
+        container, or sandbox-routed agent -- which tells the caller it has no
+        observable exit status and must not guess.
+        """
+        return self._procs.get(session_id)
+
     def session_process_groups(self) -> dict[str, int | None]:
         """Return each live session's process group id, for a quiescence check.
 
