@@ -273,6 +273,12 @@ class InProcessAgent:
         with self._lock:
             self._sessions.pop(session_id, None)
 
+    def _cleanup_observed(self, session_id: str, handle: _ThreadResult) -> None:
+        """Retire only the captured, completed dispatch, never a reused id."""
+        with self._lock:
+            if self._sessions.get(session_id) is handle and not handle.thread.is_alive():
+                self._sessions.pop(session_id)
+
     @property
     def active_sessions(self) -> dict[str, _ThreadResult]:
         """Return a copy of active session records."""

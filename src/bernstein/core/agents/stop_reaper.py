@@ -173,6 +173,7 @@ class StopReaper:
         self.entries: dict[str, StopEntry] = {}
         self._sessions: dict[str, StopEntry] = {}
         self._session_objects: dict[str, Any] = {}
+        self._session_finalizers: dict[str, Callable[[], None]] = {}
         self._session_stop_ops: dict[str, tuple[Callable[[], None], Callable[[], bool]]] = {}
         self._fallback: set[str] = set()
         self._finalized: set[str] = set()
@@ -195,6 +196,7 @@ class StopReaper:
         self._sessions.pop(session_id, None)
         self._session_objects.pop(session_id, None)
         self._session_stop_ops.pop(session_id, None)
+        self._session_finalizers.pop(session_id, None)
         self._fallback.discard(session_id)
         self._finalized.discard(session_id)
         self._receipted.discard(session_id)
@@ -276,6 +278,7 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
                 reaper._sessions[sid] = entry
                 reaper._session_objects[sid] = session
                 reaper._session_stop_ops[sid] = orch._spawner._cooperative_stop_callbacks(session)
+                reaper._session_finalizers[sid] = orch._spawner._cooperative_stop_finalizer(session)
                 with suppress(OSError):
                     orch._signal_mgr.write_shutdown(sid, reason="task cancel requested", task_title=task.title)
             request_stop, observe = reaper._session_stop_ops[sid]
@@ -318,7 +321,7 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
                                 orch._workdir, sid, receipt, reason="stop_req", actor="stop_reaper"
                             )
                             reaper._receipted.add(sid)
-                        orch._spawner.kill(session)
+                        reaper._session_finalizers[sid]()
                         _propagate_abort_to_children(orch, sid)
                         _release_file_ownership(orch, sid)
                         result.reaped.append(sid)

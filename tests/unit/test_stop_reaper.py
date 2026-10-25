@@ -175,6 +175,7 @@ def driver(tmp_path, monkeypatch, sessions):
         _client=client,
         _config=SimpleNamespace(server_url="http://local"),
     )
+    orch._spawner._cooperative_stop_finalizer = lambda session: lambda: orch._spawner.kill(session)
     orch._spawner._cooperative_stop_callbacks = lambda session: (
         lambda: orch._spawner.kill(session),
         lambda: orch._spawner.check_alive(session),

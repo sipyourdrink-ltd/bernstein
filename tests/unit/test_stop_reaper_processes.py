@@ -203,8 +203,8 @@ class _EventAdapter(CLIAdapter):
         return SpawnResult(pid=0, log_path=Path(kwargs["workdir"]) / "thread.log")
 
 
-def test_actual_tick_keeps_live_in_process_handle_until_real_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _exercise_live_thread_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, registry_cleanup: bool = False, backend_change: bool = False
 ) -> None:
     release = Event()
     adapter = _EventAdapter(release)
@@ -248,22 +248,33 @@ def test_actual_tick_keeps_live_in_process_handle_until_real_exit(
         os_signal = MagicMock(side_effect=AssertionError("in-process worker reached OS group signal"))
         monkeypatch.setattr(agent_lifecycle, "_is_process_alive", os_probe)
         monkeypatch.setattr(platform_compat, "kill_process_group", os_signal)
+        adapter_kill = MagicMock(return_value=None)
+        monkeypatch.setattr(adapter, "kill", adapter_kill)
         now = [0.0]
         reaper = StopReaper(tmp_path, clock=lambda: now[0])
         vars(orch)["_stop_reaper"] = reaper
         orch._agents[session.id] = session
         try:
+            if registry_cleanup:
+                captured_observe = spawner._cooperative_stop_callbacks(session)[1]
+                spawner._in_process.cleanup(session.id)
+                assert handle.thread.is_alive() and captured_observe()
+                agent_lifecycle._refresh_heartbeat_from_signals(orch, session, time.time())
+                assert spawner.check_alive(session), "actual thread provenance was lost with its registry entry"
             response = client.post(f"/tasks/{tid}/cancel?stop_mode=request", json={"reason": "stop"})
             assert response.status_code == 200
             for timestamp in [0, 6, 30, 100]:
                 now[0] = timestamp
                 orch.tick()
                 assert handle.thread.is_alive()
-                assert session.id in spawner._in_process.active_sessions, "live cooperative worker lost its handle"
-                assert spawner._in_process.active_sessions[session.id] is handle
+                if not registry_cleanup:
+                    assert session.id in spawner._in_process.active_sessions, "live cooperative worker lost its handle"
+                    assert spawner._in_process.active_sessions[session.id] is handle
                 assert app.state.store.get_task(tid).status.value == "stop_req"
                 assert app.state.store.get_task(tid).claimed_by_session == "worker"
                 assert not app.state.audit_chain.query(event_type="task.release_receipt")
+            if backend_change:
+                spawner._backend = AgentBackend.SUBPROCESS
             release.set()
             handle.thread.join(timeout=2)
             assert not handle.thread.is_alive()
@@ -272,6 +283,7 @@ def test_actual_tick_keeps_live_in_process_handle_until_real_exit(
             orch.tick()
             receipts = app.state.audit_chain.query(event_type="task.release_receipt")
             assert len([e for e in receipts if e.details.get("release_path") == "stop_confirmed"]) == 1
+            adapter_kill.assert_not_called()
             assert session.id not in spawner._in_process.active_sessions
             os_probe.assert_not_called()
             os_signal.assert_not_called()
@@ -281,6 +293,24 @@ def test_actual_tick_keeps_live_in_process_handle_until_real_exit(
             handle.thread.join(timeout=2)
             spawner._in_process.cleanup(session.id)
             orch._client.close()
+
+
+def test_actual_tick_keeps_live_in_process_handle_until_real_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _exercise_live_thread_stop(tmp_path, monkeypatch)
+
+
+def test_in_process_heartbeat_retains_provenance_after_registry_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _exercise_live_thread_stop(tmp_path, monkeypatch, registry_cleanup=True)
+
+
+def test_cooperative_finalization_never_signals_synthetic_identifier_after_backend_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _exercise_live_thread_stop(tmp_path, monkeypatch, backend_change=True)
 
 
 def test_in_process_heartbeat_does_not_probe_os_pid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -196,6 +197,67 @@ def test_resume_nonleader_uses_real_process_callbacks_under_in_process_config(tm
         proc.wait(timeout=5)
         assert not observe()
         group_signal.assert_not_called()
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def test_cooperative_process_finalization_never_signals_after_gone(tmp_path, monkeypatch):
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    try:
+        adapter = _ResultAdapter(SpawnResult(pid=proc.pid, proc=proc, log_path=tmp_path / "exited.log"))
+        spawner = _spawner(tmp_path, adapter)
+        session = spawner.spawn_for_tasks([_task()])
+        proc.wait(timeout=5)
+        forbidden = MagicMock(side_effect=AssertionError("observed-dead process was signalled again"))
+        monkeypatch.setattr(adapter, "kill", forbidden)
+        monkeypatch.setattr(proc, "kill", forbidden)
+        monkeypatch.setattr(proc, "terminate", forbidden)
+        _request, observe = spawner._cooperative_stop_callbacks(session)
+        assert not observe()
+        finalize = spawner._cooperative_stop_finalizer(session)
+        finalize()
+        finalize()  # Retry cannot target a recycled PID.
+        assert session.status == "dead"
+        assert session.id not in spawner._procs
+        forbidden.assert_not_called()
+    finally:
+        proc.wait(timeout=5)
+
+
+def test_replaced_execution_callbacks_cannot_target_new_session(tmp_path, monkeypatch):
+    from bernstein.core.tasks.models import AgentSession
+
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        adapter = _ResultAdapter(SpawnResult(pid=proc.pid, proc=proc, log_path=tmp_path / "replacement.log"))
+        spawner = _spawner(tmp_path, adapter)
+        old = AgentSession(id="reused", role="backend", pid=proc.pid, status="working")
+        spawner._procs[old.id] = proc
+        spawner._capture_session_execution(old, in_process=False, adapter=adapter)
+        request, observe = spawner._cooperative_stop_callbacks(old)
+        finalize = spawner._cooperative_stop_finalizer(old)
+        replacement = replace(old)
+        spawner._capture_session_execution(replacement, in_process=False, adapter=adapter)
+        forbidden = MagicMock(side_effect=AssertionError("stale execution targeted replacement"))
+        monkeypatch.setattr(adapter, "kill", forbidden)
+        request()
+        stale_request, stale_observe = spawner._cooperative_stop_callbacks(old)
+        stale_request()
+        assert stale_observe()
+        assert observe(), "stale observation cannot confirm replacement death"
+        with pytest.raises(RuntimeError, match="replaced execution"):
+            finalize()
+        with pytest.raises(RuntimeError, match="replaced execution"):
+            spawner._finalize_cooperative_stop(old)
+        assert replacement.status == "working"
+        assert spawner._procs[replacement.id] is proc and proc.poll() is None
+        # Same object, new dispatch epoch also invalidates old callbacks.
+        latest_finalize = spawner._cooperative_stop_finalizer(replacement)
+        spawner._capture_session_execution(replacement, in_process=False, adapter=adapter)
+        with pytest.raises(RuntimeError, match="replaced execution"):
+            latest_finalize()
+        forbidden.assert_not_called()
     finally:
         proc.kill()
         proc.wait(timeout=5)

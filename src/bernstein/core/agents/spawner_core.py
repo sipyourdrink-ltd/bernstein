@@ -16,6 +16,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
@@ -197,8 +198,25 @@ _read_cached = _project_context.read_cached
 _SANDBOX_AUDIT_LOCK = threading.Lock()
 
 
+@dataclass
+class _SessionExecution:
+    """Ephemeral identity of one dispatch, independent of mutable registries."""
+
+    session: AgentSession
+    in_process: bool
+    request: Callable[[], None]
+    observe: Callable[[], bool]
+    cleanup: Callable[[], None]
+    completed: bool = False
+
+
 def _in_process_observer(spawner: Any, session: AgentSession) -> Callable[[], bool] | None:
     """Resolve a real thread handle; synthetic pid values never identify a process."""
+    record = getattr(spawner, "_session_executions", {}).get(session.id)
+    if record is not None:
+        if record.session is not session:
+            return lambda: True  # stale session has no authority over its replacement
+        return record.observe if record.in_process else None
     in_process = getattr(spawner, "_in_process", None)
     if not isinstance(in_process, InProcessAgent):
         return None
@@ -1787,6 +1805,7 @@ class AgentSpawner:
         self._file_ownership_provider: Callable[[], dict[str, str]] | None = None
         self._cost_anomaly_spawn_observer: Callable[[list[Task], ModelConfig], None] | None = None
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
+        self._session_executions: dict[str, _SessionExecution] = {}
         # Per-session baseline of operator-checkout untracked paths, captured
         # at manager/planning spawn so the reap-time sweep can quarantine any
         # stray write that escaped the worktree cwd (issue #2793).
@@ -5674,6 +5693,9 @@ class AgentSpawner:
 
                     register_stdin_pipe(session_id, proc_stdin)
 
+            if not remote_spawned and session.container_id is None and session.id not in self._sandbox_exec_handles:
+                self._capture_session_execution(session, in_process=spawned_in_process, adapter=target_adapter)
+
             # Create and persist the initial trace
             # Serialize task fields to JSON-safe types (convert Enums to their values)
             import dataclasses
@@ -6151,6 +6173,8 @@ class AgentSpawner:
             session.log_path = str(result.log_path)
         if result.proc is not None:
             self._procs[session_id] = result.proc  # type: ignore[assignment]
+
+        self._capture_session_execution(session, in_process=False, adapter=self._adapter)
 
         # Track worktree so reap_completed_agent can merge+clean up
         self._worktree_paths[session_id] = worktree_path
@@ -7166,6 +7190,9 @@ class AgentSpawner:
         Returns:
             True if the process is alive, False otherwise.
         """
+        execution = self._session_executions.get(session.id)
+        if execution is not None:
+            return execution.observe() if execution.session is session else True
         if session.runtime_backend == "openclaw":
             return self._check_alive_openclaw(session)
 
@@ -7183,8 +7210,100 @@ class AgentSpawner:
             return False
         return self._adapter.is_alive(session.pid)
 
+    def _capture_session_execution(self, session: AgentSession, *, in_process: bool, adapter: CLIAdapter) -> None:
+        """Capture an actual dispatch once; record identity acts as its epoch."""
+        owner = self._in_process
+        handle = owner.active_sessions.get(session.id) if in_process and owner is not None else None
+        proc = self._procs.get(session.id)
+        pid, pgid = session.pid, session.pgid
+
+        def current() -> bool:
+            return self._session_executions.get(session.id) is record
+
+        def request() -> None:
+            if not current() or record.completed:
+                return
+            if in_process:
+                if handle is not None and owner is not None:
+                    # Set the captured handle even after registry retirement.
+                    handle.stop_requested = True
+                    registered = owner.active_sessions.get(session.id)
+                    if registered is None or registered is handle:
+                        owner.stop(session.id)
+            elif pid is not None:
+                receipt = adapter.kill(pid)
+                emit_process_reap_receipt(self._workdir, session.id, receipt, reason="stop_requested")
+
+        def observe() -> bool:
+            if not current():
+                return True  # stale callbacks cannot confirm another dispatch
+            if record.completed:
+                return False
+            if in_process:
+                return handle.thread.is_alive() if handle is not None else True
+            if proc is not None:
+                code = proc.poll()
+                if code is not None:
+                    session.exit_code = code
+                if pgid is not None:
+                    return platform_compat.process_group_alive(pgid)
+                return code is None
+            if pgid is not None:
+                return platform_compat.process_group_alive(pgid)
+            return adapter.is_alive(pid) if pid is not None else True
+
+        def cleanup() -> None:
+            if in_process and handle is not None and owner is not None:
+                session.exit_code = handle.exit_code
+                owner._cleanup_observed(session.id, handle)
+            if proc is not None and self._procs.get(session.id) is proc:
+                self._procs.pop(session.id)
+
+        record = _SessionExecution(session, in_process, request, observe, cleanup)
+        self._session_executions[session.id] = record
+
+    def _cooperative_stop_finalizer(self, session: AgentSession) -> Callable[[], None]:
+        """Pin finalization to the same dispatch epoch as stop observation."""
+        record = self._session_executions.get(session.id)
+
+        def finalize() -> None:
+            if self._session_executions.get(session.id) is not record:
+                raise RuntimeError("Cannot finalize a replaced execution")
+            self._finalize_cooperative_stop(session)
+
+        return finalize
+
+    def _finalize_cooperative_stop(self, session: AgentSession) -> None:
+        """Retire observed-dead execution metadata without targeting any process."""
+        record = self._session_executions.get(session.id)
+        if record is not None:
+            if record.session is not session:
+                raise RuntimeError("Cannot finalize a replaced execution")
+            if record.completed:
+                return
+            if record.observe():
+                raise RuntimeError("Cannot finalize a live execution")
+            record.cleanup()
+        if session.timeout_timer is not None:
+            session.timeout_timer.cancel()
+        from bernstein.core.agents.agent_ipc import unregister_stdin_pipe
+
+        unregister_stdin_pipe(session.id)
+        self._transition_to_dead(session, "stop confirmed", "execution observed dead by cooperative reaper")
+        if record is not None:
+            record.completed = True
+            # Retain identity, discard strong execution handles and callbacks.
+            record.request = lambda: None
+            record.observe = lambda: False
+            record.cleanup = lambda: None
+
     def _cooperative_stop_callbacks(self, session: AgentSession) -> tuple[Callable[[], None], Callable[[], bool]]:
         """Bind stop intent and observation to this session's actual execution handle."""
+        execution = self._session_executions.get(session.id)
+        if execution is not None:
+            if execution.session is session:
+                return execution.request, execution.observe
+            return lambda: None, lambda: True
         in_process = self._in_process
         observe_thread = _in_process_observer(self, session)
         if observe_thread is not None:
@@ -7199,6 +7318,10 @@ class AgentSpawner:
             and session.id not in self._sandbox_exec_handles
         )
         if local_process:
+            if session.id in self._procs or session.pgid is not None:
+                self._capture_session_execution(session, in_process=False, adapter=self._adapter)
+                execution = self._session_executions[session.id]
+                return execution.request, execution.observe
             # Missing provenance must not turn a possible synthetic identifier
             # into an OS target, nor turn an unknown worker into observed death.
             if session.pid is None or (
