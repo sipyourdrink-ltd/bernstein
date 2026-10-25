@@ -285,7 +285,7 @@ stays open. See [the operator workflow](https://github.com/sipyourdrink-ltd/bern
 The task cancel API supports opt-in `stop_mode=request`: active tasks enter
 `stop_req` and keep their claims until the orchestrator observes worker termination.
 Omitting the mode keeps immediate cancellation. See the
-[operator workflow](docs/operations/cooperative-cancellation.md) for escalation,
+[operator workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cooperative-cancellation.md) for escalation,
 confirmation, and runtime limitations.
 
 ### contributing, support, license

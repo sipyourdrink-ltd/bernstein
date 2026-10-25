@@ -5923,13 +5923,12 @@ class AgentSpawner:
         if not tasks:
             raise ValueError("Cannot resume with empty task list")
 
-        resume_adapter = self._adapter
-
         # Sovereign posture drift gate (#2518): the resume path goes straight to
         # the adapter without ``_spawn_for_tasks_internal``, so it must apply the
         # same gate or a sovereign run could resume an agent after the posture
         # drifted. A hard stop (``PostureDriftRefusal``), same as the main path.
         self._preflight_posture_drift()
+        resume_adapter = self._adapter
 
         # Build resume context prefix
         files_list = "\n".join(f"  - {f}" for f in changed_files) if changed_files else "  (none)"
