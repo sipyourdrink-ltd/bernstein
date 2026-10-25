@@ -204,6 +204,7 @@ class _SessionExecution:
 
     session: AgentSession
     in_process: bool
+    pgid: int | None
     request: Callable[[], None]
     observe: Callable[[], bool]
     cleanup: Callable[[], None]
@@ -7261,8 +7262,26 @@ class AgentSpawner:
             if proc is not None and self._procs.get(session.id) is proc:
                 self._procs.pop(session.id)
 
-        record = _SessionExecution(session, in_process, request, observe, cleanup)
+        record = _SessionExecution(session, in_process, pgid, request, observe, cleanup)
         self._session_executions[session.id] = record
+
+    def _cooperative_group_sender(self, session: AgentSession) -> Callable[[int, int], bool]:
+        """Bind every escalation signal to the captured dispatch and group."""
+        record = self._session_executions.get(session.id)
+
+        def send(pgid: int, sig: int) -> bool:
+            if (
+                record is None
+                or self._session_executions.get(session.id) is not record
+                or record.session is not session
+                or record.completed
+                or record.in_process
+                or record.pgid != pgid
+            ):
+                return False
+            return platform_compat.kill_process_group(pgid, sig)
+
+        return send
 
     def _cooperative_stop_finalizer(self, session: AgentSession) -> Callable[[], None]:
         """Pin finalization to the same dispatch epoch as stop observation."""

@@ -173,6 +173,7 @@ class StopReaper:
         self.entries: dict[str, StopEntry] = {}
         self._sessions: dict[str, StopEntry] = {}
         self._session_objects: dict[str, Any] = {}
+        self._session_group_senders: dict[str, Callable[[int, int], bool]] = {}
         self._session_finalizers: dict[str, Callable[[], None]] = {}
         self._session_stop_ops: dict[str, tuple[Callable[[], None], Callable[[], bool]]] = {}
         self._fallback: set[str] = set()
@@ -197,6 +198,7 @@ class StopReaper:
         self._session_objects.pop(session_id, None)
         self._session_stop_ops.pop(session_id, None)
         self._session_finalizers.pop(session_id, None)
+        self._session_group_senders.pop(session_id, None)
         self._fallback.discard(session_id)
         self._finalized.discard(session_id)
         self._receipted.discard(session_id)
@@ -235,8 +237,12 @@ class StopReaper:
 
 
 class _SessionOps(PlatformOps):
-    def __init__(self, observe: Callable[[], bool]):
+    def __init__(self, observe: Callable[[], bool], send: Callable[[int, int], bool]):
         self.observe = observe
+        self._send = send
+
+    def send(self, pgid: int, sig: int) -> bool:
+        return self._send(pgid, sig)
 
     def alive(self, pgid: int) -> bool:
         return self.observe()
@@ -279,6 +285,7 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
                 reaper._session_objects[sid] = session
                 reaper._session_stop_ops[sid] = orch._spawner._cooperative_stop_callbacks(session)
                 reaper._session_finalizers[sid] = orch._spawner._cooperative_stop_finalizer(session)
+                reaper._session_group_senders[sid] = orch._spawner._cooperative_group_sender(session)
                 with suppress(OSError):
                     orch._signal_mgr.write_shutdown(sid, reason="task cancel requested", task_title=task.title)
             request_stop, observe = reaper._session_stop_ops[sid]
@@ -290,7 +297,9 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
                 if session.pgid is not None and (session.pgid <= 1 or session.pgid == _own_pgid()):
                     entry = replace(entry, outcome=StopOutcome.REFUSED, resolved_at=reaper.clock())
                 elif usable:
-                    entry = advance(entry, reaper.clock(), reaper.policy, _SessionOps(observe))
+                    entry = advance(
+                        entry, reaper.clock(), reaper.policy, _SessionOps(observe, reaper._session_group_senders[sid])
+                    )
                 elif entry.outcome == StopOutcome.PENDING:
                     if sid not in reaper._fallback:
                         try:

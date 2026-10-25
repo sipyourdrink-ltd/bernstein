@@ -175,6 +175,7 @@ def driver(tmp_path, monkeypatch, sessions):
         _client=client,
         _config=SimpleNamespace(server_url="http://local"),
     )
+    orch._spawner._cooperative_group_sender = lambda session: mod.PlatformOps().send
     orch._spawner._cooperative_stop_finalizer = lambda session: lambda: orch._spawner.kill(session)
     orch._spawner._cooperative_stop_callbacks = lambda session: (
         lambda: orch._spawner.kill(session),
@@ -446,3 +447,49 @@ def test_reused_session_id_binds_a_new_observer(tmp_path, monkeypatch):
     assert orch._stop_reaper._session_objects[fresh.id] is fresh
     reap_stop_requests(orch, result, {"stop_req": []})
     assert not orch._stop_reaper._session_stop_ops
+
+
+@pytest.mark.parametrize("replacement_group", [987654, 876543])
+def test_stale_execution_epoch_never_signals_a_group(tmp_path, monkeypatch, replacement_group):
+    from unittest.mock import MagicMock
+
+    from bernstein.core.agents.spawner_core import AgentSpawner
+
+    group = 987654
+    monkeypatch.setattr(mod.platform_compat, "process_group_alive", lambda pgid: True)
+    signals = []
+    monkeypatch.setattr(
+        mod.platform_compat, "kill_process_group", lambda pgid, sig: signals.append((pgid, int(sig))) or True
+    )
+    spawner = AgentSpawner.__new__(AgentSpawner)
+    spawner._session_executions = {}
+    spawner._in_process = None
+    spawner._procs = {}
+    agent = AgentSession(id="reused", role="worker", task_ids=["t"], pid=group, pgid=group, status="working")
+    adapter = MagicMock()
+    spawner._capture_session_execution(agent, in_process=False, adapter=adapter)
+    now = [0.0]
+    reaper = StopReaper(tmp_path, clock=lambda: now[0])
+    orch = SimpleNamespace(
+        _workdir=tmp_path,
+        _stop_reaper=reaper,
+        _agents={agent.id: agent},
+        _spawner=spawner,
+        _signal_mgr=MagicMock(),
+        _client=MagicMock(),
+        _config=SimpleNamespace(server_url="http://local"),
+    )
+    snapshot = {"stop_req": [SimpleNamespace(id="t", title="Task")]}
+    result = SimpleNamespace(reaped=[])
+    reap_stop_requests(orch, result, snapshot)
+    stale_observe = reaper._session_stop_ops[agent.id][1]
+    agent.pid = agent.pgid = replacement_group
+    spawner._capture_session_execution(agent, in_process=False, adapter=adapter)
+    assert stale_observe(), "stale observation must remain fail-closed"
+    for timestamp in [5, 15, 30, 60, 100]:
+        now[0] = timestamp
+        reap_stop_requests(orch, result, snapshot)
+        assert not signals, "stale execution escalated into a group signal"
+        assert not result.reaped
+        orch._client.post.assert_not_called()
+        adapter.kill.assert_not_called()
