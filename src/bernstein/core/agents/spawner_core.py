@@ -5922,6 +5922,8 @@ class AgentSpawner:
         if not tasks:
             raise ValueError("Cannot resume with empty task list")
 
+        resume_adapter = self._adapter
+
         # Sovereign posture drift gate (#2518): the resume path goes straight to
         # the adapter without ``_spawn_for_tasks_internal``, so it must apply the
         # same gate or a sovereign run could resume an agent after the posture
@@ -5973,14 +5975,14 @@ class AgentSpawner:
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
-        # Resume goes straight to ``self._adapter``; gate its model like the
+        # Resume goes straight to ``resume_adapter``; gate its model like the
         # fresh-spawn path does, before any process starts.
         self._enforce_model_registry_gate(
             session_id=session_id,
             tasks=tasks,
             model_config=model_config,
             provider_name=None,
-            adapter=self._adapter,
+            adapter=resume_adapter,
             routing_path="spawner_resume",
         )
 
@@ -5991,7 +5993,7 @@ class AgentSpawner:
         # exactly the kind of short, tightly-budgeted resume where a model
         # exploring instead of finishing is most costly.
         #
-        # Resume spawns go straight to ``self._adapter`` (no provider
+        # Resume spawns go straight to ``resume_adapter`` (no provider
         # routing below), so the env/tuning fallback - which only the
         # openai_agents runner enforces - applies only when that adapter
         # is the openai_agents one. See the matching gate and rationale in
@@ -6000,7 +6002,7 @@ class AgentSpawner:
         if _resume_max_turns is None:
             from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 
-            if isinstance(self._adapter, OpenAIAgentsAdapter):
+            if isinstance(resume_adapter, OpenAIAgentsAdapter):
                 try:
                     from bernstein.adapters.openai_agents_runner import _resolve_max_turns
 
@@ -6040,14 +6042,14 @@ class AgentSpawner:
             role=role,
             task_ids=[t.id for t in tasks],
             model_config=model_config,
-            model_vendor=getattr(self._adapter, "model_vendor", "") or "",
+            model_vendor=getattr(resume_adapter, "model_vendor", "") or "",
             status="starting",
             timeout_s=self._resolve_spawn_timeout(tasks),
             context_receipt=receipt.to_dict()["entries"],
             # Endpoint identity fields (issue #4908) - resume resolves the
             # same way the primary spawn path does: role policy overrides
             # the adapter and model that actually serve this spawn.
-            endpoint_adapter_name=self._adapter.name(),
+            endpoint_adapter_name=resume_adapter.name(),
             endpoint_model=model_config.model,
             endpoint_base_url=_policy_preview.get("base_url", ""),
             endpoint_profile_name=_policy_preview.get("endpoint", ""),
@@ -6079,7 +6081,7 @@ class AgentSpawner:
         # Same task-identity forwarding as the primary spawn path: a resumed
         # agent must attribute its output to the task it continues.
         _resume_extra: dict[str, Any] = {}
-        _resume_params = inspect.signature(self._adapter.spawn).parameters
+        _resume_params = inspect.signature(resume_adapter.spawn).parameters
         if "task_id" in _resume_params:
             _resume_extra["task_id"] = tasks[0].id
         if "task_title" in _resume_params:
@@ -6087,11 +6089,11 @@ class AgentSpawner:
         if _resume_attachments is not None:
             if "multimodal_context" not in _resume_params:
                 raise AttachmentDispatchError(
-                    f"adapter {self._adapter.name()!r} cannot carry attachments on resume: its "
+                    f"adapter {resume_adapter.name()!r} cannot carry attachments on resume: its "
                     "spawn() does not accept multimodal_context."
                 )
             _resume_extra["multimodal_context"] = _resume_attachments
-        # Issue #3565: a resumed agent goes straight to ``self._adapter``
+        # Issue #3565: a resumed agent goes straight to ``resume_adapter``
         # (no ``_spawn_for_tasks_internal``), so it used to skip the
         # response-style resolution that path performs and the resumed
         # process never received ``system_addendum`` - the channel that
@@ -6132,7 +6134,7 @@ class AgentSpawner:
                     f"Cannot hand preserved worktree {preserved_path} to resume session {session_id}: {exc}"
                 ) from exc
         try:
-            result = self._adapter.spawn(
+            result = resume_adapter.spawn(
                 prompt=prompt,
                 workdir=worktree_path,
                 model_config=model_config,
@@ -6174,14 +6176,14 @@ class AgentSpawner:
         if result.proc is not None:
             self._procs[session_id] = result.proc  # type: ignore[assignment]
 
-        self._capture_session_execution(session, in_process=False, adapter=self._adapter)
+        self._capture_session_execution(session, in_process=False, adapter=resume_adapter)
 
         # Track worktree so reap_completed_agent can merge+clean up
         self._worktree_paths[session_id] = worktree_path
 
         # Record persistent-agent step for each task if adapter is persistent
         for _t in tasks:
-            record_persistent_agent_step(self._workdir / ".sdd", _t.id, self._adapter.name())
+            record_persistent_agent_step(self._workdir / ".sdd", _t.id, resume_adapter.name())
 
         return session
 

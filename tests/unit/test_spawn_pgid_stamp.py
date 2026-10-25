@@ -261,3 +261,36 @@ def test_replaced_execution_callbacks_cannot_target_new_session(tmp_path, monkey
     finally:
         proc.kill()
         proc.wait(timeout=5)
+
+
+@pytest.mark.parametrize("resume", [False, True], ids=["primary", "resume"])
+def test_actual_dispatch_adapter_is_retained_when_default_changes(tmp_path, monkeypatch, resume):
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        result = SpawnResult(pid=proc.pid, proc=proc, log_path=tmp_path / "actual-adapter.log")
+        actual = _ResultAdapter(result)
+        replacement = _ResultAdapter(result)
+        spawner = _spawner(tmp_path, actual, AgentBackend.IN_PROCESS if resume else AgentBackend.SUBPROCESS)
+        actual_kill = MagicMock(return_value=None)
+        replacement_kill = MagicMock(return_value=None)
+        monkeypatch.setattr(actual, "kill", actual_kill)
+        monkeypatch.setattr(replacement, "kill", replacement_kill)
+
+        def dispatch(**kwargs):
+            spawner._adapter = replacement
+            return result
+
+        monkeypatch.setattr(actual, "spawn", dispatch)
+        session = (
+            spawner.spawn_for_resume([_task()], worktree_path=tmp_path, changed_files=[])
+            if resume
+            else spawner.spawn_for_tasks([_task()])
+        )
+        request, observe = spawner._cooperative_stop_callbacks(session)
+        assert observe()
+        request()
+        actual_kill.assert_called_once_with(proc.pid)
+        replacement_kill.assert_not_called()
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
