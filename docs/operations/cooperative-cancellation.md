@@ -28,3 +28,9 @@ A server without a running orchestrator leaves stop requests pending. The reaper
 registry is in memory; durable restart recovery, harness lanes, tuning YAML,
 UI colours and protocol maps remain follow-ups. Real process regressions cover
 POSIX; Windows branches are tested with platform stubs only.
+
+In-process runs keep their actual thread handle during cooperative shutdown.
+A thread that has not exited remains `stop_req` and retains its claim even when
+it ignores the shutdown notice. No forced Python-thread termination is implied.
+Synthetic thread identifiers are not probed as OS PIDs or process groups;
+external process resume is still observed through its actual process handle.

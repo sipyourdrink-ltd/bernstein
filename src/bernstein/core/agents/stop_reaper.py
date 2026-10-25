@@ -173,6 +173,7 @@ class StopReaper:
         self.entries: dict[str, StopEntry] = {}
         self._sessions: dict[str, StopEntry] = {}
         self._session_objects: dict[str, Any] = {}
+        self._session_stop_ops: dict[str, tuple[Callable[[], None], Callable[[], bool]]] = {}
         self._fallback: set[str] = set()
         self._finalized: set[str] = set()
         self._receipted: set[str] = set()
@@ -189,6 +190,15 @@ class StopReaper:
 
     def forget(self, task_id: str) -> None:
         self.entries.pop(task_id, None)
+
+    def _forget_session(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+        self._session_objects.pop(session_id, None)
+        self._session_stop_ops.pop(session_id, None)
+        self._fallback.discard(session_id)
+        self._finalized.discard(session_id)
+        self._receipted.discard(session_id)
+        self._logged.discard(session_id)
 
     def beat(self, pending: int, unverified: list[str]) -> None:
         now = self.clock()
@@ -223,11 +233,11 @@ class StopReaper:
 
 
 class _SessionOps(PlatformOps):
-    def __init__(self, spawner: Any, session: Any):
-        self.spawner, self.session = spawner, session
+    def __init__(self, observe: Callable[[], bool]):
+        self.observe = observe
 
     def alive(self, pgid: int) -> bool:
-        return bool(self.spawner.check_alive(self.session))
+        return self.observe()
 
 
 def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]) -> None:
@@ -246,12 +256,7 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
     relevant_sessions = {s.id for s in known_sessions.values() if task_ids.intersection(s.task_ids)}
     for sid in list(reaper._sessions):
         if sid not in relevant_sessions:
-            reaper._sessions.pop(sid)
-            reaper._session_objects.pop(sid, None)
-            reaper._fallback.discard(sid)
-            reaper._finalized.discard(sid)
-            reaper._receipted.discard(sid)
-            reaper._logged.discard(sid)
+            reaper._forget_session(sid)
     processed: set[str] = set()
     pending = 0
     unverified = []
@@ -263,13 +268,17 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
         tier = StopTier.NOTIFY
         for session in sessions:
             sid = session.id
+            if sid in reaper._session_objects and reaper._session_objects[sid] is not session:
+                reaper._forget_session(sid)
             entry = reaper._sessions.get(sid)
             if entry is None:
                 entry = StopEntry(task.id, sid, session.pgid if session.pgid is not None else 0, reaper.clock())
                 reaper._sessions[sid] = entry
                 reaper._session_objects[sid] = session
+                reaper._session_stop_ops[sid] = orch._spawner._cooperative_stop_callbacks(session)
                 with suppress(OSError):
                     orch._signal_mgr.write_shutdown(sid, reason="task cancel requested", task_title=task.title)
+            request_stop, observe = reaper._session_stop_ops[sid]
             if sid not in processed:
                 processed.add(sid)
                 usable = (
@@ -278,16 +287,16 @@ def reap_stop_requests(orch: Any, result: Any, tasks_snapshot: Mapping[str, Any]
                 if session.pgid is not None and (session.pgid <= 1 or session.pgid == _own_pgid()):
                     entry = replace(entry, outcome=StopOutcome.REFUSED, resolved_at=reaper.clock())
                 elif usable:
-                    entry = advance(entry, reaper.clock(), reaper.policy, _SessionOps(orch._spawner, session))
+                    entry = advance(entry, reaper.clock(), reaper.policy, _SessionOps(observe))
                 elif entry.outcome == StopOutcome.PENDING:
                     if sid not in reaper._fallback:
                         try:
-                            orch._spawner.kill(session)
+                            request_stop()
                         except Exception:
                             logger.exception("Fallback stop failed for %s; will retry", sid)
                         else:
                             reaper._fallback.add(sid)
-                    if not orch._spawner.check_alive(session):
+                    if not observe():
                         entry = replace(entry, outcome=StopOutcome.GONE, resolved_at=reaper.clock())
                 reaper._sessions[sid] = entry
                 if entry.outcome == StopOutcome.GONE and sid not in reaper._finalized:

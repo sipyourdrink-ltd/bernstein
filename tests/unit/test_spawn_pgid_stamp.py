@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import ast
-import inspect
 import os
 import signal
 import subprocess
 import sys
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.agents import spawner_core
 from bernstein.core.config import platform_compat
+from bernstein.core.tasks.models import AgentBackend, Scope, Task
 
 
 @pytest.mark.parametrize(
@@ -83,18 +85,117 @@ def test_real_process_group(isolated):
         proc.wait(timeout=5)
 
 
-def test_both_spawn_paths_stamp_pgid_immediately():
-    tree = ast.parse(inspect.getsource(spawner_core))
-    count = 0
-    for node in ast.walk(tree):
-        for value in vars(node).values():
-            if not isinstance(value, list):
-                continue
-            for index, statement in enumerate(value):
-                if not isinstance(statement, ast.Assign):
-                    continue
-                if ast.unparse(statement) != "session.pid = result.pid":
-                    continue
-                assert ast.unparse(value[index + 1]) == "session.pgid = _leader_pgid(result.pid)"
-                count += 1
-    assert count == 2
+class _ResultAdapter(CLIAdapter):
+    def __init__(self, result: SpawnResult) -> None:
+        super().__init__()
+        self.result = result
+
+    def name(self) -> str:
+        return "owned-result-test"
+
+    def spawn(self, **kwargs: Any) -> SpawnResult:
+        return self.result
+
+
+def _spawner(tmp_path, adapter, backend=AgentBackend.SUBPROCESS):
+    templates = tmp_path / "templates/roles"
+    templates.mkdir(parents=True, exist_ok=True)
+    return spawner_core.AgentSpawner(
+        adapter,
+        templates,
+        tmp_path,
+        backend=backend,
+        use_worktrees=False,
+        default_model="mock-model",
+    )
+
+
+def _task():
+    return Task(id="group-task", title="group task", description="d", role="backend", scope=Scope.SMALL)
+
+
+@pytest.mark.parametrize("synthetic", [123, 2**63])
+def test_in_process_agent_does_not_probe_os_process_group(tmp_path, monkeypatch, synthetic):
+    adapter = _ResultAdapter(SpawnResult(pid=0, log_path=tmp_path / "unused.log"))
+    spawner = _spawner(tmp_path, adapter, AgentBackend.IN_PROCESS)
+    assert spawner._in_process is not None
+
+    def run(**kwargs):
+        # The dispatch decision must stay bound to the actual route, even
+        # if mutable configuration is changed while that route runs.
+        spawner._backend = AgentBackend.SUBPROCESS
+        return synthetic, tmp_path / "thread.log"
+
+    monkeypatch.setattr(spawner._in_process, "run", run)
+    probe = MagicMock(side_effect=AssertionError("synthetic handle reached OS group probe"))
+    monkeypatch.setattr(spawner_core, "_leader_pgid", probe)
+    session = spawner.spawn_for_tasks([_task()])
+    assert session.pid == synthetic
+    assert session.pgid is None
+    probe.assert_not_called()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Real POSIX process group required")
+@pytest.mark.parametrize("resume", [False, True], ids=["primary", "resume-in-process-config"])
+def test_external_dispatch_stamps_owned_group(tmp_path, resume):
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    try:
+        adapter = _ResultAdapter(SpawnResult(pid=proc.pid, proc=proc, log_path=tmp_path / "child.log"))
+        spawner = _spawner(tmp_path, adapter, AgentBackend.IN_PROCESS if resume else AgentBackend.SUBPROCESS)
+        session = (
+            spawner.spawn_for_resume([_task()], worktree_path=tmp_path, changed_files=[])
+            if resume
+            else spawner.spawn_for_tasks([_task()])
+        )
+        assert session.pid == session.pgid == proc.pid
+        assert spawner.check_alive(session)
+        _request_stop, observe = spawner._cooperative_stop_callbacks(session)
+        assert observe()
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def test_unknown_in_process_handle_is_not_an_os_target(tmp_path, monkeypatch):
+    adapter = _ResultAdapter(SpawnResult(pid=0, log_path=tmp_path / "unused.log"))
+    spawner = _spawner(tmp_path, adapter, AgentBackend.IN_PROCESS)
+    from bernstein.core.tasks.models import AgentSession
+
+    session = AgentSession(id="unknown-thread", role="backend", pid=123, status="working")
+    probe = MagicMock(side_effect=AssertionError("unknown handle reached OS adapter operation"))
+    monkeypatch.setattr(adapter, "kill", probe)
+    monkeypatch.setattr(adapter, "is_alive", probe)
+    request, observe = spawner._cooperative_stop_callbacks(session)
+    request()
+    assert observe(), "unknown provenance cannot prove death or authorize an OS target"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Real owned POSIX child required")
+def test_resume_nonleader_uses_real_process_callbacks_under_in_process_config(tmp_path, monkeypatch):
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    stopped = []
+    try:
+        assert os.getpgid(proc.pid) == os.getpgrp() != proc.pid
+        adapter = _ResultAdapter(SpawnResult(pid=proc.pid, proc=proc, log_path=tmp_path / "ordinary-child.log"))
+
+        def stop_owned(pid):
+            assert pid == proc.pid
+            stopped.append(pid)
+            proc.kill()  # Only this owned PID; never signal its shared group.
+
+        monkeypatch.setattr(adapter, "kill", stop_owned)
+        group_signal = MagicMock(side_effect=AssertionError("shared process group must not be signalled"))
+        monkeypatch.setattr(platform_compat, "kill_process_group", group_signal)
+        spawner = _spawner(tmp_path, adapter, AgentBackend.IN_PROCESS)
+        session = spawner.spawn_for_resume([_task()], worktree_path=tmp_path, changed_files=[])
+        assert session.pgid is None
+        request, observe = spawner._cooperative_stop_callbacks(session)
+        assert observe(), "real resumed process was mistaken for a missing thread"
+        request()
+        assert stopped == [proc.pid]
+        proc.wait(timeout=5)
+        assert not observe()
+        group_signal.assert_not_called()
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)

@@ -197,6 +197,15 @@ _read_cached = _project_context.read_cached
 _SANDBOX_AUDIT_LOCK = threading.Lock()
 
 
+def _in_process_observer(spawner: Any, session: AgentSession) -> Callable[[], bool] | None:
+    """Resolve a real thread handle; synthetic pid values never identify a process."""
+    in_process = getattr(spawner, "_in_process", None)
+    if not isinstance(in_process, InProcessAgent):
+        return None
+    handle = in_process.active_sessions.get(session.id)
+    return handle.thread.is_alive if handle is not None else None
+
+
 def _leader_pgid(pid: int | None) -> int | None:
     """Return a process group only when the spawned process leads it safely."""
     if pid is None:
@@ -5379,7 +5388,9 @@ class AgentSpawner:
                         self._notify_cost_anomaly_spawn(tasks, model_config)
                         target_adapter.set_resource_limits(self._resource_limits)
                         spawn_start = time.perf_counter()
-                        if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+                        spawned_in_process = self._in_process is not None and self._backend == AgentBackend.IN_PROCESS
+                        if spawned_in_process:
+                            assert self._in_process is not None
                             # In-process: run the adapter's subprocess via
                             # a thread inside the current Python process
                             fake_pid, actual_log_path = self._in_process.run(
@@ -5638,7 +5649,7 @@ class AgentSpawner:
             # Post-spawn session setup
             if result is not None:
                 session.pid = result.pid
-                session.pgid = _leader_pgid(result.pid)
+                session.pgid = None if spawned_in_process else _leader_pgid(result.pid)
                 session.abort_reason = result.abort_reason
                 session.abort_detail = result.abort_detail
                 session.finish_reason = result.finish_reason
@@ -7171,6 +7182,47 @@ class AgentSpawner:
         if session.pid is None:
             return False
         return self._adapter.is_alive(session.pid)
+
+    def _cooperative_stop_callbacks(self, session: AgentSession) -> tuple[Callable[[], None], Callable[[], bool]]:
+        """Bind stop intent and observation to this session's actual execution handle."""
+        in_process = self._in_process
+        observe_thread = _in_process_observer(self, session)
+        if observe_thread is not None:
+            # Keep the real thread observable even if unrelated legacy cleanup
+            # removes its registry entry. A stop request never joins or cleans it.
+            assert in_process is not None
+            return lambda: in_process.stop(session.id), observe_thread
+
+        local_process = (
+            session.runtime_backend == "local"
+            and session.container_id is None
+            and session.id not in self._sandbox_exec_handles
+        )
+        if local_process:
+            # Missing provenance must not turn a possible synthetic identifier
+            # into an OS target, nor turn an unknown worker into observed death.
+            if session.pid is None or (
+                in_process is not None and session.id not in self._procs and session.pgid is None
+            ):
+                return lambda: None, lambda: True
+
+            def request_process_stop() -> None:
+                assert session.pid is not None
+                receipt = self._adapter.kill(session.pid)
+                emit_process_reap_receipt(self._workdir, session.id, receipt, reason="stop_requested")
+
+            def process_alive() -> bool:
+                observed = self._check_alive_process(session)
+                if observed is not None:
+                    return observed
+                if session.pgid is not None:
+                    return platform_compat.process_group_alive(session.pgid)
+                assert session.pid is not None
+                return self._adapter.is_alive(session.pid)
+
+            return request_process_stop, process_alive
+        # Preserve existing policies for remote/container/sandbox runtimes.
+        return lambda: self.kill(session), lambda: self.check_alive(session)
 
     def kill(self, session: AgentSession) -> None:
         """Terminate the agent process and mark session dead.

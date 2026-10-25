@@ -10,20 +10,21 @@ import sys
 import time
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from threading import Event
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from bernstein.adapters.base import CLIAdapter
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.agents.spawner_core import AgentSpawner
 from bernstein.core.agents.stop_reaper import StopEscalationPolicy, StopReaper, StopTier
 from bernstein.core.config import platform_compat
 from bernstein.core.orchestration.orchestrator import Orchestrator
 from bernstein.core.server import create_app
-from bernstein.core.tasks.models import AgentSession, OrchestratorConfig
+from bernstein.core.tasks.models import AgentBackend, AgentSession, OrchestratorConfig
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -185,3 +186,148 @@ def test_real_group_escalates_and_releases_once_after_observed_death(tmp_path: P
         events = app.state.audit_chain.query(event_type="task.release_receipt")
         assert len([e for e in events if e.details.get("release_path") == "stop_confirmed"]) == 1
         orch._client.close()
+
+
+class _EventAdapter(CLIAdapter):
+    def __init__(self, release: Event) -> None:
+        super().__init__()
+        self.release = release
+        self.started = Event()
+
+    def name(self) -> str:
+        return "owned-event-thread"
+
+    def spawn(self, **kwargs: Any) -> SpawnResult:
+        self.started.set()
+        assert self.release.wait(60), "owned worker was not released"
+        return SpawnResult(pid=0, log_path=Path(kwargs["workdir"]) / "thread.log")
+
+
+def test_actual_tick_keeps_live_in_process_handle_until_real_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release = Event()
+    adapter = _EventAdapter(release)
+    app = create_app(jsonl_path=tmp_path / "server/tasks.jsonl")
+    app.state.draining = False
+    with TestClient(app) as client:
+        tid = _task(client, "event worker")
+
+        def forward(request: httpx.Request) -> httpx.Response:
+            response = client.request(
+                request.method,
+                str(request.url),
+                content=request.content,
+                headers={"content-type": request.headers.get("content-type", "application/json")},
+            )
+            return httpx.Response(response.status_code, content=response.content, headers=response.headers)
+
+        templates = tmp_path / "templates/roles"
+        templates.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates,
+            tmp_path,
+            default_model="mock-model",
+            use_worktrees=False,
+            backend=AgentBackend.IN_PROCESS,
+        )
+        orch = Orchestrator(
+            OrchestratorConfig(server_url="http://testserver"),
+            spawner,
+            tmp_path,
+            client=httpx.Client(transport=httpx.MockTransport(forward), base_url="http://testserver"),
+        )
+        session = spawner.spawn_for_tasks([app.state.store.get_task(tid)])
+        assert adapter.started.wait(2)
+        assert spawner._in_process is not None
+        handle = spawner._in_process.active_sessions[session.id]
+        from bernstein.core.agents import agent_lifecycle
+
+        os_probe = MagicMock(side_effect=AssertionError("in-process worker reached OS PID probe"))
+        os_signal = MagicMock(side_effect=AssertionError("in-process worker reached OS group signal"))
+        monkeypatch.setattr(agent_lifecycle, "_is_process_alive", os_probe)
+        monkeypatch.setattr(platform_compat, "kill_process_group", os_signal)
+        now = [0.0]
+        reaper = StopReaper(tmp_path, clock=lambda: now[0])
+        vars(orch)["_stop_reaper"] = reaper
+        orch._agents[session.id] = session
+        try:
+            response = client.post(f"/tasks/{tid}/cancel?stop_mode=request", json={"reason": "stop"})
+            assert response.status_code == 200
+            for timestamp in [0, 6, 30, 100]:
+                now[0] = timestamp
+                orch.tick()
+                assert handle.thread.is_alive()
+                assert session.id in spawner._in_process.active_sessions, "live cooperative worker lost its handle"
+                assert spawner._in_process.active_sessions[session.id] is handle
+                assert app.state.store.get_task(tid).status.value == "stop_req"
+                assert app.state.store.get_task(tid).claimed_by_session == "worker"
+                assert not app.state.audit_chain.query(event_type="task.release_receipt")
+            release.set()
+            handle.thread.join(timeout=2)
+            assert not handle.thread.is_alive()
+            orch.tick()
+            assert app.state.store.get_task(tid).status.value == "cancelled"
+            orch.tick()
+            receipts = app.state.audit_chain.query(event_type="task.release_receipt")
+            assert len([e for e in receipts if e.details.get("release_path") == "stop_confirmed"]) == 1
+            assert session.id not in spawner._in_process.active_sessions
+            os_probe.assert_not_called()
+            os_signal.assert_not_called()
+            assert not reaper._session_stop_ops
+        finally:
+            release.set()
+            handle.thread.join(timeout=2)
+            spawner._in_process.cleanup(session.id)
+            orch._client.close()
+
+
+def test_in_process_heartbeat_does_not_probe_os_pid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.agents import agent_lifecycle
+
+    release = Event()
+    adapter = _EventAdapter(release)
+    templates = tmp_path / "templates/roles"
+    templates.mkdir(parents=True)
+    spawner = AgentSpawner(
+        adapter, templates, tmp_path, default_model="mock-model", use_worktrees=False, backend=AgentBackend.IN_PROCESS
+    )
+    from bernstein.core.tasks.models import Task
+
+    session = spawner.spawn_for_tasks([Task(id="heartbeat-thread", title="thread", description="d", role="backend")])
+    assert spawner._in_process is not None
+    handle = spawner._in_process.active_sessions[session.id]
+    probe = MagicMock(side_effect=AssertionError("thread identity reached OS PID probe"))
+    monkeypatch.setattr(agent_lifecycle, "_is_process_alive", probe)
+    try:
+        agent_lifecycle._refresh_heartbeat_from_signals(
+            SimpleNamespace(_spawner=spawner, _workdir=tmp_path), session, 123.0
+        )
+        assert session.heartbeat_ts == 123.0
+        probe.assert_not_called()
+    finally:
+        release.set()
+        handle.thread.join(timeout=2)
+        spawner._in_process.cleanup(session.id)
+
+
+def test_external_process_heartbeat_retains_os_pid_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.agents import agent_lifecycle
+
+    with _owned_group("import time; print('ready',flush=True); time.sleep(60)") as proc:
+        templates = tmp_path / "templates/roles"
+        templates.mkdir(parents=True)
+        spawner = AgentSpawner(MagicMock(spec=CLIAdapter), templates, tmp_path)
+        session = AgentSession(id="external-heartbeat", role="backend", pid=proc.pid, pgid=proc.pid, status="working")
+        probe = MagicMock(wraps=agent_lifecycle._is_process_alive)
+        monkeypatch.setattr(agent_lifecycle, "_is_process_alive", probe)
+        agent_lifecycle._refresh_heartbeat_from_signals(
+            SimpleNamespace(_spawner=spawner, _workdir=tmp_path), session, 321.0
+        )
+        assert session.heartbeat_ts == 321.0
+        probe.assert_called_once_with(proc.pid)

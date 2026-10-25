@@ -175,6 +175,10 @@ def driver(tmp_path, monkeypatch, sessions):
         _client=client,
         _config=SimpleNamespace(server_url="http://local"),
     )
+    orch._spawner._cooperative_stop_callbacks = lambda session: (
+        lambda: orch._spawner.kill(session),
+        lambda: orch._spawner.check_alive(session),
+    )
     return orch, SimpleNamespace(reaped=[]), now, living, sent, killed, shutdown, confirmed
 
 
@@ -402,7 +406,7 @@ def test_initial_dead_status_observed_gone_finalizes_once(tmp_path, monkeypatch)
     reap_stop_requests(orch, result, {"stop_req": []})
     reaper = orch._stop_reaper
     assert not reaper.entries and not reaper._sessions and not reaper._session_objects
-    assert not reaper._finalized and not reaper._receipted
+    assert not reaper._finalized and not reaper._receipted and not reaper._session_stop_ops
 
 
 def test_initial_dead_unsafe_group_refused(tmp_path, monkeypatch):
@@ -416,3 +420,28 @@ def test_initial_dead_unsafe_group_refused(tmp_path, monkeypatch):
     assert orch._stop_reaper.entries["t"].outcome == StopOutcome.REFUSED
     reap_stop_requests(orch, result, {"stop_req": []})
     assert not orch._stop_reaper.entries and not orch._stop_reaper._sessions
+
+
+def test_reused_session_id_binds_a_new_observer(tmp_path, monkeypatch):
+    old = session(pgid=None)
+    orch, result, _now, _living, _sent, _killed, _shutdown, _confirmed = driver(tmp_path, monkeypatch, [old])
+    living = {id(old): False}
+    orch._spawner.check_alive = lambda current: living[id(current)]
+    posts = []
+
+    def post(url, **kwargs):
+        posts.append(url)
+        return httpx.Response(500, request=httpx.Request("POST", url))
+
+    orch._client.post = post
+    snapshot = {"stop_req": [SimpleNamespace(id="t", title="t")]}
+    reap_stop_requests(orch, result, snapshot)
+    assert len(posts) == 1
+    fresh = session(pgid=None)
+    living[id(fresh)] = True
+    orch._agents[fresh.id] = fresh
+    reap_stop_requests(orch, result, snapshot)
+    assert len(posts) == 1, "stale dead observer confirmed a new live worker"
+    assert orch._stop_reaper._session_objects[fresh.id] is fresh
+    reap_stop_requests(orch, result, {"stop_req": []})
+    assert not orch._stop_reaper._session_stop_ops
