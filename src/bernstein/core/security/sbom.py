@@ -25,7 +25,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -484,16 +484,87 @@ class SBOMGenerator:
 # ---------------------------------------------------------------------------
 
 
-def _osv_extract_severity(vuln: dict[str, Any]) -> SBOMVulnSeverity:
-    """Extract severity from an osv-scanner vulnerability entry."""
-    severity_raw = ""
-    for db_info in vuln.get("database_specific", {}).get("severity", []):
-        if isinstance(db_info, dict):
-            severity_raw = str(db_info.get("score", "")).upper()
-            break
-    if not severity_raw:
-        severity_raw = str(vuln.get("severity", "") or "").lower()
-    return _severity_from_str(severity_raw) if severity_raw else SBOMVulnSeverity.UNKNOWN
+def _higher_severity(a: SBOMVulnSeverity, b: SBOMVulnSeverity) -> SBOMVulnSeverity:
+    """Return the more severe of two ratings."""
+    return a if _SEVERITY_ORDER[a] >= _SEVERITY_ORDER[b] else b
+
+
+def _rating_from_cvss_score(score: str) -> SBOMVulnSeverity:
+    """Rate a CVSS base score on the CVSS v3 qualitative scale.
+
+    This is the scale osv-scanner itself applies to the scores it reports:
+    0.0 none, 0.1-3.9 low, 4.0-6.9 medium, 7.0-8.9 high, 9.0-10.0 critical.
+    """
+    try:
+        value = float(score)
+    except ValueError:
+        return SBOMVulnSeverity.UNKNOWN
+    if not 0.0 <= value <= 10.0:  # also rejects nan
+        return SBOMVulnSeverity.UNKNOWN
+    if value >= 9.0:
+        return SBOMVulnSeverity.CRITICAL
+    if value >= 7.0:
+        return SBOMVulnSeverity.HIGH
+    if value >= 4.0:
+        return SBOMVulnSeverity.MEDIUM
+    if value > 0.0:
+        return SBOMVulnSeverity.LOW
+    return SBOMVulnSeverity.NONE
+
+
+def _osv_group_ratings(pkg_entry: dict[str, Any]) -> dict[str, SBOMVulnSeverity]:
+    """Map each vulnerability id in an osv-scanner package entry to its group's rating.
+
+    osv-scanner groups a vulnerability with its aliases and reports the highest
+    CVSS base score it computed from their ``severity`` vectors as the group's
+    ``max_severity`` -- a string such as ``"9.8"``, or ``""`` when no record in
+    the group carries a vector.
+    """
+    ratings: dict[str, SBOMVulnSeverity] = {}
+    groups: object = pkg_entry.get("groups")
+    if not isinstance(groups, list):
+        return ratings
+    group_list = cast("list[object]", groups)
+    for group in group_list:
+        if not isinstance(group, dict):
+            continue
+        group_info = cast("dict[str, object]", group)
+        score = group_info.get("max_severity")
+        ids = group_info.get("ids")
+        if not isinstance(score, str) or not score.strip() or not isinstance(ids, list):
+            continue
+        rating = _rating_from_cvss_score(score)
+        id_list = cast("list[object]", ids)
+        for vuln_id in id_list:
+            key = str(vuln_id)
+            ratings[key] = _higher_severity(ratings.get(key, SBOMVulnSeverity.UNKNOWN), rating)
+    return ratings
+
+
+def _osv_extract_severity(
+    vuln: dict[str, Any],
+    group_rating: SBOMVulnSeverity = SBOMVulnSeverity.UNKNOWN,
+) -> SBOMVulnSeverity:
+    """Extract severity from an osv-scanner vulnerability entry.
+
+    An OSV record's top-level ``severity`` is a list of CVSS vectors, not a
+    rating; osv-scanner scores those into the group rating passed in here. A
+    GitHub advisory also carries its own rating in ``database_specific.severity``
+    (LOW, MODERATE, HIGH or CRITICAL). The higher of the two is returned, the way
+    osv-scanner takes the maximum across a vulnerability's aliases.
+    """
+    severity = group_rating
+    db_specific: object = vuln.get("database_specific")
+    if isinstance(db_specific, dict):
+        db_info = cast("dict[str, object]", db_specific)
+        label = db_info.get("severity")
+        if isinstance(label, str):
+            label = "medium" if label.strip().lower() == "moderate" else label
+            severity = _higher_severity(severity, _severity_from_str(label))
+    flat = vuln.get("severity")
+    if isinstance(flat, str):
+        severity = _higher_severity(severity, _severity_from_str(flat))
+    return severity
 
 
 def _osv_extract_fix_version(vuln: dict[str, Any]) -> str:
@@ -510,7 +581,12 @@ def _osv_extract_fix_version(vuln: dict[str, Any]) -> str:
     return ""
 
 
-def _osv_parse_vuln(vuln: dict[str, Any], pkg_name: str, pkg_version: str) -> SBOMVulnFinding | None:
+def _osv_parse_vuln(
+    vuln: dict[str, Any],
+    pkg_name: str,
+    pkg_version: str,
+    group_ratings: dict[str, SBOMVulnSeverity],
+) -> SBOMVulnFinding | None:
     """Parse a single osv-scanner vulnerability into a finding."""
     if not isinstance(vuln, dict):
         return None
@@ -520,7 +596,7 @@ def _osv_parse_vuln(vuln: dict[str, Any], pkg_name: str, pkg_version: str) -> SB
         component_name=pkg_name,
         component_version=pkg_version,
         vuln_id=vuln_id,
-        severity=_osv_extract_severity(vuln),
+        severity=_osv_extract_severity(vuln, group_ratings.get(vuln_id, SBOMVulnSeverity.UNKNOWN)),
         summary=summary,
         fix_version=_osv_extract_fix_version(vuln),
         scanner="osv-scanner",
@@ -536,9 +612,10 @@ def _osv_parse_package_entry(pkg_entry: dict[str, Any]) -> list[SBOMVulnFinding]
         return []
     pkg_name = str(pkg.get("name", ""))
     pkg_version = str(pkg.get("version", ""))
+    group_ratings = _osv_group_ratings(pkg_entry)
     findings: list[SBOMVulnFinding] = []
     for vuln in pkg_entry.get("vulnerabilities", []):
-        finding = _osv_parse_vuln(vuln, pkg_name, pkg_version)
+        finding = _osv_parse_vuln(vuln, pkg_name, pkg_version, group_ratings)
         if finding is not None:
             findings.append(finding)
     return findings

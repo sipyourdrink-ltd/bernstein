@@ -13,6 +13,13 @@ uses a file-based handshake:
   .sdd/runtime/pending_approvals/<task_id>.json   ← written by orchestrator
   .sdd/runtime/approvals/<task_id>.approved       ← written by ``bernstein approve``
   .sdd/runtime/approvals/<task_id>.rejected       ← written by ``bernstein reject``
+
+The pending file carries a fresh request nonce. A decision file is honoured
+only when it is an authentic decision record for this task and this request
+(:mod:`bernstein.core.security.approval_decision`); anything else in a
+decision slot rejects the work with ``decision_source="unverified-file"``.
+Every file-based resolution is recorded as an ``approval_resolved`` audit
+event naming the decision path and principal.
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.defaults import APPROVAL
 from bernstein.core.identity.grants import GrantLedger, install_grant_signer
+from bernstein.core.security.approval_decision import DecisionCheck, inspect_decisions, new_request_nonce
 from bernstein.core.security.audit import load_or_create_audit_key
 
 if TYPE_CHECKING:
@@ -36,6 +44,9 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+#: Name of this gate on its audit events.
+_GATE_NAME = "post-completion-review"
 
 _DEFAULT_POLL_INTERVAL_S = APPROVAL.poll_interval_s
 _DEFAULT_MAX_WAIT_S = APPROVAL.max_wait_s
@@ -74,18 +85,59 @@ class ApprovalResult:
 # ---------------------------------------------------------------------------
 
 
+def _poll_decision_record(
+    task_id: str,
+    approved_path: Path,
+    rejected_path: Path,
+    *,
+    expected_nonce: str,
+    poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
+    max_wait_s: float = _DEFAULT_MAX_WAIT_S,
+) -> DecisionCheck | None:
+    """Poll the decision slots; return the first decision found, or ``None`` on expiry.
+
+    The returned check is either a verified record answering this request or
+    an unverified slot (which the caller resolves as a rejection).
+    """
+    deadline = time.monotonic() + max_wait_s
+    while time.monotonic() < deadline:
+        check = inspect_decisions(approved_path, rejected_path, task_id=task_id, expected_nonce=expected_nonce)
+        if check is not None:
+            if check.verified:
+                logger.info("Approval gate: task %s %s via %s decision record", task_id, check.outcome, check.source)
+            else:
+                logger.warning(
+                    "Approval gate: task %s decision file %s is not an authentic decision record (%s) - rejecting",
+                    task_id,
+                    check.path.name,
+                    check.failure,
+                )
+            return check
+        time.sleep(poll_interval_s)
+
+    logger.warning(
+        "Approval gate: task %s timed out after %.0fs with no decision - failing closed",
+        task_id,
+        max_wait_s,
+    )
+    return None
+
+
 def _default_poll_decision(
     task_id: str,
     approvals_dir: Path,
     *,
+    expected_nonce: str,
     poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
     max_wait_s: float = _DEFAULT_MAX_WAIT_S,
 ) -> str:
-    """Poll for a decision file and return the raw outcome.
+    """Poll for a decision record and return the raw outcome.
 
     Reads ``<approvals_dir>/<task_id>.approved`` or
     ``<approvals_dir>/<task_id>.rejected`` until one appears or the wait
-    expires.
+    expires. Only an authentic decision record bound to *expected_nonce*
+    yields its outcome; any other file in a decision slot yields
+    ``"rejected"``.
 
     This helper reports what happened, not what to do about it: a wait that
     expires with no decision file returns ``"timed_out"``, and the caller
@@ -96,6 +148,7 @@ def _default_poll_decision(
     Args:
         task_id: Task ID to poll for.
         approvals_dir: Directory where decision files are written.
+        expected_nonce: Nonce of the open review request.
         poll_interval_s: Seconds between file-existence checks.
         max_wait_s: Maximum seconds to wait for a decision file.
 
@@ -106,25 +159,15 @@ def _default_poll_decision(
 
     # The same single implementation every other approvals sink resolves to,
     # in the variant that takes the directory rather than a project root.
-    deadline = time.monotonic() + max_wait_s
-    approved_path = approval_path_in(approvals_dir, task_id, ".approved")
-    rejected_path = approval_path_in(approvals_dir, task_id, ".rejected")
-
-    while time.monotonic() < deadline:
-        if approved_path.exists():
-            logger.info("Approval gate: task %s approved via file", task_id)
-            return "approved"
-        if rejected_path.exists():
-            logger.info("Approval gate: task %s rejected via file", task_id)
-            return "rejected"
-        time.sleep(poll_interval_s)
-
-    logger.warning(
-        "Approval gate: task %s timed out after %.0fs with no decision - failing closed",
+    check = _poll_decision_record(
         task_id,
-        max_wait_s,
+        approval_path_in(approvals_dir, task_id, ".approved"),
+        approval_path_in(approvals_dir, task_id, ".rejected"),
+        expected_nonce=expected_nonce,
+        poll_interval_s=poll_interval_s,
+        max_wait_s=max_wait_s,
     )
-    return "timed_out"
+    return "timed_out" if check is None else check.outcome
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +237,11 @@ class ApprovalGate:
         auto_merge: When True and a PR is created, enable auto-merge via ``gh pr merge --auto``.
         pr_labels: GitHub labels to apply to created PRs.
         _poll_decision: Injectable polling function for testing.  Signature:
-            ``(task_id: str, approvals_dir: Path) -> str``.
+            ``(task_id: str, approvals_dir: Path) -> str``. When omitted the
+            gate polls the decision slots itself and verifies the records.
         _push_branch_fn: Injectable push function for testing.
         _create_pr_fn: Injectable PR-creation function for testing.
+        _poll_interval_s: Poll interval for the built-in file poller (tests).
     """
 
     def __init__(
@@ -208,20 +253,18 @@ class ApprovalGate:
         _poll_decision: _PollDecisionFn | None = None,
         _push_branch_fn: _PushBranchFn | None = None,
         _create_pr_fn: _CreatePrFn | None = None,
+        _poll_interval_s: float | None = None,
     ) -> None:
         self._mode = mode if isinstance(mode, ApprovalMode) else ApprovalMode(mode)
         self._workdir = workdir
         self._auto_merge = auto_merge
         self._pr_labels: list[str] = pr_labels if pr_labels is not None else ["bernstein", "auto-generated"]
 
-        def _default_poll(
-            task_id: str,
-            approvals_dir: Path,
-            max_wait_s: float = _DEFAULT_MAX_WAIT_S,
-        ) -> str:
-            return _default_poll_decision(task_id, approvals_dir, max_wait_s=max_wait_s)
-
-        self._poll_decision: _PollDecisionFn = _poll_decision or _default_poll
+        # ``None`` means the built-in file poller, which verifies decision
+        # records against the open request; an injected poller (tests) only
+        # reports an outcome string.
+        self._poll_decision: _PollDecisionFn | None = _poll_decision
+        self._poll_interval_s = _poll_interval_s if _poll_interval_s is not None else _DEFAULT_POLL_INTERVAL_S
         self._push_branch_fn = _push_branch_fn
         self._create_pr_fn = _create_pr_fn
 
@@ -501,23 +544,40 @@ class ApprovalGate:
         to approved, and it still leaves ``resolution="timed_out"`` on the
         record.
 
-        In non-interactive mode (when no decision file is provided and no
-        human intervention is expected), a refusal is recorded to the chain-
-        anchored grant ledger, ensuring the refusal itself is an auditable
-        event rather than just an in-process callback.
+        The chain-anchored grant ledger records what actually happened: a
+        refusal when the task is rejected (explicit rejection or fail-closed
+        timeout), and an approval attributed to the timeout policy when
+        ``approve_on_timeout`` lets an expired review proceed. Either way the
+        outcome is an auditable event rather than just an in-process callback.
         """
+        from bernstein.core.orchestration.approval_gate import (
+            approval_path_in,
+            emit_approval_audit,
+            resolution_details,
+            settle_prior_decisions,
+        )
+
         pending_dir = self._workdir / ".sdd" / "runtime" / "pending_approvals"
         approvals_dir = self._workdir / ".sdd" / "runtime" / "approvals"
         pending_dir.mkdir(parents=True, exist_ok=True)
         approvals_dir.mkdir(parents=True, exist_ok=True)
+        approved_path = approval_path_in(approvals_dir, task.id, ".approved")
+        rejected_path = approval_path_in(approvals_dir, task.id, ".rejected")
 
-        pending_file = pending_dir / f"{task.id}.json"
+        # Slots still holding a decision from an earlier request (for example
+        # the pre-spawn approval of this task) are superseded; anything else
+        # fails this review closed.
+        prior_unverified = settle_prior_decisions(approved_path, rejected_path, task_id=task.id, gate=_GATE_NAME)
+
+        nonce = new_request_nonce()
+        pending_file = approval_path_in(pending_dir, task.id, ".json")
         payload: dict[str, str] = {
             "task_id": task.id,
             "task_title": task.title,
             "session_id": session_id,
             "diff": diff,
             "test_summary": test_summary,
+            "nonce": nonce,
         }
         pending_file.write_text(json.dumps(payload, indent=2))
         logger.info(
@@ -527,28 +587,82 @@ class ApprovalGate:
             task.id,
         )
 
-        kwargs: dict[str, Any] = {}
-        if timeout_s is not None:
-            kwargs["max_wait_s"] = timeout_s
+        max_wait_s = timeout_s if timeout_s is not None else _DEFAULT_MAX_WAIT_S
+        check: DecisionCheck | None = None
+        file_based = self._poll_decision is None
+        if prior_unverified is not None:
+            check = prior_unverified
+            decision: str = check.outcome
+        elif self._poll_decision is None:
+            check = _poll_decision_record(
+                task.id,
+                approved_path,
+                rejected_path,
+                expected_nonce=nonce,
+                poll_interval_s=self._poll_interval_s,
+                max_wait_s=max_wait_s,
+            )
+            decision = "timed_out" if check is None else check.outcome
+        else:
+            kwargs: dict[str, Any] = {}
+            if timeout_s is not None:
+                kwargs["max_wait_s"] = timeout_s
+            decision = self._poll_decision(task.id, approvals_dir, **kwargs)
 
-        decision = self._poll_decision(task.id, approvals_dir, **kwargs)
-
-        if decision == "timed_out":
-            # Record a chain-anchored refusal for the missing approval
-            self._record_approval_refusal(
+        if check is not None:
+            emit_approval_audit(
+                None,
+                event_type="approval_resolved",
                 task_id=task.id,
-                session_id=session_id,
-                reason="approval_timeout",
-                detail=f"Approval gate timed out after {timeout_s or _DEFAULT_MAX_WAIT_S:.0f}s with no decision",
+                details={**resolution_details(check, gate=_GATE_NAME, request_nonce=nonce), "session_id": session_id},
+            )
+            if not check.verified:
+                self._record_approval_refusal(
+                    task_id=task.id,
+                    session_id=session_id,
+                    reason="unverified_decision_file",
+                    detail=f"Decision file {check.path.name} is not an authentic decision record ({check.failure})",
+                )
+                return ApprovalResult(approved=False, rejected=True)
+        elif file_based and decision == "timed_out":
+            emit_approval_audit(
+                None,
+                event_type="approval_resolved",
+                task_id=task.id,
+                details={
+                    "outcome": "timeout",
+                    "decision_source": "timeout-default",
+                    "applied_outcome": "approved" if approve_on_timeout else "rejected",
+                    "gate": _GATE_NAME,
+                    "request_nonce": nonce,
+                    "session_id": session_id,
+                },
             )
 
+        if decision == "timed_out":
+            detail = f"Approval gate timed out after {timeout_s or _DEFAULT_MAX_WAIT_S:.0f}s with no decision"
             if approve_on_timeout:
+                # The ledger must say what actually happened: the task proceeds,
+                # so record an approval attributed to the timeout policy (not a
+                # refusal, and not a grant by a person).
+                self._record_timeout_policy_approval(
+                    task_id=task.id,
+                    session_id=session_id,
+                    detail=detail,
+                )
                 logger.warning(
                     "Approval gate: task %s expired with no decision - resolving to approved "
                     "(approve_on_timeout opt-in); recorded as timed_out, not a granted approval",
                     task.id,
                 )
                 return ApprovalResult(approved=True, resolution="timed_out")
+            # Record a chain-anchored refusal for the missing approval
+            self._record_approval_refusal(
+                task_id=task.id,
+                session_id=session_id,
+                reason="approval_timeout",
+                detail=detail,
+            )
             logger.warning(
                 "Approval gate: task %s expired with no decision - failing closed to rejected",
                 task.id,
@@ -564,6 +678,47 @@ class ApprovalGate:
             )
             return ApprovalResult(approved=False, rejected=True)
         return ApprovalResult(approved=True)
+
+    def _approval_ledger(self) -> GrantLedger:
+        """Open the grant ledger with the install-anchored signer."""
+        return GrantLedger(
+            root=self._workdir / ".sdd" / "audit",
+            key=load_or_create_audit_key(),
+            signer=install_grant_signer(issuer="approval-gate"),
+        )
+
+    def _record_timeout_policy_approval(
+        self,
+        *,
+        task_id: str,
+        session_id: str,
+        detail: str,
+    ) -> None:
+        """Record that ``approve_on_timeout`` approved a task nobody decided on.
+
+        The record is a ``grant_issued`` entry whose signed reason names the
+        timeout policy, so the chain shows the task proceeded and that no person
+        granted it. Best-effort, like :meth:`_record_approval_refusal`.
+        """
+        try:
+            self._approval_ledger().issue_grant(
+                run_id=f"approval-{task_id}",
+                task_id=task_id,
+                secret_name=f"approval:{session_id}",
+                audience="approval-gate",
+                grant_id=task_id,
+                reason=f"approved_by_timeout_policy: {detail}",
+            )
+            logger.info(
+                "Approval gate: recorded chain-anchored timeout-policy approval for task %s",
+                task_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "Approval gate: failed to record timeout-policy approval for task %s: %s",
+                task_id,
+                exc,
+            )
 
     def _record_approval_refusal(
         self,
@@ -590,12 +745,7 @@ class ApprovalGate:
             run_id = f"approval-{task_id}"
 
             # Get or create the grant ledger with install-anchored signer
-            signer = install_grant_signer(issuer="approval-gate")
-            ledger = GrantLedger(
-                root=self._workdir / ".sdd" / "audit",
-                key=load_or_create_audit_key(),
-                signer=signer,
-            )
+            ledger = self._approval_ledger()
 
             # Record the refusal - we use the grant_refused kind since it's
             # the appropriate chain-anchored refusal record

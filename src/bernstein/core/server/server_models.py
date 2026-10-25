@@ -11,13 +11,14 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.tasks.models import CompletionSignalType
 from bernstein.core.tasks.task_store import ProgressEntry
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
 
-_SIGNAL_TYPE = Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
+_SIGNAL_TYPE = CompletionSignalType
 
 
 class CompletionSignalSchema(BaseModel):
@@ -135,6 +136,8 @@ def _ensure_relative_owned_files(value: list[str]) -> list[str]:
 
 class TaskCreate(BaseModel):
     """Body for POST /tasks."""
+
+    run_id: str | None = Field(default=None, pattern=r"^admin-[a-f0-9]{32}$")
 
     # bounded string lengths prevent trivial memory exhaustion.
     id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
@@ -356,10 +359,17 @@ class TaskCompleteRequest(BaseModel):
     refusal - and is schema-validated at the API boundary; an invalid
     payload is a typed ``contract_violation`` failure, never a silent
     accept. When ``payload`` is provided, ``result_summary`` is ignored.
+
+    Remote delivery (#6538): a worker node that pushed its agent branch
+    to the shared remote sets ``agent_branch`` and ``agent_sha`` so the
+    central can fetch and merge the work instead of looking for a local
+    worktree that does not exist.
     """
 
     result_summary: str = ""
     payload: dict[str, Any] | None = None
+    agent_branch: str | None = None
+    agent_sha: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -431,11 +441,37 @@ class TaskBlockRequest(BaseModel):
 
 
 class TaskPatchRequest(BaseModel):
-    """Body for PATCH /tasks/{task_id} - manager corrections."""
+    """Body for PATCH /tasks/{task_id} - manager corrections.
+
+    ``meta_messages``, ``cli``, ``escalation_ladder_step`` and
+    ``escalation_ladder_attempts`` carry an evidence-gated escalation hop
+    (issue #4855): the context line, the step's adapter, and the ladder
+    position. ``model`` is the step's model id, unmodified.
+
+    There is deliberately no free-form ``metadata`` here. The ladder's
+    evidence is resolved from the audit chain and its spend from the cost
+    ledger, so no PATCH body can fabricate either. The route restricts
+    ``cli`` and both ladder-position fields to operator credentials and
+    unscoped run-root identities.
+    """
 
     role: str | None = None
     priority: int | None = None
     model: str | None = None
+    cli: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    meta_messages: list[str] | None = Field(default=None, max_length=_MAX_LIST_LEN)
+    escalation_ladder_step: int | None = Field(default=None, ge=0, le=_MAX_LIST_LEN)
+    escalation_ladder_attempts: int | None = Field(default=None, ge=1, le=_MAX_LIST_LEN)
+
+    @field_validator("meta_messages")
+    @classmethod
+    def _cap_meta_messages(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        for msg in value:
+            if len(msg) > _MAX_META_MESSAGE_LEN:
+                raise ValueError(f"meta_messages entry exceeds {_MAX_META_MESSAGE_LEN} chars")
+        return value
 
 
 class TaskProgressRequest(BaseModel):
@@ -528,7 +564,8 @@ class TaskMessagePost(BaseModel):
     """Body for POST /tasks/{task_id}/messages (#2357).
 
     Typed, size-capped worker mailbox payload. ``kind`` must be one of the
-    closed vocabulary (``finding`` / ``artefact_ref`` / ``question``).
+    closed vocabulary (``finding`` / ``artefact_ref`` / ``question`` /
+    ``rendezvous_open`` / ``rendezvous_closed``).
     The message body is capped by the mailbox chain to 4096 UTF-8 bytes
     (see ``task_mailbox.MAX_MESSAGE_BODY_BYTES``); the API model mirrors
     this limit so oversized bodies fail validation up front instead of
@@ -537,6 +574,11 @@ class TaskMessagePost(BaseModel):
     """
 
     sender: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    # Required only when a task-scoped worker addresses another task.  A JWT
+    # may cover a batch, so the authenticated session alone cannot identify
+    # which task is speaking; the mailbox route checks this value against the
+    # signed task_ids claim before accepting the cross-task protocol step.
+    acting_task_id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
     kind: str = Field(min_length=1, max_length=64)
     body: str = Field(min_length=1, max_length=4096)
     sender_card_fingerprint: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
@@ -558,6 +600,34 @@ class TaskMessageResponse(BaseModel):
     entry_hash: str
     signature: str
     signer_public_key_pem: str
+
+
+class TaskAskRequest(BaseModel):
+    """One blocking question from the task named in the route."""
+
+    awaited_task_id: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    question: str = Field(min_length=1, max_length=4096)
+    timeout_s: float = Field(default=300.0, gt=0, le=3600)
+
+
+class TaskAskResponse(BaseModel):
+    """The exact stored UTF-8 answer selected by the rendezvous close."""
+
+    answer: str
+
+
+class TaskRendezvousReplyRequest(BaseModel):
+    """Answer one open rendezvous as the task named in the route."""
+
+    open_entry_hash: str = Field(min_length=1, max_length=_MAX_SHORT_STR_LEN)
+    answer: str = Field(min_length=1, max_length=4096)
+
+
+class TaskRendezvousReplyResponse(BaseModel):
+    """The reply entry and close entry appended in protocol order."""
+
+    reply: TaskMessageResponse
+    close: TaskMessageResponse
 
 
 class TaskArtifactPost(BaseModel):

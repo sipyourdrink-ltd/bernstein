@@ -75,7 +75,7 @@ def test_schema_entries_are_served_under_their_own_id() -> None:
 
 def test_redirect_anchors_exist_in_the_docs() -> None:
     """A redirect into the docs must land on a heading that exists."""
-    docs_root = "https://bernstein.readthedocs.io/en/latest/"
+    docs_root = "https://docs.bernstein.run/en/latest/"
     for entry in _manifest()["entries"]:
         if entry["kind"] != "redirect" or not entry["target"].startswith(docs_root):
             continue

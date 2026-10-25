@@ -7,8 +7,11 @@ already locked by a live agent, the batch is deferred until the lock is released
 Locks are persisted to ``.sdd/runtime/file_locks.json`` so the orchestrator can
 survive restarts without re-locking already-owned files.
 
-Lock TTL (:attr:`FileLockManager.LOCK_TTL_SECONDS`, default 2 h) automatically
-expires stale entries left behind by crashed agents.
+Every orchestrator tick releases the locks no live session holds - a killed
+agent, or an agent of an earlier orchestrator process
+(:meth:`FileLockManager.release_all_except`). Lock TTL
+(:attr:`FileLockManager.LOCK_TTL_SECONDS`, default 2 h) stays the backstop for
+entries left behind while no orchestrator runs.
 
 Cross-process safety
 --------------------
@@ -42,7 +45,7 @@ from typing import IO, TYPE_CHECKING
 from bernstein.core.persistence.atomic_write import write_atomic_json
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Collection, Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -319,13 +322,33 @@ class FileLockManager:
         Returns:
             Paths of the released files.
         """
+        released = self._release_where(lambda lock: lock.agent_id == agent_id)
+        if released:
+            logger.debug("Released %d file lock(s) for agent %s", len(released), agent_id)
+        return released
+
+    def release_all_except(self, live_agent_ids: Collection[str]) -> list[str]:
+        """Release every lock whose holder is not in *live_agent_ids*.
+
+        Args:
+            live_agent_ids: Agents that still own their files.
+
+        Returns:
+            Paths of the released files.
+        """
+        released = self._release_where(lambda lock: lock.agent_id not in live_agent_ids)
+        if released:
+            logger.debug("Released %d file lock(s) held by no live agent", len(released))
+        return released
+
+    def _release_where(self, matches: Callable[[FileLock], bool]) -> list[str]:
+        """Delete and persist every lock *matches* selects; return their paths."""
         with self._guard():
-            released = [f for f, lock in self._locks.items() if lock.agent_id == agent_id]
+            released = [f for f, lock in self._locks.items() if matches(lock)]
             for f in released:
                 del self._locks[f]
             if released:
                 self._save()
-                logger.debug("Released %d file lock(s) for agent %s", len(released), agent_id)
             return released
 
     def check_conflicts(self, files: list[str]) -> list[tuple[str, FileLock]]:

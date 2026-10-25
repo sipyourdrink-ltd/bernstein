@@ -233,6 +233,10 @@ def pattern_subsumes(outer: str, inner: str) -> bool:
     a prefix. Nor is it string containment: ``src/*`` does not subsume
     ``src/a/b``, because ``*`` stops at a separator.
 
+    Argument order is outer-first, the opposite of
+    :func:`bernstein.core.security.capability_tokens.path_covered_by`; the
+    predicate is asymmetric, so transposing the two inverts the answer.
+
     Undecided cases answer ``False``. A pattern that is admitted only by two
     parent patterns *together* (``a/b`` under ``{a/*, b/*}`` is decided, but
     ``a/?`` under ``{a/x, a/y}`` is not) is reported as not subsumed, which is
@@ -249,8 +253,19 @@ def pattern_subsumes(outer: str, inner: str) -> bool:
     Returns:
         True when ``outer`` admits every path ``inner`` admits.
     """
-    outer_segments = _collapse_repeated_stars(normalise_repo_path(outer).split("/"))
-    inner_segments = _collapse_repeated_stars(normalise_repo_path(inner).split("/"))
+    outer_norm = normalise_repo_path(outer)
+    inner_norm = normalise_repo_path(inner)
+    if not outer_norm:
+        # An unreadable parent admits nothing, and containment is unprovable:
+        # fail closed. The empty language is a subset of itself, so two empty
+        # patterns are still containment.
+        return not inner_norm
+    if not inner_norm:
+        # An unreadable child is the empty language, which every pattern
+        # admits: provably contained, not a widening to report.
+        return True
+    outer_segments = _collapse_repeated_stars(outer_norm.split("/"))
+    inner_segments = _collapse_repeated_stars(inner_norm.split("/"))
     return _segments_subsume(tuple(outer_segments), tuple(inner_segments))
 
 
@@ -295,9 +310,12 @@ def _segment_subsumes(outer: str, inner: str) -> bool:
             return walk(o + 1, i) or (i < len(inner) and walk(o, i + 1))
         if i == len(inner):
             return False
+        # A `?` admits exactly one character, so an inner `*` - which may
+        # stand for none or for several - is not contained by it. The
+        # ``inner[i] != "*"`` guard is load-bearing: dropping it would let a
+        # `?` silently swallow a child `*`, a silent unsoundness no test below
+        # would catch.
         if outer[o] == "?":
-            # Exactly one character, so an inner `*` - which may stand for none
-            # or for several - is not contained by it.
             return inner[i] != "*" and walk(o + 1, i + 1)
         return outer[o] == inner[i] and walk(o + 1, i + 1)
 

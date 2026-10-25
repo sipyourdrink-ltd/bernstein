@@ -21,14 +21,25 @@ if TYPE_CHECKING:
     from bernstein.core.tasks.task_store import ArchiveRecord
 
 
-def role_mismatch_error(task_id: str, task_role: str, agent_role: str) -> ValueError:
+class RoleMismatchError(ValueError):
+    """A role-locked claim named a task that belongs to another role.
+
+    A ``ValueError`` so existing callers keep catching it; the HTTP layer
+    tells it apart from a version conflict and answers 403 instead of 409,
+    since retrying cannot make the roles match.
+    """
+
+
+def role_mismatch_error(task_id: str, task_role: str, agent_role: str) -> RoleMismatchError:
     """Build the error raised when an agent claims a task of another role.
 
     Owned here because both stores raise it and the ``claim_by_id`` /
     ``claim_batch`` contracts below document it - one wording, so a caller
     matching on it behaves the same whichever backend answers.
     """
-    return ValueError(f"role mismatch: task {task_id} requires role '{task_role}', agent has role '{agent_role}'")
+    return RoleMismatchError(
+        f"role mismatch: task {task_id} requires role '{task_role}', agent has role '{agent_role}'"
+    )
 
 
 @dataclass

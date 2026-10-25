@@ -92,6 +92,12 @@ BOARD_COLUMNS = ("queued", "running", "gated", "needs_review", "merged")
 #: :func:`record_task_merged`, projected here into the ``merged`` column.
 EVENT_TASK_MERGED = "task_merged"
 
+#: Journal event recorded when a dead, timed-out or recycled agent's unmerged
+#: work is kept on a salvage or graveyard ref instead of being merged (#6539).
+#: Written by the agent lifecycle via :func:`record_task_salvaged`. It is not a
+#: board column: the work never reached the integration branch.
+EVENT_TASK_SALVAGED = "task_salvaged"
+
 #: Journal event recorded when a task's git diff is captured as a
 #: content-addressed review artifact (see :func:`record_task_diff_captured`).
 #: The row carries only the diff's ``sha256`` and line/file counts; the diff
@@ -211,6 +217,12 @@ def _fold_event(cards: dict[str, dict[str, Any]], run: dict[str, Any], index: in
         card["column"] = "merged"
         agent_id = row.get("agent_id")
         card["agent_id"] = str(agent_id) if isinstance(agent_id, str) and agent_id else card["agent_id"]
+        if row.get("merge_commit"):
+            card["merge_commit"] = str(row["merge_commit"])
+        if row.get("salvaged_commit"):
+            card["salvaged_commit"] = str(row["salvaged_commit"])
+        if row.get("reason"):
+            card["salvage_reason"] = str(row["reason"])
     elif event == EVENT_TASK_DIFF_CAPTURED:
         if card is None:
             card = cards[task_id] = _new_card(task_id)
@@ -445,13 +457,15 @@ def record_task_merged(
     task_id: str,
     agent_id: str | None,
     merge_commit: str | None = None,
+    salvaged_commit: str | None = None,
+    reason: str | None = None,
 ) -> None:
     """Record a ``task_merged`` event into the run journal.
 
     Called by the task lifecycle right after a verified task's work is
-    merged, so the merge decision exists as a chained journal row that the
-    board's ``merged`` column projects from. ``None`` *recorder* is a
-    no-op so detached callers and minimal test harnesses need no journal.
+    merged, or by the agent lifecycle when salvaged partial work is merged.
+    ``None`` *recorder* is a no-op so detached callers and minimal test
+    harnesses need no journal.
 
     Args:
         recorder: The run's :class:`EventJournal` (or ``None``).
@@ -464,11 +478,56 @@ def record_task_merged(
             keep compiling; omitted from the row entirely rather than
             recorded as an empty string, so an older journal reader that
             does not know the field sees exactly what it saw before.
+        salvaged_commit: The sha of the salvaged work-in-progress commit,
+            when this row records a recovery merge rather than a verified
+            one. Same omit-when-absent rule as ``merge_commit``.
+        reason: Why the merge happened when it was not a verified
+            completion -- ``'dead_agent'``, ``'orphan_no_signals'``,
+            ``'completed'`` (leftovers salvaged after a completion marker),
+            or the idle reason that recycled the agent (``'heartbeat_60s'``,
+            ``'role_drained_rebalance'``, ...). Same omit-when-absent rule.
     """
     if recorder is None:
         return
-    extra: dict[str, Any] = {"merge_commit": merge_commit} if merge_commit else {}
+    extra: dict[str, Any] = {}
+    if merge_commit:
+        extra["merge_commit"] = merge_commit
+    if salvaged_commit:
+        extra["salvaged_commit"] = salvaged_commit
+    if reason:
+        extra["reason"] = reason
     recorder.record(EVENT_TASK_MERGED, task_id=task_id, agent_id=agent_id, **extra)
+
+
+def record_task_salvaged(
+    recorder: EventJournal | None,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    ref: str,
+    commit: str,
+    reason: str | None = None,
+) -> None:
+    """Record a ``task_salvaged`` event into the run journal (#6539).
+
+    Called by the agent lifecycle when a dying agent's attempt was not
+    accepted: nothing was merged, and its work is kept on *ref* at *commit*.
+    ``None`` *recorder* is a no-op, as for :func:`record_task_merged`.
+
+    Args:
+        recorder: The run's :class:`EventJournal` (or ``None``).
+        task_id: The task the attempt was for.
+        agent_id: The dying agent's session id, when known.
+        ref: The full ref holding the work (``refs/heads/salvage/<id>`` or
+            ``refs/graveyard/<id>-<ts>``).
+        commit: The sha *ref* points at.
+        reason: Why the agent was reaped (``'dead_agent'``,
+            ``'orphan_no_signals'``, or the idle reason). Omitted when absent.
+    """
+    if recorder is None:
+        return
+    extra: dict[str, Any] = {"reason": reason} if reason else {}
+    recorder.record(EVENT_TASK_SALVAGED, task_id=task_id, agent_id=agent_id, ref=ref, commit=commit, **extra)
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +704,7 @@ __all__ = [
     "EVENT_TASK_DIFF_CAPTURED",
     "EVENT_TASK_MERGED",
     "EVENT_TASK_REVIEW_DECISION",
+    "EVENT_TASK_SALVAGED",
     "REVIEW_DECISIONS",
     "REVIEW_DECISION_APPROVE",
     "REVIEW_DECISION_MERGE",
@@ -661,5 +721,6 @@ __all__ = [
     "record_review_decision",
     "record_task_diff_captured",
     "record_task_merged",
+    "record_task_salvaged",
     "store_task_diff",
 ]

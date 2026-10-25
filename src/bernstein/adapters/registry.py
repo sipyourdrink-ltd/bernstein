@@ -87,10 +87,12 @@ class AdmissionGateLike(Protocol):
 
 _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     # Successor CLI for the discontinued non-enterprise hosted gemini
-    # backend. Separate registry entry from "gemini"/"antigravity" (which
-    # stay on the dual-binary GeminiAdapter for the enterprise / API-key
-    # lane); see docs/adapters/agy.md for the split.
+    # backend. Separate adapter from "gemini" (which stays on GeminiAdapter
+    # for the enterprise / API-key lane); see docs/adapters/agy.md for the
+    # split. "antigravity" is the product name of the same CLI, so it is a
+    # second key for AgyAdapter, not for GeminiAdapter.
     "agy": AgyAdapter,
+    "antigravity": AgyAdapter,
     "aichat": AIChatAdapter,
     "aider": AiderAdapter,
     "amp": AmpAdapter,
@@ -114,11 +116,6 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "droid": DroidAdapter,
     "forge": ForgeAdapter,
     "garak": GarakAdapter,
-    # The Google CLI ships under two binary names during the 2026-06-18
-    # transition. Both registry keys resolve to the same dual-binary aware
-    # adapter; the adapter discovers ``antigravity`` first on PATH and falls
-    # back to ``gemini`` (or honours BERNSTEIN_GEMINI_BINARY) at spawn time.
-    "antigravity": GeminiAdapter,
     "gemini": GeminiAdapter,
     "generic": GenericAdapter,
     "goose": GooseAdapter,
@@ -446,15 +443,15 @@ def _build_provider_alias_table() -> None:
     ``provides`` declarations participate in collision detection too.
 
     Some adapters are registered under more than one ``_ADAPTERS`` key for
-    the *same* underlying class (for example ``GeminiAdapter`` is keyed as
-    both ``"gemini"`` and ``"antigravity"`` during the 2026-06-18
-    dual-binary transition -- see the comment in ``_ADAPTERS`` above). Each
+    the *same* underlying class (for example ``AgyAdapter`` is keyed as
+    both ``"agy"`` and ``"antigravity"`` -- see the comment in ``_ADAPTERS``
+    above). Each
     distinct adapter object/class must contribute its ``provides`` aliases
     exactly once, or the second registration would collide with the first
     under a *different* adapter name and trip the collision guard on a
     false positive. Entries are grouped by identity first; when a group
     has more than one registry key, the key that is itself one of the
-    declared aliases (self-referencing / canonical, e.g. ``"gemini"``) is
+    declared aliases (self-referencing / canonical, e.g. ``"agy"``) is
     preferred, matching what the old hardcoded substring branch used to
     return literally.
     """

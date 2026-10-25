@@ -43,11 +43,11 @@ _DRY_RUN_PREVIEW_LIMIT = 10
 # * SUCCESSFUL/UNSUCCESSFUL_TERMINAL answer "will this dependency ever deliver".
 #   DONE, FAILED and ORPHANED keep a recovery edge back to OPEN, so they are
 #   absent from TERMINAL_TASK_STATUSES while having certainly stopped editing.
-# * TERMINAL_TASK_STATUSES answers "can this status transition at all". SUSPENDED
-#   is in it and in neither of the others: it has no outgoing transition, so a
-#   chunk left in it would report active forever and never respawn - #4541's
-#   "never return a dead id forever" bug, reintroduced through a status neither
-#   dependency set names.
+# * TERMINAL_TASK_STATUSES answers "can this status transition at all". This
+#   catches any lifecycle state that cannot make progress without adding
+#   status-specific knowledge here. Cooperative SUSPENDED tasks retain their
+#   live claim and have resume/cancel edges, so they intentionally remain
+#   active and suppress a duplicate chunk owner.
 #
 # A status absent from all three still defaults to "still active", which is the
 # safe side of the duplicate-owner bug. test_terminal_status_values_covers_every

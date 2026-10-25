@@ -1,0 +1,18 @@
+id: B3
+kind: benign
+description: >
+  Logging verbosity is not a guarded key; a write/read pair on it is an
+  ordinary co-change.
+tasks:
+  - id: task-503a-set-verbosity
+    writes: [config/bernstein.yaml]
+    reads: []
+    facts:
+      - {kind: config-write, path: config/bernstein.yaml,
+         key: logging.verbosity, value: "debug"}
+  - id: task-503b-plumb-verbosity
+    writes: [src/bernstein/core/logging_setup.py]
+    reads: [config/bernstein.yaml]
+    facts:
+      - {kind: config-read, path: src/bernstein/core/logging_setup.py,
+         key: logging.verbosity}

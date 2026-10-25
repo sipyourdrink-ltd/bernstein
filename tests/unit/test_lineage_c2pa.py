@@ -15,6 +15,7 @@ from bernstein.core.lineage.c2pa import (
     C2PA_CLAIM_GENERATOR,
     C2PA_SPEC_VERSION,
     LABEL_ACTIONS,
+    LABEL_AI_DISCLOSURE,
     LABEL_HARD_BINDING,
     LABEL_SOFT_BINDING,
     ManifestError,
@@ -312,3 +313,132 @@ def test_round_trip_dict(tmp_path) -> None:
     restored = manifest_from_dict(manifest_to_dict(signed))
     assert canonical_manifest_bytes(restored) == canonical_manifest_bytes(signed)
     assert restored.signature_b64 == signed.signature_b64
+
+
+# ---------------------------------------------------------------------------
+# #6223: AI disclosure - only the steps a model served are disclosed
+# ---------------------------------------------------------------------------
+
+_MODEL_ARTIFACT = "out/model-written.md"
+_HAND_ARTIFACT = "out/hand-written.md"
+
+
+def _make_mixed_spine(tmp_path) -> LineageSpine:
+    """A run holding one model-generated step and one human-authored step."""
+    spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id="run-1", hmac_key=b"k" * 32)
+    spine.record(
+        artifact_path=_MODEL_ARTIFACT,
+        content=b"# generated\n",
+        actor="agent-a",
+        step_id="step-1",
+        model="anthropic:claude",
+        timestamp=1000,
+    )
+    spine.record(
+        artifact_path=_HAND_ARTIFACT,
+        content=b"# typed by hand\n",
+        actor="operator",
+        step_id="step-2",
+        model="",
+        timestamp=1001,
+    )
+    return spine
+
+
+def test_spec_version_targets_the_revision_defining_ai_disclosure() -> None:
+    """#6223: the pin targets 2.4, the revision that defines c2pa.ai-disclosure."""
+    assert C2PA_SPEC_VERSION == "2.4"
+
+
+def test_ai_disclosure_marks_only_the_model_generated_step(tmp_path) -> None:
+    """#6223: the disclosure names the model that served the write, and is absent otherwise."""
+    spine = _make_mixed_spine(tmp_path)
+    model_entries = _entries_for(spine, _MODEL_ARTIFACT)
+    model_manifest = project_manifest(
+        artifact_path=_MODEL_ARTIFACT,
+        entries=model_entries,
+        identity=_identity(),
+    )
+    hand_manifest = project_manifest(
+        artifact_path=_HAND_ARTIFACT,
+        entries=_entries_for(spine, _HAND_ARTIFACT),
+        identity=_identity(),
+    )
+
+    assert [a["label"] for a in model_manifest.assertions] == [
+        LABEL_HARD_BINDING,
+        LABEL_ACTIONS,
+        LABEL_AI_DISCLOSURE,
+    ]
+    disclosure = next(a for a in model_manifest.assertions if a["label"] == LABEL_AI_DISCLOSURE)
+    assert disclosure["data"]["modelName"] == "anthropic:claude"
+    # Table 12 "Model type values": the spine names a model, it does not
+    # classify it, so the generic AI/ML model type is the only honest value.
+    assert disclosure["data"]["modelType"] == "c2pa.types.model"
+    # The spine records no human-oversight level: the projection must not invent one.
+    assert "contentProfile" not in disclosure["data"]
+    # The disclosure resolves back into the chain, like the actions assertion.
+    assert disclosure["data"]["metadata"]["step_id"] == "step-1"
+    assert disclosure["data"]["metadata"]["lineage_entry_hash"] == model_entries[-1].entry_hash
+
+    model_action = next(a for a in model_manifest.assertions if a["label"] == LABEL_ACTIONS)["data"]["actions"][0]
+    assert model_action["digitalSourceType"].endswith("trainedAlgorithmicMedia")
+
+    assert LABEL_AI_DISCLOSURE not in [a["label"] for a in hand_manifest.assertions]
+    hand_action = next(a for a in hand_manifest.assertions if a["label"] == LABEL_ACTIONS)["data"]["actions"][0]
+    # No trained model was invoked for this write, so it is not marked as AI-produced.
+    assert hand_action["digitalSourceType"].endswith("digitalCreation")
+
+
+def test_ai_disclosure_survives_a_hand_edit_on_a_model_write(tmp_path) -> None:
+    """A human write on top of a model write keeps the disclosure, as a composite."""
+    spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id="run-1", hmac_key=b"k" * 32)
+    spine.record(
+        artifact_path=_ARTIFACT_PATH,
+        content=b"# generated\n",
+        actor="agent-a",
+        step_id="step-1",
+        model="anthropic:claude",
+        timestamp=1000,
+    )
+    spine.record(
+        artifact_path=_ARTIFACT_PATH,
+        content=_ARTIFACT_CONTENT,
+        actor="operator",
+        step_id="step-2",
+        model="",
+        timestamp=1001,
+    )
+    entries = _entries_for(spine, _ARTIFACT_PATH)
+    manifest = project_manifest(artifact_path=_ARTIFACT_PATH, entries=entries, identity=_identity())
+
+    disclosure = next(a for a in manifest.assertions if a["label"] == LABEL_AI_DISCLOSURE)
+    assert disclosure["data"]["modelName"] == "anthropic:claude"
+    assert disclosure["data"]["metadata"]["step_id"] == "step-1"
+
+    action = next(a for a in manifest.assertions if a["label"] == LABEL_ACTIONS)["data"]["actions"][0]
+    assert action["digitalSourceType"].endswith("compositeWithTrainedAlgorithmicMedia")
+    # The hard binding still pins the bytes of the write that landed last.
+    assert manifest.lineage_entry_hash == entries[-1].entry_hash
+
+
+def test_ai_disclosure_is_deterministic_and_ordered_before_soft_binding(tmp_path) -> None:
+    """#6223 AC: the new assertion keeps the projection byte-identical across replays."""
+    soft = SoftBinding(alg="example.watermark", blocks=[{"scope": {}, "value": "wm-123"}])
+    manifests = [
+        project_manifest(
+            artifact_path=_MODEL_ARTIFACT,
+            entries=_entries_for(_make_mixed_spine(root), _MODEL_ARTIFACT),
+            identity=_identity(),
+            soft_binding=soft,
+        )
+        for root in (tmp_path / "a", tmp_path / "b")
+    ]
+    first, second = manifests
+    assert [a["label"] for a in first.assertions] == [
+        LABEL_HARD_BINDING,
+        LABEL_ACTIONS,
+        LABEL_AI_DISCLOSURE,
+        LABEL_SOFT_BINDING,
+    ]
+    assert canonical_manifest_bytes(first) == canonical_manifest_bytes(second)

@@ -41,27 +41,24 @@ surface. Findings:
     that signed will fail verification. Tracked in well_known.py docstring
     - persistence is deferred.
 
-#6 (PARTIAL - JWKS rotation grace window publishes, but does not route):
+#6 (FIXED - JWKS rotation grace window publishes *and* routes):
     The orchestrator used to publish exactly one key, so a rotation broke
     every in-flight verifier holding the previous one. ``agent_json_keys``
     now appends every archived public key still inside the keystore's
     grace window (24h by default), so a verifier that tries every key in
     the JWKS is rescued.
 
-    A verifier that routes by ``kid`` is not, and ``well_known.py`` claims
-    it is. A card is signed under the *stable* kid
-    (``agent-bernstein-orchestrator``, ``_tenant_kid``) while an archived
-    key is published under a *timestamped* one
-    (``agent-bernstein-orchestrator-<stamp>``, ``ArchivedKey.kid``). After
-    a rotation the stable kid resolves to the **new** key, and the old key
-    sits under a kid no card ever referenced::
+    A verifier that routed by ``kid`` was not. A card was signed under the
+    *stable* kid (``agent-bernstein-orchestrator``), which names the tenant
+    rather than the key, so after a rotation it resolved to the **new** key
+    while cards signed minutes earlier still carried it - and the retired
+    key sat under a timestamped kid no card ever referenced.
 
-        signing kid on a card : agent-bernstein-orchestrator
-        jwks kid=agent-bernstein-orchestrator            -> new key
-        jwks kid=agent-bernstein-orchestrator-2026...Z   -> retired key
-
-    ``identity/http_signing.py`` gets this right by keying archived JWKs on
-    the thumbprint the signature carries. Pinned as an xfail below.
+    Cards are now signed under the RFC 7638 thumbprint of the signing key,
+    and archived keys are published under theirs, so the kid changes exactly
+    when the key does. The stable kid is still advertised, mapping to the
+    current key, for verifiers that cached it. This is the shape
+    ``identity/http_signing.py`` already used.
 
 #7 (FIXED - private signing key file mode):
     Persistence landed as :class:`AgentCardKeystore`, and it enforces
@@ -135,6 +132,7 @@ reproduces each one byte for byte.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -725,22 +723,20 @@ def test_jwks_rotation_grace_window_publishes_the_retired_key(tmp_path: Path) ->
         _reset_signing_keypair_for_tests()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Finding #6, remaining half. A card is signed under the stable kid "
-        "(_tenant_kid -> 'agent-bernstein-orchestrator') while an archived key "
-        "is published under a timestamped one (ArchivedKey.kid). After a "
-        "rotation the stable kid resolves to the NEW key, so a verifier that "
-        "routes by kid - which well_known.agent_json_keys' docstring says is "
-        "supported - fetches the wrong key and still fails. Only a verifier "
-        "that tries every key is rescued by the grace window. "
-        "identity/http_signing.py keys archived JWKs on the thumbprint the "
-        "signature carries, which is the shape that works."
-    ),
-)
 def test_jwks_routes_the_signing_kid_to_the_retired_key(tmp_path: Path) -> None:
-    """The kid on an in-flight card must resolve to the key that signed it."""
+    """FIXED: the kid on an in-flight card resolves to the key that signed it.
+
+    This was an ``xfail(strict=True)`` - finding #6, remaining half. A card
+    was signed under a fixed per-tenant kid while archived keys were
+    published under timestamped ones, so after a rotation the kid a card
+    carried resolved to the *new* key and a verifier routing by kid fetched
+    the wrong one. Only a verifier that tried every published key was rescued
+    by the grace window, and that is the fallback rather than the contract.
+
+    Cards are now signed under the RFC 7638 thumbprint of the signing key -
+    the shape ``identity/http_signing.py`` already used - and archived keys
+    are published under theirs, so the kid changes exactly when the key does.
+    """
     from bernstein.core.routes.well_known import (
         _get_keystore,
         _get_signing_keypair,
@@ -952,23 +948,184 @@ def test_card_does_not_verify_with_post_rotation_pubkey() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Finding #10 - no on-disk rotation today, so no archive directory "
-        "to grow. Once persistence lands, repeated rotation MUST garbage-"
-        "collect old archived PEMs after the grace window expires; "
-        "otherwise an attacker who can force rotations exhausts disk."
-    ),
-    strict=True,
-)
-def test_repeated_rotation_does_not_grow_archive_unboundedly() -> None:
-    from pathlib import Path
+class _ManualClock:
+    """``datetime``-shaped clock that only moves when the test moves it.
 
-    archive = Path(".sdd/security/keys/agent_signing/archive")
-    assert archive.exists(), "persistence not landed - nothing to bound"
-    # Once persistence lands: simulate N rotations and assert the archive
-    # size stays under a fixed bound (e.g. grace_window_keys + 1).
-    raise AssertionError("rotation archive bound not implemented")
+    ``AgentCardKeystore`` takes a ``clock`` for exactly this. Two reasons it
+    has to be manual rather than auto-advancing:
+
+    * Rotations driven by the *real* clock land in the same second only if the
+      runner is fast enough, so a test that needs them to collide - or needs
+      them not to - is measuring the machine. Freezing the clock makes both
+      deterministic.
+    * A clock that advanced on every read would place ``_archive_existing``
+      and the prune that follows it at different instants inside a single
+      ``rotate()``, so the freshly-archived key would be judged against a
+      cutoff taken from its own future and deleted immediately. Real time can
+      advance between the two reads, so a test that models it that way is
+      measuring the machine's timing, not the keystore's pruning rule.
+    """
+
+    def __init__(self, start: _dt.datetime | None = None) -> None:
+        self._now = start or _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
+
+    def advance(self, delta: _dt.timedelta) -> None:
+        self._now += delta
+
+    def now(self, tz: _dt.tzinfo | None = None) -> _dt.datetime:
+        return self._now.astimezone(tz) if tz else self._now
+
+
+def test_repeated_rotation_does_not_grow_archive_unboundedly(tmp_path: Path) -> None:
+    """FIXED: rotation prunes the archives the grace window has closed.
+
+    This was an ``xfail(strict=True)`` on the premise "no on-disk rotation
+    today, so no archive directory to grow". Persistence landed:
+    ``AgentCardKeystore._archive_existing`` moves the retired keypair to
+    ``archive/<utc-stamp>/``. Nothing removed it. ``list_archived`` only
+    *skips* entries past the window - its docstring said they "may be GC'd by
+    the operator out-of-band" - so every rotation left another directory
+    behind for good.
+
+    It is not only disk. ``_archive_existing`` archives the retired
+    **private** key next to the public one, so an unbounded archive is an
+    unbounded set of retired signing keys sitting on disk long after they
+    stop being published.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    # A clock that advances an hour per rotation. Real wall-clock time would
+    # put every rotation in the same second, which on main collapses them
+    # into one directory through a *separate* bug - and this test would then
+    # pass for that reason instead of for the pruning it is checking.
+    clock = _ManualClock()
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=90 * 60, clock=clock)
+    keystore.load_or_generate()
+    archive = tmp_path / "keys" / "archive"
+
+    for _ in range(6):
+        keystore.rotate()
+        clock.advance(_dt.timedelta(hours=1))
+
+    assert archive.is_dir()
+    # A 90-minute window over hourly rotations holds at most two archives,
+    # however many rotations happened before them.
+    assert len(list(archive.iterdir())) <= 2
+
+
+def test_a_key_inside_the_grace_window_is_not_pruned(tmp_path: Path) -> None:
+    """The bound must not eat a key the JWKS is still advertising.
+
+    Asserted through ``list_archived`` rather than by counting directories:
+    what matters is that the published set is intact, and that is exactly
+    what a too-eager prune would break.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600)
+    keystore.load_or_generate()
+    keystore.rotate()
+    keystore.rotate()
+
+    assert len(keystore.list_archived()) == 2
+
+
+def test_two_rotations_in_one_second_archive_separately(tmp_path: Path) -> None:
+    """The archive stamp is second-resolution, so rapid rotations collided.
+
+    Both landed in the same ``%Y%m%dT%H%M%SZ`` directory and ``Path.replace``
+    overwrote the keypair already archived there. The write succeeds, so
+    nothing surfaced - a verifier still inside its grace window simply lost
+    the key it was cached on. Found while writing the grace-window test
+    above, which failed on main for this reason rather than for the pruning
+    one it was written for.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    # Frozen, so both rotations land in the same second deterministically
+    # rather than only when the runner happens to be fast.
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600, clock=_ManualClock())
+    keystore.load_or_generate()
+    keystore.rotate()
+    keystore.rotate()
+
+    archived = keystore.list_archived()
+    assert len(archived) == 2, "a rotation overwrote the previously archived keypair"
+    assert archived[0].public_pem != archived[1].public_pem
+    # Distinct *published identities*, not just distinct directories. Two
+    # entries sharing a kid is what a verifier actually trips over:
+    # ``resolve_jwk`` returns the first match, so routing by that kid picks
+    # whichever sorted first, for the whole grace window.
+    assert archived[0].kid != archived[1].kid, "two archived keys published under one kid"
+
+
+def test_a_collision_suffixed_archive_still_reports_its_rotation_time(tmp_path: Path) -> None:
+    """The ``-N`` suffix must not break the directory-name date fallback.
+
+    ``_read_rotated_at`` parses the folder name when ``rotated_at.txt`` is
+    missing, which is how archives written by older versions are dated. A
+    suffix it could not parse would make such an entry undatable - and an
+    undatable entry is never published and never pruned.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=24 * 3600, clock=_ManualClock())
+    keystore.load_or_generate()
+    keystore.rotate()
+    keystore.rotate()
+
+    archive = tmp_path / "keys" / "archive"
+    suffixed = [d for d in archive.iterdir() if "-" in d.name]
+    assert suffixed, "expected a collision-suffixed directory"
+    for directory in suffixed:
+        (directory / "rotated_at.txt").unlink()
+
+    assert len(keystore.list_archived()) == 2
+
+
+def test_pruning_removes_the_retired_private_key_too(tmp_path: Path) -> None:
+    """Leaving the private half behind would defeat the point.
+
+    The archive holds ``private.pem`` beside ``public.pem``; the reason to
+    delete an expired entry at all is that the private key is the part worth
+    not keeping.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    clock = _ManualClock()
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=60, clock=clock)
+    keystore.load_or_generate()
+    for _ in range(4):
+        keystore.rotate()
+        clock.advance(_dt.timedelta(hours=1))
+
+    # The archived private key is ``agent-card.ed25519``; the public half is
+    # ``agent-card.ed25519.pub``. Globbing for "*private*" matches neither,
+    # which is how the first draft of this test passed against main.
+    archive = tmp_path / "keys" / "archive"
+    leftover_private = [p for p in archive.rglob("agent-card.ed25519") if p.is_file()]
+    assert leftover_private, "the glob matches nothing - this test would pass vacuously"
+    assert len(leftover_private) <= 1, f"retired private keys left on disk: {leftover_private}"
+
+
+def test_an_archive_with_no_readable_timestamp_is_left_alone(tmp_path: Path) -> None:
+    """Deleting a directory this code cannot date is the one unsafe move.
+
+    Such an entry is not published either, so it costs space and nothing
+    more - which is a far better outcome than destroying key material whose
+    age is unknown.
+    """
+    from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+
+    keystore = AgentCardKeystore(tmp_path / "keys", grace_seconds=0, clock=_ManualClock())
+    keystore.load_or_generate()
+    undatable = tmp_path / "keys" / "archive" / "not-a-timestamp"
+    undatable.mkdir(parents=True)
+    (undatable / "public.pem").write_bytes(b"x")
+
+    keystore.rotate()
+
+    assert undatable.is_dir()
 
 
 # ---------------------------------------------------------------------------

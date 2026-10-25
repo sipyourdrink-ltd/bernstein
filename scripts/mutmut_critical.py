@@ -159,11 +159,18 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="lineage_merge",
         source="src/bernstein/core/lineage/merge.py",
-        tests=("tests/unit/lineage/",),
+        tests=(
+            "tests/unit/lineage/test_merge.py",
+            "tests/unit/lineage/test_merge_provenance.py",
+        ),
         threshold=0.75,
-        budget_seconds=600,
+        budget_seconds=900,
         max_candidates=60,
-        note="Lineage v1 merge resolution.",
+        note=(
+            "Lineage v1 merge resolution. Tests narrowed to merge-specific "
+            "files so the baseline does not run the full lineage suite "
+            "(issue #5595)."
+        ),
     ),
     Module(
         key="config_seed_parser",
@@ -193,11 +200,17 @@ MODULES: tuple[Module, ...] = (
         tests=(
             "tests/unit/test_policy_engine.py",
             "tests/unit/test_decision_graph.py",
+            "tests/unit/security/test_policy_engine_mutation_kill.py",
         ),
         threshold=0.70,
         budget_seconds=900,
         max_candidates=60,
-        note="Rego/YAML policy evaluation and decision graph precedence (8 tests).",
+        note=(
+            "Rego/YAML policy evaluation and decision graph precedence. Scored 27/60 on the two"
+            " example-driven files; the kill file pins precedence in both insertion orders, the"
+            " bypass rule, the empty-directory and OPA-missing branches, the YAML loader and every"
+            " comparison operator at its boundary."
+        ),
     ),
     Module(
         key="compliance_policies",
@@ -211,11 +224,20 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="audit_pack",
         source="src/bernstein/core/security/audit_pack.py",
-        tests=("tests/unit/security/test_audit_pack_staged_write.py",),
+        tests=(
+            "tests/unit/security/test_audit_pack_staged_write.py",
+            "tests/unit/security/test_audit_pack_tail_digest.py",
+            "tests/unit/security/test_audit_pack_hmac_tail_digest.py",
+            "tests/unit/security/test_audit_pack_mutation_kill.py",
+        ),
         threshold=0.70,
         budget_seconds=900,
         max_candidates=60,
-        note="Staged atomic write for audit packs preventing reader truncation (6 tests).",
+        note=(
+            "SOC 2 evidence pack: resolvers, staleness, rendering and staged write. "
+            "Gated against the staged-write tests alone it scored 2/60, since nothing "
+            "else in the file was reached (#6471)."
+        ),
     ),
     Module(
         key="journal_verify",

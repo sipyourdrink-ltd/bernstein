@@ -100,11 +100,32 @@ def test_committed_audit_receipt_verifies_against_its_published_key() -> None:
         assert _check(result, fmt).ok is True
 
 
-def test_committed_audit_receipt_reaches_only_the_integrity_tier_without_a_pin() -> None:
-    """Unpinned verification is trust-on-first-use and says so."""
+def test_committed_audit_receipt_is_not_verified_without_a_pin() -> None:
+    """Unpinned verification is trust-on-first-use, says so, and does not pass."""
     result = _verify(_VALID)
+    assert result.ok is False
+    key = _check(result, "public_key")
+    assert key.ok is False
+    assert key.detail.startswith("trust-on-first-use")
+    # Every other check still holds: only the key trust is missing.
+    assert all(check.ok for check in result.checks if check.name != "public_key")
+
+
+def test_committed_audit_receipt_reaches_the_integrity_tier_with_opt_in() -> None:
+    """``--allow-unpinned-key`` accepts the integrity-only tier and labels it."""
+    stream = io.StringIO()
+    result = _load_verifier().run_verify(
+        receipt_path=_VALID,
+        which="all",
+        pinned_jwk=None,
+        pinned_pem=None,
+        verbose=False,
+        stream=stream,
+        allow_unpinned_key=True,
+    )
     assert result.ok is True
-    assert _check(result, "public_key").detail == "trust-on-first-use"
+    assert _check(result, "public_key").detail.startswith("trust-on-first-use")
+    assert "integrity only" in stream.getvalue()
 
 
 def test_tampered_audit_receipt_fails_subject_binding_with_a_divergent_head() -> None:

@@ -206,6 +206,14 @@ artifact bytes (in addition to the six filesystem/test completion signals):
 
 Each has a closed evaluator; none executes artifact-supplied code.
 
+Artifact completion enforces `artifact_spec.criteria` without requiring callers
+to repeat those gates in `completion_signals`. It evaluates the declared
+criteria first, then additional artifact completion signals, in declaration
+order. Identical `(type, value)` pairs are evaluated once across both fields;
+filesystem completion signals still run separately. Every gate evaluates the
+same loaded artifact that is canonicalised for the signed receipt. A failed
+criterion names its type and value and prevents a receipt from being written.
+
 These four criteria are only evaluable with the produced artifact in scope. The
 janitor's filesystem verification path cannot see it, so it reports them as
 **not passed** with the detail

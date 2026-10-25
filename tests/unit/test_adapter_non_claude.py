@@ -12,7 +12,7 @@ import pytest
 from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.codex import CodexAdapter
-from bernstein.adapters.gemini import ANTIGRAVITY_BINARY, GeminiAdapter
+from bernstein.adapters.gemini import LEGACY_GEMINI_BINARY, GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.qwen import QwenAdapter
 
@@ -214,10 +214,9 @@ class TestGeminiAdapterSpawn:
         proc_mock = _make_popen_mock(pid=201)
         # Pin env + resolver so this assertion is deterministic across
         # CI / local hosts regardless of host PATH or a stray
-        # ``BERNSTEIN_GEMINI_BINARY`` override. Discovery prefers
-        # ``antigravity`` (the new canonical binary) and falls back to
-        # ``gemini``; with both resolver lookups returning ``None`` the
-        # non-strict cascade returns the first entry. See #1740.
+        # ``BERNSTEIN_GEMINI_BINARY`` override. With the resolver lookup
+        # returning ``None`` the non-strict cascade returns its only entry,
+        # ``gemini``. See #1740.
         with (
             patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
             patch("bernstein.adapters.gemini.shutil.which", side_effect=lambda _name: None),
@@ -231,7 +230,7 @@ class TestGeminiAdapterSpawn:
             )
         cmd = popen.call_args.args[0]
         inner = _inner_cmd(cmd)
-        assert inner[0] == ANTIGRAVITY_BINARY
+        assert inner[0] == LEGACY_GEMINI_BINARY
 
     def test_model_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()

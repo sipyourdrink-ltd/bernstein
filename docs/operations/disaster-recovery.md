@@ -30,6 +30,9 @@ Two complementary mechanisms:
    crashed orchestrator wakes up consistent.
    Source: `src/bernstein/core/persistence/wal.py:1-15`,
    `src/bernstein/core/persistence/wal_replay.py:1-18`.
+   File locks persisted in `.sdd/runtime/file_locks.json` by the crashed
+   process's agents are released on the first tick, because no live
+   session holds them; their retries do not wait out the lock TTL.
 2. **Checkpointing** - periodic atomic snapshots of full orchestrator
    state (task graph + agent sessions + cost accumulator + WAL
    sequence position) at

@@ -3,7 +3,7 @@
 The orchestrator's tick loop self-stops from exactly one place: the
 quiescence settle-window check in ``Orchestrator._tick_internal`` step 8b.
 That check is gated on at least one task having reached a terminal state
-(``done`` or ``failed``), because reading ``open == agents == 0`` on tick #1
+(``done``, ``failed`` or ``closed``), because reading ``open == agents == 0`` on tick #1
 means "nothing has been scheduled yet", not "the run finished". The gate is
 correct for startup and wrong for the rest of the run: when a run reaches
 quiescence having produced **zero** terminal tasks, the gate is never
@@ -26,7 +26,7 @@ Criterion
 A run is declared stalled only when **every** one of these holds:
 
 1. The caller is inside a confirmed quiescent tick with zero terminal tasks
-   (``open_tasks == active_agents == 0`` and ``done == failed == 0``). The
+   (``open_tasks == active_agents == 0`` and ``done == failed == closed == 0``). The
    orchestrator establishes this before calling in; it is the structural
    precondition, not something this module can observe.
 2. At least one task is declared **and** at least one of them is in an
@@ -70,9 +70,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from bernstein.core.defaults import JOURNAL_EVENT_ARTIFACT_POSTED
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bernstein.core.models import Task
 
 #: Statuses meaning a task was declared and was expected to make progress,
@@ -492,3 +496,185 @@ PROGRESS_STUCK_CLAIM_FAIL_REASON: str = (
     "Run stalled: the run finished work but a claimed task was held by a dead "
     "agent, so quiescence could never be reached. The run did not meet its goal."
 )
+
+
+# ---------------------------------------------------------------------------
+# Issue #5439: Artefact-progress clock, repeated command detector, fan-out
+# ---------------------------------------------------------------------------
+
+#: Event types recognized as genuine artefact events that advance the task progress clock.
+#: Log lines and standard stdout/stderr output explicitly do NOT advance the clock.
+ARTEFACT_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "file_hash_change",
+        "worktree_change",
+        "test_result",
+        JOURNAL_EVENT_ARTIFACT_POSTED,
+    }
+)
+
+
+@dataclass
+class ArtefactProgressClock:
+    """Tracks per-task artefact progress timestamps (#5439).
+
+    A task's progress timestamp advances ONLY on artefact events (file hash change
+    in its worktree, test result posted, artefact posted). Log output does NOT
+    advance the progress clock.
+
+    Primitive only: lifecycle callers must register tasks and supply events.
+    """
+
+    last_progress_ts: dict[str, float] = field(default_factory=dict)
+
+    def register_task(self, task_id: str, timestamp: float) -> None:
+        """Register a task with its initial timestamp if not already tracked."""
+        if task_id not in self.last_progress_ts:
+            self.last_progress_ts[task_id] = timestamp
+
+    def record_event(self, task_id: str, event_type: str, timestamp: float) -> bool:
+        """Record an event for task_id.
+
+        Returns True if the event was a recognized artefact event and advanced the
+        progress clock, False otherwise (e.g. log output).
+        """
+        if event_type in ARTEFACT_EVENT_TYPES:
+            previous = self.last_progress_ts.get(task_id)
+            if previous is not None and timestamp <= previous:
+                return False
+            self.last_progress_ts[task_id] = timestamp
+            return True
+        return False
+
+    def check_stall(self, task_id: str, now: float, threshold_s: float) -> tuple[bool, str | None]:
+        """Check if task_id has stalled due to lack of artefact progress.
+
+        Returns:
+            Tuple of (is_stalled, reason). If not stalled, reason is None.
+
+        Raises:
+            KeyError: If task_id has no progress baseline.
+            ValueError: If threshold_s is not positive.
+        """
+        if threshold_s <= 0:
+            raise ValueError("threshold_s must be positive")
+        last_ts = self.last_progress_ts[task_id]
+
+        elapsed = max(now - last_ts, 0.0)
+        if elapsed >= threshold_s:
+            reason = f"Task {task_id} stalled: no artefact progress for {elapsed:.1f}s (threshold {threshold_s:.1f}s)"
+            return True, reason
+        return False, None
+
+
+@dataclass
+class RepeatedCommandDetector:
+    """Detect repeated failures of a command with the same exit code (#5439).
+
+    Same command + same nonzero exit code >= N times triggers a stall.
+    Counting is O(1); history retains one entry per distinct command/exit pair.
+    Primitive only: task lifecycle integration and history cleanup are deferred.
+    """
+
+    task_commands: dict[str, dict[tuple[str, int], int]] = field(default_factory=dict)
+
+    def record_command(
+        self,
+        task_id: str,
+        command: str,
+        exit_code: int,
+        *,
+        threshold: int = 3,
+    ) -> tuple[bool, str | None]:
+        """Record a command execution and evaluate the repeated-command threshold.
+
+        Returns:
+            Tuple of (is_stalled, reason). When stalled, the reason names the
+            command, exit code, and repetition count.
+
+        Raises:
+            ValueError: If threshold is less than two observations.
+        """
+        if threshold < 2:
+            raise ValueError("threshold must be at least 2")
+        if exit_code == 0:
+            return False, None
+        counts = self.task_commands.setdefault(task_id, {})
+        key = (command, exit_code)
+        count = counts.get(key, 0) + 1
+        counts[key] = count
+
+        if count >= threshold:
+            reason = (
+                f"Task {task_id} stalled: command '{command}' with exit code {exit_code} "
+                f"repeated {count} times (threshold {threshold})"
+            )
+            return True, reason
+        return False, None
+
+
+@dataclass
+class FanOutController:
+    """Per-coordinator ceiling of active tasks with degradation (#5439).
+
+    - Per-coordinator ceiling of active tasks; above it no new task is admitted.
+    - When >= K tasks are in no-progress state, the ceiling halves for the run.
+    - Halving is retained in memory and offered to an optional callback.
+
+    Primitive only: lifecycle admission and durable audit wiring are deferred.
+    """
+
+    ceiling: int = 8
+    degrade_threshold: int = 2
+    halved: bool = False
+    audit_records: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.ceiling <= 0:
+            raise ValueError("ceiling must be positive")
+        if self.degrade_threshold <= 0:
+            raise ValueError("degrade_threshold must be positive")
+
+    def check_and_degrade(
+        self,
+        no_progress_task_count: int,
+        *,
+        audit_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> bool:
+        """Degrade ceiling if no-progress tasks reach the threshold. Returns True if halved."""
+        if not self.halved and no_progress_task_count >= self.degrade_threshold:
+            old_ceiling = self.ceiling
+            new_ceiling = max(1, old_ceiling // 2)
+            decision = {
+                "event": "fan_out_ceiling_halved",
+                "old_ceiling": old_ceiling,
+                "new_ceiling": new_ceiling,
+                "no_progress_tasks": no_progress_task_count,
+                "threshold": self.degrade_threshold,
+            }
+            if audit_callback is not None:
+                audit_callback(decision)
+            self.ceiling = new_ceiling
+            self.halved = True
+            self.audit_records.append(decision)
+            return True
+        return False
+
+    def can_admit_task(
+        self,
+        active_task_count: int,
+        no_progress_task_count: int = 0,
+        *,
+        audit_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[bool, str]:
+        """Check whether a new task can be admitted under the current fan-out ceiling.
+
+        Separates degradation evaluation from admission query.
+        """
+        self.check_and_degrade(no_progress_task_count, audit_callback=audit_callback)
+
+        if active_task_count >= self.ceiling:
+            reason = f"Fan-out ceiling reached: {active_task_count} active tasks >= ceiling {self.ceiling}"
+            return False, reason
+
+        return True, f"Admitted: {active_task_count} active tasks < ceiling {self.ceiling}"

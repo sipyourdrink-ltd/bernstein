@@ -227,7 +227,7 @@ USE_CASES: dict[str, AdapterUseCase] = {
         binary="junie",
     ),
     "kilo": AdapterUseCase(
-        headline="Kilo CLI by Stackblitz",
+        headline="Kilo CLI by Kilo Code",
         binary="kilo",
     ),
     "kimchi": AdapterUseCase(

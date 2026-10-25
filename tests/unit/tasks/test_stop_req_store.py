@@ -141,3 +141,41 @@ async def test_default_cascade_still_cancels_and_releases(tmp_path: Path) -> Non
     events = chain.query(event_type=EVENT_TASK_RELEASE_RECEIPT)
     assert len(events) == 1
     assert events[0].details["release_path"] == "cancel_cascade"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["fail", "force_claim", "close", "wait", "contract", "refuse", "reopen", "block"])
+@pytest.mark.parametrize("status", [TaskStatus.STOP_REQ, TaskStatus.CANCELLED])
+async def test_rejected_worker_mutation_keeps_status_index(tmp_path: Path, operation: str, status: TaskStatus) -> None:
+    from bernstein.core.tasks.contracts import ContractViolation, RefusalKind, WorkerRefusal
+
+    store, chain = _store(tmp_path)
+    task = _held(store)
+    if status == TaskStatus.STOP_REQ:
+        await store.cancel_cascade(task.id, "operator", cooperative=True)
+    else:
+        await store.cancel(task.id, "operator")
+    version = task.version
+    before = chain.query(event_type=EVENT_TASK_RELEASE_RECEIPT)
+    with pytest.raises((IllegalTransitionError, ValueError)):
+        if operation == "fail":
+            await store.fail(task.id, "worker exited")
+        elif operation == "force_claim":
+            await store.force_claim(task.id)
+        elif operation == "close":
+            await store.close(task.id)
+        elif operation == "wait":
+            await store.wait_for_subtasks(task.id, 1)
+        elif operation == "contract":
+            await store.fail_contract_violation(task.id, ContractViolation("$.summary", "bad"))
+        elif operation == "refuse":
+            await store.refuse(task.id, WorkerRefusal(RefusalKind.UNDERSPECIFIED, "need details"))
+        elif operation == "reopen":
+            await store.reopen(task.id, "janitor")
+        else:
+            await store.block(task.id, "blocked")
+    assert task.status == status
+    assert task.version == version
+    assert store._by_status[status][task.id] is task
+    assert task.claimed_by_session == "node-a"
+    assert chain.query(event_type=EVENT_TASK_RELEASE_RECEIPT) == before

@@ -460,6 +460,23 @@ async def test_cancel_claimed_task(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_cancel_cooperatively_suspended_task(client: AsyncClient, app) -> None:  # type: ignore[no-untyped-def]
+    """Operators can recover a waiter whose live request was lost."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+    await client.get("/tasks/next/backend")
+    await app.state.store.suspend_for_rendezvous(task_id, "open-entry-hash")
+
+    resp = await client.post(
+        f"/tasks/{task_id}/cancel",
+        json={"reason": "recover stranded rendezvous"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
+@pytest.mark.anyio
 async def test_cancel_done_task_returns_409(client: AsyncClient) -> None:
     """POST /tasks/{id}/cancel returns 409 if task is already done."""
     create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
@@ -2306,9 +2323,13 @@ async def test_node_heartbeat(cluster_client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_node_heartbeat_unknown(cluster_client: AsyncClient) -> None:
-    """POST heartbeat for unknown node returns 404."""
+    """POST heartbeat for unknown node returns 410 with a re-register hint."""
     resp = await cluster_client.post("/cluster/nodes/no-such-node/heartbeat", json={})
-    assert resp.status_code == 404
+    assert resp.status_code == 410
+    detail = resp.json()["detail"]
+    assert detail["error"] == "node_unknown"
+    assert detail["node_id"] == "no-such-node"
+    assert "POST /cluster/nodes" in detail["hint"]
 
 
 @pytest.mark.anyio

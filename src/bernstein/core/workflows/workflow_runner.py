@@ -33,6 +33,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.persistence.workspace import is_workspace_trusted
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from bernstein.core.spawner import AgentSpawner
     from bernstein.core.workflows.workflow_spec import LoopSpec, WorkflowNode, WorkflowSpec
@@ -69,6 +71,24 @@ class WorkflowRunError(RuntimeError):
     :class:`NodeExecution.status` rather than as exceptions so the
     runner can surface partial results to the caller.
     """
+
+
+class UntrustedWorkspaceError(WorkflowRunError):
+    """Raised when manifest-authored shell text would run in an untrusted workspace.
+
+    Command nodes and ``when`` / ``loop.until`` predicates are shell
+    strings taken from the manifest, which normally lives in the
+    repository being worked on.  They run only once the workspace has
+    been explicitly trusted, the same rule the plugin manager applies
+    to committed hook scripts.
+    """
+
+    def __init__(self, workdir: Path) -> None:
+        super().__init__(
+            f"workspace {workdir} is not trusted; refusing to run manifest shell commands. "
+            "Run `bernstein trust` there (writes .sdd/runtime/workspace_trust.json) before running this workflow."
+        )
+        self.workdir = workdir
 
 
 @dataclass
@@ -829,6 +849,25 @@ class WorkflowRunner:
         last.error = f"loop exhausted after {loop.max_iterations} iterations; predicate never exited 0: {loop.until!r}"
         return last
 
+    def _require_trusted_workspace(self, resource_id: str, kind: str) -> None:
+        """Refuse shell execution unless the workdir has been trusted.
+
+        Args:
+            resource_id: Node id (or ``"predicate"``) for the audit event.
+            kind: What was about to run (``"command"`` or ``"predicate"``).
+
+        Raises:
+            UntrustedWorkspaceError: When the workspace is not trusted.
+        """
+        if is_workspace_trusted(self._workdir):
+            return
+        self._audit(
+            "workflow.untrusted_workspace",
+            resource_id,
+            {"workdir": str(self._workdir), "kind": kind},
+        )
+        raise UntrustedWorkspaceError(self._workdir)
+
     def _loop_predicate_passes(self, predicate: str) -> bool:
         """Return ``True`` when the bash predicate exits with status 0.
 
@@ -836,7 +875,11 @@ class WorkflowRunner:
         manifest-authored bash predicates evaluated the same way (the
         name predates ``when`` - kept as-is since it's a monkeypatch
         seam an existing test reaches into directly).
+
+        Raises:
+            UntrustedWorkspaceError: When the workspace is not trusted.
         """
+        self._require_trusted_workspace("predicate", "predicate")
         # SECURITY: shell=True required because predicates are manifest-authored
         # bash expressions (e.g. "test -f marker") that rely on shell parsing; not user input.
         proc = subprocess.run(
@@ -877,8 +920,15 @@ class WorkflowRunner:
         ``subprocess.TimeoutExpired`` boundary; on timeout we surface
         a FAILED node with ``exit_code=None`` so the upstream runner
         treats it as a definite failure.
+
+        An untrusted workspace yields a FAILED node without spawning
+        anything.
         """
         assert node.command is not None
+        try:
+            self._require_trusted_workspace(node.id, "command")
+        except UntrustedWorkspaceError as exc:
+            return NodeExecution(node_id=node.id, status=NodeStatus.FAILED, exit_code=None, error=str(exc))
         try:
             # SECURITY: shell=True required because command-typed workflow nodes are
             # manifest-authored bash strings using idiomatic pipes/redirects/&&; not user input.

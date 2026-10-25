@@ -117,6 +117,7 @@ __all__ = [
     "attenuate",
     "bound_narrows",
     "caveats_for_scope",
+    "glob_narrows",
     "globs_narrow",
     "mint_root",
     "narrowing_violations",
@@ -260,12 +261,27 @@ def globs_narrow(child: frozenset[str] | None, parent: frozenset[str] | None) ->
     Every child pattern must be subsumed by a *single* parent pattern. A child
     admitted only by two parent patterns together is reported as widening: it
     is the direction that cannot overstate what the hop proved.
+
+    On this axis the empty value is the *widest*, not the narrowest, which is
+    the opposite of :func:`prefixes_narrow` - ``paths_outside_scope`` reads an
+    empty pattern list as "no restriction", so an empty set can only narrow
+    nothing.
     """
-    if parent is None:
+    if not parent:
+        # ``None`` or an empty set both mean "no restriction" on this axis, so
+        # any child - including ``None`` and the empty set - is contained.
         return True
-    if child is None:
+    if not child:
+        # ``None`` drops the parent's restriction and the empty set is "no
+        # restriction" too; both are the widest value and cannot narrow a
+        # non-empty parent scope. ``all(...)`` over an empty child is
+        # vacuously true, which would otherwise grade the widest value as a
+        # narrowing.
         return False
-    return all(any(pattern_subsumes(p, c) for p in parent) for c in child)
+    return all(any(pattern_subsumes(outer=p, inner=c) for p in parent) for c in child)
+
+
+glob_narrows = globs_narrow
 
 
 def uses_narrows(child: int | None, parent: int | None) -> bool:

@@ -164,6 +164,21 @@ def _public_key_pem_from_raw(public_raw: bytes) -> bytes:
     )
 
 
+def _rfc7638_thumbprint_for_raw(public_raw: bytes) -> str:
+    from bernstein.core.security.agent_card_signer import _b64url
+
+    x = _b64url(public_raw)
+    canonical = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": x},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return _b64url(hashlib.sha256(canonical).digest())
+
+
+_TEST_KEYPAIR_KID: str = _rfc7638_thumbprint_for_raw(_test_keypair()[1])
+
+
 def _emitter_with_known_key(
     *,
     install_rev: str = "aaaaaaaaaaaaaaaa",
@@ -510,7 +525,7 @@ class TestCnfJwkMembers:
 
         assert jwk["alg"] == "EdDSA"
         assert jwk["\U0001f600"] == "supplementary-plane"
-        assert jwk["kty"] == "OKP" and jwk["crv"] == "Ed25519" and jwk["kid"] == "install-aaaaaaaaaaaaaaaa"
+        assert jwk["kty"] == "OKP" and jwk["crv"] == "Ed25519" and jwk["kid"] == _TEST_KEYPAIR_KID
         assert _offline_verify(parsed, _public_key_pem_from_raw(_test_keypair()[1])) is True
         # The members are inside the pre-image: dropping one breaks the signature.
         del parsed["cnf"]["jwk"]["alg"]
@@ -826,11 +841,11 @@ class TestCnfJwk:
         """The key id lives on the JWK (a property of the key), not in a
         signature-adjacent object -- see the module docstring's note on the
         schema's signature envelope."""
-        emitter = _emitter_with_known_key(install_rev="deadbeefdeadbeef")
+        emitter = _emitter_with_known_key()
         journal = _create_journal(tmp_path, [{"type": "run_completed", "ts": 1.0}])
         parsed = json.loads(emitter.emit_trust_record(journal, "run-1", "exec-1"))
 
-        assert parsed["cnf"]["jwk"]["kid"] == "install-deadbeefdeadbeef"
+        assert parsed["cnf"]["jwk"]["kid"] == _TEST_KEYPAIR_KID
 
 
 # ---------------------------------------------------------------------------
@@ -1563,7 +1578,7 @@ class TestEmitTrustRecord:
         assert parsed["subject"] == "spiffe://bernstein.run/run/integration-run/exec/integration-exec"
         assert parsed["iat"] == 1690000002
         assert parsed["tool_transcript"]["call_count"] == 1
-        assert parsed["cnf"]["jwk"]["kid"] == "install-aaaaaaaaaaaaaaaa"
+        assert parsed["cnf"]["jwk"]["kid"] == _TEST_KEYPAIR_KID
         assert len(parsed["signature"]) > 0
         assert _offline_verify(parsed, _public_key_pem_from_raw(public_raw)) is True
 

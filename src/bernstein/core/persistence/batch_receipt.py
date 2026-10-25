@@ -40,6 +40,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from bernstein.core.observability.log_redact import redact_sensitive_text
 from bernstein.core.persistence.batch_ledger import GENESIS_HASH, BatchLedgerError
 from bernstein.core.receipts.protocol import register_receipt_kind
 
@@ -91,7 +92,11 @@ def output_tail_digest(tail: str | bytes) -> str:
 
 
 def failure_reason_from_tail(tail: str, *, limit: int = FAILURE_REASON_LIMIT) -> str:
-    """Return the last non-empty line of an output tail, bounded to *limit*.
+    """Return the last non-empty line of an output tail, redacted and bounded to *limit*.
+
+    The line is scrubbed of credential-shaped material and PII before it is
+    truncated, so a secret cut by the limit is not left half-visible. The
+    receipt is signed and passed around; worker output must not leak through it.
 
     The last line of an error tail is the exception or the tool's own verdict
     (``ConnectionError: upstream 503``, ``exit 137``); the lines above it are
@@ -107,7 +112,7 @@ def failure_reason_from_tail(tail: str, *, limit: int = FAILURE_REASON_LIMIT) ->
     for line in reversed(tail.splitlines()):
         stripped = line.strip()
         if stripped:
-            return stripped[:limit]
+            return redact_sensitive_text(stripped)[:limit]
     return ""
 
 
@@ -145,7 +150,9 @@ class BatchItemOutcome:
         """Build an outcome from what the worker left behind.
 
         The digest and, for a failure, the reason are derived here so a caller
-        never states a reason the tail does not end on.
+        never states a reason the tail does not end on. A failure whose tail
+        has no non-empty line carries ``exit <code>`` (or ``no output`` when
+        there was no process) so the receipt always names a reason.
 
         Args:
             entity_id: The item's identity.
@@ -165,7 +172,9 @@ class BatchItemOutcome:
             attempts=(0 if kind == "skipped" else 1) if attempts is None else attempts,
             exit_code=exit_code,
             output_tail_sha256=output_tail_digest(output_tail) if output_tail else "",
-            failure_reason=failure_reason_from_tail(tail_text) if kind == "failed" else "",
+            failure_reason=(
+                failure_reason_from_tail(tail_text) or _synthetic_failure_reason(exit_code) if kind == "failed" else ""
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -178,6 +187,11 @@ class BatchItemOutcome:
             "output_tail_sha256": self.output_tail_sha256,
             "failure_reason": self.failure_reason,
         }
+
+
+def _synthetic_failure_reason(exit_code: int | None) -> str:
+    """The reason a failed item carries when its output tail yields none."""
+    return f"exit {exit_code}" if exit_code is not None else "no output"
 
 
 def _as_outcome(value: str) -> ItemOutcome:
@@ -219,7 +233,10 @@ def build_batch_pass_payload(
         :data:`RECEIPT_KIND`.
 
     Raises:
-        ValueError: An entity id appears twice, or a head is not a sha256 hex.
+        ValueError: An entity id appears twice, a head is not a sha256 hex, or
+            the assembled payload fails :func:`batch_pass_payload_errors` (for
+            example a success item with 0 attempts), so a payload that the
+            registered verifier would reject is never returned for signing.
     """
     for name, head in (("ledger_head_before", ledger_head_before), ("ledger_head_after", ledger_head_after)):
         if not _is_sha256_hex(head):
@@ -244,6 +261,10 @@ def build_batch_pass_payload(
         "items": item_dicts,
     }
     payload.update(_derived_fields(item_dicts))
+    problems = batch_pass_payload_errors(payload)
+    if problems:
+        msg = "batch pass payload would not verify: " + "; ".join(problems)
+        raise ValueError(msg)
     return payload
 
 

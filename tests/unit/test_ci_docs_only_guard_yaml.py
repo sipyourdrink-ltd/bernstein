@@ -35,8 +35,9 @@ wedges or ``main`` turns red:
    the bucket fails the gate on every docs-only entry - the queue can
    then never merge a docs-only PR.
 
-``determine-changes`` computes ``docs_only`` on merge_group against
-``github.event.merge_group.base_sha`` and falls back to *not docs-only*
+``determine-changes`` computes ``docs_only`` on merge_group against the
+batch root (the merge-base with the queue's target branch, #5901) and falls
+back to *not docs-only*
 when the diff cannot be resolved, so the failure mode of a broken
 detector is wasted runners, never a skipped check.
 

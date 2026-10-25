@@ -1,6 +1,6 @@
 // useEventStream - SSE wrapper with auto-reconnect and per-event-type listeners.
 import { useEffect, useRef } from 'react';
-import { clearAuthToken, getAuthToken } from './api.ts';
+import { getAuthToken, rejectAuthToken } from './api.ts';
 
 type EventHandler = (data: unknown) => void;
 
@@ -18,8 +18,11 @@ export interface OpenEventStreamOptions {
   fetchImpl?: typeof fetch;
   /** Test seam; production reads the GUI bearer from localStorage. */
   getToken?: () => string | null;
-  /** Test seam; production clears the GUI bearer after a refused connection. */
-  clearToken?: () => void;
+  /**
+   * Test seam; production hands the refused bearer to `rejectAuthToken`, which
+   * drops it and raises the shell's token prompt.
+   */
+  clearToken?: (sent: string | null) => void;
 }
 
 export interface EventStreamHandle {
@@ -61,7 +64,7 @@ function parseSseRecord(record: string): StreamEvent | null {
 export function openEventStream(url: string, options: OpenEventStreamOptions): EventStreamHandle {
   const fetchImpl = options.fetchImpl ?? fetch;
   const getToken = options.getToken ?? getAuthToken;
-  const clearToken = options.clearToken ?? clearAuthToken;
+  const clearToken = options.clearToken ?? rejectAuthToken;
   const backoff = options.backoffMs?.length ? options.backoffMs : DEFAULT_BACKOFF_MS;
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
   const controller = new AbortController();
@@ -132,7 +135,7 @@ export function openEventStream(url: string, options: OpenEventStreamOptions): E
       });
       if (cancelled) return;
       if (response.status === 401) {
-        clearToken();
+        clearToken(token);
         options.onError?.(0);
         return;
       }

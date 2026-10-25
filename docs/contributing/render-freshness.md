@@ -147,9 +147,6 @@ rebuilds `web/` and fails when the result differs from
 bundle nor the renders, so both checks stay green while the wheel ships a UI
 built from versions the lockfile no longer pins.
 
-`web-dashboard.png` is deliberately outside this: it shows the server-rendered
-`/dashboard` page, a different surface with a different source of truth.
-
 ### The SPA fetches nothing at view time either
 
 The reason the CDN webfont is stripped from the terminal render applies to the

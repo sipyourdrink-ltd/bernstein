@@ -233,10 +233,13 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | `bernstein run plan.yaml` | Full | 3 | Plan file execution |
 | `bernstein gc cas` | Full | 3 | Mark and sweep unreferenced blobs from the CAS store |
 | `bernstein init` | Full | 3 | Workspace setup. The documented first run is covered by `tests/integration/test_first_run_documented_path.py`, which runs the command from an empty directory and asserts the created artifacts plus the key output lines documented in `first-run.md`. |
+| `bernstein adopt` | Full | 1 | Detects the running agent session (`--dry-run` only, writes nothing). Writing the adoption, the signed receipt and the MCP tool are later slices of #5435 |
 | `bernstein stop` | Full | 3 | Graceful/force stop |
+| `bernstein trust` | Full | 4 | Grant, show or revoke workspace trust; script hooks, plugin hooks and workflow command nodes run only in a trusted workspace |
 | `bernstein live` | Full | 3 | TUI dashboard. Readiness is the first rendered frame, identified by the `AGENTS` and `TASKS` pane headers; `tests/integration/test_first_run_long_running_surfaces.py` starts it from an empty workspace, waits for that frame, and asserts a traceback-free exit on `SIGINT`. |
 | `bernstein dashboard` | Full | 3 | Web dashboard |
 | `bernstein status` | Full | 3 | Task summary |
+| [`bernstein insights`](cli-reference.md#bernstein-insights) | Full | 1 | **Preview.** Skeleton: echoes the requested window in text or placeholder JSON; computes no analytics yet |
 | `bernstein ps` | Full | 3 | Process list |
 | `bernstein cost` | Full | 4 | Spend breakdown |
 | `bernstein doctor` | Full | 4 | Pre-flight health check |
@@ -276,7 +279,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein review/approve/reject/pending`](cli/task-lifecycle.md) | Full | 3 | Review workflow |
 | [`bernstein sync`](../operations/backlog-sync.md) | Full | 3 | Sync backlog with server |
 | [`bernstein manifest`](../operations/run-manifest.md) | Full | 3 | Run manifest inspection |
-| [`bernstein gateway`](../operations/mcp-gateway.md) | Full | 3 | MCP gateway proxy |
+| [`bernstein gateway`](../operations/mcp-gateway.md) | Full | 3 | MCP gateway proxy; when `attestation_interlock` is wired, the native path writes `toolcall.effect` after connector return |
 | [`bernstein workflow`](../operations/workflow-manifests.md) | Full | 3 | Workflow DSL |
 | [`bernstein watch`](../operations/watch.md) | Full | 3 | Directory file watcher |
 | [`bernstein listen`](../operations/voice-control.md) | Full | 2 | **Preview.** Voice commands are experimental. A base install exits with the `pip install 'bernstein[voice]'` hint; a usable first run also requires microphone/audio support and downloads the selected Whisper model on first use. |
@@ -331,9 +334,10 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein events query/verify`](../events/grammar.md) | Full | 3 | Query the unified event feed and verify its chain projection |
 | `bernstein endpoints certify/verify` | Full | 3 | Conformance-certify a local-model endpoint and verify its certification |
 | `bernstein ledger verify/anchor/fetch` | Full | 3 | Verify, anchor, and fetch work-ledger segments |
-| `bernstein seal publish/verify` | Full | 3 | Anchor a run's sealed journal head to an RFC 3161 timestamping authority and re-check the anchor offline against pinned TSA roots |
+| `bernstein seal publish/verify` | Full | 3 | Anchor a run's sealed journal head to an RFC 3161 timestamping authority and re-check stored anchors offline: TSA tokens against pinned roots, or a `transparency-log` inclusion proof against an operator-pinned log public key |
 | `bernstein mission define/status/verify` | Full | 3 | Define multi-phase missions and verify mission status (`mission digest verify` for digests) |
-| `bernstein model registry/impact` | Full | 3 | Model registry projection and impact analysis |
+| `bernstein model registry` | Full | 3 | Project the model registry from the audit chain, optionally as of a past instant |
+| `bernstein model impact` | Partial | 2 | List artefacts whose lineage entry names a model (`provider/model[@version]`). The command and the ledger read-back work, but no write path in the orchestrator records a model reference yet, so on ordinary runs it reports that the ledger holds none |
 | [`bernstein tournament show/verify`](../operations/tournament-runs.md) | Full | 3 | Inspect a tournament run and verify its selection receipt |
 | `bernstein spiffe id/verify-binding` | Full | 4 | Print the SPIFFE id and verify a workload-identity binding |
 | `bernstein spec check/auto-fix` | Full | 3 | Evaluate and auto-fix a spec against the quality checklist |

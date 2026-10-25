@@ -31,6 +31,7 @@ frozenset of capability strings supported at that version.
 
 | Field | Meaning |
 |---|---|
+| `protocol` | The protocol name taken from the first local version. |
 | `local_version` | The local side's highest version, regardless of outcome. |
 | `remote_version` | The remote side's highest version, regardless of outcome. |
 | `negotiated_version` | The agreed version, or `None` if negotiation failed. |
@@ -40,6 +41,8 @@ frozenset of capability strings supported at that version.
 ## The algorithm
 
 Source: `negotiate_version` in `protocol_negotiation.py`.
+
+Either list being empty raises `ValueError`.
 
 1. Both version lists are sorted ascending by `(major, minor, patch)`.
 2. Negotiation fails (`success=False`, `negotiated_version=None`) if

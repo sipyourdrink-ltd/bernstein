@@ -17,6 +17,7 @@ from pathlib import Path
 
 # Test-scope imports of the production builder are allowed; the package under
 # test (bernstein_verify) never imports bernstein.
+from bernstein.core.compliance.ai_rmf import build_ai_rmf_pack
 from bernstein.core.compliance.pack import (
     build_incident_pack,
     build_oversight_pack,
@@ -318,3 +319,87 @@ def test_incident_broken_hmac_chain_fails(tmp_path):
     result = verify_pack(tampered)
     assert not result.ok
     assert any("prev_hmac" in e or "chain" in e for e in result.errors), result.errors
+
+
+def test_ai_rmf_empty_window_verifies_and_one_byte_tamper_fails(tmp_path: Path) -> None:
+    """An empty window is a valid pack; one edited byte in the evidence fails."""
+    mapping = Path(__file__).resolve().parents[2] / "docs" / "compliance" / "nist-ai-rmf-mapping.md"
+    lineage = tmp_path / "lineage"
+    cards = tmp_path / "agents"
+    lineage.mkdir()
+    cards.mkdir()
+    key = _operator_key(tmp_path)
+    out = tmp_path / "ai-rmf.zip"
+    build_ai_rmf_pack(
+        since=date(2026, 1, 1),
+        until=date(2026, 6, 30),
+        org="Acme",
+        lineage_dir=lineage,
+        agent_cards_dir=cards,
+        mapping_path=mapping,
+        output_path=out,
+        operator_key_path=key,
+    )
+    result = verify_pack(out)
+    assert result.ok, result.errors
+    assert result.stats["window_claim"] == "empty"
+
+    with zipfile.ZipFile(out) as zf:
+        evidence = zf.read("subcategory-evidence.json")
+    tampered = _rewrite_member(out, "subcategory-evidence.json", _flip_one_byte(evidence))
+    rejected = verify_pack(tampered)
+    assert not rejected.ok
+    assert any("subcategory-evidence.json" in err for err in rejected.errors), rejected.errors
+
+
+def _ai_rmf_empty_pack(tmp_path: Path) -> Path:
+    mapping = Path(__file__).resolve().parents[2] / "docs" / "compliance" / "nist-ai-rmf-mapping.md"
+    lineage = tmp_path / "lineage"
+    cards = tmp_path / "agents"
+    lineage.mkdir()
+    cards.mkdir()
+    out = tmp_path / "ai-rmf.zip"
+    build_ai_rmf_pack(
+        since=date(2026, 1, 1),
+        until=date(2026, 6, 30),
+        org="Acme",
+        lineage_dir=lineage,
+        agent_cards_dir=cards,
+        mapping_path=mapping,
+        output_path=out,
+        operator_key_path=_operator_key(tmp_path),
+    )
+    return out
+
+
+def _rewrite_ai_rmf_evidence(pack: Path, edit) -> Path:
+    """Rewrite the evidence document as canonical JSON, so only the edit is judged."""
+    with zipfile.ZipFile(pack) as zf:
+        doc = json.loads(zf.read("subcategory-evidence.json"))
+    edit(doc)
+    canonical = json.dumps(doc, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
+    return _rewrite_member(pack, "subcategory-evidence.json", canonical)
+
+
+def test_ai_rmf_pack_without_mapping_hash_fails(tmp_path: Path) -> None:
+    pack = _ai_rmf_empty_pack(tmp_path)
+    assert verify_pack(pack).ok
+    rejected = verify_pack(_rewrite_ai_rmf_evidence(pack, lambda doc: doc.pop("mapping_sha256")))
+    assert not rejected.ok
+    assert any("mapping_sha256" in err for err in rejected.errors), rejected.errors
+
+
+def test_ai_rmf_partial_row_claiming_evidence_fails(tmp_path: Path) -> None:
+    pack = _ai_rmf_empty_pack(tmp_path)
+
+    def _claim_partial(doc: dict) -> None:
+        partial = next(row for row in doc["rows"] if row["verdict"] == "Partial")
+        partial["evidenced"] = True
+
+    rejected = verify_pack(_rewrite_ai_rmf_evidence(pack, _claim_partial))
+    assert not rejected.ok
+    assert any("Partial row claims chain evidence" in err for err in rejected.errors), (
+        rejected.errors
+    )

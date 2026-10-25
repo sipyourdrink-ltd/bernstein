@@ -44,7 +44,12 @@ def _write(path: Path, body: str) -> Path:
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
-    """A minimal ``src/bernstein`` tree with the two scanned packages present."""
+    """A minimal ``src/bernstein`` tree with the two scanned packages present.
+
+    The tree must sit outside this repository: the last test scans the real
+    tree, so a fixture symbol written under it would fail that test.
+    """
+    assert not tmp_path.resolve().is_relative_to(REPO_ROOT)
     for package in ("core/security", "core/identity"):
         _write(tmp_path / "src/bernstein" / package / "__init__.py", '"""package."""\n')
     _write(tmp_path / "src/bernstein/core/__init__.py", '"""core."""\n')
@@ -105,6 +110,63 @@ def test_symbol_called_from_a_production_module_passes(check_module: ModuleType,
         def run() -> bool:
             return enforce_live_control()
         ''',
+    )
+
+    assert _run(check_module, tree) == 0
+
+
+def test_unrelated_object_attribute_does_not_reach_a_control(
+    check_module: ModuleType, tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An SDK method with the same name is not a caller of a security function."""
+    _write(
+        tree / "src/bernstein/core/security/policy.py",
+        """
+        def create_context() -> None:
+            pass
+        """,
+    )
+    _write(
+        tree / "src/bernstein/core/orchestration/runner.py",
+        """
+        def run(sandbox: object) -> None:
+            sandbox.create_context()
+        """,
+    )
+
+    assert _run(check_module, tree) == 1
+    assert "policy.py::create_context" in capsys.readouterr().err
+
+    _write(
+        tree / "unreachable_controls_allowlist.txt",
+        """
+        src/bernstein/core/security/policy.py::create_context  # no production caller
+        """,
+    )
+    assert _run(check_module, tree) == 0
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "import bernstein.core.security.policy as policy\npolicy.create_context()",
+        "from bernstein.core.security import policy\npolicy.create_context()",
+        "from ..security import policy\npolicy.create_context()",
+        "from bernstein.core.security.policy import create_context as make_context\nmake_context()",
+    ],
+)
+def test_imported_control_aliases_reach_the_right_module(check_module: ModuleType, tree: Path, caller: str) -> None:
+    """Qualified and aliased imports still reach the actual tracked function."""
+    _write(
+        tree / "src/bernstein/core/security/policy.py",
+        """
+        def create_context() -> None:
+            pass
+        """,
+    )
+    _write(
+        tree / "src/bernstein/core/orchestration/runner.py",
+        f"def run() -> None:\n{textwrap.indent(caller, '    ')}\n",
     )
 
     assert _run(check_module, tree) == 0
@@ -380,7 +442,9 @@ def test_allowlist_entry_for_a_reachable_symbol_is_reported_as_stale(
     assert "now reachable or gone" in capsys.readouterr().err
 
 
-def test_update_writes_a_reason_marker_the_gate_rejects(check_module: ModuleType, tree: Path) -> None:
+def test_update_writes_a_reason_marker_the_gate_rejects(
+    check_module: ModuleType, tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """``--update`` records the finding but refuses to grant it a reason."""
     _write(
         tree / "src/bernstein/core/security/new_control.py",
@@ -397,9 +461,17 @@ def test_update_writes_a_reason_marker_the_gate_rejects(check_module: ModuleType
     written = (tree / "unreachable_controls_allowlist.txt").read_text(encoding="utf-8")
     assert "enforce_new_control" in written
     assert check_module.REASON_REQUIRED in written
+    capsys.readouterr()
     assert _run(check_module, tree) == 1
+    # Consumed here: the suite runs uncaptured (``-s``), and an unread report
+    # naming this fixture symbol lands next to any real-tree failure in the
+    # same file, where it reads as a stray file in the repository.
+    assert "enforce_new_control has no reason" in capsys.readouterr().err
 
 
-def test_repository_tree_matches_the_committed_allowlist(check_module: ModuleType) -> None:
+def test_repository_tree_matches_the_committed_allowlist(
+    check_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The shipped allowlist covers this tree exactly - no unlisted, no stale."""
-    assert check_module.main(["--repo-root", str(REPO_ROOT)]) == 0
+    code = check_module.main(["--repo-root", str(REPO_ROOT)])
+    assert code == 0, capsys.readouterr().err

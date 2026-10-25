@@ -19,6 +19,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from bernstein.core.persistence.workspace import is_workspace_trusted
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from types import MappingProxyType
@@ -41,6 +43,7 @@ __all__ = [
     "HookRegistry",
     "LifecycleContext",
     "LifecycleEvent",
+    "UntrustedWorkspaceError",
     "bind_rate_limit_emit",
     "bind_retry_continuation_emit",
     "discover_default_hook_scripts",
@@ -301,6 +304,23 @@ class HookFailure(RuntimeError):
         self.__cause__ = cause
 
 
+class UntrustedWorkspaceError(HookFailure):
+    """Raised when a script hook would run in a workspace that is not trusted.
+
+    Script hooks are discovered from, or declared in, the repository
+    being worked on.  Like the plugin manager's committed hook scripts,
+    they run only after the workspace has been explicitly trusted.
+    """
+
+    def __init__(self, event: LifecycleEvent, hook: str, workdir: Path) -> None:
+        super().__init__(event, hook, stderr="workspace not trusted")
+        self.args = (
+            f"workspace {workdir} is not trusted; refusing to run {hook} for {event.value}. "
+            "Run `bernstein trust` there (writes .sdd/runtime/workspace_trust.json) to enable script hooks.",
+        )
+        self.workdir = workdir
+
+
 @dataclass(frozen=True, slots=True)
 class _ScriptHook:
     path: Path
@@ -516,9 +536,19 @@ class HookRegistry:
         hook: _ScriptHook,
         context: LifecycleContext,
     ) -> HookDecision | None:
+        label = f"script:{hook.path}"
+        # Fail closed at the spawn boundary: a script registered from the
+        # repository must not run until the workspace is trusted.
+        if not is_workspace_trusted(context.workdir):
+            log.warning(
+                "Hook execution gated: workspace is not trusted (%s). Refusing %s for %s.",
+                context.workdir,
+                label,
+                event.value,
+            )
+            raise UntrustedWorkspaceError(event, label, context.workdir)
         env = _build_script_env(context)
         payload = json.dumps(context.to_payload()).encode("utf-8")
-        label = f"script:{hook.path}"
         try:
             proc = subprocess.run(
                 [str(hook.path)],

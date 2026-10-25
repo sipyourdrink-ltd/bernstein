@@ -187,7 +187,8 @@ def _standard_verify(path: Path) -> tuple[int, str]:
     spec.loader.exec_module(module)
     stdout = io.StringIO()
     with redirect_stdout(stdout):
-        rc = module.main(["--receipt", str(path)])
+        # Format and binding checks only: the fixture has no out-of-band key.
+        rc = module.main(["--receipt", str(path), "--allow-unpinned-key"])
     return rc, stdout.getvalue()
 
 

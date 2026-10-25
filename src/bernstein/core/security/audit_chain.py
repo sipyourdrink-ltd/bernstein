@@ -316,6 +316,11 @@ EVENT_ESCALATION_LADDER_EXHAUSTION = "escalation.ladder_exhaustion"
 #: exceed ``escalation_budget_usd``; the stop reason is recorded.
 EVENT_ESCALATION_LADDER_BUDGET_STOP = "escalation.ladder_budget_stop"
 
+#: Issue #4855 -- failure evidence a failure path recorded for a task. The
+#: ladder resolves its advance evidence from this event (keyed by the failed
+#: task id) and never from task metadata, which API clients can write.
+EVENT_ESCALATION_LADDER_FAILURE_EVIDENCE = "escalation.ladder_failure_evidence"
+
 #: Issue #2310 -- emitted whenever a webhook-node receipt is anchored in the
 #: webhook-node lineage spine. Inbound receipts bind ``{event_hash,
 #: journal_root}`` for a signed inbound event that spawned a run; outbound
@@ -1042,6 +1047,10 @@ EVENT_ODATA_WRITEBACK = "odata.writeback_receipt"
 #: after the attestation record was durable.
 EVENT_TOOLCALL_ATTESTATION = "toolcall.attestation"
 EVENT_TOOLCALL_ENFORCED_DISPATCH = "toolcall.enforced_dispatch"
+#: Issue #6270 -- written after the connector returns.  Binds the observed
+#: effect to the same intent digest as the pre-dispatch pair.  Absence is
+#: "effect unobserved", never success.  Slice 1 is the writer only.
+EVENT_TOOLCALL_EFFECT = "toolcall.effect"
 EVENT_IDENTITY_SPAWN_ATTESTATION = "identity.spawn_attestation"
 
 #: Issue #5031 -- session revocation propagation
@@ -3196,6 +3205,36 @@ def record_escalation_receipt(
         resource_type="escalation_receipt",
         resource_id=journal_entry_hash,
         details=details,
+    )
+
+
+def record_escalation_ladder_failure_evidence(
+    *,
+    chain: AuditChainStore,
+    run_id: str,
+    task_id: str,
+    evidence_class: str,
+    evidence_digest: str,
+    actor: str = "escalation_ladder",
+) -> AuditEvent:
+    """Append an ``escalation.ladder_failure_evidence`` event into *chain* (#4855).
+
+    Called by the failure path that produced the artefact (gate result,
+    loop verdict, degraded-terminal projection). ``evidence_digest`` is that
+    artefact's content address; the ladder later resolves the reference
+    from this event rather than from anything a client can PATCH.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_ESCALATION_LADDER_FAILURE_EVIDENCE,
+        actor=actor,
+        resource_type="escalation_ladder_failure_evidence",
+        resource_id=task_id,
+        details={
+            "run_id": run_id,
+            "task_id": task_id,
+            "evidence_class": evidence_class,
+            "evidence_digest": evidence_digest,
+        },
     )
 
 
@@ -7498,6 +7537,66 @@ def record_automation_action(
     )
 
 
+_TOOLCALL_EFFECT_OUTCOMES = frozenset({"ok", "error", "timeout", "partial"})
+
+
+def record_toolcall_effect(
+    *,
+    chain: AuditChainStore,
+    intent_digest: str,
+    effect_digest: str,
+    outcome: str,
+    duration_ms: float,
+    attestation_ref: str,
+    dispatch_ref: str,
+    actor: str = "bernstein.toolcall-interlock",
+    resource_id: str = "",
+) -> AuditEvent:
+    """Append a ``toolcall.effect`` event into *chain* (#6270 slice 1).
+
+    Follows :func:`record_automation_action`: the executed effect is itself a
+    chain event, referencing the dispatch marker that admitted the call and the
+    attestation that authorised it.  The ``intent_digest`` is the same digest
+    the pre-dispatch pair already bound.
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        intent_digest: Host-derived ``sha256:`` digest of the tool-call intent.
+        effect_digest: ``sha256:`` of the canonical response or patch.
+        outcome: One of ``ok``, ``error``, ``timeout``, ``partial``.
+        duration_ms: Connector wall time in milliseconds.
+        attestation_ref: Opaque handle of the preceding attestation.
+        dispatch_ref: Opaque handle of the preceding dispatch marker.
+        actor: Recorded actor; defaults to ``"bernstein.toolcall-interlock"``.
+        resource_id: Scope the event is stored under. The live native path
+            passes ``intent.scope_id``; when omitted, the fallback is
+            *intent_digest*.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    if outcome not in _TOOLCALL_EFFECT_OUTCOMES:
+        raise ValueError(f"unsupported tool-call effect outcome: {outcome}")
+    if not intent_digest.strip() or not effect_digest.strip():
+        raise ValueError("tool-call effect requires intent_digest and effect_digest")
+    if not attestation_ref.strip() or not dispatch_ref.strip():
+        raise ValueError("tool-call effect requires attestation_ref and dispatch_ref")
+    return chain.log_with_prev_digest(
+        event_type=EVENT_TOOLCALL_EFFECT,
+        actor=actor,
+        resource_type="toolcall_scope",
+        resource_id=resource_id or intent_digest,
+        details={
+            "intent_digest": intent_digest,
+            "effect_digest": effect_digest,
+            "outcome": outcome,
+            "duration_ms": duration_ms,
+            "attestation_ref": attestation_ref,
+            "dispatch_ref": dispatch_ref,
+        },
+    )
+
+
 def record_expectation_expired(
     *,
     chain: AuditChainStore,
@@ -9072,6 +9171,109 @@ def record_pool_warm_quarantine(
 
 
 # ---------------------------------------------------------------------------
+# Reconciliation lanes (#5120)
+# ---------------------------------------------------------------------------
+# A lane's lifecycle lives in the chain, mirroring the pool section above:
+# register/update/retire events are the only mutation path, and the runtime
+# lane registry is a deterministic projection rebuilt by replaying them (see
+# ``bernstein.core.govern.lane_registry``).
+
+#: A lane manifest was registered. Records the lane name and its canonical
+#: ``lane_hash`` so the registry projection can be rebuilt from the chain.
+EVENT_LANE_REGISTERED = "lane.registered"
+
+#: A lane manifest was updated (superseded by a new canonical hash). Records
+#: both the prior and the new ``lane_hash`` so the projection is unambiguous.
+EVENT_LANE_UPDATED = "lane.updated"
+
+#: A lane was retired. The projection drops it.
+EVENT_LANE_RETIRED = "lane.retired"
+
+
+def record_lane_registered(
+    *,
+    chain: AuditChainStore,
+    lane_name: str,
+    lane_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``lane.registered`` event into *chain* (#5120).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        lane_name: Operator-facing lane name.
+        lane_hash: Canonical hash identifying the registered lane manifest.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_LANE_REGISTERED,
+        actor=actor,
+        resource_type="reconciliation_lane",
+        resource_id=lane_hash,
+        details={"lane_name": lane_name, "lane_hash": lane_hash},
+    )
+
+
+def record_lane_updated(
+    *,
+    chain: AuditChainStore,
+    lane_name: str,
+    lane_hash: str,
+    prev_lane_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``lane.updated`` event into *chain* (#5120).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        lane_name: Operator-facing lane name.
+        lane_hash: New canonical hash identifying the lane manifest.
+        prev_lane_hash: The superseded lane hash for the same name.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_LANE_UPDATED,
+        actor=actor,
+        resource_type="reconciliation_lane",
+        resource_id=lane_hash,
+        details={"lane_name": lane_name, "lane_hash": lane_hash, "prev_lane_hash": prev_lane_hash},
+    )
+
+
+def record_lane_retired(
+    *,
+    chain: AuditChainStore,
+    lane_name: str,
+    lane_hash: str,
+    actor: str = "operator",
+) -> AuditEvent:
+    """Append a ``lane.retired`` event into *chain* (#5120).
+
+    Args:
+        chain: The audit chain store accepting the entry.
+        lane_name: Operator-facing lane name.
+        lane_hash: Canonical hash of the retired lane manifest.
+        actor: Recorded actor; defaults to ``"operator"``.
+
+    Returns:
+        The recorded :class:`AuditEvent` with ``prev_chain_digest`` embedded.
+    """
+    return chain.log_with_prev_digest(
+        event_type=EVENT_LANE_RETIRED,
+        actor=actor,
+        resource_type="reconciliation_lane",
+        resource_id=lane_hash,
+        details={"lane_name": lane_name, "lane_hash": lane_hash},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Provenance-verified release update advisory (#2942)
 # ---------------------------------------------------------------------------
 
@@ -9838,6 +10040,7 @@ __all__ = [
     "EVENT_ENDPOINT_CERTIFICATION",
     "EVENT_ESCALATION_LADDER_BUDGET_STOP",
     "EVENT_ESCALATION_LADDER_EXHAUSTION",
+    "EVENT_ESCALATION_LADDER_FAILURE_EVIDENCE",
     "EVENT_ESCALATION_LADDER_HOP",
     "EVENT_ESCALATION_LADDER_REFUSAL",
     "EVENT_ESCALATION_RECEIPT",
@@ -9862,6 +10065,9 @@ __all__ = [
     "EVENT_INPUT_REFUSAL",
     "EVENT_INTENT_CAPSULE",
     "EVENT_INTENT_DRIFT",
+    "EVENT_LANE_REGISTERED",
+    "EVENT_LANE_RETIRED",
+    "EVENT_LANE_UPDATED",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
     "EVENT_MCP_CAPABILITY_DRIFT",
@@ -10001,6 +10207,7 @@ __all__ = [
     "record_endpoint_certification",
     "record_escalation_ladder_budget_stop",
     "record_escalation_ladder_exhaustion",
+    "record_escalation_ladder_failure_evidence",
     "record_escalation_ladder_hop",
     "record_escalation_ladder_refusal",
     "record_escalation_receipt",
@@ -10023,6 +10230,9 @@ __all__ = [
     "record_input_refusal",
     "record_intent_capsule",
     "record_intent_drift",
+    "record_lane_registered",
+    "record_lane_retired",
+    "record_lane_updated",
     "record_mandate_consent_receipt",
     "record_mandate_revocation",
     "record_mcp_capability_drift",
@@ -10096,6 +10306,7 @@ __all__ = [
     "record_task_tier_decision",
     "record_thread_approval",
     "record_token_binding_refusal",
+    "record_toolcall_effect",
     "record_tournament_selection",
     "record_tracker_pipeline_sweep",
     "record_trajectory_receipt",

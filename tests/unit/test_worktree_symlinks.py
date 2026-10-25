@@ -6,6 +6,7 @@ from the main repository into agent worktrees to save disk and setup time.
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,11 @@ from unittest.mock import patch
 import pytest
 from bernstein.core.git_basic import GitResult
 from bernstein.core.worktree import WorktreeManager, WorktreeSetupConfig, setup_worktree_env
+
+#: The logger `setup_worktree_env` warns through. Every assertion on those records pins the
+#: capture to it: `caplog` only sees what the logger's effective level lets through, so a test
+#: that does not pin is asserting on whatever logging state the worker happens to be in.
+WORKTREE_LOGGER = "bernstein.core.git.worktree"
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -175,7 +181,10 @@ class TestWorktreeSymlinksFailures:
 
             raise OSError(errno.EXDEV, "Invalid cross-device link")
 
-        with patch.object(Path, "symlink_to", _fake_symlink):
+        with (
+            caplog.at_level(logging.WARNING, logger=WORKTREE_LOGGER),
+            patch.object(Path, "symlink_to", _fake_symlink),
+        ):
             setup_worktree_env(repo_root, worktree_path, config)
 
         assert any("Failed to symlink" in r.message for r in caplog.records)
@@ -200,7 +209,10 @@ class TestWorktreeSymlinksFailures:
                 raise OSError(errno.EXDEV, "cross-device")
             return original_symlink_to(self_path, target)
 
-        with patch.object(Path, "symlink_to", _conditional_fail):
+        with (
+            caplog.at_level(logging.WARNING, logger=WORKTREE_LOGGER),
+            patch.object(Path, "symlink_to", _conditional_fail),
+        ):
             setup_worktree_env(repo_root, worktree_path, config)
 
         assert (worktree_path / "node_modules").is_symlink()
@@ -218,7 +230,10 @@ class TestWorktreeSymlinksFailures:
         def _fail(_self: Path, _target: Path) -> None:  # type: ignore[override]
             raise PermissionError("a required privilege is not held")
 
-        with patch.object(Path, "symlink_to", _fail):
+        with (
+            caplog.at_level(logging.WARNING, logger=WORKTREE_LOGGER),
+            patch.object(Path, "symlink_to", _fail),
+        ):
             setup_worktree_env(repo_root, worktree_path, config)
 
         assert any("Failed to symlink" in r.message for r in caplog.records)
@@ -327,6 +342,46 @@ class TestWorktreeSymlinksIntegration:
         assert (wt / "build").readlink().is_relative_to(repo_root.resolve())
 
 
+class TestWorktreeSymlinkLoggingIsolation:
+    """The warning assertions must not depend on the worker's ambient logging state.
+
+    These four assertions failed together, on one pytest-xdist worker, in 2 of 6 full-suite
+    runs (#5954). They read `caplog.records` without pinning the capture level, so they were
+    asserting on whatever level `bernstein.core.git.worktree` happened to have -- and a
+    neighbour that raises it and does not put it back is enough to empty the records. That
+    depends on which tests share a worker, which is why it surfaced as a flake rather than a
+    deterministic red.
+    """
+
+    def test_symlink_failure_warning_is_captured_regardless_of_prior_logging_state(
+        self, repo_root: Path, worktree_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A raised level left behind by a neighbour does not hide the warning.
+
+        Without `caplog.at_level`, this exact setup is the failure: the warning is emitted,
+        the code behaves correctly, and the assertion sees nothing.
+        """
+        (repo_root / "node_modules").mkdir()
+        config = WorktreeSetupConfig(symlink_dirs=("node_modules",))
+
+        def _fail(_self: Path, _target: Path) -> None:  # type: ignore[override]
+            raise OSError("cross-device link")
+
+        worktree_logger = logging.getLogger(WORKTREE_LOGGER)
+        prior = worktree_logger.level
+        worktree_logger.setLevel(logging.ERROR)
+        try:
+            with (
+                caplog.at_level(logging.WARNING, logger=WORKTREE_LOGGER),
+                patch.object(Path, "symlink_to", _fail),
+            ):
+                setup_worktree_env(repo_root, worktree_path, config)
+
+            assert any("Failed to symlink" in r.message for r in caplog.records)
+        finally:
+            worktree_logger.setLevel(prior)
+
+
 # ---------------------------------------------------------------------------
 # Windows caveats
 # ---------------------------------------------------------------------------
@@ -343,7 +398,10 @@ class TestWorktreeSymlinksWindowsCaveats:
         def _win_fail(_self: Path, _target: Path) -> None:  # type: ignore[override]
             raise OSError("A required privilege is not held by the client")
 
-        with patch.object(Path, "symlink_to", _win_fail):
+        with (
+            caplog.at_level(logging.WARNING, logger=WORKTREE_LOGGER),
+            patch.object(Path, "symlink_to", _win_fail),
+        ):
             setup_worktree_env(repo_root, worktree_path, config)
 
         # Should log warning, not crash

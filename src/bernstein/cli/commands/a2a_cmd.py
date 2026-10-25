@@ -31,10 +31,14 @@ from bernstein.cli.helpers import (
     print_success,
 )
 from bernstein.core.interop.a2a_card import (
+    DEFAULT_CARD_TTL_SECONDS,
     SignedCapabilityCard,
+    card_public_key_fingerprint,
     issue_capability_card,
     resolve_advertised_card_policies,
+    verify_capability_card,
 )
+from bernstein.core.persistence.atomic_write import write_atomic_text
 from bernstein.core.protocols.a2a.publish import (
     DEFAULT_PUBLISH_SURFACES,
     PUBLISH_SURFACES,
@@ -204,7 +208,12 @@ def verify(
     type=click.Path(dir_okay=False, path_type=Path),
     default=_DEFAULT_CARD_PATH,
     show_default=True,
-    help="Signed capability card to publish. Minted on first use and reused after.",
+    help=(
+        "Signed capability card to publish. Minted on first use, reused while"
+        " valid, and re-issued from its own claims once expired, after the"
+        " stored signature verifies; the key file beside the card is required"
+        " for re-issue."
+    ),
 )
 @click.option(
     "--surface",
@@ -292,18 +301,23 @@ def publish(
 
 
 def _load_or_issue_card(card_path: Path, *, endpoint: str) -> SignedCapabilityCard:
-    """Return the node's capability card, minting and persisting it once.
+    """Return the node's capability card, reusing it while valid.
 
-    Reusing a persisted card keeps one stable identity across republications;
-    minting a fresh card each time would hand peers a new key to trust on
-    every publish. The private key is written beside the card at ``0600``.
+    A persisted card that has not expired is reused as-is, keeping one stable
+    identity across republications. An expired one is re-issued from its own
+    claims on the key persisted beside it, so both the key fingerprint and
+    whatever the card asserts survive the new validity window. When no card
+    exists yet one is minted for this node; the private key is written beside
+    the card at ``0600``.
     """
     if card_path.exists():
-        return SignedCapabilityCard.from_json(card_path.read_text(encoding="utf-8"))
+        card = SignedCapabilityCard.from_json(card_path.read_text(encoding="utf-8"))
+        if not card.card.is_expired():
+            return card
+        return _reissue_expired_card(card, card_path)
 
     key_path = card_path.with_suffix(card_path.suffix + ".key.pem")
     private_key_pem = key_path.read_bytes() if key_path.exists() else None
-
     signed, private_key_pem = issue_capability_card(
         issuer="bernstein",
         name="bernstein",
@@ -313,11 +327,57 @@ def _load_or_issue_card(card_path: Path, *, endpoint: str) -> SignedCapabilityCa
         private_key_pem=private_key_pem,
     )
 
-    card_path.parent.mkdir(parents=True, exist_ok=True)
-    card_path.write_text(signed.to_json(), encoding="utf-8")
+    # public artifact: peers read and republish it, so keep the 0644 write_text default
+    write_atomic_text(card_path, signed.to_json(), mode=0o644)
     if not key_path.exists():
         key_path.write_bytes(private_key_pem)
         key_path.chmod(0o600)
+    return signed
+
+
+def _reissue_expired_card(card: SignedCapabilityCard, card_path: Path) -> SignedCapabilityCard:
+    """Re-issue an expired card from its own claims on its persisted key.
+
+    The card file may be operator-authored (``bernstein interop a2a card``),
+    so the claims are carried over verbatim rather than re-derived from this
+    command's defaults, and only after the stored signature verifies: without
+    that check anything able to edit the file on disk could add a claim here
+    and have it signed under the node's real key. A missing or mismatched key
+    file is refused for the same reason: minting a different key would
+    silently change the node's identity, and re-signing the card's claims
+    under a key the operator never bound them to is not this command's call
+    to make.
+    """
+    if not verify_capability_card(card, check_expiry=False):
+        _fail(f"the expired capability card at {card_path} does not verify; refusing to re-sign its claims")
+    key_path = card_path.with_suffix(card_path.suffix + ".key.pem")
+    if not key_path.exists():
+        _fail(
+            f"expired capability card at {card_path} has no key file beside it; "
+            "restore the key it was issued with to keep the node's identity, or "
+            "mint a new card with 'bernstein interop a2a card' and re-trust "
+            "the new fingerprint"
+        )
+    private_key_pem = key_path.read_bytes()
+    ttl_seconds = int(card.card.expires_at - card.card.created_at)
+    signed, _echoed_key = issue_capability_card(
+        issuer=card.card.issuer,
+        name=card.card.name,
+        description=card.card.description,
+        advertised_tools=list(card.card.advertised_tools),
+        policies=card.card.policies,
+        private_key_pem=private_key_pem,
+        kid=card.card.kid,
+        ttl_seconds=ttl_seconds if ttl_seconds > 0 else DEFAULT_CARD_TTL_SECONDS,
+    )
+    # compare via issue_capability_card's own key derivation: no direct private-key load (key-custody guard)
+    if card_public_key_fingerprint(signed.card.public_key_pem) != card_public_key_fingerprint(card.card.public_key_pem):
+        _fail(
+            f"the key beside {card_path} does not match the expired card's public key; "
+            "restore the key the card was issued with, or mint a new card with "
+            "'bernstein interop a2a card' and re-trust the new fingerprint"
+        )
+    write_atomic_text(card_path, signed.to_json(), mode=card_path.stat().st_mode & 0o777)
     return signed
 
 

@@ -126,6 +126,12 @@ URL or the access log. Posture is unchanged: a non-loopback bind still refuses
 to start without configured auth and is never auto-minted a bearer, and an
 external, tokenless `/api/v1/*` request still returns `401`.
 
+**In the UI.** When the server refuses the browser's token, a banner under the
+top bar asks for it: paste the value of `BERNSTEIN_AUTH_TOKEN` and press
+**Save**. Every panel retries with the new token, and the banner closes on the
+first request the server accepts. The same field is under **Settings → Auth
+token**.
+
 Manual fallback (any bundle): set the key the API reads and reload.
 
 ```js

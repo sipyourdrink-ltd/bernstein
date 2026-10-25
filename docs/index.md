@@ -4,7 +4,7 @@ description: >-
   The open-source governance layer for AI agents. No model in the coordination
   loop, so replaying a plan reproduces its task graph byte-identically.
   Signed lineage plus an opt-in HMAC audit chain a reviewer checks offline,
-  without rerunning it. Run Claude Code, Codex, Gemini CLI, and 40+ more behind
+  without rerunning it. Run Claude Code, Codex, Gemini CLI, and 50+ more behind
   one governance surface, for any deliverable, with zero vendor lock-in.
 tags:
   - orchestration
@@ -13,20 +13,32 @@ tags:
   - AI coding agents
 search:
   boost: 2
+hide:
+  - toc
 ---
 
-# Bernstein
+<div class="bn-hero" markdown>
 
-**Reproducible multi-agent runs. Verifiable results. Any agent, any deliverable.**
+<p class="bn-eyebrow">Bernstein documentation</p>
 
-<a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+# Reproducible multi-agent runs. *Verifiable* results.
+
+<p class="bn-lede">Any agent, any deliverable. A deterministic scheduler runs AI agents in parallel, gates what they produce, and records every step, so a run can be checked after the fact, offline, from its artifacts alone.</p>
+
+<div class="bn-actions" markdown>
+[Install](getting-started/install.md){ .md-button .md-button--primary }
+[Take the first run](getting-started/first-run.md){ .md-button }
+[Read the architecture](architecture/ARCHITECTURE.md){ .md-button }
+</div>
+
+</div>
 
 <figure markdown>
   ![A real bernstein demo run - mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline](assets/demo-run/demo.gif){ loading=lazy width="820" }
   <figcaption>A real recorded run - its signed receipt and public key ship next to this recording, and CI re-verifies them on every push</figcaption>
 </figure>
 
----
+## What it does
 
 Bernstein takes a goal, breaks it into tasks, assigns them to AI agents running in parallel, verifies the output, and merges the results. You come back to working code, passing tests, and a clean git history - or, when a task declares an artifact contract, to a signed deliverable: a research dossier, a dataset, an audit evidence pack.
 
@@ -98,7 +110,7 @@ A run in flight is watchable from either operator surface. Both read the same ta
 
     ---
 
-    40+ CLI adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
+    50+ CLI adapters: Claude Code, Codex, OpenAI Agents SDK v2, Gemini, Cursor, Aider, GitHub Copilot, Devin Terminal, CLM gateway, AWS Q Developer, and more.
     Mix cheap local models with cloud models in the same run.
 
 - :material-source-branch:{ .lg .middle } **Git worktree isolation**
@@ -126,8 +138,8 @@ minutes. State lives in `.sdd/` - no server to provision. Per-agent
 credential scoping keeps your keys out of the client's environment.
 The broad adapter spread means the swarm runs on whichever CLI agent
 the client already trusts (Claude Code, Codex, Gemini CLI, Aider,
-and more). Every step is an HMAC-signed audit record, replayable
-for client compliance review.
+and more). `BERNSTEIN_AUDIT=1` enables the HMAC-chained audit log
+for offline client compliance review.
 
 ## Quick links
 
@@ -148,6 +160,7 @@ for client compliance review.
 
 ## Links
 
+- [Ask DeepWiki](https://deepwiki.com/sipyourdrink-ltd/bernstein)
 - [Website](https://bernstein.run)
 - [GitHub](https://github.com/sipyourdrink-ltd/bernstein)
 - [PyPI](https://pypi.org/project/bernstein/)

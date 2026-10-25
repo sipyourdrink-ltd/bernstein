@@ -93,9 +93,10 @@ def plan_requests(
     approving = {login for login, r in standing.items() if r.state == "APPROVED" and r.commit_id == pr.head_sha}
     approving &= may_approve
     need_total, need_core = approvals_needed(pr)
+    core = roster.core_for(pr.paths)
     pending = requested & may_approve
     missing_total = need_total - len(approving) - len(pending)
-    missing_core = need_core - len(approving & roster.core) - len(pending & roster.core)
+    missing_core = need_core - len(approving & core) - len(pending & core)
     if missing_total <= 0:
         return []
 
@@ -105,7 +106,7 @@ def plan_requests(
         key=lambda login: (load.get(login, 0), login),
     )
     picks: list[str] = []
-    for login in [c for c in candidates if c in roster.core]:
+    for login in [c for c in candidates if c in core]:
         if missing_core <= 0 or len(picks) >= missing_total:
             break
         picks.append(login)

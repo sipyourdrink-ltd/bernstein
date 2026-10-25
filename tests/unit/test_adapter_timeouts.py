@@ -204,13 +204,12 @@ class TestAllAdaptersHaveTimeout:
         self._assert_has_timer(CursorAdapter, "bernstein.adapters.cursor.subprocess.Popen", tmp_path)
 
     def test_gemini_has_timer(self, tmp_path: Path) -> None:
-        # GeminiAdapter discovers the binary via shutil.which at spawn time
-        # (dual-binary cascade for the 2026-06-18 transition). Pin the
-        # resolver here so the test passes on a CI runner that has neither
-        # ``antigravity`` nor ``gemini`` installed.
+        # GeminiAdapter discovers the binary via shutil.which at spawn time.
+        # Pin the resolver here so the test passes on a CI runner that does
+        # not have ``gemini`` installed.
         with patch(
             "bernstein.adapters.gemini.shutil.which",
-            side_effect=lambda name: f"/usr/local/bin/{name}" if name in {"antigravity", "gemini"} else None,
+            side_effect=lambda name: f"/usr/local/bin/{name}" if name == "gemini" else None,
         ):
             self._assert_has_timer(GeminiAdapter, "bernstein.adapters.gemini.subprocess.Popen", tmp_path)
 

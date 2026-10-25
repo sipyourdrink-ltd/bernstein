@@ -94,16 +94,16 @@ bernstein stop                          # graceful shutdown
 
 ## Core Documentation
 
-- [Getting Started](https://bernstein.readthedocs.io/en/latest/getting-started/GETTING_STARTED/) - Install, configure, run first orchestration in 60 seconds
-- [Architecture](https://bernstein.readthedocs.io/en/latest/architecture/ARCHITECTURE/) - Task server, agent spawner, janitor verification, worktree isolation
-- [Why deterministic](https://bernstein.readthedocs.io/en/latest/architecture/WHY_DETERMINISTIC/) - Design rationale for zero-LLM scheduling
-- [Lifecycle FSM](https://bernstein.readthedocs.io/en/latest/architecture/LIFECYCLE/) - Task and agent state machines with transition tables
-- [Adapter Guide](https://bernstein.readthedocs.io/en/latest/adapters/ADAPTER_GUIDE/) - Supported agents and how to add your own
-- [Sandbox backends](https://bernstein.readthedocs.io/en/latest/architecture/sandbox/) - Worktree, Docker, E2B, Modal
-- [Artifact sinks](https://bernstein.readthedocs.io/en/latest/architecture/storage/) - Local, S3, GCS, Azure Blob, Cloudflare R2
-- [Skills](https://bernstein.readthedocs.io/en/latest/architecture/skills/) - Progressive-disclosure skill packs (OpenAI Agents SDK pattern)
-- [Configuration](https://bernstein.readthedocs.io/en/latest/operations/CONFIG/) - `bernstein.yaml` reference
-- [API Reference](https://bernstein.readthedocs.io/en/latest/reference/openapi-reference/) - Task server REST API on `:8052`
+- [Getting Started](https://docs.bernstein.run/en/latest/getting-started/GETTING_STARTED/) - Install, configure, run first orchestration in 60 seconds
+- [Architecture](https://docs.bernstein.run/en/latest/architecture/ARCHITECTURE/) - Task server, agent spawner, janitor verification, worktree isolation
+- [Why deterministic](https://docs.bernstein.run/en/latest/architecture/WHY_DETERMINISTIC/) - Design rationale for zero-LLM scheduling
+- [Lifecycle FSM](https://docs.bernstein.run/en/latest/architecture/LIFECYCLE/) - Task and agent state machines with transition tables
+- [Adapter Guide](https://docs.bernstein.run/en/latest/adapters/ADAPTER_GUIDE/) - Supported agents and how to add your own
+- [Sandbox backends](https://docs.bernstein.run/en/latest/architecture/sandbox/) - Worktree, Docker, E2B, Modal
+- [Artifact sinks](https://docs.bernstein.run/en/latest/architecture/storage/) - Local, S3, GCS, Azure Blob, Cloudflare R2
+- [Skills](https://docs.bernstein.run/en/latest/architecture/skills/) - Progressive-disclosure skill packs (OpenAI Agents SDK pattern)
+- [Configuration](https://docs.bernstein.run/en/latest/operations/CONFIG/) - `bernstein.yaml` reference
+- [API Reference](https://docs.bernstein.run/en/latest/reference/openapi-reference/) - Task server REST API on `:8052`
 
 ## Capabilities
 
@@ -136,6 +136,6 @@ bernstein stop                          # graceful shutdown
 - [PyPI Package](https://pypi.org/project/bernstein/) - `pip install bernstein`
 - [npm wrapper](https://www.npmjs.com/package/bernstein-orchestrator) - `npx bernstein-orchestrator`
 - [Website](https://bernstein.run)
-- [Documentation](https://bernstein.readthedocs.io/)
+- [Documentation](https://docs.bernstein.run/)
 - [Author](https://alexchernysh.com) - Built by Alex Chernysh
 - [X / Twitter](https://x.com/alex_chernysh) - `@alex_chernysh`

@@ -183,6 +183,8 @@ class AutopilotLoop:
             if self.dry_run:
                 logger.info("DRY-RUN: would claim task %s", task_id)
                 self._append_ledger({"event": "dry_run_claim", "task_id": task_id})
+                # claim_next took a claim at the source; a dry run must not keep it.
+                await self.source.release(task)
                 break
 
             self._claimed_task_ids.add(task_id)
@@ -213,8 +215,13 @@ class AutopilotLoop:
         Returns:
             Task object or None.
         """
+        # Ids this call has already released.  A source that re-offers one
+        # after its release has nothing new to give, and without this the loop
+        # would claim and release the same task forever.
+        rejected: set[str] = set()
+
         # Keep trying until we find a matching task or run out
-        while True:
+        while not self._stop_requested.is_set():
             # Call source to get a candidate (source applies project filter)
             task = await self.source.claim_next(self.profile)
 
@@ -224,18 +231,25 @@ class AutopilotLoop:
             task_id = self._get_task_id(task)
 
             # Resume safety: skip already-claimed tasks
+            reason = None
             if task_id in self._claimed_task_ids:
-                logger.info("Task %s already claimed in this session, skipping", task_id)
-                await self.source.release(task)
-                continue
-
+                reason = "already claimed in this session"
             # Additional policy filters beyond what source applied
-            if not self._matches_profile(task):
-                logger.info("Task %s does not match profile, skipping", task_id)
+            elif not self._matches_profile(task):
+                reason = "does not match profile"
+
+            if reason is not None:
+                logger.info("Task %s %s, skipping", task_id, reason)
                 await self.source.release(task)
+                if task_id in rejected:
+                    logger.warning("Source re-offered released task %s; no further candidates", task_id)
+                    return None
+                rejected.add(task_id)
                 continue
 
             return task
+
+        return None
 
     def _matches_profile(self, task: Any) -> bool:
         """Check if task matches the donor's profile.

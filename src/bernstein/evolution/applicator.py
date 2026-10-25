@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -11,8 +12,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 import yaml
 
 from bernstein.core.persistence.atomic_write import write_atomic_text
+from bernstein.core.persistence.file_locks import cross_process_lock
 from bernstein.evolution.admission import AdmissionPolicy
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
+from bernstein.evolution.types import RollbackError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -56,8 +59,6 @@ class FileUpgradeExecutor:
         # copying a gate into each.
         self._admission = admission if admission is not None else AdmissionPolicy()
 
-        self._backup_files: dict[str, Path] = {}
-
     def execute_upgrade(self, proposal: UpgradeProposal) -> bool:
         """Execute an upgrade by applying configuration changes.
 
@@ -98,19 +99,301 @@ class FileUpgradeExecutor:
         self._admission.record_outcome(decision, applied)
         return applied
 
-    def rollback_upgrade(self, _proposal: UpgradeProposal) -> bool:
-        """Rollback an upgrade by restoring backup files."""
-        try:
-            for backup_key, backup_path in self._backup_files.items():
-                if backup_path.exists():
-                    target_path = self.config_dir / backup_key
-                    shutil.copy2(backup_path, target_path)
-                    backup_path.unlink()
-            self._backup_files.clear()
+    def rollback_upgrade(self, proposal: UpgradeProposal) -> bool:
+        """Restore the files *proposal* changed, from the record left at apply time.
+
+        Driven by the proposal and by what was written to disk, never by
+        process-local state. The previous version restored from
+        ``self._backup_files``, a dictionary populated during the same process
+        that applied the change: a rollback after a restart found it empty,
+        swallowed the emptiness, and returned ``True``. It also ignored its own
+        argument, so it could not roll back a NAMED proposal even in the
+        process that applied one.
+
+        The three answers this can give are kept distinct, because the
+        dangerous one used to be indistinguishable from success:
+
+        * nothing was applied for this proposal, so there is nothing to undo -
+          ``True``, and that is the honest answer rather than a convenient one;
+        * a manifest exists and every file in it was restored - ``True``;
+        * a manifest is missing for an apply that happened, or a restore
+          failed - :class:`RollbackError`. A rollback that reports success for
+          work it did not do is worse than one that fails, because the caller
+          stops looking.
+
+        Args:
+            proposal: The proposal to undo.
+
+        Returns:
+            ``True`` when the tree is in the state that preceded *proposal*.
+
+        Raises:
+            RollbackError: The files this proposal changed could not be put
+                back, or the record needed to put them back is gone.
+        """
+        manifest = self._backup_manifest_path(proposal.storage_key)
+        if not manifest.exists():
+            self._refuse_legacy_backup(proposal)
+            # No record. Either nothing was applied - the common case today,
+            # since every category resolves to `_skip_no_sink` - or the record
+            # was lost. `history.jsonl` is what tells those apart, and getting
+            # it wrong in the reassuring direction is the defect above.
+            if self.was_applied(proposal):
+                raise RollbackError(
+                    f"proposal {proposal.id} was applied but no backup manifest exists at "
+                    f"{manifest}; the files it changed cannot be restored from here"
+                )
+            self._write_rollback_receipt(proposal, restored=[], note="nothing was applied")
             return True
-        except Exception as exc:
-            logger.exception("Failed to rollback upgrade: %s", exc)
-            return False
+
+        recorded = self._read_backup_manifest(manifest)
+        wanted = self._files_to_restore(proposal, recorded)
+        restored: list[str] = []
+        try:
+            for filename in wanted:
+                backup_path = self._contained(self.upgrades_dir, recorded[filename], proposal.id)
+                target_path = self._contained(self.config_dir, filename, proposal.id)
+                if not backup_path.exists():
+                    raise RollbackError(
+                        f"proposal {proposal.id} recorded a backup for {filename!r} at "
+                        f"{backup_path}, and it is not there"
+                    )
+                shutil.copy2(backup_path, target_path)
+                restored.append(filename)
+        except OSError as exc:
+            # Partial restore named rather than hidden: the operator has to know
+            # WHICH files are back and which are not, or the tree's state is
+            # unknown to everyone.
+            raise RollbackError(f"proposal {proposal.id} rollback failed after restoring {restored}: {exc}") from exc
+
+        # The files are back. What follows is bookkeeping, and a failure in it
+        # must not escape as a bare OSError: the caller only knows to fail
+        # closed on RollbackError, and this is a revert it must hear about.
+        try:
+            self._record_history(proposal, "rolled_back")
+            self._write_rollback_receipt(proposal, restored=restored, note="restored from the apply-time manifest")
+            # Last, and the commit point: until the backup is retired a repeat
+            # call restores the same bytes again, which is harmless. After it,
+            # the manifest no longer claims an un-reverted change, so a later
+            # apply that reuses this proposal id (ids restart at UPG-0001 in
+            # every process) starts from a clean slate instead of being
+            # masked by this one.
+            self._retire_backup(proposal.storage_key)
+        except OSError as exc:
+            raise RollbackError(
+                f"proposal {proposal.id} files were restored ({restored}) but the rollback could not be recorded: {exc}"
+            ) from exc
+        return True
+
+    # ------------------------------------------------------------------
+    # Rollback bookkeeping
+    # ------------------------------------------------------------------
+
+    def _backup_dir(self, storage_key: str) -> Path:
+        """Where this proposal's backups live. Keyed by proposal, not by clock.
+
+        The old path embedded ``int(time.time())``, which made a backup
+        un-addressable by anything but the in-memory map that recorded it.
+        The key is ``UpgradeProposal.storage_key``, not the ``UPG-NNNN`` label,
+        which repeats in every process (#6186).
+        """
+        return self.upgrades_dir / "backups" / self._path_segment(storage_key)
+
+    def _refuse_legacy_backup(self, proposal: UpgradeProposal) -> None:
+        """Fail closed on a backup filed under the bare label by an older version.
+
+        Before #6186 backups lived at ``backups/<proposal.id>/``. An install
+        upgraded while such a backup was un-reverted has bytes on disk that the
+        storage-key lookup never finds, and reading "no manifest" as "nothing
+        was applied" would report a half-applied tree as clean. The label
+        cannot say which proposal wrote it (every run's first proposal is
+        ``UPG-0001``), so restoring from it could put back a different
+        proposal's files. Neither guess is safe: refuse, and name the directory
+        so an operator can restore or retire it by hand. ``was_applied`` counts
+        the same directory as evidence, so the breaker sees it too.
+        """
+        legacy = self._legacy_manifest_path(proposal)
+        if legacy is not None and legacy.exists():
+            raise RollbackError(
+                f"proposal {proposal.id} has no backup under its storage key, but a backup filed under "
+                f"the bare id by an earlier version exists at {legacy.parent}; it may belong to a "
+                "different proposal with the same id, so it is not restored automatically. Restore "
+                "the files listed in its manifest.json by hand, or rename the directory aside once "
+                "the tree is known to be correct"
+            )
+
+    def _legacy_manifest_path(self, proposal: UpgradeProposal) -> Path | None:
+        """``backups/<proposal.id>/manifest.json`` as versions before #6186 wrote it."""
+        try:
+            return self.upgrades_dir / "backups" / self._path_segment(proposal.id) / "manifest.json"
+        except RollbackError:
+            return None
+
+    @staticmethod
+    def _path_segment(proposal_id: str) -> str:
+        """*proposal_id* as a single path component, or :class:`RollbackError`.
+
+        The id is joined into ``backups/<id>`` and ``rollbacks/<id>.json``. The
+        generators in this package mint ``UPG-0001``-style ids, but the executor
+        accepts any proposal, and an id carrying a separator or ``..`` would
+        write outside ``upgrades/``.
+        """
+        if (
+            not proposal_id
+            or proposal_id in {".", ".."}
+            or "/" in proposal_id
+            or "\\" in proposal_id
+            or "\0" in proposal_id
+        ):
+            raise RollbackError(f"proposal id {proposal_id!r} is not usable as a path component")
+        return proposal_id
+
+    @staticmethod
+    def _contained(root: Path, relative: str, proposal_id: str) -> Path:
+        """``root / relative``, refused unless it resolves inside *root*.
+
+        Manifest keys and values come off disk. A restore that follows a ``..``
+        or an absolute path in one overwrites a file the apply never touched.
+        """
+        candidate = (root / relative).resolve()
+        if not candidate.is_relative_to(root.resolve()):
+            raise RollbackError(
+                f"proposal {proposal_id} manifest entry {relative!r} resolves outside {root}; refusing to restore it"
+            )
+        return candidate
+
+    def _retire_backup(self, storage_key: str) -> None:
+        """Move a restored proposal's backups aside so its storage key is free again.
+
+        Renamed rather than deleted: the bytes that were restored stay available
+        to whoever wants to know what the rollback overwrote.
+        """
+        backup_dir = self._backup_dir(storage_key)
+        backup_dir.rename(backup_dir.with_name(f"{backup_dir.name}.rolled-back-{time.time_ns()}"))
+
+    def _backup_manifest_path(self, storage_key: str) -> Path:
+        return self._backup_dir(storage_key) / "manifest.json"
+
+    def _read_backup_manifest(self, manifest: Path) -> dict[str, str]:
+        """``{config-relative filename: backup path relative to upgrades_dir}``."""
+        try:
+            raw = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RollbackError(f"backup manifest at {manifest} is unreadable: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise RollbackError(f"backup manifest at {manifest} is not an object")
+        return {str(k): str(v) for k, v in raw.items()}
+
+    def _files_to_restore(self, proposal: UpgradeProposal, recorded: dict[str, str]) -> list[str]:
+        """The files to put back: what the apply recorded backing up.
+
+        NOT ``proposal.rollback_plan``. This executor takes
+        ``evolution.proposals.UpgradeProposal``, whose ``rollback_plan`` is a
+        :class:`RollbackPlan` of operator-facing ``steps`` - prose, with no
+        machine-readable file list. The ``ChangeContract.rollback
+        .files_to_restore`` that WOULD name files belongs to the other
+        ``UpgradeProposal``, in ``evolution.types``, which never reaches here.
+        Reading a file list off this proposal is therefore not possible today,
+        and inventing one from the prose would be worse than using the record
+        the apply actually left.
+
+        The manifest is keyed by the proposal's ``storage_key`` (its id plus a
+        digest of its identity fields) and written at apply time, so it is
+        per-proposal and survives a restart - which is what the process-local
+        map failed at. When the two proposal types are reconciled, the declared
+        inverse becomes the authority and this becomes the check on it.
+        """
+        _ = proposal
+        return sorted(recorded)
+
+    def was_applied(self, proposal: UpgradeProposal) -> bool:
+        """Is there evidence of a change by this proposal that was not reverted?
+
+        Read rather than remembered, so this answers the same way in a process
+        that did not perform the apply. Two records count as evidence: an
+        ``applied`` history row not followed by a ``rolled_back`` one, or a
+        backup manifest. The manifest is written by ``_backup_file`` BEFORE a
+        file is mutated, so it is the only record a partial apply (one that
+        raised midway and never reached an ``applied`` row) leaves behind
+        (#6317).
+
+        A manifest means a mutation was ATTEMPTED, not that bytes changed: a
+        failure between the backup and the write counts, and trips the breaker
+        for a tree that is byte-identical. That is the fail-closed direction.
+
+        ``rollback_upgrade`` retires the manifest once the files are restored,
+        so a manifest present here is always an un-reverted backup. That is what
+        keeps an earlier rollback from masking a later apply under a reused id.
+
+        Matched on ``proposal.storage_key``, not the label: rows from unrelated
+        proposals of earlier runs share a ``proposal_id`` (#6186). A history row
+        written before the key existed carries none and matches nothing; a
+        backup an earlier version filed under the bare label still counts, see
+        :meth:`_refuse_legacy_backup`.
+        """
+        history_file = self.upgrades_dir / "history.jsonl"
+        applied = False
+        if history_file.exists():
+            for line in history_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    # A torn final line is not evidence either way, and refusing to
+                    # read the whole file because of one would turn a truncated
+                    # journal into an un-rollbackable tree.
+                    continue
+                if row.get("storage_key") != proposal.storage_key:
+                    continue
+                status = row.get("status")
+                if status == "applied":
+                    applied = True
+                elif status == "rolled_back":
+                    applied = False
+        if applied or self._backup_manifest_path(proposal.storage_key).exists():
+            return True
+        legacy = self._legacy_manifest_path(proposal)
+        return legacy is not None and legacy.exists()
+
+    def _write_rollback_receipt(self, proposal: UpgradeProposal, *, restored: list[str], note: str) -> Path:
+        """Persist a record of what this rollback did, with a checksum over it.
+
+        The same shape the verdict receipt uses (``change_contract_replay``):
+        a body, and a sha256 over its canonical JSON. The checksum is keyless,
+        so it catches accidental corruption of the file; it is NOT tamper
+        evidence, because anyone who edits the body can recompute it.
+
+        Never overwrites: the first receipt for an id is ``<id>.json`` and a
+        later one is ``<id>.<n>.json``, so a repeat rollback (or a reused id)
+        cannot erase the record of the one that restored files. The body
+        carries ``storage_key`` so a receipt names the one proposal it is about
+        even though the label repeats between runs (#6186).
+        """
+        body: dict[str, Any] = {
+            "proposal_id": proposal.id,
+            "storage_key": proposal.storage_key,
+            "title": proposal.title,
+            "category": proposal.category.value,
+            "restored_files": sorted(restored),
+            "note": note,
+            "rolled_back_at": time.time(),
+        }
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        receipt = body | {"receipt_hash": hashlib.sha256(canonical).hexdigest()}
+        segment = self._path_segment(proposal.id)
+        out_dir = self.upgrades_dir / "rollbacks"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Name selection and publication form one operation: atomic replace
+        # alone would let concurrent same-label rollbacks overwrite a receipt.
+        with cross_process_lock(self.upgrades_dir / ".rollback-receipts.lock", timeout=10):
+            out_path = out_dir / f"{segment}.json"
+            n = 1
+            while out_path.exists():
+                n += 1
+                out_path = out_dir / f"{segment}.{n}.json"
+            write_atomic_text(out_path, json.dumps(receipt, indent=2, ensure_ascii=False))
+        return out_path
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -143,6 +426,7 @@ class FileUpgradeExecutor:
                 json.dumps(
                     {
                         "proposal_id": proposal.id,
+                        "storage_key": proposal.storage_key,
                         "title": proposal.title,
                         "category": proposal.category.value,
                         "change": proposal.proposed_change,
@@ -153,13 +437,43 @@ class FileUpgradeExecutor:
                 + "\n"
             )
 
-    def _backup_file(self, filename: str) -> None:
-        """Create a backup copy of a config file before modifying it."""
+    def _backup_file(self, filename: str, proposal: UpgradeProposal) -> None:
+        """Copy a config file aside before modifying it, and RECORD that it did.
+
+        The record is the point. The previous version wrote the copy to a
+        clock-named path and remembered the mapping in an instance attribute,
+        so the bytes survived a restart and nothing could find them. Here the
+        path is derived from the proposal's ``storage_key`` and the mapping is written to a
+        manifest beside it, which is what lets `rollback_upgrade` work in a
+        process that did not perform the apply. It takes the proposal, not a
+        key string, so a caller cannot hand it the reusable ``UPG-NNNN`` label
+        and file the backup where a later proposal with the same label finds it.
+
+        Two limits, both stated rather than papered over. A file that does not
+        exist yet is not recorded (there is nothing to copy), so an apply that
+        CREATES a config file leaves no manifest and a rollback cannot remove
+        it. And the manifest is written before the caller mutates anything, so
+        it records an intent to change, not a change.
+        """
+        # The bare id must be a path segment too, checked before anything is written: rollback
+        # writes its receipt under it (`rollbacks/<id>.json`), so an id of "", "." or ".." would
+        # restore the files and then fail at the receipt, leaving the manifest unretired and
+        # `was_applied` true. The storage key's own check does not cover it.
+        self._path_segment(proposal.id)
         source_path = self.config_dir / filename
-        backup_path = self.upgrades_dir / f"backup_{filename}_{int(time.time())}"
-        if source_path.exists():
-            shutil.copy2(source_path, backup_path)
-            self._backup_files[filename] = backup_path
+        if not source_path.exists():
+            return
+        storage_key = proposal.storage_key
+        backup_dir = self._backup_dir(storage_key)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / filename
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, backup_path)
+
+        manifest = self._backup_manifest_path(storage_key)
+        recorded = self._read_backup_manifest(manifest) if manifest.exists() else {}
+        recorded[filename] = str(backup_path.relative_to(self.upgrades_dir))
+        write_atomic_text(manifest, json.dumps(recorded, indent=2, sort_keys=True))
 
     # ------------------------------------------------------------------
     # Category-specific apply methods

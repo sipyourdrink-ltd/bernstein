@@ -563,6 +563,13 @@ def plugins_cmd(workdir: str, trust_details: bool) -> None:
     default=False,
     help="Exercise every declared provider fallback chain; exit non-zero on any broken chain.",
 )
+@click.option(
+    "--unattended",
+    "unattended",
+    is_flag=True,
+    default=False,
+    help="Execute probes through the unattended spawner environment.",
+)
 @click.pass_context
 def doctor(
     ctx: click.Context,
@@ -576,6 +583,7 @@ def doctor(
     endpoint_timeout: float,
     roles: tuple[str, ...],
     failover_drill: bool,
+    unattended: bool = False,
 ) -> None:
     """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
 
@@ -636,7 +644,7 @@ def doctor(
     # the trailing hint to keep the exit code unchanged.
     exit_code = 0
     try:
-        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix)
+        ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix, unattended=unattended)
     except SystemExit as exc:  # NOSONAR python:S5754 - captured to add a hint, re-raised below
         exit_code = int(exc.code or 0)
 
@@ -1195,6 +1203,148 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
     _trace_show_task(task_id, traces_dir=traces_dir, as_json=as_json)
 
 
+def _ledger_entries_for_entity(sdd_dir: Path, entity_id: str) -> list[tuple[str, Any]]:
+    """Return ``(run_id, LedgerEntry)`` pairs from every run ledger referencing ``entity_id``.
+
+    A work ledger is scoped per run, under ``<sdd_dir>/runtime/ledger/<run_id>/``.
+    ``entity_id`` may name the run itself (the ledger directory) or a task
+    inside it (``LedgerEntry.task_id``), so both are checked. Deliberately
+    reads the ledger root path directly rather than going through
+    :func:`bernstein.core.persistence.work_ledger.default_ledger_root`, which
+    creates it on first use -- a read-only ``follow`` must not create a
+    ``.sdd/runtime/ledger/`` directory as a side effect of a query that finds
+    nothing.
+    """
+    from bernstein.core.persistence.work_ledger import LedgerReader
+
+    ledger_root = sdd_dir / "runtime" / "ledger"
+    if not ledger_root.is_dir():
+        return []
+    found: list[tuple[str, Any]] = []
+    for run_dir in sorted(p for p in ledger_root.iterdir() if p.is_dir()):
+        reader = LedgerReader(run_dir)
+        if not reader.exists():
+            continue
+        run_matches = run_dir.name == entity_id
+        for entry in reader.entries():
+            if run_matches or entry.task_id == entity_id:
+                found.append((run_dir.name, entry))
+    return found
+
+
+def _collect_follow_entries(
+    traces_path: Path,
+    entity_id: str,
+) -> tuple[list[Any], list[tuple[str, Any]], list[tuple[float, str, dict[str, Any]]]]:
+    """Gather trace and ledger entries referencing ``entity_id``, sorted by timestamp."""
+    from bernstein.core.observability.trace_store import ContentAddressedTraceStore
+
+    store = ContentAddressedTraceStore(traces_path)
+    matches = store.search(text=entity_id)
+    matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
+
+    ledger_entries = _ledger_entries_for_entity(traces_path.parent, entity_id)
+
+    rows: list[tuple[float, str, dict[str, Any]]] = [
+        (entry.started_at, f"trace:{entry.trace_id}", {**entry.to_dict(), "source": "trace"}) for entry in matches
+    ]
+    rows.extend(
+        (entry.ts, f"ledger:{run_id}:{entry.seq}", {**entry.to_dict(), "source": "ledger", "run_id": run_id})
+        for run_id, entry in ledger_entries
+    )
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return matches, ledger_entries, rows
+
+
+def _entry_matches_since(row: tuple[float, str, dict[str, Any]], since_id: str) -> bool:
+    """Return True if the given row matches the journal entry id for ``--since``."""
+    _, row_id, data = row
+    if since_id == row_id:
+        return True
+    source = data.get("source")
+    if source == "trace":
+        # Trace rows carry a content hash (``sha256``) the same way ledger rows
+        # carry ``entry_hash``, and ``trace verify`` proves it, so --since takes
+        # either spelling. Accepting only the id would make "resume from the
+        # hash I was given" work for one of the two sources.
+        if since_id in (data.get("trace_id"), data.get("sha256")):
+            return True
+    elif source == "ledger":
+        run_id = data.get("run_id")
+        seq = data.get("seq")
+        if since_id in (f"{run_id}:{seq}", f"ledger:{run_id}:{seq}", data.get("entry_hash")):
+            return True
+    return False
+
+
+def _is_entity_terminal(sdd_dir: Path, entity_id: str, ledger_entries: list[tuple[str, Any]]) -> bool:
+    """Check if the referenced run or task has reached a closed/terminal state.
+
+    ``task.failed`` is terminal *in the work ledger*. The ledger's task kinds
+    are a one-way lifecycle -- scheduled, started, then completed / failed /
+    abandoned (plus suspended) -- with no retry kind, and ``insights.py`` reads
+    completed and failed as the pair of final outcomes. The ``task_retried``
+    event lives in the trace recorder, a different stream this function does
+    not read, so a retry recorded there does not make a ledger ``task.failed``
+    provisional. That is why the first terminal entry within each run is enough and no
+    latest-state scan is needed.
+
+    Entity may be a run or a task. For a run, terminal means ``run.closed``.
+    For a task, every related run must record one of those task outcomes or
+    close. A task id can recur in another run; a historical occurrence cannot
+    terminate a newer one that is still active.
+    """
+    from bernstein.core.persistence.work_ledger import (
+        KIND_RUN_CLOSED,
+        KIND_TASK_ABANDONED,
+        KIND_TASK_COMPLETED,
+        KIND_TASK_FAILED,
+        LedgerReader,
+    )
+
+    terminal_task_kinds = {KIND_TASK_COMPLETED, KIND_TASK_FAILED, KIND_TASK_ABANDONED}
+    related_runs: set[str] = set()
+    terminal_runs: set[str] = set()
+
+    for run_id, entry in ledger_entries:
+        related_runs.add(run_id)
+        if run_id == entity_id and entry.kind == KIND_RUN_CLOSED:
+            terminal_runs.add(run_id)
+        if entry.task_id == entity_id and entry.kind in terminal_task_kinds:
+            terminal_runs.add(run_id)
+
+    from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
+    ledger_root = sdd_dir / "runtime" / "ledger"
+
+    def _run_dir(name: str) -> Path | None:
+        """The ledger directory for *name*, or None when it is not one.
+
+        ``entity_id`` is an argv value, so joining it raw let `../..` walk out
+        of the ledger root and probe the filesystem through `is_dir`. The
+        containment join is the same one the rest of this file uses for a
+        journal path; a name that escapes is simply not a run directory.
+        """
+        try:
+            return contained_path(ledger_root, name, label="entity id")
+        except PathContainmentError:
+            return None
+
+    if ledger_root.is_dir():
+        entity_dir = _run_dir(entity_id)
+        if entity_dir is not None and entity_dir.is_dir():
+            related_runs.add(entity_id)
+
+        for run_name in related_runs:
+            run_dir = _run_dir(run_name)
+            if run_dir is not None and run_dir.is_dir():
+                reader = LedgerReader(run_dir)
+                if any(e.kind == KIND_RUN_CLOSED for e in reader.entries()):
+                    terminal_runs.add(run_name)
+
+    return bool(related_runs) and related_runs <= terminal_runs
+
+
 @trace_cmd.command("follow")
 @click.argument("entity_id")
 @click.option(
@@ -1204,65 +1354,312 @@ def trace_show_cmd(ctx: click.Context, task_id: str, as_json: bool) -> None:
     default=False,
     help="Output the matched index entries as JSON.",
 )
+@click.option(
+    "--since",
+    "since_id",
+    default=None,
+    help="Resume following after this entry id.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="Write matched entries to file.",
+)
+@click.option(
+    "--live",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Keep following entries until run terminates.",
+)
+@click.option(
+    "--poll-interval",
+    "poll_interval",
+    default=0.2,
+    hidden=True,
+    # Floored: 0 or a negative interval turns the follow loop into a busy spin
+    # that re-reads the trace store and the ledger as fast as the disk allows.
+    type=click.FloatRange(min=0.01),
+    help="Polling interval in seconds for live mode (minimum 0.01).",
+)
 @click.pass_context
-def trace_follow_cmd(ctx: click.Context, entity_id: str, as_json: bool) -> None:
-    """Show every trace entry that references ENTITY_ID, oldest first.
+def trace_follow_cmd(
+    ctx: click.Context,
+    entity_id: str,
+    as_json: bool,
+    since_id: str | None = None,
+    out_path: str | None = None,
+    live: bool = False,
+    poll_interval: float = 0.2,
+) -> None:
+    """Show every trace or ledger entry that references ENTITY_ID, oldest first.
 
     `trace show` globs filenames for one task id and prints whichever file
     matches, once. An entity id -- a task, a run, a grant -- appears across
-    several traces, and following it meant exporting and grepping.
+    several journals, and following it meant exporting and grepping each one
+    separately. This joins two of them by that id: the trace store and the
+    work ledger.
 
-    Ordering is by start time, and ties break on trace id, so a finished run
+    Ordering is by timestamp, with a total tie-break, so a finished run
     prints byte-identically on every invocation.
     """
-    from bernstein.core.observability.trace_store import ContentAddressedTraceStore
-
     traces_dir = (ctx.obj or {}).get("traces_dir", ".sdd/traces")
     traces_path = Path(traces_dir)
     if not traces_path.exists():
         console.print(f"[red]Traces directory not found:[/red] {traces_path}")
         raise SystemExit(1)
 
-    store = ContentAddressedTraceStore(traces_path)
-    # `search(text=...)` matches trace_id, task_id or sha256 -- the three
-    # spellings by which an index row can reference an entity.
-    matches = store.search(text=entity_id)
-    # Sorted rather than index order: `reindex` rebuilds by walking the blob
-    # tree, so the file's order is a filesystem artefact and would make the
-    # same finished run print differently after a rebuild.
-    matches.sort(key=lambda entry: (entry.started_at, entry.trace_id))
+    matches, ledger_entries, rows = _collect_follow_entries(traces_path, entity_id)
 
-    if not matches:
+    # Live mode resumes from everything that exists now, not from the --since
+    # window. The poll loop re-collects unfiltered, so seeding seen_ids from the
+    # filtered rows would re-emit every pre-since entry as new on the first
+    # poll -- the exact replay --since exists to avoid. Terminal detection has
+    # the same problem: a run.closed before the resume point is absent from the
+    # filtered ledger list, so the pre-loop check would miss an already-closed
+    # run and poll once before the in-loop check caught it.
+    live_seen_ids = {r[1] for r in rows}
+    unfiltered_ledger_entries = ledger_entries
+
+    if not matches and not ledger_entries:
+        # Under --live this used to fall through and poll forever: with no
+        # matching entries the terminal check can never fire, so an entity that
+        # does not exist (a typo, a finished run already pruned) held the
+        # terminal open until it was killed. Refuse absent entities as the
+        # static path does. Trace-only entities can still be followed, but
+        # need an interrupt unless a matching ledger later supplies closure.
         console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
         raise SystemExit(1)
 
+    if since_id:
+        match_idx = None
+        for idx, r in enumerate(rows):
+            if _entry_matches_since(r, since_id):
+                match_idx = idx
+                break
+        if match_idx is None:
+            console.print(f"[yellow]Entry not found for --since:[/yellow] {since_id}")
+            raise SystemExit(1)
+        rows = rows[match_idx + 1 :]
+        retained_row_ids = {r[1] for r in rows}
+        matches = [m for m in matches if f"trace:{m.trace_id}" in retained_row_ids]
+        ledger_entries = [le for le in ledger_entries if f"ledger:{le[0]}:{le[1].seq}" in retained_row_ids]
+
+    # A capture that continues an earlier one appends; a one-shot capture
+    # replaces. `--since` means "carry on from where I stopped", so truncating
+    # the file it is pointed at threw away the part the resume was relative to.
+    _resuming = bool(since_id)
+
+    if as_json and _resuming and out_path and Path(out_path).exists():
+        # A continuation is JSONL. Validate before writing anything: appending
+        # objects to a previous one-shot array or text capture corrupts it.
+        try:
+            with Path(out_path).open(encoding="utf-8") as capture:
+                for line in capture:
+                    if not line.strip():
+                        continue
+                    if line.lstrip().startswith("["):
+                        raise click.ClickException(
+                            "Cannot resume a one-shot JSON array; use a new output file or an existing JSONL capture."
+                        )
+                    if not isinstance(json.loads(line), dict):
+                        raise click.ClickException("Existing capture is not JSONL objects; use a new output file.")
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise click.ClickException("Existing capture is not JSONL objects; use a new output file.") from exc
+
+    def _write_out(target: Path, content: str, *, append: bool = False) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if (_resuming or append) and target.exists():
+            separator = ""
+            if as_json and content:
+                with target.open("rb") as capture:
+                    capture.seek(0, 2)
+                    if capture.tell():
+                        capture.seek(-1, 2)
+                        if capture.read(1) != b"\n":
+                            separator = "\n"
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write(separator + content)
+        else:
+            target.write_text(content, encoding="utf-8")
+
     if as_json:
-        console.print_json(json.dumps([entry.to_dict() for entry in matches]))
+        json_output = json.dumps([row[2] for row in rows])
+        if out_path:
+            # The format follows --as-json and --live, never the file suffix.
+            # A completed run is one JSON array; a followed run is JSONL,
+            # because the file is appended to as rows arrive and an array
+            # cannot be extended a line at a time. Mixing the two -- an array
+            # written here and lines appended later -- produces a file no
+            # consumer can read, which is what the suffix rule used to do.
+            # One JSON array only for a complete, one-shot capture. A stream
+            # that continues -- because it is followed, or because it resumes
+            # an earlier capture with --since -- is JSONL: an array cannot be
+            # appended to, and both of those append.
+            if live or _resuming:
+                _write_out(Path(out_path), "".join(json.dumps(row[2]) + "\n" for row in rows))
+            else:
+                _write_out(Path(out_path), json.dumps([row[2] for row in rows], indent=2) + "\n")
+        # stdout follows the same rule as the file. Under --live the stream is
+        # appended to as rows arrive, so it is JSONL on both: printing an array
+        # here and then one loose object per row left stdout unparseable by any
+        # single reader, which is the same defect the file had.
+        if live:
+            # click.echo, not the Rich console: Rich soft-wraps at the terminal
+            # width, which splits a long JSONL row across lines and leaves the
+            # stream unparseable. Machine-readable output must not be laid out.
+            for row in rows:
+                click.echo(json.dumps(row[2]))
+        else:
+            console.print_json(json_output)
+    else:
+        from rich.console import Console
+        from rich.table import Table
+
+        file_console = Console(record=True, width=100) if out_path else None
+
+        if matches:
+            table = Table(
+                title=f"Traces referencing {entity_id}",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            table.add_column("Started")
+            table.add_column("Trace")
+            table.add_column("Task")
+            table.add_column("Model")
+            table.add_column("Bytes", justify="right")
+            for entry in matches:
+                table.add_row(
+                    _trace_timestamp(entry.started_at),
+                    entry.trace_id,
+                    entry.task_id or "-",
+                    entry.model or "-",
+                    str(entry.byte_size),
+                )
+            console.print(table)
+            if file_console:
+                file_console.print(table)
+
+        if ledger_entries:
+            ledger_entries_sorted = sorted(ledger_entries, key=lambda pair: (pair[1].ts, pair[0], pair[1].seq))
+            ledger_table = Table(
+                title=f"Ledger entries referencing {entity_id}",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            ledger_table.add_column("Time")
+            ledger_table.add_column("Run")
+            ledger_table.add_column("Seq", justify="right")
+            ledger_table.add_column("Kind")
+            ledger_table.add_column("Task")
+            for run_id, entry in ledger_entries_sorted:
+                ledger_table.add_row(
+                    _trace_timestamp(entry.ts),
+                    run_id,
+                    str(entry.seq),
+                    entry.kind,
+                    entry.task_id or "-",
+                )
+            console.print(ledger_table)
+            if file_console:
+                file_console.print(ledger_table)
+
+        if ledger_entries:
+            trace_suffix = "y" if len(matches) == 1 else "ies"
+            ledger_suffix = "y" if len(ledger_entries) == 1 else "ies"
+            summary_msg = f"{len(matches)} trace entr{trace_suffix}, {len(ledger_entries)} ledger entr{ledger_suffix}"
+            console.print(f"[dim]{summary_msg}[/dim]")
+            if file_console:
+                file_console.print(summary_msg)
+        elif matches:
+            suffix = "y" if len(matches) == 1 else "ies"
+            summary_msg = f"{len(matches)} entr{suffix}"
+            console.print(f"[dim]{summary_msg}[/dim]")
+            if file_console:
+                file_console.print(summary_msg)
+        elif since_id:
+            msg = f"0 entries (resumed since {since_id})"
+            console.print(f"[dim]{msg}[/dim]")
+            if file_console:
+                file_console.print(msg)
+
+        if out_path and file_console:
+            # Text mode writes the rendered table whatever the file is called.
+            # Inferring JSON from a .json suffix meant `--out trace.json`
+            # without --as-json wrote an array here and then appended text
+            # lines in the live loop below.
+            _write_out(Path(out_path), file_console.export_text())
+
+    if not live:
         return
 
-    from rich.table import Table
+    if _is_entity_terminal(traces_path.parent, entity_id, unfiltered_ledger_entries):
+        return
 
-    table = Table(
-        title=f"Traces referencing {entity_id}",
-        show_header=True,
-        header_style="bold cyan",
-    )
-    table.add_column("Started")
-    table.add_column("Trace")
-    table.add_column("Task")
-    table.add_column("Model")
-    table.add_column("Bytes", justify="right")
-    for entry in matches:
-        table.add_row(
-            _trace_timestamp(entry.started_at),
-            entry.trace_id,
-            entry.task_id or "-",
-            entry.model or "-",
-            str(entry.byte_size),
-        )
-    console.print(table)
-    suffix = "y" if len(matches) == 1 else "ies"
-    console.print(f"[dim]{len(matches)} entr{suffix}[/dim]")
+    seen_ids = live_seen_ids
+
+    def _notice(message: str) -> None:
+        if as_json:
+            click.echo(message, err=True)
+        else:
+            console.print(f"[dim]{message}[/dim]")
+
+    _notice("--- following (Ctrl+C to stop) ---")
+
+    def _emit_live_row(r: tuple[float, str, dict[str, Any]]) -> None:
+        if as_json:
+            # One compact object per line, unwrapped: this is the
+            # continuation of the JSONL stream the pre-loop write started.
+            click.echo(json.dumps(r[2]))
+            if out_path:
+                # Append one JSON object per line, matching the JSONL the
+                # pre-loop write produced for --live. Rewriting the whole
+                # array on every row was O(n^2) in file writes and raced any
+                # reader tailing the file.
+                _write_out(Path(out_path), json.dumps(r[2]) + "\n", append=True)
+        else:
+            ts_str = _trace_timestamp(r[0])
+            src = r[2].get("source")
+            if src == "trace":
+                line = f"{ts_str} trace {r[2].get('trace_id')} {r[2].get('task_id') or '-'}"
+                console.print(
+                    f"[cyan]{ts_str}[/cyan] [dim]trace[/dim] {r[2].get('trace_id')} {r[2].get('task_id') or '-'}"
+                )
+            else:
+                run_part = r[2].get("run_id")
+                seq_part = r[2].get("seq")
+                kind_part = r[2].get("kind")
+                task_part = r[2].get("task_id") or "-"
+                line = f"{ts_str} ledger {run_part} #{seq_part} {kind_part} {task_part}"
+                console.print(
+                    f"[cyan]{ts_str}[/cyan] [dim]ledger[/dim] {run_part} "
+                    f"#{seq_part} [bold]{kind_part}[/bold] {task_part}"
+                )
+            if out_path:
+                with open(out_path, "a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+
+    try:
+        while True:
+            time.sleep(poll_interval)
+            _matches, cur_ledgers, cur_rows = _collect_follow_entries(traces_path, entity_id)
+            new_rows = [r for r in cur_rows if r[1] not in seen_ids]
+            for r in new_rows:
+                seen_ids.add(r[1])
+                _emit_live_row(r)
+            if _is_entity_terminal(traces_path.parent, entity_id, cur_ledgers):
+                _matches, cur_ledgers, cur_rows = _collect_follow_entries(traces_path, entity_id)
+                final_rows = [r for r in cur_rows if r[1] not in seen_ids]
+                for r in final_rows:
+                    seen_ids.add(r[1])
+                    _emit_live_row(r)
+                _notice("run terminated.")
+                break
+    except KeyboardInterrupt:
+        _notice("\nstopped.")
 
 
 def _trace_timestamp(epoch: float) -> str:
@@ -1436,6 +1833,97 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     )
 
 
+#: ``trace export`` output formats. ``trust-record`` is the historical
+#: behaviour and stays the default; ``ocsf`` is the SIEM projection (#6037).
+_TRACE_EXPORT_FORMATS = ("trust-record", "ocsf")
+
+
+def _resolve_latest_run(sdd_path: Path) -> str | None:
+    """Newest run directory under ``<sdd>/runs`` holding a non-empty journal.
+
+    Every journal path goes through ``contained_run_journal`` rather than being
+    joined by hand. Iterating the runs root yields a name that cannot carry
+    ``..``, but that covers only half the threat: a directory entry with a
+    perfectly ordinary name can be a **symlink** pointing outside the root, and
+    iteration says nothing about what it resolves to. The barrier re-derives
+    through containment and returns ``None`` for an escaping entry, so the
+    sweep skips it and keeps going.
+    """
+    from bernstein.core.replay.journal import JOURNAL_FILENAME, contained_run_journal
+
+    runs_root = sdd_path / "runs"
+    if not runs_root.is_dir():
+        return None
+    candidates: list[tuple[int, str]] = []
+    for entry in runs_root.iterdir():
+        if not entry.is_dir():
+            continue
+        journal = contained_run_journal(runs_root, entry.name, JOURNAL_FILENAME)
+        if journal is None or not journal.is_file() or journal.stat().st_size == 0:
+            continue
+        candidates.append((journal.stat().st_mtime_ns, entry.name))
+    if not candidates:
+        return None
+    return max(candidates)[1]
+
+
+def _trace_export_ocsf(
+    *,
+    run_id: str | None,
+    output: str | None,
+    latest: bool,
+    sdd_dir: str | None,
+    include_proposed: bool,
+    include_audit: bool,
+) -> None:
+    """``bernstein trace export --format ocsf`` (#6037).
+
+    Separate from the trust-record path on purpose: this needs no ``trace``
+    extra and no signing key, because it is a projection of records that are
+    already on disk rather than a new attestation.
+    """
+    from bernstein.core.observability.ocsf_projection import (
+        OCSF_SCHEMA_VERSION,
+        export_ocsf,
+    )
+
+    sdd_path = Path(sdd_dir) if sdd_dir else (Path(".sdd") if Path(".sdd").is_dir() else Path("."))
+    if latest and not run_id:
+        run_id = _resolve_latest_run(sdd_path)
+        if not run_id:
+            console.print("[red]No finished run found under[/red] " + str(sdd_path / "runs"))
+            raise SystemExit(1)
+    if not run_id:
+        console.print("[red]Usage:[/red] bernstein trace export <RUN_ID> --format ocsf [--last]")
+        raise SystemExit(1)
+
+    result = export_ocsf(
+        sdd_path,
+        run_id,
+        include_proposed=include_proposed,
+        include_audit=include_audit,
+    )
+    if not result.events:
+        console.print(f"[red]No journal or audit records found for run[/red] {run_id}")
+        raise SystemExit(1)
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(result.jsonl)
+        console.print(f"Wrote {result.event_count} OCSF {OCSF_SCHEMA_VERSION} event(s) to {out_path}")
+    else:
+        sys.stdout.write(result.jsonl.decode("utf-8"))
+
+    # An unmapped kind is a recorded omission, not a silent drop: the journal
+    # has no central registry of event kinds, so the table is a snapshot.
+    if result.unmapped_kinds:
+        console.print(
+            f"[yellow]{len(result.unmapped_kinds)} journal kind(s) had no mapping "
+            f"and were exported as activity_id=0:[/yellow] " + ", ".join(result.unmapped_kinds)
+        )
+
+
 @trace_cmd.command("export")
 @click.argument("run_id", required=False)
 @click.option(
@@ -1474,6 +1962,31 @@ def trace_project_cmd(run_id: str, workdir: str, no_stability: bool, as_json: bo
     default=None,
     help="Write one record per worker hop (<exec_id>.json) and the run-level aggregate.json into DIR.",
 )
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(_TRACE_EXPORT_FORMATS, case_sensitive=False),
+    default="trust-record",
+    show_default=True,
+    help="Output format. 'ocsf' projects the run journal and audit chain as OCSF events for a SIEM.",
+)
+@click.option(
+    "--include-proposed",
+    "include_proposed",
+    is_flag=True,
+    default=False,
+    help=(
+        "OCSF only: mark fields from the open proposal ocsf/ocsf-schema#1760. "
+        "Off by default so output validates against stock OCSF."
+    ),
+)
+@click.option(
+    "--no-audit",
+    "no_audit",
+    is_flag=True,
+    default=False,
+    help="OCSF only: project the run journal alone, omitting the audit chain (and so the security decisions).",
+)
 def trace_export_cmd(
     run_id: str | None,
     output: str | None,
@@ -1481,6 +1994,9 @@ def trace_export_cmd(
     latest: bool,
     sdd_dir: str | None,
     out_dir: str | None,
+    fmt: str,
+    include_proposed: bool,
+    no_audit: bool,
 ) -> None:
     """Export ``RUN_ID``'s execution evidence as a TRACE 0.2 Trust Record.
 
@@ -1504,8 +2020,27 @@ def trace_export_cmd(
     writes only the run-level aggregate to --out/stdout; the per-hop member
     records require --out-dir.
 
+    \b
+    --format ocsf: project the run journal AND the HMAC audit chain into OCSF
+            1.9.0 events as JSONL, for a SIEM or security data lake. The
+            security decisions (denied tool calls, admission and capability
+            refusals) live in the audit chain, not the journal, so both are
+            read. See docs/observability/ocsf-export.md for the mapping.
+            Needs no trace extra and no signing key.
+
     Exit codes: 0 = exported, 1 = run not found / chain broken / emit error.
     """
+    if fmt.lower() == "ocsf":
+        _trace_export_ocsf(
+            run_id=run_id,
+            output=output,
+            latest=latest,
+            sdd_dir=sdd_dir,
+            include_proposed=include_proposed,
+            include_audit=not no_audit,
+        )
+        return
+
     # Gate on trace extra
     try:
         import agentrust_trace as _trace_lib  # type: ignore[import-untyped, unused-ignore, import-not-found]
@@ -2875,6 +3410,7 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
         console.print("[dim]No quarantined tasks.[/dim]")
         return
 
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(show_header=True, header_style="bold red")
@@ -2886,12 +3422,13 @@ def _quarantine_list(workdir: str, show_all: bool) -> None:  # type: ignore[repo
 
     for entry in entries:
         fail_style = "bold red" if entry.fail_count >= QUARANTINE_THRESHOLD else "yellow"
+        # Rich parses cells as markup; titles and reasons are free text.
         table.add_row(
-            entry.task_title,
+            escape(entry.task_title),
             f"[{fail_style}]{entry.fail_count}[/{fail_style}]",
             entry.last_failure,
             entry.action,
-            entry.reason,
+            escape(entry.reason),
         )
 
     console.print(table)

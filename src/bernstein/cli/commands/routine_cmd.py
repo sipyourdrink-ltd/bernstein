@@ -17,12 +17,13 @@ from typing import TYPE_CHECKING
 import click
 
 from bernstein.core.planning.routine_bridge import RoutineBridge
+from bernstein.core.planning.scenario_library import packaged_scenarios_dir
 
 if TYPE_CHECKING:
     from bernstein.core.planning.scenario_library import ScenarioRecipe
 
 # Default scenarios directory shipped with the package.
-_DEFAULT_SCENARIOS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "templates" / "scenarios"
+_DEFAULT_SCENARIOS_DIR = packaged_scenarios_dir()
 
 
 def _resolve_state_dir(workdir: Path) -> Path:

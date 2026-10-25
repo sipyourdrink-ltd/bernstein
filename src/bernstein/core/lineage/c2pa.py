@@ -18,6 +18,12 @@ than a separately-asserted label:
   bytes the chain recorded (AC1/AC3).
 * An **AI actions** assertion (``c2pa.actions``) records the producing
   model and actor drawn from the spine entry (AC1).
+* An **AI disclosure** assertion (``c2pa.ai-disclosure``, #6223) carries
+  the model that served the write, and is attached **only** when the
+  artifact's lineage window names a model. A write that recorded no model
+  (``model=""``) is projected as ``digitalCreation`` with no disclosure,
+  so the credential never claims AI involvement the chain does not
+  evidence.
 * A **soft binding** assertion (``c2pa.soft-binding``) is emitted only
   when a pluggable watermark/fingerprint layer is supplied, so
   multi-layer transparency requirements can be satisfied without
@@ -26,6 +32,16 @@ than a separately-asserted label:
 The manifest is signed with the install-identity Ed25519 key, so one
 attestation root covers both "who ran this" (the install identity) and
 "what was produced" (the content credential) -- AC5.
+
+Target revision (#6223)
+-----------------------
+``C2PA_SPEC_VERSION`` tracks the current published revision, **2.4
+(April 2026)**: 2.4 is the revision that introduced the
+``c2pa.ai-disclosure`` assertion (spec section 18.28) and refined the
+``trainedAlgorithmicMedia`` digital-source-type vocabulary. A verifier
+running a current validator treats a 2.2 manifest as stale and cannot
+find the disclosure signal at all, and the Article 50 marking claim in
+``docs/operations/content-credentials.md`` rests on exactly that signal.
 
 Determinism (AC2)
 -----------------
@@ -59,9 +75,11 @@ if TYPE_CHECKING:
     from bernstein.core.lineage.spine import SpineEntry
 
 __all__ = [
+    "AI_MODEL_TYPE_GENERIC",
     "C2PA_CLAIM_GENERATOR",
     "C2PA_SPEC_VERSION",
     "LABEL_ACTIONS",
+    "LABEL_AI_DISCLOSURE",
     "LABEL_HARD_BINDING",
     "LABEL_SOFT_BINDING",
     "C2paManifest",
@@ -78,7 +96,7 @@ __all__ = [
 ]
 
 #: C2PA specification version the manifest shape targets.
-C2PA_SPEC_VERSION: str = "2.2"
+C2PA_SPEC_VERSION: str = "2.4"
 
 #: Schema version of *this* projection envelope. Bumped on breaking
 #: changes to the signed-payload shape.
@@ -92,11 +110,26 @@ C2PA_CLAIM_GENERATOR: str = "bernstein/lineage-c2pa"
 LABEL_ACTIONS: str = "c2pa.actions"
 LABEL_HARD_BINDING: str = "c2pa.hash.data"
 LABEL_SOFT_BINDING: str = "c2pa.soft-binding"
+LABEL_AI_DISCLOSURE: str = "c2pa.ai-disclosure"
 
-#: IPTC digital-source-type URI for AI-produced media. Recorded in the
-#: actions assertion so downstream tools classify the artifact as
-#: algorithmically produced.
+#: Model type recorded in the AI-disclosure assertion. Spec Table 12
+#: ("Model type values") defines the enumeration; the spine records a
+#: model *string* (``anthropic:claude``) and never a model family, so the
+#: generic ``c2pa.types.model`` value is the only honest projection -- a
+#: more specific value would be a fresh claim about the artifact rather
+#: than a projection of the chain.
+AI_MODEL_TYPE_GENERIC: str = "c2pa.types.model"
+
+#: IPTC digital-source-type URIs. Which one applies is derived from the
+#: lineage window: a model-served write is ``trainedAlgorithmicMedia``, a
+#: later human write over model output is
+#: ``compositeWithTrainedAlgorithmicMedia``, and a window that never named
+#: a model is ``digitalCreation`` (spec section 18.28.3).
 _DIGITAL_SOURCE_TYPE_AI: str = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+_DIGITAL_SOURCE_TYPE_AI_COMPOSITE: str = (
+    "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+)
+_DIGITAL_SOURCE_TYPE_CREATED: str = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
 
 
 class ManifestError(RuntimeError):
@@ -157,11 +190,12 @@ class SoftBinding:
 
 @dataclass(slots=True)
 class C2paManifest:
-    """A C2PA 2.2 manifest projected from the lineage spine.
+    """A C2PA 2.4 manifest projected from the lineage spine.
 
     The assertion list is order-stable: hard binding first, AI actions
-    next, then the optional soft binding. Two projections of the same
-    inputs produce byte-identical canonical bytes (AC2).
+    next, then the AI disclosure (when the lineage window named a model),
+    then the optional soft binding. Two projections of the same inputs
+    produce byte-identical canonical bytes (AC2).
     """
 
     schema_version: str
@@ -187,6 +221,18 @@ class C2paManifest:
                     return str(data_dict.get("hash", ""))
         return ""
 
+    def ai_disclosure(self) -> dict[str, Any] | None:
+        """Return the AI-disclosure assertion data, or ``None`` when absent.
+
+        Absent means the lineage window recorded no model for this
+        artifact: the projection never synthesises a disclosure.
+        """
+        for assertion in self.assertions:
+            if assertion.get("label") == LABEL_AI_DISCLOSURE:
+                data = assertion.get("data")
+                return cast("dict[str, Any]", data) if isinstance(data, dict) else None
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class ManifestVerification:
@@ -199,6 +245,62 @@ class ManifestVerification:
 # ---------------------------------------------------------------------------
 # Projection
 # ---------------------------------------------------------------------------
+
+
+def _model_served(entry: SpineEntry) -> bool:
+    """Return whether a trained model served this artifact write.
+
+    An empty ``model`` is the shape every non-model write uses (the same
+    fact :func:`bernstein.core.compliance.ai_bom.snapshot_from_spine`
+    reads), so it is evidence about the step rather than a missing value
+    to paper over.
+    """
+    return bool(entry.model.strip())
+
+
+def _ai_projection(matching: Sequence[SpineEntry]) -> tuple[str, dict[str, Any] | None]:
+    """Derive ``(digitalSourceType, ai-disclosure data)`` from the artifact's entries.
+
+    A window that never named a model yields the ``digitalCreation``
+    source type and no disclosure: nothing in the chain evidences AI
+    involvement, so nothing is claimed. A window that named a model yields
+    the disclosure for the **most recent model-served step** -- the step
+    that put that model's output into the artifact -- and the source type
+    distinguishes a straight model write (``trainedAlgorithmicMedia``)
+    from a later human write on top of model output
+    (``compositeWithTrainedAlgorithmicMedia``).
+
+    ``humanOversightLevel`` is deliberately not projected: the spine
+    records who wrote each step, never whether a human reviewed a model's
+    output, and the field is optional in the spec's CDDL schema. Filling
+    it would be a fresh claim, not a projection.
+
+    Args:
+        matching: The artifact's spine entries, in append order.
+
+    Returns:
+        ``(digitalSourceType, disclosure)``; ``disclosure`` is ``None``
+        when no entry in the window named a model.
+    """
+    model_steps = [entry for entry in matching if _model_served(entry)]
+    if not model_steps:
+        return _DIGITAL_SOURCE_TYPE_CREATED, None
+
+    digital_source_type = _DIGITAL_SOURCE_TYPE_AI if _model_served(matching[-1]) else _DIGITAL_SOURCE_TYPE_AI_COMPOSITE
+    latest_model_step = model_steps[-1]
+    disclosure: dict[str, Any] = {
+        "modelType": AI_MODEL_TYPE_GENERIC,
+        "modelName": latest_model_step.model,
+        # Chain link lives in ``metadata`` because the CDDL rule for
+        # ``ai-model-disclosure-map`` admits only its own named fields at
+        # the top level; ``metadata`` is a free-form map.
+        "metadata": {
+            "actor": latest_model_step.actor,
+            "step_id": latest_model_step.step_id,
+            "lineage_entry_hash": latest_model_step.entry_hash,
+        },
+    }
+    return digital_source_type, disclosure
 
 
 def project_manifest(
@@ -214,6 +316,11 @@ def project_manifest(
     such entry (the most recent write) supplies the content hash and the
     producing model/actor. The manifest pins that entry's hash so it
     links straight back into the chain.
+
+    The whole matching window feeds the AI-disclosure decision (#6223):
+    the disclosure is attached when *any* of the artifact's steps named a
+    model, and it names the most recent such step, so a human write that
+    follows a model write still publishes the model's provenance.
 
     Args:
         artifact_path: Repo-relative POSIX path of the artifact.
@@ -236,6 +343,7 @@ def project_manifest(
         raise ManifestError(msg)
 
     source = matching[-1]
+    digital_source_type, ai_disclosure = _ai_projection(matching)
 
     assertions: list[dict[str, Any]] = [
         {
@@ -253,7 +361,7 @@ def project_manifest(
                     {
                         "action": "c2pa.created",
                         "softwareAgent": source.model,
-                        "digitalSourceType": _DIGITAL_SOURCE_TYPE_AI,
+                        "digitalSourceType": digital_source_type,
                         "parameters": {
                             "actor": source.actor,
                             "step_id": source.step_id,
@@ -264,6 +372,8 @@ def project_manifest(
             },
         },
     ]
+    if ai_disclosure is not None:
+        assertions.append({"label": LABEL_AI_DISCLOSURE, "data": ai_disclosure})
     if soft_binding is not None:
         assertions.append(
             {

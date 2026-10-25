@@ -23,6 +23,7 @@ receipt anchored to the lineage spine and the HMAC audit chain.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import logging
 import urllib.error
@@ -379,7 +380,7 @@ def discover_default_model(
     client = _EndpointClient(base_url, api_key=api_key, timeout=timeout, transport=transport)
     try:
         status, body = client.request("GET", "/models", None)
-    except (TimeoutError, OSError, UrlSchemeError, ValueError) as exc:
+    except (TimeoutError, OSError, http.client.HTTPException, UrlSchemeError, ValueError) as exc:
         logger.debug("endpoint model discovery failed: %s", type(exc).__name__)
         return None
     if status != 200:
@@ -387,7 +388,8 @@ def discover_default_model(
     try:
         data = json.loads(body)
         first = data["data"][0]["id"]
-    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+    except (ValueError, KeyError, IndexError, TypeError):
+        # ValueError covers JSONDecodeError and a body that is not valid UTF-8.
         return None
     return str(first) if first else None
 

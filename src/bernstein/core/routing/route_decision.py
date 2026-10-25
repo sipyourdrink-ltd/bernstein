@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.lineage.entry import ModelRef
-    from bernstein.core.security.audit_chain import AuditChainStore
 
 from bernstein.core.routing.model_registry import (
     format_timestamp,
@@ -24,7 +23,7 @@ from bernstein.core.routing.model_registry import (
     model_key,
     project_registry,
 )
-from bernstein.core.security.audit_chain import record_model_refusal
+from bernstein.core.security.audit_chain import AuditChainStore, record_model_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +119,61 @@ def enforce_model_registry(
         actor=routing_path,
     )
     raise ModelNotAdmittedError(reason)
+
+
+def enforce_model_registry_for_dispatch(
+    *,
+    workdir: Path,
+    provider: str,
+    model: str,
+    task_class: str,
+    routing_path: str,
+    run_id: str = "",
+    task_id: str = "",
+) -> None:
+    """Gate one final model choice against the registry kept in *workdir*'s audit chain.
+
+    This is the call dispatch sites make once a routing decision is final -
+    after the router, ladder, fallback and operator pins have all had their
+    say and immediately before a process or provider job is started. It is a
+    no-op while enforcement is off (the audit chain is not even opened), and
+    fail-closed while it is on: a reference that cannot be built, a chain that
+    cannot be opened or replayed, and a model with no live admission all raise
+    :class:`ModelNotAdmittedError`. A refusal is appended to the chain first.
+
+    Args:
+        workdir: Project directory whose ``.sdd/audit`` chain holds the registry.
+        provider: Model vendor (or provider/adapter name when no vendor is known).
+        model: The model about to be used.
+        task_class: Task class the model would be used for.
+        routing_path: Dispatch surface performing the check, recorded on a refusal.
+        run_id: Optional run identifier recorded on a refusal.
+        task_id: Optional task identifier recorded on a refusal.
+
+    Raises:
+        ModelNotAdmittedError: If enforcement is on and the model is not admitted.
+    """
+    if not is_model_registry_enforcement_enabled():
+        return
+    from bernstein.core.lineage.entry import ModelRef
+
+    try:
+        ref = ModelRef(provider=provider, model_requested=model)
+        chain = AuditChainStore(workdir / ".sdd" / "audit")
+        enforce_model_registry(
+            chain=chain,
+            ref=ref,
+            task_class=task_class,
+            run_id=run_id,
+            task_id=task_id,
+            routing_path=routing_path,
+        )
+    except ModelNotAdmittedError:
+        raise
+    except Exception as exc:
+        raise ModelNotAdmittedError(
+            f"model registry enforcement is enabled but {provider!r}/{model!r} could not be checked: {exc}"
+        ) from exc
 
 
 def _canonical_bytes(data: dict[str, object]) -> bytes:

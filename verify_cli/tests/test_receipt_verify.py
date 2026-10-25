@@ -208,7 +208,7 @@ def test_run_verify_pass_path(tmp_path: Path) -> None:
         receipt_path=receipt_path,
         which="all",
         pinned_jwk=None,
-        pinned_pem=None,
+        pinned_pem=_signing_key_pem(tmp_path).read_bytes(),
         verbose=False,
         stream=stream,
     )
@@ -271,6 +271,7 @@ def test_run_verify_format_filter(tmp_path: Path) -> None:
         pinned_pem=None,
         verbose=False,
         stream=stream,
+        allow_unpinned_key=True,
     )
     assert result.ok is True
     names = [c.name for c in result.checks]
@@ -278,3 +279,114 @@ def test_run_verify_format_filter(tmp_path: Path) -> None:
     # intoto and transparency should NOT be checked when filtering
     assert "intoto" not in names
     assert "transparency" not in names
+
+
+# ---------- key trust ----------
+
+
+def _signing_key_pem(tmp_path: Path) -> Path:
+    """The public half of the key ``_build_receipt`` signs with, held out of band."""
+    public = Ed25519PrivateKey.from_private_bytes(b"i" * 32).public_key()
+    pem_path = tmp_path / "trusted.pub.pem"
+    pem_path.write_bytes(
+        public.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    )
+    return pem_path
+
+
+def test_run_verify_unpinned_key_is_not_a_pass_by_default(tmp_path: Path) -> None:
+    """A receipt verified only against the key it carries does not PASS."""
+    receipt_path, _ = _build_receipt(tmp_path)
+
+    stream = io.StringIO()
+    result = run_verify(
+        receipt_path=receipt_path,
+        which="all",
+        pinned_jwk=None,
+        pinned_pem=None,
+        verbose=False,
+        stream=stream,
+    )
+
+    output = stream.getvalue()
+    assert result.ok is False
+    assert "[FAIL] public_key" in output
+    assert "trust-on-first-use" in output
+    assert "--allow-unpinned-key" in output
+    # The integrity checks still run and report on their own.
+    assert "[PASS] subject_binding" in output
+    assert "[PASS] cose" in output
+    assert "OVERALL: FAIL" in output
+
+
+def test_run_verify_unpinned_key_passes_only_with_opt_in(tmp_path: Path) -> None:
+    receipt_path, _ = _build_receipt(tmp_path)
+
+    stream = io.StringIO()
+    result = run_verify(
+        receipt_path=receipt_path,
+        which="all",
+        pinned_jwk=None,
+        pinned_pem=None,
+        verbose=False,
+        stream=stream,
+        allow_unpinned_key=True,
+    )
+
+    output = stream.getvalue()
+    assert result.ok is True
+    # The key-trust status is printed even without --verbose.
+    assert "[PASS] public_key - trust-on-first-use" in output
+    assert "OVERALL: PASS (unpinned key: integrity only)" in output
+
+
+def test_run_verify_pinned_key_prints_trust_status(tmp_path: Path) -> None:
+    receipt_path, _ = _build_receipt(tmp_path)
+
+    stream = io.StringIO()
+    result = run_verify(
+        receipt_path=receipt_path,
+        which="all",
+        pinned_jwk=None,
+        pinned_pem=_signing_key_pem(tmp_path).read_bytes(),
+        verbose=False,
+        stream=stream,
+    )
+
+    output = stream.getvalue()
+    assert result.ok is True
+    assert "[PASS] public_key - pinned-pem" in output
+    assert "OVERALL: PASS" in output
+
+
+def test_main_exit_code_follows_key_trust(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from bernstein_verify_receipt.verify import main
+
+    receipt_path, _ = _build_receipt(tmp_path)
+
+    assert main(["--receipt", str(receipt_path)]) == 1
+    assert main(["--receipt", str(receipt_path), "--allow-unpinned-key"]) == 0
+    assert (
+        main(["--receipt", str(receipt_path), "--public-key", str(_signing_key_pem(tmp_path))]) == 0
+    )
+    capsys.readouterr()
+
+
+def test_click_cli_exit_code_follows_key_trust(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from bernstein_verify_receipt.__main__ import cli
+
+    receipt_path, _ = _build_receipt(tmp_path)
+    runner = CliRunner()
+
+    default = runner.invoke(cli, ["verify", str(receipt_path)])
+    assert default.exit_code == 1, default.output
+    assert "trust-on-first-use" in default.output
+
+    opted_in = runner.invoke(cli, ["verify", str(receipt_path), "--allow-unpinned-key"])
+    assert opted_in.exit_code == 0, opted_in.output

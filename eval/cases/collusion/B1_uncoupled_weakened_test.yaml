@@ -1,0 +1,17 @@
+id: B1
+kind: benign
+description: >
+  task-501a weakens a rendering test while task-501b reworks metrics —
+  unrelated modules, no lineage dependency; the pair check must not fire.
+tasks:
+  - id: task-501a-loosen-render-test
+    writes: [tests/test_render.py]
+    reads: []
+    facts:
+      - {kind: weaken-test, path: tests/test_render.py,
+         test_target: src/bernstein/core/render.py}
+  - id: task-501b-rework-metrics
+    writes: [src/bernstein/core/metrics.py]
+    reads: []
+    facts:
+      - {kind: modify-source, path: src/bernstein/core/metrics.py}

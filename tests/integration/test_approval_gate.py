@@ -57,17 +57,29 @@ def _read_audit(audit_dir: Path) -> list[dict[str, object]]:
     return entries
 
 
+def _operator_approves(workdir: Path, task_id: str) -> None:
+    """Record a signed ``bernstein approve`` decision for the open request."""
+    from bernstein.core.approval.models import local_shell_principal
+    from bernstein.core.orchestration.approval_gate import record_decision
+
+    record_decision(workdir, task_id, "approved", source="cli", principal=local_shell_principal().to_dict())
+
+
 class TestWaitForApprovalSentinel:
     def test_sentinel_created_on_entry_then_cleared_on_resolve(self, tmp_path: Path, audit_log: AuditLog) -> None:
         spec = ApprovalSpec(prompt="ship?", timeout_seconds=5)
 
-        # Drop the approval decision before the gate even starts so the
-        # poll loop exits on the first iteration.
+        # Land the operator's decision on the first poll so the loop exits
+        # on the next iteration.
         approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
-        approvals_dir.mkdir(parents=True)
-        (approvals_dir / "T-1.approved").write_text("approved")
 
-        outcome = wait_for_approval("T-1", spec, workdir=tmp_path, audit_log=audit_log)
+        outcome = wait_for_approval(
+            "T-1",
+            spec,
+            workdir=tmp_path,
+            audit_log=audit_log,
+            sleep=lambda _s: _operator_approves(tmp_path, "T-1"),
+        )
 
         assert outcome == "approved"
         # Pending sentinel must be cleaned up so list_pending_approvals
@@ -217,16 +229,13 @@ class TestTimeoutBehaviour:
 class TestAuditChain:
     def test_pending_then_resolved_events_in_order(self, tmp_path: Path, audit_log: AuditLog) -> None:
         spec = ApprovalSpec(prompt="ship?", timeout_seconds=5)
-        # Pre-place an .approved file so the gate resolves on first poll.
-        approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
-        approvals_dir.mkdir(parents=True)
-        (approvals_dir / "T-audit.approved").write_text("approved")
-
+        # Land a signed CLI decision on the first poll.
         outcome = wait_for_approval(
             "T-audit",
             spec,
             workdir=tmp_path,
             audit_log=audit_log,
+            sleep=lambda _s: _operator_approves(tmp_path, "T-audit"),
         )
         assert outcome == "approved"
 

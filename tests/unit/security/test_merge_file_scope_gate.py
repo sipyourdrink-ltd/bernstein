@@ -23,6 +23,7 @@ import pytest
 
 from bernstein.core.agents.spawner_merge import _file_scope_refusal, _incoming_change
 from bernstein.core.identity.agent_jwt import AgentIdentityStore
+from tests.unit._identity_record_helpers import seal
 
 
 def _run(args: list[str], cwd: Path) -> None:
@@ -154,7 +155,8 @@ def test_a_pattern_stored_before_validation_existed_matches_nothing_rather_than_
     stored = json.loads(record.read_text(encoding="utf-8"))
     stored["allowed_files"] = [""]
     stored["credential"]["allowed_files"] = [""]
-    record.write_text(json.dumps(stored), encoding="utf-8")
+    # Re-authenticated, as the record would be had it been minted then.
+    record.write_text(json.dumps(seal(stored)), encoding="utf-8")
 
     result = _refuse(tmp_path, "s7")
 

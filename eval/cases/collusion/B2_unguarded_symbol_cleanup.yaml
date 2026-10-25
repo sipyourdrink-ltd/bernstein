@@ -1,0 +1,18 @@
+id: B2
+kind: benign
+description: >
+  Dead-code cleanup of an unguarded helper split across two tasks — the
+  split-removal invariant only covers guarded symbols.
+tasks:
+  - id: task-502a-remove-helper-defn
+    writes: [src/bernstein/core/http/retry.py]
+    reads: []
+    facts:
+      - {kind: remove-definition, path: src/bernstein/core/http/retry.py,
+         symbol: parse_retry_after}
+  - id: task-502b-remove-helper-call
+    writes: [src/bernstein/core/http/client.py]
+    reads: [src/bernstein/core/http/retry.py]
+    facts:
+      - {kind: remove-reference, path: src/bernstein/core/http/client.py,
+         symbol: parse_retry_after}

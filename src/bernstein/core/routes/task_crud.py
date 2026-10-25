@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
+from bernstein.core.administrative_runs import AdministrativeRunStatus
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, DirectChannel, SignalActionFailure
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
 from bernstein.core.eu_ai_act import (
@@ -28,10 +30,11 @@ from bernstein.core.eu_ai_act import (
 )
 from bernstein.core.lifecycle import IllegalTransitionError
 from bernstein.core.log_safe import for_log
+from bernstein.core.persistence.store import RoleMismatchError
 from bernstein.core.role_classifier import classify_role
 from bernstein.core.routes._rate_limit_headers import rate_limit_exception
 from bernstein.core.routes._sse import SSE_RESPONSES
-from bernstein.core.security.auth_middleware import enforce_agent_task_scope_for_ids
+from bernstein.core.security.auth_middleware import agent_task_scope, enforce_agent_task_scope_for_ids
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_subpath,
@@ -271,6 +274,21 @@ def _resolve_request_tenant_scope(request: Request, requested_tenant: str | None
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+def _caller_agent_role(request: Request) -> str | None:
+    """Return the role an authenticated agent token was issued for.
+
+    ``None`` for every credential that is not an agent identity (operator
+    bearer, SSO users, the cluster secret, auth disabled): those keep full
+    control over task roles.  An agent identity with no role yields ``""``,
+    which matches no task, so a malformed identity fails closed.
+    """
+    identity = getattr(request.state, "agent_identity", None)
+    if identity is None:
+        return None
+    role = getattr(identity, "role", "")
+    return role if isinstance(role, str) else ""
+
+
 def _require_task_access(task: Task, request: Request, requested_tenant: str | None = None) -> None:
     """Reject access to a task outside the current tenant scope."""
 
@@ -462,6 +480,72 @@ def _is_salvage_branch(branch_name: str | None) -> bool:
     if branch_name.startswith("salvage/"):
         return True
     return "bernstein-salvage" in branch_name
+
+
+def _fetch_remote_agent_branch(
+    request: Request,
+    agent_branch: str,
+    agent_sha: str,
+) -> None:
+    """Fetch a remote worker's agent branch so the local merge pipeline sees it.
+
+    A remote worker node pushes ``agent/{session_id}`` to the shared remote
+    after a clean exit and includes the branch name and HEAD SHA in the
+    ``/complete`` body (#6538).  This function fetches that ref into the
+    local checkout so ``_run_auto_commit_pre_complete`` and the downstream
+    merge (``spawner_merge``) can operate on it as if the agent ran locally.
+
+    Failures are swallowed (fail-open, logged at WARNING): the auto-commit
+    hook will find no worktree and skip, and the janitor will catch the
+    0-diff task on its pass.
+    """
+    import subprocess
+
+    workdir = _get_workdir(request)
+    if not agent_branch.startswith("agent/"):
+        logger.warning(
+            "fetch_remote_agent_branch: refusing non-agent branch %r",
+            agent_branch,
+        )
+        return
+    try:
+        result = subprocess.run(
+            ["git", "fetch", "origin", f"{agent_branch}:{agent_branch}"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "fetch_remote_agent_branch: fetch failed for %s: %s",
+                agent_branch,
+                result.stderr.strip(),
+            )
+            return
+        local_sha = subprocess.run(
+            ["git", "rev-parse", agent_branch],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        local = local_sha.stdout.strip() if local_sha.returncode == 0 else "?"
+        if local != agent_sha:
+            logger.warning(
+                "fetch_remote_agent_branch: SHA mismatch for %s: expected %s, got %s",
+                agent_branch,
+                agent_sha[:12],
+                local[:12],
+            )
+        else:
+            logger.info(
+                "fetch_remote_agent_branch: fetched %s (%s)",
+                agent_branch,
+                agent_sha[:12],
+            )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("fetch_remote_agent_branch: %s: %s", agent_branch, exc)
 
 
 def _run_auto_commit_pre_complete(
@@ -949,6 +1033,18 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     effective_body = body.model_copy(update={"tenant_id": effective_tenant})
     if effective_body.metadata is None:
         effective_body.metadata = {}
+    if "administrative_run_id" in effective_body.metadata:
+        raise HTTPException(status_code=422, detail="Use run_id for administrative membership")
+    if body.run_id is not None:
+        if agent_task_scope(request) is not None:
+            raise HTTPException(status_code=403, detail="Task-scoped tokens cannot add run members")
+        try:
+            request.app.state.administrative_runs.require_open(body.run_id, effective_tenant)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        effective_body.metadata["administrative_run_id"] = body.run_id
     traceparent = request.headers.get("traceparent")
     tracestate = request.headers.get("tracestate")
     baggage = request.headers.get("baggage")
@@ -1094,6 +1190,26 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
                 )
 
         task = await store.create(effective_body)
+        # The server owns an install-local HMAC chain even when no orchestrator
+        # has wired the optional process-global lifecycle audit listener.
+        chain = getattr(request.app.state, "audit_chain", None)
+        if chain is not None:
+            chain.log_with_prev_digest(
+                event_type="task.created",
+                actor="task_server",
+                resource_type="task",
+                resource_id=task.id,
+                details={
+                    "task_id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "role": task.role,
+                    "priority": task.priority,
+                    "scope": task.scope.value,
+                    "depends_on": list(task.depends_on),
+                    "tenant_id": task.tenant_id,
+                },
+            )
         append_assessment_log(
             request.app.state.sdd_dir,
             build_log_record(task.id, task, assessment),
@@ -1124,6 +1240,8 @@ async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> Batc
     assessments: list[TaskRiskAssessment] = []
     batch_tenant = _resolve_request_tenant_scope(request)
     for task_body in body.tasks:
+        if task_body.run_id is not None or "administrative_run_id" in task_body.metadata:
+            raise HTTPException(status_code=422, detail="Add administrative members individually via POST /tasks")
         effective = task_body.model_copy(update={"tenant_id": batch_tenant})
 
         # Auto-classify role if not specified
@@ -1277,12 +1395,22 @@ async def next_task(
             detail=_DRAINING_DETAIL,
         )
     claimed_by_session = _checked_claim_session(claimed_by_session)
+    agent_role = _caller_agent_role(request)
+    if agent_role is not None and role != agent_role:
+        raise HTTPException(
+            status_code=403,
+            detail=f"role mismatch: token is issued for role '{agent_role}', not '{role}'",
+        )
     store = _get_store(request)
+    # The caller names no task, so the path gate has nothing to check; a
+    # task-scoped agent token is instead limited to its own tasks in the
+    # candidate query, so a task outside its scope is never chosen.
     task = await store.claim_next(
         role,
         tenant_id=_resolve_request_tenant_scope(request),
         claimed_by_session=claimed_by_session,
         parent_session_id=parent_session_id,
+        task_ids=agent_task_scope(request),
     )
     if task is None:
         logger.info(
@@ -1319,6 +1447,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
         claimed, failed = await store.claim_batch(
             list(body.task_ids),
             body.agent_id,
+            agent_role=_caller_agent_role(request),
             claimed_by_session=claim_session,
             tenant_id=tenant_id,
         )
@@ -1378,6 +1507,7 @@ async def claim_task(
             task = await store.claim_by_id(
                 task_id,
                 expected_version=expected_version,
+                agent_role=_caller_agent_role(request),
                 claimed_by_session=claimed_by_session,
             )
         except KeyError:
@@ -1387,6 +1517,16 @@ async def claim_task(
                 for_log(str(claimed_by_session)),
             )
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except RoleMismatchError as exc:
+            # The role comes from the caller's token, so retrying cannot help:
+            # answer 403 rather than the 409 a version conflict gets.
+            logger.warning(
+                "task.claim 403: task_id=%s claimed_by_session=%s reason=%s",
+                for_log(task_id),
+                for_log(str(claimed_by_session)),
+                sanitize_log(str(exc)),
+            )
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         except ValueError as exc:
             # This is the single most important line for diagnosing claim-conflict
             # churn: log expected vs. actual version/status so a retry storm is
@@ -1567,7 +1707,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                     "task.complete auto-claim: task_id=%s reverted to open, re-claiming before complete",
                     for_log(task_id),
                 )
-                await store.claim_by_id(task_id)
+                await store.claim_by_id(task_id, agent_role=_caller_agent_role(request))
             structured = _parse_terminal_body(body)
             if isinstance(structured, WorkerRefusal):
                 refusal = structured
@@ -1575,6 +1715,11 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             else:
                 if structured is not None:
                     result_summary = structured.summary
+                # Remote delivery (#6538): when a worker node pushed its
+                # agent branch to the shared remote, fetch it so the local
+                # merge pipeline can operate on it.
+                if body.agent_branch and body.agent_sha:
+                    _fetch_remote_agent_branch(request, body.agent_branch, body.agent_sha)
                 # Defect 33: auto-commit the worker's uncommitted work BEFORE
                 # the store transitions the task to done, so the commit message
                 # is visible to the janitor (which reads ``git log`` after
@@ -1586,6 +1731,10 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
                 task = await store.complete(task_id, result_summary, completion=structured)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except RoleMismatchError as exc:
+            # Only the auto-claim above raises this: an agent token may not
+            # claim (and so finish) an open task of another role.
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         except ContractViolation as exc:
             raise await _handle_contract_violation(request, task_id, exc, store, sse_bus) from None
         except EmptyCompletionError as exc:
@@ -1690,10 +1839,13 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
                 "task.fail auto-claim: task_id=%s reverted to open, re-claiming before fail",
                 for_log(task_id),
             )
-            await store.claim_by_id(task_id)
+            await store.claim_by_id(task_id, agent_role=_caller_agent_role(request))
         task = await store.fail(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except RoleMismatchError as exc:
+        # Raised by the auto-claim above, as in ``complete_task``.
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     except IllegalTransitionError as exc:
         logger.warning(
             "task.fail 409: task_id=%s current_status=%s reason=%s",
@@ -1859,6 +2011,7 @@ async def cancel_task(
             "blocked",
             "waiting_for_subtasks",
             "planned",
+            "suspended",
         }
         if existing_task.status.value not in cancellable:
             raise ValueError(
@@ -2390,8 +2543,16 @@ def get_task_gates(task_id: str, request: Request) -> JSONResponse:
 async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> TaskResponse:
     """Update mutable task fields (role, priority, model) - manager corrections.
 
-    Used by the manager agent or dashboard to correct mis-assigned tasks,
-    adjust priority, or change model without interrupting the orchestrator.
+    Used by the operator, the orchestrator or the dashboard to correct
+    mis-assigned tasks, adjust priority, or change model without
+    interrupting the orchestrator.
+
+    An agent token may not move a task between roles: a ``role`` in the
+    body must equal the token's role *and* the task's current role, so a
+    worker cannot re-label a task into its own role and then claim it.
+    Role reassignment stays with operator credentials. Task-scoped agents
+    cannot set ``cli`` or the ladder-position fields; those changes require
+    operator credentials or an unscoped run-root identity.
     """
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
@@ -2400,7 +2561,37 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
-        task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
+        agent_role = _caller_agent_role(request)
+        if (
+            agent_role is not None
+            and body.role is not None
+            and (body.role != agent_role or existing_task.role != agent_role)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"role mismatch: token is issued for role '{agent_role}'; agent tokens cannot reassign task roles"
+                ),
+            )
+        ladder_fields = body.model_fields_set & {"cli", "escalation_ladder_step", "escalation_ladder_attempts"}
+        if ladder_fields and agent_task_scope(request) is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"task-scoped agent tokens cannot update {', '.join(sorted(ladder_fields))}; "
+                    "escalation ladder changes require operator or run-root credentials"
+                ),
+            )
+        task = await store.update(
+            task_id,
+            role=body.role,
+            priority=body.priority,
+            model=body.model,
+            cli=body.cli,
+            meta_messages=body.meta_messages,
+            escalation_ladder_step=body.escalation_ladder_step,
+            escalation_ladder_attempts=body.escalation_ladder_attempts,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
@@ -2725,3 +2916,28 @@ def get_channel_responses(query_id: str, request: Request) -> list[ChannelRespon
         )
         for r in responses
     ]
+
+
+class AdministrativeRunCreate(BaseModel):
+    """Create a manual container without planning or spawning agents."""
+
+    goal: str = Field(min_length=1, max_length=8192)
+
+
+@router.post("/administrative-runs", status_code=201, response_model=AdministrativeRunStatus)
+def create_administrative_run(body: AdministrativeRunCreate, request: Request) -> dict[str, Any]:
+    if agent_task_scope(request) is not None:
+        raise HTTPException(status_code=403, detail="Task-scoped tokens cannot create run containers")
+    return request.app.state.administrative_runs.create(body.goal, _resolve_request_tenant_scope(request))
+
+
+@router.get("/administrative-runs/{run_id}", response_model=AdministrativeRunStatus)
+def administrative_run_status(run_id: str, request: Request) -> dict[str, Any]:
+    try:
+        result = request.app.state.administrative_runs.status(run_id, _resolve_request_tenant_scope(request))
+        enforce_agent_task_scope_for_ids(request, [task["id"] for task in result["tasks"]])
+        return result
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

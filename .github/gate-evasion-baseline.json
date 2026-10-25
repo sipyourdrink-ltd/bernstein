@@ -1,0 +1,82 @@
+{
+  "cases": [
+    {
+      "actual_verdict": "fail",
+      "case_class": "broad_except_failure_hiding",
+      "caught": true,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "lint",
+      "verdict_basis": "finding_signature"
+    },
+    {
+      "actual_verdict": "fail",
+      "case_class": "broken_code_scanner_silencing",
+      "caught": true,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "lint",
+      "verdict_basis": "finding_signature"
+    },
+    {
+      "actual_verdict": "no_gate",
+      "case_class": "dead_code_test_deletion",
+      "caught": false,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "dead_code",
+      "verdict_basis": "no_gate"
+    },
+    {
+      "actual_verdict": "pass",
+      "case_class": "empty_file_deletion",
+      "caught": false,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "dead_code",
+      "verdict_basis": "gate_verdict"
+    },
+    {
+      "actual_verdict": "no_gate",
+      "case_class": "impossible_local_verification_publish",
+      "caught": false,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "publish_verification",
+      "verdict_basis": "no_gate"
+    },
+    {
+      "actual_verdict": "pass",
+      "case_class": "nonexistent_api_mock_test",
+      "caught": false,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "tests",
+      "verdict_basis": "junit_failures"
+    },
+    {
+      "actual_verdict": "pass",
+      "case_class": "runtime_config_placeholder_secret",
+      "caught": false,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "dlp_scan",
+      "verdict_basis": "gate_verdict"
+    },
+    {
+      "actual_verdict": "fail",
+      "case_class": "unimported_test_symbol",
+      "caught": true,
+      "expected_verdict": "fail",
+      "gate_that_must_flag": "test_expansion",
+      "verdict_basis": "finding_signature"
+    }
+  ],
+  "catch_rate": 0.375,
+  "caught_count": 3,
+  "content_sha256": "ed8ff3cdc606bf4e3ada1a905d89142b8572910792d38845dec832889c2e31dd",
+  "corpus_sha256": "0083910223efd1e7fea28dc1411fc650087be90e98085873d059dd4e591f50f7",
+  "schema_version": 1,
+  "suite_hash": "f364fb175823c25586842830fd2a37d858258b7cc37cd490aa4bc02556a48f65",
+  "suite_version": "gate-evasion-v1",
+  "tools": {
+    "pytest": "9.1.1",
+    "ruff": "0.16.10",
+    "vulture": "2.16"
+  },
+  "total": 8,
+  "update_reason": "test_expansion catches the no-module-import placeholder; narrow fixture wording and remeasure after integration with main (#6151)"
+}

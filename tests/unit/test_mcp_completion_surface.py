@@ -98,6 +98,7 @@ def _stdio_args(tmp_path: Path) -> dict[str, dict[str, Any]]:
     return {
         # The consolidated surface (#3087).
         "bernstein_status": {},
+        "bernstein_subscribe": {"role": "backend", "timeout_seconds": 1},
         "bernstein_run": {"goal": "ship the parser"},
         "bernstein_run_status": {"run_id": "run-1", "workdir": str(tmp_path)},
         "bernstein_claim": {"claimer_id": "worker-1"},
@@ -113,6 +114,7 @@ def _stdio_args(tmp_path: Path) -> dict[str, dict[str, Any]]:
         "bernstein_shutdown_orchestrator": {"workdir": str(tmp_path)},
         "bernstein_approve": {"task_id": _TASK_ID, "note": "unstick it"},
         "bernstein_complete": {"task_id": _TASK_ID, "result_summary": "looked done to me"},
+        "bernstein_create_task": {"title": "sweep task", "description": "sweep test"},
         "bernstein_task_capsule": {"task_id": _TASK_ID, "workdir": str(tmp_path)},
         "load_skill": {"name": "backend"},
         # Deprecated aliases, callable for one release (#3087): swept with
@@ -132,6 +134,7 @@ def _remote_args() -> dict[str, dict[str, Any]]:
     """Minimal valid arguments for every tool the HTTP transport advertises."""
     return {
         "bernstein_status": {},
+        "bernstein_subscribe": {"role": "backend", "timeout_seconds": 1},
         "bernstein_run": {"goal": "ship the parser"},
         "bernstein_cancel": {"task_id": _TASK_ID},
         "bernstein_shutdown_orchestrator": {"workdir": ""},
@@ -163,6 +166,19 @@ def _mock_http_client(status: str, posts: list[str]) -> MagicMock:
     client.__aexit__ = AsyncMock(return_value=False)
     client.get = AsyncMock(return_value=read)
     client.post = AsyncMock(side_effect=_post)
+
+    async def event_lines():
+        yield "event: task.created"
+        yield 'data: {"task_id": "new-task", "title": "Incoming task"}'
+        yield ""
+
+    streamed = MagicMock()
+    streamed.raise_for_status = MagicMock()
+    streamed.aiter_lines = event_lines
+    stream_context = MagicMock()
+    stream_context.__aenter__ = AsyncMock(return_value=streamed)
+    stream_context.__aexit__ = AsyncMock(return_value=False)
+    client.stream = MagicMock(return_value=stream_context)
     return client
 
 
@@ -203,7 +219,10 @@ async def test_no_stdio_tool_finishes_a_task_outside_the_gate(status: str, tmp_p
         posts: list[str] = []
         client = _mock_http_client(status, posts)
         with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client):
-            await mcp.call_tool(tool, dict(args))
+            result = await mcp.call_tool(tool, dict(args))
+        if tool == "bernstein_subscribe":
+            client.stream.assert_called_once()
+            assert "Incoming task" in result.content[0].text
         bad = _forbidden(posts, tool, status)
         if bad:
             offenders[tool] = bad
@@ -275,13 +294,20 @@ async def test_no_remote_tool_finishes_a_task_outside_the_gate(status: str) -> N
             return "{}"
 
         proxy_get = AsyncMock(return_value=json.dumps({"id": _TASK_ID, "status": status}))
+        client = _mock_http_client(status, posts)
         with (
+            patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client),
             patch.object(StreamableHTTPTransport, "_proxy_get", proxy_get),
             patch.object(StreamableHTTPTransport, "_proxy_post", AsyncMock(side_effect=_post)),
         ):
             # A tool that raises issued no write, which is what is being measured.
-            with contextlib.suppress(Exception):
-                await transport._execute_tool(tool, dict(args))
+            if tool == "bernstein_subscribe":
+                result = await transport._execute_tool(tool, dict(args))
+                client.stream.assert_called_once()
+                assert "Incoming task" in result
+            else:
+                with contextlib.suppress(Exception):
+                    await transport._execute_tool(tool, dict(args))
         bad = _forbidden(posts, tool, status)
         if bad:
             offenders[tool] = bad

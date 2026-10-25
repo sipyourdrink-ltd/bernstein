@@ -46,11 +46,7 @@ bernstein.core.autoheal.idempotency: #4526 audit in flight
 bernstein.core.autoheal.kill_switch: #4526 audit in flight
 bernstein.core.autoheal.shadow_mode: #4526 audit in flight
 bernstein.core.autoheal.wire: #4526 audit in flight
-bernstein.core.checks.adapters: #4526 audit in flight
-bernstein.core.checks.contract: #4526 audit in flight
-bernstein.core.checks.registry: #4526 audit in flight
 bernstein.core.communication.direct: #4526 audit in flight
-bernstein.core.communication.rendezvous: #4526 audit in flight
 bernstein.core.communication.whiteboard: #4526 audit in flight
 bernstein.core.compat_redirect_ledger: #4526 audit in flight
 bernstein.core.config.prompt_versions: #4526 audit in flight
@@ -93,7 +89,6 @@ bernstein.core.identity.spiffe.mtls: #4526 audit in flight
 bernstein.core.interop.authority_envelope: #4526 audit in flight
 bernstein.core.knowledge.graphify_code_graph: #4526 audit in flight
 bernstein.core.lifecycle.pluggy_bridge: #4526 audit in flight
-bernstein.core.lineage.foreign_attestation: #4526 audit in flight
 bernstein.core.lineage.recorder: #4526 audit in flight
 bernstein.core.memory.compaction.auto: #4526 audit in flight
 bernstein.core.memory.compaction.micro: #4526 audit in flight
@@ -160,7 +155,6 @@ bernstein.core.persistence.insights: #4526 audit in flight
 bernstein.core.persistence.migrations.v001_baseline: #4526 audit in flight
 bernstein.core.persistence.migrations.v002_stamp_runtime_state: #4526 audit in flight
 bernstein.core.persistence.session_continuity: #4526 audit in flight
-bernstein.core.persistence.store: #4526 audit in flight
 bernstein.core.persistence.store_factory: #4526 audit in flight
 bernstein.core.persistence.store_postgres: #4526 audit in flight
 bernstein.core.persistence.store_redis: #4526 audit in flight

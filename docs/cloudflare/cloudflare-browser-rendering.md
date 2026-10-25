@@ -35,8 +35,9 @@ The bridge reads two values, by convention from environment variables:
 | `CLOUDFLARE_ACCOUNT_ID` (alias `CF_ACCOUNT_ID`)         | Cloudflare account UUID                |
 | `CLOUDFLARE_API_TOKEN` (alias `CF_API_TOKEN`)           | API token with Browser Rendering Edit  |
 
-These are the same vars consumed by `cloudflare.py` and
-`r2_sync.py`. Set them once and every Cloudflare bridge picks them up.
+No bridge module reads these variables itself: your code passes them
+into `BrowserConfig` (and `R2Config`, `BridgeConfig.extra`) as shown below,
+and wrangler reads the same names.
 
 ### Bernstein-side configuration
 
@@ -53,7 +54,7 @@ cfg = BrowserConfig(
 browser = BrowserRenderingBridge(cfg)
 ```
 
-Optional fields (with defaults from `browser_rendering.py:32`):
+Optional fields (with defaults from `BrowserConfig` in `browser_rendering.py`):
 
 | Field                | Default              | Notes                                                 |
 |----------------------|----------------------|-------------------------------------------------------|
@@ -359,6 +360,6 @@ Rendering arbitrary URLs is, by design, a sandbox. Treat it as one:
 - [Cloudflare setup](cloudflare-setup.md) - wrangler, account, and
   token setup that this bridge relies on.
 - [Cloudflare bridges](cloudflare-bridges.md) - Workers / Workflow /
-  R2 bridges that share the same auth env vars.
+  R2 bridges that share the same account ID and API token.
 - [Secrets and credentials](../operations/secrets.md) - where the
   `CLOUDFLARE_API_TOKEN` lives and how to rotate it.

@@ -127,3 +127,94 @@ tasks:
         # Verify that tasks were spawned
         assert "Successfully spawned 2 tasks for scenario 'multi-task-scenario'" in result.output
         assert "task-123" in result.output
+
+
+_THREE_TASK_SCENARIO = """\
+id: three
+name: Three
+description: three tasks
+tasks:
+  - title: One
+    description: first
+    role: backend
+  - title: Two
+    description: second
+    role: backend
+  - title: Three
+    description: third
+    role: backend
+"""
+
+
+def _workspace_with_scenario(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    scenarios_dir = tmp_path / ".bernstein" / "scenarios"
+    scenarios_dir.mkdir(parents=True)
+    (scenarios_dir / "three.yaml").write_text(_THREE_TASK_SCENARIO, encoding="utf-8")
+
+
+def test_scenario_run_json_spawns_and_reports_real_task_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--json used to print task_ids [] and post nothing."""
+    import json
+
+    _workspace_with_scenario(tmp_path, monkeypatch)
+    posted: list[str] = []
+
+    def fake_post(path: str, body: dict[str, object]) -> dict[str, str]:
+        posted.append(str(body.get("title")))
+        return {"id": f"t-{len(posted)}"}
+
+    with patch("bernstein.cli.helpers.server_post", side_effect=fake_post):
+        result = CliRunner().invoke(cli, ["scenario", "run", "three", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["task_ids"] == ["t-1", "t-2", "t-3"]
+    assert data["spawned_count"] == 3
+    assert len(posted) == 3
+
+
+def test_scenario_run_fails_when_server_is_unreachable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """server_post returns None when the server is down; that is not success."""
+    _workspace_with_scenario(tmp_path, monkeypatch)
+
+    with patch("bernstein.cli.helpers.server_post", return_value=None):
+        result = CliRunner().invoke(cli, ["scenario", "run", "three"])
+
+    assert result.exit_code != 0
+    assert "Successfully spawned" not in result.output
+    assert "0 of 3" in result.output
+
+
+def test_scenario_run_partial_failure_exits_nonzero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _workspace_with_scenario(tmp_path, monkeypatch)
+    replies: list[object] = [{"id": "t-1"}, None, {"id": "t-3"}]
+
+    with patch("bernstein.cli.helpers.server_post", side_effect=replies):
+        result = CliRunner().invoke(cli, ["scenario", "run", "three"])
+
+    assert result.exit_code != 0
+    assert "2 of 3" in result.output
+    assert "Successfully spawned" not in result.output
+
+
+def test_scenario_run_json_partial_failure_exits_nonzero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    _workspace_with_scenario(tmp_path, monkeypatch)
+
+    with patch("bernstein.cli.helpers.server_post", return_value=None):
+        result = CliRunner().invoke(cli, ["scenario", "run", "three", "--json"])
+
+    assert result.exit_code != 0
+    assert json.loads(result.output)["task_ids"] == []
+
+
+def test_scenario_list_leaves_no_state_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A read-only listing must not create .sdd/routines in the cwd."""
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(cli, ["scenario", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / ".sdd").exists()

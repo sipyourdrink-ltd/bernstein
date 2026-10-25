@@ -15,7 +15,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### avoimen lähdekoodin governance-kerros AI-agenteille
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:13f9153b6acd" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:cf660270848a" -->
 
 [![CI](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -28,7 +28,7 @@
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.sipyourdrink-ltd%2Fbernstein.svg)](https://mcptoplist.com/server/io.github.sipyourdrink-ltd%2Fbernstein)
 <a href="https://deepwiki.com/sipyourdrink-ltd/bernstein"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 
-[website](https://bernstein.run) &middot; [docs](https://bernstein.readthedocs.io/) &middot; [install](https://bernstein.readthedocs.io/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
+[website](https://bernstein.run) &middot; [docs](https://docs.bernstein.run/) &middot; [install](https://docs.bernstein.run/en/latest/getting-started/install/) &middot; [first run](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/getting-started/first-run.md) &middot; [glossary](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/GLOSSARY.md) &middot; [limitations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/KNOWN_LIMITATIONS.md) &middot; [name policy](https://github.com/sipyourdrink-ltd/bernstein/blob/main/TRADEMARKS.md) &middot; [sponsor](https://github.com/sponsors/chernistry)
 
 [简体中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-Hans.md) &middot; [繁體中文](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.zh-TW.md) &middot; [日本語](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ja.md) &middot; [한국어](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ko.md) &middot; [हिन्दी](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.hi.md) &middot; [বাংলা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.bn.md) &middot; [Русский](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ru.md) &middot; [Español](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.es.md) &middot; [Português](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pt.md) &middot; [Deutsch](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.de.md) &middot; [Français](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fr.md) &middot; [Italiano](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.it.md) &middot; [Nederlands](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.nl.md) &middot; [Polski](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.pl.md) &middot; [Svenska](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.sv.md) &middot; [Suomi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.fi.md) &middot; [Українська](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.uk.md) &middot; [Türkçe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.tr.md) &middot; [العربية](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.ar.md) &middot; [עברית](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.he.md) &middot; [Bahasa Indonesia](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.id.md) &middot; [Tiếng Việt](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.vi.md) &middot; [ไทย](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/i18n/README.th.md)
 
@@ -38,17 +38,18 @@
 
 > **Tila: beta.** Yhden henkilön ylläpitämä, aktiivisessa kehityksessä. Versionumero laskee julkaisuja, ei kypsyyttä — pienet versiopäivitykset (minor) voivat muuttaa rajapintoja. Lukitse versio kriittisissä riippuvuuksissa; regressiot korjataan nopeasti, [ilmoita niistä](https://github.com/sipyourdrink-ltd/bernstein/issues).
 
-Bernstein on avoimen lähdekoodin governance-kerros AI-agenteille. Se toimii policy as code -periaatteella: sinä kirjoitat käytännön - kuka saa tehdä mitä, mikä vaatii hyväksynnän, mikä on kirjattava - ja Bernstein toteuttaa sen ja tuottaa todennettavan tallenteen. Deterministinen skeduloija - ei mallia koordinaatiosilmukassa - ajaa agentteja rinnakkain, portittaa niiden tuotokset ja kirjaa jokaisen askeleen, joten ajon voi verifioida jälkikäteen, offline, pelkistä artefakteista. CLI-koodiagentit toimivat suoraan (Claude Code, Codex, Gemini CLI ja 52+ muuta), ja sama kerros governoi mitä tahansa agenttikuormaa: tulos voi olla diff, tutkimusraportti, datasetti tai auditointievidenssipaketti. Air-gap-asennusprofiili mukana. Apache-2.0.
+Bernstein on avoimen lähdekoodin governance-kerros AI-agenteille. Se toimii policy as code -periaatteella: sinä kirjoitat käytännön - kuka saa tehdä mitä, mikä vaatii hyväksynnän, mikä on kirjattava - ja Bernstein toteuttaa sen ja tuottaa todennettavan tallenteen. Deterministinen skeduloija - ei mallia koordinaatiosilmukassa - ajaa agentteja rinnakkain, portittaa niiden tuotokset ja kirjaa jokaisen askeleen, joten ajon voi verifioida jälkikäteen, offline, pelkistä artefakteista. CLI-koodiagentit toimivat suoraan (Claude Code, Codex, Gemini CLI ja 50+ muuta), ja sama kerros governoi mitä tahansa agenttikuormaa: tulos voi olla diff, tutkimusraportti, datasetti tai auditointievidenssipaketti. Air-gap-asennusprofiili mukana. Apache-2.0.
 
 ### lyhyesti
-<!-- l10n: en="at a glance" hash="sha256:5ebd34b9459d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Neljä ominaisuutta erottaa sen muista; kaikki muu on yksityiskohtia.
+Viisi asiaa erottaa sen muista; loput ovat yksityiskohtia.
 
 - **Ei kielimallia koordinointisilmukassa.** Aikataulutus on puhdasta Pythonia, joten suoritus on täysin toistettavissa alusta loppuun. Toista eilinen suunnitelma ja saat saman tehtävägraafin.
+- **Laitteistoavainten todisteet.** PIV-säilytyksen ja FIDO2-hyväksynnän offline-tarkistimet jakavat kuittiprotokollan, kiinnitetyt luottamusankkurit ja nimenomaisen ajan. Tokenin säilytys ei nosta TRACE-luottamustasoja. [Laitteistoavainten todisteet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Tarkistettavissa jälkikäteen.** Toistoloki (replay journal) tallentaa jokaisen ajon, ja aina aktiivinen alkuperärunko (lineage spine) kirjaa jokaisen jäljitettävän vaiheen; valinnainen HMAC-ketjutettu audit-loki (`BERNSTEIN_AUDIT=1`) lisää kuitteja (receipts), jotka voidaan vahvistaa offline-tilassa. Epädeterministisyys näkyy tarkkana tiiviste-erona kyseisessä vaiheessa eikä satunnaisena epävakautena uudelleenajossa. Muut kuin koodituotokset käsitellään samalla tavalla: tehtävä voi määritellä artefaktisopimuksen (raportti, tietoaineisto, toimintaloki, operaatiotulos) ja se valmistuu allekirjoitetulla alkuperäkuitilla git-commitin sijaan.
 - **Eristetty rakenteellisesti.** Jokainen koodaustehtävä saa oman git worktreen merge-porttien taakse; artefaktitilan tehtävät saavat työhakemiston polkuun `.sdd/workspaces/`. Agentit eivät oletusarvoisesti jaa muokattavaa työtilaa; ainoa jaettu tila on tehtäväjono, joka varataan atomisesti. Tiukemmat tiedostojärjestelmärajoitukset ovat valinnaisia [sandbox-taustajärjestelmien](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md) kautta. Jos poistat worktreen käytöstä, jokainen tehtävä suoritetaan jaetussa työtilassa.
-- **Kattava ja paikallinen.** Yli 52 CLI-agenttisovitinta sekä yleinen `--prompt`-kääre, tiedostopohjainen tila, ei SaaS-riippuvuuksia, ei ulkopuolista datatasoa.
+- **Kattava ja paikallinen.** Yli 53 CLI-agenttisovitinta sekä yleinen `--prompt`-kääre, tiedostopohjainen tila, ei SaaS-riippuvuuksia, ei ulkopuolista datatasoa.
 
 Täydellinen luettelo löytyy [kyvykkyyssivulta](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md); [ominaisuusmatriisi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/FEATURE_MATRIX.md) toimii kattavana hakemistona.
 
@@ -134,7 +135,7 @@ flowchart LR
 Jokaisen solmun ottaa agentti, jonka roolin vaihe sallii; rooliaidat ja hyväksyntäportit pitävät riippumatta siitä, mitä agentti tekee tehtävän sisällä. Koodisolmu päättyy merge-porttien taakse omassa git worktreessään. Yllä olevat solmut päättyvät toisin: [artefaktisopimus](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nimeää tuloksen (raportti, datasetti, skannaus, toimiloki), ja solmu sulkeutuu allekirjoitetulla lineage-kuitilla commitin sijaan. Sama skeduloija, sama journal, sama offline-verifiointi - kantoi graafi sitten koodia, tutkimusta, ops-muutosta tai näiden sekoitusta. Valmiit graafit ohjelmistoille, tutkimukselle, dokumentaatiolle, enterprise-käyttöön ja kontribuutiovirroille ovat [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### asennus 30 sekunnissa
-<!-- l10n: en="install in 30 seconds" hash="sha256:81b04220e0ff" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,7 +144,7 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
-pipx, pip, brew, dnf, npm ja Docker käsitellään [asennusoppaassa](https://bernstein.readthedocs.io/en/latest/getting-started/install/); eristetyllä paketilla on oma [air-gap-oppaansa](https://bernstein.readthedocs.io/en/latest/installation/air-gap/).
+pipx, pip, brew, dnf, npm ja Docker käsitellään [asennusoppaassa](https://docs.bernstein.run/en/latest/getting-started/install/); eristetyllä paketilla on oma [air-gap-oppaansa](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
 
@@ -154,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI vahvistaa tallennetun kuitin jokaisen main-haaraan tehdyn pushin yhteydessä — ja todistaa peukaloidun kopion hylkäämisen —, jotta julkaistu näyttö ei muutu pelkäksi koristeeksi. Skripti `scripts/record_demo.sh` luo tallenteen, kuitin ja avaimen uudelleen tuoreesta todellisesta ajosta; mikään terminaalissa ei ole simuloitua.
+Tallennetun kuitin voi tarkistaa milloin tahansa uudelleen yllä olevalla komennolla; muokattu kopio ei läpäise samaa tarkistusta. `scripts/record_demo.sh` luo tallenteen, kuitin ja avaimen uudelleen tuoreesta todellisesta ajosta; mikään terminaalissa ei ole simuloitua.
 
 Käynnissä olevaa ajoa voidaan seurata kummasta tahansa käyttöliittymästä. Molemmat lukevat samaa tehtävärajapintaa, joten kumpikaan ei ole toisen viivästynyt heijastus. `bernstein live` -näkymässä vasen ja oikea sarake vierittyvät itsenäisesti kokonaisina paneeleina, jolloin ohjaimet pysyvät saavutettavissa myös matalissa terminaaleissa.
 
@@ -230,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Yhdistele agentteja samassa ajossa: edullisia paikallisia malleja rutiinikoodiin, raskaampia pilvimalleja arkkitehtuuriin. `bernstein integrations list --installed` näyttää koneellasi käytettävissä olevat työkalut.
 
 ### vapaaehtoinen laskentateho
-<!-- l10n: en="volunteer compute" hash="sha256:f0bd4a22affd" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Projekti voi merkitä tiketit vapaaehtoisille avoimiksi, ja kuka tahansa voi ajaa yhden niistä omalla koneellaan ilman tiliä ja ilman koordinaattoria. Sen, mitä tehtävä saa tehdä, projekti ilmoittaa `volunteer.json`-manifestissa - hiekkalaatikon taustaosa, sallittujen verkko-osoitteiden lista, seinäkelloajan ja muistin katot - ja lahjoittajan omat rajat voivat vain kaventaa tätä, eivät koskaan laajentaa. Valmiin tehtävän tuottama kuitti sitoo tuloksen siihen eristyspäätökseen, jonka alla se ajettiin, joten ylläpitäjä voi kuukausienkin päästä tarkistaa, mihin työllä todella oli lupa koskea.
 
@@ -239,16 +240,17 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-[Lahjoittajan opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) käsittelee workerin ajamisen ja asettamasi budjetin, [projektin opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) manifestin ilmoittamisen, ja [uhkamalli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) kertoo, miltä kukin raja suojaa ja miltä ei. Yhden komennon ajuria ei ole vielä julkaistu: tänään toimivat alikomennot ovat `verify`, `browse` ja `hub`.
+[Lahjoittajan opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) käsittelee workerin ajamisen ja asettamasi budjetin, [projektin opas](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) manifestin ilmoittamisen, ja [uhkamalli](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) kertoo, miltä kukin raja suojaa ja miltä ei. Yhden komennon ajuria ei ole vielä julkaistu: tänään toimivat alikomennot ovat `verify`, `browse`, `budget`, `verify-bundle` ja `hub`. `autopilot` on rekisteröity, mutta se kieltäytyy käynnistymästä, kunnes `TaskSource` on toteutettu.
 
 ### etusivun lisäksi
-<!-- l10n: en="beyond the front page" hash="sha256:ebdf899bf20a" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
-Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://bernstein.readthedocs.io/):
+Kaikki syvällisempi materiaali löytyy [dokumentaatiosivustolta](https://docs.bernstein.run/):
 
 | sivu | aihealue |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | koko ominaisuuslista: MCP-palvelintila, allekirjoitetut agenttikortit, hiekkalaatikkotaustat, artefaktinielut, sääntelykartoitukset |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | missä arvo syntyy ja milloin Bernstein ei ole oikea työkalu |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | deklaratiiviset YAML DAG -rakenteet agentti- / komento- / silmukkasolmuista |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | selainpohjainen hallintapaneeli samalla rajapinnalla kuin TUI |
@@ -278,6 +280,11 @@ Täydellinen seurantalista, mukaan lukien jokainen awesome-listan merkintä, lue
 
 </details>
 
+### Hallinnolliset ajot
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Luo tyhjä, auditoitu säilö ilman suunnittelijaa tai agenttiprosesseja kutsulla `bernstein_run(template="administrative", goal="Weekly sprint")`. Lisää käsin tehtäviä kutsulla `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ja tarkista tila kutsulla `bernstein_run_status(run_id="admin-...")`. Tehtävät ovat varattavissa tavallisen API:n kautta, mutta ne on rajattu automaattisen orkestroinnin ulkopuolelle. Ei-tyhjä ajo valmistuu, kun jokaisen tehtävän tila on `done`, `closed` tai `cancelled`; tyhjä ajo pysyy avoinna. [Käyttöohje](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### osallistuminen, tuki, lisenssi
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -287,6 +294,6 @@ Viittausmetatiedot löytyvät tiedostosta [CITATION.cff](https://github.com/sipy
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

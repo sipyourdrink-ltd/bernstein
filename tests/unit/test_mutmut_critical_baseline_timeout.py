@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,8 +25,8 @@ from scripts.mutmut_critical import (
 )
 
 # The real lineage_tips entry from MODULES: same source and suite as the
-# nightly job that crashed, so the missing-source guard is satisfied and
-# the baseline path under test is the production one.
+# nightly job that crashed. The fixture copies its source into a private
+# repository so the real missing-source and baseline paths remain exercised.
 LINEAGE_TIPS = Module(
     key="lineage_tips",
     source="src/bernstein/core/lineage/tips.py",
@@ -35,6 +36,16 @@ LINEAGE_TIPS = Module(
     max_candidates=60,
     note="Lineage v1 tip tracker.",
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_mutation_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the real mutator against a per-test copy, never the shared checkout."""
+    source = Path(__file__).resolve().parents[2] / LINEAGE_TIPS.source
+    target = tmp_path / LINEAGE_TIPS.source
+    target.parent.mkdir(parents=True)
+    target.write_bytes(source.read_bytes())
+    monkeypatch.setattr(mutmut_critical, "REPO", tmp_path)
 
 
 def _raise_timeout(cmd: list[str], timeout: int | None = None, **_: Any) -> None:

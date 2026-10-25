@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import httpx
 
@@ -64,61 +64,9 @@ async def _post_task_to_server(
     Raises:
         httpx.HTTPStatusError: If the server rejects the request.
     """
-    from dataclasses import asdict
+    from bernstein.core.tasks.task_body import build_task_body
 
-    # Apply priority boost for upgrade proposals
-    priority = task.priority
-    if task.task_type == TaskType.UPGRADE_PROPOSAL:
-        priority = max(1, task.priority - 1)
-
-    body: dict[str, Any] = {
-        "title": task.title,
-        "description": task.description,
-        "role": task.role,
-        "priority": priority,
-        "scope": task.scope.value,
-        "complexity": task.complexity.value,
-        "estimated_minutes": task.estimated_minutes,
-        "depends_on": task.depends_on,
-        "owned_files": task.owned_files,
-        "task_type": task.task_type.value,
-    }
-    # Forward routing hints declared on the task (per-step plan fields).
-    # ``cli`` selects the adapter (claude, gemini, codex …) and ``model`` /
-    # ``effort`` pin the model variant.  Dropping ``model`` here causes
-    # plan-driven runs to collapse onto the orchestrator default (sonnet),
-    # which silently violates per-step ``cli:``/``model:`` directives.
-    if task.cli:
-        body["cli"] = task.cli
-    if task.model:
-        body["model"] = task.model
-    if task.effort:
-        body["effort"] = task.effort
-    # Include upgrade_details if present
-    if task.upgrade_details:
-        body["upgrade_details"] = asdict(task.upgrade_details)
-    # Forward the declared artifact contract (issue #3110). Dropping it here
-    # would silently turn a declared report/dataset/action_log/ops_result task
-    # back into a code_diff task at the server boundary.
-    from bernstein.core.tasks.artifacts import ArtifactKind
-
-    if task.artifact_spec.kind is not ArtifactKind.CODE_DIFF:
-        body["artifact_spec"] = task.artifact_spec.to_dict()
-
-    # Forward declared context files (issue #3375). The plan loader stamps
-    # plan-level ``context_files`` onto ``task.metadata``, and the spawner
-    # reads the same key off the stored task at dispatch; this body is built
-    # field-by-field, so without an explicit forward the declaration dies at
-    # the server boundary. Scoped to the one key this wire carries rather
-    # than forwarding all metadata, so unrelated loader-internal metadata
-    # keys keep their current (server-absent) behaviour.
-    context_files = task.metadata.get("context_files") if isinstance(task.metadata, dict) else None
-    if isinstance(context_files, list) and context_files:
-        body["metadata"] = {"context_files": [str(p) for p in context_files]}
-
-    # Plan mode: tasks start as PLANNED instead of OPEN
-    if plan_mode:
-        body["status"] = "planned"
+    body = build_task_body(task, plan_mode=plan_mode)
 
     resp = await client.post(f"{server_url}/tasks", json=body)
     resp.raise_for_status()

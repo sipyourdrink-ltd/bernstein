@@ -17,7 +17,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bernstein.cli.commands.volunteer_cmd import volunteer_group
@@ -547,17 +547,30 @@ def test_verify_bundle_receipt_out_writes_a_receipt_that_verifies(tmp_path: Path
 # --------------------------------------------------------------------------- #
 
 
-def test_bare_volunteer_command_does_not_print_bare_click_help() -> None:
+def _onboard(root: Path, *args: str, stdin: str = "y\n") -> Result:
+    """Run bare ``bernstein volunteer`` with *root* as the working directory.
+
+    Onboarding resolves ``.sdd/`` relative to the working directory, so every
+    run is pinned to a scratch directory -- a run from the repository root
+    would otherwise write into the developer's own ``.sdd/``. ``stdin`` answers
+    "yes" by default so a consent prompt, were one ever added back, would be
+    accepted rather than hide what the command does with a yes.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.chdir(root)
+        return CliRunner().invoke(volunteer_group, list(args), catch_exceptions=False, input=stdin)
+
+
+def test_bare_volunteer_command_does_not_print_bare_click_help(tmp_path: Path) -> None:
     """Regression guard: bare `bernstein volunteer` must not print Click help.
 
     Before the onboarding routing, `volunteer_group` had no
     `invoke_without_command=True`, so bare invocation printed Click's default
-    group help. After the change it must route to the onboarding flow instead.
+    group help. It routes to the onboarding flow instead.
     """
-    result = CliRunner().invoke(volunteer_group, [], catch_exceptions=False, input="y\n")
-    # Click help has "Usage:" and "Commands:" sections
-    assert "Usage:" not in result.output or "Commands:" not in result.output
-    assert result.exit_code == 0
+    result = _onboard(tmp_path)
+    assert "Commands:" not in result.output
+    assert "volunteer onboarding" in result.output
 
 
 def test_volunteer_subcommands_still_dispatch_normally_after_the_change() -> None:
@@ -573,33 +586,61 @@ def test_volunteer_subcommands_still_dispatch_normally_after_the_change() -> Non
     assert "volunteer verify" in result.output or "Validate a project" in result.output
 
 
-def test_bare_volunteer_explains_before_asking_for_anything(tmp_path: Path) -> None:
-    """Output order: explanation text appears before any prompt or interactive step."""
-    result = CliRunner().invoke(volunteer_group, [], catch_exceptions=False, input="n\n")
-    lines = result.output.split("\n")
-    # Find the first substantial line (skip blanks)
-    first_line_idx = next((i for i, line in enumerate(lines) if line.strip()), 0)
-    # Explanation should be early in output, definitely before any "Proceed?" prompt
-    assert first_line_idx < len(lines) // 2
-    # The explanation should contain key terms from the issue
-    explanation_text = "\n".join(lines[:10])
-    assert "volunteer" in explanation_text.lower() or "task" in explanation_text.lower()
+def test_bare_volunteer_explains_before_stopping(tmp_path: Path) -> None:
+    """The explanation comes first, and says consent is bound to a project."""
+    result = _onboard(tmp_path)
+    explanation, _, refusal = result.output.partition("Error:")
+    assert "donate compute capacity" in explanation
+    assert "consent" in explanation.lower()
+    assert "manifest" in explanation
+    assert refusal, "the explanation must be followed by the reason onboarding stops"
 
 
-def test_no_flag_can_skip_the_consent_step() -> None:
-    """Consent is mandatory; no flag bypasses it.
+def test_bare_volunteer_records_no_consent_receipt(tmp_path: Path) -> None:
+    """Onboarding must not sign a consent receipt it has nothing to bind to.
 
-    This is an explicit acceptance criterion from #3889: "Consent is always
-    explicit on first run, recorded as a signed receipt, and cannot be skipped
-    by any flag."
+    A consent receipt binds the donor's key to one project's manifest digest
+    and the sandbox profile digest derived from it. No project is chosen during
+    onboarding, so any receipt written here carries invented digests -- and
+    reads, to a verifier that checks only the signature, as valid consent to a
+    policy the donor never saw. Onboarding used to write exactly that, signed by
+    a key generated on the spot, at the path every later reader would load.
     """
-    for flag in ["--yes", "--force", "--non-interactive", "-y"]:
-        result = CliRunner().invoke(volunteer_group, [flag], catch_exceptions=False)
-        # The command should either:
-        # 1. Not recognize the flag (exit 2, usage error), OR
-        # 2. Recognize it but still require consent (output mentions consent)
-        if result.exit_code == 2:
-            # Click rejected the unknown flag - that's acceptable
-            continue
-        # If it accepted the flag, consent must still be required
-        assert "consent" in result.output.lower() or result.exit_code != 0
+    from bernstein.core.volunteer.consent import DEFAULT_CONSENT_PATH
+
+    _onboard(tmp_path)
+
+    assert not (tmp_path / DEFAULT_CONSENT_PATH).exists()
+    assert list(tmp_path.iterdir()) == [], "onboarding wrote to the working directory"
+
+
+def test_bare_volunteer_does_not_ask_for_consent_it_cannot_record(tmp_path: Path) -> None:
+    """No yes/no prompt: a "yes" that leads to nothing being recorded is not consent."""
+    result = _onboard(tmp_path, stdin="")
+    assert "[y/N]" not in result.output
+
+
+def test_bare_volunteer_names_what_is_missing_and_exits_non_zero(tmp_path: Path) -> None:
+    """A script that runs onboarding must not carry on as if a donor were onboarded.
+
+    The refusal names the piece that is actually missing -- a task source, the
+    same gap ``volunteer autopilot`` refuses on -- rather than prerequisites
+    that have since landed.
+    """
+    result = _onboard(tmp_path)
+    assert result.exit_code == 1
+    assert "no task source" in result.output
+    assert "No consent was recorded" in result.output
+    assert "not yet merged" not in result.output
+
+
+@pytest.mark.parametrize("flag", ["--yes", "--force", "--non-interactive", "-y"])
+def test_no_flag_can_skip_the_consent_step(tmp_path: Path, flag: str) -> None:
+    """Consent is mandatory; no flag bypasses it (#3889 acceptance criterion).
+
+    Click rejects every one of these as an unknown option, and none of them
+    reaches the onboarding flow or writes anything.
+    """
+    result = _onboard(tmp_path, flag)
+    assert result.exit_code == 2, result.output
+    assert list(tmp_path.iterdir()) == []

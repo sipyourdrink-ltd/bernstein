@@ -1,7 +1,8 @@
 # Graphs in `core/knowledge/`
 
-Bernstein has three graph modules under `src/bernstein/core/knowledge/`. Despite
-the shared word "graph", they model three different domains and rarely overlap
+Bernstein has three core graph modules under `src/bernstein/core/knowledge/`
+(`code_graph.py` and `graphify_code_graph.py` also live there and are not
+covered here). Despite the shared word "graph", they model three different domains and rarely overlap
 at runtime. This page records what each one is for, where it lives, and who
 reads from it so future readers don't confuse them.
 
@@ -11,7 +12,7 @@ reads from it so future readers don't confuse them.
 | --- | --- | --- | --- |
 | `task_graph.py` | Task-dependency DAG (`core/knowledge/task_graph.py`) | Tasks; `BLOCKS` / `INFORMS` / `VALIDATES` / `TRANSFORMS` edges | In-memory, rebuilt each tick from the task store |
 | `knowledge_graph.py` | Codebase symbol graph (`core/knowledge/knowledge_graph.py`) | Files, classes, functions, methods; `defines` / `imports` / `calls` / `inherits` edges | SQLite at `.sdd/index/knowledge_graph.db` |
-| `ast_symbol_graph.py` | AST-level symbol graph (`core/knowledge/ast_symbol_graph.py`) | Function/class/method symbols; `calls` / `imports` / `inherits` edges | In-memory per build; seeds `knowledge_graph` |
+| `ast_symbol_graph.py` | AST-level symbol graph (`core/knowledge/ast_symbol_graph.py`) | Function/class/method symbols; `calls` / `inherits` edges | In-memory per build; seeds `knowledge_graph` |
 
 ## When to use which
 

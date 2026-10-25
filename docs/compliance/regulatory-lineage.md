@@ -113,19 +113,22 @@ are operator-provided.
 
 #### `kms_adapter: hsm` requires a real integration
 
-Setting `lineage.customer_signing.kms_adapter: hsm` in `bernstein.yaml`
+The HSM selector is a Python API argument, with no `bernstein.yaml` key
+yet: `kms_adapter="hsm"` (with `kms_token_uri=`) on
+`lineage_signer.signer_from_config`, or `kind="hsm"` (with `token_uri=`)
+on `key_custody.kms_adapter_from_config`. It
 does **not** ship a working PKCS#11 / Cloud-KMS client. The base
 `HSMKMSAdapter` in `bernstein.core.security.key_custody` is a
 documentation stub: every `sign()` call raises `NotImplementedError`.
 To use the `hsm` selector in production, ship a subclass that
 overrides both `sign()` and `public_key_jwk()`, import it before the
-orchestrator loads its config, and the dispatcher picks it up
-automatically.
+signer is built, and the dispatcher picks it up automatically.
 
-If a subclass is not on the classpath, `kms_adapter_from_config` raises
-`LineageSignerError` at config-load time -- so a misconfigured
-`bernstein.yaml` surfaces immediately rather than crashing on the first
-audit-emit / lineage-sign call. For non-production smoke tests where
+Building the signer raises `LineageSignerError` if `token_uri` is
+missing. It also raises when no `HSMKMSAdapter` subclass is imported,
+unless `BERNSTEIN_ALLOW_HSM_STUB=1` is set, so a misconfiguration
+surfaces when the signer is built rather than on the first
+lineage-sign call. For non-production smoke tests where
 the silent-stub behaviour is acceptable, set
 `BERNSTEIN_ALLOW_HSM_STUB=1` to opt in to the stub explicitly.
 
@@ -158,6 +161,7 @@ for rec in reader.iter_records(run_id="r-2026-05-05"):
 bernstein lineage export r-2026-05-05 --format html --output /tmp/audit.html
 bernstein lineage export r-2026-05-05 --format csv  --output /tmp/audit.csv
 bernstein lineage export r-2026-05-05 --format jsonld --output /tmp/audit.jsonld
+bernstein lineage export r-2026-05-05 --format openlineage --output /tmp/audit.ol.jsonl
 ```
 
 The HTML form is a single self-contained file (no JS, no external
@@ -168,10 +172,11 @@ verifier with a JSON-LD library can graph-walk the chain.
 
 ## Tamper-loud detection
 
-The janitor's lineage compaction step runs a chain verification
-pass on every cycle. If verification fails the janitor:
+`verify_lineage_chains` (`core/quality/janitor.py`) runs a chain
+verification pass over every run's lineage. It is a library entry
+point, not yet wired into the janitor cycle. If verification fails it:
 
-1. Emits an `audit.jsonl` entry of type `lineage_tamper_detected`.
+1. Emits an audit-chain entry of type `lineage_tamper_detected`.
 2. Increments `bernstein_lineage_tamper_total{run_id}`.
 3. POSTs to the configured SIEM webhook (if any).
 
@@ -182,28 +187,35 @@ closed on a broken sink (the janitor never blocks on a bad webhook).
 
 ### Configuring the SIEM webhook
 
+`lineage_alert.sink_from_config` builds the webhook sink, but it is not
+yet wired into the janitor cycle either: the `tuning.lineage.tamper_alert_*`
+keys below are accepted and have no effect until that wiring lands.
+
 ```yaml
 tuning:
   lineage:
-    alert_sink:
-      kind: webhook
-      url: https://siem.internal/bernstein-lineage-tamper
-      headers:
-        Authorization: "Bearer ${SIEM_TOKEN}"
-      retries: 5
-      backoff_seconds: [1, 2, 4, 8, 16]
+    tamper_alert_enabled: true
+    tamper_alert_webhook_url: https://siem.internal/bernstein-lineage-tamper
+    tamper_alert_timeout_secs: 5.0
+    tamper_alert_max_retries: 3
 ```
 
-For air-gap deployments the alternative `kind: syslog` writes to the
-local syslog facility instead of HTTP.
+The webhook receives a JSON `POST` describing the event (`type`, `run_id`,
+`errors`, `record_count`, `detected_at`, `source`). 5xx responses and
+transport errors are retried with exponential back-off (0.5 s doubled per
+attempt) up to `tamper_alert_max_retries`; a 4xx is not retried. Tamper events
+are also mirrored to the portable side channel when
+`BERNSTEIN_TELEMETRY_DSN` is set.
 
 ### `bernstein lineage verify`
 
-A one-shot chain verification that exits 0 only if every record's
-HMAC and customer signature validate:
+A one-shot verification of a run's lineage spine. Exit codes: 0 = OK,
+1 = no entries / bad input, 2 = tamper detected, 3 = cannot verify (audit
+key missing). Pass `--public-key` to also re-verify every
+`customer_signature` on the legacy chain:
 
 ```bash
-bernstein lineage verify r-2026-05-05
+bernstein lineage verify r-2026-05-05 --public-key customer-ed25519.pub.pem
 ```
 
 Useful for compliance teams running ad-hoc checks against archived

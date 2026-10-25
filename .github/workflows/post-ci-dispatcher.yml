@@ -113,7 +113,7 @@ jobs:
       event: ${{ steps.out.outputs.event }}
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - name: Capture event metadata
@@ -172,6 +172,9 @@ jobs:
       contents: write
       issues: write
       actions: write
+    # workflow_run is a low-trust trigger; the called workflow must not be
+    # able to write the Actions cache that trusted runs later restore.
+    cache-mode: read
     uses: ./.github/workflows/auto-release.yml
     # GITHUB_TOKEN is provided automatically to reusable workflows.
     with:
@@ -209,6 +212,9 @@ jobs:
       attestations: write
       id-token: write
       actions: read
+    # workflow_run is a low-trust trigger; the called workflow must not be
+    # able to write the Actions cache that trusted runs later restore.
+    cache-mode: read
     uses: ./.github/workflows/auto-heal.yml
     # GITHUB_TOKEN is auto-provided to the reusable workflow. Nothing else
     # is: a reusable workflow sees only the secrets passed here, so the
@@ -238,6 +244,9 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+    # workflow_run is a low-trust trigger; the called workflow must not be
+    # able to write the Actions cache that trusted runs later restore.
+    cache-mode: read
     uses: ./.github/workflows/bisect-on-red.yml
     # bisect-on-red reads only inputs and GITHUB_TOKEN (auto-provided).
     # No repository secrets are forwarded, replacing the prior

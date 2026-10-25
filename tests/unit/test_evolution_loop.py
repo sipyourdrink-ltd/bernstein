@@ -1124,9 +1124,11 @@ def test_run_cycle_does_not_close_the_issue_for_a_category_with_no_sink(
 
     # The apply reached the category helper rather than being turned away at
     # the admission gate - otherwise this test would pass for the wrong reason.
+    # skipped_no_sink must appear; rolled_back may follow from _apply_proposal.
     history_file = state_dir / "upgrades" / "history.jsonl"
     assert history_file.exists()
-    assert json.loads(history_file.read_text().strip().splitlines()[-1])["status"] == "skipped_no_sink"
+    statuses = [json.loads(line)["status"] for line in history_file.read_text().strip().splitlines() if line.strip()]
+    assert "skipped_no_sink" in statuses
 
 
 def test_run_cycle_does_close_the_issue_when_an_upgrade_really_lands(tmp_path: Path) -> None:

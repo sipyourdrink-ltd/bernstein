@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
@@ -105,7 +107,7 @@ def generate_signer_keypair() -> tuple[str, str]:
     return _generate_keypair()
 
 
-def sign_payload(payload: bytes, private_key_pem: str) -> str:
+def sign_payload(payload: bytes, private_key_pem: str, *, allow_p256: bool = False) -> str:
     """Sign an arbitrary canonical payload with an Ed25519 key.
 
     Shared primitive behind :func:`sign_entry`; also reused by the team
@@ -129,6 +131,8 @@ def sign_payload(payload: bytes, private_key_pem: str) -> str:
         priv = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
     except (ValueError, TypeError) as exc:
         raise ManifestSignatureError(f"cannot load private key: {exc}") from exc
+    if allow_p256 and isinstance(priv, ec.EllipticCurvePrivateKey) and isinstance(priv.curve, ec.SECP256R1):
+        return _b64url_encode(priv.sign(payload, ec.ECDSA(hashes.SHA256())))
     if not isinstance(priv, Ed25519PrivateKey):
         raise ManifestSignatureError("private key must be Ed25519")
     sig = priv.sign(payload)
@@ -159,6 +163,7 @@ def verify_payload(
     public_key_pem: str | None,
     *,
     allow_unverified: bool = False,
+    allow_p256: bool = False,
     missing_signature_reason: str = "entry has no signature",
     missing_key_reason: str = "catalog has no signer_pubkey",
 ) -> VerificationOutcome:
@@ -204,7 +209,8 @@ def verify_payload(
         if allow_unverified:
             return outcome
         raise ManifestSignatureError(outcome.reason) from exc
-    if not isinstance(pub, Ed25519PublicKey):
+    is_p256 = allow_p256 and isinstance(pub, ec.EllipticCurvePublicKey) and isinstance(pub.curve, ec.SECP256R1)
+    if not isinstance(pub, Ed25519PublicKey) and not is_p256:
         outcome = VerificationOutcome(verified=False, reason="public key must be Ed25519")
         if allow_unverified:
             return outcome
@@ -219,7 +225,11 @@ def verify_payload(
         raise ManifestSignatureError(outcome.reason) from exc
 
     try:
-        pub.verify(sig_bytes, payload)
+        if isinstance(pub, ec.EllipticCurvePublicKey):
+            pub.verify(sig_bytes, payload, ec.ECDSA(hashes.SHA256()))
+        else:
+            assert isinstance(pub, Ed25519PublicKey)
+            pub.verify(sig_bytes, payload)
     except InvalidSignature:
         outcome = VerificationOutcome(verified=False, reason="signature does not verify")
         if allow_unverified:

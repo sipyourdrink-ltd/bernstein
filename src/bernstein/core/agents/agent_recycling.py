@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core import heartbeat as heartbeat_protocol  # type: ignore[attr-defined]  # meta-path redirect
 from bernstein.core.agents.agent_reaping import (
+    _dispose_dead_worktree,
     _propagate_abort_to_children,
     _save_partial_work,
 )
@@ -211,7 +212,16 @@ def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Pat
         session: The completed agent session.
         completion_file: Path to the completion marker (cleaned up after reap).
     """
-    _save_partial_work(orch._spawner, session)
+    # Same recorder and a true reason as the dead-agent and orphan paths: a
+    # salvage merge that happens here is a recovery merge too, and a journal
+    # that only saw two of the four salvage paths was reporting the other two
+    # as "no merge happened" (#5271 review, F1).
+    _save_partial_work(
+        orch._spawner,
+        session,
+        recorder=getattr(orch, "_recorder", None),
+        reason="completed",
+    )
     with contextlib.suppress(Exception):
         orch._spawner.kill(session)
     # Bug fix (2026-07-04): every forced-kill path must reap the session's
@@ -285,7 +295,8 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
             reason,
             int(_IDLE_GRACE_S),
         )
-        _save_partial_work(orch._spawner, session)
+        # Killed before its worktree is disposed of, so the process cannot
+        # write into the tree while it is committed and kept.
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
         # Bug fix (2026-07-04): reap the heartbeat loop on every forced kill
@@ -308,8 +319,12 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
             session.id,
             _preserved_dir if _preserved_dir is not None else "nothing to preserve",
         )
-        with contextlib.suppress(Exception):
-            orch._spawner.cleanup_worktree(session.id)
+        # Merged only as an accepted attempt; any other attempt's work is kept
+        # on a salvage ref (#6539). The idle reason is written on that row.
+        try:
+            _dispose_dead_worktree(orch, session, reason=reason)
+        except Exception:
+            logger.exception("Worktree disposal failed for recycled agent %s", session.id)
         get_collector().end_agent(session.id)
 
 

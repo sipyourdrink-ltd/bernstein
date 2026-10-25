@@ -59,6 +59,8 @@ from bernstein.core.tasks.task_store import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from bernstein.core.fleet import FleetAggregator
+
 logger = logging.getLogger(__name__)
 
 
@@ -394,6 +396,7 @@ class SSEBus:
         self._subscriber_last_read: dict[int, float] = {}
         # map queue id -> owning IP so per-IP accounting works
         self._subscriber_ip: dict[int, str] = {}
+        self._task_subscriptions: dict[int, tuple[str, str, frozenset[str]]] = {}
         self._max_buffer = max_buffer
         self._stale_timeout_s = stale_timeout_s
         self._max_buffer_per_ip = max_buffer_per_ip
@@ -455,7 +458,14 @@ class SSEBus:
 
     # ---- subscribe / unsubscribe ------------------------------------------
 
-    def subscribe(self, *, client_ip: str | None = None) -> asyncio.Queue[str]:
+    def subscribe(
+        self,
+        *,
+        client_ip: str | None = None,
+        task_role: str | None = None,
+        tenant_id: str = "default",
+        task_ids: frozenset[str] = frozenset(),
+    ) -> asyncio.Queue[str]:
         """Create a new subscriber queue.
 
         Args:
@@ -472,6 +482,8 @@ class SSEBus:
             raise PermissionError(f"SSE reconnect rate limit exceeded for {client_ip}")
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._max_buffer)
         self._subscribers.append(queue)
+        if task_role is not None:
+            self._task_subscriptions[id(queue)] = (task_role, tenant_id, task_ids)
         self._subscriber_last_read[id(queue)] = time.time()
         if client_ip is not None:
             self._subscriber_ip[id(queue)] = client_ip
@@ -483,6 +495,7 @@ class SSEBus:
             self._subscribers.remove(queue)
         self._subscriber_last_read.pop(id(queue), None)
         self._subscriber_ip.pop(id(queue), None)
+        self._task_subscriptions.pop(id(queue), None)
 
     def mark_read(self, queue: asyncio.Queue[str]) -> None:
         """Update the last-read timestamp for a subscriber."""
@@ -508,7 +521,15 @@ class SSEBus:
 
     # ---- publish ----------------------------------------------------------
 
-    def publish(self, event_type: str, data: str = "{}") -> None:
+    def publish(
+        self,
+        event_type: str,
+        data: str = "{}",
+        *,
+        task_role: str | None = None,
+        tenant_id: str | None = None,
+        task_id: str | None = None,
+    ) -> None:
         """Push an event to all subscribers (non-blocking).
 
         If a subscriber's queue is full, or pushing would exceed the
@@ -527,6 +548,16 @@ class SSEBus:
         # Snapshot the subscriber list so mutations during publish (tests
         # exercise this) do not raise.
         for queue in self._subscribers.copy():
+            subscription = self._task_subscriptions.get(id(queue))
+            if event_type == "task.created":
+                # Titles only enter an explicitly authorized task subscription.
+                if subscription is None:
+                    continue
+                role, tenant, allowed_ids = subscription
+                if role != task_role or tenant != tenant_id or (allowed_ids and task_id not in allowed_ids):
+                    continue
+            elif subscription is not None and event_type != "heartbeat":
+                continue
             owner = self._subscriber_ip.get(id(queue))
             if owner is not None and per_ip_used[owner] >= self._max_buffer_per_ip:
                 dropped += 1
@@ -670,6 +701,41 @@ async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
             removed = bus.cleanup_stale()
             if removed > 0:
                 logger.info("SSE bus: cleaned up %d stale subscribers", removed)
+
+
+async def _start_fleet_aggregator(app: FastAPI) -> FleetAggregator | None:
+    """Attach a multi-project fleet aggregator when ``BERNSTEIN_FLEET_CONFIG`` is set.
+
+    The operator UI's Fleet view reads ``/fleet/projects`` from the task
+    server it is served by, and that route only has projects to show when
+    an aggregator sits on ``app.state.fleet_aggregator``. Pointing
+    ``BERNSTEIN_FLEET_CONFIG`` at a ``projects.toml`` (the file
+    ``bernstein fleet`` reads) makes this server poll every listed task
+    server and serve the overview itself. The aggregator authenticates the
+    way every CLI client does, with ``BERNSTEIN_AUTH_TOKEN`` plus any
+    access-proxy headers, so each listed server must accept that token.
+
+    Returns:
+        The started aggregator, or ``None`` when the variable is unset or
+        the config lists no usable project (config errors are logged).
+    """
+    raw = os.environ.get("BERNSTEIN_FLEET_CONFIG", "").strip()
+    if not raw:
+        return None
+    from bernstein.core.fleet import FleetAggregator, load_projects_config
+    from bernstein.core.run_auth_token import auth_headers
+
+    config = load_projects_config(Path(raw).expanduser())
+    for err in config.errors:
+        logger.warning("fleet config %s: %s", config.source_path or raw, err.message)
+    if not config.projects:
+        logger.warning("BERNSTEIN_FLEET_CONFIG=%s lists no usable project; the Fleet view stays empty", raw)
+        return None
+    aggregator = FleetAggregator(config.projects, headers=auth_headers())
+    await aggregator.start()
+    app.state.fleet_aggregator = aggregator
+    logger.info("Fleet aggregator attached: %d project(s) from %s", len(config.projects), raw)
+    return aggregator
 
 
 def _install_artifact_event_publisher(bus: SSEBus | None) -> None:
@@ -1036,6 +1102,11 @@ def create_app(
     _nodes_persist: Path | None = None
     if _runtime_dir.name == "runtime" and _runtime_dir.parent.name == ".sdd":
         _nodes_persist = _runtime_dir / "nodes.json"
+    # Explicit override: always persist the node registry at this path so
+    # registered nodes survive a server restart regardless of runtime layout.
+    _nodes_persist_env = os.environ.get("BERNSTEIN_NODES_PERSIST_PATH", "").strip()
+    if _nodes_persist_env:
+        _nodes_persist = Path(_nodes_persist_env).expanduser()
     node_registry = NodeRegistry(effective_cluster, persist_path=_nodes_persist)
 
     # Cluster JWT authentication. Constructed below, once the API legacy
@@ -1055,6 +1126,19 @@ def create_app(
             json.dumps({"id": task_obj.id, "status": task_obj.status.value}),
         )
 
+    def _publish_task_created(task_obj: Any) -> None:
+        from bernstein.core.server.sse_events import SSEEvent
+
+        event = SSEEvent.task_created(task_obj.id, task_obj.title)
+        sse_bus.publish(
+            event.event.value,
+            json.dumps(event.data),
+            task_role=task_obj.role,
+            tenant_id=task_obj.tenant_id,
+            task_id=task_obj.id,
+        )
+
+    store.add_task_created_listener(_publish_task_created)
     store.add_task_listener(_publish_task_update)
     workdir = (
         jsonl_path.parent.parent.parent
@@ -1121,6 +1205,7 @@ def create_app(
         # The events are journaled beside the spine regardless; this only adds
         # live delivery while a server is up, and the sink is cleared on
         # shutdown so a stopped server never holds a stale bus reference.
+        store.add_task_created_listener(_publish_task_created)
         _install_artifact_event_publisher(sse_bus)
         # Launch the node-stale reaper whenever the /cluster/nodes routes are
         # mounted (always) rather than only when cluster auth is enabled. Node
@@ -1135,8 +1220,13 @@ def create_app(
                 interval_s=effective_cluster.node_heartbeat_interval_s,
             )
         )
+        fleet_aggregator = await _start_fleet_aggregator(app)
         yield
         # Shutdown
+        if fleet_aggregator is not None:
+            app.state.fleet_aggregator = None
+            await fleet_aggregator.stop()
+        store.remove_task_created_listener(_publish_task_created)
         _install_artifact_event_publisher(None)
         reaper.cancel()
         sse_heartbeat.cancel()
@@ -1402,6 +1492,10 @@ def create_app(
     # an acquisition-only ledger replays as node A holding a task node B is
     # already running.
     store.attach_audit_chain(_audit_chain)
+    from bernstein.core.administrative_runs import AdministrativeRuns
+
+    application.state.administrative_runs = AdministrativeRuns(_audit_chain, store.get_task, store.list_tasks)
+    store.administrative_runs = application.state.administrative_runs
     application.state.task_mailbox = TaskMailbox(  # type: ignore[attr-defined]
         jsonl_path.parent / "mailbox.jsonl",
         hmac_key=_chain_key,

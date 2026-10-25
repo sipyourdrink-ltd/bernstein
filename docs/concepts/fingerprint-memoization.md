@@ -42,8 +42,9 @@ def embed_chunk(chunk_text: str, embedder_id: str) -> list[float]:
 ```
 
 On second invocation with the same arguments the call is served from
-`.sdd/runtime/memo/<sha>/` without re-execution. Edit the function
-body, redeploy, the next call misses cache and re-derives.
+`.sdd/runtime/memo/<aa>/<rest>.bin` (the SHA-256 hex digest split after
+its first byte) without re-execution. Edit the function body, redeploy,
+the next call misses cache and re-derives.
 
 The decorator is already applied at three call sites:
 
@@ -102,7 +103,7 @@ so adding the parameter did not invalidate existing stores.
 
 | Knob | Default | Controls |
 |---|--:|---|
-| `defaults.MEMO_MAX_MB` | `200` | Max disk used by the store before LRU eviction kicks in. |
+| `defaults.JANITOR.memo_max_mb` | `200` | Max disk used by the store before LRU eviction kicks in. |
 | Memo store path | `.sdd/runtime/memo/` | Pinned to `.sdd/` so air-gap runs do not write to `~/.cache/`. |
 
 Metrics exposed on `/metrics`:
@@ -127,7 +128,9 @@ Metrics exposed on `/metrics`:
   cannot disagree about which chunker is current.
 - `depends_on` covers the declared modules, not *their* imports. A
   parser that changes behaviour because a library it calls was upgraded
-  still needs manual invalidation (`bernstein cache clear`).
+  still needs manual invalidation (delete `.sdd/runtime/memo/`;
+  `bernstein cache clear` only clears the response cache at
+  `.sdd/caching/response_cache.jsonl`).
 - Functions with hidden state (env vars read at call time, file IO,
   network calls) are unsafe to memoize. Restrict use to pure
   functions.

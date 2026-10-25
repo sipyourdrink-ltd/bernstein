@@ -202,6 +202,22 @@ def test_copr_build_watch_is_delegated_to_the_tested_watcher(workflow: dict[str,
     assert "--nowait" in run, "copr-cli's own watch has no deadline; the watcher owns it"
 
 
+def _environment_name(job: dict[str, Any]) -> str | None:
+    environment = job.get("environment")
+    if isinstance(environment, dict):
+        return cast("str | None", environment.get("name"))
+    return cast("str | None", environment)
+
+
+def test_copr_job_runs_in_its_own_environment_apart_from_pypi(workflow: dict[str, Any]) -> None:
+    """Each run of a job with an ``environment`` opens a deployment there. The
+    Copr job must not share ``pypi``, or a Copr build failure is recorded as a
+    failed PyPI deployment even when the PyPI upload succeeded."""
+    jobs = workflow["jobs"]
+    assert _environment_name(jobs["publish"]) == "pypi"
+    assert _environment_name(jobs[COPR_JOB]) == "copr"
+
+
 def test_copr_config_secret_is_written_from_the_environment_with_owner_only_mode(
     workflow: dict[str, Any],
 ) -> None:
@@ -339,13 +355,13 @@ def test_npm_missing_token_fails_the_job(workflow: dict[str, Any]) -> None:
     run = _step_run(workflow, "publish-npm", "Publish to npm")
 
     assert "::warning::NPM_TOKEN is not configured" not in run
-    assert "::error::NPM_TOKEN is not configured" in run
-    assert "exit 1" in run
+    assert "::error::npm wrapper publish failed" in run
+    assert "exit " in run
 
 
-def test_github_release_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
+def test_publish_graph_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
     """A GITHUB_TOKEN release emits no `release: published`, so each consumer is dispatched."""
-    dispatched = _dispatches(workflow, "github-release")
+    dispatched = {target: inputs for job in workflow["jobs"] for target, inputs in _dispatches(workflow, job).items()}
 
     for consumer in RELEASE_EVENT_CONSUMERS:
         assert consumer in dispatched, f"{consumer} consumes `release: published` but is never dispatched"
@@ -353,7 +369,7 @@ def test_github_release_dispatches_every_release_event_consumer(workflow: dict[s
 
 def test_dispatched_inputs_match_the_target_workflow_inputs(workflow: dict[str, Any]) -> None:
     """Every `-f name=` passed on dispatch must be an input the target declares."""
-    dispatched = _dispatches(workflow, "github-release")
+    dispatched = {target: inputs for job in workflow["jobs"] for target, inputs in _dispatches(workflow, job).items()}
 
     for workflow_file, passed_inputs in dispatched.items():
         declared = _declared_dispatch_inputs(workflow_file)

@@ -77,3 +77,17 @@ def test_stop_request_audit_log(monkeypatch: pytest.MonkeyPatch) -> None:
     kwargs = audit_log.log.call_args.kwargs
     assert kwargs["event_type"] == "task.transition"
     assert kwargs["details"]["to_status"] == "stop_req"
+
+
+def test_mailbox_and_stop_edges_both_survive_integration() -> None:
+    from bernstein.core.tasks.task_store_core import CLAIM_HELD_STATUSES
+
+    assert {TaskStatus.SUSPENDED, TaskStatus.STOP_REQ} <= CLAIM_HELD_STATUSES
+    for source, target in [
+        (TaskStatus.IN_PROGRESS, TaskStatus.SUSPENDED),
+        (TaskStatus.SUSPENDED, TaskStatus.CLAIMED),
+        (TaskStatus.SUSPENDED, TaskStatus.IN_PROGRESS),
+        (TaskStatus.SUSPENDED, TaskStatus.CANCELLED),
+        *STOP_EDGES,
+    ]:
+        assert (source, target) in lifecycle.TASK_TRANSITIONS

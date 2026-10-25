@@ -101,6 +101,10 @@ def test_legal_transition_mutates_status_and_returns_event() -> None:
         (TaskStatus.PLANNED, TaskStatus.OPEN),
         (TaskStatus.OPEN, TaskStatus.WAITING_FOR_SUBTASKS),
         (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS),
+        (TaskStatus.CLAIMED, TaskStatus.SUSPENDED),
+        (TaskStatus.SUSPENDED, TaskStatus.CLAIMED),
+        (TaskStatus.IN_PROGRESS, TaskStatus.SUSPENDED),
+        (TaskStatus.SUSPENDED, TaskStatus.IN_PROGRESS),
         (TaskStatus.IN_PROGRESS, TaskStatus.DONE),
         (TaskStatus.DONE, TaskStatus.CLOSED),
         (TaskStatus.FAILED, TaskStatus.OPEN),  # retry
@@ -141,6 +145,8 @@ def test_illegal_transition_raises_and_leaves_status_unchanged() -> None:
         (TaskStatus.CLOSED, TaskStatus.OPEN),  # closed is terminal
         (TaskStatus.CANCELLED, TaskStatus.OPEN),  # cancelled is terminal
         (TaskStatus.DONE, TaskStatus.IN_PROGRESS),
+        (TaskStatus.OPEN, TaskStatus.SUSPENDED),
+        (TaskStatus.DONE, TaskStatus.SUSPENDED),
     ],
 )
 def test_documented_illegal_transitions_rejected(frm: TaskStatus, to: TaskStatus) -> None:

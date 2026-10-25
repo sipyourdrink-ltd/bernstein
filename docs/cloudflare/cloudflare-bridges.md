@@ -2,7 +2,7 @@
 
 Bernstein uses **bridges** to abstract where agents execute. The Cloudflare integration provides four bridges: the Workers runtime bridge, the Workflow bridge, the browser rendering bridge, and the R2 workspace sync.
 
-All bridges except browser rendering and R2 sync implement the `RuntimeBridge` interface from `bernstein.bridges.base`, making them drop-in replacements for local execution.
+The Workers and Workflow bridges implement the `RuntimeBridge` interface from `bernstein.bridges.base`. The orchestrator does not wire them from `bernstein.yaml` (its only configurable runtime bridge is OpenClaw), so you construct and drive them from your own code.
 
 ---
 
@@ -21,8 +21,8 @@ Executes agents on Cloudflare Workers with Durable Objects. Each agent becomes a
 | `api_key` | `config.api_key` | Yes | -- | Cloudflare API token |
 | `account_id` | `config.extra["account_id"]` | Yes | -- | Cloudflare account ID |
 | `worker_name` | `config.extra["worker_name"]` | No | `"bernstein-agent"` | Name of the deployed Worker script |
-| `timeout_seconds` | `config.timeout_seconds` | No | (from BridgeConfig) | HTTP request timeout |
-| `max_log_bytes` | `config.max_log_bytes` | No | (from BridgeConfig) | Max log bytes to fetch |
+| `timeout_seconds` | `config.timeout_seconds` | No | `30` | HTTP request timeout |
+| `max_log_bytes` | `config.max_log_bytes` | No | `1048576` | Max log bytes to fetch |
 
 ### Usage
 
@@ -44,6 +44,8 @@ bridge = CloudflareBridge(config)
 status = await bridge.spawn(
     SpawnRequest(
         agent_id="agent-001",
+        image="bernstein-agent",
+        command=["bernstein-agent"],
         prompt="Add input validation to all API endpoints",
         model="sonnet",
         role="backend",
@@ -128,6 +130,7 @@ from bernstein.bridges.cloudflare_workflow import CloudflareWorkflowBridge
 
 config = BridgeConfig(
     bridge_type="cloudflare-workflow",
+    endpoint="https://api.cloudflare.com",
     api_key="cf_token_...",
     extra={
         "account_id": "abc123",
@@ -141,6 +144,8 @@ bridge = CloudflareWorkflowBridge(config)
 status = await bridge.spawn(
     SpawnRequest(
         agent_id="task-42",
+        image="bernstein-agent",
+        command=["bernstein-agent"],
         prompt="Refactor the auth module",
         model="opus",
         role="architect",

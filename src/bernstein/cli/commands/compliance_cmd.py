@@ -21,6 +21,7 @@ from typing import cast
 import click
 
 from bernstein.compliance.eu_ai_act import ComplianceEngine, bernstein_descriptor
+from bernstein.core.compliance.ai_rmf import PACK_KIND_AI_RMF, build_ai_rmf_pack
 from bernstein.core.compliance.pack import (
     build_incident_pack,
     build_oversight_pack,
@@ -677,6 +678,7 @@ def pack_group() -> None:
       retention   chain-continuity evidence for a window (Article 12(3)).
       incident    serious-incident report from a run (Article 73).
       oversight   human-oversight evidence from receipts (Article 14).
+      ai-rmf      NIST AI RMF Core evidence for all four functions.
     """
 
 
@@ -928,3 +930,119 @@ def pack_incident(
         operator_key_path=resolved_key,
     )
     click.echo(f"Incident pack written to: {out_path} ({len(gaps)} evidence gap(s))")
+
+
+@pack_group.command("ai-rmf")
+@click.option("--since", required=True, help="Window start date (YYYY-MM-DD, inclusive).")
+@click.option("--until", required=True, help="Window end date (YYYY-MM-DD, inclusive).")
+@click.option("--org", required=True, help="Organisation name (printed on the cover page).")
+@click.option("--output", required=True, type=click.Path(path_type=Path), help="Destination .zip path.")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Project root (used to locate lineage and the NIST mapping).",
+)
+@click.option("--lineage-dir", default=None, type=click.Path(path_type=Path), help="Override lineage directory.")
+@click.option(
+    "--agent-cards-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Override Agent Cards directory.",
+)
+@click.option(
+    "--mapping",
+    default=None,
+    type=click.Path(path_type=Path),
+    help=(
+        "NIST AI RMF mapping markdown. Defaults to docs/compliance/nist-ai-rmf-mapping.md "
+        "under --workdir, which exists in a source checkout only; an installed package "
+        "must pass this explicitly."
+    ),
+)
+@click.option("--operator-key", default=None, type=click.Path(path_type=Path), help="Override operator signing key.")
+def pack_ai_rmf(
+    since: str,
+    until: str,
+    org: str,
+    output: Path,
+    workdir: Path,
+    lineage_dir: Path | None,
+    agent_cards_dir: Path | None,
+    mapping: Path | None,
+    operator_key: Path | None,
+) -> None:
+    """Build one NIST AI RMF evidence pack for GOVERN, MAP, MEASURE, and MANAGE.
+
+    Covered subcategories carry the chain entries that match their mechanism.
+    A window with no matching entries is still a valid sealed pack and does
+    not claim those rows were evidenced. Generative AI Profile actions are
+    recorded on the same subcategory rows.
+    """
+    since_date, until_date = _window_dates(since, until)
+    resolved_lineage = lineage_dir or (workdir / ".sdd" / "lineage")
+    resolved_cards = agent_cards_dir or (workdir / ".sdd" / "agents")
+    resolved_key = _require_operator_key(operator_key, workdir)
+    mapping_path = mapping or (workdir / "docs" / "compliance" / "nist-ai-rmf-mapping.md")
+    if not mapping_path.is_file():
+        raise click.ClickException(f"NIST AI RMF mapping not found at {mapping_path}.")
+
+    out_path = build_ai_rmf_pack(
+        since=since_date,
+        until=until_date,
+        org=org,
+        lineage_dir=resolved_lineage,
+        agent_cards_dir=resolved_cards,
+        mapping_path=mapping_path,
+        output_path=output,
+        operator_key_path=resolved_key,
+    )
+    click.echo(f"AI RMF pack written to: {out_path} (kind={PACK_KIND_AI_RMF})")
+
+
+# ---------------------------------------------------------------------------
+# `bernstein compliance controls` - Central control registry inspection
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("controls")
+@click.option(
+    "--framework",
+    default=None,
+    help="Filter by compliance framework (eu_ai_act, owasp_asi, owasp_skills, nist_ai_rmf, iso_42001, finos_aigf).",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "markdown"], case_sensitive=False),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+def controls_command(framework: str | None, output_format: str) -> None:
+    """List the registered compliance controls and their framework mappings."""
+    from bernstein.compliance.controls import get_default_registry
+
+    registry = get_default_registry()
+    controls = registry.list_controls(framework=framework)
+    if framework and not controls:
+        # A typo must not read as "no controls for this framework".
+        known = sorted({k for c in registry.list_controls() for k in c.references})
+        click.echo(f"No control references framework {framework!r}; known frameworks: {', '.join(known)}", err=True)
+
+    if output_format == "json":
+        click.echo(json.dumps([c.to_dict() for c in controls], indent=2))
+        return
+
+    if output_format == "markdown":
+        click.echo(registry.to_markdown_table(framework=framework))
+        return
+
+    # Text table format
+    click.echo(f"{'Control ID':<14} {'Category':<14} {'Frameworks':<28} Title")
+    click.echo("─" * 95)
+    for c in controls:
+        fw_list = ", ".join(c.references.keys())
+        click.echo(f"{c.control_id:<14} {c.category:<14} {fw_list:<28} {c.title}")
+    click.echo(f"\nTotal: {len(controls)} controls")

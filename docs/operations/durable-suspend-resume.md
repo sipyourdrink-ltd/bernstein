@@ -15,6 +15,28 @@ budget envelope, and a later **resume** restores from that receipt
 deterministically. The suspension itself is the artifact -- without the chain
 there is no suspension, only a dead process.
 
+## Recovering a stranded cooperative wait
+
+Mailbox rendezvous uses a lighter form of suspension than an operator park. A
+task waiting in `POST /tasks/<task-id>/ask` keeps its worker, process, sandbox,
+seat and claim while its status is `SUSPENDED`. The mailbox
+`rendezvous_open`/`rendezvous_closed` chain is authoritative; the live HTTP
+request only observes that durable state.
+
+If the server process restarts while the request is waiting, the live request
+is gone and this slice does not reconstruct it automatically. Inspect the
+task's mailbox chain first. If the open has no matching close and the task
+remains `SUSPENDED`, cancel it through the normal operator path:
+
+```bash
+bernstein task cancel <task-id> --reason "recover stranded mailbox rendezvous after restart"
+```
+
+Cancellation is an escape hatch, not a fabricated rendezvous resolution: it
+does not append an `answered`, `refused`, or `timeout` close. Preserve the
+mailbox journal for audit or later replay analysis. Automatic reconstruction
+and replay resolution of recorded closes remain separate follow-up work.
+
 ## The park is a receipt, not a flag
 
 A park is a pair of Merkle-chained journal rows plus matching HMAC audit-chain
@@ -91,6 +113,12 @@ the approval decision digest, and a `<task-id>.resumed` marker binds the resume
 receipt hash, so the approval record and the resume receipt reference each
 other. This makes approval checkpoints usable mid-session, not only at the
 pre-spawn and post-completion boundaries.
+
+The decision file must be an authentic decision record (see
+[decision records](../reference/cli/task-lifecycle.md#decision-records)): its
+MAC must verify and it must name this task. A parked task has no open request
+nonce, so the nonce is not checked here. Any other file in the slot does not
+count as an approval, and the resume stays refused.
 
 ## Verifying continuity offline
 

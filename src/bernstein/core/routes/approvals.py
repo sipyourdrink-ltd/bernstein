@@ -2,7 +2,10 @@
 
 Provides a TUI-friendly API over the file-based approval gate handshake:
 - Lists pending approvals from ``.sdd/runtime/pending_approvals/``
-- Approves or rejects by writing decision files to ``.sdd/runtime/approvals/``
+- Approves or rejects by writing signed decision records to
+  ``.sdd/runtime/approvals/``, attributed to the ``web`` decision path and
+  the principal the request authenticated as, and bound to the nonce of the
+  open approval request
 
 op-002 adds the interactive tool-call endpoints:
 - ``GET /approvals?session_id=...`` - list pending tool-call approvals.
@@ -20,7 +23,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -34,6 +37,11 @@ from bernstein.core.approval.models import (
 )
 from bernstein.core.approval.models import PendingApproval as QueuedApproval
 from bernstein.core.approval.queue import get_default_queue, promote_to_always_allow
+from bernstein.core.security.approval_decision import (
+    build_decision_record,
+    read_request_nonce,
+    write_decision_record,
+)
 from bernstein.core.security.path_containment import (
     PathContainmentError,
     contained_path,
@@ -185,6 +193,54 @@ def _load_pending(filepath: Path) -> PendingApproval | None:
         return None
 
 
+def _write_web_decision(
+    request: Request,
+    task_id: str,
+    outcome: Literal["approved", "rejected"],
+    reason: str,
+) -> None:
+    """Resolve the open request for *task_id* with a signed ``web`` decision record.
+
+    Raises:
+        HTTPException: ``400`` for an invalid id, ``401`` when no principal
+            can be named, ``404`` when no approval is pending, ``503`` when
+            the decision key cannot be loaded.
+    """
+    _validate_task_id(task_id)
+    if ".." in task_id or "/" in task_id or "\\" in task_id:
+        raise HTTPException(status_code=400, detail=_INVALID_TASK_ID_MSG)
+    safe_id = Path(task_id).name  # Strip any directory components
+    approvals_dir = _approvals_dir()
+    pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")
+    pre_spawn_pending = _safe_child(approvals_dir, f"{safe_id}.pending")
+    decision_path = _safe_child(approvals_dir, f"{safe_id}.{outcome}")
+
+    if not pending_path.exists() and not pre_spawn_pending.exists():
+        raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
+
+    principal = _resolve_approval_principal(request)
+    nonce = read_request_nonce([pre_spawn_pending, pending_path])
+    try:
+        record = build_decision_record(
+            task_id=safe_id,
+            outcome=outcome,
+            source="web",
+            principal=principal.to_dict(),
+            nonce=nonce,
+            reason=reason,
+        )
+    # RuntimeError: AuditKeyPermissionError (key readable by others); OSError:
+    # the key file cannot be read or created; ValueError: unnamed principal.
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.error("Approval routes: cannot sign decision record: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Decision key unavailable") from exc
+    write_decision_record(decision_path, record)
+
+    # Remove pending files
+    pending_path.unlink(missing_ok=True)
+    pre_spawn_pending.unlink(missing_ok=True)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -241,82 +297,51 @@ def list_approvals() -> ListApprovalsResponse:
     return ListApprovalsResponse(pending=results)
 
 
-@router.post(
-    "/{task_id}/approve",
-    responses={400: {"description": _INVALID_TASK_ID_MSG}, 404: {"description": "No pending approval for task"}},
-)
-def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
+_DECISION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {"description": _INVALID_TASK_ID_MSG},
+    401: {"description": "No authenticated principal to attribute the decision to"},
+    404: {"description": "No pending approval for task"},
+    503: {"description": "Decision key unavailable"},
+}
+
+
+@router.post("/{task_id}/approve", responses=_DECISION_RESPONSES)
+def approve_task(request: Request, task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Approve a pending approval request.
 
-    Writes a .approved decision file so the orchestrator poll loop unblocks.
-    The pending file is then removed.
+    Writes a signed ``.approved`` decision record (source ``web``, attributed
+    to the authenticated principal, bound to the open request's nonce) so the
+    orchestrator poll loop unblocks. The pending file is then removed.
 
     Args:
+        request: The HTTP request; its credentials name the principal.
         task_id: Task ID to approve.
         body: Optional reason metadata.
 
     Returns:
         Success message.
     """
-    _validate_task_id(task_id)
-    if ".." in task_id or "/" in task_id or "\\" in task_id:
-        raise HTTPException(status_code=400, detail=_INVALID_TASK_ID_MSG)
-    safe_id = Path(task_id).name  # Strip any directory components
-    approvals_dir = _approvals_dir()
-    pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")
-    pre_spawn_pending = _safe_child(approvals_dir, f"{safe_id}.pending")
-    approved_path = _safe_child(approvals_dir, f"{safe_id}.approved")
-
-    if not pending_path.exists() and not pre_spawn_pending.exists():
-        raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
-
-    # Write decision
-    approved_path.write_text(json.dumps({"reason": body.reason}, indent=2))
-
-    # Remove pending files
-    pending_path.unlink(missing_ok=True)
-    pre_spawn_pending.unlink(missing_ok=True)
-
+    _write_web_decision(request, task_id, "approved", body.reason)
     logger.info("Approval routes: task %r approved via TUI/API", task_id.replace("\n", "\\n").replace("\r", "\\r"))
     return {"status": "approved", "task_id": task_id}
 
 
-@router.post(
-    "/{task_id}/reject",
-    responses={400: {"description": _INVALID_TASK_ID_MSG}, 404: {"description": "No pending approval for task"}},
-)
-def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
+@router.post("/{task_id}/reject", responses=_DECISION_RESPONSES)
+def reject_task(request: Request, task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Reject a pending approval request.
 
-    Writes a .rejected decision file so the orchestrator poll loop unblocks.
-    The pending file is then removed.
+    Writes a signed ``.rejected`` decision record (source ``web``) so the
+    orchestrator poll loop unblocks. The pending file is then removed.
 
     Args:
+        request: The HTTP request; its credentials name the principal.
         task_id: Task ID to reject.
         body: Optional reason metadata.
 
     Returns:
         Success message.
     """
-    _validate_task_id(task_id)
-    if ".." in task_id or "/" in task_id or "\\" in task_id:
-        raise HTTPException(status_code=400, detail=_INVALID_TASK_ID_MSG)
-    safe_id = Path(task_id).name  # Strip any directory components
-    approvals_dir = _approvals_dir()
-    pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")
-    pre_spawn_pending = _safe_child(approvals_dir, f"{safe_id}.pending")
-    rejected_path = _safe_child(approvals_dir, f"{safe_id}.rejected")
-
-    if not pending_path.exists() and not pre_spawn_pending.exists():
-        raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
-
-    # Write decision
-    rejected_path.write_text(json.dumps({"reason": body.reason}, indent=2))
-
-    # Remove pending files
-    pending_path.unlink(missing_ok=True)
-    pre_spawn_pending.unlink(missing_ok=True)
-
+    _write_web_decision(request, task_id, "rejected", body.reason)
     logger.info("Approval routes: task %r rejected via TUI/API", task_id.replace("\n", "\\n").replace("\r", "\\r"))
     return {"status": "rejected", "task_id": task_id}
 

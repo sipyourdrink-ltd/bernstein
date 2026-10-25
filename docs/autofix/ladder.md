@@ -33,7 +33,7 @@ ruff check failed: 1 error
 ```
 
 The ladder fires Rung 0. Its actor runs `ruff check --fix --diff`,
-commits the patch with the agent's session trailer, pushes to the PR
+commits the patch, pushes to the PR
 branch, and posts a one-line comment. No model spend.
 
 ## Worked example: Rung 1 (single-file small diff)
@@ -82,11 +82,13 @@ Operators can audit-replay any fire by walking the chain for
 ```
 bernstein autofix ladder --dry-run --pr <number> [--repo owner/name] \
   [--log-excerpt "..."] [--failing-files a,b] [--pr-touched-files c,d] \
-  [--diff-line-count 12] [--payload failure.json]
+  [--diff-line-count 12] [--payload failure.json] \
+  [--signature <sig>] [--config path/to/bernstein.yaml]
 ```
 
 The CLI prints the rung that would fire, the per-rung cost cap, the
-operator cap, and the acceptance reason. No side effects.
+operator cap, and the acceptance reason. `--config` overrides the
+`./bernstein.yaml` location. No side effects.
 
 ## Feature flag
 

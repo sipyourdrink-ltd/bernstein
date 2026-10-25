@@ -149,8 +149,8 @@ stages:
           placement. Preserve COBOL arithmetic precision using BigDecimal.
           Reference migration/specs/ for business rules.
         completion_signals:
-          - type: command
-            run: "mvn compile -q"
+          - type: test_passes
+            command: "mvn compile -q"
 
       - title: "Translate data access layer"
         role: backend
@@ -162,8 +162,8 @@ stages:
           repositories. Map COBOL record layouts (copybooks) to JPA entities.
           Maintain field-level compatibility per interfaces.json.
         completion_signals:
-          - type: command
-            run: "mvn compile -q"
+          - type: test_passes
+            command: "mvn compile -q"
 
       - title: "Translate batch processing"
         role: backend
@@ -174,8 +174,8 @@ stages:
           Convert batch JCL jobs to Spring Batch jobs. Map COBOL SORT/MERGE
           to Java equivalents. Preserve step-level restart capability.
         completion_signals:
-          - type: command
-            run: "mvn compile -q"
+          - type: test_passes
+            command: "mvn compile -q"
 
       - title: "Translate API/transaction layer"
         role: backend
@@ -186,8 +186,8 @@ stages:
           Convert CICS transactions to REST controllers per module-map.yaml.
           Map COMMAREA structures to request/response DTOs.
         completion_signals:
-          - type: command
-            run: "mvn compile -q"
+          - type: test_passes
+            command: "mvn compile -q"
 
   # ── Stage 4: Verification ──
   - name: "Verification"
@@ -204,8 +204,8 @@ stages:
           the same inputs to both COBOL logic (documented) and Java code,
           asserting identical outputs. Cover all business rules.
         completion_signals:
-          - type: command
-            run: "mvn test -q"
+          - type: test_passes
+            command: "mvn test -q"
 
       - title: "Run static analysis and code review"
         role: security
@@ -218,8 +218,8 @@ stages:
           and unsafe BigDecimal operations (avoid floating-point).
           Fix all critical findings.
         completion_signals:
-          - type: command
-            run: "mvn verify -q"
+          - type: test_passes
+            command: "mvn verify -q"
 
       - title: "Write migration report"
         role: docs

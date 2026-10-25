@@ -25,6 +25,8 @@ from bernstein.core.models import ModelConfig
 # upstream CLI is installed locally. Missing entries fall back to the
 # registry key.
 _BINARY_OVERRIDES: dict[str, str] = {
+    # Second registry key for AgyAdapter; the Antigravity CLI binary is ``agy``.
+    "antigravity": "agy",
     "claude": "claude",
     "codex": "codex",
     "devin_terminal": "devin",

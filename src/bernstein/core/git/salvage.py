@@ -42,6 +42,8 @@ _SALVAGE_BRANCH_PREFIX = "salvage/"
 # Worktree branches are named ``agent/<session-id>`` (core/git/worktree.py:1066).
 _AGENT_BRANCH_PREFIX = "agent/"
 _SALVAGE_TIMEOUT_S = 30
+# Backup and editor leftovers never enter a salvage commit (#6539).
+SALVAGE_EXCLUDE_PATHSPECS: tuple[str, ...] = (":(exclude)*.bak", ":(exclude)*.orig", ":(exclude)*~")
 
 
 @dataclass(frozen=True)
@@ -214,8 +216,9 @@ def _try_salvage_branch(
 
     Strategy:
     1. ``git add -A`` inside the worktree so tracked edits + new files land
-       on the index.  ``.gitignore`` matches are skipped by ``git add`` -
-       no explicit filter needed.
+       on the index.  ``.gitignore`` matches are skipped by ``git add``;
+       backup and editor files (``SALVAGE_EXCLUDE_PATHSPECS``) are excluded
+       by pathspec.
     2. ``git commit -m "WIP: salvage <id>"`` (allowed-empty so we still
        leave an audit marker when the diff is trivial).
     3. Rename the current branch ref to ``salvage/<id>`` via
@@ -260,8 +263,9 @@ def _try_salvage_branch(
         errors.append(f"refusing salvage on non-agent branch {current_branch!r}")
         return None, False, errors
 
-    # 1. Stage everything (including untracked files, skipping .gitignore).
-    add_r = run_git(["add", "-A"], worktree_path, timeout=_SALVAGE_TIMEOUT_S)
+    # 1. Stage everything (including untracked files), skipping .gitignore matches
+    #    and backup/editor leftovers.
+    add_r = run_git(["add", "-A", "--", ".", *SALVAGE_EXCLUDE_PATHSPECS], worktree_path, timeout=_SALVAGE_TIMEOUT_S)
     if not add_r.ok:
         logger.warning(
             "salvage step 1/4 FAILED (git add -A): session=%s worktree=%s stderr=%s",

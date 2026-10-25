@@ -127,6 +127,56 @@ class TestFilterChain:
         )
         assert [n.node_id for n in resolve_targets(store, Selector.parse(["pattern", r"\~^us-"]))] == ["n1"]
 
+    def test_an_empty_regex_is_a_syntax_error(self) -> None:
+        """``key ~`` selected everything instead of narrowing to nothing.
+
+        An empty pattern matches at every position, so the term constrained
+        nothing while reading as a constraint. That is the direction that
+        costs something here: a selector drives reconcile lanes and audit
+        passes, so a term that silently stops filtering aims one at the whole
+        inventory.
+
+        It is also what an unset shell variable expands to - ``region
+        ~$REGION`` becomes ``region ~`` - which is how it would actually be
+        reached rather than by anyone typing it.
+        """
+        with pytest.raises(SelectorSyntaxError, match="empty regex"):
+            Selector.parse(["region", "~"])
+
+    def test_an_empty_regex_is_refused_like_an_empty_set(self) -> None:
+        """The grammar already refused ``{}`` for exactly this reason.
+
+        Both spell "a term that constrains nothing"; they should not disagree
+        about whether that is an error.
+        """
+        with pytest.raises(SelectorSyntaxError, match="empty set"):
+            Selector.parse(["region", "{}"])
+        with pytest.raises(SelectorSyntaxError, match="empty regex"):
+            Selector.parse(["region", "~"])
+
+    def test_a_one_character_regex_is_still_accepted(self) -> None:
+        """Only the empty expression is refused, not short ones.
+
+        Without this the fix could read as "regexes must be long enough",
+        which is not the rule.
+        """
+        store = InventoryStore(
+            nodes=(
+                InventoryNode(node_id="n1", attributes={"region": ("us-east",)}, groups=()),
+                InventoryNode(node_id="n2", attributes={"region": ("eu-west",)}, groups=()),
+            ),
+            groups=(),
+        )
+        assert [n.node_id for n in resolve_targets(store, Selector.parse(["region", "~u"]))] == ["n1", "n2"]
+
+    def test_an_escaped_tilde_is_still_an_exact_match(self) -> None:
+        r"""``\~`` is the documented escape and must not hit the new refusal."""
+        store = InventoryStore(
+            nodes=(InventoryNode(node_id="n1", attributes={"region": ("~",)}, groups=()),),
+            groups=(),
+        )
+        assert [n.node_id for n in resolve_targets(store, Selector.parse(["region", r"\~"]))] == ["n1"]
+
     def test_odd_token_count_is_a_syntax_error(self) -> None:
         with pytest.raises(SelectorSyntaxError):
             Selector.parse(["kind", "bucket", "region"])

@@ -3,7 +3,7 @@
 `bernstein evolve` turns what recent runs did into tracked, actionable items. Its subcommands are:
 
 - **`bernstein evolve run`** - scan run history, surface failure patterns, and (with `--github`) file or update the issue that tracks each one.
-- **`bernstein evolve review`** - list upgrade proposals waiting on a human.
+- **`bernstein evolve review`** - list upgrade proposals waiting on a human, including the change contract component and sandbox verdict for each.
 - **`bernstein evolve approve <PROPOSAL_ID>`** - approve one proposal.
 - **`bernstein evolve status`** - show the evolution history table.
 - **`bernstein evolve export <OUTPUT>`** - write a static HTML or Markdown report.

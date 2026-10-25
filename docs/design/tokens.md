@@ -7,6 +7,9 @@ value per semantic name, the source file it lives in, and the measured contrast
 for every text-on-background pair. A token that does not exist is recorded as
 not defined rather than filled in with a neighbour.
 
+The identity that sits on these tokens - the mark, the wordmark, the brand
+amber - is specified in [Brand and logo](brand.md).
+
 ## Decision — the canonical accent (2026-09-02)
 
 The canonical accent is the website's terracotta, `oklch(55% 0.10 35)` /

@@ -44,6 +44,13 @@ Coverage sets (issue #5398):
         * ``|unverified| / max(|change_set|, 1) > unverified_threshold``
           (default ``0.0`` -- refuse when any path is unchecked)
           -> :class:`UnverifiedShareExceededError`.
+
+Collusion record (issue #5398, cross-task slice):
+    v3 adds an optional ``collusion`` binding field carrying the
+    cross-task gate's record: flags naming the invariant and both
+    tasks, pair counts, gate status, void tasks. JSON ``null`` when
+    the gate did not run; earlier receipts load unchanged via
+    :meth:`from_dict`'s version-aware defaults.
 """
 
 from __future__ import annotations
@@ -76,12 +83,17 @@ _MERGE_MODEL = "admission"
 #: Version stamped into every receipt binding preimage. Bump only on a
 #: wire-format change. v2 adds the structured coverage sets
 #: (verified/unverified/skipped/coverage_set_hash) bound into the signed
-#: preimage; v1 receipts (without those fields) still load.
-MERGE_SCHEMA_VERSION = 2
+#: preimage; v3 adds the cross-task collusion record (issue #5398);
+#: earlier receipts still load.
+MERGE_SCHEMA_VERSION = 3
 
 # First schema version whose signed binding carries the coverage fields.
 # A receipt below this version re-canonicalises without them.
 _COVERAGE_FIELDS_SINCE = 2
+
+# First schema version whose signed binding carries the cross-task
+# collusion record (issue #5398).
+_COLLUSION_FIELDS_SINCE = 3
 
 #: Admission decision: every gate satisfied, merge permitted.
 DECISION_ADMIT = "admit"
@@ -375,6 +387,7 @@ class MergeAdmissionReceipt:
     unverified: tuple[str, ...] = ()
     skipped: tuple[tuple[str, str], ...] = ()
     coverage_set_hash: str = ""
+    collusion: dict[str, Any] | None = None
     schema_version: int = MERGE_SCHEMA_VERSION
 
     def _binding(self) -> dict[str, Any]:
@@ -411,6 +424,8 @@ class MergeAdmissionReceipt:
             binding["verified"] = list(self.verified)
             binding["unverified"] = list(self.unverified)
             binding["skipped"] = [list(pair) for pair in self.skipped]
+        if self.schema_version >= _COLLUSION_FIELDS_SINCE:
+            binding["collusion"] = self.collusion
         return binding
 
     def to_canonical_bytes(self) -> bytes:
@@ -441,6 +456,10 @@ class MergeAdmissionReceipt:
             unverified = tuple(row.get("unverified", []))
             skipped = tuple(tuple(pair) for pair in row.get("skipped", []))
             coverage_set_hash = str(row.get("coverage_set_hash", ""))
+        collusion = None
+        if version >= _COLLUSION_FIELDS_SINCE:
+            raw_collusion = row.get("collusion")
+            collusion = dict(raw_collusion) if isinstance(raw_collusion, dict) else None
         return cls(
             head_sha=str(row["head_sha"]),
             merge_base_sha=str(row["merge_base_sha"]),
@@ -460,6 +479,7 @@ class MergeAdmissionReceipt:
             unverified=unverified,
             skipped=skipped,
             coverage_set_hash=coverage_set_hash,
+            collusion=collusion,
             schema_version=version,
         )
 
@@ -519,6 +539,7 @@ def emit_merge_receipt(
     scopes: tuple[VerificationScope, ...] = (),
     required_oracle_kinds: tuple[str, ...] = (),
     unverified_threshold: float = 0.0,
+    collusion: dict[str, Any] | None = None,
 ) -> MergeAdmissionReceipt:
     """Emit a signed, spine-anchored merge admission receipt.
 
@@ -560,6 +581,10 @@ def emit_merge_receipt(
         unverified_threshold: Maximum allowed share of unverified paths,
             ``|unverified| / max(|change_set|, 1)``. Default ``0.0``
             refuses any receipt with at least one unverified path.
+        collusion: Cross-task collusion record from the cross-task
+            gate (``collusion_gate.CrossTaskAdmission.receipt_section``),
+            bound into the signed preimage at v3. ``None`` when the
+            gate did not run.
 
     Returns:
         The signed, anchored :class:`MergeAdmissionReceipt`.
@@ -620,6 +645,7 @@ def emit_merge_receipt(
         unverified=unverified,
         skipped=skipped,
         coverage_set_hash=coverage_set_hash,
+        collusion=collusion,
     )
     payload = unsigned.to_canonical_bytes()
     signature = sign_payload(payload, private_key_pem)
@@ -655,6 +681,7 @@ def emit_merge_receipt(
         unverified=unsigned.unverified,
         skipped=unsigned.skipped,
         coverage_set_hash=unsigned.coverage_set_hash,
+        collusion=collusion,
         schema_version=unsigned.schema_version,
     )
     path.parent.mkdir(parents=True, exist_ok=True)

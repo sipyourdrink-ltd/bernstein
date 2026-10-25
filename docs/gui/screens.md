@@ -28,6 +28,8 @@ Eight routes. Source: `web/src/routes/`. Design tokens: `web/src/index.css`.
 
 ![Fleet — fleet management scaffold](../assets/webui-fleet.png)
 
+![Missions — mission timeline, zero state](../assets/webui-missions.png)
+
 ![Settings — settings placeholder screen](../assets/webui-settings.png)
 
 ## Tasks (`/ui/tasks`, default route)

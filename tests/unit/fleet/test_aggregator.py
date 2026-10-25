@@ -72,6 +72,39 @@ async def test_poll_once_updates_snapshot(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_configured_headers_ride_on_the_status_poll(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A task server with authentication on answers 401 without the bearer, so the
+    aggregator's own client must send the headers it was given."""
+    project = _project(tmp_path, "alpha")
+    seen: list[httpx.Headers] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(200, json={"summary": {"agents": 0}})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    aggregator = FleetAggregator(
+        [project],
+        headers={"Authorization": "Bearer fleet-test", "CF-Access-Client-Id": "edge-id"},
+    )
+    try:
+        await aggregator._poll_once(project)
+    finally:
+        await aggregator.stop()
+
+    assert seen[0]["authorization"] == "Bearer fleet-test"
+    assert seen[0]["cf-access-client-id"] == "edge-id"
+    snap = aggregator.snapshot("alpha")
+    assert snap is not None
+    assert snap.state == ProjectState.ONLINE
+
+
+@pytest.mark.asyncio
 async def test_offline_marker_on_connection_error(tmp_path: Path) -> None:
     """A poll failure flips the row to OFFLINE without crashing."""
     project = _project(tmp_path, "down")

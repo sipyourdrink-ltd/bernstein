@@ -789,3 +789,9 @@ def test_the_clone_never_carries_a_host_credential_variable(tmp_path: Path, monk
     home = next(line for line in observed.splitlines() if line.startswith("HOME="))
     assert home != f"HOME={Path.home()}", "the clone reads the donor's ~/.gitconfig and its credential helper"
     assert home.endswith("git-home"), home
+
+
+def test_claimed_task_keeps_ref_as_the_fifth_positional_argument() -> None:
+    task = ClaimedTask("https://example.com/r.git", 7, "title", "body", "release-1.2")
+    assert task.ref == "release-1.2"
+    assert task.role is None

@@ -78,6 +78,9 @@ test('mixed CRLF/LF record separators survive framing intact', async () => {
   close = stream.close;
 
   await waitFor(() => received.length === separators.length, 'mixed-separator records did not all dispatch');
+  // The body ends after the last record, so an open stream reconnects and
+  // replays it forever, keeping the test process alive.
+  close();
   for (let i = 0; i < separators.length; i += 1) {
     assert.deepEqual(received[i], { type: `evt_${i}`, data: { payload: `${i}` } });
   }

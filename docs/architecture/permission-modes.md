@@ -24,7 +24,7 @@ restrictive. Critical rules are **never** relaxed in any mode.
 |-----------|:---:|---------------------------------------------------------------------|
 | `bypass`  | 0   | Skip all approvals. Only critical-severity rules still apply.       |
 | `plan`    | 1   | Enforce critical+high rules. Useful for dry-runs and plan reviews.  |
-| `auto`    | 2   | Enforce critical+high+medium rules. The non-interactive default.    |
+| `auto`    | 2   | Enforce critical+high+medium rules. Suited to non-interactive runs.  |
 | `default` | 3   | Enforce every rule, ask on anything ambiguous. The interactive default. |
 
 ### `bypass` - most permissive
@@ -32,7 +32,7 @@ restrictive. Critical rules are **never** relaxed in any mode.
 Only critical-severity rules are enforced. High/medium/low rules are
 relaxed to `allow`. The approval gate is **skipped** at task completion
 (`bypass_enabled=True`). This is the mode behind the legacy
-`--dangerously-skip-permissions` flag.
+`dangerously-skip-permissions` value.
 
 Use when: you're running on your own dev box, you trust the agent and
 the goal, and you want to see what it does without prompts. Do **not**
@@ -47,13 +47,13 @@ of the way.
 
 Use when: you want to see an agent's plan and a small amount of
 exploratory tool use without the full approval ceremony. The legacy
-`--plan` flag and `plan_mode: true` config both map to this mode.
+`plan` and `plan_mode` values both map to this mode.
 
-### `auto` - the headless default
+### `auto` - the headless choice
 
 Enforces critical, high, and medium rules; only low-severity rules are
-relaxed. No legacy flag - this is what an orchestrator picks by default
-when no operator is at the keyboard.
+relaxed. No legacy flag; select it explicitly when no operator is at the
+keyboard.
 
 Use when: a scheduled job, CI runner, or automation harness drives the
 orchestrator. The mode protects against the most common destructive
@@ -140,32 +140,31 @@ shortest path to a useful answer.
 
 ## Configuration
 
-### YAML (`bernstein.yaml`)
+### `OrchestratorConfig.permission_mode`
 
-```yaml
-permission_mode: auto       # bypass | plan | auto | default
+The mode is a string field on `OrchestratorConfig`
+(`src/bernstein/core/tasks/models.py`); the orchestrator passes it through
+`resolve_mode()` at startup. There is currently no dedicated
+`bernstein run` flag or `bernstein.yaml` key for it.
+
+```python
+OrchestratorConfig(permission_mode="auto")  # bypass | plan | auto | default
 ```
 
-If absent or `null`, the orchestrator falls back to `default` and logs
-a warning when an unrecognised value is supplied.
+If unset (`None`), the orchestrator falls back to `default`; an
+unrecognised value also falls back to `default` and logs a warning.
 
-### CLI flag
+### Legacy value mapping
 
-```bash
-bernstein run --permission-mode auto
-```
+`resolve_mode()` still accepts these older names (`LEGACY_FLAG_TO_MODE`) and quietly maps them:
 
-### Legacy flag mapping
-
-The orchestrator still accepts older flags and quietly maps them:
-
-| Legacy flag / config value           | Canonical mode |
+| Legacy value                         | Canonical mode |
 |--------------------------------------|----------------|
-| `--dangerously-skip-permissions`     | `bypass`       |
+| `dangerously-skip-permissions`       | `bypass`       |
 | `dangerously_skip_permissions: true` | `bypass`       |
-| `--plan` / `plan_mode: true`         | `plan`         |
-| `--auto` / no flag (orchestrator)    | `auto`         |
-| (interactive CLI, no flag)           | `default`      |
+| `plan` / `plan_mode`                 | `plan`         |
+| `auto`                               | `auto`         |
+| `default` / unset                    | `default`      |
 
 `resolve_mode()` checks canonical names first, then legacy names, then
 falls back to `default` with a warning.
@@ -224,7 +223,7 @@ rule 1 still denies, rule 2 relaxes to `allow`, rule 3 relaxes to
 | `src/bernstein/core/security/permission_rules.py`       | `PermissionRuleEngine` - matches rules, applies mode relaxation |
 | `src/bernstein/core/security/permission_matrix.py`      | `PermissionResolutionMatrix` - combines rule outcome with hook outcome |
 | `src/bernstein/core/security/approval.py`               | Approval gate - honours `bypass_enabled` when mode is `bypass` |
-| `tests/unit/test_permission_mode.py`                    | 62 tests covering every cell of the matrix |
+| `tests/unit/test_permission_mode.py`                    | 62 tests (37 test functions, several parametrized) covering every cell of the matrix |
 
 ---
 

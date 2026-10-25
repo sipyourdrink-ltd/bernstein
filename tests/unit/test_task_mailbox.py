@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bernstein.core.communication.rendezvous import encode_close_body, encode_open_body
 from bernstein.core.communication.task_mailbox import (
     MAILBOX_SCHEMA_VERSION,
     MAX_MESSAGE_BODY_BYTES,
@@ -90,15 +91,49 @@ def test_all_declared_kinds_accepted(tmp_path: Path) -> None:
         "finding",
         "artefact_ref",
         "question",
+        "rendezvous_open",
+        "rendezvous_closed",
         "steer.pause",
         "steer.resume",
         "steer.guidance",
         "steer.redirect",
         "steer.abort",
     }
-    for i, kind in enumerate(MESSAGE_KINDS):
+    ordinary_kinds = [kind for kind in MESSAGE_KINDS if not kind.startswith("rendezvous_")]
+    for i, kind in enumerate(ordinary_kinds):
         msg = mailbox.post(task_id="t", sender="a", kind=kind, body=f"payload-{i}")
         assert msg.kind == kind
+
+
+def test_trusted_writer_still_has_to_post_a_structurally_valid_rendezvous(tmp_path: Path) -> None:
+    mailbox = _mailbox(tmp_path)
+    with pytest.raises(ValueError, match="invalid rendezvous open"):
+        mailbox.post(task_id="task-b", sender="session-a", kind="rendezvous_open", body="not-json")
+
+    question = mailbox.post(task_id="task-b", sender="session-a", kind="question", body="question")
+    opened = mailbox.post(
+        task_id="task-b",
+        sender="session-a",
+        kind="rendezvous_open",
+        body=encode_open_body(
+            question_entry_hash=question.entry_hash,
+            waiter_task_id="task-a",
+            awaited_task_id="task-b",
+        ),
+    )
+    reply = mailbox.post(task_id="task-a", sender="session-b", kind="question", body="answer")
+    closed = mailbox.post(
+        task_id="task-a",
+        sender="session-b",
+        kind="rendezvous_closed",
+        body=encode_close_body(
+            open_entry_hash=opened.entry_hash,
+            reply_entry_hash=reply.entry_hash,
+            resolution="answered",
+        ),
+    )
+
+    assert closed.seq > reply.seq > opened.seq
 
 
 def test_unknown_kind_rejected(tmp_path: Path) -> None:

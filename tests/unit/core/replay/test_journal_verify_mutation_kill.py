@@ -415,3 +415,281 @@ class TestUnmutatedVerifierAcceptsValidJournal:
         assert result.count == 4
         assert result.divergent_index is None
         assert not result.errors
+
+
+# ---------------------------------------------------------------------------
+# Run-id barrier, resume refusals, retention and repair (#6471 follow-up)
+#
+# The nightly scored this target 81/120 (threshold 70%). The survivors sat in
+# the run-id barrier, the refusals ``EventJournal.resume`` and
+# ``repair_journal_tail`` print, the replay-retention pruner, and the strict
+# reader's messages. Each test below pins one of those to an exact value.
+# ---------------------------------------------------------------------------
+
+
+def _write_rows(path: Path, rows: list[object]) -> None:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+class TestRunIdBarrier:
+    @pytest.mark.parametrize("run_id", [".", "..", "a/b", "", "x" * 65, "a b"])
+    def test_an_unsafe_run_id_is_refused_by_name(self, tmp_path: Path, run_id: str) -> None:
+        from bernstein.core.replay.journal import JournalPathError, run_journal_path
+
+        with pytest.raises(JournalPathError) as exc:
+            run_journal_path(tmp_path, run_id)
+        assert str(exc.value) == f"unsafe run_id for journal path: {run_id!r}"
+
+    @pytest.mark.parametrize("run_id", ["run-1", "a.b_c", "x" * 64, "..."])
+    def test_a_safe_run_id_names_its_own_directory(self, tmp_path: Path, run_id: str) -> None:
+        from bernstein.core.replay.journal import run_journal_path
+
+        assert run_journal_path(tmp_path, run_id).parent.name == run_id
+
+
+class TestResumeRefusals:
+    def test_resume_of_a_mid_journal_discard_names_the_line(self, tmp_path: Path) -> None:
+        sdd = tmp_path / ".sdd"
+        journal = EventJournal("resume-mid", sdd)
+        journal.record("a")
+        journal.record("b")
+        lines = journal.path.read_text(encoding="utf-8").splitlines(keepends=True)
+        journal.path.write_text(lines[0] + "not json\n" + lines[1], encoding="utf-8")
+
+        with pytest.raises(ValueError) as exc:
+            EventJournal.resume("resume-mid", sdd)
+        assert str(exc.value) == f"cannot resume journal {journal.path}: reader discarded physical line(s): 1"
+
+    def test_resume_of_a_broken_chain_quotes_the_verifier(self, tmp_path: Path) -> None:
+        sdd = tmp_path / ".sdd"
+        journal = EventJournal("resume-broken", sdd)
+        journal.record("a")
+        journal.record("b")
+        rows = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
+        rows[1]["prev_hash"] = "0" * 64
+        _write_rows(journal.path, rows)
+        expected_errors = verify_journal(journal.path).errors
+        assert expected_errors
+
+        with pytest.raises(ValueError) as exc:
+            EventJournal.resume("resume-broken", sdd)
+        assert str(exc.value) == f"cannot resume journal {journal.path}: {'; '.join(expected_errors)}"
+
+    def test_resume_of_a_clean_journal_continues_its_chain(self, tmp_path: Path) -> None:
+        sdd = tmp_path / ".sdd"
+        journal = EventJournal("resume-ok", sdd)
+        journal.record("a")
+        journal.record("b")
+
+        resumed = EventJournal.resume("resume-ok", sdd)
+        assert resumed.head() == journal.head()
+        assert resumed.event_count() == 2
+
+
+class TestRetention:
+    """``BERNSTEIN_REPLAY_RETENTION`` prunes the oldest past runs, never the active one."""
+
+    @staticmethod
+    def _runs(sdd: Path, *names: str) -> None:
+        for name in names:
+            (sdd / "runs" / name).mkdir(parents=True)
+            (sdd / "runs" / name / "journal.jsonl").write_text("", encoding="utf-8")
+
+    @staticmethod
+    def _left(sdd: Path) -> list[str]:
+        return sorted(d.name for d in (sdd / "runs").iterdir())
+
+    @pytest.mark.parametrize("raw", ["", "   ", "abc", "0", "-3"])
+    def test_unset_invalid_or_non_positive_retention_keeps_everything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: str
+    ) -> None:
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RETENTION", raw)
+        sdd = tmp_path / ".sdd"
+        self._runs(sdd, "r1", "r2", "r3")
+        EventJournal("r9", sdd)
+        assert self._left(sdd) == ["r1", "r2", "r3", "r9"]
+
+    def test_retention_one_keeps_only_the_active_run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RETENTION", "1")
+        sdd = tmp_path / ".sdd"
+        self._runs(sdd, "r1", "r2")
+        EventJournal("r9", sdd)
+        assert self._left(sdd) == ["r9"]
+
+    def test_the_oldest_runs_go_first(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RETENTION", "2")
+        sdd = tmp_path / ".sdd"
+        self._runs(sdd, "r1", "r2", "r3")
+        EventJournal("r9", sdd)
+        assert self._left(sdd) == ["r3", "r9"]
+
+    def test_exactly_at_the_limit_nothing_goes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RETENTION", "3")
+        sdd = tmp_path / ".sdd"
+        self._runs(sdd, "r1", "r2")
+        EventJournal("r9", sdd)
+        assert self._left(sdd) == ["r1", "r2", "r9"]
+
+    def test_an_active_run_that_sorts_first_is_skipped_not_counted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RETENTION", "2")
+        sdd = tmp_path / ".sdd"
+        self._runs(sdd, "r1", "r2", "r3")
+        EventJournal("a0", sdd)
+        assert self._left(sdd) == ["a0", "r3"]
+
+    def test_files_beside_the_run_directories_are_neither_counted_nor_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("BERNSTEIN_REPLAY_RETENTION", "2")
+        sdd = tmp_path / ".sdd"
+        self._runs(sdd, "r1")
+        (sdd / "runs" / "index.json").write_text("{}", encoding="utf-8")
+        EventJournal("r9", sdd)
+        assert self._left(sdd) == ["index.json", "r1", "r9"]
+
+
+class TestRepairRefusalsAndCut:
+    def test_a_clean_journal_reports_its_count_and_head(self, tmp_path: Path) -> None:
+        from bernstein.core.replay.journal import JournalRepairResult, repair_journal_tail
+
+        path, seal = _journal(tmp_path, count=3)
+        assert repair_journal_tail(path) == JournalRepairResult(repaired=False, event_count=3, head=seal.head)
+        assert JournalRepairResult(repaired=False).event_count == 0
+
+    def test_a_mid_journal_discard_is_refused_with_its_reason(self, tmp_path: Path) -> None:
+        from bernstein.core.replay.journal import repair_journal_tail
+
+        path, _ = _journal(tmp_path, count=2)
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        path.write_text(lines[0] + "garbage\n" + lines[1], encoding="utf-8")
+
+        with pytest.raises(ValueError) as exc:
+            repair_journal_tail(path)
+        assert str(exc.value) == (
+            f"refusing repair of {path}: reader discarded physical line(s) 1 in the middle of the journal "
+            "(corruption, not a torn write); repair truncates only a trailing fragment"
+        )
+
+    def test_a_torn_tail_is_cut_to_the_exact_surviving_bytes(self, tmp_path: Path) -> None:
+        from bernstein.core.replay.journal import repair_journal_tail
+
+        path, seal = _journal(tmp_path, count=2)
+        clean = path.read_bytes()
+        path.write_bytes(clean + b'{"event": "torn')
+
+        result = repair_journal_tail(path, seal=seal)
+
+        assert result.repaired is True
+        assert result.removed_line_indices == (2,)
+        assert (result.event_count, result.head) == (2, seal.head)
+        assert path.read_bytes() == clean
+
+    def test_a_seal_with_the_right_count_and_a_wrong_head_refuses_before_writing(self, tmp_path: Path) -> None:
+        from bernstein.core.replay.journal import repair_journal_tail
+
+        path, seal = _journal(tmp_path, count=2)
+        torn = path.read_bytes() + b'{"event": "torn'
+        path.write_bytes(torn)
+        wrong = JournalSeal(head="f" * 64, event_count=seal.event_count)
+
+        with pytest.raises(ValueError) as exc:
+            repair_journal_tail(path, seal=wrong)
+        assert str(exc.value) == (
+            f"refusing repair of {path}: truncated journal (head={seal.head}, events=2) does not match the "
+            f"external seal (head={'f' * 64}, events=2); the journal is sealed and this command is not its authority"
+        )
+        assert path.read_bytes() == torn
+
+
+class TestStrictReaderMessages:
+    def test_undecodable_bytes_name_the_line(self, tmp_path: Path) -> None:
+        path = tmp_path / "j.jsonl"
+        path.write_bytes(b"\n\xff\xfe\n")
+        with pytest.raises(JournalParseError) as exc:
+            load_events(path, strict=True)
+        assert str(exc.value) == "undecodable bytes at physical line 1 (not valid UTF-8)"
+
+    @pytest.mark.parametrize(
+        ("row", "message"),
+        [
+            ({"index": 0, "prev_hash": "", "payload_hash": "p", "event_hash": "e"}, "a missing or non-string 'event'"),
+            (
+                {"event": "", "index": 0, "prev_hash": "", "payload_hash": "p", "event_hash": "e"},
+                "a missing or non-string 'event'",
+            ),
+            (
+                {"event": "x", "prev_hash": "", "payload_hash": "p", "event_hash": "e"},
+                "a missing or non-integer 'index'",
+            ),
+            (
+                {"event": "x", "index": True, "prev_hash": "", "payload_hash": "p", "event_hash": "e"},
+                "a missing or non-integer 'index'",
+            ),
+            ({"event": "x", "index": 0, "payload_hash": "p", "event_hash": "e"}, "a missing or non-string 'prev_hash'"),
+        ],
+    )
+    def test_a_malformed_row_names_the_field(self, tmp_path: Path, row: dict[str, object], message: str) -> None:
+        path = tmp_path / "j.jsonl"
+        _write_rows(path, [row])
+        with pytest.raises(JournalParseError) as exc:
+            load_events(path, strict=True)
+        assert str(exc.value) == f"row at physical line 0 has {message}"
+
+    def test_verify_names_the_discarded_lines(self, tmp_path: Path) -> None:
+        path, _ = _journal(tmp_path, count=1)
+        path.write_text(path.read_text(encoding="utf-8") + "[1, 2]\n", encoding="utf-8")
+        result = verify_journal(path)
+        assert "reader discarded unparsable or non-object physical line(s): 1" in result.errors
+
+
+class TestHashProfilesArePinnedBytes:
+    """Each profile hashes a fixed pre-image; a writer and a verifier that swapped
+    profiles together would still agree with each other, so the bytes are pinned
+    here independently of the module.
+
+    ``é`` separates the two: ``py-json-v1`` escapes it (``ensure_ascii``), while
+    RFC 8785 keeps it as UTF-8.
+    """
+
+    def test_payload_hash_per_profile(self) -> None:
+        import hashlib
+
+        from bernstein.core.replay.journal import HASH_PROFILE_JCS_V2, HASH_PROFILE_LEGACY, _payload_hash
+
+        legacy = hashlib.sha256(b'{"event":"step","value":"\\u00e9"}').hexdigest()
+        jcs = hashlib.sha256('{"event":"step","value":"é"}'.encode()).hexdigest()
+        assert _payload_hash("step", {"value": "é"}) == legacy
+        assert _payload_hash("step", {"value": "é"}, HASH_PROFILE_LEGACY) == legacy
+        assert _payload_hash("step", {"value": "é"}, HASH_PROFILE_JCS_V2) == jcs
+
+    def test_event_hash_per_profile(self) -> None:
+        import hashlib
+
+        from bernstein.core.replay.journal import HASH_PROFILE_JCS_V2, compute_event_hash
+
+        fields = {"prev_hash": "", "event_type": "é", "payload_hash": "p", "index": 0}
+        legacy = hashlib.sha256(b'{"event_type":"\\u00e9","index":0,"payload_hash":"p","prev_hash":""}').hexdigest()
+        jcs = hashlib.sha256('{"event_type":"é","index":0,"payload_hash":"p","prev_hash":""}'.encode()).hexdigest()
+        assert compute_event_hash(**fields) == legacy  # type: ignore[arg-type]
+        assert compute_event_hash(**fields, hash_profile=HASH_PROFILE_JCS_V2) == jcs  # type: ignore[arg-type]
+
+
+def test_retention_with_exactly_one_excess_run_removes_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_REPLAY_RETENTION", "3")
+    sdd = tmp_path / ".sdd"
+    for name in ("r1", "r2", "r3"):
+        (sdd / "runs" / name).mkdir(parents=True)
+    EventJournal("r9", sdd)
+    assert sorted(d.name for d in (sdd / "runs").iterdir()) == ["r2", "r3", "r9"]
+
+
+def test_repair_of_a_journal_that_is_only_a_torn_line_empties_it(tmp_path: Path) -> None:
+    from bernstein.core.replay.journal import JournalRepairResult, repair_journal_tail
+
+    path = tmp_path / "journal.jsonl"
+    path.write_bytes(b'{"event": "torn')
+
+    assert repair_journal_tail(path) == JournalRepairResult(repaired=True, removed_line_indices=(0,))
+    assert path.read_bytes() == b""

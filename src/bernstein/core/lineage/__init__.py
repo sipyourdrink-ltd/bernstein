@@ -6,6 +6,8 @@ Public API:
 
   - LineageEntry - frozen dataclass for a single write event
   - canonicalise, entry_hash - RFC 8785 JCS bytes + sha256 digest
+  - ChangeFact, TaskEffects - per-task effect footprints (issue #5398)
+  - coupled, detect_dependencies - pairwise cross-task dependency
   - AgentCard - minimal A2A v1.0 Agent Card subset
   - generate_keypair, sign_detached, verify_detached - Ed25519 JWS RFC 7515
 
@@ -29,6 +31,12 @@ from bernstein.core.lineage.artifact_uri import (
     is_canonical_artifact_key,
     match_artifact_pattern,
     parse_artifact_key,
+)
+from bernstein.core.lineage.dependency import (
+    ChangeFact,
+    TaskEffects,
+    coupled,
+    detect_dependencies,
 )
 from bernstein.core.lineage.entry import (
     ARTEFACT_KINDS,
@@ -104,6 +112,7 @@ __all__ = [
     "ArtifactKey",
     "ArtifactURIError",
     "AuditingTrackerAdapter",
+    "ChangeFact",
     "ChildBody",
     "FirstWriterPolicy",
     "ForeignAttestationResult",
@@ -124,6 +133,7 @@ __all__ = [
     "SpineStatus",
     "SpineVerifyResult",
     "StewardKey",
+    "TaskEffects",
     "TipSet",
     "TrackerActor",
     "TrackerAuditEntry",
@@ -139,6 +149,8 @@ __all__ = [
     "compute_entry_hash",
     "compute_tips",
     "content_hash_of",
+    "coupled",
+    "detect_dependencies",
     "detect_forks",
     "entry_hash",
     "external_reference_bytes",
