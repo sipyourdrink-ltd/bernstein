@@ -47,7 +47,7 @@ jobs:
       # the residual default-cache risk is acceptable here.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7 # zizmor: ignore[cache-poisoning]
         with:
-          node-version: '24'
+          node-version: '26'
 
       - name: Validate extension icon (>= 128x128)
         run: |

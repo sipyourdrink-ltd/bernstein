@@ -403,7 +403,7 @@ jobs:
       # so a transitive lockfile bump can't be cached and re-served.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7 # zizmor: ignore[cache-poisoning]
         with:
-          node-version: 24
+          node-version: 26
           registry-url: https://registry.npmjs.org
       - name: Sync version from tag
         run: |
