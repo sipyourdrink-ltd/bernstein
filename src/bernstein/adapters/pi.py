@@ -15,7 +15,7 @@ from bernstein.adapters.env_isolation import build_filtered_env
 
 #: Pi's switch that turns off extension discovery (``-ne``); explicit ``-e``
 #: paths would still load.
-_NO_EXTENSIONS = "--no-extensions"
+_NO_EXTENSIONS = "-ne"
 
 
 class PiAdapter(CLIAdapter):

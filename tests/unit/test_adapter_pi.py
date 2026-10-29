@@ -32,7 +32,7 @@ class TestPiAdapterSpawn:
                 session_id="pi-s1",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "--no-extensions", "--model", "provider/model-name", "fix the bug"]
+        assert inner == ["pi", "-ne", "--model", "provider/model-name", "fix the bug"]
 
     def test_spawn_leaves_model_selection_to_pi_for_auto(self, tmp_path: Path) -> None:
         adapter = PiAdapter()
@@ -45,7 +45,7 @@ class TestPiAdapterSpawn:
                 session_id="pi-s2",
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert inner == ["pi", "--no-extensions", "fix the bug"]
+        assert inner == ["pi", "-ne", "fix the bug"]
 
     def test_pi_spawn_includes_mcp_isolation_flags(self, tmp_path: Path) -> None:
         """Pi reaches MCP servers only through extensions, and it discovers the
@@ -53,17 +53,19 @@ class TestPiAdapterSpawn:
         them, whatever MCP config the task carries (#5965)."""
         adapter = PiAdapter()
         proc_mock = make_popen_mock(pid=802)
+        mcp_config = {"mcpServers": {"bernstein": {"command": "bernstein-mcp"}}}
         with patch("bernstein.adapters.pi.subprocess.Popen", return_value=proc_mock) as popen:
             adapter.spawn(
                 prompt="fix the bug",
                 workdir=tmp_path,
                 model_config=ModelConfig(model="auto", effort="high"),
                 session_id="pi-s3",
-                mcp_config={"mcpServers": {"bernstein": {"command": "bernstein-mcp"}}},
+                mcp_config=mcp_config,
             )
         inner = inner_cmd(popen.call_args.args[0])
-        assert "--no-extensions" in inner
+        assert "-ne" in inner
         assert inner[-1] == "fix the bug"
+        assert mcp_config == {"mcpServers": {"bernstein": {"command": "bernstein-mcp"}}}
 
     def test_spawn_translates_missing_cli(self, tmp_path: Path) -> None:
         adapter = PiAdapter()
