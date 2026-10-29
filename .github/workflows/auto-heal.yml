@@ -142,7 +142,7 @@ jobs:
         # SHA-pinned action vendors a pinned uv release, so the toolchain
         # is reproducible without an unpinned `pip install` step
         # (Scorecard pinned-dependencies).
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           python-version: "3.14"
@@ -331,7 +331,7 @@ jobs:
           git -c advice.detachedHead=false checkout "$HEAD_SHA"
 
       - name: Install uv (provides Python via .python-version)
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
 
