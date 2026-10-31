@@ -780,3 +780,178 @@ class TestSandboxFailureDetection:
         )
         detected = detect_sandbox_failure(log)
         assert detected is not None and detected[1:] == (3, 3)
+
+
+class TestReasoningEffortArgs:
+    """Unit tests for _reasoning_effort_args (issue #6641)."""
+
+    def test_high_effort_passes_flag(self):
+        from bernstein.adapters.codex import _reasoning_effort_args
+
+        args = _reasoning_effort_args("high")
+        assert args == ("--reasoning-effort", "high")
+
+    def test_low_effort_passes_flag(self):
+        from bernstein.adapters.codex import _reasoning_effort_args
+
+        args = _reasoning_effort_args("low")
+        assert args == ("--reasoning-effort", "low")
+
+    def test_max_effort_maps_to_high(self):
+        from bernstein.adapters.codex import _reasoning_effort_args
+
+        args = _reasoning_effort_args("max")
+        assert args == ("--reasoning-effort", "high")
+
+    def test_normal_effort_maps_to_medium(self):
+        from bernstein.adapters.codex import _reasoning_effort_args
+
+        args = _reasoning_effort_args("normal")
+        assert args == ("--reasoning-effort", "medium")
+
+    def test_unknown_effort_value_raises(self):
+        from bernstein.adapters.codex import _reasoning_effort_args
+
+        with pytest.raises(ValueError, match="unrecognised effort value"):
+            _reasoning_effort_args("turbo")
+
+    def test_medium_effort_passes_flag(self):
+        from bernstein.adapters.codex import _reasoning_effort_args
+
+        args = _reasoning_effort_args("medium")
+        assert args == ("--reasoning-effort", "medium")
+
+
+class TestSpawnEffortIntegration:
+    """Verify that spawn passes --reasoning-effort for o-series and rejects bad combos."""
+
+    def _make_adapter(self):
+        from bernstein.adapters.codex import CodexAdapter
+
+        return CodexAdapter()
+
+    def _minimal_spawn_kwargs(self, model, effort, workdir):
+        from bernstein.core.models import ModelConfig
+
+        return {
+            "prompt": "do something",
+            "workdir": workdir,
+            "model_config": ModelConfig(model=model, effort=effort),
+            "session_id": "sess-effort-test",
+        }
+
+    def test_o3_spawn_includes_reasoning_effort_flag(self, tmp_path):
+        import contextlib
+        import subprocess
+
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.codex import CodexAdapter
+
+        adapter = CodexAdapter()
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            raise FileNotFoundError("codex not installed")
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(subprocess, "Popen", fake_popen)
+            with contextlib.suppress(RuntimeError):
+                adapter.spawn(
+                    prompt="p",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="o3", effort="high"),
+                    session_id="sess-1",
+                )
+
+        cmd = captured.get("cmd", [])
+        flat_cmd = " ".join(str(c) for c in cmd)
+        assert "--reasoning-effort" in flat_cmd
+        assert "high" in flat_cmd
+
+    def test_gpt_model_with_default_effort_does_not_add_flag(self, tmp_path):
+        import contextlib
+        import subprocess
+
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.codex import CodexAdapter
+
+        adapter = CodexAdapter()
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            raise FileNotFoundError("codex not installed")
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(subprocess, "Popen", fake_popen)
+            with contextlib.suppress(RuntimeError):
+                adapter.spawn(
+                    prompt="p",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="gpt-5.5", effort="normal"),
+                    session_id="sess-2",
+                )
+
+        cmd = captured.get("cmd", [])
+        assert "--reasoning-effort" not in cmd
+
+    def test_gpt_model_with_non_default_effort_silently_omits_flag(self, tmp_path):
+        import contextlib
+        import subprocess
+
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.codex import CodexAdapter
+
+        adapter = CodexAdapter()
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            raise FileNotFoundError("codex not installed")
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(subprocess, "Popen", fake_popen)
+            with contextlib.suppress(RuntimeError):
+                adapter.spawn(
+                    prompt="p",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="gpt-5.5", effort="high"),
+                    session_id="sess-3",
+                )
+
+        cmd = captured.get("cmd", [])
+        assert "--reasoning-effort" not in cmd
+
+    def test_o1_mini_spawn_includes_reasoning_effort_flag(self, tmp_path):
+        import contextlib
+        import subprocess
+
+        from bernstein.core.models import ModelConfig
+
+        from bernstein.adapters.codex import CodexAdapter
+
+        adapter = CodexAdapter()
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            raise FileNotFoundError("codex not installed")
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(subprocess, "Popen", fake_popen)
+            with contextlib.suppress(RuntimeError):
+                adapter.spawn(
+                    prompt="p",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="o1-mini", effort="low"),
+                    session_id="sess-4",
+                )
+
+        cmd = captured.get("cmd", [])
+        flat_cmd = " ".join(str(c) for c in cmd)
+        assert "--reasoning-effort" in flat_cmd
+        assert "low" in flat_cmd

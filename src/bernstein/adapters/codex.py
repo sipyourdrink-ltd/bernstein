@@ -102,6 +102,24 @@ _CODEX_AUTH_FILE = Path.home() / ".codex" / "auth.json"
 _DEFAULT_CODEX_MODEL = "gpt-5.5"
 _CLAUDE_TIER_MODELS = frozenset({"opus", "sonnet", "haiku"})
 
+#: Models that accept ``--reasoning-effort``. The o-series reasoning models
+#: (o1, o3, o4-mini, and their snapshots) expose this flag; GPT-series models
+#: do not and will silently receive no effort flag (#6641).
+_REASONING_EFFORT_MODELS = frozenset({"o1", "o1-mini", "o1-pro", "o3", "o3-mini", "o4-mini", "o3-pro"})
+
+#: Valid ``--reasoning-effort`` values accepted by the Codex CLI.
+_SUPPORTED_EFFORT_VALUES = frozenset({"low", "medium", "high"})
+
+#: Effort values that map directly to a ``--reasoning-effort`` flag value.
+#: ``"max"`` and ``"normal"`` are Bernstein tier names, not Codex CLI values.
+_EFFORT_MAP: dict[str, str] = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "max": "high",
+    "normal": "medium",
+}
+
 #: Sandbox argv for a spawn that keeps the vendor sandbox. Codex implements
 #: this profile with bubblewrap on Linux, so it needs an unprivileged user
 #: namespace the host must allow.
@@ -231,6 +249,22 @@ def _codex_model(model: str) -> str:
         )
         return _DEFAULT_CODEX_MODEL
     return model
+
+
+def _reasoning_effort_args(effort: str) -> tuple[str, ...]:
+    """Return ``--reasoning-effort <value>`` argv for an o-series model.
+
+    Only call this when the model is already known to be in
+    ``_REASONING_EFFORT_MODELS``; GPT-series models silently receive no
+    effort flag (#6641).
+
+    Raises:
+        ValueError: when the effort value is unrecognised.
+    """
+    mapped = _EFFORT_MAP.get(effort)
+    if mapped is None:
+        raise ValueError(f"CodexAdapter: unrecognised effort value {effort!r}. Supported values: {sorted(_EFFORT_MAP)}")
+    return ("--reasoning-effort", mapped)
 
 
 #: Bubblewrap's refusal when the kernel disallows unprivileged user namespaces.
@@ -438,12 +472,20 @@ class CodexAdapter(CLIAdapter):
             )
 
         model = _codex_model(model_config.model)
+        effort_args: tuple[str, ...] = ()
+        base_model = model.split(":")[0].split("/")[-1]
+        _model_supports_effort = any(
+            base_model == m or base_model.startswith(m + "-") for m in _REASONING_EFFORT_MODELS
+        )
+        if _model_supports_effort:
+            effort_args = _reasoning_effort_args(model_config.effort)
         cmd = [
             "codex",
             "exec",
             *self._sandbox_args(),
             "-m",
             model,
+            *effort_args,
             "--json",
             "-o",
             str(output_path),
