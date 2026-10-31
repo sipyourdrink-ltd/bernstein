@@ -26,6 +26,7 @@ required_flags:
   - "--sandbox"
   - "--dangerously-bypass-approvals-and-sandbox"
   - "-m"
+  - "--reasoning-effort"
   - "--json"
   - "-o"
 required_subcommands:
