@@ -89,6 +89,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `trackers/`                 | Tracker adapter subsystem |
 | `trigger_sources/`          | Trigger source adapters - normalize raw events into TriggerEvent |
 | `tunnels/`                  | Tunnel provider abstraction and registry |
+| `verification/`             | Cross-tier verification protocol (#6559) |
 | `verifier/`                 | Sub-package: audit_receipt_verifier |
 | `volunteer/`                | Volunteer-workers substrate: opt-in project policy and its trust anchor |
 | `workflows/`                | Declarative YAML workflow manifests |
