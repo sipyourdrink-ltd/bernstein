@@ -555,9 +555,11 @@ def test_long_lived_clean_exit_auto_complete_does_not_warn(
     monkeypatch.setattr(al, "complete_task", lambda client, base, task_id, summary: None)
     session = _session(exit_code=0)
     session.spawn_ts = _time.time() - 300.0
+    task = MagicMock()
+    task.completion_signals = None  # no signals → skip gate check, auto-complete directly
     with caplog.at_level(logging.WARNING):
         success, _ = al._handle_orphan_no_signals(
-            _orphan_orch(tmp_path), MagicMock(), "T-1", session, "http://srv", _time.time()
+            _orphan_orch(tmp_path), task, "T-1", session, "http://srv", _time.time()
         )
     assert success is True
     assert not any("SUSPICIOUS auto-complete" in r.message for r in caplog.records)
@@ -665,3 +667,109 @@ def test_normal_or_deliberate_agent_exit_does_not_cool_the_adapter_down(
     orch = _run_handle_dead_agent(monkeypatch, exit_code=exit_code)
 
     assert orch._agent_failure_timestamps == {}
+
+
+# ---------------------------------------------------------------------------
+# no-diff + janitor gates (issue #6606)
+# ---------------------------------------------------------------------------
+
+
+def test_long_lived_clean_exit_with_gates_passed_auto_completes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long-lived clean exit + completion_signals: run gates; if they pass, complete."""
+    import time as _time
+    from unittest.mock import MagicMock
+
+    import bernstein.core.agents.agent_lifecycle as al
+    from bernstein.core.tasks.models import Task
+
+    monkeypatch.setattr(al, "collect_completion_data", lambda workdir, session: {"files_modified": []})
+    completed: list[tuple[str, str]] = []
+    monkeypatch.setattr(al, "complete_task", lambda client, base, tid, summary: completed.append((tid, summary)))
+    monkeypatch.setattr(al, "retry_or_fail_task", lambda *a, **kw: None)
+    monkeypatch.setattr(al, "verify_task_completion", lambda task, workdir: (True, []))
+
+    task = MagicMock(spec=Task)
+    task.completion_signals = ["path_exists:src/foo.py"]
+
+    session = _session(exit_code=0)
+    session.spawn_ts = _time.time() - 300.0
+
+    success, error_type = al._handle_orphan_no_signals(
+        _orphan_orch(tmp_path), task, "T-gates", session, "http://srv", _time.time()
+    )
+
+    assert success is True
+    assert error_type is None
+    assert completed and "T-gates" in completed[0][0]
+    assert "gates" in completed[0][1] or "satisfied" in completed[0][1]
+
+
+def test_long_lived_clean_exit_with_gates_failed_retries_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long-lived clean exit + completion_signals: run gates; if any fail, retry/fail."""
+    import time as _time
+    from unittest.mock import MagicMock
+
+    import bernstein.core.agents.agent_lifecycle as al
+    from bernstein.core.tasks.models import Task
+
+    monkeypatch.setattr(al, "collect_completion_data", lambda workdir, session: {"files_modified": []})
+    completed: list[str] = []
+    monkeypatch.setattr(al, "complete_task", lambda client, base, tid, summary: completed.append(tid))
+    failed: list[tuple[str, str]] = []
+    monkeypatch.setattr(al, "retry_or_fail_task", lambda tid, reason, **kw: failed.append((tid, reason)))
+    monkeypatch.setattr(al, "verify_task_completion", lambda task, workdir: (False, ["test_passes"]))
+
+    task = MagicMock(spec=Task)
+    task.completion_signals = ["test_passes:tests/test_foo.py"]
+
+    session = _session(exit_code=0)
+    session.spawn_ts = _time.time() - 300.0
+
+    success, error_type = al._handle_orphan_no_signals(
+        _orphan_orch(tmp_path), task, "T-fail", session, "http://srv", _time.time()
+    )
+
+    assert success is False
+    assert error_type == "janitor_failed"
+    assert completed == []
+    assert failed and failed[0][0] == "T-fail"
+    assert "test_passes" in failed[0][1]
+
+
+def test_long_lived_clean_exit_without_signals_auto_completes_as_before(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without completion_signals the existing no-gate path is unchanged."""
+    import time as _time
+    from unittest.mock import MagicMock
+
+    import bernstein.core.agents.agent_lifecycle as al
+    from bernstein.core.tasks.models import Task
+
+    monkeypatch.setattr(al, "collect_completion_data", lambda workdir, session: {"files_modified": []})
+    completed: list[str] = []
+    monkeypatch.setattr(al, "complete_task", lambda client, base, tid, summary: completed.append(tid))
+    # verify_task_completion must NOT be called; patch it to raise so any call is caught.
+    monkeypatch.setattr(
+        al, "verify_task_completion", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not be called"))
+    )
+
+    task = MagicMock(spec=Task)
+    task.completion_signals = []
+
+    session = _session(exit_code=0)
+    session.spawn_ts = _time.time() - 300.0
+
+    success, _ = al._handle_orphan_no_signals(
+        _orphan_orch(tmp_path), task, "T-nosig", session, "http://srv", _time.time()
+    )
+
+    assert success is True
+    assert "T-nosig" in completed
