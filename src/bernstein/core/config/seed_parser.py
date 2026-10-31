@@ -2489,10 +2489,25 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
 
     _warn_unknown_top_level_keys(data)
 
-    # --- Required fields ---
-    goal: object = data.get("goal")
-    if not goal or not isinstance(goal, str):
-        raise SeedError("Seed file must contain a non-empty 'goal' string.")
+    # --- Goal (required for goal-driven runs; optional for plan-file runs) ---
+    # When ``bernstein run --from-plan <plan.yaml>`` is used the plan file
+    # supplies the work and the seed need not declare a goal. Raising a hard
+    # SeedError here was swallowing the entire seed config (the caller caught
+    # the exception and treated ``seed=None``), which silently re-enabled
+    # ``evolution_enabled`` and ``gate_repair_enabled`` even when the operator
+    # had explicitly set them to ``false`` (#6604).
+    _raw_goal: object = data.get("goal")
+    if _raw_goal and isinstance(_raw_goal, str):
+        goal: str = _raw_goal.strip()
+    else:
+        goal = ""
+        if _raw_goal is not None:
+            logger.warning(
+                "parse_seed: 'goal' in %s is not a non-empty string (got %r); "
+                "treating as absent. Other seed settings are still applied.",
+                path,
+                _raw_goal,
+            )
 
     # --- Optional fields ---
     budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
