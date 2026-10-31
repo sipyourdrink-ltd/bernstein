@@ -26,6 +26,17 @@ A nightly workflow
   matched against the adapter's declared contract
   (`tests/contract/contracts/<adapter>.yaml`).
 
+The deep-research adapters (`gpt_researcher`, `tongyi_deepresearch`,
+`paper_qa`, see [deep-research.md](deep-research.md)) are not in the matrix.
+Each one runs a runner script shipped with bernstein, so the command line its
+contract asserts is bernstein's own and cannot drift with an upstream release;
+the contract and the runners' behaviour against a stub of the agent package
+are checked by the unit suite on every pull request
+(`tests/unit/adapters/test_deep_research_adapters.py`). What can drift is the
+agent package the runner imports, and a nightly probe of that would need the
+package installed and a gateway key on the runner, which the matrix does not
+carry.
+
 ## Every probe is a receipt
 
 Each probe seals a content-addressed receipt: canonical JSON whose
