@@ -161,6 +161,37 @@ def test_retry_escalation_terminal_reason_takes_precedence_over_scope() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Gateway-prefixed model escalation (#6605)
+# ---------------------------------------------------------------------------
+
+
+def test_retry_escalation_gateway_model_is_not_replaced_with_bare_tier() -> None:
+    # A model like "openai/gpt-4o" is on an OpenAI-compatible gateway whose
+    # registry does not know "opus". The escalation must keep the prefixed name.
+    task = _task()
+    model, _effort = _choose_retry_escalation(task, 2, "openai/gpt-4o", "high")
+    assert model == "openai/gpt-4o", f"expected prefixed model, got {model!r}"
+
+
+def test_retry_escalation_gateway_model_large_scope_keeps_prefix() -> None:
+    task = _task(scope=Scope.LARGE)
+    model, _effort = _choose_retry_escalation(task, 1, "openai/gpt-4o", "low")
+    assert "/" in model, f"bare tier name returned for gateway model: {model!r}"
+
+
+def test_retry_escalation_gateway_model_blocking_limit_keeps_prefix() -> None:
+    task = _task(terminal_reason="blocking_limit")
+    model, _effort = _choose_retry_escalation(task, 1, "openai/gpt-4o-mini", "low")
+    assert "/" in model, f"bare tier name returned for gateway model: {model!r}"
+
+
+def test_retry_escalation_tier_model_still_escalates_normally() -> None:
+    # Ensure the gateway guard does not break plain Claude tier names.
+    task = _task()
+    assert _choose_retry_escalation(task, 2, "haiku", "low") == ("sonnet", "high")
+
+
+# ---------------------------------------------------------------------------
 # _dynamic_retry_limit
 # ---------------------------------------------------------------------------
 
