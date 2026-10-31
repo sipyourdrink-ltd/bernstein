@@ -1108,10 +1108,35 @@ def test_planner_fails_safe_when_the_group_base_is_missing(
         "gha_workflows_changed",
         "macos_sensitive",
         "rpm_relevant_changed",
+        "gate_evasion_relevant",
     ):
         assert outputs[key] == "true", (
             f"fail-safe classification must set {key}=true so no job skips; outputs={outputs!r}"
         )
+
+
+@requires_shell_tools
+def test_planner_fails_safe_when_the_trunk_shares_no_history(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """The fetch succeeds and merge-base finds nothing: still fail closed.
+
+    The case the two params above do not reach. A trunk with unrelated history (or a clone too
+    shallow to reach the common ancestor) fetches cleanly, so only the empty merge-base can say the
+    root is unknown. It must widen the classification like any other unresolved root.
+    """
+    repo, _, entry_1 = _synthetic_merge_group(tmp_path)
+    origin = tmp_path / "origin"
+    _git(origin, "checkout", "--quiet", "--orphan", "unrelated")
+    _git(origin, "rm", "-rf", "--quiet", ".")
+    _commit_file(origin, "OTHER.md", "other\n", "unrelated root")
+    outputs = _run_classify(
+        repo,
+        _classify_script(ci_doc),
+        event="merge_group",
+        extra_env={"MERGE_GROUP_BASE_SHA": entry_1, "MERGE_GROUP_BASE_REF": "refs/heads/unrelated"},
+    )
+    assert outputs["docs_only"] == "false", f"an empty merge-base must not narrow; outputs={outputs!r}"
+    for key in ("python_changed", "tests_changed", "gate_evasion_relevant"):
+        assert outputs[key] == "true", f"fail-safe must set {key}=true; outputs={outputs!r}"
 
 
 # ---------------------------------------------------------------------------
