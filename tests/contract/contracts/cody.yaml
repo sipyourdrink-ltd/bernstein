@@ -1,0 +1,22 @@
+# Contract for the Sourcegraph Cody CLI (adapter: cody).
+#
+# Always-passed surface from src/bernstein/adapters/cody.py:
+# ``cody chat -m <prompt> [--model <id>]``. The flags live on the ``chat``
+# subcommand, so the help text checked is ``cody chat --help``.
+adapter: cody
+binary: cody
+install:
+  method: npm
+  spec: "@sourcegraph/cody@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "SRC_ACCESS_TOKEN"
+  basis: api_key
+help_command: ["cody", "chat", "--help"]
+required_flags:
+  - "--message"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
