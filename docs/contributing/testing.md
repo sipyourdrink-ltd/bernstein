@@ -142,6 +142,10 @@ uv run mypy --config-file mypy.gate.ini
 # aborts before checking the tree.
 uv run mypy src
 
+# Doctor's optional environment contract, with real mypy acceptance/rejection
+# and explicit PATH versus ambient lookup checks.
+uv run pytest tests/unit/cli/test_doctor_environment_type_contract.py -q
+
 # Vulture
 vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
 

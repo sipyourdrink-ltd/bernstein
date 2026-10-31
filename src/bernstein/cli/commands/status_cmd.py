@@ -807,7 +807,7 @@ def _doctor_check_adapters(checks: list[dict[str, Any]], *, env: Mapping[str, st
 
     any_adapter = False
     has_path = env is not None and "PATH" in env
-    path_val = env["PATH"] if has_path else None
+    path_val = env["PATH"] if env is not None and has_path else None
     for adapter_name in ("claude", "codex", "gemini"):
         if has_path:
             found = shutil.which(adapter_name, path=path_val) is not None
