@@ -1,0 +1,21 @@
+name: osv-scanner-recorded-sarif
+adapter_class: bernstein.adapters.osv_scanner.OsvScannerAdapter
+steps:
+  - target: tests/fixtures/scanners/osv-scanner/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/osv-scanner/target
+      config:
+        db_pin: sha256:5c4e7405a2af43f1a34811037f086f5bb6d112176d930bbade47d3e49e49e142
+    expect_feed_digest: sha256:5c4e7405a2af43f1a34811037f086f5bb6d112176d930bbade47d3e49e49e142
+    expected_finding_hashes:
+      - e7343cefea97f441b9606539740fb6bd4a6a33741fc0500ce50d970cee64647e
+  - target: tests/fixtures/scanners/osv-scanner/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/osv-scanner/target
+      config:
+        db_pin: sha256:5c4e7405a2af43f1a34811037f086f5bb6d112176d930bbade47d3e49e49e142
+    expect_feed_digest: sha256:5c4e7405a2af43f1a34811037f086f5bb6d112176d930bbade47d3e49e49e142
+    expected_finding_hashes:
+      - e7343cefea97f441b9606539740fb6bd4a6a33741fc0500ce50d970cee64647e

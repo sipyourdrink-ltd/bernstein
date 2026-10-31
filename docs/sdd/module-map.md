@@ -179,6 +179,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `openai_agents_runner.py`       | Python entrypoint that runs an OpenAI Agents SDK session |
 | `opencode.py`                   | OpenCode CLI adapter |
 | `openhands.py`                  | OpenHands CLI adapter |
+| `osv_scanner.py`                | Feed-pinned OSV-Scanner adapter and SARIF normalization |
 | `pi.py`                         | Pi (pi-coding-agent) CLI adapter |
 | `plandex.py`                    | Plandex CLI adapter |
 | `plugin_sdk.py`                 | Adapter plugin SDK for third-party agent integration |
