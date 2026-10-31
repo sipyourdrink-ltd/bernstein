@@ -167,6 +167,16 @@ _WRITE_RPM_ENV = "BERNSTEIN_RATE_LIMIT_WRITE_RPM"
 _READ_RPM_ENV = "BERNSTEIN_RATE_LIMIT_READ_RPM"
 _HEARTBEAT_RPM_ENV = "BERNSTEIN_RATE_LIMIT_HEARTBEAT_RPM"
 
+# Header that a proxied worker sets to identify itself. When the request also
+# carries a cluster bearer token, rate-limit buckets are keyed by this id
+# rather than the peer IP. This lets many workers behind one NAT/proxy each
+# get their own per-minute budget (#6609).
+_AGENT_ID_HEADER = "x-bernstein-agent-id"
+
+# Maximum length accepted for an agent-id header value. IDs longer than this
+# are rejected to prevent bucket-key inflation attacks.
+_AGENT_ID_MAX_LEN = 128
+
 logger = logging.getLogger(__name__)
 
 # Heartbeat routes get their own bucket keyed by the node/agent id in the
@@ -191,6 +201,29 @@ def _env_rpm(name: str, default: int) -> int:
         logger.warning("Ignoring non-positive %s=%r; using default %d", name, raw, default)
         return default
     return value
+
+
+def _agent_bucket_key(request: Request) -> str | None:
+    """Return ``"agent:<id>"`` when the request should be keyed by agent id.
+
+    A proxied worker may sit behind a NAT or load-balancer where many workers
+    share one peer IP.  When a request carries both a cluster bearer token
+    *and* a well-formed ``x-bernstein-agent-id`` header we switch the bucket
+    key from the peer IP to the agent id so each worker gets its own budget.
+
+    Anonymous requests and those without the header keep the peer-IP key,
+    preserving the existing behaviour and preventing attacker-controlled
+    headers from influencing the rate-limit key.
+
+    Returns ``None`` when the request should fall back to the peer-IP key.
+    """
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    agent_id = request.headers.get(_AGENT_ID_HEADER, "").strip()
+    if not agent_id or len(agent_id) > _AGENT_ID_MAX_LEN:
+        return None
+    return f"agent:{agent_id}"
 
 
 def _heartbeat_key(request: Request, path: str, method: str) -> str | None:
@@ -297,7 +330,7 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Default method-based rate limits
-        client_id = _request_client_id(request)
+        client_id = _agent_bucket_key(request) or _request_client_id(request)
         heartbeat_key = _heartbeat_key(request, path, method)
         if heartbeat_key is not None:
             bucket_name = "heartbeat"

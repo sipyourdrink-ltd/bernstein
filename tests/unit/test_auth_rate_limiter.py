@@ -436,3 +436,162 @@ class TestRateLimitKeyingAgainstHeaderSpoofing:
 
         assert first.status_code == 200
         assert second.status_code == 429
+
+
+class TestAgentIdBucketKey:
+    """Tests for agent-id-keyed rate-limit buckets (issue #6609)."""
+
+    def test_returns_agent_key_when_bearer_and_agent_id_present(self):
+        from bernstein.core.auth_rate_limiter import _agent_bucket_key
+        from fastapi import Request as FastAPIRequest
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/tasks",
+            "query_string": b"",
+            "headers": [
+                (b"authorization", b"Bearer cluster-secret-token"),
+                (b"x-bernstein-agent-id", b"agent-abc-123"),
+            ],
+            "client": ("10.0.0.5", 5000),
+        }
+        req = FastAPIRequest(scope)
+        assert _agent_bucket_key(req) == "agent:agent-abc-123"
+
+    def test_returns_none_without_authorization_header(self):
+        from bernstein.core.auth_rate_limiter import _agent_bucket_key
+        from fastapi import Request as FastAPIRequest
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/tasks",
+            "query_string": b"",
+            "headers": [
+                (b"x-bernstein-agent-id", b"agent-abc-123"),
+            ],
+            "client": ("10.0.0.5", 5000),
+        }
+        req = FastAPIRequest(scope)
+        assert _agent_bucket_key(req) is None
+
+    def test_returns_none_without_agent_id_header(self):
+        from bernstein.core.auth_rate_limiter import _agent_bucket_key
+        from fastapi import Request as FastAPIRequest
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/tasks",
+            "query_string": b"",
+            "headers": [
+                (b"authorization", b"Bearer cluster-secret-token"),
+            ],
+            "client": ("10.0.0.5", 5000),
+        }
+        req = FastAPIRequest(scope)
+        assert _agent_bucket_key(req) is None
+
+    def test_returns_none_for_overlong_agent_id(self):
+        from bernstein.core.auth_rate_limiter import _AGENT_ID_MAX_LEN, _agent_bucket_key
+        from fastapi import Request as FastAPIRequest
+
+        long_id = "a" * (_AGENT_ID_MAX_LEN + 1)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/tasks",
+            "query_string": b"",
+            "headers": [
+                (b"authorization", b"Bearer cluster-secret-token"),
+                (b"x-bernstein-agent-id", long_id.encode()),
+            ],
+            "client": ("10.0.0.5", 5000),
+        }
+        req = FastAPIRequest(scope)
+        assert _agent_bucket_key(req) is None
+
+    def test_non_bearer_auth_does_not_enable_agent_keying(self):
+        from bernstein.core.auth_rate_limiter import _agent_bucket_key
+        from fastapi import Request as FastAPIRequest
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/tasks",
+            "query_string": b"",
+            "headers": [
+                (b"authorization", b"Basic dXNlcjpwYXNz"),
+                (b"x-bernstein-agent-id", b"agent-abc-123"),
+            ],
+            "client": ("10.0.0.5", 5000),
+        }
+        req = FastAPIRequest(scope)
+        assert _agent_bucket_key(req) is None
+
+    @pytest.mark.anyio
+    async def test_two_agents_behind_same_ip_get_independent_budgets(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Workers sharing an IP but carrying distinct agent-ids have separate buckets."""
+        monkeypatch.delenv("BERNSTEIN_TRUSTED_PROXY_IPS", raising=False)
+
+        app = FastAPI()
+        app.add_middleware(RequestRateLimitMiddleware, write_rpm=1, read_rpm=300)
+        app.state.seed_config = None
+
+        @app.post("/tasks")
+        async def create_task() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("10.0.0.5", 5000))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post(
+                "/tasks",
+                headers={
+                    "Authorization": "Bearer cluster-token",
+                    "x-bernstein-agent-id": "agent-alpha",
+                },
+            )
+            second = await client.post(
+                "/tasks",
+                headers={
+                    "Authorization": "Bearer cluster-token",
+                    "x-bernstein-agent-id": "agent-beta",
+                },
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 200, "distinct agent IDs must not share a rate-limit bucket"
+
+    @pytest.mark.anyio
+    async def test_same_agent_id_shares_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Requests from the same agent-id exhaust the shared bucket."""
+        monkeypatch.delenv("BERNSTEIN_TRUSTED_PROXY_IPS", raising=False)
+
+        app = FastAPI()
+        app.add_middleware(RequestRateLimitMiddleware, write_rpm=1, read_rpm=300)
+        app.state.seed_config = None
+
+        @app.post("/tasks")
+        async def create_task() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("10.0.0.5", 5000))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post(
+                "/tasks",
+                headers={
+                    "Authorization": "Bearer cluster-token",
+                    "x-bernstein-agent-id": "agent-alpha",
+                },
+            )
+            second = await client.post(
+                "/tasks",
+                headers={
+                    "Authorization": "Bearer cluster-token",
+                    "x-bernstein-agent-id": "agent-alpha",
+                },
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 429
