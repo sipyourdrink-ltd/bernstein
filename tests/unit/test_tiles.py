@@ -23,7 +23,6 @@ import pytest
 from bernstein.core.persistence.tiles import (
     TILES_SUBDIR,
     generate_tiles,
-    has_hash_tile,
     has_tile,
     list_hash_tiles,
     list_tile_segments,
@@ -395,15 +394,15 @@ def test_list_hash_tiles_returns_sorted_names(tmp_path: Path) -> None:
     ]
 
 
-def test_has_hash_tile(tmp_path: Path) -> None:
-    """has_hash_tile reflects existence of a .tile file."""
+def test_generate_tiles_publishes_at_the_hash_tile_path(tmp_path: Path) -> None:
+    """generate_tiles writes the tile where tile_hash_path says readers look."""
     segments = [("2026-08-24.jsonl", b'{"event":"a"}\n')]
     _write_segments(tmp_path, segments)
     seal = _make_seal(segments)
 
-    assert has_hash_tile(tmp_path, "2026-08-24.jsonl") is False
+    assert not tile_hash_path(tmp_path, "2026-08-24.jsonl").is_file()
     generate_tiles(tmp_path, seal)
-    assert has_hash_tile(tmp_path, "2026-08-24.jsonl") is True
+    assert tile_hash_path(tmp_path, "2026-08-24.jsonl").is_file()
 
 
 def test_generate_tiles_empty_seal(tmp_path: Path) -> None:
