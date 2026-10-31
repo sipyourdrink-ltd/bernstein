@@ -339,6 +339,10 @@ def task_to_response(task: Task) -> TaskResponse:
         max_output_tokens=task.max_output_tokens,
         meta_messages=list(task.meta_messages),
         max_turns=task.max_turns,
+        # Issue #6640: governance and claim-identity fields.
+        approval_spec=task.approval_spec.to_dict() if task.approval_spec is not None else None,
+        sensitivity=task.sensitivity,
+        claimed_by_session=task.claimed_by_session,
     )
 
 
