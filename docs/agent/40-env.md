@@ -24,11 +24,11 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_ACCESSIBILITY` |  | 1 | — | `src/bernstein/tui/accessibility.py:90` |
 | `BERNSTEIN_ACTIVITY_LOG` |  | 1 | — | `src/bernstein/cli/dashboard_app.py:297` |
 | `BERNSTEIN_ADAPTER` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:2706` |
-| `BERNSTEIN_ADAPTER_ADMISSION_POLICY` |  | 2 | — | `tests/conftest.py:607` |
+| `BERNSTEIN_ADAPTER_ADMISSION_POLICY` |  | 2 | — | `tests/conftest.py:753` |
 | `BERNSTEIN_AGENT_CARD_KEY_DIR` |  | 2 | — | `src/bernstein/core/routes/well_known.py:191` |
 | `BERNSTEIN_AGENT_IMAGE` |  | 1 | — | `src/bernstein/core/orchestration/operator.py:605` |
 | `BERNSTEIN_ALLOW_HSM_STUB` |  | 1 | — | `src/bernstein/core/security/key_custody.py:466` |
-| `BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH` |  | 2 | — | `tests/conftest.py:608` |
+| `BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH` |  | 2 | — | `tests/conftest.py:754` |
 | `BERNSTEIN_AUDIT` |  | 1 | — | `src/bernstein/core/orchestration/orchestrator.py:1112` |
 | `BERNSTEIN_AUDIT_KEY_PATH` |  | 4 | — | `tests/unit/test_replay_verify_cli.py:35` |
 | `BERNSTEIN_AUDIT_MQTT_ENABLED` |  | 1 | — | `examples/plugins/custom-audit-sink/src/custom_audit_sink/_sink.py:58` |
@@ -44,7 +44,7 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_BIN` |  | 1 | — | `src/bernstein/core/fleet/bulk.py:148` |
 | `BERNSTEIN_BIND_HOST` |  | 4 | — | `src/bernstein/cli/run_bootstrap.py:3090` |
 | `BERNSTEIN_BROKER_KEY` | yes | 1 | — | `src/bernstein/core/security/secrets_broker.py:451` |
-| `BERNSTEIN_CLI` |  | 2 | — | `tests/conftest.py:604` |
+| `BERNSTEIN_CLI` |  | 2 | — | `tests/conftest.py:750` |
 | `BERNSTEIN_CLUSTER_AUTH_SECRET` | yes | 1 | — | `src/bernstein/core/server/server_app.py:1632` |
 | `BERNSTEIN_CLUSTER_ENABLED` |  | 2 | — | `src/bernstein/core/orchestration/orchestrator.py:7426` |
 | `BERNSTEIN_COMPLIANCE` |  | 3 | — | `src/bernstein/core/orchestration/bootstrap.py:364` |
@@ -77,20 +77,20 @@ Keys only. Values are never read or emitted by agent-docs.
 | `BERNSTEIN_GITHUB_PAGE_LIMIT` |  | 1 | — | `src/bernstein/core/git/github.py:97` |
 | `BERNSTEIN_GITLAB_URL` |  | 1 | — | `src/bernstein/gitlab_app/app.py:94` |
 | `BERNSTEIN_HARD_BUDGET_USD` |  | 2 | — | `src/bernstein/cli/run_bootstrap.py:437` |
-| `BERNSTEIN_HEARTBEAT_TIMEOUT` |  | 2 | — | `tests/conftest.py:606` |
+| `BERNSTEIN_HEARTBEAT_TIMEOUT` |  | 2 | — | `tests/conftest.py:752` |
 | `BERNSTEIN_JANITOR_FUZZY_PATHS` |  | 1 | — | `src/bernstein/core/quality/janitor.py:1874` |
 | `BERNSTEIN_JANITOR_REOPEN_MAX` |  | 1 | — | `src/bernstein/core/tasks/task_lifecycle.py:5147` |
 | `BERNSTEIN_LINEAGE_OP_SECRET` | yes | 2 | — | `src/bernstein/cli/commands/audit_cmd.py:3380` |
 | `BERNSTEIN_LOG_JSON` |  | 1 | — | `src/bernstein/core/server/json_logging.py:104` |
 | `BERNSTEIN_MAX_BLAST_RADIUS` |  | 1 | — | `src/bernstein/cli/run_bootstrap.py:444` |
-| `BERNSTEIN_MAX_TASK_RETRIES` |  | 2 | — | `tests/conftest.py:605` |
+| `BERNSTEIN_MAX_TASK_RETRIES` |  | 2 | — | `tests/conftest.py:751` |
 | `BERNSTEIN_MCP_CATALOG_AUDIT_DIR` |  | 1 | — | `src/bernstein/cli/commands/mcp_catalog_cmd.py:51` |
 | `BERNSTEIN_MCP_CATALOG_CACHE_PATH` |  | 2 | — | `src/bernstein/core/protocols/mcp_catalog/fetcher.py:51` |
 | `BERNSTEIN_MCP_CATALOG_CHECK_INTERVAL` |  | 1 | — | `src/bernstein/cli/commands/mcp_catalog_cmd.py:59` |
 | `BERNSTEIN_MCP_CATALOG_REVALIDATE_INTERVAL` |  | 1 | — | `src/bernstein/cli/commands/mcp_catalog_cmd.py:68` |
 | `BERNSTEIN_MCP_USER_CONFIG_PATH` |  | 2 | — | `src/bernstein/cli/commands/mcp_catalog_cmd.py:78` |
 | `BERNSTEIN_MCP_VALIDATION` |  | 4 | — | `tests/unit/test_mcp_input_validation.py:51` |
-| `BERNSTEIN_MEM_GUARD_GB` |  | 1 | — | `tests/conftest.py:70` |
+| `BERNSTEIN_MEM_GUARD_GB` |  | 1 | — | `tests/conftest.py:71` |
 | `BERNSTEIN_METRICS_DIR` |  | 2 | — | `docs/integrations/plugin-sdk.md:531` |
 | `BERNSTEIN_MICROVM_INTEGRATION` |  | 1 | — | `tests/integration/sandbox/test_microvm_firecracker.py:46` |
 | `BERNSTEIN_MOCK_IDLE` |  | 2 | — | `src/bernstein/adapters/mock.py:345` |
