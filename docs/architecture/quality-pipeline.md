@@ -186,16 +186,26 @@ the two probe caps.
 
 `agent_test_mutation` checks the changed tests before it runs any mutant
 (`mock_spec.py`, #6150). Every `Mock`, `MagicMock`, `AsyncMock`,
-`NonCallableMock` or `NonCallableMagicMock` must be given a spec (a first
-positional argument, `spec=` or `spec_set=`, or `create_autospec(...)`), and
-every `patch("<first-party target>")` must pass `autospec=`, `spec=`,
-`spec_set=`, `new=` or `new_callable=`. A spec-less mock answers to any
-attribute name, so a test can assert on an API the code does not have and
-still pass. A spec makes that an `AttributeError` at run time. The gate fails
-with one `path:line: mock without a spec: ...` line per mock and does not run
-mutmut. Third-party patch targets and `patch.object` are not checked. The
-check reads the tests named by the git diff and by the change set the runner
-was handed.
+`NonCallableMock` or `NonCallableMagicMock` the change adds must be given a
+spec (a first positional argument, `spec=` or `spec_set=`, or
+`create_autospec(...)`), and every added `patch("<first-party target>")` must
+pass `autospec=`, `spec=`, `spec_set=`, `new=` or `new_callable=`, or a
+replacement as its second argument. A value that binds nothing (`spec=None`,
+`autospec=False`, `new=DEFAULT`) does not count. A spec-less mock answers to any
+attribute name, so a test can assert on an API the code does not have and still
+pass. A spec makes that an `AttributeError` at run time. The gate fails with one
+`path:line: mock without a spec: ...` line per mock and does not run mutmut.
+
+Only added lines are judged, and a call counts if any of its lines was added.
+An old bare mock on an untouched line passes, because adding a spec to it is not
+a neutral edit. An untracked test file counts as all added. A pure rename adds
+nothing. With no readable diff the gate scans whole files and says so in its
+detail: it cannot tell old from new, and a miss is the worse failure. Paths that
+are deleted, unreadable or outside the worktree are skipped and logged at debug
+level.
+
+Not checked: third-party patch targets, `patch.object`, `patch.multiple`, a
+non-literal target such as `patch(f"{MOD}.f")`, and `conftest.py`.
 
 Gate conditions (`VALID_GATE_CONDITIONS` in `gate_pipeline.py`) gate execution by what changed:
 `always`, `python_changed`, `tests_changed`, `any_changed`, `deps_changed`.

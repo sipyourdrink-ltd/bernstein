@@ -17,11 +17,25 @@ narrow and mechanical:
   argument, ``spec=`` or ``spec_set=``);
 * a ``patch(...)`` whose target string names a first-party module must pass
   ``autospec=``, ``spec=``, ``spec_set=``, ``new=`` or ``new_callable=``, or
-  give the replacement positionally.
+  give the replacement as its second positional argument.
 
-Third-party patch targets (``patch("requests.get")``) and ``patch.object``
-are left alone: the first is not code the change can make up, and the second
-names its target by object, which this static pass does not resolve.
+A spec has to bind something: ``spec=None``, ``autospec=False`` and
+``new=DEFAULT`` are what the call means with the keyword left out, so they do
+not count. Names imported from ``unittest.mock`` or ``mock`` are resolved first,
+so ``from unittest.mock import MagicMock as M`` is still ``MagicMock``.
+
+Not checked, on purpose: third-party patch targets (``patch("requests.get")``)
+are not code the change can make up; ``patch.object`` and ``patch.multiple``
+name their target by object, and a non-literal target (``patch(f"{MOD}.f")``)
+has no text to read, so this static pass cannot resolve them; ``conftest.py`` is
+not a test module by :func:`is_test_file`.
+
+Only what the change ADDED is judged. Adding a spec to an old mock is not a
+neutral edit (a mock configured off-spec starts to raise), so a finding on an
+untouched line would push an agent into an unsafe drive-by change. The caller
+passes the added lines per file; a call is in scope when any line of it was
+added. With no history to read them from, the whole file is scanned: the gate
+then has no way to tell old from new, and a miss is the worse failure.
 
 The check is pure: it reads source text and returns findings. It never
 imports or runs the test.
@@ -30,12 +44,15 @@ imports or runs the test.
 from __future__ import annotations
 
 import ast
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
+
+logger = logging.getLogger(__name__)
 
 #: Constructors that build a mock answering to any attribute unless given a spec.
 MOCK_CONSTRUCTORS = frozenset({"Mock", "MagicMock", "AsyncMock", "NonCallableMock", "NonCallableMagicMock"})
@@ -45,6 +62,9 @@ _CONSTRUCTOR_SPEC_KWARGS = frozenset({"spec", "spec_set"})
 
 #: Keywords that make ``patch`` install something other than a spec-less ``MagicMock``.
 _PATCH_SPEC_KWARGS = frozenset({"autospec", "spec", "spec_set", "new", "new_callable"})
+
+#: The modules a mock can be imported from.
+_MOCK_MODULES = frozenset({"unittest.mock", "mock"})
 
 #: Finding line prefix. The gate-evasion suite matches on it, so it is part of
 #: the gate's output contract.
@@ -100,7 +120,56 @@ def _is_first_party(target: str, first_party: frozenset[str]) -> bool:
     return target.split(".", 1)[0] in first_party
 
 
-def find_unspecced_mocks(source: str, path: str, first_party: frozenset[str] = frozenset()) -> list[UnspeccedMock]:
+def _binds_nothing(value: ast.expr) -> bool:
+    """Whether a spec argument leaves the mock as open as omitting it would."""
+    if isinstance(value, ast.Constant):
+        return value.value is None or value.value is False
+    return _callee_name(value).rsplit(".", 1)[-1] == "DEFAULT"
+
+
+def _bound_keywords(call: ast.Call, names: frozenset[str]) -> bool:
+    return any(kw.arg in names and not _binds_nothing(kw.value) for kw in call.keywords)
+
+
+def _mock_aliases(tree: ast.AST) -> dict[str, str]:
+    """Local names bound to something from a mock module, mapped to its real leaf name."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in _MOCK_MODULES:
+            aliases.update({alias.asname: alias.name for alias in node.names if alias.asname})
+    return aliases
+
+
+def _constructor_is_unspecced(call: ast.Call) -> bool:
+    if call.args and not _binds_nothing(call.args[0]):
+        return False
+    return not _bound_keywords(call, _CONSTRUCTOR_SPEC_KWARGS)
+
+
+def _patch_target(call: ast.Call, first_party: frozenset[str]) -> str | None:
+    """The first-party target of a ``patch`` that installs a spec-less mock, else None."""
+    if not call.args or not isinstance(call.args[0], ast.Constant) or not isinstance(call.args[0].value, str):
+        return None
+    target = call.args[0].value
+    replaced = len(call.args) > 1 and not _binds_nothing(call.args[1])
+    if replaced or _bound_keywords(call, _PATCH_SPEC_KWARGS) or not _is_first_party(target, first_party):
+        return None
+    return target
+
+
+def _in_scope(node: ast.Call, added: frozenset[int] | None) -> bool:
+    """Whether any line of the call was added. ``None`` means no history: every line counts."""
+    if added is None:
+        return True
+    return any(line in added for line in range(node.lineno, (node.end_lineno or node.lineno) + 1))
+
+
+def find_unspecced_mocks(
+    source: str,
+    path: str,
+    first_party: frozenset[str] = frozenset(),
+    added: frozenset[int] | None = None,
+) -> list[UnspeccedMock]:
     """Return every mock in ``source`` that is built without a spec.
 
     Args:
@@ -109,6 +178,8 @@ def find_unspecced_mocks(source: str, path: str, first_party: frozenset[str] = f
         first_party: Top-level package or module names that belong to the
             project. A ``patch`` target is checked only when its first dotted
             component is one of these.
+        added: The 1-based lines the change added, or ``None`` to judge every
+            line. A call spanning several lines is in scope if any was added.
 
     Returns:
         Findings in source order. A file that does not parse yields none:
@@ -116,28 +187,25 @@ def find_unspecced_mocks(source: str, path: str, first_party: frozenset[str] = f
     """
     try:
         tree = ast.parse(source, filename=path)
-    except SyntaxError:
+    except (SyntaxError, ValueError, RecursionError):
         return []
 
+    aliases = _mock_aliases(tree)
     findings: list[UnspeccedMock] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or _has_star_kwargs(node):
+        if not isinstance(node, ast.Call) or _has_star_kwargs(node) or not _in_scope(node, added):
             continue
         callee = _callee_name(node.func)
         if not callee:
             continue
-        leaf = callee.rsplit(".", 1)[-1]
+        written = callee.rsplit(".", 1)[-1]
+        leaf = aliases.get(written, written)
         if leaf in MOCK_CONSTRUCTORS:
-            if not node.args and not (_keyword_names(node) & _CONSTRUCTOR_SPEC_KWARGS):
+            if _constructor_is_unspecced(node):
                 findings.append(UnspeccedMock(path=path, line=node.lineno, call=callee))
         elif leaf == "patch":
-            if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
-                continue
-            target = node.args[0].value
-            # ``patch(target, new)`` gives the replacement positionally.
-            if len(node.args) > 1 or _keyword_names(node) & _PATCH_SPEC_KWARGS:
-                continue
-            if _is_first_party(target, first_party):
+            target = _patch_target(node, first_party)
+            if target is not None:
                 findings.append(UnspeccedMock(path=path, line=node.lineno, call=callee, target=target))
     findings.sort(key=lambda f: (f.line, f.call))
     return findings
@@ -168,17 +236,38 @@ def is_test_file(path: str) -> bool:
     return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
 
 
-def scan_test_files(run_dir: Path, test_files: Iterable[str]) -> list[UnspeccedMock]:
-    """Scan each existing test file under ``run_dir`` for spec-less mocks.
+def scan_test_files(
+    run_dir: Path,
+    test_files: Iterable[str],
+    added_lines: Mapping[str, frozenset[int]] | None = None,
+) -> list[UnspeccedMock]:
+    """Scan each test file under ``run_dir`` for spec-less mocks.
 
-    Paths that do not exist (a deleted test) or cannot be read are skipped.
+    Args:
+        run_dir: The worktree the paths are relative to.
+        test_files: Paths to scan.
+        added_lines: The lines the change added, per path. ``None`` means there
+            is no history and every file is scanned whole. With a mapping, a
+            path it does not name has nothing added (a pure rename) and is
+            skipped. A path that resolves outside ``run_dir``, or that is
+            deleted or unreadable, is skipped and logged at debug level.
     """
     first_party = first_party_names(run_dir)
+    root = run_dir.resolve()
     findings: list[UnspeccedMock] = []
     for rel in sorted(set(test_files)):
-        try:
-            source = (run_dir / rel).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        added = None if added_lines is None else added_lines.get(rel)
+        if added_lines is not None and added is None:
+            logger.debug("mock spec check: %s has no added lines", rel)
             continue
-        findings.extend(find_unspecced_mocks(source, rel, first_party))
+        path = (run_dir / rel).resolve()
+        if not path.is_relative_to(root):
+            logger.debug("mock spec check: skipping %s, it resolves outside the worktree", rel)
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("mock spec check: skipping %s: %s", rel, exc)
+            continue
+        findings.extend(find_unspecced_mocks(source, rel, first_party, added))
     return findings

@@ -41,12 +41,12 @@
       "verdict_basis": "no_gate"
     },
     {
-      "actual_verdict": "pass",
+      "actual_verdict": "fail",
       "case_class": "nonexistent_api_mock_test",
-      "caught": false,
+      "caught": true,
       "expected_verdict": "fail",
-      "gate_that_must_flag": "tests",
-      "verdict_basis": "junit_failures"
+      "gate_that_must_flag": "agent_test_mutation",
+      "verdict_basis": "finding_signature"
     },
     {
       "actual_verdict": "pass",
@@ -65,18 +65,17 @@
       "verdict_basis": "finding_signature"
     }
   ],
-  "catch_rate": 0.375,
-  "caught_count": 3,
-  "content_sha256": "ed8ff3cdc606bf4e3ada1a905d89142b8572910792d38845dec832889c2e31dd",
-  "corpus_sha256": "0083910223efd1e7fea28dc1411fc650087be90e98085873d059dd4e591f50f7",
+  "catch_rate": 0.5,
+  "caught_count": 4,
+  "content_sha256": "a3c9b44f3d308ec1bac77eeb5a5d6511b1dcb3eae25c866aa5be4a6357950f5f",
+  "corpus_sha256": "b652ee201d68085368cdc7a48efc8d4be121a2b31df734fcdfca8425ad9774be",
   "schema_version": 1,
-  "suite_hash": "f364fb175823c25586842830fd2a37d858258b7cc37cd490aa4bc02556a48f65",
+  "suite_hash": "6486d071d40b2abd873ec99d09e23ad2fa975d1b8512e577538e326d6b1e9056",
   "suite_version": "gate-evasion-v1",
   "tools": {
-    "pytest": "9.1.1",
     "ruff": "0.16.10",
     "vulture": "2.16"
   },
   "total": 8,
-  "update_reason": "test_expansion catches the no-module-import placeholder; narrow fixture wording and remeasure after integration with main (#6151)"
+  "update_reason": "agent_test_mutation flags nonexistent_api_mock_test on added lines (#6150); remeasured on main"
 }

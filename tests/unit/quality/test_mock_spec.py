@@ -9,6 +9,8 @@ rests on: a spec turns that evasion into an ``AttributeError``.
 
 from __future__ import annotations
 
+import logging
+import subprocess
 import textwrap
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, create_autospec
@@ -225,3 +227,161 @@ class TestAgentTestMutationGate:
         assert FINDING_TEXT not in detail
         # With no git diff the gate has no test file to mutate against and passes as before.
         assert passed is True
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "MagicMock(spec=None)",
+        "MagicMock(spec_set=None)",
+        "MagicMock(None)",
+    ],
+)
+def test_a_spec_that_binds_nothing_is_still_spec_less(expr: str) -> None:
+    assert _calls(f"m = {expr}\n") == [(1, "MagicMock", "")]
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        'patch("payments.service.charge", autospec=False)',
+        'patch("payments.service.charge", spec=None)',
+        'patch("payments.service.charge", new=DEFAULT)',
+        'patch("payments.service.charge", DEFAULT)',
+    ],
+)
+def test_a_patch_spec_that_binds_nothing_is_still_spec_less(expr: str) -> None:
+    assert _calls(f"p = {expr}\n") == [(1, "patch", "payments.service.charge")]
+
+
+def test_an_aliased_import_is_resolved() -> None:
+    source = """\
+        from unittest.mock import MagicMock as M, patch as p
+
+        m = M()
+        q = p("payments.service.charge")
+        """
+    assert _calls(source) == [(3, "M", ""), (4, "p", "payments.service.charge")]
+
+
+@pytest.mark.parametrize(
+    "expr",
+    ['patch(f"{MOD}.charge")', 'patch.multiple("payments.service", charge=object())'],
+    ids=["non_literal_target", "patch_multiple"],
+)
+def test_the_documented_exclusions_stay_unchecked(expr: str) -> None:
+    assert _calls(f"p = {expr}\n") == []
+
+
+class TestAddedLines:
+    SOURCE = "from unittest.mock import MagicMock\n\nold = MagicMock()\nnew = MagicMock(\n    name='x',\n)\n"
+
+    def _lines(self, added: frozenset[int] | None) -> list[int]:
+        return [f.line for f in find_unspecced_mocks(self.SOURCE, "test_x.py", added=added)]
+
+    def test_an_untouched_mock_is_not_judged(self) -> None:
+        assert self._lines(frozenset({1})) == []
+
+    def test_an_added_mock_is_judged(self) -> None:
+        assert self._lines(frozenset({3})) == [3]
+
+    def test_a_call_is_in_scope_when_any_of_its_lines_was_added(self) -> None:
+        assert self._lines(frozenset({5})) == [4]
+
+    def test_no_history_judges_the_whole_file(self) -> None:
+        assert self._lines(None) == [3, 4]
+
+
+class TestScanPaths:
+    def test_a_path_with_no_added_lines_is_skipped(self, tmp_path: Path) -> None:
+        (tmp_path / "test_renamed.py").write_text("m = MagicMock()\n")
+        assert scan_test_files(tmp_path, ["test_renamed.py"], {}) == []
+
+    def test_a_path_outside_the_worktree_is_skipped_and_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        run_dir = tmp_path / "work"
+        run_dir.mkdir()
+        (tmp_path / "test_outside.py").write_text("m = MagicMock()\n")
+        with caplog.at_level(logging.DEBUG, logger="bernstein.core.quality.mock_spec"):
+            assert scan_test_files(run_dir, ["../test_outside.py"]) == []
+        assert "outside the worktree" in caplog.text
+
+    def test_an_unreadable_path_is_skipped_and_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        (tmp_path / "test_binary.py").write_bytes(b"\xff\xfe")
+        with caplog.at_level(logging.DEBUG, logger="bernstein.core.quality.mock_spec"):
+            assert scan_test_files(tmp_path, ["test_binary.py", "test_deleted.py"]) == []
+        assert "test_binary.py" in caplog.text
+        assert "test_deleted.py" in caplog.text
+
+
+class TestAddedLinesFromGit:
+    """The gate against a real repository: the diff decides what is judged."""
+
+    LEGACY = "from unittest.mock import MagicMock\n\n\ndef test_old():\n    m = MagicMock()\n    assert m\n"
+
+    def _repo(self, tmp_path: Path) -> Path:
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.invalid")
+        git("config", "user.name", "t")
+        (tmp_path / "test_legacy.py").write_text(self.LEGACY)
+        git("add", ".")
+        git("commit", "-qm", "base")
+        (tmp_path / "keep.txt").write_text("x")
+        git("add", ".")
+        git("commit", "-qm", "second")
+        return tmp_path
+
+    def _gate(self, repo: Path, changed: list[str], monkeypatch: pytest.MonkeyPatch) -> tuple[bool, str]:
+        import bernstein.core.quality_gates as qg
+        from bernstein.core.models import Task
+        from bernstein.core.quality_gates import QualityGatesConfig, run_agent_test_mutation_gate_sync
+
+        monkeypatch.setattr(qg, "_run_command", lambda *_a, **_k: (True, "", 0))
+        config = QualityGatesConfig(agent_test_mutation=True)
+        task = Task(id="t1", title="t", description="d", role="qa")
+        passed, detail, _score, _status = run_agent_test_mutation_gate_sync(config, task, repo, changed)
+        return passed, detail
+
+    def test_an_unrelated_edit_does_not_judge_a_legacy_mock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = self._repo(tmp_path)
+        (repo / "test_legacy.py").write_text(self.LEGACY.replace("assert m", "assert m is not None"))
+        passed, detail = self._gate(repo, ["test_legacy.py"], monkeypatch)
+        assert passed is True
+        assert FINDING_TEXT not in detail
+
+    def test_a_bare_mock_added_to_an_existing_file_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        repo = self._repo(tmp_path)
+        (repo / "test_legacy.py").write_text(self.LEGACY + "\n\ndef test_new():\n    n = MagicMock()\n    assert n\n")
+        passed, detail = self._gate(repo, ["test_legacy.py"], monkeypatch)
+        assert passed is False
+        assert f"test_legacy.py:10: {FINDING_TEXT}" in detail
+        assert "test_legacy.py:5:" not in detail
+        assert "Checked: added lines." in detail
+
+    def test_a_new_untracked_file_is_judged_whole(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        repo = self._repo(tmp_path)
+        (repo / "test_legacy.py").write_text(self.LEGACY + "# touched\n")
+        (repo / "test_brand_new.py").write_text("from unittest.mock import MagicMock\n\nm = MagicMock()\n")
+        passed, detail = self._gate(repo, ["test_legacy.py", "test_brand_new.py"], monkeypatch)
+        assert passed is False
+        assert f"test_brand_new.py:3: {FINDING_TEXT}" in detail
+
+    def test_a_pure_rename_judges_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        repo = self._repo(tmp_path)
+        subprocess.run(["git", "mv", "test_legacy.py", "test_moved.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "move"], cwd=repo, check=True)
+        passed, detail = self._gate(repo, ["test_moved.py"], monkeypatch)
+        assert passed is True
+        assert FINDING_TEXT not in detail
+
+    def test_no_history_says_it_checked_whole_files(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / "test_plain.py").write_text("from unittest.mock import MagicMock\n\nm = MagicMock()\n")
+        passed, detail = self._gate(tmp_path, ["test_plain.py"], monkeypatch)
+        assert passed is False
+        assert "Checked: whole files, no diff was readable." in detail
