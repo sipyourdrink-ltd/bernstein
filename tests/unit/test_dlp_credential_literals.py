@@ -9,10 +9,14 @@ it flags, and which it deliberately leaves alone.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from bernstein.core.config.seed_parser import parse_seed
+from bernstein.core.quality.gate_runner import GateRunner
 from bernstein.core.quality.quality_gates import QualityGatesConfig, _is_dlp_test_path, _run_dlp_gate
 from bernstein.core.security.dlp_scanner import DLPConfig, DLPScanner
 from bernstein.eval.bench.gate_evasion_suite import _FINDING_SIGNATURE
@@ -21,6 +25,7 @@ from bernstein.eval.bench.gate_evasion_suite import _FINDING_SIGNATURE
 LIVE = "sk" + "-live-" + "12345-placeholder-secret-evasion"
 STRIPE = "sk" + "_live_" + "4eC39HqLyjWDarjtT1zdp7dc"
 AWS = "AKIA" + "Z3J7QX5M2KDWPL4R"
+STS = "ASIA" + "Z3J7QX5M2KDWPL4R"
 GITHUB = "ghp" + "_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
 
 
@@ -63,9 +68,54 @@ def test_each_provider_shape_is_recognised(value: str, rule: str) -> None:
     assert _rules(f"x = os.getenv('K', '{value}')\n") == [(rule, 1)]
 
 
-def test_a_plain_assignment_is_left_to_the_line_rules() -> None:
-    """``pii_scan`` reads ``name = "..."``; this pass is for the positions it cannot see."""
-    assert _rules(f"API_KEY = '{LIVE}'\n") == []
+@pytest.mark.parametrize(
+    "source",
+    [
+        f"API_KEY = '{LIVE}'\n",
+        f"API_KEY: str = '{LIVE}'\n",
+        f"SETTINGS = {{'key': '{LIVE}'}}\n",
+        f"def key():\n    return '{LIVE}'\n",
+    ],
+    ids=["plain", "annotated", "dict_value", "return"],
+)
+def test_a_value_that_declares_itself_live_is_flagged_in_any_position(source: str) -> None:
+    """``sk-live-`` in lower case is read by no line rule: ``pii_scan`` wants mixed case here."""
+    assert [rule for rule, _line in _rules(source)] == ["live_payment_key"]
+
+
+@pytest.mark.parametrize("value", [AWS, GITHUB], ids=["aws", "github"])
+def test_a_shape_with_no_live_marker_stays_with_the_line_rules_in_a_plain_assignment(value: str) -> None:
+    """``pii_scan`` reads these in assignment position, and blocks them there."""
+    assert _rules(f"KEY = '{value}'\n") == []
+
+
+def test_a_docstring_is_not_a_value() -> None:
+    assert _rules(f'def f():\n    """Pass a key such as {LIVE}."""\n') == []
+
+
+def test_temporary_aws_credentials_are_recognised() -> None:
+    assert _rules(f"x = os.getenv('K', '{STS}')\n") == [("aws_access_key_literal", 1)]
+
+
+def test_two_literals_on_one_line_do_not_print_each_other() -> None:
+    other = "sk" + "-live-" + "second-value-on-this-line"
+    source = f"K = os.getenv('A', '{LIVE}') or os.getenv('B', '{other}')\n"
+
+    findings = DLPScanner().scan_python_source(source).findings
+
+    assert len(findings) == 2
+    for finding in findings:
+        assert LIVE not in finding.redacted_match
+        assert other not in finding.redacted_match
+
+
+def test_a_source_too_deep_to_parse_yields_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def too_deep(_source: str) -> None:
+        raise RecursionError
+
+    monkeypatch.setattr("bernstein.core.security.dlp_scanner.ast.parse", too_deep)
+
+    assert _rules("x = 1\n") == []
 
 
 def test_a_live_prefix_is_not_excused_by_an_allowlist_word() -> None:
@@ -110,10 +160,10 @@ def test_a_file_that_does_not_parse_yields_nothing() -> None:
     ("rel", "is_test"),
     [
         ("tests/unit/test_x.py", True),
-        ("pkg/tests/helpers.py", True),
+        ("pkg/tests/helpers.py", False),
         ("src/test_payments.py", True),
         ("src/payments_test.py", True),
-        ("conftest.py", True),
+        ("conftest.py", False),
         ("src/config.py", False),
         ("src/contest.py", False),
         ("tests.py", False),
@@ -121,6 +171,7 @@ def test_a_file_that_does_not_parse_yields_nothing() -> None:
 )
 def test_test_path_rule(rel: str, is_test: bool) -> None:
     assert _is_dlp_test_path(rel) is is_test
+    assert GateRunner._is_test_path(cast("GateRunner", None), rel) is is_test
 
 
 def _write(root: Path, rel: str, text: str) -> str:
@@ -160,3 +211,24 @@ def test_the_gate_config_switch_reaches_the_scanner(tmp_path: Path) -> None:
     assert result.passed is True
     assert "[WARN]" in result.detail
     assert not _FINDING_SIGNATURE["dlp_scan"].search(result.detail)
+
+
+def test_a_nested_tests_directory_is_scanned(tmp_path: Path) -> None:
+    rel = _write(tmp_path, "pkg/tests/config.py", f"import os\n\nKEY = os.getenv('K', '{LIVE}')\n")
+    result = _run_dlp_gate(QualityGatesConfig(), tmp_path, [rel])
+    assert result.blocked is True
+
+
+@pytest.mark.parametrize(
+    ("key", "blocked"),
+    [("dlp_check_credential_literals", False), ("dlp_block_credential_literals", False)],
+)
+def test_the_documented_switches_reach_the_gate_from_a_seed(tmp_path: Path, key: str, blocked: bool) -> None:
+    seed = tmp_path / "bernstein.json"
+    seed.write_text(json.dumps({"goal": "DLP switches", "quality_gates": {key: False}}), encoding="utf-8")
+    config = parse_seed(seed).quality_gates
+    assert config is not None
+    assert getattr(config, key) is False
+
+    rel = _write(tmp_path, "app/config.py", f"import os\n\nKEY = os.getenv('K', '{LIVE}')\n")
+    assert _run_dlp_gate(config, tmp_path, [rel]).blocked is blocked

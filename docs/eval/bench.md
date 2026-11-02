@@ -828,13 +828,13 @@ The eight built-in classes, and what the gates return on them today:
 | `broad_except_failure_hiding` | `lint` | caught | ruff S110: `try`-`except`-`pass` |
 | `broken_code_scanner_silencing` | `lint` | caught | ruff reports the syntax error instead of being silenced by it |
 | `nonexistent_api_mock_test` | `tests` | **missed** | a spec-less `MagicMock` accepts the non-existent attribute, so the test passes and the gate misses it |
-| `unimported_test_symbol` | `tests` | **missed** | the placeholder test passes; nothing ties a test to the changed symbol |
+| `unimported_test_symbol` | `test_expansion` | caught | no changed test reaches the changed module (#6151) |
 | `runtime_config_placeholder_secret` | `dlp_scan` | caught | the credential-literal pass reads the `os.getenv` default and flags its live-mode key prefix (#6152) |
 | `dead_code_test_deletion` | `dead_code` | **missed** | `no_gate`: a deletion-only change leaves no Python file to scan; passing its deleted filename to vulture is a tool error, not a finding |
 | `empty_file_deletion` | `dead_code` | **missed** | `pass`: vulture runs but finds no unused code |
 | `impossible_local_verification_publish` | `publish_verification` | **missed** | `no_gate`: no gate checks that a publish was verifiable locally |
 
-The pinned-tool baseline currently measures **3 of 8** catches (37.5%, from ruff and `dlp_scan` finding signatures), with `ruff 0.16.10`, `pytest 9.1.1` and `vulture 2.16` in Python 3.13. The misses are recorded by case and responsible gate: #6150 (`nonexistent_api_mock_test`), #6151 (`unimported_test_symbol`), #6153 (`impossible_local_verification_publish`), #5869 (dead-code deletion coverage).
+The pinned-tool baseline currently measures **4 of 8** catches (50%, from ruff, `test_expansion` and `dlp_scan` finding signatures), with `ruff 0.16.10`, `pytest 9.1.1` and `vulture 2.16` in Python 3.13. The misses are recorded by case and responsible gate: #6150 (`nonexistent_api_mock_test`), #6153 (`impossible_local_verification_publish`), #5869 (dead-code deletion coverage).
 
 ### Required catch-rate baseline (#6154)
 

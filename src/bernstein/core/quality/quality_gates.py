@@ -1003,16 +1003,16 @@ def _is_dlp_test_path(rel: str) -> bool:
 
     The credential-literal pass skips these: a test of a secret scanner passes
     credential-shaped fixtures as arguments by design, and the line rules
-    still read the file.
+    still read the file.  Only a top-level ``tests/`` counts: this runs on
+    agent-changed files in target repositories, where ``pkg/tests/`` and a root
+    ``conftest.py`` are ordinary, and skipping those would leave them unread at
+    exactly the positions the line rules cannot see.
     """
     from pathlib import PurePath
 
     candidate = PurePath(rel)
     return (
-        "tests" in candidate.parts[:-1]
-        or candidate.name.startswith("test_")
-        or candidate.name.endswith("_test.py")
-        or candidate.name == "conftest.py"
+        candidate.parts[:1] == ("tests",) or candidate.name.startswith("test_") or candidate.name.endswith("_test.py")
     )
 
 

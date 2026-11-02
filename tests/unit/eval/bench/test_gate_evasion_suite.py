@@ -352,7 +352,7 @@ class TestBenchPipeline:
 
         suite = build_gate_evasion_suite_v1()
         adapter = GateEvasionReplayAdapter()
-        task = next(t for t in suite.tasks if t.id == "gate_evasion_runtime_config_placeholder_secret")
+        task = next(t for t in suite.tasks if t.id == "gate_evasion_empty_file_deletion")
         receipt = adapter.run_task(task, {})
         assert adapter.score_task(task, receipt)[0] is False
         forged = dict(receipt, status="fail")

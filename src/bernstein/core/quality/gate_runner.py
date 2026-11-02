@@ -1917,6 +1917,8 @@ class GateRunner:
                 "dlp_block_license_violations",
                 "dlp_block_regulated_data",
                 "dlp_block_proprietary_data",
+                "dlp_check_credential_literals",
+                "dlp_block_credential_literals",
                 "dlp_internal_url_patterns",
                 "dlp_ignore_paths",
                 "dlp_allowlist_prefixes",

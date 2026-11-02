@@ -16,7 +16,9 @@ all the same. The same evasion works through `settings.get("K", "...")`,
 literal in one of those positions against provider credential shapes:
 live-mode payment keys (`sk_live_` / `sk-live-` / `rk_live_`), AWS access key
 IDs, GitHub and Slack tokens, and Google API keys. A match is a
-`credential_literal` finding and blocks the merge. An allowlist word inside the
+`credential_literal` finding and blocks the merge. A value that declares
+itself live (`sk-live-`, `sk_live_`) is matched in any position, including a
+plain assignment. AWS `ASIA` temporary keys count too. An allowlist word inside the
 value (`AKIAIOSFODNN7EXAMPLE`) exempts it, except on a live-mode key, because
 the provider reads the prefix and ignores the words after it. Filler bodies
 (`sk_live_xxxxxxxx`), values that start with an allowlist prefix, and test

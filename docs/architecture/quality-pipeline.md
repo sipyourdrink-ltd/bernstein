@@ -350,7 +350,7 @@ quality_gates:
 
   pii_scan: true
   dlp_scan: true
-  dlp_check_credential_literals: true   # provider keys in .py argument/default literals
+  dlp_check_credential_literals: true   # provider keys in .py argument/default literals; live keys anywhere
   dlp_block_credential_literals: true   # false = report as [WARN] without blocking
   security_scan: false
   coverage_delta: false

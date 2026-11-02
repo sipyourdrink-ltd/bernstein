@@ -12,7 +12,8 @@ Extends PII/secret detection (pii_output_gate.py) with additional categories:
    Soft-flags by default; can be promoted to hard-block via config.
 4. **Credential literals** - a string literal in a Python file's argument or
    default position (``os.getenv("K", "<value>")``, ``config.get(...)``, a
-   parameter or dataclass-field default) shaped like a provider credential.
+   parameter or dataclass-field default) shaped like a provider credential, or
+   a live payment key in any position.
    The value is what runs whenever the variable is unset, so routing it
    through a lookup does not make it any less committed.  Hard-blocks merge.
 
@@ -462,7 +463,7 @@ _CREDENTIAL_LITERAL_RULES: list[tuple[str, re.Pattern[str], str, bool]] = [
     ),
     (
         "aws_access_key_literal",
-        re.compile(r"(?<![A-Z0-9])(?P<prefix>AKIA)[0-9A-Z]{16}(?![A-Z0-9])"),
+        re.compile(r"(?<![A-Z0-9])(?P<prefix>A[KS]IA)[0-9A-Z]{16}(?![A-Z0-9])"),
         "AWS access key ID literal in an argument or default",
         False,
     ),
@@ -492,14 +493,23 @@ _CREDENTIAL_LITERAL_RULES: list[tuple[str, re.Pattern[str], str, bool]] = [
 _FILLER_CHARS = frozenset("xX*0.-_<>")
 
 
-def _argument_position_literals(tree: ast.AST) -> list[tuple[int, str]]:
-    """``(lineno, value)`` of every ``str`` constant passed as an argument or written as a default.
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    """The ``id`` of every string constant that is a bare statement: a docstring, not a value."""
+    return {
+        id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
 
-    Covers call arguments and keyword values (``os.getenv``, ``dict.get``,
-    ``setdefault``, ``field(default=...)``), parameter defaults of functions
-    and lambdas, and annotated class-body assignments (dataclass, pydantic
-    and attrs field defaults).  Plain ``name = "..."`` assignments are left
-    to the line rules, which already read them.
+
+def _argument_position_literals(tree: ast.AST) -> list[tuple[int, str, bool]]:
+    """``(lineno, value, in_argument_position)`` of every ``str`` constant that is a value.
+
+    Argument position covers call arguments and keyword values (``os.getenv``,
+    ``dict.get``, ``setdefault``, ``field(default=...)``), parameter defaults of
+    functions and lambdas, and annotated class-body assignments (dataclass,
+    pydantic and attrs field defaults).  Other literals (a plain assignment, a
+    dict value, a ``return``) are listed too: a value that declares itself live
+    is checked wherever it sits, because no line rule reads an all-lowercase
+    ``sk-live-`` value in those positions.  Docstrings are not values.
     """
     candidates: list[ast.expr | None] = []
     for node in ast.walk(tree):
@@ -511,7 +521,13 @@ def _argument_position_literals(tree: ast.AST) -> list[tuple[int, str]]:
             candidates.extend(node.args.kw_defaults)
         elif isinstance(node, ast.ClassDef):
             candidates.extend(stmt.value for stmt in node.body if isinstance(stmt, ast.AnnAssign))
-    return [(c.lineno, c.value) for c in candidates if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+    argument_nodes = {id(c) for c in candidates if c is not None}
+    docstrings = _docstring_nodes(tree)
+    return [
+        (node.lineno, node.value, id(node) in argument_nodes)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
+    ]
 
 
 def _contains_allowlist_word(value: str, config: DLPConfig) -> bool:
@@ -530,8 +546,17 @@ def _is_filler(matched: str, prefix: str) -> bool:
 
 
 def _redact_literal(line: str, value: str) -> str:
-    """The source line with the literal replaced by ``***``, at most 80 chars."""
-    redacted = line.strip().replace(value, "***") if value in line else "<multi-line literal>"
+    """The source line with every credential on it replaced by ``***``, at most 80 chars.
+
+    Every rule runs over the line, not only the finding's own value: two literals
+    on one line would otherwise print each other, and the gate's detail is cached
+    to disk.
+    """
+    if value not in line:
+        return "<multi-line literal>"
+    redacted = line.strip().replace(value, "***")
+    for _label, pattern, _description, _declares_live in _CREDENTIAL_LITERAL_RULES:
+        redacted = pattern.sub("***", redacted)
     return redacted if len(redacted) <= 80 else redacted[:77] + "..."
 
 
@@ -662,7 +687,7 @@ class DLPScanner:
         return _make_result(findings)
 
     def scan_python_source(self, source: str) -> DLPScanResult:
-        """Scan a Python file's argument- and default-position string literals.
+        """Scan a Python file's string literals for provider credentials.
 
         The line rules read assignment-shaped text, so a credential written as
         ``os.getenv("API_KEY", "sk_live_...")``, ``settings.get("k", "...")``,
@@ -670,7 +695,9 @@ class DLPScanner:
         default passes them: nothing on the line is ``key = "..."``.  This
         pass walks the syntax tree instead, takes every string literal in one
         of those positions, and matches it against
-        :data:`_CREDENTIAL_LITERAL_RULES`.
+        :data:`_CREDENTIAL_LITERAL_RULES`.  A value that declares itself live
+        (``sk-live-``) is matched in any position: a plain assignment, a dict
+        value or a ``return`` is read by no line rule when it is all lowercase.
 
         A value that *starts* with an ``allowlist_prefixes`` entry, a body
         made only of filler characters (``sk_live_xxxxxxxx``), and a line
@@ -692,12 +719,12 @@ class DLPScanner:
             return DLPScanResult.empty()
         try:
             tree = ast.parse(source)
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, RecursionError):
             return DLPScanResult.empty()
 
         lines = source.splitlines()
         findings: list[DLPFinding] = []
-        for lineno, value in _argument_position_literals(tree):
+        for lineno, value, in_argument_position in _argument_position_literals(tree):
             line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
             if _is_allowlisted_line(line, cfg) or _starts_with_allowlisted_prefix(value, cfg):
                 continue
@@ -705,7 +732,7 @@ class DLPScanner:
                 m = pattern.search(value)
                 if m is None or _is_filler(value[m.start() :], m.group("prefix")):
                     continue
-                if not declares_live and _contains_allowlist_word(value, cfg):
+                if not declares_live and (not in_argument_position or _contains_allowlist_word(value, cfg)):
                     continue
                 findings.append(
                     DLPFinding(
