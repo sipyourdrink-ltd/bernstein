@@ -1,10 +1,10 @@
 # Project pulse
 
-Median time from pull request opened to merged over the last 30 days: **10.5 h**.
+Median time from pull request opened to merged over the last 30 days: **3.9 h**.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse-dark.svg?v=2026-10-26">
-  <img alt="Project pulse for sipyourdrink-ltd/bernstein, 2026-10-26: median merge lag 10.5 h, 58.3% merged within 24 hours, 343 merged pull requests in 30 days, 3 unassigned up-for-grabs issues." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse.svg?v=2026-10-26" width="880">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse-dark.svg?v=2026-11-02">
+  <img alt="Project pulse for sipyourdrink-ltd/bernstein, 2026-11-02: median merge lag 3.9 h, 68.6% merged within 24 hours, 226 merged pull requests in 30 days, 3 unassigned up-for-grabs issues." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse.svg?v=2026-11-02" width="880">
 </picture>
 
 > [!TIP]
@@ -18,28 +18,28 @@ The last 8 weekly collections. The full series is `history.json` on the
 ```mermaid
 xychart-beta
     title "Merged pull requests per week"
-    x-axis ["09-10", "09-14", "09-19", "09-21", "09-28", "10-05", "10-12", "10-26"]
+    x-axis ["09-14", "09-19", "09-21", "09-28", "10-05", "10-12", "10-26", "11-02"]
     y-axis "Merged" 0 --> 2000
-    bar [1170, 1120, 1017, 996, 784, 555, 414, 343]
+    bar [1120, 1017, 996, 784, 555, 414, 343, 226]
 ```
 
 ```mermaid
 xychart-beta
     title "Median merge lag, hours"
-    x-axis ["09-10", "09-14", "09-19", "09-21", "09-28", "10-05", "10-12", "10-26"]
+    x-axis ["09-14", "09-19", "09-21", "09-28", "10-05", "10-12", "10-26", "11-02"]
     y-axis "Hours" 0 --> 30
-    line [2.7, 3.0, 3.3, 3.3, 4.7, 10.5, 18.9, 10.5]
+    line [3.0, 3.3, 3.3, 4.7, 10.5, 18.9, 10.5, 3.9]
 ```
 
 ## Review and merge
 
 | Metric | Value |
 | --- | --- |
-| Median PR merge lag (30 d) | 10.5 h |
-| Merged within 24 h (30 d) | 58.3% |
-| Merged PRs (30 d) | 343 |
-| Median issue open to close (30 d) | 16.1 d |
-| Issues closed (30 d) | 120 |
+| Median PR merge lag (30 d) | 3.9 h |
+| Merged within 24 h (30 d) | 68.6% |
+| Merged PRs (30 d) | 226 |
+| Median issue open to close (30 d) | 16.8 d |
+| Issues closed (30 d) | 74 |
 
 ## Who merges what
 
@@ -49,12 +49,12 @@ maintainer account nor an automation account, so the outside number is never fla
 ```mermaid
 pie showData
     title Merged pull requests by author class, 30 d
-    "Outside contributors" : 127
-    "Maintainer" : 128
-    "Automation" : 88
+    "Outside contributors" : 65
+    "Maintainer" : 87
+    "Automation" : 74
 ```
 
-Distinct outside authors with a merged PR in the last 90 days: **83**.
+Distinct outside authors with a merged PR in the last 90 days: **74**.
 
 ## Work you can pick up
 
@@ -67,7 +67,7 @@ Distinct outside authors with a merged PR in the last 90 days: **83**.
 
 | Metric | Value |
 | --- | --- |
-| Commits to main (7 d) | 65 |
+| Commits to main (7 d) | 18 |
 | Days since last commit | 0 |
 | Adapters in the registry | 56 wired in, 54 selectable |
 | Latest release | v3.23.0 (2026-10-24) |
@@ -76,7 +76,7 @@ Distinct outside authors with a merged PR in the last 90 days: **83**.
 <details>
 <summary>How this page is made</summary>
 
-Generated 2026-10-26 from the public GitHub API and this repository's own tree.
+Generated 2026-11-02 from the public GitHub API and this repository's own tree.
 Aggregates only: no individual logins, no per-person ranking, no data that is not already public.
 The card, the charts and the weekly history on the `project-pulse` branch are projections of the
 same ten fields. Regenerate with `scripts/project_pulse.py`; the field allow-list is documented at
