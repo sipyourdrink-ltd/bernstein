@@ -40,29 +40,10 @@ def _make_task(*, id: str = "T-001", role: str = "backend") -> Task:
 
 
 #: QualityGatesConfig fields that ``_parse_quality_gates`` does not read from a
-#: seed. Each is a gate an operator cannot configure from ``bernstein.yaml``;
-#: the list shrinks as they are wired (#6615 wired the ``dlp_*`` ten).
-_KNOWN_UNWIRED: frozenset[str] = frozenset(
-    {
-        "agent_test_mutation",
-        "agent_test_mutation_threshold",
-        "agent_test_mutation_timeout_s",
-        "dep_audit",
-        "dep_audit_command",
-        "dep_audit_files",
-        "integration_test_gen",
-        "intent_verification",
-        "large_file_check",
-        "large_file_threshold",
-        "migration_reversibility_check",
-        "mutation_command",
-        "mutation_testing",
-        "mutation_threshold",
-        "mutation_timeout_s",
-        "review_rubric",
-        "test_expansion",
-    }
-)
+#: seed. Each is a gate an operator cannot configure from ``bernstein.yaml``.
+#: #6615 wired the ``dlp_*`` ten and then the remaining seventeen, so this is
+#: empty; a new field lands here only until its parser line does.
+_KNOWN_UNWIRED: frozenset[str] = frozenset()
 
 
 class TestRunCommand:
@@ -580,6 +561,90 @@ class TestSeedQualityGatesParsing:
         assert qg.dlp_internal_url_patterns == ["intranet[.]corp"]
         assert qg.dlp_ignore_paths == ["vendor/"]
         assert qg.dlp_allowlist_prefixes == ["FAKE"]
+
+    def test_parse_quality_gates_remaining_keys_reach_the_config(self, tmp_path: Path) -> None:
+        """The seventeen fields left after the ``dlp_*`` fix are read from the seed (#6615).
+
+        Every value here differs from the dataclass default, so a key the
+        parser still drops shows up as the default and fails its assert.
+        """
+        from bernstein.core.seed import parse_seed
+
+        seed_file = tmp_path / "bernstein.yaml"
+        lines = [
+            "goal: test",
+            "quality_gates:",
+            "  mutation_testing: true",
+            "  mutation_command: 'mutmut run --paths-to-mutate src'",
+            "  mutation_threshold: 0.8",
+            "  mutation_timeout_s: 42",
+            "  dep_audit: true",
+            "  dep_audit_command: 'pip-audit --strict'",
+            "  dep_audit_files: ['pyproject.toml']",
+            "  migration_reversibility_check: true",
+            "  large_file_check: true",
+            "  large_file_threshold: 7",
+            "  integration_test_gen: true",
+            "  review_rubric: true",
+            "  test_expansion: true",
+            "  agent_test_mutation: true",
+            "  agent_test_mutation_threshold: 0.9",
+            "  agent_test_mutation_timeout_s: 11",
+            "  intent_verification:",
+            "    enabled: true",
+            "    model: 'openai/gpt-4o-mini'",
+            "    provider: 'openai'",
+            "    max_diff_chars: 123",
+            "    max_tokens: 45",
+            "    block_on_no: false",
+            "    block_on_partial: true",
+            "    fork_from_context: 'summary'",
+        ]
+        seed_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        qg = cfg.quality_gates
+        assert qg.mutation_testing is True
+        assert qg.mutation_command == "mutmut run --paths-to-mutate src"
+        assert qg.mutation_threshold == 0.8
+        assert qg.mutation_timeout_s == 42
+        assert qg.dep_audit is True
+        assert qg.dep_audit_command == "pip-audit --strict"
+        assert qg.dep_audit_files == ["pyproject.toml"]
+        assert qg.migration_reversibility_check is True
+        assert qg.large_file_check is True
+        assert qg.large_file_threshold == 7
+        assert qg.integration_test_gen is True
+        assert qg.review_rubric is True
+        assert qg.test_expansion is True
+        assert qg.agent_test_mutation is True
+        assert qg.agent_test_mutation_threshold == 0.9
+        assert qg.agent_test_mutation_timeout_s == 11
+        iv = qg.intent_verification
+        assert iv.enabled is True
+        assert iv.model == "openai/gpt-4o-mini"
+        assert iv.provider == "openai"
+        assert iv.max_diff_chars == 123
+        assert iv.max_tokens == 45
+        assert iv.block_on_no is False
+        assert iv.block_on_partial is True
+        assert iv.fork_from_context == "summary"
+
+    def test_parse_quality_gates_intent_verification_rejects_wrong_types(self, tmp_path: Path) -> None:
+        """A mistyped nested key fails loudly, like every other quality_gates key."""
+        from bernstein.core.seed import SeedError, parse_seed
+
+        seed_file = tmp_path / "bernstein.yaml"
+        seed_file.write_text(
+            "goal: test\nquality_gates:\n  intent_verification:\n    enabled: 'yes'\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SeedError, match="intent_verification.enabled must be a bool"):
+            parse_seed(seed_file)
+
+        seed_file.write_text("goal: test\nquality_gates:\n  intent_verification: true\n", encoding="utf-8")
+        with pytest.raises(SeedError, match="intent_verification must be a mapping"):
+            parse_seed(seed_file)
 
     def test_every_quality_gates_field_is_reachable_from_the_seed_parser(self) -> None:
         """A ``QualityGatesConfig`` field the parser never sets cannot be configured.
