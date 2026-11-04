@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -99,6 +101,11 @@ logger = logging.getLogger(__name__)
 
 SERVER_URL = os.environ.get("BERNSTEIN_SERVER_URL", "http://localhost:8052")
 _POLL_INTERVAL: float = 2.0
+#: Stay below the server's 3 connections / 60 s sliding window, with a
+#: one-second margin per attempt rather than reconnecting on its boundary.
+_STREAM_RECONNECT_MIN_S: float = 21.0
+#: The shared-IP limiter's cooldown when a 429 has no usable Retry-After.
+_STREAM_RETRY_AFTER_DEFAULT_S: float = 300.0
 
 #: CSS selector for the waterfall trace view widget.
 _WATERFALL_VIEW_SELECTOR = "#waterfall-view"
@@ -128,8 +135,29 @@ def _thread_stream_run() -> str | None:
         return explicit
     from bernstein.core.orchestration.run_closure_owner import read_spawner_run_owner
 
-    owner = read_spawner_run_owner(Path(".sdd"))
+    try:
+        owner = read_spawner_run_owner(Path(".sdd"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
     return owner.run_id if owner is not None else None
+
+
+def _thread_stream_retry_after(value: str | None) -> float:
+    """Read a 429's delay-seconds or HTTP-date, falling back to the cooldown."""
+    if value is None:
+        return _STREAM_RETRY_AFTER_DEFAULT_S
+    value = value.strip()
+    try:
+        if value.isascii() and value.isdecimal():
+            delay = float(value)
+        else:
+            when = parsedate_to_datetime(value)
+            if when.tzinfo is None:
+                return _STREAM_RETRY_AFTER_DEFAULT_S
+            delay = max(0.0, when.timestamp() - time.time())
+    except (ValueError, TypeError, OverflowError):
+        return _STREAM_RETRY_AFTER_DEFAULT_S
+    return delay if math.isfinite(delay) else _STREAM_RETRY_AFTER_DEFAULT_S
 
 
 def _auth_headers() -> dict[str, str]:
@@ -579,10 +607,13 @@ class BernsteinApp(App[None]):
 
         Every received text chunk is fed to the consumer, whitespace-only
         ones included (a lone newline can be the blank line that completes a
-        frame), and a refresh fires only once a complete frame is delivered.
+        frame), and normal stream refreshes require a complete frame.
         When a connection ends for any reason its incomplete frame is
-        discarded, and the next attempt waits ``poll_interval`` so a server
-        that keeps closing or rejecting the stream is not hammered. A frame
+        discarded. Transport and HTTP failures also refresh the snapshot.
+        Every reconnect waits at least 21 seconds (or ``poll_interval`` if
+        longer), including after clean EOF, to respect the server's sliding
+        reconnect budget. A 429 can extend that wait via ``Retry-After``;
+        missing or invalid values use the 300-second cooldown. A frame
         over the consumer's size bound ends streaming for this session and
         switches to the polling fallback rather than skipping the frame.
         """
@@ -596,6 +627,7 @@ class BernsteinApp(App[None]):
             if run_id is not None and current != run_id:
                 self._stream_consumer = JournalStreamConsumer()
             run_id = current
+            reconnect_delay = max(self._poll_interval, _STREAM_RECONNECT_MIN_S)
             try:
                 headers = _auth_headers() | self._stream_consumer.reconnect_headers()
                 async with (
@@ -618,13 +650,18 @@ class BernsteinApp(App[None]):
                 self.set_interval(self._poll_interval, self.action_refresh)
                 self.action_refresh()
                 return
-            except Exception:
+            except httpx.HTTPError as exc:
                 logger.debug("thread stream disconnected, will reconnect", exc_info=True)
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+                    reconnect_delay = max(
+                        reconnect_delay, _thread_stream_retry_after(exc.response.headers.get("Retry-After"))
+                    )
+                self.action_refresh()
             finally:
                 discarded = self._stream_consumer.end_stream()
                 if discarded:
                     logger.debug("thread stream ended mid-frame; discarded %d buffered chars", discarded)
-            await asyncio.sleep(self._poll_interval)
+            await asyncio.sleep(reconnect_delay)
 
     def _apply_task_filter(self) -> None:
         """Apply the current structured task filter to the cached task rows."""

@@ -470,8 +470,8 @@ forwards `SSEBus` messages without an `id` for the web UI and other clients.
 - Resume: a client that reconnects with `Last-Event-ID: <index>` gets the
   rows after that index, including after a server restart, because the route
   re-reads the journal on disk. A `Last-Event-ID` that is not a non-negative
-  decimal is a 400; an invalid run id is a 400; a run with no journal is a
-  404.
+  decimal is a 400; an invalid run id is a 400 or 422 (query validation);
+  a run with no journal is a 404.
 - On one connection, ids are strictly increasing. A row whose index is not
   above the last one sent (a duplicate or out-of-order index) is not sent,
   and a row the journal reader cannot decode is skipped; a partly written
@@ -492,7 +492,8 @@ forwards `SSEBus` messages without an `id` for the web UI and other clients.
   source is swapped. The TUI follows the run named by `BERNSTEIN_TUI_RUN`,
   or else the run in `.sdd/runtime/spawner-run-owner.json`; when that run
   changes it leaves the open stream and starts the new run from index 0.
-  While no run is known it refreshes once per poll interval.
+  Missing, unreadable or malformed owner records (including invalid UTF-8)
+  mean no known run. While no run is known it refreshes once per poll interval.
 - The TUI client (`src/bernstein/tui/event_stream.py`) buffers SSE frames
   across network chunks. Only a complete frame (ended by a blank line) whose
   `id` is a non-negative decimal journal index above the cursor is delivered
@@ -500,8 +501,15 @@ forwards `SSEBus` messages without an `id` for the web UI and other clients.
   duplicate a row. Frames without an `id` (heartbeats) are control frames:
   no refresh, no cursor move. Duplicate or older ids are dropped and
   non-numeric ids are rejected. A connection that ends mid-frame discards the
-  partial frame, and the TUI waits `poll_interval` before every reconnect,
-  including after a clean end of stream or a non-2xx response.
+  partial frame while keeping the cursor for the same run. Connection and
+  non-2xx failures trigger a snapshot refresh through the existing refresh
+  path; HTTP error bodies never become stream frames.
+- Every TUI reconnect waits at least 21 seconds, or `poll_interval` if longer,
+  including after a clean end of stream. This leaves a margin below the
+  server's default budget of three connections per sliding 60-second window.
+  A 429's valid `Retry-After` (delay-seconds or HTTP-date) can extend the wait;
+  a missing, negative or malformed value uses a finite 300-second default.
+  Other clients sharing the IP also consume the server's budget.
 - One frame is capped at 1 Mi characters (`MAX_FRAME_CHARS`, counted over all
   of its lines, comments and field names included). An oversized frame
   switches that TUI session to the polling fallback instead of being skipped.
