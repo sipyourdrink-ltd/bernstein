@@ -3989,6 +3989,49 @@
         }
       }
     },
+    "/events/thread": {
+      "get": {
+        "summary": "Thread Events",
+        "description": "Stream one run's journal as hash-anchored ``thread.step`` frames.\n\nServes :func:`~bernstein.core.replay.thread_projection.project_journal`\nfor ``.sdd/runs/<run>/journal.jsonl`` over SSE. Each frame's ``id`` is\nthe row's journal index, so a client that reconnects with\n``Last-Event-ID`` resumes after the last row it saw, across server\nrestarts, for as long as the run journal is on disk. ``/events`` is\nunchanged; this is a sibling stream pinned to one run per connection.\n\nIds sent on a connection are strictly increasing: a row whose index is\nnot above the last one sent (a duplicate or out-of-order index) is not\nsent. Rows the journal reader cannot decode, including a partly\nwritten last line, are skipped until they become decodable. Heartbeats\ncarry no ``id`` and never move a client's cursor. The stream ends if\nthe journal file disappears (for example after retention pruning).",
+        "operationId": "thread_events_events_thread_get",
+        "parameters": [
+          {
+            "name": "run",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Run"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream. The response body does not terminate.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/badge.json": {
       "get": {
         "summary": "Get Badge",
@@ -13386,6 +13429,49 @@
               "maxLength": 64,
               "pattern": "^[a-zA-Z0-9_-]+$",
               "title": "Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream. The response body does not terminate.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/thread": {
+      "get": {
+        "summary": "Thread Events",
+        "description": "Stream one run's journal as hash-anchored ``thread.step`` frames.\n\nServes :func:`~bernstein.core.replay.thread_projection.project_journal`\nfor ``.sdd/runs/<run>/journal.jsonl`` over SSE. Each frame's ``id`` is\nthe row's journal index, so a client that reconnects with\n``Last-Event-ID`` resumes after the last row it saw, across server\nrestarts, for as long as the run journal is on disk. ``/events`` is\nunchanged; this is a sibling stream pinned to one run per connection.\n\nIds sent on a connection are strictly increasing: a row whose index is\nnot above the last one sent (a duplicate or out-of-order index) is not\nsent. Rows the journal reader cannot decode, including a partly\nwritten last line, are skipped until they become decodable. Heartbeats\ncarry no ``id`` and never move a client's cursor. The stream ends if\nthe journal file disappears (for example after retention pruning).",
+        "operationId": "thread_events_api_v1_events_thread_get",
+        "parameters": [
+          {
+            "name": "run",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Run"
             }
           }
         ],

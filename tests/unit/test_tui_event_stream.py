@@ -10,7 +10,8 @@ Network chunks never align with SSE frames, so the incremental tests feed
 every split and seeded multi-split partitions and require the same
 delivered frames and final cursor as the whole text. App tests drive the
 real ``_consume_thread_stream`` loop through a real ``httpx.AsyncClient``
-on an injected ``MockTransport``; nothing leaves the process.
+on an injected ``MockTransport``, and one end-to-end test runs it against the
+real ``/events/thread`` route in process; nothing leaves the process.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
-import json
 import random
 import re
 from typing import TYPE_CHECKING, Any
@@ -39,6 +39,7 @@ from bernstein.tui.event_stream import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
+    from pathlib import Path
 
 
 def _frame(sse_id: str, event: str, data: str) -> str:
@@ -515,10 +516,13 @@ class _ChunkStream(httpx.AsyncByteStream):
 
 
 class _Harness:
-    """Scripted ``/events`` server: one response per connection attempt."""
+    """Scripted ``/events/thread`` server: one response per connection attempt."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, connections: list[httpx.Response]) -> None:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, connections: list[httpx.Response | httpx.RequestError]) -> None:
         self.requests: list[httpx.Request] = []
+        self.request_times: list[float] = []
+        self.clients: list[httpx.AsyncClient] = []
+        self.now = 1_700_000_000.0
         self.sleeps: list[float] = []
         self.refreshes = 0
         self.intervals: list[float] = []
@@ -527,19 +531,28 @@ class _Harness:
 
         def handler(request: httpx.Request) -> httpx.Response:
             self.requests.append(request)
-            return self._connections[len(self.requests) - 1]
+            self.request_times.append(self.now)
+            result = self._connections[len(self.requests) - 1]
+            if isinstance(result, httpx.RequestError):
+                raise result
+            return result
 
         def client_factory(**kwargs: Any) -> httpx.AsyncClient:
-            return real_client(transport=httpx.MockTransport(handler), **kwargs)
+            client = real_client(transport=httpx.MockTransport(handler), **kwargs)
+            self.clients.append(client)
+            return client
 
         async def fake_sleep(delay: float) -> None:
             self.sleeps.append(delay)
+            self.now += delay
             if len(self.sleeps) >= len(self._connections):
                 raise _Stop
 
         monkeypatch.setattr(app_module.httpx, "AsyncClient", client_factory)
         monkeypatch.setattr(app_module.asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(app_module.time, "time", lambda: self.now)
         monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+        monkeypatch.setenv(app_module.STREAM_RUN_ENV_VAR, "run-1")
         self.app = app_module.BernsteinApp(poll_interval=0.25)
 
         def count_refresh() -> None:
@@ -558,6 +571,148 @@ class _Harness:
 
 def _sse(chunks: Sequence[bytes], **kwargs: Any) -> httpx.Response:
     return httpx.Response(200, headers=_SSE_HEADERS, stream=_ChunkStream(chunks, **kwargs))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [404, 422, "connect"])
+async def test_app_refreshes_on_failure_and_recovers_with_the_same_cursor(
+    monkeypatch: pytest.MonkeyPatch, failure: int | str
+) -> None:
+    first = _sse([(_frame("5", "s", "{}") + 'id: 6\nevent: s\ndata: {"partial":').encode()])
+    error_body = _ChunkStream([_frame("99", "s", '{"error_body":true}').encode()])
+    failed = (
+        httpx.Response(failure, headers=_SSE_HEADERS, stream=error_body)
+        if isinstance(failure, int)
+        else httpx.ConnectError("synthetic unavailable server")
+    )
+    recovered = _sse([(_frame("5", "s", "{}") + _frame("6", "s", '{"recovered":true}')).encode()])
+    harness = _Harness(monkeypatch, [first, failed, recovered])
+    seen: list[StreamFrame] = []
+    real_consume = harness.app._stream_consumer.consume
+
+    def spy(raw: str) -> list[StreamFrame]:
+        got = real_consume(raw)
+        seen.extend(got)
+        return got
+
+    monkeypatch.setattr(harness.app._stream_consumer, "consume", spy)
+
+    await harness.run()
+
+    assert harness.refreshes == 3  # first frame, failure snapshot, recovered frame
+    assert seen == [StreamFrame("5", "s", {}), StreamFrame("6", "s", {"recovered": True})]
+    assert [r.headers.get("last-event-id") for r in harness.requests] == [None, "5", "5"]
+    assert harness.app._stream_consumer.last_event_id == "6"
+    assert harness.app._stream_consumer.pending_chars == 0
+    assert first.is_closed and recovered.is_closed
+    if isinstance(failed, httpx.Response):
+        assert failed.is_closed
+        assert not failed.is_stream_consumed  # even an SSE-shaped error body is never read
+    assert len(harness.clients) == 3 and all(client.is_closed for client in harness.clients)
+
+
+@pytest.mark.asyncio
+async def test_app_repeated_eof_stays_inside_the_sliding_reconnect_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    harness = _Harness(monkeypatch, [_sse([]) for _ in range(9)])
+
+    await harness.run()
+
+    assert len(harness.requests) == 9
+    assert harness.sleeps == [21.0] * 9
+    # Include both boundaries: exactly 20 seconds would have no timing margin.
+    for end in harness.request_times:
+        assert sum(0 <= end - start <= 60.0 for start in harness.request_times) <= 3
+    assert harness.refreshes == 0
+    assert all(client.is_closed for client in harness.clients)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retry_after", "expected_delay"),
+    [
+        ("75", 75.0),
+        ("Tue, 14 Nov 2023 22:14:35 GMT", 75.0),
+        ("0", 21.0),
+        ("Tue, 14 Nov 2023 22:13:00 GMT", 21.0),
+    ],
+)
+async def test_app_honors_retry_after_429_before_recovering(
+    monkeypatch: pytest.MonkeyPatch, retry_after: str, expected_delay: float
+) -> None:
+    failed = httpx.Response(429, headers={"Retry-After": retry_after}, content=_frame("99", "s", "{}"))
+    harness = _Harness(monkeypatch, [failed, _sse([_frame("0", "s", "{}").encode()])])
+
+    await harness.run()
+
+    assert harness.sleeps == [expected_delay, 21.0]
+    assert harness.request_times[1] - harness.request_times[0] == expected_delay
+    assert harness.refreshes == 2  # failure snapshot, then recovered frame
+    assert harness.app._stream_consumer.last_event_id == "0"
+    assert all(r.headers.get("last-event-id") is None for r in harness.requests)
+    assert failed.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_after", [None, "", "-1", "later", "nan", "inf", "1.5", "9" * 400])
+async def test_app_invalid_retry_after_429_uses_a_finite_cooldown(
+    monkeypatch: pytest.MonkeyPatch, retry_after: str | None
+) -> None:
+    headers = {} if retry_after is None else {"Retry-After": retry_after}
+    harness = _Harness(monkeypatch, [httpx.Response(429, headers=headers), _sse([])])
+
+    await harness.run()
+
+    assert harness.sleeps == [300.0, 21.0]
+    assert len(harness.requests) == 2
+    assert harness.refreshes == 1
+    assert harness.app._stream_consumer.last_event_id == ""
+    assert all(client.is_closed for client in harness.clients)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_bytes", [b"\xff\xfe", b'{"run_id":', b"[]"])
+async def test_app_malformed_owner_keeps_no_run_polling_responsive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owner_bytes: bytes
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    owner_file = tmp_path / ".sdd" / "runtime" / "spawner-run-owner.json"
+    owner_file.parent.mkdir(parents=True)
+    owner_file.write_bytes(owner_bytes)
+    harness = _Harness(monkeypatch, [_sse([]), _sse([]), _sse([])])
+    monkeypatch.delenv(app_module.STREAM_RUN_ENV_VAR)
+
+    await harness.run()
+
+    assert harness.requests == []
+    assert harness.refreshes == 3
+    assert harness.sleeps == [0.25, 0.25, 0.25]
+
+
+@pytest.mark.asyncio
+async def test_app_cancellation_during_429_wait_closes_client_and_keeps_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    failed = httpx.Response(429, headers={"Retry-After": "300"})
+    harness = _Harness(monkeypatch, [failed])
+    harness.app._stream_consumer.consume(_frame("5", "s", "{}"))
+    waiting = asyncio.Event()
+
+    async def wait_for_cancellation(delay: float) -> None:
+        harness.sleeps.append(delay)
+        waiting.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(app_module.asyncio, "sleep", wait_for_cancellation)
+    task = asyncio.ensure_future(harness.run())
+    await asyncio.wait_for(waiting.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert harness.sleeps == [300.0]
+    assert harness.refreshes == 1
+    assert harness.app._stream_consumer.last_event_id == "5"
+    assert harness.app._stream_consumer.pending_chars == 0
+    assert len(harness.requests) == 1 and harness.requests[0].headers["last-event-id"] == "5"
+    assert failed.is_closed and all(client.is_closed for client in harness.clients)
 
 
 @pytest.mark.asyncio
@@ -624,12 +779,12 @@ async def test_app_reconnects_after_mid_json_drop_without_stale_bytes(monkeypatc
 
     await harness.run()
 
-    assert harness.refreshes == 2  # one per connection that delivered a complete frame
+    assert harness.refreshes == 3  # delivered frames on both connections, plus a failure snapshot
     assert harness.app._stream_consumer.last_event_id == "2"
     assert "last-event-id" not in harness.requests[0].headers
     assert harness.requests[1].headers["last-event-id"] == "0"
     assert all(r.headers["authorization"] == "Bearer tkn" for r in harness.requests)
-    assert all(str(r.url).endswith("/events") for r in harness.requests)
+    assert all(r.url.path == "/events/thread" and r.url.params["run"] == "run-1" for r in harness.requests)
     assert harness.app._stream_consumer.pending_chars == 0
 
 
@@ -642,9 +797,9 @@ async def test_app_waits_between_connections_on_eof_and_http_error(monkeypatch: 
 
     await harness.run()
 
-    assert harness.sleeps == [0.25, 0.25, 0.25]  # no immediate reconnect on clean EOF
+    assert harness.sleeps == [21.0, 300.0, 21.0]  # EOF is paced; a 429 without Retry-After uses the cooldown
     assert len(harness.requests) == 3
-    assert harness.refreshes == 1  # the 429 body is never parsed as events
+    assert harness.refreshes == 2  # failure snapshot, then frame delivery; the 429 body is never parsed
 
 
 @pytest.mark.asyncio
@@ -674,60 +829,210 @@ async def test_app_cancellation_closes_stream_and_discards_partial(monkeypatch: 
         await task
 
     assert stream.closed
+    assert len(harness.clients) == 1 and harness.clients[0].is_closed
     assert harness.app._stream_consumer.pending_chars == 0
     assert harness.app._stream_consumer.last_event_id == ""
     assert harness.refreshes == 0
     assert harness.sleeps == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "integration blocker (server, out of scope here): SSEBus.publish in "
-        "core/server/server_app.py writes 'event:/data:' frames with no SSE id, "
-        "/events (core/routes/status_events.py) forwards them verbatim, and the "
-        "id-bearing ThreadStreamEvent.to_sse (core/replay/thread_projection.py) "
-        "has no server caller - so the consumer treats every live frame as a "
-        "control frame and the streamed TUI never refreshes"
-    ),
-)
 @pytest.mark.asyncio
-async def test_live_bus_task_update_refreshes_streamed_tui(monkeypatch: pytest.MonkeyPatch) -> None:
-    from bernstein.core.server.server_app import SSEBus
+async def test_app_follows_the_owner_run_and_restarts_the_cursor_on_a_new_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
 
-    bus = SSEBus()
-    queue = bus.subscribe()
-    bus.publish("task_update", json.dumps({"id": "t1", "status": "done"}))
-    wire = 'event: heartbeat\ndata: {"connected": true}\n\n' + queue.get_nowait()
-    harness = _Harness(monkeypatch, [_sse([wire.encode()])])
-    consumer = harness.app._stream_consumer
-    decoded: list[StreamFrame] = []
-    errors: list[BaseException] = []
-    real_feed = consumer._decoder.feed
-    real_consume = consumer.consume
+    monkeypatch.chdir(tmp_path)
+    sdd = tmp_path / ".sdd"
+    write_spawner_run_owner(sdd_dir=sdd, run_id="run-a", journal_head="h", journal_event_count=1)
+    harness = _Harness(
+        monkeypatch,
+        [_sse([_frame("5", "thread.step", "{}").encode()]), _sse([_frame("0", "thread.step", "{}").encode()])],
+    )
+    monkeypatch.delenv(app_module.STREAM_RUN_ENV_VAR)
+    first_consumer = harness.app._stream_consumer
+    real_consume = first_consumer.consume
 
-    def feed_spy(text: str) -> list[StreamFrame]:
-        frames = real_feed(text)
-        decoded.extend(frames)
-        return frames
+    def switch_run_after_first_frame(raw: str) -> list[StreamFrame]:
+        got = real_consume(raw)
+        if got:
+            write_spawner_run_owner(sdd_dir=sdd, run_id="run-b", journal_head="h", journal_event_count=1)
+        return got
 
-    def consume_spy(raw: str) -> list[StreamFrame]:
-        try:
-            return real_consume(raw)
-        except Exception as exc:
-            errors.append(exc)
-            raise
-
-    monkeypatch.setattr(consumer._decoder, "feed", feed_spy)
-    monkeypatch.setattr(consumer, "consume", consume_spy)
+    monkeypatch.setattr(first_consumer, "consume", switch_run_after_first_frame)
 
     await harness.run()
 
-    # The loop swallows every Exception, so anything but the stated cause must
-    # fail via pytest.fail (not AssertionError) to escape the strict xfail.
-    if errors or len(harness.requests) != 1 or len(decoded) != 2:
-        pytest.fail(f"stream path broke for another reason: errors={errors!r}, decoded={decoded!r}")
-    if any(frame.sse_id for frame in decoded) and harness.refreshes == 0:
-        pytest.fail(f"frames carry ids yet no refresh happened: {decoded!r}")
-    assert harness.refreshes >= 1  # fails only because every live frame lacks an id
+    assert [r.url.params["run"] for r in harness.requests] == ["run-a", "run-b"]
+    # run-b's journal starts at 0: the old cursor (5) must not be sent or applied.
+    assert "last-event-id" not in harness.requests[1].headers
+    assert harness.app._stream_consumer is not first_consumer
+    assert harness.app._stream_consumer.last_event_id == "0"
+    assert harness.refreshes == 2
+
+
+@pytest.mark.asyncio
+async def test_app_refreshes_on_the_poll_interval_while_no_run_is_known(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)  # no .sdd/runtime/spawner-run-owner.json
+    harness = _Harness(monkeypatch, [_sse([]), _sse([]), _sse([])])
+    monkeypatch.delenv(app_module.STREAM_RUN_ENV_VAR)
+
+    await harness.run()
+
+    assert harness.requests == []
+    assert harness.refreshes == 3
+    assert harness.sleeps == [0.25, 0.25, 0.25]
+
+
+class _ASGIStreamTransport(httpx.AsyncBaseTransport):
+    """Bridge an httpx client to an in-process ASGI app, streaming the body.
+
+    ``httpx.ASGITransport`` waits for the whole response body, which an SSE
+    stream never finishes. This bridge hands each body chunk to the client
+    as the app sends it, and tells the app the client disconnected when the
+    response is closed. No network is involved.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        body: asyncio.Queue[bytes | None] = asyncio.Queue()
+        started: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        disconnect = asyncio.Event()
+        request_sent = False
+
+        async def receive() -> dict[str, Any]:
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                started.set_result(message)
+            elif message["type"] == "http.response.body":
+                if message.get("body"):
+                    body.put_nowait(message["body"])
+                if not message.get("more_body", False):
+                    body.put_nowait(None)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": request.method,
+            "scheme": request.url.scheme,
+            "path": request.url.path,
+            "raw_path": request.url.raw_path.split(b"?")[0],
+            "query_string": request.url.query,
+            "root_path": "",
+            "headers": [(k.lower(), v) for k, v in request.headers.raw],
+            "client": ("127.0.0.1", 40001),
+            "server": (request.url.host, request.url.port or 80),
+        }
+        task = asyncio.ensure_future(self._app(scope, receive, send))
+
+        def finished(done: asyncio.Future[None]) -> None:
+            body.put_nowait(None)
+            if not started.done():
+                error = None if done.cancelled() else done.exception()
+                started.set_exception(error or RuntimeError("app sent no response"))
+
+        task.add_done_callback(finished)
+        start = await started
+        return httpx.Response(
+            start["status"], headers=start.get("headers", []), stream=_QueueStream(body, disconnect, task)
+        )
+
+
+class _QueueStream(httpx.AsyncByteStream):
+    def __init__(self, body: asyncio.Queue[bytes | None], disconnect: asyncio.Event, task: Any) -> None:
+        self._body = body
+        self._disconnect = disconnect
+        self._task = task
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while (chunk := await self._body.get()) is not None:
+            yield chunk
+
+    async def aclose(self) -> None:
+        self._disconnect.set()
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await asyncio.wait_for(self._task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_streamed_tui_refreshes_from_the_live_journal_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End to end in process: journal rows -> /events/thread -> TUI refresh.
+
+    Replaces the strict xfail that recorded the id-less ``/events`` gap. The
+    real ``create_app`` route projects a real ``EventJournal``; the TUI's real
+    reconnect loop reads it through a real ``httpx.AsyncClient``.
+    """
+    from bernstein.core.replay.journal import EventJournal
+    from bernstein.core.routes import status_events
+    from bernstein.core.server import create_app
+
+    (tmp_path / ".sdd" / "runtime").mkdir(parents=True)
+    journal = EventJournal("run-live", tmp_path / ".sdd")
+    journal.record("task_claimed", task_id="t-1", agent_id="agent-a")
+    journal.record("task_claimed", task_id="t-2", agent_id="agent-a")
+    server = create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
+    monkeypatch.setattr(status_events, "THREAD_STREAM_POLL_S", 0.01)
+    monkeypatch.setenv(app_module.STREAM_RUN_ENV_VAR, "run-live")
+    monkeypatch.delenv("BERNSTEIN_AUTH_TOKEN", raising=False)
+    real_client = httpx.AsyncClient
+    requests: list[httpx.Request] = []
+
+    class _Recording(_ASGIStreamTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return await super().handle_async_request(request)
+
+    monkeypatch.setattr(app_module.httpx, "AsyncClient", lambda **kw: real_client(transport=_Recording(server), **kw))
+    tui = app_module.BernsteinApp(poll_interval=0.01)
+    refreshes: list[str] = []
+    monkeypatch.setattr(tui, "action_refresh", lambda: refreshes.append(tui._stream_consumer.last_event_id))
+    consumer = tui._stream_consumer
+    delivered: list[StreamFrame] = []
+    errors: list[BaseException] = []
+    real_consume = consumer.consume
+
+    def consume_spy(raw: str) -> list[StreamFrame]:
+        try:
+            got = real_consume(raw)
+        except Exception as exc:
+            errors.append(exc)
+            raise
+        delivered.extend(got)
+        if [f.sse_id for f in delivered] == ["0", "1"]:
+            journal.record("task_completed", task_id="t-1", agent_id="agent-a")  # arrives live
+        if consumer.last_event_id == "2":
+            raise _Stop
+        return got
+
+    monkeypatch.setattr(consumer, "consume", consume_spy)
+
+    try:
+        with contextlib.suppress(_Stop):
+            await asyncio.wait_for(tui._consume_thread_stream(), timeout=10)
+    except TimeoutError:
+        pytest.fail(f"no journal frame reached the TUI: errors={errors!r}, delivered={delivered!r}")
+
+    assert errors == []
+    assert [(f.sse_id, f.data["journal_event"]) for f in delivered] == [
+        ("0", "task_claimed"),
+        ("1", "task_claimed"),
+        ("2", "task_completed"),
+    ]
+    assert refreshes and refreshes[-1] in {"0", "1"}  # refreshed on delivery; _Stop fired before frame 2's refresh
+    assert len(requests) == 1
+    assert requests[0].url.path == "/events/thread"
+    assert requests[0].url.params["run"] == "run-live"
