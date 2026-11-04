@@ -472,6 +472,25 @@ operator's view is an attestable projection of what executed.
 - Set `BERNSTEIN_TUI_STREAM=1` to drive the TUI hot path from the stream; unset
   keeps the polling fallback for constrained terminals. The rendering is
   unchanged - only the data source is swapped.
+- The TUI client (`src/bernstein/tui/event_stream.py`) buffers SSE frames
+  across network chunks. Only a complete frame (ended by a blank line) whose
+  `id` is a non-negative decimal journal index above the cursor is delivered
+  and moves `Last-Event-ID`, so no split of the byte stream can skip or
+  duplicate a row. Frames without an `id` (heartbeats, bus events) are control
+  frames: no refresh, no cursor move. Duplicate or older ids are dropped and
+  non-numeric ids are rejected. A connection that ends mid-frame discards the
+  partial frame, and the TUI waits `poll_interval` before every reconnect,
+  including after a clean end of stream or a non-2xx response.
+- One frame is capped at 1 Mi characters (`MAX_FRAME_CHARS`, counted over all
+  of its lines, comments and field names included). An oversized frame
+  switches that TUI session to the polling fallback instead of being skipped.
+- Known limitation: `/events` currently forwards `SSEBus` messages
+  (`SSEBus.publish` in `src/bernstein/core/server/server_app.py`), which carry
+  no `id`; the journal projection above is not served on `/events` yet. With
+  `BERNSTEIN_TUI_STREAM=1` the TUI therefore does not refresh from live bus
+  events - keep the polling default until the server emits journal ids. The
+  strict xfail `test_live_bus_task_update_refreshes_streamed_tui` in
+  `tests/unit/test_tui_event_stream.py` tracks this.
 - An approval resolved over the stream is itself a signed record: it is
   appended to the HMAC audit chain as a `thread.approval` event
   (`record_thread_approval` in `src/bernstein/core/security/audit_chain.py`)

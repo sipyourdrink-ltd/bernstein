@@ -701,7 +701,33 @@ async def test_live_bus_task_update_refreshes_streamed_tui(monkeypatch: pytest.M
     bus.publish("task_update", json.dumps({"id": "t1", "status": "done"}))
     wire = 'event: heartbeat\ndata: {"connected": true}\n\n' + queue.get_nowait()
     harness = _Harness(monkeypatch, [_sse([wire.encode()])])
+    consumer = harness.app._stream_consumer
+    decoded: list[StreamFrame] = []
+    errors: list[BaseException] = []
+    real_feed = consumer._decoder.feed
+    real_consume = consumer.consume
+
+    def feed_spy(text: str) -> list[StreamFrame]:
+        frames = real_feed(text)
+        decoded.extend(frames)
+        return frames
+
+    def consume_spy(raw: str) -> list[StreamFrame]:
+        try:
+            return real_consume(raw)
+        except Exception as exc:
+            errors.append(exc)
+            raise
+
+    monkeypatch.setattr(consumer._decoder, "feed", feed_spy)
+    monkeypatch.setattr(consumer, "consume", consume_spy)
 
     await harness.run()
 
-    assert harness.refreshes >= 1
+    # The loop swallows every Exception, so anything but the stated cause must
+    # fail via pytest.fail (not AssertionError) to escape the strict xfail.
+    if errors or len(harness.requests) != 1 or len(decoded) != 2:
+        pytest.fail(f"stream path broke for another reason: errors={errors!r}, decoded={decoded!r}")
+    if any(frame.sse_id for frame in decoded) and harness.refreshes == 0:
+        pytest.fail(f"frames carry ids yet no refresh happened: {decoded!r}")
+    assert harness.refreshes >= 1  # fails only because every live frame lacks an id
