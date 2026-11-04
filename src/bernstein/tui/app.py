@@ -112,6 +112,26 @@ _TASK_CONTEXT_SELECTOR = "#task-context"
 _TOAST_OVERLAY_SELECTOR = "#toast-overlay"
 
 
+#: Env var naming the run whose journal the streamed TUI follows. Unset
+#: follows the run recorded in ``.sdd/runtime/spawner-run-owner.json``.
+STREAM_RUN_ENV_VAR = "BERNSTEIN_TUI_RUN"
+
+
+def _thread_stream_run() -> str | None:
+    """Return the run id the thread stream should follow, if one is known.
+
+    ``BERNSTEIN_TUI_RUN`` wins; otherwise the run the orchestrator recorded
+    as its owner run. ``None`` when neither names a run yet.
+    """
+    explicit = os.environ.get(STREAM_RUN_ENV_VAR, "").strip()
+    if explicit:
+        return explicit
+    from bernstein.core.orchestration.run_closure_owner import read_spawner_run_owner
+
+    owner = read_spawner_run_owner(Path(".sdd"))
+    return owner.run_id if owner is not None else None
+
+
 def _auth_headers() -> dict[str, str]:
     """Return Authorization header dict if BERNSTEIN_AUTH_TOKEN is set.
 
@@ -541,15 +561,21 @@ class BernsteinApp(App[None]):
             self.run_worker(self._refresh_timeline())
 
     async def _consume_thread_stream(self) -> None:
-        """Drive the hot path from the audit-chain SSE stream (issue #2297).
+        """Drive the hot path from the run journal's SSE stream (issue #2297).
 
         Replaces the timer poll loop: each hash-anchored journal frame that
-        the server projects triggers a refresh, so the rendered view is an
-        attestable projection of the executed thread rather than a polled
-        snapshot. On a dropped connection the loop reconnects with
-        ``Last-Event-ID`` so it resumes from the last journal index without
-        missing or duplicating an entry (AC5). The rendering path is
-        unchanged - only the data source is swapped.
+        the server projects on ``/events/thread`` triggers a refresh, so the
+        rendered view follows what executed rather than a timer. On a
+        dropped connection the loop reconnects with ``Last-Event-ID`` (the
+        last journal index) so it resumes without missing or duplicating a
+        row (AC5). The rendering path is unchanged - only the data source is
+        swapped.
+
+        The stream is pinned to one run per connection
+        (:func:`_thread_stream_run`). When that run changes, the open stream
+        is left and the consumer starts over for the new run, whose journal
+        indices restart at 0. While no run is known yet the loop refreshes
+        once per ``poll_interval``, as the polling path would.
 
         Every received text chunk is fed to the consumer, whitespace-only
         ones included (a lone newline can be the blank line that completes a
@@ -560,17 +586,30 @@ class BernsteinApp(App[None]):
         over the consumer's size bound ends streaming for this session and
         switches to the polling fallback rather than skipping the frame.
         """
+        run_id: str | None = None
         while True:
+            current = _thread_stream_run()
+            if current is None:
+                self.action_refresh()
+                await asyncio.sleep(self._poll_interval)
+                continue
+            if run_id is not None and current != run_id:
+                self._stream_consumer = JournalStreamConsumer()
+            run_id = current
             try:
                 headers = _auth_headers() | self._stream_consumer.reconnect_headers()
                 async with (
                     httpx.AsyncClient(timeout=None) as client,
-                    client.stream("GET", f"{SERVER_URL}/events", headers=headers) as response,
+                    client.stream(
+                        "GET", f"{SERVER_URL}/events/thread", params={"run": run_id}, headers=headers
+                    ) as response,
                 ):
                     response.raise_for_status()
                     async for chunk in response.aiter_text():
                         if self._stream_consumer.consume(chunk):
                             self.action_refresh()
+                        if _thread_stream_run() != run_id:
+                            break
             except SSEFrameTooLarge as exc:
                 logger.warning(
                     "thread stream frame exceeded %d chars; switching to polling fallback",
