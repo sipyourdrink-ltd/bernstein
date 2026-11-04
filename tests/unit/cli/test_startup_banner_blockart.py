@@ -49,9 +49,14 @@ def test_compact_splash_stays_compact_on_non_tty() -> None:
     assert "BERNSTEIN" in out
 
 
-def test_compact_splash_stays_compact_on_narrow_tty() -> None:
+@pytest.mark.parametrize("term", ["dumb", "xterm-256color"])
+def test_compact_splash_stays_compact_on_narrow_tty(
+    term: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Too narrow to hold the art: fall back to the one-liner even on a TTY.
-    console = Console(force_terminal=True, width=30)
+    monkeypatch.setenv("TERM", term)
+    console = Console(force_terminal=True, width=30, height=10)
+    assert console.width == 30
     with console.capture() as cap:
         splash(console, version="9.9.9", skip_animation=True)
     out = cap.get()
