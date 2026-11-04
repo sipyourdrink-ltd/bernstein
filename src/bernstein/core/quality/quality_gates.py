@@ -743,10 +743,83 @@ def _build_agent_mutation_command(source_files: list[str], test_files: list[str]
     )
 
 
+_NO_DIFF_RESULTS = frozenset({"(no diff available)", "(failed to get git diff)"})
+_DIFF_NEW_FILE = re.compile(r"^\+\+\+ b/(.+)$")
+_DIFF_HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _added_lines_by_file(
+    diff: str,
+    run_dir: Path,
+    paths: set[str],
+) -> dict[str, frozenset[int]] | None:
+    """The lines ``diff`` added, per file, or ``None`` when there is no diff to read.
+
+    A path in ``paths`` that git does not track yet is new in its whole, and
+    ``git diff`` does not show it, so all its lines count as added. A file with
+    no hunks of its own (a pure rename) is not in the result.
+    """
+    if diff in _NO_DIFF_RESULTS:
+        return None
+    added: dict[str, set[int]] = {}
+    current: set[int] | None = None
+    line_no = 0
+    old_left = new_left = 0  # Lines left in the hunk, so a body line is never read as a header.
+    for line in diff.splitlines():
+        if old_left > 0 or new_left > 0:
+            if line.startswith("+"):
+                if current is not None:
+                    current.add(line_no)
+                line_no += 1
+                new_left -= 1
+            elif line.startswith("-"):
+                old_left -= 1
+            elif not line.startswith("\\"):  # "\ No newline at end of file" is no line.
+                line_no += 1
+                old_left -= 1
+                new_left -= 1
+        elif header := _DIFF_NEW_FILE.match(line):
+            current = added.setdefault(header.group(1), set())
+        elif hunk := _DIFF_HUNK.match(line):
+            old_left = int(hunk.group(1) or 1)
+            line_no = int(hunk.group(2))
+            new_left = int(hunk.group(3) or 1)
+
+    for rel in sorted(paths - set(added)):
+        if _is_untracked(run_dir, rel):
+            added[rel] = _all_lines(run_dir / rel)
+    return {rel: frozenset(lines) for rel, lines in added.items()}
+
+
+def _is_untracked(run_dir: Path, rel: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "--", rel],
+            cwd=run_dir,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("mock spec check: could not ask git about %s: %s", rel, exc)
+        return False
+    return bool(result.stdout.strip())
+
+
+def _all_lines(path: Path) -> set[int]:
+    try:
+        return set(range(1, len(path.read_text(encoding="utf-8").splitlines()) + 1))
+    except (OSError, UnicodeDecodeError):
+        return set()
+
+
 def run_agent_test_mutation_gate_sync(
     config: QualityGatesConfig,
     task: Task,
     run_dir: Path,
+    changed_files: list[str] | None = None,
 ) -> tuple[bool, str, float | None, str | None]:
     """Verify that agent-written tests actually catch bugs via targeted mutation testing.
 
@@ -759,18 +832,47 @@ def run_agent_test_mutation_gate_sync(
     which runs full mutation testing on Bernstein's own test suite.  This gate
     runs *per agent task*, focused only on the tests the agent produced.
 
+    Before any mutant runs, the mocks the change ADDED to its test files must
+    each name a spec (:mod:`bernstein.core.quality.mock_spec`, #6150). A bare
+    ``MagicMock()`` answers to any attribute name, so a test can assert on an
+    API the code does not have and still pass. That fails the gate with one
+    ``path:line: mock without a spec`` line per mock, and mutmut is not run:
+    its score would describe tests that may not reach the code at all. Mocks
+    on untouched lines of an existing file are not judged. With no readable
+    history the check falls back to whole files, and the detail says so.
+
     Args:
         config: Quality gates configuration.
         task: The completed agent task (used to get owned files for diff).
         run_dir: Repository root for running commands.
+        changed_files: The change set the gate runner was handed. Its test
+            files are checked for spec-less mocks alongside the ones the git
+            diff names, so the check does not depend on the worktree's history.
 
     Returns:
         Tuple of (passed, detail_message, score_or_None, evidence_status).
         ``evidence_status`` is None when evidence exists, or a reason string
         like ``evidence-missing`` when the gate cannot run.
     """
+    from bernstein.core.quality.mock_spec import is_test_file, scan_test_files
+
     diff = _get_intent_diff(run_dir, task.owned_files or [])
     test_files = _extract_agent_test_files(diff)
+
+    spec_scope = set(test_files) | {f for f in changed_files or [] if is_test_file(f)}
+    # Read unscoped: `owned_files` narrows the mutation target, not what the change added.
+    added_lines = _added_lines_by_file(_get_intent_diff(run_dir, []), run_dir, spec_scope)
+    unspecced = scan_test_files(run_dir, spec_scope, added_lines)
+    if unspecced:
+        lines = "\n".join(finding.render() for finding in unspecced)
+        scope = "whole files, no diff was readable" if added_lines is None else "added lines"
+        detail = (
+            f"{len(unspecced)} mock(s) in agent-written tests answer to any attribute name, so the tests "
+            f"can pass without touching the code they claim to test. Give each one a spec. "
+            f"Checked: {scope}.\n{lines}"
+        )
+        return False, detail, None, None
+
     if not test_files:
         return True, "No agent-written test files detected in diff - skipping agent mutation gate.", None, None
 
