@@ -37,3 +37,9 @@ tests/fixtures/agent-card-utf16-vector/*.sha256 -text
 tests/fixtures/evidence-envelope-vectors/*.json -text
 tests/fixtures/evidence-envelope-vectors/*.pem -text
 tests/fixtures/evidence-envelope-vectors/*.sha256 -text
+
+# Vendored CycloneDX / JSF / SPDX JSON schemas: byte-exact artefacts. The
+# fixture README records each file's sha256 and a test compares the raw bytes
+# against it, so a checkout that translates line endings (autocrlf on
+# Windows) fails that test on an unchanged file.
+tests/fixtures/cyclonedx/*.json -text

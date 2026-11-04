@@ -568,3 +568,32 @@ def test_scan_result_to_dict_structure() -> None:
     assert d["highest_severity"] == "high"
     assert len(d["findings"]) == 1
     assert d["findings"][0]["vuln_id"] == "CVE-001"
+
+
+def test_collect_python_packages_emits_one_component_per_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A distribution visible from two ``sys.path`` entries is one component.
+
+    ``importlib.metadata.distributions()`` yields a distribution once per
+    path it is found on (a user-site install beside a venv, a PYTHONPATH
+    overlay). CycloneDX requires ``components`` to be unique, so the second
+    sighting must be dropped rather than emitted as a duplicate.
+    """
+    import importlib.metadata
+
+    from bernstein.core.security.sbom import _collect_python_packages
+
+    class _Meta(dict):
+        def get(self, key: str, default: str = "") -> str:  # type: ignore[override]
+            return dict.get(self, key, default)
+
+    class _Dist:
+        def __init__(self, name: str, version: str) -> None:
+            self.metadata = _Meta(Name=name, Version=version, Summary=f"{name} summary", License="MIT")
+
+    sightings = [_Dist("pip", "26.2.1"), _Dist("requests", "2.28.0"), _Dist("pip", "26.2.1")]
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda: iter(sightings))
+
+    components = _collect_python_packages()
+
+    assert [c.purl for c in components] == ["pkg:pypi/pip@26.2.1", "pkg:pypi/requests@2.28.0"]
+    assert len({c.purl for c in components}) == len(components)
