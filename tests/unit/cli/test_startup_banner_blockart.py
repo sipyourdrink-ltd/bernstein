@@ -50,9 +50,7 @@ def test_compact_splash_stays_compact_on_non_tty() -> None:
 
 
 @pytest.mark.parametrize("term", ["dumb", "xterm-256color"])
-def test_compact_splash_stays_compact_on_narrow_tty(
-    term: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_compact_splash_stays_compact_on_narrow_tty(term: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Too narrow to hold the art: fall back to the one-liner even on a TTY.
     monkeypatch.setenv("TERM", term)
     console = Console(force_terminal=True, width=30, height=10)
