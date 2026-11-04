@@ -49,9 +49,13 @@ def test_compact_splash_stays_compact_on_non_tty() -> None:
     assert "BERNSTEIN" in out
 
 
-def test_compact_splash_stays_compact_on_narrow_tty() -> None:
+@pytest.mark.parametrize("term", ["dumb", "xterm"])
+def test_compact_splash_stays_compact_on_narrow_tty(monkeypatch: pytest.MonkeyPatch, term: str) -> None:
     # Too narrow to hold the art: fall back to the one-liner even on a TTY.
-    console = Console(force_terminal=True, width=30)
+    monkeypatch.setenv("TERM", term)
+    # Rich falls back to 80x25 for TERM=dumb unless both dimensions are set.
+    console = Console(force_terminal=True, width=30, height=25)
+    assert console.size.width == 30
     with console.capture() as cap:
         splash(console, version="9.9.9", skip_animation=True)
     out = cap.get()
