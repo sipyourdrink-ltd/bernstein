@@ -238,16 +238,23 @@ class TestRequestRateLimitMiddleware:
         async def cost_events() -> dict[str, str]:
             return {"status": "ok"}
 
+        @app.get("/events/thread")
+        async def thread_events() -> dict[str, str]:
+            return {"status": "ok"}
+
         transport = ASGITransport(app=app, client=("198.51.100.8", 123))
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp_events = await client.get("/events")
             resp_cost = await client.get("/events/cost")
+            resp_thread = await client.get("/events/thread")
 
         assert resp_events.status_code == 429
         assert resp_events.json()["bucket"] == "sse"
         assert "Retry-After" in resp_events.headers
         assert resp_cost.status_code == 429
         assert resp_cost.json()["bucket"] == "sse"
+        assert resp_thread.status_code == 429
+        assert resp_thread.json()["bucket"] == "sse"
 
 
 class _FakeClient:

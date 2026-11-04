@@ -161,6 +161,8 @@ _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DEFAULT_WRITE_RPM = 30
 DEFAULT_READ_RPM = 300
 DEFAULT_SSE_MAX_CONCURRENT = 10
+#: SSE endpoints that share the concurrent-connection cap.
+_SSE_LIMITED_PATHS = frozenset({"/events", "/events/cost", "/events/thread"})
 DEFAULT_HEARTBEAT_RPM = 600
 
 _WRITE_RPM_ENV = "BERNSTEIN_RATE_LIMIT_WRITE_RPM"
@@ -262,7 +264,7 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
         method = request.method.upper()
 
         # SSE concurrency limit for /events endpoints
-        if path in ("/events", "/events/cost") and method == "GET":
+        if path in _SSE_LIMITED_PATHS and method == "GET":
             if self._sse_connections >= self._sse_max_concurrent:
                 return JSONResponse(
                     status_code=429,
