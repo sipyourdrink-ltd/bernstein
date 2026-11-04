@@ -452,3 +452,157 @@ def test_concurrent_same_label_rollbacks_preserve_both_receipt_bodies(tmp_path: 
         body = {key: value for key, value in receipt.items() if key != "receipt_hash"}
         canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
         assert receipt["receipt_hash"] == hashlib.sha256(canonical).hexdigest()
+
+
+def _assert_failure_receipt(state_dir: Path, proposal: UpgradeProposal, restored: list[str]) -> dict:
+    import hashlib
+
+    receipts = list((state_dir / "upgrades" / "rollbacks").glob(f"{proposal.id}*.json"))
+    assert len(receipts) == 1, "a failed rollback must leave its own receipt"
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["proposal_id"] == proposal.id
+    assert receipt["storage_key"] == proposal.storage_key
+    assert receipt["status"] == "failed"
+    assert receipt["restored_files"] == restored
+    assert receipt["error_type"] == "RollbackError"
+    assert receipt["error"]
+    body = {key: value for key, value in receipt.items() if key != "receipt_hash"}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    assert receipt["receipt_hash"] == hashlib.sha256(canonical).hexdigest()
+    return receipt
+
+
+def test_missing_manifest_records_rollback_failure_for_the_named_proposal(tmp_path: Path) -> None:
+    proposal = _proposal()
+    executor = FileUpgradeExecutor(tmp_path)
+    executor._record_history(proposal, "applied")
+
+    with pytest.raises(RollbackError, match="no backup manifest"):
+        FileUpgradeExecutor(tmp_path).rollback_upgrade(proposal)
+
+    receipt = _assert_failure_receipt(tmp_path, proposal, [])
+    assert "no backup manifest" in receipt["error"]
+
+
+def test_missing_backup_records_exactly_the_files_already_restored(tmp_path: Path) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal, "policies.yaml")
+    _applied_change(tmp_path, proposal, "routing.yaml")
+    executor = FileUpgradeExecutor(tmp_path)
+    backup_dir = executor._backup_dir(proposal.storage_key)
+    (backup_dir / "routing.yaml").unlink()
+
+    with pytest.raises(RollbackError, match="recorded a backup"):
+        executor.rollback_upgrade(proposal)
+
+    _assert_failure_receipt(tmp_path, proposal, ["policies.yaml"])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == ORIGINAL
+    assert (executor.config_dir / "routing.yaml").read_text(encoding="utf-8") == CHANGED
+    assert (backup_dir / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("manifest_text", ["invalid json", "[]"])
+def test_invalid_manifest_records_failure_without_changing_files(tmp_path: Path, manifest_text: str) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    executor = FileUpgradeExecutor(tmp_path)
+    manifest = executor._backup_manifest_path(proposal.storage_key)
+    manifest.write_text(manifest_text, encoding="utf-8")
+
+    with pytest.raises(RollbackError, match="backup manifest"):
+        executor.rollback_upgrade(proposal)
+
+    _assert_failure_receipt(tmp_path, proposal, [])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert manifest.read_text(encoding="utf-8") == manifest_text
+
+
+def test_restore_io_failure_is_recorded_and_keeps_its_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.evolution import applicator
+
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    error = OSError("synthetic restore I/O failure")
+
+    def fail_copy(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(applicator.shutil, "copy2", fail_copy)
+    executor = FileUpgradeExecutor(tmp_path)
+    with pytest.raises(RollbackError, match="synthetic restore I/O failure") as excinfo:
+        executor.rollback_upgrade(proposal)
+
+    assert excinfo.value.__cause__ is error
+    _assert_failure_receipt(tmp_path, proposal, [])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert executor._backup_manifest_path(proposal.storage_key).exists()
+
+
+def test_escaping_manifest_records_failure_without_restoring_outside_config(tmp_path: Path) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    executor = FileUpgradeExecutor(tmp_path)
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("unchanged", encoding="utf-8")
+    manifest = executor._backup_manifest_path(proposal.storage_key)
+    contents = json.dumps({"../outside.yaml": f"backups/{proposal.storage_key}/policies.yaml"})
+    manifest.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(RollbackError, match="resolves outside"):
+        executor.rollback_upgrade(proposal)
+
+    _assert_failure_receipt(tmp_path, proposal, [])
+    assert outside.read_text(encoding="utf-8") == "unchanged"
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert manifest.read_text(encoding="utf-8") == contents
+
+
+@pytest.mark.parametrize("stage", ["_record_history", "_write_rollback_receipt", "_retire_backup"])
+def test_bookkeeping_failure_records_restored_files_without_retiring_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    executor = FileUpgradeExecutor(tmp_path)
+    original = getattr(executor, stage)
+    calls = 0
+
+    def fail_once(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(f"synthetic {stage} failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(executor, stage, fail_once)
+    with pytest.raises(RollbackError, match=f"synthetic {stage} failure"):
+        executor.rollback_upgrade(proposal)
+
+    receipts = list((tmp_path / "upgrades" / "rollbacks").glob(f"{proposal.id}*.json"))
+    if stage == "_retire_backup":
+        # The existing success receipt precedes retirement; failure appends its own record.
+        assert len(receipts) == 2
+        failed = [json.loads(path.read_text(encoding="utf-8")) for path in receipts]
+        assert [body["restored_files"] for body in failed if body.get("status") == "failed"] == [["policies.yaml"]]
+    else:
+        _assert_failure_receipt(tmp_path, proposal, ["policies.yaml"])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == ORIGINAL
+    assert executor._backup_manifest_path(proposal.storage_key).exists()
+
+
+def test_unwritable_failure_receipt_reports_both_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    proposal = _proposal()
+    executor = FileUpgradeExecutor(tmp_path)
+    executor._record_history(proposal, "applied")
+
+    def fail_receipt(*args: object, **kwargs: object) -> None:
+        raise OSError("synthetic receipt store unavailable")
+
+    monkeypatch.setattr(executor, "_write_rollback_receipt", fail_receipt)
+    with pytest.raises(RollbackError, match="failure receipt could not be recorded") as excinfo:
+        executor.rollback_upgrade(proposal)
+
+    assert "no backup manifest" in str(excinfo.value)
+    assert "synthetic receipt store unavailable" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, RollbackError)
+    assert not (executor.upgrades_dir / "rollbacks").exists()
