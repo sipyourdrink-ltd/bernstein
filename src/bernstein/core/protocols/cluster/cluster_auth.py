@@ -124,7 +124,7 @@ class ClusterAuthenticator:
         self._node_tokens[node_id] = f"node-{node_id}"
         # Only the node_id and scope list are logged; the JWT itself stays in
         # the return value.
-        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure  # noqa: E501
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.info("Issued cluster token for node %s with scopes %s", node_id, scopes)
         return token
 
@@ -241,7 +241,7 @@ class ClusterAuthenticator:
         # mask anyway so the log line is unambiguous in audit review.
         from bernstein.core.security.redactor import mask
 
-        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure  # noqa: E501
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.info("Revoked cluster token: %s", mask(token, keep=4))
 
     def revoke_node(self, node_id: str) -> None:
