@@ -64,7 +64,8 @@ policy = FederationPolicy(
     max_indexes=100,
 )
 projects, dropped = browse_indexes(
-    ["https://registry.example/index.json"], federation=policy,
+    ["https://registry.example/index.json"],
+    federation=policy,
 )
 ```
 
