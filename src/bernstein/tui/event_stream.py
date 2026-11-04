@@ -68,8 +68,13 @@ class StreamFrame:
     data: dict[str, Any] = field(default_factory=dict)
 
 
-#: Upper bound, in decoded characters, on one buffered SSE frame (the
-#: in-progress ``data`` lines plus the unterminated line tail). It mirrors
+#: Upper bound, in decoded characters, on one SSE frame. A frame's size is
+#: every character of every line since the previous blank line - field
+#: names, separators, values, comments and unknown fields alike - with each
+#: line ending (``LF``, ``CR`` or ``CRLF``) counted as one character, plus
+#: the not-yet-terminated line; the blank line that ends the frame is not
+#: counted. This depends only on the text, never on how it was chunked, so
+#: a frame is accepted or rejected identically for every partition. It mirrors
 #: the 1 MiB frame cap the ACP transport enforces
 #: (:data:`bernstein.core.protocols.acp.transport.MAX_FRAME_BYTES`) and the
 #: server's 1 MiB request-body cap; journal projections are far smaller.
@@ -116,7 +121,8 @@ class SSEDecoder:
     ``id`` nor ``event``. ``id`` and ``event`` values are whitespace-stripped.
 
     Memory is bounded by ``max_frame_chars`` (``None`` disables the bound for
-    already-in-memory input). After :class:`SSEFrameTooLarge` the decoder
+    already-in-memory input), applied to the chunk-independent frame size
+    defined at :data:`MAX_FRAME_CHARS`. After :class:`SSEFrameTooLarge` the decoder
     refuses further input until :meth:`close`, so a tail of the oversized
     frame can never be misread as new fields.
     """
@@ -134,13 +140,13 @@ class SSEDecoder:
         self._id = ""
         self._event = ""
         self._data: list[str] = []
-        self._data_len = 0
+        self._frame_len = 0
         self._has_data = False
 
     @property
     def pending_chars(self) -> int:
-        """Characters buffered for the in-progress (undelivered) frame."""
-        return self._tail_len + self._data_len
+        """Size of the in-progress (undelivered) frame, per :data:`MAX_FRAME_CHARS`."""
+        return self._frame_len + self._tail_len
 
     def feed(self, text: str) -> list[StreamFrame]:
         """Consume *text* and return the frames it completed, in order.
@@ -217,13 +223,13 @@ class SSEDecoder:
             if frame is not None:
                 frames.append(frame)
             return
+        self._frame_len += len(line) + 1  # one per line ending, however spelled
         if line.startswith(":"):
             return  # comment / keep-alive
         name, _, value = line.partition(":")
         value = value.removeprefix(" ")
         if name == "data":
             self._data.append(value)
-            self._data_len += len(value) + 1
             self._has_data = True
         elif name == "id":
             if "\x00" not in value:
@@ -377,7 +383,11 @@ class JournalStreamConsumer:
 def _as_index(sse_id: str) -> int | None:
     if _JOURNAL_INDEX.fullmatch(sse_id) is None:
         return None
-    return int(sse_id)
+    try:
+        return int(sse_id)
+    except ValueError:
+        # Beyond the interpreter's int-string digit limit: not a journal index.
+        return None
 
 
 __all__ = [

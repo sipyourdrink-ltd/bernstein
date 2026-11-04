@@ -18,7 +18,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import json
 import random
+import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -225,10 +227,13 @@ def test_crlf_split_between_cr_and_lf() -> None:
 
 def test_lone_cr_chunk_then_other_text_is_one_line_end() -> None:
     consumer = JournalStreamConsumer()
-    # CR-only line endings: the CR at a chunk end must not swallow content.
-    got = _delivered(consumer, ["id: 6\r", "event: s\r", "data: {}\r", "\r"])
+    # CR-only line endings: the CR at a chunk end must not swallow content,
+    # and nothing is delivered before the blank line arrives.
+    for chunk in ["id: 6\r", "event: s\r", 'data: {"n":6}\r']:
+        assert consumer.consume(chunk) == []
+    assert consumer.last_event_id == ""
 
-    assert [f.sse_id for f in got] == ["6"]
+    assert consumer.consume("\r") == [StreamFrame("6", "s", {"n": 6})]
 
 
 def test_two_frames_share_chunks_and_whitespace_only_terminator() -> None:
@@ -300,6 +305,14 @@ def test_non_journal_ids_are_rejected_without_cursor_move(bad_id: str) -> None:
 
     assert [f.sse_id for f in got] == ["3"]
     assert consumer.reconnect_headers() == {"Last-Event-ID": "3"}
+
+
+def test_id_beyond_int_digit_limit_is_rejected_not_raised() -> None:
+    consumer = JournalStreamConsumer()
+    raw = _frame("5", "s", "{}") + _frame("9" * 5000, "s", "{}") + _frame("6", "s", "{}")
+
+    assert [f.sse_id for f in consumer.consume(raw)] == ["5", "6"]
+    assert consumer.last_event_id == "6"
 
 
 def test_empty_id_and_id_only_frames_are_control_not_journal_events() -> None:
@@ -385,15 +398,89 @@ def test_oversized_unterminated_line_is_bounded_across_chunks() -> None:
     assert decoder.pending_chars == 0
 
 
-def test_frame_at_exact_bound_is_accepted_and_one_over_is_not() -> None:
-    """The bound covers the longest buffered state: the raw ``data:`` line."""
-    data = '{"k":"' + "z" * 20 + '"}'
-    limit = len(f"data: {data}")
-    consumer = JournalStreamConsumer(max_frame_chars=limit)
+#: Single complete frames for the size-bound controls. Their size includes
+#: comments, unknown fields and field-name prefixes, not just data values.
+_BOUND_FRAMES = {
+    # Shape of the confirmed probe: whole delivered vs split rejected before the fix.
+    "probe": 'id: 1\nevent: s\ndata: {"k":"xxxxxxxxx"}\n\n',
+    "prefixes": (
+        ": keep-alive comment\nid: 1\nevent: thread.step\nretry: 1000\n"
+        'x-unknown-field: ignored value\ndata: {"a":\ndata: 1}\n\n'
+    ),
+    "crlf": ': c\r\nid: 1\r\nevent: s\r\ndata: {"note":"日本"}\r\n\r\n',
+    "cr": ": c\rid: 1\revent: s\rdata: {}\r\r",
+}
 
-    assert [f.sse_id for f in _delivered(consumer, list(_frame("1", "s", data)))] == ["1"]
+
+def _frame_size(text: str) -> int:
+    """Independent oracle: chars of the frame's lines, one per line ending."""
+    lines = re.split(r"\r\n|\r|\n", text)
+    return sum(len(line) + 1 for line in lines[: lines.index("")])
+
+
+def _bound_outcome(limit: int, chunks: Sequence[str]) -> tuple[str, list[str], str]:
+    consumer = JournalStreamConsumer(max_frame_chars=limit)
+    ids: list[str] = []
+    try:
+        for chunk in chunks:
+            ids += [f.sse_id for f in consumer.consume(chunk)]
+    except SSEFrameTooLarge as exc:
+        ids += [f.sse_id for f in exc.delivered]
+        return ("rejected", ids, consumer.last_event_id)
+    return ("accepted", ids, consumer.last_event_id)
+
+
+@pytest.mark.parametrize("name", sorted(_BOUND_FRAMES))
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_frame_size_bound_is_partition_independent(name: str, offset: int) -> None:
+    """Below, at and above the bound: whole text and every split agree."""
+    text = _BOUND_FRAMES[name]
+    limit = _frame_size(text) + offset
+    expected = ("accepted", ["1"], "1") if offset >= 0 else ("rejected", [], "")
+
+    assert _bound_outcome(limit, [text]) == expected
+    assert _bound_outcome(limit, list(text)) == expected
+    for cut in range(len(text) + 1):
+        assert _bound_outcome(limit, [text[:cut], text[cut:]]) == expected, f"split at {cut}"
+
+
+def test_probe_frame_size_counts_field_prefixes() -> None:
+    text = _BOUND_FRAMES["probe"]
+
+    assert _frame_size(text) == len("id: 1\n") + len("event: s\n") + len('data: {"k":"xxxxxxxxx"}\n')
+    assert _bound_outcome(20, [text]) == ("rejected", [], "")
+    assert _bound_outcome(20, [text[:-2], text[-2:]]) == ("rejected", [], "")
+
+
+def test_comment_lines_count_until_a_blank_line_resets_the_frame() -> None:
+    limit = 64
+    terminated = ": ping\n\n" * 100 + _frame("1", "s", "{}")
+    assert _bound_outcome(limit, [terminated]) == ("accepted", ["1"], "1")
+    assert _bound_outcome(limit, list(terminated)) == ("accepted", ["1"], "1")
+
+    unterminated = ": ping\n" * 100
+    assert _bound_outcome(limit, [unterminated])[0] == "rejected"
+    assert _bound_outcome(limit, list(unterminated))[0] == "rejected"
+
+
+def test_repeated_id_and_event_lines_count_toward_the_bound() -> None:
+    """Overwritten ``id``/``event`` lines are counted, so retained text stays bounded."""
+    limit = 100
+    text = "id: " + "1" * 60 + "\nevent: " + "e" * 60 + '\ndata: {"k":"' + "v" * 20 + '"}\n\n'
+
+    assert _bound_outcome(limit, [text])[0] == "rejected"
+    assert _bound_outcome(limit, list(text))[0] == "rejected"
+
+
+def test_pending_never_exceeds_bound_while_feeding() -> None:
+    limit = 50
+    decoder = SSEDecoder(max_frame_chars=limit)
+    text = _frame("1", "s", "{}") + ": comment\nid: 2\nevent: s\ndata: " + "q" * 200
     with pytest.raises(SSEFrameTooLarge):
-        _delivered(JournalStreamConsumer(max_frame_chars=limit - 1), list(_frame("1", "s", data)))
+        for char in text:
+            decoder.feed(char)
+            assert decoder.pending_chars <= limit
+    assert decoder.pending_chars == 0
 
 
 # ---------------------------------------------------------------------------
@@ -505,10 +592,25 @@ async def test_app_delivers_byte_split_frames_without_partial_refresh(monkeypatc
 
 @pytest.mark.asyncio
 async def test_app_whitespace_only_chunk_terminates_frame(monkeypatch: pytest.MonkeyPatch) -> None:
-    harness = _Harness(monkeypatch, [_sse([b"id: 1\nevent: s\ndata: {}\n", b"\n"])])
+    harness = _Harness(monkeypatch, [_sse([b'id: 1\nevent: s\ndata: {"n":1}\n', b"\n"])])
+    per_chunk: list[tuple[str, list[StreamFrame], int]] = []
+    real_consume = harness.app._stream_consumer.consume
+
+    def spy(raw: str) -> list[StreamFrame]:
+        got = real_consume(raw)
+        per_chunk.append((raw, got, harness.refreshes))
+        return got
+
+    monkeypatch.setattr(harness.app._stream_consumer, "consume", spy)
 
     await harness.run()
 
+    # The first chunk lacks its blank line: no frame, no refresh. The lone
+    # "\n" chunk must reach the consumer and complete the frame.
+    assert per_chunk == [
+        ('id: 1\nevent: s\ndata: {"n":1}\n', [], 0),
+        ("\n", [StreamFrame("1", "s", {"n": 1})], 0),
+    ]
     assert harness.refreshes == 1
     assert harness.app._stream_consumer.last_event_id == "1"
 
@@ -576,3 +678,30 @@ async def test_app_cancellation_closes_stream_and_discards_partial(monkeypatch: 
     assert harness.app._stream_consumer.last_event_id == ""
     assert harness.refreshes == 0
     assert harness.sleeps == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "integration blocker (server, out of scope here): SSEBus.publish in "
+        "core/server/server_app.py writes 'event:/data:' frames with no SSE id, "
+        "/events (core/routes/status_events.py) forwards them verbatim, and the "
+        "id-bearing ThreadStreamEvent.to_sse (core/replay/thread_projection.py) "
+        "has no server caller - so the consumer treats every live frame as a "
+        "control frame and the streamed TUI never refreshes"
+    ),
+)
+@pytest.mark.asyncio
+async def test_live_bus_task_update_refreshes_streamed_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.core.server.server_app import SSEBus
+
+    bus = SSEBus()
+    queue = bus.subscribe()
+    bus.publish("task_update", json.dumps({"id": "t1", "status": "done"}))
+    wire = 'event: heartbeat\ndata: {"connected": true}\n\n' + queue.get_nowait()
+    harness = _Harness(monkeypatch, [_sse([wire.encode()])])
+
+    await harness.run()
+
+    assert harness.refreshes >= 1
