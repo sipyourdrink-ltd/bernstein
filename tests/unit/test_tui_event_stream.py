@@ -574,7 +574,70 @@ def _sse(chunks: Sequence[bytes], **kwargs: Any) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [404, 422, "connect"])
+@pytest.mark.parametrize("next_run", ["run-2", "run-1"])
+async def test_app_polls_unserved_run_until_a_new_run_appears(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, next_run: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    next_id = "0" if next_run == "run-2" else "6"
+    missing = httpx.Response(404, json={"detail": "run journal not found"})
+    harness = _Harness(
+        monkeypatch,
+        [missing, _sse([_frame(next_id, "s", "{}").encode()]), _sse([]), _sse([])],
+    )
+    old_consumer = harness.app._stream_consumer
+    old_consumer.consume(_frame("5", "s", "{}") + 'id: 6\nevent: s\ndata: {"partial":')
+
+    async def poll_then_start_run(delay: float) -> None:
+        harness.sleeps.append(delay)
+        harness.now += delay
+        if len(harness.sleeps) == 1 and next_run == "run-1":
+            monkeypatch.delenv(app_module.STREAM_RUN_ENV_VAR)
+        if len(harness.sleeps) == 3:
+            monkeypatch.setenv(app_module.STREAM_RUN_ENV_VAR, next_run)
+        if len(harness.sleeps) == 4:
+            raise _Stop
+
+    monkeypatch.setattr(app_module.asyncio, "sleep", poll_then_start_run)
+
+    await harness.run()
+
+    assert harness.sleeps == [0.25, 0.25, 0.25, 21.0]
+    assert [request.url.params["run"] for request in harness.requests] == ["run-1", next_run]
+    assert [request.headers.get("last-event-id") for request in harness.requests] == [
+        "5",
+        None if next_run == "run-2" else "5",
+    ]
+    assert harness.refreshes == 4  # unavailable snapshot, two polls, then the new run's frame
+    assert old_consumer.pending_chars == 0
+    assert (harness.app._stream_consumer is old_consumer) == (next_run == "run-1")
+    assert harness.app._stream_consumer.last_event_id == next_id
+    assert len(harness.clients) == 2 and all(client.is_closed for client in harness.clients)
+    assert missing.is_closed
+
+
+@pytest.mark.asyncio
+async def test_app_invalid_url_reports_one_configuration_error_and_stops(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = _Harness(monkeypatch, [_sse([])])
+    monkeypatch.setattr(app_module, "SERVER_URL", "http://fixture.invalid:not-a-port")
+
+    with caplog.at_level("ERROR", logger=app_module.__name__):
+        await harness.run()
+
+    errors = [record for record in caplog.records if record.name == app_module.__name__ and record.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "BERNSTEIN_SERVER_URL" in errors[0].getMessage()
+    assert harness.requests == []
+    assert harness.sleeps == []
+    assert harness.intervals == []
+    assert harness.refreshes == 0
+    assert len(harness.clients) == 1 and harness.clients[0].is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [500, 422, "connect"])
 async def test_app_refreshes_on_failure_and_recovers_with_the_same_cursor(
     monkeypatch: pytest.MonkeyPatch, failure: int | str
 ) -> None:
