@@ -453,10 +453,13 @@ visibility ends.
 
 ## Live thread stream
 
-The TUI and web UI render the run as a live SSE stream that is a hash-anchored
-projection of the same `journal.jsonl` chain, rather than a timer poll of the
-server. Each streamed event carries its journal entry's `event_hash`, so the
-operator's view is an attestable projection of what executed.
+The thread stream is designed as a live SSE projection of the same
+`journal.jsonl` chain, so the TUI and web UI can render the run without a timer
+poll of the server. Each projected event carries its journal entry's
+`event_hash`, so a view driven by it is an attestable projection of what
+executed. The server does not serve this projection on `/events` yet (see the
+known limitation below); until it does, the TUI's polling default is the
+working path.
 
 - `bernstein thread verify --run <id>` proves the projection equals the
   executed journal: it recomputes the Merkle chain
@@ -469,9 +472,10 @@ operator's view is an attestable projection of what executed.
   (`project_journal(path, after_index=...)`), so a dropped-and-reconnected
   client resumes from `Last-Event-ID` (the monotonic journal index) without
   missing or duplicating a row.
-- Set `BERNSTEIN_TUI_STREAM=1` to drive the TUI hot path from the stream; unset
-  keeps the polling fallback for constrained terminals. The rendering is
-  unchanged - only the data source is swapped.
+- `BERNSTEIN_TUI_STREAM=1` switches the TUI hot path from polling to the
+  stream; unset keeps polling. The rendering is unchanged - only the data
+  source is swapped. It is only useful once the server emits journal ids on
+  `/events` (see the known limitation below).
 - The TUI client (`src/bernstein/tui/event_stream.py`) buffers SSE frames
   across network chunks. Only a complete frame (ended by a blank line) whose
   `id` is a non-negative decimal journal index above the cursor is delivered
