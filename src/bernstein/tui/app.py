@@ -24,7 +24,7 @@ from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
 from bernstein.tui.command_palette import DEFAULT_PALETTE_COMMANDS, CommandPalette, CommandPaletteScreen, PaletteCommand
-from bernstein.tui.event_stream import JournalStreamConsumer, stream_enabled
+from bernstein.tui.event_stream import JournalStreamConsumer, SSEFrameTooLarge, stream_enabled
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
 from bernstein.tui.layout_persistence import LayoutConfig, load_layout, save_layout
 from bernstein.tui.notification_badge import NotificationCenterPanel, NotificationHistory
@@ -544,12 +544,21 @@ class BernsteinApp(App[None]):
         """Drive the hot path from the audit-chain SSE stream (issue #2297).
 
         Replaces the timer poll loop: each hash-anchored journal frame that
-        the server projects triggers a single refresh, so the rendered view
-        is an attestable projection of the executed thread rather than a
-        polled snapshot. On a dropped connection the loop reconnects with
+        the server projects triggers a refresh, so the rendered view is an
+        attestable projection of the executed thread rather than a polled
+        snapshot. On a dropped connection the loop reconnects with
         ``Last-Event-ID`` so it resumes from the last journal index without
         missing or duplicating an entry (AC5). The rendering path is
         unchanged - only the data source is swapped.
+
+        Every received text chunk is fed to the consumer, whitespace-only
+        ones included (a lone newline can be the blank line that completes a
+        frame), and a refresh fires only once a complete frame is delivered.
+        When a connection ends for any reason its incomplete frame is
+        discarded, and the next attempt waits ``poll_interval`` so a server
+        that keeps closing or rejecting the stream is not hammered. A frame
+        over the consumer's size bound ends streaming for this session and
+        switches to the polling fallback rather than skipping the frame.
         """
         while True:
             try:
@@ -558,15 +567,25 @@ class BernsteinApp(App[None]):
                     httpx.AsyncClient(timeout=None) as client,
                     client.stream("GET", f"{SERVER_URL}/events", headers=headers) as response,
                 ):
-                    async for block in response.aiter_text():
-                        if not block.strip():
-                            continue
-                        delivered = list(self._stream_consumer.consume(block))
-                        if delivered:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_text():
+                        if self._stream_consumer.consume(chunk):
                             self.action_refresh()
+            except SSEFrameTooLarge as exc:
+                logger.warning(
+                    "thread stream frame exceeded %d chars; switching to polling fallback",
+                    exc.limit,
+                )
+                self.set_interval(self._poll_interval, self.action_refresh)
+                self.action_refresh()
+                return
             except Exception:
                 logger.debug("thread stream disconnected, will reconnect", exc_info=True)
-                await asyncio.sleep(self._poll_interval)
+            finally:
+                discarded = self._stream_consumer.end_stream()
+                if discarded:
+                    logger.debug("thread stream ended mid-frame; discarded %d buffered chars", discarded)
+            await asyncio.sleep(self._poll_interval)
 
     def _apply_task_filter(self) -> None:
         """Apply the current structured task filter to the cached task rows."""
