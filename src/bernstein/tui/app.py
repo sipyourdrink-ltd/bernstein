@@ -602,15 +602,18 @@ class BernsteinApp(App[None]):
         The stream is pinned to one run per connection
         (:func:`_thread_stream_run`). When that run changes, the open stream
         is left and the consumer starts over for the new run, whose journal
-        indices restart at 0. While no run is known yet the loop refreshes
-        once per ``poll_interval``, as the polling path would.
+        indices restart at 0. While no run is known, or the server reports
+        its journal missing, snapshots refresh once per ``poll_interval``.
+        A missing journal is not retried until the run selection changes
+        or disappears and reappears. An invalid server URL is reported once
+        as a configuration error and stops the consumer.
 
         Every received text chunk is fed to the consumer, whitespace-only
         ones included (a lone newline can be the blank line that completes a
         frame), and normal stream refreshes require a complete frame.
         When a connection ends for any reason its incomplete frame is
         discarded. Transport and HTTP failures also refresh the snapshot.
-        Every reconnect waits at least 21 seconds (or ``poll_interval`` if
+        Other reconnects wait at least 21 seconds (or ``poll_interval`` if
         longer), including after clean EOF, to respect the server's sliding
         reconnect budget. A 429 can extend that wait via ``Retry-After``;
         missing or invalid values use the 300-second cooldown. A frame
@@ -618,12 +621,19 @@ class BernsteinApp(App[None]):
         switches to the polling fallback rather than skipping the frame.
         """
         run_id: str | None = None
+        unserved_run: str | None = None
         while True:
             current = _thread_stream_run()
             if current is None:
+                unserved_run = None
                 self.action_refresh()
                 await asyncio.sleep(self._poll_interval)
                 continue
+            if current == unserved_run:
+                self.action_refresh()
+                await asyncio.sleep(self._poll_interval)
+                continue
+            unserved_run = None
             if run_id is not None and current != run_id:
                 self._stream_consumer = JournalStreamConsumer()
             run_id = current
@@ -650,12 +660,19 @@ class BernsteinApp(App[None]):
                 self.set_interval(self._poll_interval, self.action_refresh)
                 self.action_refresh()
                 return
+            except httpx.InvalidURL:
+                logger.error("Invalid thread stream URL; check BERNSTEIN_SERVER_URL configuration")
+                return
             except httpx.HTTPError as exc:
                 logger.debug("thread stream disconnected, will reconnect", exc_info=True)
-                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
-                    reconnect_delay = max(
-                        reconnect_delay, _thread_stream_retry_after(exc.response.headers.get("Retry-After"))
-                    )
+                if isinstance(exc, httpx.HTTPStatusError):
+                    if exc.response.status_code == 404:
+                        unserved_run = run_id
+                        reconnect_delay = self._poll_interval
+                    elif exc.response.status_code == 429:
+                        reconnect_delay = max(
+                            reconnect_delay, _thread_stream_retry_after(exc.response.headers.get("Retry-After"))
+                        )
                 self.action_refresh()
             finally:
                 discarded = self._stream_consumer.end_stream()

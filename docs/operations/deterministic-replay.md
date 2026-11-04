@@ -494,6 +494,11 @@ forwards `SSEBus` messages without an `id` for the web UI and other clients.
   changes it leaves the open stream and starts the new run from index 0.
   Missing, unreadable or malformed owner records (including invalid UTF-8)
   mean no known run. While no run is known it refreshes once per poll interval.
+  A server 404 (run journal not found) also switches to snapshot polling at
+  that interval, without reconnecting for the unserved run. Streaming resumes
+  when the selected run changes or disappears and reappears. A malformed
+  server URL logs one configuration error naming `BERNSTEIN_SERVER_URL` and
+  stops the stream consumer without retrying.
 - The TUI client (`src/bernstein/tui/event_stream.py`) buffers SSE frames
   across network chunks. Only a complete frame (ended by a blank line) whose
   `id` is a non-negative decimal journal index above the cursor is delivered
@@ -504,7 +509,7 @@ forwards `SSEBus` messages without an `id` for the web UI and other clients.
   partial frame while keeping the cursor for the same run. Connection and
   non-2xx failures trigger a snapshot refresh through the existing refresh
   path; HTTP error bodies never become stream frames.
-- Every TUI reconnect waits at least 21 seconds, or `poll_interval` if longer,
+- Other TUI reconnects wait at least 21 seconds, or `poll_interval` if longer,
   including after a clean end of stream. This leaves a margin below the
   server's default budget of three connections per sliding 60-second window.
   A 429's valid `Retry-After` (delay-seconds or HTTP-date) can extend the wait;
