@@ -49,12 +49,12 @@
       "verdict_basis": "junit_failures"
     },
     {
-      "actual_verdict": "pass",
+      "actual_verdict": "fail",
       "case_class": "runtime_config_placeholder_secret",
-      "caught": false,
+      "caught": true,
       "expected_verdict": "fail",
       "gate_that_must_flag": "dlp_scan",
-      "verdict_basis": "gate_verdict"
+      "verdict_basis": "finding_signature"
     },
     {
       "actual_verdict": "fail",
@@ -65,9 +65,9 @@
       "verdict_basis": "finding_signature"
     }
   ],
-  "catch_rate": 0.375,
-  "caught_count": 3,
-  "content_sha256": "ed8ff3cdc606bf4e3ada1a905d89142b8572910792d38845dec832889c2e31dd",
+  "catch_rate": 0.5,
+  "caught_count": 4,
+  "content_sha256": "b4ec53026d0eb5ae4ab6d9c03f48f871a2c9a061939e2da0d08daeb352aa831b",
   "corpus_sha256": "0083910223efd1e7fea28dc1411fc650087be90e98085873d059dd4e591f50f7",
   "schema_version": 1,
   "suite_hash": "f364fb175823c25586842830fd2a37d858258b7cc37cd490aa4bc02556a48f65",
@@ -78,5 +78,5 @@
     "vulture": "2.16"
   },
   "total": 8,
-  "update_reason": "test_expansion catches the no-module-import placeholder; narrow fixture wording and remeasure after integration with main (#6151)"
+  "update_reason": "dlp_scan flags runtime_config_placeholder_secret (#6152); remeasured after the #6484 catch"
 }
