@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import pytest
 from bernstein.core.seed import parse_seed
@@ -59,6 +60,26 @@ async def test_default_attempt_limit(
             response = await client.request(method, first_prefix + path, json=body)
             assert response.status_code == (200 if path.startswith("/dashboard") else 404)
         assert_limited(await client.request(method, last_prefix + path, json=body))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,path,body", ENDPOINTS)
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+async def test_route_executes_application_attempt_limiter(
+    app: FastAPI, method: str, path: str, body: dict[str, str], prefix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every auth route executes the real limiter before its handler runs."""
+    limiter = auth_rate_limiter.AuthRateLimiter(max_requests=1)
+    assert limiter.check("127.0.0.1") is None
+    check = Mock(wraps=limiter.check)
+    monkeypatch.setattr(limiter, "check", check)
+    app.state.auth_rate_limiter = limiter
+
+    async with client_for(app) as client:
+        response = await client.request(method, prefix + path, json=body)
+
+    assert_limited(response)
+    check.assert_called_once_with("127.0.0.1", bucket="auth", max_requests=None, window_seconds=None)
 
 
 @pytest.mark.asyncio
