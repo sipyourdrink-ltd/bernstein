@@ -249,7 +249,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 | [datasources](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/datasources.md) | read-only query receipts, plus a query driver that binds each result to the schema snapshot it was derived against |
 | [agent catalogs](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/agent-catalogs.md) | point roles at agent definitions outside the built-in templates - a generic YAML/SKILL.md directory, or a Claude Code plugin-layout tree |
 | [integrations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/integrations.md) | what Bernstein bridges to, by the name you call it: SCIM, OIDC, Vault, OPA/Cedar, SPIFFE, OpenTelemetry, MCP, A2A - with what is shipped, what is wired, and what is not planned |
-| [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, hardening; [request limits](docs/operations/security-and-identity.md#request-rate-limits) cover canonical routes and `/api/v1` aliases |
+| [security](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/security.md) | scorecard, fuzzing, hardening |
 | [architecture](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/ARCHITECTURE.md) | how it works under the hood |
 
 ### why the name?
