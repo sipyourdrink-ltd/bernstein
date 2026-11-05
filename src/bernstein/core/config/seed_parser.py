@@ -1849,7 +1849,8 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
 
     def _qg_int(key: str, default: int) -> int:
         val = qg_dict.get(key, default)
-        if not isinstance(val, int):
+        # ``bool`` is a subclass of ``int``; ``timeout_s: true`` is a typo, not a timeout.
+        if isinstance(val, bool) or not isinstance(val, int):
             raise SeedError(f"quality_gates.{key} must be an integer, got: {type(val).__name__}")
         return val
 

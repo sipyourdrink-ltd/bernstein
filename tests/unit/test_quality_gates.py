@@ -630,6 +630,20 @@ class TestSeedQualityGatesParsing:
         assert iv.block_on_partial is True
         assert iv.fork_from_context == "summary"
 
+    @pytest.mark.parametrize("key", ["large_file_threshold", "timeout_s", "mutation_timeout_s"])
+    def test_parse_quality_gates_integer_keys_reject_bools(self, tmp_path: Path, key: str) -> None:
+        """``bool`` subclasses ``int``; a bare ``true`` under an integer key is a typo, not a value."""
+        from bernstein.core.seed import SeedError, parse_seed
+
+        yaml_text = f"""goal: Test
+quality_gates:
+  {key}: true
+"""
+        seed_path = tmp_path / "bernstein.yaml"
+        seed_path.write_text(yaml_text)
+        with pytest.raises(SeedError, match=f"quality_gates.{key} must be an integer"):
+            parse_seed(seed_path)
+
     def test_parse_quality_gates_intent_verification_rejects_wrong_types(self, tmp_path: Path) -> None:
         """A mistyped nested key fails loudly, like every other quality_gates key."""
         from bernstein.core.seed import SeedError, parse_seed
