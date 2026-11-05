@@ -45,6 +45,10 @@ def _repo_with_remote_branch(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "trunk")
+    # The merge path commits with the repository identity, and a CI runner has
+    # no global one; the ``-c`` flags in ``_git`` cover only its own calls.
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "config", "user.email", "t@x")
     (repo / "README.md").write_text("start\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-q", "-m", "initial")
