@@ -30,6 +30,41 @@ no canonical rule matches.
 The `/events`, `/events/cost` and `/events/thread` routes and their versioned
 aliases share the SSE concurrency cap.
 
+## Authentication attempt limits
+
+`POST /dashboard/auth/login`, `GET /auth/login`, `GET /auth/oidc/callback`,
+`POST /auth/saml/acs`, and `POST /auth/cli/{device,token,authorize}` share a
+default budget of 10 attempts per client per 60 seconds. Their `/api/v1`
+aliases use the same counters. Limits apply even to loopback clients and
+unconfigured providers. Client identity uses the TCP peer unless the peer
+is explicitly trusted through `BERNSTEIN_TRUSTED_PROXY_IPS`; in that case,
+the right-most untrusted address in `X-Forwarded-For` identifies the client.
+
+Exhausting the budget returns HTTP 429 with an integer `Retry-After` header.
+The first lockout lasts one window; subsequent exhausted windows double the
+lockout up to 900 seconds (or one window if configured longer). Failed
+dashboard credentials also start a backoff of 1, 2, 4, ... seconds, capped at
+900 seconds. Blocked requests do not extend the lockout. A successful
+dashboard login clears only that client's backoff, retaining attempt counts.
+Backoff history expires 900 seconds after the lockout ends. State is held
+in memory per application process and is cleared on restart; deployments
+with multiple processes should also enforce limits at their ingress.
+
+Existing seed buckets override the default attempt count and window:
+
+```yaml
+rate_limit:
+  auth:
+    requests: 10
+    window_seconds: 60
+    paths: [/auth, /dashboard/auth]
+```
+
+Matching follows the request-limit rules above, including method filters
+and canonical precedence over versioned-only rules. Each matching seed
+bucket shares an authentication budget across its covered auth endpoints;
+general request limits continue to apply as well.
+
 ## Auth providers
 
 Three provider families are supported, configured under `auth.*` in
