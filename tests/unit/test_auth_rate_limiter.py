@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -13,7 +15,9 @@ from bernstein.core.auth_rate_limiter import (
 )
 from bernstein.core.seed import RateLimitBucketConfig, RateLimitConfig, SeedConfig
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from httpx import ASGITransport, AsyncClient
+from starlette.types import Message, Scope
 
 from bernstein.core.server import create_app
 
@@ -255,6 +259,113 @@ class TestRequestRateLimitMiddleware:
         assert resp_cost.json()["bucket"] == "sse"
         assert resp_thread.status_code == 429
         assert resp_thread.json()["bucket"] == "sse"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["/events", "/events/cost", "/events/thread"])
+    @pytest.mark.parametrize("termination", ["finish", "disconnect", "cancel", "error"])
+    async def test_sse_cap_holds_until_stream_closes(self, path: str, termination: str) -> None:
+        """Two open bodies reject a third stream; closing one admits a replacement."""
+        app = FastAPI()
+        finishes: list[asyncio.Event] = []
+
+        async def body() -> AsyncIterator[bytes]:
+            finish = asyncio.Event()
+            finishes.append(finish)
+            yield b"data: ready\n\n"
+            await finish.wait()
+            if termination == "error":
+                raise RuntimeError("stream failed")
+
+        async def events() -> StreamingResponse:
+            return StreamingResponse(body(), media_type="text/event-stream")
+
+        for route in ("/events", "/events/cost", "/events/thread"):
+            app.add_api_route(route, events, methods=["GET"])
+        middleware = RequestRateLimitMiddleware(app, sse_max_concurrent=2)
+        exchanges: list[_OpenSSE] = []
+
+        async def open_stream(route: str) -> _OpenSSE:
+            exchange = _OpenSSE(middleware, route)
+            exchanges.append(exchange)
+            await asyncio.wait_for(exchange.ready.wait(), timeout=5)
+            return exchange
+
+        try:
+            first = await open_stream(path)
+            second = await open_stream("/events/thread")
+            assert first.status == second.status == 200
+            assert not first.task.done() and not second.task.done()
+
+            excess = await open_stream(path)
+            assert excess.status == 429
+            assert excess.headers[b"retry-after"] == b"5"
+            assert middleware.sse_connections == 2
+            await asyncio.wait_for(excess.task, timeout=5)
+
+            if termination == "disconnect":
+                first.disconnect.set()
+                await asyncio.wait_for(first.task, timeout=5)
+            elif termination == "cancel":
+                first.task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await first.task
+            else:
+                finishes[0].set()
+                if termination == "error":
+                    with pytest.raises(RuntimeError, match="stream failed"):
+                        await asyncio.wait_for(first.task, timeout=5)
+                else:
+                    await asyncio.wait_for(first.task, timeout=5)
+
+            assert middleware.sse_connections == 1
+            replacement = await open_stream(path)
+            assert replacement.status == 200
+        finally:
+            for exchange in exchanges:
+                exchange.task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(*(exchange.task for exchange in exchanges), return_exceptions=True), timeout=5
+            )
+        assert middleware.sse_connections == 0
+
+
+class _OpenSSE:
+    """Drive a real streaming response without buffering it like ASGITransport."""
+
+    def __init__(self, app: RequestRateLimitMiddleware, path: str) -> None:
+        self.ready = asyncio.Event()
+        self.disconnect = asyncio.Event()
+        self.status = 0
+        self.headers: dict[bytes, bytes] = {}
+        self._sent_request = False
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "query_string": b"",
+            "root_path": "",
+            "headers": [],
+            "client": ("198.51.100.8", 123),
+            "server": ("test", 80),
+        }
+        self.task = asyncio.create_task(app(scope, self.receive, self.send))
+
+    async def receive(self) -> Message:
+        if not self._sent_request:
+            self._sent_request = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await self.disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(self, message: Message) -> None:
+        if message["type"] == "http.response.start":
+            self.status = message["status"]
+            self.headers = dict(message.get("headers", []))
+        elif message["type"] == "http.response.body":
+            self.ready.set()
 
 
 class _FakeClient:
