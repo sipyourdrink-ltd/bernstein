@@ -17,7 +17,7 @@ from bernstein.core.seed import RateLimitBucketConfig, RateLimitConfig, SeedConf
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from httpx import ASGITransport, AsyncClient
-from starlette.types import Message, Scope
+from starlette.types import Message, Receive, Scope, Send
 
 from bernstein.core.server import create_app
 
@@ -366,6 +366,124 @@ class _OpenSSE:
             self.headers = dict(message.get("headers", []))
         elif message["type"] == "http.response.body":
             self.ready.set()
+
+
+class TestVersionedRateLimitAliases:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["/events", "/events/cost", "/events/thread"])
+    @pytest.mark.parametrize(
+        "first_prefix,second_prefix", [("", ""), ("", "/api/v1"), ("/api/v1", ""), ("/api/v1", "/api/v1")]
+    )
+    async def test_sse_aliases_share_connection_cap(self, path: str, first_prefix: str, second_prefix: str) -> None:
+        app = FastAPI()
+        finishes: list[asyncio.Event] = []
+
+        async def body() -> AsyncIterator[bytes]:
+            finish = asyncio.Event()
+            finishes.append(finish)
+            yield b"data: ready\n\n"
+            await finish.wait()
+
+        async def events() -> StreamingResponse:
+            return StreamingResponse(body(), media_type="text/event-stream")
+
+        for route in (path, "/api/v1" + path):
+            app.add_api_route(route, events, methods=["GET"])
+        middleware = RequestRateLimitMiddleware(app, sse_max_concurrent=1)
+        exchanges: list[_OpenSSE] = []
+
+        async def with_app(scope: Scope, receive: Receive, send: Send) -> None:
+            # FastAPI normally sets app before invoking its middleware stack.
+            scope["app"] = app
+            await middleware(scope, receive, send)
+
+        async def open_stream(route: str) -> _OpenSSE:
+            exchange = _OpenSSE(with_app, route)  # type: ignore[arg-type]
+            exchanges.append(exchange)
+            await asyncio.wait_for(exchange.ready.wait(), timeout=5)
+            return exchange
+
+        try:
+            first = await open_stream(first_prefix + path)
+            assert first.status == 200
+            assert not first.task.done()
+            assert middleware.sse_connections == 1
+
+            excess = await open_stream(second_prefix + path)
+            assert excess.status == 429
+            assert excess.headers[b"retry-after"] == b"5"
+            assert not first.task.done()
+            assert middleware.sse_connections == 1
+            await asyncio.wait_for(excess.task, timeout=5)
+
+            finishes[0].set()
+            await asyncio.wait_for(first.task, timeout=5)
+            assert middleware.sse_connections == 0
+            replacement = await open_stream(second_prefix + path)
+            assert replacement.status == 200
+            assert not replacement.task.done()
+            assert middleware.sse_connections == 1
+        finally:
+            for exchange in exchanges:
+                exchange.task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(*(exchange.task for exchange in exchanges), return_exceptions=True), timeout=5
+            )
+        assert middleware.sse_connections == 0
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("path,method", [("/tasks", "GET"), ("/auth/cli/device", "POST")])
+    @pytest.mark.parametrize("first_prefix,second_prefix", [("", "/api/v1"), ("/api/v1", "")])
+    @pytest.mark.parametrize("fallback_prefix", [None, "/", "/api/v1"])
+    async def test_seed_bucket_is_shared_by_versioned_alias(
+        self, path: str, method: str, first_prefix: str, second_prefix: str, fallback_prefix: str | None
+    ) -> None:
+        app = FastAPI()
+        app.add_middleware(RequestRateLimitMiddleware)
+        buckets = (RateLimitBucketConfig(name="shared", requests=1, path_prefixes=(path,), methods=(method,)),)
+        if fallback_prefix is not None:
+            buckets += (RateLimitBucketConfig(name="fallback", requests=10, path_prefixes=(fallback_prefix,)),)
+        app.state.seed_config = SeedConfig(
+            goal="Test",
+            rate_limit=RateLimitConfig(buckets=buckets),
+        )
+
+        async def endpoint() -> dict[str, str]:
+            return {"status": "ok"}
+
+        app.add_api_route(path, endpoint, methods=[method])
+        app.add_api_route("/api/v1" + path, endpoint, methods=[method])
+        transport = ASGITransport(app=app, client=("198.51.100.9", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.request(method, first_prefix + path)).status_code == 200
+            response = await client.request(method, second_prefix + path)
+
+        assert response.status_code == 429
+        assert response.json()["bucket"] == "shared"
+        assert int(response.headers["Retry-After"]) >= 1
+
+    @pytest.mark.anyio
+    async def test_explicit_versioned_seed_bucket_is_preserved(self) -> None:
+        app = FastAPI()
+        app.add_middleware(RequestRateLimitMiddleware)
+        app.state.seed_config = SeedConfig(
+            goal="Test",
+            rate_limit=RateLimitConfig(
+                buckets=(RateLimitBucketConfig(name="versioned", requests=1, path_prefixes=("/api/v1/tasks",)),)
+            ),
+        )
+
+        @app.get("/api/v1/tasks")
+        async def tasks() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("198.51.100.10", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get("/api/v1/tasks")).status_code == 200
+            response = await client.get("/api/v1/tasks")
+
+        assert response.status_code == 429
+        assert response.json()["bucket"] == "versioned"
 
 
 class _FakeClient:

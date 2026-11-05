@@ -260,8 +260,12 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
             await super().__call__(scope, receive, send)
             return
         request = Request(scope)
+        path = request.url.path
+        # Versioned aliases share the canonical route's limits.
+        if path.startswith("/api/v1/"):
+            path = path[len("/api/v1") :]
 
-        if request.url.path in _SSE_LIMITED_PATHS and request.method.upper() == "GET":
+        if path in _SSE_LIMITED_PATHS and request.method.upper() == "GET":
             if self._sse_connections >= self._sse_max_concurrent:
                 response = JSONResponse(
                     status_code=429,
@@ -290,6 +294,8 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
         call_next: Callable[[Request], Awaitable[StarletteResponse]],
     ) -> StarletteResponse:
         path = request.url.path
+        if path.startswith("/api/v1/"):
+            path = path[len("/api/v1") :]
         method = request.method.upper()
 
         # Exempt loopback clients (orchestrator, spawner, agents) from rate
@@ -350,7 +356,10 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
         rate_limit = getattr(seed_config, "rate_limit", None)
         if rate_limit is None or not hasattr(rate_limit, "match_request"):
             return None
+        # Canonical rules cover aliases; retain versioned-only configurations.
         bucket = rate_limit.match_request(path, method)
+        if bucket is None and path != request.url.path:
+            bucket = rate_limit.match_request(request.url.path, method)
         if bucket is None:
             return None
         client_id = _request_client_id(request)

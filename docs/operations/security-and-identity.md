@@ -21,6 +21,15 @@ startup. SSO providers, RBAC route mapping, identity issuance, audit
 integrity, drain/export endpoints, and SBOM generation are all in-tree
 features - there is no separate "enterprise edition" toggle.
 
+## Request rate limits
+
+Request limits apply to both canonical routes and their `/api/v1` aliases.
+Seed-configured `rate_limit.buckets` share their counters across both forms.
+Canonical rules take precedence; versioned-only rules remain supported when
+no canonical rule matches.
+The `/events`, `/events/cost` and `/events/thread` routes and their versioned
+aliases share the SSE concurrency cap.
+
 ## Auth providers
 
 Three provider families are supported, configured under `auth.*` in
