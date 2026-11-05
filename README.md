@@ -260,7 +260,7 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 
 ### mentioned in
 
-Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, and listed in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). We also wrote up the approach as the [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) pattern in awesome-agentic-patterns.
+Listed in [vinta/awesome-python](https://github.com/vinta/awesome-python), covered in Augment Code's [open-source agent orchestrators](https://www.augmentcode.com/tools/open-source-agent-orchestrators) roundup, [explainx.ai](https://explainx.ai/blog/bernstein-open-source-governance-layer-ai-coding-agents-policy-as-code-53-adapters-2026) and [RuntimeWire](https://runtimewire.com/article/bernstein-agent-governance-alex-chernysh), and listed in [Python Weekly #742](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026). We also wrote up the approach as the [deterministic zero-LLM orchestration](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md) pattern in awesome-agentic-patterns.
 
 <details>
 <summary>All coverage: 20+ awesome lists, directories, newsletters, and peer citations</summary>
