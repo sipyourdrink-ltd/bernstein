@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from bernstein.core.auth_rate_limiter import (
@@ -61,10 +61,10 @@ class TestAuthRateLimiter:
         limiter = AuthRateLimiter(max_requests=5, window_seconds=60, cleanup_every=1)
         limiter.check("old-ip")
         # Manually expire the timestamps
-        limiter._hits["old-ip"] = [0.0]
+        limiter._hits[("auth", "old-ip")] = [0.0]
         # Next check triggers cleanup
         limiter.check("new-ip")
-        assert "old-ip" not in limiter._hits
+        assert ("auth", "old-ip") not in limiter._hits
 
     def test_retry_after_is_positive(self) -> None:
         limiter = AuthRateLimiter(max_requests=1, window_seconds=60)
@@ -72,6 +72,59 @@ class TestAuthRateLimiter:
         retry = limiter.check("5.5.5.5")
         assert retry is not None
         assert retry > 0
+
+    def test_failure_backoff_is_capped_and_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        limiter = AuthRateLimiter(cleanup_every=1)
+        for index in range(15):
+            delay = limiter.record_failure("client")
+            assert delay == min(2**index, 900)
+            assert limiter.check("client") == delay
+            now[0] += delay
+        now[0] += 900
+        assert limiter.check("client") is None
+        assert limiter.record_failure("client") == 1
+
+    def test_success_retains_attempt_count(self) -> None:
+        limiter = AuthRateLimiter(max_requests=1)
+        assert limiter.check("client") is None
+        limiter.record_success("client")
+        assert limiter.check("client") is not None
+
+    def test_cleanup_preserves_configured_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        limiter = AuthRateLimiter(cleanup_every=1)
+        assert limiter.check("client", window_seconds=120, max_requests=1) is None
+        now[0] += 61
+        assert limiter.check("other") is None
+        assert limiter.check("client", window_seconds=120, max_requests=1) == 120
+
+    def test_cleanup_drops_idle_client_metadata(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        limiter = AuthRateLimiter(max_requests=1, cleanup_every=1)
+        assert limiter.check("client") is None
+        assert limiter.check("client") == 60
+        now[0] += 60
+        assert limiter.check("client") is None
+        assert limiter.check("client") == 120
+        now[0] += 61
+        assert limiter.check("other") is None
+        assert limiter.check("client") == 59
+        now[0] += 960
+        assert limiter.check("other") is None
+        key = ("auth", "client")
+        assert key not in limiter._hits
+        assert key not in limiter._backoff
+        assert key not in limiter._windows
 
 
 class TestAuthRateLimiterHTTP:
@@ -82,35 +135,28 @@ class TestAuthRateLimiterHTTP:
         from fastapi import APIRouter, Depends, FastAPI
         from starlette.testclient import TestClient
 
-        # Patch the module-level limiter with a low-limit one for testing
-        import bernstein.core.security.auth_rate_limiter as mod
+        app = FastAPI()
+        app.state.auth_rate_limiter = AuthRateLimiter(max_requests=3, window_seconds=60)
+        rt = APIRouter(
+            prefix="/auth",
+            dependencies=[Depends(check_auth_rate_limit)],
+        )
 
-        original = mod._auth_limiter
-        mod._auth_limiter = AuthRateLimiter(max_requests=3, window_seconds=60)
-        try:
-            app = FastAPI()
-            rt = APIRouter(
-                prefix="/auth",
-                dependencies=[Depends(check_auth_rate_limit)],
-            )
+        @rt.get("/test")
+        async def test_endpoint() -> dict[str, str]:
+            return {"status": "ok"}
 
-            @rt.get("/test")
-            async def test_endpoint() -> dict[str, str]:
-                return {"status": "ok"}
+        app.include_router(rt)
+        client = TestClient(app)
 
-            app.include_router(rt)
-            client = TestClient(app)
-
-            for _ in range(3):
-                resp = client.get("/auth/test")
-                assert resp.status_code == 200
-
+        for _ in range(3):
             resp = client.get("/auth/test")
-            assert resp.status_code == 429
-            assert "Retry-After" in resp.headers
-            assert int(resp.headers["Retry-After"]) >= 1
-        finally:
-            mod._auth_limiter = original
+            assert resp.status_code == 200
+
+        resp = client.get("/auth/test")
+        assert resp.status_code == 429
+        assert "Retry-After" in resp.headers
+        assert int(resp.headers["Retry-After"]) >= 1
 
 
 class TestRequestRateLimitMiddleware:
@@ -553,21 +599,17 @@ class TestRateLimitKeyingAgainstHeaderSpoofing:
         request = _FakeRequest("10.0.0.1", {"X-Forwarded-For": "10.0.0.2, 10.0.0.3"})
         assert _request_client_id(request) == "10.0.0.1"  # type: ignore[arg-type]
 
-    def test_bucket_resets_after_window(self) -> None:
-        """A bucket that is full releases again once all timestamps age out."""
+    def test_bucket_resets_after_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A full bucket reopens when both the window and lockout expire."""
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
         limiter = AuthRateLimiter(max_requests=2, window_seconds=60)
-
-        # Fill the bucket
         assert limiter.check("203.0.113.10") is None
         assert limiter.check("203.0.113.10") is None
-        assert limiter.check("203.0.113.10") is not None  # blocked
-
-        # Fast-forward the recorded timestamps past the window. This
-        # simulates the window expiring without an actual wall-clock sleep.
-        now = time.monotonic()
-        limiter._hits[("auth", "203.0.113.10")] = [now - 120.0, now - 120.0]
-
-        # Next request must be accepted again - bucket has reset.
+        assert limiter.check("203.0.113.10") is not None
+        now[0] += 60
         assert limiter.check("203.0.113.10") is None
 
     @pytest.mark.anyio
