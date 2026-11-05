@@ -485,8 +485,10 @@ forwards `SSEBus` messages without an `id` for the web UI and other clients.
   re-reads the whole journal each time the file changes, at most once per
   poll interval per connection.
 - `/events/thread` uses the same auth as `/events` (`status:read`) and shares
-  its SSE reconnect limiter and concurrent-connection cap. Like `/events`, it
-  is not tenant-filtered.
+  its SSE reconnect limiter and concurrent-connection cap. Each admitted
+  stream holds a slot until its body finishes or the connection closes,
+  including cancellation or a stream error. The cap is shared across clients
+  within each middleware instance. Like `/events`, it is not tenant-filtered.
 - `BERNSTEIN_TUI_STREAM=1` switches the TUI hot path from polling to this
   stream; unset keeps polling. The rendering is unchanged - only the data
   source is swapped. The TUI follows the run named by `BERNSTEIN_TUI_RUN`,

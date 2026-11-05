@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from starlette.responses import Response as StarletteResponse
-    from starlette.types import ASGIApp
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -255,18 +255,15 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
         """Current number of active SSE connections."""
         return self._sse_connections
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[StarletteResponse]],
-    ) -> StarletteResponse:
-        path = request.url.path
-        method = request.method.upper()
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await super().__call__(scope, receive, send)
+            return
+        request = Request(scope)
 
-        # SSE concurrency limit for /events endpoints
-        if path in _SSE_LIMITED_PATHS and method == "GET":
+        if request.url.path in _SSE_LIMITED_PATHS and request.method.upper() == "GET":
             if self._sse_connections >= self._sse_max_concurrent:
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=429,
                     content={
                         "detail": "Too many concurrent SSE connections",
@@ -275,11 +272,25 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={"Retry-After": "5"},
                 )
+                await response(scope, receive, send)
+                return
             self._sse_connections += 1
             try:
-                return await call_next(request)
+                # call_next returns at headers; the ASGI app runs until the
+                # body closes, including disconnects, cancellation and errors.
+                await self.app(scope, receive, send)
             finally:
-                self._sse_connections = max(0, self._sse_connections - 1)
+                self._sse_connections -= 1
+            return
+        await super().__call__(scope, receive, send)
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[StarletteResponse]],
+    ) -> StarletteResponse:
+        path = request.url.path
+        method = request.method.upper()
 
         # Exempt loopback clients (orchestrator, spawner, agents) from rate
         # limiting - they are internal components, not external callers.
