@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from bernstein.core.models import AgentSession, CompletionSignal, ModelConfig, T
 
 from bernstein.core.agents.agent_lifecycle import handle_orphaned_task
 from bernstein.core.persistence.wal import WALWriter
+from bernstein.core.tasks.artifact_completion import verify_task_completion
 
 _TEST_COMMAND = "./.venv/bin/python -m pytest tests/unit/test_deliverable.py -q"
 
@@ -77,7 +79,7 @@ def no_change_attempt(tmp_path: Path):
     with (
         patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
         patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
-        patch("bernstein.core.agents.agent_lifecycle._uncommitted_work_paths", return_value=[]),
+        patch("bernstein.core.agents.agent_lifecycle._worktree_is_clean", return_value=True),
         patch("bernstein.core.quality.janitor._gitignore_exclusion", return_value=None),
         patch("bernstein.core.quality.janitor.subprocess.run", side_effect=run_gate) as gate_command,
         patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as retry,
@@ -140,4 +142,117 @@ def test_clean_no_change_retries_when_any_worktree_gate_fails(no_change_attempt,
     assert row["output"]["success"] is False
     assert row["output"]["completion_signals_checked"] is True
     assert row["output"]["janitor_passed"] is False
+    assert row["output"]["verification_workdir"] == str(worktree)
+
+
+@pytest.fixture
+def real_worktree_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Use a linked worktree with real completion-data, git and janitor probes."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for key, value in (
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.invalid"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.invalid"),
+    ):
+        monkeypatch.setenv(key, value)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str, cwd: Path = repo) -> str:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
+
+    git("init", "-b", "main")
+    (repo / ".gitignore").write_text("deliverable.txt\n.sdd/\n")
+    (repo / "feature.txt").write_text("already on base\n")
+    git("add", ".gitignore", "feature.txt")
+    git("commit", "-m", "base")
+    worktree = tmp_path / "agent-worktree"
+    git("worktree", "add", "-b", "agent/no-change", str(worktree))
+
+    task = Task(
+        id="T-satisfied-base",
+        title="Verify existing deliverable",
+        description="Only deliverables that survive a merge count",
+        role="backend",
+        status=TaskStatus.CLAIMED,
+        completion_signals=[CompletionSignal(type="path_exists", value="feature.txt")],
+    )
+    session = AgentSession(
+        id="sess-no-change",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=0,
+        spawn_ts=time.time(),
+    )
+    client = MagicMock()
+    client.get.return_value.json.side_effect = lambda: task.to_dict()
+    orch = SimpleNamespace(
+        _config=SimpleNamespace(
+            server_url="http://server", recovery="restart", max_crash_retries=3, max_task_retries=3
+        ),
+        _client=client,
+        _workdir=repo,
+        _rate_limit_tracker=None,
+        _crash_counts={},
+        _retried_task_ids=set(),
+        _record_provider_health=MagicMock(),
+        _evolution=None,
+        _wal_writer=WALWriter("satisfied-base", repo / ".sdd"),
+        _spawner=MagicMock(),
+    )
+    orch._spawner.get_worktree_path.return_value = worktree
+    with (
+        patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as retry,
+        patch("bernstein.core.agents.agent_lifecycle.emit_orphan_metrics"),
+    ):
+        yield orch, task, session, worktree, retry, git
+
+
+@pytest.mark.parametrize(
+    ("path", "ignored"),
+    [("deliverable.txt", True), ("untracked.txt", False), (".sdd/deliverable.txt", True)],
+)
+def test_worktree_only_file_cannot_complete_as_satisfied_base(real_worktree_attempt, path: str, ignored: bool) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    task.completion_signals = [CompletionSignal(type="path_exists", value=path)]
+    deliverable = worktree / path
+    deliverable.parent.mkdir(parents=True, exist_ok=True)
+    deliverable.write_text("exists only in the agent worktree\n")
+
+    assert not (orch._workdir / path).exists()
+    assert git("diff", "HEAD", cwd=worktree) == ""
+    assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
+    expected_status = "!!" if ignored else "??"
+    assert git("status", "--porcelain=v1", "--ignored", "--untracked-files=all", cwd=worktree) == (
+        f"{expected_status} {path}\n"
+    )
+    # The gate really passes on this ephemeral file; only delivery is missing.
+    assert verify_task_completion(task, worktree) == (True, [])
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    orch._client.post.assert_not_called()
+    retry.assert_called_once()
+    assert "janitor failed" in retry.call_args.args[1]
+    assert "path_exists" in retry.call_args.args[1]
+    assert _journal(orch)["decision_type"] == "task_failed"
+
+
+def test_real_clean_worktree_completes_when_base_gate_passes(real_worktree_attempt) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    assert git("status", "--porcelain=v1", "--ignored", "--untracked-files=all", cwd=worktree) == ""
+    # A stale run checkout must not hide the committed deliverable in the worktree.
+    (orch._workdir / "feature.txt").unlink()
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    retry.assert_not_called()
+    orch._client.post.assert_called_once()
+    assert "already satisfied on base" in orch._client.post.call_args.kwargs["json"]["result_summary"]
+    row = _journal(orch)
+    assert row["decision_type"] == "task_completed"
     assert row["output"]["verification_workdir"] == str(worktree)

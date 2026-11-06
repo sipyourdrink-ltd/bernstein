@@ -2724,7 +2724,7 @@ def handle_orphaned_task(
             no_change_exit = (
                 not completion_data.get("files_modified")
                 and not _has_git_commits_on_branch(worktree, start_ts)
-                and not _uncommitted_work_paths(worktree)
+                and _worktree_is_clean(worktree)
             )
             if no_change_exit:
                 # The agent can legitimately find the deliverable already on
@@ -3091,6 +3091,29 @@ _ADAPTER_GITIGNORE_PREFIX = ".aider"
 # or ``attestations/`` prefixes hide legitimate target-repo work and can cause
 # a false "no changes" completion; see :mod:`bernstein.core.git.git_basic`.
 _ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/",)
+
+
+def _worktree_is_clean(worktree_path: Path) -> bool:
+    """Prove the no-change shortcut has no worktree-only state (#2760).
+
+    Include every untracked and ignored file, even orchestrator/adapter paths
+    that ``_uncommitted_work_paths`` filters out. Such files can satisfy gates
+    locally but will not survive a merge. An unreadable status is not proof
+    of a clean worktree.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and not result.stdout
 
 
 def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:

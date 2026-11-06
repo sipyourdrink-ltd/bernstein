@@ -42,8 +42,14 @@ them.
 When an agent exits with code 0, no changed files or new commits, and no
 completion report, the orphan-recovery path checks its declared janitor gates
 in the agent worktree (or the run checkout when no separate worktree exists).
-If all pass, the task completes with an "already satisfied on base" summary
-without a retry. Any failed gate keeps the existing fail/retry behavior.
+This shortcut requires a successful, empty Git status including all untracked
+and ignored files, without excluding orchestrator or adapter paths. Files that
+exist only in the worktree will not survive a merge and cannot establish that
+the task was already satisfied. A dirty or unreadable status keeps verification
+on the run checkout and uses the existing completion/retry behavior.
+For a clean worktree, passing all gates completes the task with an "already
+satisfied on base" summary without a retry. Any failed gate keeps the existing
+fail/retry behavior.
 The outcome's WAL row records `completion_signals_checked`, `janitor_passed`,
 and `verification_workdir`. This case requires declared gates; an empty gate
 list does not establish that the task was already satisfied.

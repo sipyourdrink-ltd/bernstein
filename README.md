@@ -192,7 +192,9 @@ Each goal moves through four stages:
 
 If an agent exits cleanly without changes or reporting completion, passing all
 declared janitor gates in its worktree completes the task as "already satisfied
-on base"; a failed gate follows the usual retry path.
+on base". This requires a clean Git status, including no untracked or ignored
+files; worktree-only files cannot establish delivery. Otherwise, the usual
+verification and retry path applies.
 
 Why the scheduler is plain Python, and what that trades away: [why deterministic](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
