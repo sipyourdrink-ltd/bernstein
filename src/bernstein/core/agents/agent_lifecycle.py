@@ -2404,7 +2404,43 @@ def _handle_orphan_no_signals(
         _probe_result = _probe_fast_exit(orch, session, task_id)
         if not _probe_result.get("suspicious"):
             # Long-lived clean exit: the agent had time to do real work and
-            # decided nothing needed changing. Record that as a completion.
+            # decided nothing needed changing.
+            #
+            # If the task declares janitor gates, verify them now: the work may
+            # already satisfy the criteria on the base branch (issue #6606).
+            # A gate-passing verdict records a stronger completion reason;
+            # a failing gate fails the task as usual rather than auto-completing
+            # on an unverified assumption.
+            if task.completion_signals:
+                _gates_passed, _failed_signals = verify_task_completion(task, orch._workdir)
+                if _gates_passed:
+                    summary = (
+                        f"Auto-completed (already satisfied): agent {session.id} "
+                        f"exited cleanly with no diff; all janitor gates verified on base"
+                    )
+                    _sid = session.id
+                    log_msg = f"Orphaned task {task_id} auto-completed (no diff, gates passed) after agent {_sid} died"
+                    return _try_auto_complete(orch, task_id, base, summary, log_msg, session=session, start_ts=start_ts)
+                logger.info(
+                    "Orphaned task %s: no diff but janitor gate(s) failed (%s); failing task",
+                    task_id,
+                    _failed_signals,
+                )
+                try:
+                    retry_or_fail_task(
+                        task_id,
+                        f"Agent {session.id} exited cleanly with no diff; janitor gate(s) failed: {_failed_signals}",
+                        client=orch._client,
+                        server_url=base,
+                        max_task_retries=orch._config.max_task_retries,
+                        retried_task_ids=orch._retried_task_ids,
+                        workdir=getattr(orch, "_workdir", None),
+                        **_retry_escalation_context(orch),
+                    )
+                except httpx.HTTPError as exc:
+                    logger.error("Failed to retry/fail no-diff gate-failed task %s: %s", task_id, exc)
+                return False, "janitor_failed"
+
             summary = (
                 f"Auto-completed (no changes needed): agent {session.id} "
                 f"exited cleanly with empty diff (exit code 0, no signals to verify)"
