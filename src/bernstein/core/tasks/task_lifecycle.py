@@ -4992,6 +4992,93 @@ def _ingest_remote_completion(orch: Any, task: Task) -> str | None:
     return branch
 
 
+def _remote_completion_branches(orch: Any) -> dict[str, str]:
+    """Branches the janitor materialised for remote completions, keyed by task id (issue #6611).
+
+    Recorded when the alive-exit pass ingests a posted artifact and consumed
+    when the verdict is processed, so the merge-back lands the branch the
+    verdict was computed on, not whatever the newest posted artifact is by
+    then.
+    """
+    branches = getattr(orch, "_remote_completion_branches", None)
+    if branches is None:
+        branches = {}
+        orch._remote_completion_branches = branches
+    return cast("dict[str, str]", branches)
+
+
+def _merge_remote_completion(orch: Any, task: Task, branch: str, result: Any, janitor_passed: bool) -> bool:
+    """Land a remote completion's verified branch on the run branch (issue #6611).
+
+    A worker outside the host has no session to reap, so the merge-back that
+    :func:`_reap_and_cleanup_session` performs for a local agent never ran: a
+    PASSed remote task stayed ``done`` with its work stranded on
+    ``agent/remote-<task>-v<n>``. This is that merge-back. The branch goes
+    through the spawner's merge path under a synthetic session named after it,
+    so every acceptance gate a local agent's work meets applies unchanged. A
+    worktree at ``.sdd/worktrees/<session>`` holds the branch for the duration
+    so the quality gates grade the branch's tree, as they do a local agent's
+    worktree; the normal session cleanup removes the worktree and the branch
+    once the merge has landed, and a merge that did not land leaves both for
+    inspection, as the local path does.
+
+    Returns ``merge_failed`` in the sense :func:`_reap_and_cleanup_session`
+    uses: True only for a non-conflict failure, which the caller routes through
+    the bounded reopen budget. A conflict has already produced a resolver task.
+    """
+    if not janitor_passed:
+        logger.info("remote_merge_back: task=%s branch=%s verdict=FAIL action=none", task.id, branch)
+        return False
+    session = AgentSession(id=branch.removeprefix("agent/"), role=task.role, task_ids=[task.id], status="dead")
+    if _evaluate_approval_gate(orch, task, session, None, janitor_passed):
+        logger.info("remote_merge_back: task=%s branch=%s held by the approval gate", task.id, branch)
+        return False
+
+    from bernstein.core.git.git_basic import run_git
+
+    workdir = Path(orch._workdir)
+    worktree = workdir / ".sdd" / "worktrees" / session.id
+    added = run_git(["worktree", "add", str(worktree), branch], workdir, timeout=60)
+    if added.returncode != 0:
+        logger.warning(
+            "remote_merge_back: task=%s could not check out %s at %s; merge gates read the run checkout: %s",
+            task.id,
+            branch,
+            worktree,
+            (added.stderr or added.stdout).strip()[-300:],
+        )
+    merge_result = orch._spawner.merge_remote_branch(session)
+    merge_ok = _handle_merge_result(orch, task, result, merge_result, janitor_passed, False)
+    merge_failed = merge_result is not None and not merge_result.success and not merge_result.conflicting_files
+    if not merge_ok:
+        logger.error(
+            "remote_merge_back: task=%s branch=%s not merged; preserving the branch and %s: %s",
+            task.id,
+            branch,
+            worktree,
+            getattr(merge_result, "error", None) or "merge conflict",
+        )
+        return merge_failed
+
+    _close_completed_task(orch, task)
+    seal_evidence_on_completion(orch._workdir, task)
+    record_task_merged(
+        getattr(orch, "_recorder", None),
+        task_id=task.id,
+        agent_id=session.id,
+        merge_commit=getattr(merge_result, "merge_commit", None),
+    )
+    orch._spawner.cleanup_worktree(session.id)
+    if worktree.exists():
+        # No worktree manager was registered for the run (worktrees disabled),
+        # so the session cleanup had nothing to act on; remove what this merge
+        # created itself.
+        run_git(["worktree", "remove", "--force", str(worktree)], workdir, timeout=60)
+        run_git(["branch", "-D", branch], workdir, timeout=30)
+    logger.info("remote_merge_back: task=%s branch=%s merged", task.id, branch)
+    return merge_failed
+
+
 def _enqueue_alive_exit_janitor_pass(
     orch: Any,
     task: Task,
@@ -5076,6 +5163,7 @@ def _enqueue_alive_exit_janitor_pass(
         preview_branch = _ingest_remote_completion(orch, task)
         if preview_branch is not None:
             session_id = f"remote-{task.id}"
+            _remote_completion_branches(orch)[task.id] = preview_branch
     preview_setup = _preview_setup(orch) if preview_branch is not None else None
     if executor is None:
         # Defensive: if the orchestrator has no executor we still want a
@@ -5319,6 +5407,13 @@ def _process_single_completed_task(
             cache_diff_lines,
             preserve_worktree=gate_repair_task_id is not None,
         )
+    else:
+        # Issue #6611: no session means the work arrived as a posted artifact
+        # and was verified on the branch the alive-exit pass materialised.
+        # Land that branch here, since there is no reap to do it.
+        remote_branch = _remote_completion_branches(orch).pop(task.id, None)
+        if remote_branch is not None:
+            merge_failed = _merge_remote_completion(orch, task, remote_branch, result, janitor_passed)
 
     task_m, cost_usd = _record_completion_metrics(
         orch,
