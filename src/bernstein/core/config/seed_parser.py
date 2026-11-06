@@ -2442,17 +2442,23 @@ def _warn_unknown_top_level_keys(data: dict[str, object]) -> None:
             logger.warning("Ignoring unknown top-level key %r in seed file.", key_text)
 
 
-def parse_seed(path: Path) -> SeedConfig:
+def parse_seed(path: Path, *, require_goal: bool = True) -> SeedConfig:
     """Parse a bernstein.yaml seed file into a validated SeedConfig.
 
     Args:
         path: Path to the bernstein.yaml file.
+        require_goal: When ``False``, a missing or empty ``goal`` key is
+            accepted and the returned config carries ``goal=""`` instead of
+            raising ``SeedError``.  Use this when the caller supplies the goal
+            from another source (e.g. ``--from-plan``) and only needs the
+            operator settings from the file (#6604).
 
     Returns:
         Validated SeedConfig dataclass.
 
     Raises:
         SeedError: If the file is missing, unreadable, or has invalid content.
+            When ``require_goal=False``, a missing goal does not raise.
     """
     return _parse_seed(path, apply_tuning=True)
 
@@ -2492,7 +2498,9 @@ def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
     # --- Required fields ---
     goal: object = data.get("goal")
     if not goal or not isinstance(goal, str):
-        raise SeedError("Seed file must contain a non-empty 'goal' string.")
+        if require_goal:
+            raise SeedError("Seed file must contain a non-empty 'goal' string.")
+        goal = ""
 
     # --- Optional fields ---
     budget_usd = _parse_budget(cast(_CAST_STR_INT_FLOAT_NONE, data.get("budget")))
