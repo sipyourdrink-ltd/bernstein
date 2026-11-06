@@ -354,14 +354,30 @@ class TestParseSeedInvalid:
             parse_seed(seed_file)
 
     def test_missing_goal_raises_seed_error(self, seed_file: Path) -> None:
+        """goal is now optional; missing goal parses with goal='' instead of raising (#6604)."""
         seed_file.write_text("budget: 10\n")
-        with pytest.raises(SeedError, match="goal"):
-            parse_seed(seed_file)
+        cfg = parse_seed(seed_file)
+        assert cfg.goal == ""
+
+    # Alias kept for hygiene ratchet — same test, descriptive name.
+    test_missing_goal_parses_with_empty_goal = test_missing_goal_raises_seed_error
+
+    def test_missing_goal_honours_other_keys(self, seed_file: Path) -> None:
+        """evolution_enabled and gate_repair_enabled must be respected even without goal (#6604)."""
+        seed_file.write_text("evolution_enabled: false\ngate_repair_enabled: false\n")
+        cfg = parse_seed(seed_file)
+        assert cfg.goal == ""
+        assert cfg.evolution_enabled is False
+        assert cfg.gate_repair_enabled is False
 
     def test_empty_goal_raises_seed_error(self, seed_file: Path) -> None:
+        """Explicit empty-string goal is treated as absent, not an error (#6604)."""
         seed_file.write_text('goal: ""\n')
-        with pytest.raises(SeedError, match="goal"):
-            parse_seed(seed_file)
+        cfg = parse_seed(seed_file)
+        assert cfg.goal == ""
+
+    # Alias kept for hygiene ratchet — same test, descriptive name.
+    test_empty_goal_parses_with_empty_goal = test_empty_goal_raises_seed_error
 
     def test_invalid_yaml_raises_seed_error(self, seed_file: Path) -> None:
         seed_file.write_text("goal: [\ninvalid yaml {{{\n")
