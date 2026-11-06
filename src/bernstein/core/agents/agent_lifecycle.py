@@ -3124,14 +3124,47 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
                 target = parts[0].strip()
                 if (worktree_path / target).is_symlink():
                     return False
-            if completion_signal.type in ("path_exists", "glob_exists") and any(c in "*?[" for c in target):
-                # Match exactly as the janitor does: unlike Git pathspecs,
-                # Python glob's * does not span directory separators.
+            git_command = ["git", "--literal-pathspecs"]
+            # Literal-first, exactly like the janitor's _check_path_exists: a
+            # literal path that exists wins even when it holds glob
+            # metacharacters (a Next.js route ``app/[id]/page.tsx``, a fixture
+            # ``foo[1].json``); only on a literal miss is a pattern expanded.
+            # path_exists accepts a directory (janitor uses Path.exists);
+            # git ls-files then confirms the matched path is tracked, so a
+            # worktree-only file never establishes delivery.
+            if (worktree_path / target).exists():
+                result = subprocess.run(
+                    [*git_command, "ls-files", "-z", "--", target],
+                    cwd=str(worktree_path),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                )
+                if result.returncode != 0 or not result.stdout:
+                    return False
+                if completion_signal.type == "file_contains":
+                    result = subprocess.run(
+                        [*git_command, "diff", "--quiet", "HEAD", "--", target],
+                        cwd=str(worktree_path),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                    )
+                    if result.returncode != 0:
+                        return False
+            elif completion_signal.type in ("path_exists", "glob_exists") and any(c in "*?[" for c in target):
+                # Literal miss + glob syntax: the janitor expands the pattern.
+                # Python glob's * does not span directory separators (unlike Git
+                # pathspecs), so enumerate with glob and require a tracked match.
                 tracked_match = False
                 for candidate in glob.glob(str(worktree_path / target), recursive=True):
                     relative_path = str(Path(candidate).relative_to(worktree_path))
                     result = subprocess.run(
-                        ["git", "--literal-pathspecs", "ls-files", "-z", "--", relative_path],
+                        [*git_command, "ls-files", "-z", "--", relative_path],
                         cwd=str(worktree_path),
                         capture_output=True,
                         text=True,
@@ -3146,36 +3179,10 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
                         break
                 if not tracked_match:
                     return False
-                continue
-            git_command = ["git", "--literal-pathspecs"]
-            # path_exists accepts a directory (janitor uses Path.exists);
-            # only file_contains needs a readable file, which its own gate
-            # (and the HEAD-clean diff below) still enforces.
-            if not (worktree_path / target).exists():
+            else:
+                # Literal miss with no glob pattern (or a missing file_contains
+                # target): the gate cannot be satisfied by committed content.
                 return False
-            result = subprocess.run(
-                [*git_command, "ls-files", "-z", "--", target],
-                cwd=str(worktree_path),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-            )
-            if result.returncode != 0 or not result.stdout:
-                return False
-            if completion_signal.type == "file_contains":
-                result = subprocess.run(
-                    [*git_command, "diff", "--quiet", "HEAD", "--", target],
-                    cwd=str(worktree_path),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=5,
-                )
-                if result.returncode != 0:
-                    return False
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
     return True

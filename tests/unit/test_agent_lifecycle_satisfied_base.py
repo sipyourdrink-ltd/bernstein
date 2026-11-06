@@ -455,3 +455,67 @@ def test_file_contains_requires_committed_content(real_worktree_attempt, uncommi
         row = _journal(orch)
         assert row["decision_type"] == "task_completed"
         assert row["output"]["verification_workdir"] == str(worktree)
+
+
+def test_literal_path_with_glob_chars_completes_when_committed(real_worktree_attempt) -> None:
+    """A committed path that happens to carry glob metacharacters (a Next.js
+    dynamic route) is a literal deliverable: the guard must check it literally and
+    satisfy it on base, not treat ``[id]`` as a character class that matches
+    nothing and re-open the #6606 retry loop (literal-first, false-block branch)."""
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    route = "app/users/[id]/page.tsx"
+    (orch._workdir / route).parent.mkdir(parents=True)
+    (orch._workdir / route).write_text("export default Page\n")
+    git("add", "-A")
+    git("commit", "-m", "add dynamic route on base")
+    git("reset", "--hard", "main", cwd=worktree)
+    task.completion_signals = [CompletionSignal(type="path_exists", value=route)]
+    # The committed literal is checked out in the worktree; a stale run checkout
+    # must not be what the shortcut reads.
+    (orch._workdir / route).unlink()
+    assert (worktree / route).exists()
+    assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
+    assert verify_task_completion(task, worktree) == (True, [])
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    retry.assert_not_called()
+    orch._client.post.assert_called_once()
+    assert "already satisfied on base" in orch._client.post.call_args.kwargs["json"]["result_summary"]
+    row = _journal(orch)
+    assert row["decision_type"] == "task_completed"
+    assert row["output"]["verification_workdir"] == str(worktree)
+
+
+def test_literal_path_with_glob_chars_retries_when_only_worktree_file_matches(real_worktree_attempt) -> None:
+    """A gate whose literal target holds glob metacharacters must be matched
+    literally: a tracked ``foo1.json`` that only a glob expansion would hit must
+    not let an ignored, worktree-only ``foo[1].json`` auto-complete the task
+    without ever delivering it (literal-first, false-completion branch)."""
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    # A tracked decoy that a glob reading of the gate would match, plus an escaped
+    # ignore so only the literal bracketed name is ignored (not the decoy).
+    (orch._workdir / "foo1.json").write_text("{}\n")
+    with (orch._workdir / ".gitignore").open("a") as ignore:
+        ignore.write("foo\\[1\\].json\n")
+    git("add", "-A")
+    git("commit", "-m", "tracked decoy and escaped ignore on base")
+    git("reset", "--hard", "main", cwd=worktree)
+    # The literal target exists only in the worktree and is git-ignored, so it can
+    # never merge; the glob decoy is gone from the run checkout.
+    (worktree / "foo[1].json").write_text("{}\n")
+    (orch._workdir / "foo1.json").unlink()
+    task.completion_signals = [CompletionSignal(type="path_exists", value="foo[1].json")]
+    assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
+    assert git("status", "--porcelain=v1", "--untracked-files=all", cwd=worktree) == ""
+    # The janitor passes on the ignored worktree file, but nothing mergeable
+    # satisfies the literal gate once the decoy leaves the run checkout.
+    assert verify_task_completion(task, worktree) == (True, [])
+    assert verify_task_completion(task, orch._workdir)[0] is False
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    orch._client.post.assert_not_called()
+    retry.assert_called_once()
+    assert "path_exists" in retry.call_args.args[1]
+    assert _journal(orch)["decision_type"] == "task_failed"
