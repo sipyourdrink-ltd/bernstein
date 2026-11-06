@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bernstein-example-vault-secret-store"
+version = "0.1.0"
+description = "Example bernstein plugin: HashiCorp Vault backend for the ExternalSecretStore contract"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+dependencies = [
+    "bernstein",
+]
+
+[project.entry-points."bernstein.plugins"]
+vault_secret_store = "vault_secret_store:VaultSecretStorePlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vault_secret_store"]
+
+[tool.pytest.ini_options]
+markers = ["live: requires a running Vault dev server"]
