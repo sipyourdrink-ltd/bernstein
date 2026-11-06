@@ -14,11 +14,14 @@ from bernstein.adapters._contract import STRATEGY_MATRIX, AdapterStrategy, Dange
 from bernstein.adapters.capability_profile import SandboxTier
 from bernstein.adapters.codex import (
     _BYPASS_SANDBOX_FLAG,
+    _CODEX_SUPPORTED_EFFORTS,
     _DEFAULT_CODEX_MODEL,
+    _EFFORT_MAP,
     _SANDBOXED_ARGS,
     _TIERS_REPLACING_VENDOR_SANDBOX,
     _UNDECLARED_HOST_ISOLATION,
     CodexAdapter,
+    _codex_reasoning_effort_args,
 )
 
 if TYPE_CHECKING:
@@ -780,3 +783,95 @@ class TestSandboxFailureDetection:
         )
         detected = detect_sandbox_failure(log)
         assert detected is not None and detected[1:] == (3, 3)
+
+
+# ---------------------------------------------------------------------------
+# _codex_reasoning_effort_args and spawn effort forwarding (#6641)
+# ---------------------------------------------------------------------------
+
+
+class TestCodexReasoningEffort:
+    """CodexAdapter forwards model_config.effort as --reasoning-effort (#6641)."""
+
+    def test_supported_effort_argv(self, tmp_path: Path) -> None:
+        """Supported effort values produce the correct --reasoning-effort arg."""
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=200)
+        for effort_in, effort_out in [
+            ("high", "high"),
+            ("medium", "medium"),
+            ("low", "low"),
+            ("max", "max"),
+            ("normal", "medium"),
+        ]:
+            with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
+                adapter.spawn(
+                    prompt="task",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="o3", effort=effort_in),
+                    session_id=f"codex-effort-{effort_in}",
+                )
+            inner = _inner_cmd(popen.call_args.args[0])
+            assert "--reasoning-effort" in inner, f"missing flag for effort={effort_in!r}: {inner}"
+            idx = inner.index("--reasoning-effort")
+            assert inner[idx + 1] == effort_out, (
+                f"effort={effort_in!r} -> expected {effort_out!r}, got {inner[idx + 1]!r}"
+            )
+
+    def test_unset_effort_omits_flag(self, tmp_path: Path) -> None:
+        """When effort is empty string, --reasoning-effort is absent (CLI default applies)."""
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=201)
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="task",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-5.5", effort=""),
+                session_id="codex-no-effort",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--reasoning-effort" not in inner, f"unexpected flag in argv: {inner}"
+
+    def test_none_effort_omits_flag(self) -> None:
+        """_codex_reasoning_effort_args(None) returns []."""
+        assert _codex_reasoning_effort_args(None) == []
+
+    def test_empty_effort_omits_flag(self) -> None:
+        """_codex_reasoning_effort_args('') returns []."""
+        assert _codex_reasoning_effort_args("") == []
+
+    def test_unsupported_effort_raises_before_spawn(self, tmp_path: Path) -> None:
+        """An unsupported effort value raises ValueError before Popen is called."""
+        adapter = CodexAdapter()
+        with (
+            patch("bernstein.adapters.codex.subprocess.Popen") as popen,
+            pytest.raises(ValueError, match="not supported"),
+        ):
+            adapter.spawn(
+                prompt="task",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="o3", effort="turbo"),
+                session_id="codex-bad-effort",
+            )
+        popen.assert_not_called()
+
+    def test_exact_model_preserved_with_effort(self, tmp_path: Path) -> None:
+        """The model identifier is passed through unchanged alongside effort."""
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=202)
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="task",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="o4-mini", effort="medium"),
+                session_id="codex-model-exact",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "-m" in inner
+        m_idx = inner.index("-m")
+        assert inner[m_idx + 1] == "o4-mini", f"model changed: {inner}"
+
+    def test_effort_map_translations_target_supported_values(self) -> None:
+        """Every translated value in _EFFORT_MAP is a valid Codex effort level."""
+        for key, val in _EFFORT_MAP.items():
+            assert val in _CODEX_SUPPORTED_EFFORTS, f"_EFFORT_MAP[{key!r}] = {val!r} is not in _CODEX_SUPPORTED_EFFORTS"
