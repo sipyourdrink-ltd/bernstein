@@ -46,6 +46,22 @@ templates/
 Empty buckets (``references/``, ``scripts/``, ``assets/``) are omitted -
 the manifest's corresponding field is just an empty list.
 
+## Task server URLs in prompt sources
+
+Role system prompts and completion instructions receive the task server URL
+resolved from `BERNSTEIN_SERVER_URL`, the run's `server.port`, or the default.
+Reusable role task templates also use `{{SERVER_URL}}` when rendered with that
+context. They currently have no automatic role-dispatch consumer. The
+`progress-report.md` and `team-awareness.md` prompt partials likewise retain
+this placeholder: prompt-registry seeding stores their raw content, but no
+current agent prompt path renders or injects those two partials.
+
+Skill references follow a different path. `load_skill` returns reference
+contents unchanged through `SkillLoader.read_reference`; it does not render
+placeholders. The manager's `task-api.md` therefore tells the agent to replace
+`<base-url>` with the server URL in its system prompt. Deployment templates
+retain their own default ports.
+
 ## ``SKILL.md`` format
 
 ```markdown
