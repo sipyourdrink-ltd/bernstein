@@ -199,7 +199,6 @@ bernstein.core.protocols.ssh_backend: #4526 audit in flight
 bernstein.core.protocols.volunteer.aggregate: #4526 audit in flight
 bernstein.core.protocols.volunteer.claim: #4526 audit in flight
 bernstein.core.protocols.volunteer.conformance: #4526 audit in flight
-bernstein.core.protocols.volunteer.documents: #4526 audit in flight
 bernstein.core.protocols.volunteer.github: #4526 audit in flight
 bernstein.core.protocols.volunteer.project_card: #4526 audit in flight
 bernstein.core.protocols.volunteer.receipt: #4526 audit in flight
