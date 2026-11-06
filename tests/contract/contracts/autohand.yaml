@@ -1,0 +1,22 @@
+# Contract for the Autohand CLI (adapter: autohand).
+#
+# Always-passed surface from src/bernstein/adapters/autohand.py:
+# ``autohand --unrestricted -p <prompt>``. ``--unrestricted`` runs without
+# approval prompts; ``-p``/``--prompt`` runs one instruction in command mode.
+adapter: autohand
+binary: autohand
+install:
+  method: npm
+  spec: "autohand-cli@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "AUTOHAND_API_KEY"
+  basis: api_key
+required_flags:
+  - "--unrestricted"
+  - "--prompt"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

@@ -1,0 +1,22 @@
+# Contract for the Composio agent orchestrator CLI (adapter: composio, binary: ao).
+#
+# Always-passed surface from src/bernstein/adapters/composio.py:
+# ``ao spawn --prompt <prompt>``. The flag lives on the ``spawn``
+# subcommand, so the help text checked is ``ao spawn --help``.
+adapter: composio
+binary: ao
+install:
+  method: npm
+  spec: "@aoagents/ao@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "COMPOSIO_API_KEY"
+  basis: api_key
+help_command: ["ao", "spawn", "--help"]
+required_flags:
+  - "--prompt"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

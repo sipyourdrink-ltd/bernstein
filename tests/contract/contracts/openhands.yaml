@@ -1,0 +1,24 @@
+# Contract for the OpenHands CLI (adapter: openhands).
+#
+# Always-passed surface from src/bernstein/adapters/openhands.py:
+# ``openhands --headless --override-with-envs -t <prompt>``. ``--headless``
+# runs with no UI and auto-approves, and requires ``--task``;
+# ``--override-with-envs`` takes LLM settings from the environment.
+adapter: openhands
+binary: openhands
+install:
+  method: uv
+  spec: "openhands"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "LLM_API_KEY"
+  basis: api_key
+required_flags:
+  - "--headless"
+  - "--override-with-envs"
+  - "--task"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
