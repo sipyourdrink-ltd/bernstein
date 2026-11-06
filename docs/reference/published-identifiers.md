@@ -174,6 +174,18 @@ Schema identifier of a compliance evidence pack manifest.
 Emitted by `bernstein.core.compliance.pack`.
 See [EU AI Act Article 12 bundle](../compliance/eu-ai-act-article-12-bundle.md).
 
+### `compliance/sbom-deps/v1` {#compliance-sbom-deps-v1}
+
+Namespace URL a run-shaped dependency SBOM's `serialNumber` is derived from.
+Emitted by `bernstein.core.security.sbom`.
+See [Run BOM](../operations/run-bom.md).
+
+### `compliance/sbom/v1` {#compliance-sbom-v1}
+
+Namespace URL the SBOM `serialNumber` of a run is derived from.
+Emitted by `bernstein.core.security.compliance`.
+See [Run BOM](../operations/run-bom.md).
+
 ### `oscal` {#oscal}
 
 Namespace (`ns`) of the Bernstein-specific properties in OSCAL
