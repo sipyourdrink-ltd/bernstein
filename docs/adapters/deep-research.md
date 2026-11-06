@@ -1,6 +1,6 @@
 # Deep-research adapters
 
-Two adapters run deep-research agents: agents that search, open and read a
+Three adapters run deep-research agents: agents that search, open and read a
 large number of sources and write a report. Their unit of work is that report,
 not a commit.
 
@@ -8,13 +8,14 @@ not a commit.
 |---|---|---|
 | `gpt_researcher` | gpt-researcher, `deep` report mode | the installed `gpt_researcher` package |
 | `tongyi_deepresearch` | Tongyi DeepResearch ReAct agent | an operator-provided checkout (`inference/`) |
+| `paper_qa` | PaperQA2 agent over a directory of papers | the installed `paperqa` package |
 
 ## The run artifact
 
-A deep-research adapter's product is the report in this run directory, not
-a commit and not a task's declared artifact: the adapters do not publish the
-report to a task's `artifact_spec.output_path`, so they do not declare the
-`artifact` output mode. A task that declares an artifact kind and runs on
+A deep-research adapter's product is the report (for PaperQA2, the cited
+answer) in this run directory, not a commit and not a task's declared
+artifact: none of the three publishes it to a task's
+`artifact_spec.output_path`, so none declares the `artifact` output mode. A task that declares an artifact kind and runs on
 one of them will not complete through the artifact path.
 
 Each run writes three files to `.sdd/<agent>/<session>/` in the task's
@@ -46,7 +47,7 @@ own key, so its usage can be limited and revoked on its own:
 | `BERNSTEIN_<AGENT>_MODEL` | the model (required) |
 | `BERNSTEIN_<AGENT>_PYTHON` | the interpreter the agent is installed in (default `python3`) |
 
-`<AGENT>` is `GPT_RESEARCHER` or `TONGYI_DEEPRESEARCH`. A spawn with a
+`<AGENT>` is `GPT_RESEARCHER`, `TONGYI_DEEPRESEARCH` or `PAPER_QA`. A spawn with a
 missing variable fails before anything starts, and the error names the
 variables, never their values. One agent's key is never read for another.
 
@@ -78,6 +79,20 @@ the agent's own, so the endpoint must speak the Serper and Jina Reader
 protocols. A value that is not an absolute http(s) URL fails the run with
 exit 2.
 
+PaperQA2 answers from papers, not the web. `BERNSTEIN_PAPER_QA_PAPERS`
+(required) is the directory of papers it indexes and searches; a missing
+directory, or one that holds no files, fails the run with exit 2 rather than
+letting PaperQA2 answer with no context. Every model it calls - answer,
+summary, agent, parser enrichment and embedding - is sent to the endpoint
+through LiteLLM's OpenAI provider; `BERNSTEIN_PAPER_QA_EMBEDDING` names the
+embedding model (default `text-embedding-3-small`). Paper metadata lookup
+(Crossref, Semantic Scholar) is off, so the papers and the endpoint are the
+run's only inputs. `PQA_HOME`, where PaperQA2 keeps its indexes, is passed
+through. Its sources are the papers the answer cites, one entry each: the
+paper's URL or DOI link when PaperQA2 has one, else its citation. PaperQA2's
+`unsure` and `truncated` statuses record `inconclusive`; `fail` records
+`driver_failure`.
+
 ## Network egress policy
 
 These agents exist to make outbound calls, so a spawn consults the active
@@ -89,9 +104,10 @@ The destinations are known per spawn, not declared on the class:
 
 | Adapter | Checked |
 |---|---|
-| both | the gateway from `BERNSTEIN_<AGENT>_OPENAI_BASE_URL` |
+| all three | the gateway from `BERNSTEIN_<AGENT>_OPENAI_BASE_URL` |
 | `gpt_researcher` | the host of every retriever in `RETRIEVER` (default `tavily`; `searx` uses `SEARX_URL`), and the scraper's service for `tavily_extract` / `firecrawl` |
 | `tongyi_deepresearch` | the Serper and Jina bases (the `..._SERPER_BASE_URL` / `..._JINA_BASE_URL` override, else `google.serper.dev` / `r.jina.ai`), and each `SANDBOX_FUSION_ENDPOINT` |
+| `paper_qa` | nothing beyond the gateway: metadata lookup is off and the papers are local |
 
 A URL without a readable host, and a retriever or scraper that is not in the
 table above (`custom`, `mcp`), cannot be placed and so is refused under a
@@ -107,7 +123,8 @@ a gateway or reader you control if page fetches must be bounded.
 ## How the agent runs
 
 The adapter launches a runner script shipped with bernstein
-(`gpt_researcher_runner.py`, `tongyi_deepresearch_runner.py`) under the
+(`gpt_researcher_runner.py`, `tongyi_deepresearch_runner.py`,
+`paper_qa_runner.py`) under the
 agent's own interpreter. The runner imports nothing from bernstein, so the
 agent's dependencies stay out of bernstein's environment and bernstein's
 stay out of the agent's.
@@ -134,7 +151,7 @@ nothing on the host.
 |---|---|
 | `set BERNSTEIN_<AGENT>_...` at spawn | a gateway variable or the checkout path is unset |
 | `network egress denied by policy` at spawn | the policy denies the gateway or a tool host (see above) |
-| runner exit 2 | the agent is not installed in `BERNSTEIN_<AGENT>_PYTHON`, the checkout has no `inference/react_agent.py`, or a Tongyi tool base URL is not http(s) |
+| runner exit 2 | the agent is not installed in `BERNSTEIN_<AGENT>_PYTHON`, the Tongyi checkout has no `inference/react_agent.py`, a Tongyi tool base URL is not http(s), or the PaperQA2 papers directory is missing or holds no files |
 | state `driver_failure`, `detail` set | the agent raised; `detail` holds the exception |
 | state `inconclusive` | empty report, or Tongyi stopped without an answer (`detail` says why) |
 | state `tampered` | `report.md` or `sources.json` changed after the run |

@@ -843,6 +843,16 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         event_channel=EventChannel.STREAM_JSON,
     ),
     "openhands": AdapterStrategy(),
+    # PaperQA2 is a deep-research agent over a local paper corpus: its unit of work is
+    # the cited answer bound to the papers it cites by digest (deep_research_artifact),
+    # not a commit. As for the other deep-research adapters, the answer stays in the run
+    # directory; nothing publishes it to a task's artifact path, so this row does not
+    # declare ``artifact``. No native resume; runs unattended.
+    "paper_qa": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
     "pi": AdapterStrategy(),
     "plandex": AdapterStrategy(),
     # Generic Python-invoked agent runtime adapter (#2959).
@@ -1250,6 +1260,7 @@ _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
         "junie",
         "muse",
         "opencode",
+        "paper_qa",
         "python_runtime",
         "q_dev",
         "qwen",
