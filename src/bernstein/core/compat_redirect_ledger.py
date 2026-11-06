@@ -39,11 +39,10 @@ REDIRECT_LEDGER_POLICY: Final[RedirectLedgerPolicy] = RedirectLedgerPolicy(
     ),
 )
 
-#: Bumped when the ``agent_identity`` entry was retargeted from
-#: ``bernstein.core.agents.agent_identity`` to ``bernstein.core.identity.agent_jwt``
-#: after the identity modules were consolidated (#5097). The legacy
-#: ``bernstein.core.agent_identity`` path keeps resolving; only its destination moved.
-REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "06963f10e4de5deea456719b1924082ed0604b8664911ee72bcee3cff729dc01"
+#: Bumped when the ``verify_contract``, ``verify_retry_policy`` and ``verify_tiers``
+#: aliases were added for the cross-tier verification package
+#: ``bernstein.core.verification`` (#6559).
+REVIEWED_REDIRECT_MAP_DIGEST: Final[str] = "7536eb2c098abe03cefaa85481ee35ca8084059f10e372c56ff4eb74a71d65a8"
 
 
 def redirect_map_digest(redirects: Mapping[str, str]) -> str:

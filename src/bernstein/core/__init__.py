@@ -561,6 +561,9 @@ _REDIRECT_MAP: dict[str, str] = {
     # usage_telemetry: removed - dead code, no production importers.
     "vault_injector": "bernstein.core.security.vault_injector",
     "verification_nudge": "bernstein.core.quality.verification_nudge",
+    "verify_contract": "bernstein.core.verification.contract",
+    "verify_retry_policy": "bernstein.core.verification.retry_policy",
+    "verify_tiers": "bernstein.core.verification.tiers",
     "vertical_packs": "bernstein.core.plugins_core.vertical_packs",
     "view_mode": "bernstein.core.config.view_mode",
     "visual_config": "bernstein.core.config.visual_config",
