@@ -2714,12 +2714,39 @@ def handle_orphaned_task(
 
     # Artifact-mode tasks run the pass even with no declared signals: the
     # signed receipt it records is their completion identity (issue #2608).
+    verification_evidence: dict[str, Any] = {}
     if task.completion_signals or is_artifact_mode(task):
-        passed, failed_signals = verify_task_completion(task, orch._workdir)
+        verification_workdir = orch._workdir
+        no_change_exit = False
+        if session.exit_code == 0 and task.completion_signals and not is_artifact_mode(task):
+            worktree = orch._spawner.get_worktree_path(session.id) or orch._workdir
+            completion_data = collect_completion_data(orch._workdir, session)
+            no_change_exit = (
+                not completion_data.get("files_modified")
+                and not _has_git_commits_on_branch(worktree, start_ts)
+                and not _uncommitted_work_paths(worktree)
+            )
+            if no_change_exit:
+                # The agent can legitimately find the deliverable already on
+                # base. Verify its worktree, not a potentially stale run checkout.
+                verification_workdir = worktree
+        passed, failed_signals = verify_task_completion(task, verification_workdir)
+        if no_change_exit:
+            verification_evidence = {
+                "completion_signals_checked": True,
+                "janitor_passed": passed,
+                "verification_workdir": str(verification_workdir),
+            }
         if passed:
             try:
+                summary = f"Auto-completed after agent {session.id} died; janitor passed"
+                if no_change_exit:
+                    summary = (
+                        f"Auto-completed (already satisfied on base): agent {session.id} "
+                        "exited cleanly with empty diff; janitor gates verified"
+                    )
                 result_payload: dict[str, Any] = {
-                    "result_summary": f"Auto-completed after agent {session.id} died; janitor passed",
+                    "result_summary": summary,
                 }
                 orch._client.post(
                     f"{base}/tasks/{task_id}/complete",
@@ -2778,7 +2805,7 @@ def handle_orphaned_task(
             _wal.write_entry(
                 decision_type=_wal_dtype,
                 inputs={"task_id": task_id, "agent_id": session.id, "orphaned": True},
-                output={"success": success, "error_type": error_type or ""},
+                output={"success": success, "error_type": error_type or "", **verification_evidence},
                 actor="agent_lifecycle",
             )
         except OSError:

@@ -39,6 +39,15 @@ stamps `task.verification_count` (0–3) and `task.flagged_unverified`
 (bool) on the task object so any downstream consumer can filter on
 them.
 
+When an agent exits with code 0, no changed files or new commits, and no
+completion report, the orphan-recovery path checks its declared janitor gates
+in the agent worktree (or the run checkout when no separate worktree exists).
+If all pass, the task completes with an "already satisfied on base" summary
+without a retry. Any failed gate keeps the existing fail/retry behavior.
+The outcome's WAL row records `completion_signals_checked`, `janitor_passed`,
+and `verification_workdir`. This case requires declared gates; an empty gate
+list does not establish that the task was already satisfied.
+
 ---
 
 ## When the alert fires

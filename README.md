@@ -190,6 +190,10 @@ Each goal moves through four stages:
 3. **Verify**. The janitor checks concrete signals: tests pass, files exist, lint clean, types correct.
 4. **Merge**. Verified work lands in main. Failed tasks get retried or routed to a different model.
 
+If an agent exits cleanly without changes or reporting completion, passing all
+declared janitor gates in its worktree completes the task as "already satisfied
+on base"; a failed gate follows the usual retry path.
+
 Why the scheduler is plain Python, and what that trades away: [why deterministic](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
 ### everyday commands
