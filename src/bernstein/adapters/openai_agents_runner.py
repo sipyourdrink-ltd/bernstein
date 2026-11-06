@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import inspect
 import itertools
 import json
 import logging
@@ -1935,6 +1936,19 @@ def run(manifest: RunnerManifest) -> int:
         heartbeat_stop.set()
 
 
+def _should_replay_minimax_reasoning(context: Any) -> bool:
+    """Replay only reasoning produced by the same explicitly configured model."""
+    return bool(context.reasoning.origin_model == context.model)
+
+
+def _supports_reasoning_content_replay(model_cls: Any) -> bool:
+    """Return whether the installed SDK exposes its replay-policy hook."""
+    try:
+        return "should_replay_reasoning_content" in inspect.signature(model_cls).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int:
     """Run the SDK session after startup validation has passed.
 
@@ -2083,9 +2097,30 @@ def _run_session(manifest: RunnerManifest, client_kwargs: dict[str, Any]) -> int
                 manifest.model,
                 manifest.base_url,
             )
+            model_kwargs: dict[str, Any] = {}
+            if (
+                manifest.model.lower().startswith("minimax-")
+                and urlparse(manifest.base_url or "").hostname == "api.minimax.io"
+            ):
+                # The SDK replays reasoning_content only for DeepSeek by default.
+                # MiniMax requires its complete reasoning/tool history as well.
+                if not _supports_reasoning_content_replay(sdk.OpenAIChatCompletionsModel):
+                    emit_event(
+                        {
+                            "type": "error",
+                            "kind": "sdk_incompatible",
+                            "message": (
+                                "installed openai-agents SDK does not expose the "
+                                "reasoning-content replay policy required for direct MiniMax runs"
+                            ),
+                        },
+                    )
+                    return EXIT_GENERIC
+                model_kwargs["should_replay_reasoning_content"] = _should_replay_minimax_reasoning
             agent_kwargs["model"] = sdk.OpenAIChatCompletionsModel(
                 model=manifest.model,
                 openai_client=explicit_model_client,
+                **model_kwargs,
             )
         if manifest.tool_source == "builtin":
             # Opt-in workdir-sandboxed builtins for runs with no MCP gateway

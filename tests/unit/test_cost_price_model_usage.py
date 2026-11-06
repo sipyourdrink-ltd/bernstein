@@ -138,6 +138,30 @@ class TestPriceModelUsage:
         assert gemini_flash.cost_usd == pytest.approx(0.15 + 1.0)
         assert gemini_flash.cost_usd != pytest.approx(3.0 + 15.0)
 
+    @pytest.mark.parametrize("model", ["MiniMax-M3.1-Flash", "minimax/minimax-m3.1-flash"])
+    def test_minimax_flash_uses_its_own_rate(self, model: str) -> None:
+        """Flash must not fall through to the broader, more expensive M3 stem."""
+        result = price_model_usage(model, input_tokens=1_000_000, output_tokens=1_000_000)
+        assert result.priced is True
+        assert result.cost_usd == pytest.approx(0.75)
+        rates = MODEL_COSTS_PER_1M_TOKENS["minimax-m3.1-flash"]
+        assert rates["cache_read"] == pytest.approx(0.015)
+        assert rates["cache_write"] is None
+
+    @pytest.mark.parametrize(
+        ("model", "expected_cost"),
+        [("MiniMax-M3", 3.0), ("MiniMax-M2.7", 1.5)],
+    )
+    def test_minimax_existing_rates_are_preserved(self, model: str, expected_cost: float) -> None:
+        result = price_model_usage(model, input_tokens=1_000_000, output_tokens=1_000_000)
+        assert result.priced is True
+        assert result.cost_usd == pytest.approx(expected_cost)
+
+    def test_minimax_m25_remains_explicitly_unpriced(self) -> None:
+        result = price_model_usage("MiniMax-M2.5", input_tokens=1_000_000, output_tokens=1_000_000)
+        assert result.priced is False
+        assert result.cost_usd == 0.0
+
     def test_every_pricing_table_entry_is_self_priceable(self) -> None:
         """Every key in the table must price itself as a positive number
         for nonzero tokens - guards against a future entry with a typo'd
