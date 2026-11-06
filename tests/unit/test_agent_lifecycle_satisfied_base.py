@@ -519,3 +519,89 @@ def test_literal_path_with_glob_chars_retries_when_only_worktree_file_matches(re
     retry.assert_called_once()
     assert "path_exists" in retry.call_args.args[1]
     assert _journal(orch)["decision_type"] == "task_failed"
+
+
+def test_glob_exists_prefers_tracked_match_over_ignored_literal(real_worktree_attempt) -> None:
+    """glob_exists is always a pattern: a tracked `foo1.json` that matches the
+    glob satisfies it, so an ignored, worktree-only literal `foo[1].json` must
+    not make the guard block a task the janitor completes. Literal-first must not
+    leak into glob_exists (#6606 regression)."""
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    (orch._workdir / "foo1.json").write_text("{}\n")
+    with (orch._workdir / ".gitignore").open("a") as ignore:
+        ignore.write("foo\\[1\\].json\n")
+    git("add", "-A")
+    git("commit", "-m", "tracked glob match and escaped ignore on base")
+    git("reset", "--hard", "main", cwd=worktree)
+    # The ignored literal exists only in the worktree; the tracked glob match
+    # stays checked out in both trees.
+    (worktree / "foo[1].json").write_text("{}\n")
+    task.completion_signals = [CompletionSignal(type="glob_exists", value="foo[1].json")]
+    assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
+    assert git("status", "--porcelain=v1", "--untracked-files=all", cwd=worktree) == ""
+    assert verify_task_completion(task, worktree) == (True, [])
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    retry.assert_not_called()
+    orch._client.post.assert_called_once()
+    assert "already satisfied on base" in orch._client.post.call_args.kwargs["json"]["result_summary"]
+    row = _journal(orch)
+    assert row["decision_type"] == "task_completed"
+    assert row["output"]["verification_workdir"] == str(worktree)
+
+
+def test_path_exists_symlink_to_worktree_only_target_retries(real_worktree_attempt) -> None:
+    """path_exists follows a symlink (janitor uses Path.exists), so a tracked
+    link to an ignored, worktree-only target passes the gate in the worktree yet
+    dangles after the merge. The guard must require the resolved target to be
+    tracked (#6606/#2760)."""
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    with (orch._workdir / ".gitignore").open("a") as ignore:
+        ignore.write("secret.txt\n")
+    (orch._workdir / "link.txt").symlink_to("secret.txt")
+    git("add", "-A")
+    git("commit", "-m", "tracked symlink to an ignored target on base")
+    git("reset", "--hard", "main", cwd=worktree)
+    # The link's target exists only in the worktree and is git-ignored.
+    (worktree / "secret.txt").write_text("worktree-only payload\n")
+    task.completion_signals = [CompletionSignal(type="path_exists", value="link.txt")]
+    assert (worktree / "link.txt").is_symlink()
+    assert git("status", "--porcelain=v1", "--untracked-files=all", cwd=worktree) == ""
+    # The janitor passes on the resolved worktree target, but it will not merge.
+    assert verify_task_completion(task, worktree) == (True, [])
+    assert verify_task_completion(task, orch._workdir)[0] is False
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    orch._client.post.assert_not_called()
+    retry.assert_called_once()
+    assert "path_exists" in retry.call_args.args[1]
+    assert _journal(orch)["decision_type"] == "task_failed"
+
+
+def test_path_exists_symlink_to_tracked_target_completes(real_worktree_attempt) -> None:
+    """A tracked symlink to a tracked target is a real on-base deliverable:
+    path_exists must still complete it, so the symlink guard does not over-block
+    and re-open #6606 for a legitimate committed link."""
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    (orch._workdir / "real.txt").write_text("committed target\n")
+    (orch._workdir / "link.txt").symlink_to("real.txt")
+    git("add", "-A")
+    git("commit", "-m", "tracked symlink to a tracked target on base")
+    git("reset", "--hard", "main", cwd=worktree)
+    task.completion_signals = [CompletionSignal(type="path_exists", value="link.txt")]
+    # Force the shortcut to read the worktree, not a stale run checkout.
+    (orch._workdir / "link.txt").unlink()
+    (orch._workdir / "real.txt").unlink()
+    assert (worktree / "link.txt").is_symlink()
+    assert verify_task_completion(task, worktree) == (True, [])
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    retry.assert_not_called()
+    orch._client.post.assert_called_once()
+    assert "already satisfied on base" in orch._client.post.call_args.kwargs["json"]["result_summary"]
+    row = _journal(orch)
+    assert row["decision_type"] == "task_completed"
+    assert row["output"]["verification_workdir"] == str(worktree)

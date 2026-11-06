@@ -3102,6 +3102,15 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
     a non-symlink file so an uncommitted edit or link target cannot establish
     completion (#6606, #2760).
 
+    Each gate type mirrors the janitor it will be re-checked against:
+    ``path_exists`` is literal-first (a literal path wins even when it holds
+    glob metacharacters; only a literal miss expands a glob pattern) and a
+    tracked symlink target must itself resolve to tracked content, because
+    ``Path.exists`` follows the link and a worktree-only target dangles after a
+    merge. ``glob_exists`` is always expanded as a pattern -- a tracked match
+    satisfies it even when an ignored literal of the same name exists only in
+    the worktree. ``file_contains`` is literal and rejects a symlink.
+
     Non-incidental uncommitted work or an unreadable status blocks every gate.
     Ignored agent-created files used by ``test_passes`` or ``glob_exists``
     cannot in general be distinguished from ordinary ignored build state
@@ -3125,14 +3134,44 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
                 if (worktree_path / target).is_symlink():
                     return False
             git_command = ["git", "--literal-pathspecs"]
-            # Literal-first, exactly like the janitor's _check_path_exists: a
-            # literal path that exists wins even when it holds glob
-            # metacharacters (a Next.js route ``app/[id]/page.tsx``, a fixture
-            # ``foo[1].json``); only on a literal miss is a pattern expanded.
-            # path_exists accepts a directory (janitor uses Path.exists);
-            # git ls-files then confirms the matched path is tracked, so a
-            # worktree-only file never establishes delivery.
+            if completion_signal.type == "glob_exists":
+                # The janitor always expands glob_exists as a pattern (never
+                # literal-first), so a tracked file that matches satisfies it
+                # even when an ignored literal of the same name exists only in
+                # the worktree. Require a tracked match.
+                if not _has_tracked_glob_candidate(worktree_path, target, git_command):
+                    return False
+                continue
+            # path_exists / file_contains are literal-first, exactly like the
+            # janitor's _check_path_exists: a literal path that exists wins even
+            # when it holds glob metacharacters (a Next.js route
+            # ``app/[id]/page.tsx``, a fixture ``foo[1].json``); only on a
+            # literal miss is a path_exists pattern expanded. path_exists accepts
+            # a directory (janitor uses Path.exists); git ls-files then confirms
+            # the matched path is tracked, so a worktree-only file never
+            # establishes delivery.
             if (worktree_path / target).exists():
+                if completion_signal.type == "path_exists" and (worktree_path / target).is_symlink():
+                    # path_exists follows the link (Path.exists), so a tracked
+                    # symlink to an ignored/worktree-only target passes here yet
+                    # dangles once the worktree is deleted. Require the resolved
+                    # target to be tracked so the gate survives a merge.
+                    try:
+                        resolved = (worktree_path / target).resolve(strict=True)
+                        relative_target = str(resolved.relative_to(worktree_path.resolve()))
+                    except (OSError, RuntimeError, ValueError):
+                        return False
+                    result = subprocess.run(
+                        [*git_command, "ls-files", "-z", "--", relative_target],
+                        cwd=str(worktree_path),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                    )
+                    if result.returncode != 0 or not result.stdout:
+                        return False
                 result = subprocess.run(
                     [*git_command, "ls-files", "-z", "--", target],
                     cwd=str(worktree_path),
@@ -3156,36 +3195,43 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
                     )
                     if result.returncode != 0:
                         return False
-            elif completion_signal.type in ("path_exists", "glob_exists") and any(c in "*?[" for c in target):
+            elif completion_signal.type == "path_exists" and any(c in "*?[" for c in target):
                 # Literal miss + glob syntax: the janitor expands the pattern.
-                # Python glob's * does not span directory separators (unlike Git
-                # pathspecs), so enumerate with glob and require a tracked match.
-                tracked_match = False
-                for candidate in glob.glob(str(worktree_path / target), recursive=True):
-                    relative_path = str(Path(candidate).relative_to(worktree_path))
-                    result = subprocess.run(
-                        [*git_command, "ls-files", "-z", "--", relative_path],
-                        cwd=str(worktree_path),
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=5,
-                    )
-                    if result.returncode != 0:
-                        return False
-                    if result.stdout:
-                        tracked_match = True
-                        break
-                if not tracked_match:
+                if not _has_tracked_glob_candidate(worktree_path, target, git_command):
                     return False
             else:
-                # Literal miss with no glob pattern (or a missing file_contains
-                # target): the gate cannot be satisfied by committed content.
+                # Literal miss with no path_exists glob pattern (or a missing
+                # file_contains target): committed content cannot satisfy it.
                 return False
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
     return True
+
+
+def _has_tracked_glob_candidate(worktree_path: Path, pattern: str, git_command: list[str]) -> bool:
+    """Whether a glob pattern matches at least one tracked path in the worktree.
+
+    Mirrors the janitor's Python glob semantics (``*`` does not span ``/``,
+    unlike a Git pathspec), then confirms a match is tracked so a worktree-only
+    file never establishes delivery (#6606, #2760). A failed ``git ls-files``
+    probe is treated as no match (fail closed).
+    """
+    for candidate in glob.glob(str(worktree_path / pattern), recursive=True):
+        relative_path = str(Path(candidate).relative_to(worktree_path))
+        result = subprocess.run(
+            [*git_command, "ls-files", "-z", "--", relative_path],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        if result.stdout:
+            return True
+    return False
 
 
 def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
