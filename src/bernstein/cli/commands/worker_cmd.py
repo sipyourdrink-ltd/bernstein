@@ -555,38 +555,73 @@ class WorkerLoop:
         task_id: str,
         summary: str,
         delivery: tuple[str, str] | None = None,
-    ) -> None:
+    ) -> bool:
         """Report task completion to the central server.
 
         When *delivery* is ``(branch, sha)``, the body includes
         ``agent_branch`` and ``agent_sha`` so the central can fetch and
         merge the remote agent's work (#6538).
+
+        Returns ``True`` when delivery was acknowledged (HTTP 2xx or 409),
+        ``False`` on transport error or HTTP 5xx so the caller can retain
+        the report for a later retry (#6627).
+
+        HTTP 409 means the coordinator already has a terminal state for this
+        task; treat it as a successful delivery rather than retrying
+        indefinitely.
         """
         body: dict[str, str] = {"result_summary": summary}
         if delivery is not None:
             body["agent_branch"] = delivery[0]
             body["agent_sha"] = delivery[1]
         try:
-            client.post(
+            resp = client.post(
                 f"{self._server_url}/tasks/{task_id}/complete",
                 json=body,
                 headers=self._headers(),
                 timeout=10.0,
             )
+            if resp.status_code == 409:
+                logger.warning(
+                    "Completion for %s: 409 conflict; coordinator already terminal, discarding",
+                    task_id,
+                )
+                return True
+            if resp.is_success:
+                return True
+            logger.warning("Failed to report completion for %s: HTTP %s", task_id, resp.status_code)
+            return False
         except httpx.HTTPError as exc:
             logger.warning("Failed to report completion for %s: %s", task_id, exc)
+            return False
 
-    def _fail_task(self, client: httpx.Client, task_id: str, reason: str) -> None:
-        """Report task failure to the central server."""
+    def _fail_task(self, client: httpx.Client, task_id: str, reason: str) -> bool:
+        """Report task failure to the central server.
+
+        Returns ``True`` when delivery was acknowledged (HTTP 2xx or 409),
+        ``False`` on transport error or HTTP 5xx so the caller can retain
+        the report for a later retry (#6627).
+        """
         try:
-            client.post(
+            resp = client.post(
                 f"{self._server_url}/tasks/{task_id}/fail",
                 json={"reason": reason},
                 headers=self._headers(),
                 timeout=10.0,
             )
+            if resp.status_code == 409:
+                logger.warning(
+                    "Fail-report for %s: 409 conflict; coordinator already terminal, discarding",
+                    task_id,
+                )
+                return True
+            if resp.is_success:
+                return True
+            logger.warning("Failed to report failure for %s: HTTP %s", task_id, resp.status_code)
+            return False
         except httpx.HTTPError as exc:
             logger.warning("Failed to report failure for %s: %s", task_id, exc)
+            return False
 
     def _release_task(self, client: httpx.Client, task_id: str, reason: str) -> None:
         """Release a claimed task back to the open pool after a failed spawn.
@@ -613,15 +648,25 @@ class WorkerLoop:
         in-agent completion curl may never fire (crash, kill, wrong URL), so
         the worker reports completion/failure itself (#2808). A task already
         terminal server-side simply no-ops the redundant report.
+
+        Reports that fail delivery (HTTP 5xx or transport error) are kept in
+        ``_pending_reports`` so the next poll cycle retries them (#6627).
+        HTTP 409 is treated as a successful delivery: the coordinator already
+        holds a terminal state, so retrying would be pointless.
         """
         if not self._pending_reports:
             return
         pending, self._pending_reports = self._pending_reports, []
+        failed: list[tuple[str, bool, str, tuple[str, str] | None]] = []
         for task_id, ok, detail, delivery in pending:
-            if ok:
+            delivered = (
                 self._complete_task(client, task_id, detail, delivery)
-            else:
-                self._fail_task(client, task_id, detail)
+                if ok
+                else self._fail_task(client, task_id, detail)
+            )
+            if not delivered:
+                failed.append((task_id, ok, detail, delivery))
+        self._pending_reports.extend(failed)
 
     def _spawn_agent(self, task: dict) -> int | None:
         """Spawn a CLI agent process to work on a task. Returns PID or None."""
