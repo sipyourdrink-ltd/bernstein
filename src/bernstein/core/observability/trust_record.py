@@ -235,12 +235,16 @@ _SPIFFE_TRUST_DOMAIN: str = "bernstein.run"
 #: non-empty.
 _SPIFFE_SEGMENT_RE = re.compile(r"^[^/]+$")
 
-#: ``runtime.measurement`` for a software-only producer: an explicit
-#: all-zero digest, never a real measurement. Distinct from an *absent*
-#: field -- the schema requires ``measurement``, and an all-zero value is
-#: the honest way to say "no hardware measurement exists" rather than
-#: overloading a real journal hash (which would look like evidence of a
-#: measurement that was never taken).
+#: ``runtime.measurement`` as this producer emits it today: an explicit
+#: all-zero digest, never a real measurement. The schema requires the field,
+#: so it cannot be left absent, and a real journal hash would look like
+#: evidence of a measurement that was never taken. The TRACE trust-levels page
+#: (https://trace.agentrust-io.com/docs/trust-levels/) reserves the all-zero
+#: value for a producer with no commitment to offer at all and says it is not
+#: the default for software-only records, which it describes as carrying a
+#: software commitment defined by the producing profile and recomputable by a
+#: verifier. This emitter does not carry such a commitment, so every record it
+#: signs has the all-zero value.
 _ALL_ZERO_SHA256_MEASUREMENT: str = f"sha256:{'0' * 64}"
 
 #: Fixed enforcement mode this producer always asserts: capability-scope and
