@@ -222,7 +222,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
-The Codex adapter forwards explicit reasoning effort (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) with `-c model_reasoning_effort=<value>`. Unsupported values, including `max` and `normal`, raise `ValueError` before a worker starts; empty effort leaves the CLI default. The session log records requested effort separately from effective effort, which remains unknown without provider evidence. See the [capability contract](docs/adapters/capability_contract.md#reasoning-effort).
+The Codex adapter maps Bernstein reasoning effort to `-c model_reasoning_effort=<value>`: `max` becomes `xhigh`, `normal` becomes `medium`, and native values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) pass through. Unknown values raise `ValueError` before a worker starts; empty effort leaves the CLI default. The session log records the internal request and mapped CLI override separately; effective provider effort remains unknown without provider evidence. See the [capability contract](docs/adapters/capability_contract.md#reasoning-effort).
 
 ### volunteer compute
 

@@ -262,14 +262,82 @@ class TestCodexAdapterSpawn:
 
 
 class TestCodexEffort:
-    @pytest.mark.parametrize("effort", ["none", "minimal", "low", "medium", "high", "xhigh"])
-    def test_supported_effort_preserves_exact_model(self, tmp_path: Path, effort: str) -> None:
+    @pytest.mark.parametrize(
+        ("effort", "cli_effort"),
+        [
+            ("none", "none"),
+            ("minimal", "minimal"),
+            ("low", "low"),
+            ("medium", "medium"),
+            ("normal", "medium"),
+            ("high", "high"),
+            ("max", "xhigh"),
+            ("xhigh", "xhigh"),
+        ],
+    )
+    def test_supported_effort_preserves_exact_model(self, tmp_path: Path, effort: str, cli_effort: str) -> None:
         model = "gateway/Exact-Model-v7"
         inner = _spawn_inner_cmd(CodexAdapter(), tmp_path, 800, ModelConfig(model=model, effort=effort))
         assert inner[inner.index("-m") + 1] == model
-        assert inner[inner.index("-c") + 1] == f"model_reasoning_effort={effort}"
+        assert inner[inner.index("-c") + 1] == f"model_reasoning_effort={cli_effort}"
+        assert cli_effort in ContractSpec.load("codex").supported_efforts
         assert inner.count("-c") == 1
         assert inner[-1] == "hello"
+        record = json.loads((tmp_path / ".sdd/runtime/codex-sbx800.log").read_text().splitlines()[0])
+        assert record["requested_effort"] == effort
+        assert record["effective_cli_effort"] == cli_effort
+        assert record["effective_effort"] is None
+
+    @pytest.mark.parametrize(
+        ("role", "model", "scope", "priority", "complexity", "requested", "cli_effort"),
+        [
+            pytest.param("backend", "gpt-5.5", "medium", 2, "medium", "normal", "medium", id="backend-model"),
+            pytest.param("architect", None, "medium", 2, "medium", "max", "xhigh", id="architect"),
+            pytest.param("manager", None, "medium", 2, "medium", "max", "xhigh", id="manager"),
+            pytest.param("security", None, "medium", 2, "medium", "max", "xhigh", id="security"),
+            pytest.param("backend", None, "large", 2, "medium", "max", "xhigh", id="large-scope"),
+            pytest.param("backend", None, "medium", 1, "medium", "max", "xhigh", id="priority-one"),
+            pytest.param("backend", None, "medium", 2, "high", "high", "high", id="high-complexity"),
+        ],
+    )
+    def test_batch_default_effort_reaches_codex_spawn(
+        self,
+        tmp_path: Path,
+        role: str,
+        model: str | None,
+        scope: str,
+        priority: int,
+        complexity: str,
+        requested: str,
+        cli_effort: str,
+    ) -> None:
+        """Exercise real selector defaults through spawn; never supply Task.effort."""
+        from bernstein.core.models import Complexity, Scope, Task
+
+        from bernstein.core.agents.spawner_warm_pool import _select_batch_config
+
+        task = Task(
+            id="effort-batch-default",
+            title="Fix",
+            description="Fix",
+            role=role,
+            model=model,
+            scope=Scope(scope),
+            priority=priority,
+            complexity=Complexity(complexity),
+        )
+        assert task.effort is None
+        config = _select_batch_config([task], default_model="gpt-5.5")
+        assert config.effort == requested
+        inner = _spawn_inner_cmd(CodexAdapter(), tmp_path, 806, config)
+        assert inner[inner.index("-m") + 1] == "gpt-5.5"
+        assert inner[inner.index("-c") + 1] == f"model_reasoning_effort={cli_effort}"
+        assert inner.count("-c") == 1
+        assert config.effort == requested
+        record = json.loads((tmp_path / ".sdd/runtime/codex-sbx806.log").read_text().splitlines()[0])
+        assert record["requested_effort"] == requested
+        assert record["effective_cli_effort"] == cli_effort
+        assert record["effective_effort"] is None
 
     def test_unset_effort_leaves_cli_default(self, tmp_path: Path) -> None:
         with patch("bernstein.adapters.codex.subprocess.Popen", return_value=_make_popen_mock(801)) as popen:
@@ -283,9 +351,10 @@ class TestCodexEffort:
         assert "-c" not in _inner_cmd(popen.call_args.args[0])
         record = json.loads(result.log_path.read_text().splitlines()[0])
         assert record["requested_effort"] is None
+        assert record["effective_cli_effort"] is None
         assert record["effective_effort"] is None
 
-    @pytest.mark.parametrize("effort", ["max", "normal", "ultra", "HIGH", " high ", "high\nmodel=other"])
+    @pytest.mark.parametrize("effort", ["ultra", "HIGH", " high ", "high\nmodel=other"])
     def test_unsupported_effort_rejected_before_worker_spawn(self, tmp_path: Path, effort: str) -> None:
         with patch("bernstein.adapters.codex.subprocess.Popen") as popen:
             with pytest.raises(ValueError, match="Unsupported Codex reasoning effort") as exc_info:
@@ -313,6 +382,7 @@ class TestCodexEffort:
         assert record == {
             "type": "bernstein.codex.effort",
             "requested_effort": "high",
+            "effective_cli_effort": "high",
             "effective_effort": None,
         }
 
@@ -420,12 +490,16 @@ class TestCodexEffort:
         assert inner[inner.index("-c") + 1] == "model_reasoning_effort=xhigh"
         assert inner[inner.index("-m") + 1] == "gpt-5.5"
 
-    @pytest.mark.parametrize("effort", ["high", "xhigh", ""])
+    @pytest.mark.parametrize(
+        ("effort", "cli_effort"),
+        [("high", "high"), ("xhigh", "xhigh"), ("max", "xhigh"), ("normal", "medium"), ("", "low")],
+    )
     def test_executable_stub_observes_requested_setting(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         effort: str,
+        cli_effort: str,
     ) -> None:
         """Run the actual worker and a local CLI stub; never contact a provider."""
         stub = tmp_path / "codex"
@@ -461,10 +535,11 @@ class TestCodexEffort:
             result.post_exit_thread.join(timeout=5)
             assert not result.post_exit_thread.is_alive()
             observed = json.loads((tmp_path / ".sdd/runtime/effort-executable.last-message.txt").read_text())
-            assert observed["setting"] == (effort or "low")
+            assert observed["setting"] == cli_effort
             assert observed["model"] == "Exact-Model-v7"
             record = json.loads(result.log_path.read_text().splitlines()[0])
             assert record["requested_effort"] == (effort or None)
+            assert record["effective_cli_effort"] == (cli_effort if effort else None)
             assert record["effective_effort"] is None
         finally:
             if result.proc.poll() is None:

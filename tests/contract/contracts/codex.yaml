@@ -32,8 +32,9 @@ required_flags:
   - "-o"
 required_subcommands:
   - "exec"
-# Native CLI vocabulary only. Bernstein's "max" and "normal" are not
-# equivalent claims: reject them before spawn rather than weakening a request.
+# Native CLI vocabulary only. The adapter maps Bernstein's "max" to "xhigh"
+# and "normal" to "medium" before constructing argv; native values pass through.
+# The internal request and mapped CLI override are recorded separately.
 # Empty effort leaves the account/config default unspecified.
 supported_efforts: ["none", "minimal", "low", "medium", "high", "xhigh"]
 # Codex sub-flags live under ``codex exec --help``, not ``codex --help``.

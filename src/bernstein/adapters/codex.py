@@ -67,7 +67,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from bernstein.adapters._contract import ContractSpec, DangerousModeStrategy
+from bernstein.adapters._contract import DangerousModeStrategy
 from bernstein.adapters.base import (
     DEFAULT_TIMEOUT_SECONDS,
     CLIAdapter,
@@ -101,6 +101,23 @@ _CODEX_AUTH_FILE = Path.home() / ".codex" / "auth.json"
 # both auth paths accept.
 _DEFAULT_CODEX_MODEL = "gpt-5.5"
 _CLAUDE_TIER_MODELS = frozenset({"opus", "sonnet", "haiku"})
+
+#: Bernstein's routing vocabulary includes ``normal`` and ``max`` (notably
+#: _select_batch_config's defaults). Translate at the CLI boundary without
+#: changing the internal request: normal is medium, and max maps UP to xhigh.
+#: Native Codex values pass through; empty effort keeps the CLI/account default.
+#: See docs/adapters/capability_contract.md#reasoning-effort.
+_CODEX_EFFORT_MAP: dict[str, str] = {
+    "": "",
+    "none": "none",
+    "minimal": "minimal",
+    "low": "low",
+    "normal": "medium",
+    "medium": "medium",
+    "high": "high",
+    "max": "xhigh",
+    "xhigh": "xhigh",
+}
 
 #: Sandbox argv for a spawn that keeps the vendor sandbox. Codex implements
 #: this profile with bubblewrap on Linux, so it needs an unprivileged user
@@ -425,12 +442,13 @@ class CodexAdapter(CLIAdapter):
         multimodal_context: Any | None = None,
     ) -> SpawnResult:
         effort = model_config.effort
-        supported_efforts = ContractSpec.load("codex").supported_efforts
-        if effort != "" and effort not in supported_efforts:
+        if effort not in _CODEX_EFFORT_MAP:
             raise ValueError(
                 f"Unsupported Codex reasoning effort {effort!r}; "
-                f"supported values: {', '.join(supported_efforts)} (or empty for CLI default)"
+                f"supported internal values: {', '.join(value for value in _CODEX_EFFORT_MAP if value)} "
+                "(or empty for CLI default)"
             )
+        cli_effort = _CODEX_EFFORT_MAP[effort]
         self.refuse_multimodal_if_needed(multimodal_context)
         self.enforce_network_policy()
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
@@ -455,8 +473,8 @@ class CodexAdapter(CLIAdapter):
             "-o",
             str(output_path),
         ]
-        if effort:
-            cmd.extend(["-c", f"model_reasoning_effort={effort}"])
+        if cli_effort:
+            cmd.extend(["-c", f"model_reasoning_effort={cli_effort}"])
         # Make the worktree's git dir writable so the agent can actually commit.
         # No-op outside a linked worktree. See _worktree_gitdir_roots.
         #
@@ -493,14 +511,15 @@ class CodexAdapter(CLIAdapter):
 
         env = build_filtered_env(["OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_BASE_URL"])
         with log_path.open("w") as log_file:
-            # Preserve the request in the existing session log, without claiming
-            # the CLI/gateway actually used it. No effective-effort attestation
-            # is available at spawn, even when the command exits successfully.
+            # Record the internal request and mapped CLI override separately.
+            # The effective provider effort still needs provider attestation;
+            # forwarding an override does not prove the gateway used it.
             log_file.write(
                 json.dumps(
                     {
                         "type": "bernstein.codex.effort",
                         "requested_effort": effort or None,
+                        "effective_cli_effort": cli_effort or None,
                         "effective_effort": None,
                     }
                 )
