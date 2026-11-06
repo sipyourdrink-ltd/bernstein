@@ -89,6 +89,7 @@ KNOWN_ORPHAN_REASONS: dict[str, str] = {
     "policy_limits": "remove-by:2026-12-01",
     "policy_templates": "remove-by:2026-12-01",
     "promptware_ingest": "remove-by:2026-12-01",
+    "quarantine_journal": "#5108",
     "quarantined_parser": "remove-by:2026-12-01",
     "rbac": "#4972,#5018,#5021,#5040",
     "sandbox_escape_detector": "remove-by:2026-12-01",

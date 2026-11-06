@@ -89,6 +89,7 @@ KNOWN_ORPHANS_SECURITY = frozenset(
         "policy_limits",
         "policy_templates",
         "promptware_ingest",
+        "quarantine_journal",
         "quarantined_parser",
         "rbac",
         "sandbox_escape_detector",
