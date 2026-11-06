@@ -2725,7 +2725,6 @@ def handle_orphaned_task(
             no_change_exit = (
                 not completion_data.get("files_modified")
                 and not _has_git_commits_on_branch(worktree, start_ts)
-                and not _uncommitted_work_paths(worktree)
                 and _satisfied_on_base_is_safe(worktree, task)
             )
             if no_change_exit:
@@ -3099,10 +3098,11 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
     """Require path-bearing gates to be satisfiable by committed content.
 
     Unrelated orchestrator/adapter files do not affect delivery. Gate targets
-    must be tracked, and ``file_contains`` must see unchanged HEAD content so
-    an uncommitted edit cannot establish completion (#6606, #2760).
+    must be tracked, and ``file_contains`` must see unchanged HEAD content in
+    a non-symlink file so an uncommitted edit or link target cannot establish
+    completion (#6606, #2760).
 
-    Non-incidental untracked work is rejected by the caller for every gate.
+    Non-incidental uncommitted work or an unreadable status blocks every gate.
     Ignored agent-created files used by ``test_passes`` or ``glob_exists``
     cannot in general be distinguished from ordinary ignored build state
     (.venv, __pycache__, caches): this is an accepted shortcut limitation.
@@ -3110,6 +3110,9 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
     ``file_contains`` targets remain guarded, even when ignored.
     """
     try:
+        status_ok, paths = _filtered_worktree_status(worktree_path)
+        if not status_ok or paths:
+            return False
         for completion_signal in task.completion_signals:
             if completion_signal.type not in ("path_exists", "glob_exists", "file_contains"):
                 continue
@@ -3119,7 +3122,9 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
                 if len(parts) != 2:
                     return False
                 target = parts[0].strip()
-            if completion_signal.type == "glob_exists":
+                if (worktree_path / target).is_symlink():
+                    return False
+            if completion_signal.type in ("path_exists", "glob_exists") and any(c in "*?[" for c in target):
                 # Match exactly as the janitor does: unlike Git pathspecs,
                 # Python glob's * does not span directory separators.
                 tracked_match = False
@@ -3142,15 +3147,12 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
                 if not tracked_match:
                     return False
                 continue
-            # Only glob_exists treats the target as a pattern.
-            git_command = ["git"]
-            if completion_signal.type != "glob_exists":
-                git_command.append("--literal-pathspecs")
-                # path_exists accepts a directory (janitor uses Path.exists);
-                # only file_contains needs a readable file, which its own gate
-                # (and the HEAD-clean diff below) still enforces.
-                if not (worktree_path / target).exists():
-                    return False
+            git_command = ["git", "--literal-pathspecs"]
+            # path_exists accepts a directory (janitor uses Path.exists);
+            # only file_contains needs a readable file, which its own gate
+            # (and the HEAD-clean diff below) still enforces.
+            if not (worktree_path / target).exists():
+                return False
             result = subprocess.run(
                 [*git_command, "ls-files", "-z", "--", target],
                 cwd=str(worktree_path),
@@ -3204,6 +3206,12 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
     """
     if worktree_path is None:
         return []
+    status_ok, paths = _filtered_worktree_status(worktree_path)
+    return paths if status_ok else []
+
+
+def _filtered_worktree_status(worktree_path: Path) -> tuple[bool, list[str]]:
+    """Read status and drop incidental artifacts, preserving Git failure state."""
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -3215,9 +3223,9 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
             timeout=5,
         )
     except Exception:
-        return []
+        return False, []
     if result.returncode != 0:
-        return []
+        return False, []
     paths: list[str] = []
     records = iter(result.stdout.split("\0"))
     for record in records:
@@ -3236,7 +3244,7 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
         if path == ".gitignore" and _gitignore_change_is_adapter_noise(worktree_path):
             continue
         paths.append(path)
-    return paths
+    return True, paths
 
 
 def _gitignore_change_is_adapter_noise(worktree_path: Path) -> bool:

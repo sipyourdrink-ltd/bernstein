@@ -260,7 +260,8 @@ def test_real_clean_worktree_completes_when_base_gate_passes(real_worktree_attem
 
 
 @pytest.mark.parametrize("pattern", ["out/*.json", "out/**/*.json"])
-def test_glob_tracked_match_on_base_completes(real_worktree_attempt, pattern: str) -> None:
+@pytest.mark.parametrize("signal_type", ["path_exists", "glob_exists"])
+def test_glob_tracked_match_on_base_completes(real_worktree_attempt, pattern: str, signal_type: str) -> None:
     orch, task, session, worktree, retry, git = real_worktree_attempt
     paths = ["out/sub/a.json"]
     if pattern == "out/*.json":
@@ -278,7 +279,7 @@ def test_glob_tracked_match_on_base_completes(real_worktree_attempt, pattern: st
     # Ordinary ignored build state must not disable the shortcut.
     (worktree / ".venv").mkdir()
     (worktree / ".venv/pyvenv.cfg").write_text("synthetic build state\n")
-    task.completion_signals = [CompletionSignal(type="glob_exists", value=pattern)]
+    task.completion_signals = [CompletionSignal(type=signal_type, value=pattern)]
     assert git("diff", "HEAD", cwd=worktree) == ""
     assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
     assert verify_task_completion(task, worktree) == (True, [])
@@ -298,7 +299,10 @@ def test_glob_tracked_match_on_base_completes(real_worktree_attempt, pattern: st
 
 @pytest.mark.parametrize("ignored", [False, True])
 @pytest.mark.parametrize("tracked_nested", [False, True])
-def test_glob_worktree_only_match_retries(real_worktree_attempt, ignored: bool, tracked_nested: bool) -> None:
+@pytest.mark.parametrize("signal_type", ["path_exists", "glob_exists"])
+def test_glob_worktree_only_match_retries(
+    real_worktree_attempt, ignored: bool, tracked_nested: bool, signal_type: str
+) -> None:
     orch, task, session, worktree, retry, git = real_worktree_attempt
     if ignored:
         with (orch._workdir / ".gitignore").open("a") as ignore:
@@ -315,7 +319,7 @@ def test_glob_worktree_only_match_retries(real_worktree_attempt, ignored: bool, 
     target = worktree / "out/result.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("{}\n")
-    task.completion_signals = [CompletionSignal(type="glob_exists", value="out/*.json")]
+    task.completion_signals = [CompletionSignal(type=signal_type, value="out/*.json")]
     assert git("diff", "HEAD", cwd=worktree) == ""
     assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
     assert verify_task_completion(task, worktree) == (True, [])
@@ -325,7 +329,7 @@ def test_glob_worktree_only_match_retries(real_worktree_attempt, ignored: bool, 
 
     orch._client.post.assert_not_called()
     retry.assert_called_once()
-    assert "glob_exists" in retry.call_args.args[1]
+    assert signal_type in retry.call_args.args[1]
     assert _journal(orch)["decision_type"] == "task_failed"
 
 
@@ -344,6 +348,58 @@ def test_test_passes_with_untracked_input_retries(real_worktree_attempt) -> None
     orch._client.post.assert_not_called()
     retry.assert_called_once()
     assert "test_passes" in retry.call_args.args[1]
+    assert _journal(orch)["decision_type"] == "task_failed"
+
+
+@pytest.mark.parametrize("failure", ["nonzero", "oserror", "timeout"])
+def test_test_passes_status_failure_blocks_satisfied_base(real_worktree_attempt, failure: str) -> None:
+    orch, task, session, worktree, retry, _git = real_worktree_attempt
+    (worktree / "deliverable.txt").write_text("ignored test input\n")
+    task.completion_signals = [CompletionSignal(type="test_passes", value="test -f deliverable.txt")]
+    assert verify_task_completion(task, worktree) == (True, [])
+    assert verify_task_completion(task, orch._workdir)[0] is False
+    run = subprocess.run
+    status_calls = []
+
+    def fail_status(command, *args, **kwargs):
+        if isinstance(command, list) and command[:2] == ["git", "status"]:
+            status_calls.append(command)
+            if failure == "oserror":
+                raise OSError("simulated git status failure")
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(command, 5)
+            return subprocess.CompletedProcess(command, 128, stdout="", stderr="simulated git status failure")
+        return run(command, *args, **kwargs)
+
+    with patch("bernstein.core.agents.agent_lifecycle.subprocess.run", side_effect=fail_status):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    assert status_calls == [["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"]]
+    orch._client.post.assert_not_called()
+    retry.assert_called_once()
+    assert "test_passes" in retry.call_args.args[1]
+    assert _journal(orch)["decision_type"] == "task_failed"
+
+
+def test_file_contains_symlink_blocks_satisfied_base(real_worktree_attempt) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    (orch._workdir / "feature-link.txt").symlink_to("deliverable.txt")
+    git("add", "feature-link.txt")
+    git("commit", "-m", "symlink on base with ignored target")
+    git("reset", "--hard", "main", cwd=worktree)
+    (worktree / "deliverable.txt").write_text("implemented\n")
+    task.completion_signals = [CompletionSignal(type="file_contains", value="feature-link.txt :: implemented")]
+    assert (worktree / "feature-link.txt").is_symlink()
+    assert git("status", "--porcelain=v1", "--untracked-files=all", cwd=worktree) == ""
+    assert git("diff", "HEAD", cwd=worktree) == ""
+    assert verify_task_completion(task, worktree) == (True, [])
+    assert verify_task_completion(task, orch._workdir)[0] is False
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    orch._client.post.assert_not_called()
+    retry.assert_called_once()
+    assert "file_contains" in retry.call_args.args[1]
     assert _journal(orch)["decision_type"] == "task_failed"
 
 

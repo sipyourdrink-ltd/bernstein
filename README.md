@@ -192,10 +192,11 @@ Each goal moves through four stages:
 
 If an agent exits cleanly without changes or reporting completion, passing all
 declared janitor gates in its worktree completes the task as "already satisfied
-on base". Path and glob gates require tracked targets; `file_contains` also
-requires the target to have no uncommitted changes relative to HEAD. Unrelated
-orchestrator and adapter files do not block this shortcut. Worktree-only gate
-targets or failed Git probes keep the usual verification and retry path.
+on base". Path and glob gates require tracked targets, including glob patterns
+in `path_exists`; `file_contains` also requires a non-symlink target with no
+uncommitted changes relative to HEAD. Unrelated orchestrator and adapter files
+do not block this shortcut. Worktree-only gate targets or failed Git probes
+keep the usual verification and retry path.
 
 Why the scheduler is plain Python, and what that trades away: [why deterministic](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
