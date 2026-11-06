@@ -286,12 +286,21 @@ def _collect_python_packages() -> list[SBOMComponent]:
         return []
 
     components: list[SBOMComponent] = []
+    # One component per purl. ``distributions()`` yields a distribution once
+    # per ``sys.path`` entry it is visible from (a user-site install beside a
+    # venv, a PYTHONPATH overlay), and CycloneDX requires ``components`` to be
+    # unique, so a repeated distribution would make the document schema-invalid.
+    seen: set[str] = set()
     for dist in importlib_metadata.distributions():
         try:
             name = dist.metadata["Name"] or ""
             version = dist.metadata["Version"] or ""
             if not name or not version:
                 continue
+            purl = _purl_for_python_package(name, version)
+            if purl in seen:
+                continue
+            seen.add(purl)
             description = dist.metadata.get("Summary", "") or ""
             license_val = dist.metadata.get("License", "") or ""
             licenses = [license_val] if license_val and license_val != "UNKNOWN" else []
@@ -299,7 +308,7 @@ def _collect_python_packages() -> list[SBOMComponent]:
                 SBOMComponent(
                     name=name,
                     version=version,
-                    purl=_purl_for_python_package(name, version),
+                    purl=purl,
                     description=description,
                     licenses=licenses,
                 )
