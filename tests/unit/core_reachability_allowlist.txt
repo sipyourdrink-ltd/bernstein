@@ -140,6 +140,7 @@ bernstein.core.orchestration.rolling_restart: #4526 audit in flight
 bernstein.core.orchestration.shutdown_sequence: #4526 audit in flight
 bernstein.core.orchestration.source_fetcher: #4526 audit in flight
 bernstein.core.orchestration.staggered_shutdown: #4526 audit in flight
+bernstein.core.orchestration.task_stall: #4526 audit in flight
 bernstein.core.orchestration.tick_anomaly: #4526 audit in flight
 bernstein.core.orchestration.tick_budget: #4526 audit in flight
 bernstein.core.orchestration.tick_hooks: #4526 audit in flight
