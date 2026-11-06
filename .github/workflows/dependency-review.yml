@@ -59,6 +59,7 @@ jobs:
             Apache-2.0,
             MIT,
             MIT-0,
+            MIT-CMU,
             BSD-2-Clause,
             BSD-3-Clause,
             ISC,
