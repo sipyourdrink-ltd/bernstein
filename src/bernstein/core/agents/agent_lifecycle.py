@@ -2724,7 +2724,7 @@ def handle_orphaned_task(
             no_change_exit = (
                 not completion_data.get("files_modified")
                 and not _has_git_commits_on_branch(worktree, start_ts)
-                and _worktree_is_clean(worktree)
+                and _satisfied_on_base_is_safe(worktree, task)
             )
             if no_change_exit:
                 # The agent can legitimately find the deliverable already on
@@ -3093,27 +3093,58 @@ _ADAPTER_GITIGNORE_PREFIX = ".aider"
 _ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/",)
 
 
-def _worktree_is_clean(worktree_path: Path) -> bool:
-    """Prove the no-change shortcut has no worktree-only state (#2760).
+def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
+    """Require path-bearing gates to be satisfiable by committed content.
 
-    Include every untracked and ignored file, even orchestrator/adapter paths
-    that ``_uncommitted_work_paths`` filters out. Such files can satisfy gates
-    locally but will not survive a merge. An unreadable status is not proof
-    of a clean worktree.
+    Unrelated orchestrator/adapter files do not affect delivery. Gate targets
+    must be tracked, and ``file_contains`` must see unchanged HEAD content so
+    an uncommitted edit cannot establish completion (#6606, #2760).
     """
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored"],
-            cwd=str(worktree_path),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        for completion_signal in task.completion_signals:
+            if completion_signal.type not in ("path_exists", "glob_exists", "file_contains"):
+                continue
+            target = completion_signal.value
+            if completion_signal.type == "file_contains":
+                parts = target.split(" :: ", maxsplit=1)
+                if len(parts) != 2:
+                    return False
+                target = parts[0].strip()
+            # Only glob_exists treats the target as a pattern.
+            git_command = ["git"]
+            if completion_signal.type != "glob_exists":
+                git_command.append("--literal-pathspecs")
+                # path_exists accepts a directory (janitor uses Path.exists);
+                # only file_contains needs a readable file, which its own gate
+                # (and the HEAD-clean diff below) still enforces.
+                if not (worktree_path / target).exists():
+                    return False
+            result = subprocess.run(
+                [*git_command, "ls-files", "-z", "--", target],
+                cwd=str(worktree_path),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            if result.returncode != 0 or not result.stdout:
+                return False
+            if completion_signal.type == "file_contains":
+                result = subprocess.run(
+                    [*git_command, "diff", "--quiet", "HEAD", "--", target],
+                    cwd=str(worktree_path),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                )
+                if result.returncode != 0:
+                    return False
+    except (OSError, ValueError, subprocess.SubprocessError):
         return False
-    return result.returncode == 0 and not result.stdout
+    return True
 
 
 def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:

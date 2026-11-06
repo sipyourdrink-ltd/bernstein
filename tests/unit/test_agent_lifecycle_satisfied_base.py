@@ -79,7 +79,7 @@ def no_change_attempt(tmp_path: Path):
     with (
         patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
         patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
-        patch("bernstein.core.agents.agent_lifecycle._worktree_is_clean", return_value=True),
+        patch("bernstein.core.agents.agent_lifecycle._satisfied_on_base_is_safe", return_value=True),
         patch("bernstein.core.quality.janitor._gitignore_exclusion", return_value=None),
         patch("bernstein.core.quality.janitor.subprocess.run", side_effect=run_gate) as gate_command,
         patch("bernstein.core.agents.agent_lifecycle.retry_or_fail_task") as retry,
@@ -256,3 +256,57 @@ def test_real_clean_worktree_completes_when_base_gate_passes(real_worktree_attem
     row = _journal(orch)
     assert row["decision_type"] == "task_completed"
     assert row["output"]["verification_workdir"] == str(worktree)
+
+
+@pytest.mark.parametrize("signal_type", ["path_exists", "glob_exists"])
+def test_incidental_artifacts_do_not_block_satisfied_base(real_worktree_attempt, signal_type: str) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    target = "feature.txt" if signal_type == "path_exists" else "feature.*"
+    task.completion_signals = [CompletionSignal(type=signal_type, value=target)]
+    for path in (".claude/scheduled_tasks.json", ".sdd/attestations/spawn.json"):
+        artifact = worktree / path
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("{}\n")
+    status = git("status", "--porcelain=v1", "--ignored", "--untracked-files=all", cwd=worktree)
+    assert "?? .claude/scheduled_tasks.json" in status
+    assert "!! .sdd/attestations/spawn.json" in status
+    (orch._workdir / "feature.txt").unlink()
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    retry.assert_not_called()
+    orch._client.post.assert_called_once()
+    assert "already satisfied on base" in orch._client.post.call_args.kwargs["json"]["result_summary"]
+    row = _journal(orch)
+    assert row["decision_type"] == "task_completed"
+    assert row["output"]["completion_signals_checked"] is True
+    assert row["output"]["janitor_passed"] is True
+    assert row["output"]["verification_workdir"] == str(worktree)
+
+
+@pytest.mark.parametrize("uncommitted_edit", [False, True])
+def test_file_contains_requires_committed_content(real_worktree_attempt, uncommitted_edit: bool) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    needle = "implemented" if uncommitted_edit else "already on base"
+    task.completion_signals = [CompletionSignal(type="file_contains", value=f"feature.txt :: {needle}")]
+    if uncommitted_edit:
+        (worktree / "feature.txt").write_text("already on base\nimplemented\n")
+        assert needle not in git("show", "HEAD:feature.txt", cwd=worktree)
+    else:
+        (orch._workdir / "feature.txt").unlink()
+    assert verify_task_completion(task, worktree) == (True, [])
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    if uncommitted_edit:
+        orch._client.post.assert_not_called()
+        retry.assert_called_once()
+        assert "file_contains" in retry.call_args.args[1]
+        assert _journal(orch)["decision_type"] == "task_failed"
+    else:
+        retry.assert_not_called()
+        orch._client.post.assert_called_once()
+        assert "already satisfied on base" in orch._client.post.call_args.kwargs["json"]["result_summary"]
+        row = _journal(orch)
+        assert row["decision_type"] == "task_completed"
+        assert row["output"]["verification_workdir"] == str(worktree)
