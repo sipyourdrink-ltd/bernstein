@@ -1666,15 +1666,14 @@ class TestEmptyDiffGuardAndAttribution:
         assert any("empty_diff" in d for d in failed), f"failed={failed}"
 
     @pytest.mark.asyncio
-    async def test_unattributable_diff_with_nontrivial_signal_accepted_with_warning(
+    async def test_unattributable_diff_with_nontrivial_signal_accepted(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A task that landed real work in a commit whose message omits the
-        task id and which has no owned_files (attribution returns empty) must
-        NOT be hard-rejected when it has a passing non-trivial completion
-        signal (a passing test_passes). Instead it is accepted and flagged for
-        review, so real completions are not false-rejected just because the
-        commit did not stamp the task id."""
+        """A task whose commit message omits the task id (no owned_files, no
+        attribution) but whose non-trivial completion signal passes must be
+        accepted cleanly as 'already satisfied on base' (#6606).  The signal
+        is evidence enough that the deliverable exists; the missing commit
+        stamp does not undercut it."""
         _init_git_repo(tmp_path)
         # A real landing commit whose message does NOT reference the task id.
         (tmp_path / "src").mkdir()
@@ -1696,17 +1695,74 @@ class TestEmptyDiffGuardAndAttribution:
             ],
         )
 
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("INFO"):
             results = await run_janitor([task], tmp_path)
 
         assert len(results) == 1
         assert results[0].passed is True, f"signal_results={results[0].signal_results}"
-        # Not hard-rejected: no failing empty_diff signal.
+        # Accepted cleanly: no failing signal, accepted with already_satisfied.
         failed = [d for d, ok, _ in results[0].signal_results if not ok]
-        assert not any("empty_diff" in d and "warn" not in d for d in failed), f"failed={failed}"
-        assert any("empty diff, flagged for review" in rec.message for rec in caplog.records), (
-            "expected an empty-diff WARN log flagging the task for review"
+        assert not any("empty_diff" in d for d in failed), f"failed={failed}"
+        satisfied = [d for d, ok, _ in results[0].signal_results if ok and "already_satisfied" in d]
+        assert satisfied, f"expected attribution:already_satisfied, got {results[0].signal_results}"
+
+    @pytest.mark.asyncio
+    async def test_already_satisfied_all_gates_pass_accepted_without_retry(self, tmp_path: Path) -> None:
+        """Clean exit + empty diff + all gates pass (file_contains, test_passes)
+        -> done with 'already satisfied on base', no retry (#6606)."""
+        _init_git_repo(tmp_path)
+        # Deliverable already on base branch from a prior run.
+        # Commit message intentionally does NOT reference task id ALREADY-1
+        # so attribution fails and the empty-diff guard fires.
+        (tmp_path / "src").mkdir(exist_ok=True)
+        (tmp_path / "src" / "result.py").write_text("RESULT = 42\n")
+        subprocess.run(["git", "add", "src/result.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "prior run: add result (no task id)"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
         )
+        task = _make_task(
+            id="ALREADY-1",
+            signals=[
+                CompletionSignal(type="file_contains", value="src/result.py :: RESULT = 42"),
+                CompletionSignal(type="path_exists", value="src/result.py"),
+                CompletionSignal(
+                    type="test_passes",
+                    value=f'{sys.executable} -c "raise SystemExit(0)"',
+                ),
+            ],
+        )
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is True, f"signal_results={results[0].signal_results}"
+        satisfied = [d for d, ok, _ in results[0].signal_results if ok and "already_satisfied" in d]
+        assert satisfied, f"expected attribution:already_satisfied signal, got {results[0].signal_results}"
+
+    @pytest.mark.asyncio
+    async def test_empty_diff_any_gate_fails_still_rejected(self, tmp_path: Path) -> None:
+        """Clean exit + empty diff + any gate fails -> unchanged behavior: rejected (#6606)."""
+        _init_git_repo(tmp_path)
+        task = _make_task(
+            id="PARTIAL-1",
+            signals=[
+                # test_passes would be nontrivial, but this one fails.
+                CompletionSignal(
+                    type="test_passes",
+                    value=f'{sys.executable} -c "raise SystemExit(1)"',
+                ),
+            ],
+        )
+
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].passed is False
+        failed = [d for d, ok, _ in results[0].signal_results if not ok]
+        assert any("test_passes" in d for d in failed), f"failed={failed}"
 
     @pytest.mark.asyncio
     async def test_research_noop_task_type_exempt(self, tmp_path: Path) -> None:
