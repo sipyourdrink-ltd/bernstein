@@ -22,6 +22,7 @@ from bernstein.core.security.audit import AuditLog
 from bernstein.core.security.role_adapter_policy import (
     ADAPTER_DENY_EVENT_TYPE,
     DEFAULT_POLICY_PATH,
+    PolicyFileCorrupt,
     RoleAdapterDenied,
     RolePolicy,
     check,
@@ -147,13 +148,11 @@ class TestPersistence:
         loaded = load_policy_file(tmp_path / "does-not-exist.json")
         assert loaded.per_role_allowlists == {}
 
-    def test_malformed_file_yields_empty_policy(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_malformed_file_raises_policy_file_corrupt(self, tmp_path: Path) -> None:
         path = tmp_path / "bad.json"
         path.write_text("{not valid json")
-        with caplog.at_level("WARNING"):
-            loaded = load_policy_file(path)
-        assert loaded.per_role_allowlists == {}
-        assert any("failed to load" in m for m in caplog.messages)
+        with pytest.raises(PolicyFileCorrupt):
+            load_policy_file(path)
 
     def test_from_dict_normalises_lists(self) -> None:
         policy = RolePolicy.from_dict({"security": ["claude", "aider", "claude"]})
