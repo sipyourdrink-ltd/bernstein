@@ -1,11 +1,11 @@
 # Task server API
 
-Base URL: **http://127.0.0.1:8052**
+Base URL: **{{SERVER_URL}}**
 
 ## Create a task
 
 ```bash
-curl -s -X POST http://127.0.0.1:8052/tasks \
+curl -s -X POST {{SERVER_URL}}/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Implement feature X",
@@ -31,7 +31,7 @@ every id in `depends_on` reaches `done` - a note in `description` alone
 does not gate anything:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8052/tasks \
+curl -s -X POST {{SERVER_URL}}/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Unit tests for feature X",
