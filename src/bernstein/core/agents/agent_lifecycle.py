@@ -12,6 +12,7 @@ kept on a salvage or graveyard ref by worktree cleanup, never merged (#6539).
 from __future__ import annotations
 
 import contextlib
+import glob
 import json
 import logging
 import signal
@@ -2724,6 +2725,7 @@ def handle_orphaned_task(
             no_change_exit = (
                 not completion_data.get("files_modified")
                 and not _has_git_commits_on_branch(worktree, start_ts)
+                and not _uncommitted_work_paths(worktree)
                 and _satisfied_on_base_is_safe(worktree, task)
             )
             if no_change_exit:
@@ -3099,6 +3101,13 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
     Unrelated orchestrator/adapter files do not affect delivery. Gate targets
     must be tracked, and ``file_contains`` must see unchanged HEAD content so
     an uncommitted edit cannot establish completion (#6606, #2760).
+
+    Non-incidental untracked work is rejected by the caller for every gate.
+    Ignored agent-created files used by ``test_passes`` or ``glob_exists``
+    cannot in general be distinguished from ordinary ignored build state
+    (.venv, __pycache__, caches): this is an accepted shortcut limitation.
+    ``glob_exists`` still needs a tracked candidate; all ``path_exists`` and
+    ``file_contains`` targets remain guarded, even when ignored.
     """
     try:
         for completion_signal in task.completion_signals:
@@ -3110,6 +3119,29 @@ def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
                 if len(parts) != 2:
                     return False
                 target = parts[0].strip()
+            if completion_signal.type == "glob_exists":
+                # Match exactly as the janitor does: unlike Git pathspecs,
+                # Python glob's * does not span directory separators.
+                tracked_match = False
+                for candidate in glob.glob(str(worktree_path / target), recursive=True):
+                    relative_path = str(Path(candidate).relative_to(worktree_path))
+                    result = subprocess.run(
+                        ["git", "--literal-pathspecs", "ls-files", "-z", "--", relative_path],
+                        cwd=str(worktree_path),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                    )
+                    if result.returncode != 0:
+                        return False
+                    if result.stdout:
+                        tracked_match = True
+                        break
+                if not tracked_match:
+                    return False
+                continue
             # Only glob_exists treats the target as a pattern.
             git_command = ["git"]
             if completion_signal.type != "glob_exists":

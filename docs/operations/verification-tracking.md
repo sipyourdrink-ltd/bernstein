@@ -42,13 +42,23 @@ them.
 When an agent exits with code 0, no changed files or new commits, and no
 completion report, the orphan-recovery path checks its declared janitor gates
 in the agent worktree (or the run checkout when no separate worktree exists).
-This shortcut checks the gate targets against Git: `path_exists` requires a
-tracked file, `glob_exists` requires at least one tracked match, and
+Non-incidental untracked agent work blocks this shortcut for every gate type,
+including `test_passes`. The status check excludes ignored files and filters
+orchestrator and adapter artifacts, so ordinary ignored state such as `.venv/`
+does not block it. This shortcut also checks the gate targets against Git:
+`path_exists` requires a tracked path, `glob_exists` enumerates candidates with
+the janitor's Python glob semantics and requires at least one tracked match, and
 `file_contains` requires a tracked file with no uncommitted changes relative
-to HEAD. Untracked or ignored gate targets cannot establish delivery. Unrelated
-orchestrator and adapter artifacts do not block the shortcut. Failed or timed-out
-Git probes keep verification on the run checkout with the existing
-completion/retry behavior. Non-path signals, including tests and LLM checks,
+to HEAD. Untracked work and all `path_exists`/`file_contains` targets are guarded.
+
+Accepted limitation: an agent-created Git-ignored file used to satisfy
+`test_passes` or `glob_exists` cannot in general be distinguished from ordinary
+ignored build state (`.venv/`, `__pycache__/`, caches). Such ignored dependencies
+are not detectable by the shortcut. `glob_exists` still requires a tracked
+candidate; an ignored-only match is rejected.
+
+Failed or timed-out gate-target Git probes keep verification on the run checkout
+with the existing completion/retry behavior. Non-path signals, including tests and LLM checks,
 continue to run in the worktree when the shortcut is safe.
 Passing all gates then completes the task with an "already satisfied on base"
 summary without a retry. Any failed gate keeps the existing fail/retry behavior.

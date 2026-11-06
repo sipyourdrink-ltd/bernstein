@@ -79,6 +79,7 @@ def no_change_attempt(tmp_path: Path):
     with (
         patch("bernstein.core.agents.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
         patch("bernstein.core.agents.agent_lifecycle._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agents.agent_lifecycle._uncommitted_work_paths", return_value=[]),
         patch("bernstein.core.agents.agent_lifecycle._satisfied_on_base_is_safe", return_value=True),
         patch("bernstein.core.quality.janitor._gitignore_exclusion", return_value=None),
         patch("bernstein.core.quality.janitor.subprocess.run", side_effect=run_gate) as gate_command,
@@ -256,6 +257,94 @@ def test_real_clean_worktree_completes_when_base_gate_passes(real_worktree_attem
     row = _journal(orch)
     assert row["decision_type"] == "task_completed"
     assert row["output"]["verification_workdir"] == str(worktree)
+
+
+@pytest.mark.parametrize("pattern", ["out/*.json", "out/**/*.json"])
+def test_glob_tracked_match_on_base_completes(real_worktree_attempt, pattern: str) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    paths = ["out/sub/a.json"]
+    if pattern == "out/*.json":
+        # Python's * cannot match the nested file; commit a direct match too.
+        paths.append("out/result.json")
+    for path in paths:
+        target = orch._workdir / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}\n")
+    with (orch._workdir / ".gitignore").open("a") as ignore:
+        ignore.write(".venv/\n")
+    git("add", ".gitignore", "out")
+    git("commit", "-m", "glob deliverables on base")
+    git("reset", "--hard", "main", cwd=worktree)
+    # Ordinary ignored build state must not disable the shortcut.
+    (worktree / ".venv").mkdir()
+    (worktree / ".venv/pyvenv.cfg").write_text("synthetic build state\n")
+    task.completion_signals = [CompletionSignal(type="glob_exists", value=pattern)]
+    assert git("diff", "HEAD", cwd=worktree) == ""
+    assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
+    assert verify_task_completion(task, worktree) == (True, [])
+    # Verify the shortcut actually selects the worktree over a stale checkout.
+    for path in paths:
+        (orch._workdir / path).unlink()
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    retry.assert_not_called()
+    orch._client.post.assert_called_once()
+    assert "already satisfied on base" in orch._client.post.call_args.kwargs["json"]["result_summary"]
+    row = _journal(orch)
+    assert row["decision_type"] == "task_completed"
+    assert row["output"]["verification_workdir"] == str(worktree)
+
+
+@pytest.mark.parametrize("ignored", [False, True])
+@pytest.mark.parametrize("tracked_nested", [False, True])
+def test_glob_worktree_only_match_retries(real_worktree_attempt, ignored: bool, tracked_nested: bool) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    if ignored:
+        with (orch._workdir / ".gitignore").open("a") as ignore:
+            ignore.write("out/result.json\n")
+    if tracked_nested:
+        nested = orch._workdir / "out/sub/a.json"
+        nested.parent.mkdir(parents=True)
+        nested.write_text("{}\n")
+        git("add", "out/sub/a.json")
+    if ignored or tracked_nested:
+        git("add", ".gitignore")
+        git("commit", "-m", "base with no direct glob match")
+        git("reset", "--hard", "main", cwd=worktree)
+    target = worktree / "out/result.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}\n")
+    task.completion_signals = [CompletionSignal(type="glob_exists", value="out/*.json")]
+    assert git("diff", "HEAD", cwd=worktree) == ""
+    assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
+    assert verify_task_completion(task, worktree) == (True, [])
+    assert verify_task_completion(task, orch._workdir)[0] is False
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    orch._client.post.assert_not_called()
+    retry.assert_called_once()
+    assert "glob_exists" in retry.call_args.args[1]
+    assert _journal(orch)["decision_type"] == "task_failed"
+
+
+def test_test_passes_with_untracked_input_retries(real_worktree_attempt) -> None:
+    orch, task, session, worktree, retry, git = real_worktree_attempt
+    (worktree / "generated-input.txt").write_text("uncommitted test fixture\n")
+    task.completion_signals = [CompletionSignal(type="test_passes", value="test -f generated-input.txt")]
+    assert git("status", "--porcelain=v1", "--untracked-files=all", cwd=worktree) == "?? generated-input.txt\n"
+    assert git("diff", "HEAD", cwd=worktree) == ""
+    assert git("log", "--oneline", "main..HEAD", cwd=worktree) == ""
+    assert verify_task_completion(task, worktree) == (True, [])
+    assert verify_task_completion(task, orch._workdir)[0] is False
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    orch._client.post.assert_not_called()
+    retry.assert_called_once()
+    assert "test_passes" in retry.call_args.args[1]
+    assert _journal(orch)["decision_type"] == "task_failed"
 
 
 @pytest.mark.parametrize("signal_type", ["path_exists", "glob_exists"])
