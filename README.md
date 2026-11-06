@@ -222,8 +222,6 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 
 Mix agents in the same run: cheap local models for boilerplate, heavier cloud models for architecture. `bernstein integrations list --installed` shows what is available on your machine.
 
-The Codex adapter maps Bernstein reasoning effort to `-c model_reasoning_effort=<value>`: `max` becomes `xhigh`, `normal` becomes `medium`, and native values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) pass through. Unknown values raise `ValueError` before a worker starts; empty effort leaves the CLI default. The session log records the internal request and mapped CLI override separately; effective provider effort remains unknown without provider evidence. See the [capability contract](docs/adapters/capability_contract.md#reasoning-effort).
-
 ### volunteer compute
 
 A project can mark issues as open to volunteers, and anyone can run one on their own machine without an account or a coordinator. The project declares what a task is allowed to do in a `volunteer.json` manifest - sandbox backend, network allowlist, wall-clock and memory ceilings - and a donor's own limits can only narrow that, never widen it. The receipt a finished task produces binds the result to the containment decision it ran under, so a maintainer can check months later what the work was actually permitted to touch.
