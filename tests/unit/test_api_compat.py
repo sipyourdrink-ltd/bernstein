@@ -262,3 +262,36 @@ def test_all_change_kinds_are_represented() -> None:
     assert "param_became_required" in names
     assert "param_became_keyword_only" in names
     assert "param_became_positional_only" in names
+
+
+def test_task_response_exposes_governance_and_claim_fields() -> None:
+    """TaskResponse must expose approval_spec, sensitivity, and claimed_by_session (#6640).
+
+    These are safety-relevant governance fields. A missing field means an
+    external dispatcher cannot read back the policy it is expected to honour.
+    """
+    from bernstein.core.server import TaskResponse
+
+    fields = set(TaskResponse.model_fields)
+    for name in ("approval_spec", "sensitivity", "claimed_by_session"):
+        assert name in fields, f"TaskResponse is missing governance field: {name!r}"
+
+
+def test_task_to_response_roundtrips_governance_fields() -> None:
+    """task_to_response must carry approval_spec, sensitivity, and claimed_by_session through."""
+    from bernstein.core.server.server_app import task_to_response
+    from bernstein.core.tasks.models import Task
+
+    task = Task(
+        id="gov-test",
+        title="governance fixture",
+        description="fixture",
+        role="backend",
+        batch_eligible=False,
+        sensitivity="confidential",
+        claimed_by_session="owner-session-a",
+    )
+    resp = task_to_response(task)
+    assert resp.sensitivity == "confidential"
+    assert resp.claimed_by_session == "owner-session-a"
+    assert resp.approval_spec is None  # not set, None expected
