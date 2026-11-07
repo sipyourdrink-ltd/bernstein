@@ -181,6 +181,8 @@ One run receipt binds the journal head, the lineage-spine head when the run wrot
 
 The same checkability applies to evaluation numbers. `bernstein bench run <suite> --reliability k` (also spelled `bernstein eval --reliability k`) runs every task `k` times under fixed coordination, then reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling. That result is sealed in a signed receipt which `bernstein bench reliability-verify` recomputes offline, so a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
+For workspace checks, `bernstein govern audit --format json` emits every finding's contract fields; `--format sarif` emits SARIF 2.1.0 with the three-state verdict in `properties.kind`. Use `--strict --quiet` as a CI gate: no output, exit `0` when measured checks pass, `1` for a measured failure, or `2` if any selected check is not measurable (takes precedence). Declared findings never change the exit code. See [govern audit](docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+
 ### how it works
 
 Each goal moves through four stages:

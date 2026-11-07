@@ -190,6 +190,38 @@ is by misreading the same library result.
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
 
+## `govern audit`: machine-readable output and CI gates
+
+```bash
+bernstein govern audit --format json
+bernstein govern audit --format sarif --strict
+bernstein govern audit --quiet --strict
+```
+
+`--format text` is the default. JSON is an array with one object per finding,
+including every `Finding` field and its `id` alias: `check_id`, `verdict`,
+`evidence` (locator and SHA-256 pairs), `what_would_make_it_measurable`, `reason`,
+`message`, `summary`, `remediation`, `area`, and `passed`.
+The existing `--json` and `--json-output` flags remain aliases for JSON output
+and take precedence over `--format` when combined.
+
+SARIF 2.1.0 includes one result per finding, with `ruleId = finding.id` and
+the complete finding in `properties`. `properties.kind` carries `measured`,
+`declared`, or `not_measurable`; legacy `pass`/`fail` verdicts map to `measured`
+there, while the original verdict and `passed` remain available.
+
+All checks selected by `--only` and `--skip` are required for this gate.
+
+| Exit | Condition |
+|---|---|
+| `0` | No selected measured check failed; without `--strict`, unmeasurable findings do not change the exit code. |
+| `1` | A selected measured check failed, or no checks matched the selectors. |
+| `2` | With `--strict`, any selected check is `not_measurable`; this takes precedence over a measured failure. |
+
+Declared findings never affect the exit code. `--quiet` suppresses the report
+in every format, including empty selections and `--list`; the exit code is the
+only answer. `--list` does not execute checks and exits `0`.
+
 ## `govern audit --only duplication`: duplicate implementations in this install
 
 ```

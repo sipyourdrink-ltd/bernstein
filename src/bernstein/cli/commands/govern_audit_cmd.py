@@ -8,8 +8,9 @@ three-state verdict vocabulary.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.table import Table
@@ -27,9 +28,58 @@ if TYPE_CHECKING:
     from bernstein.core.checks.registry import CheckRegistry
 
 
-def _has_failures(findings: list[Finding]) -> bool:
-    """Return True if any finding is not a passing finding."""
-    return any(f.verdict != Verdict.PASS and not f.passed for f in findings)
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_NOT_MEASURABLE = 2
+
+
+def _finding_kind(finding: Finding) -> str:
+    """Map legacy pass/fail verdicts into the three-state vocabulary."""
+    if finding.verdict in (Verdict.PASS, Verdict.FAIL):
+        return Verdict.MEASURED.value
+    return finding.verdict.value
+
+
+def _measured_failure(finding: Finding) -> bool:
+    return finding.verdict == Verdict.FAIL or (finding.verdict == Verdict.MEASURED and finding.passed is False)
+
+
+def _exit_code(findings: list[Finding], *, strict: bool) -> int:
+    """All selected checks are required; declarations do not affect the gate."""
+    if not findings:
+        return EXIT_FAILED
+    if strict and any(f.verdict == Verdict.NOT_MEASURABLE for f in findings):
+        return EXIT_NOT_MEASURABLE
+    if any(_measured_failure(f) for f in findings):
+        return EXIT_FAILED
+    return EXIT_OK
+
+
+def _finding_dict(finding: Finding) -> dict[str, Any]:
+    """Preserve every contract field, including the public id alias."""
+    return {**asdict(finding), "id": finding.id}
+
+
+def _sarif(findings: list[Finding]) -> dict[str, Any]:
+    """Keep audit verdicts in a property bag, separate from SARIF result kinds."""
+    return {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {"driver": {"name": "bernstein govern audit"}},
+                "results": [
+                    {
+                        "ruleId": f.id,
+                        "level": "error" if _measured_failure(f) else "note",
+                        "message": {"text": f.summary or f.message or f.reason or f.id},
+                        "properties": {**_finding_dict(f), "kind": _finding_kind(f)},
+                    }
+                    for f in findings
+                ],
+            }
+        ],
+    }
 
 
 @click.command("audit")
@@ -60,6 +110,16 @@ def _has_failures(findings: list[Finding]) -> bool:
     help="Project root directory to audit.",
 )
 @click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "sarif"]),
+    default="text",
+    show_default=True,
+    help="Output format (SARIF 2.1.0 for code scanning).",
+)
+@click.option("--strict", is_flag=True, help="Exit 2 if any selected check is not measurable.")
+@click.option("--quiet", is_flag=True, help="Print nothing; report the result only through the exit code.")
+@click.option(
     "--json",
     "--json-output",
     "as_json",
@@ -72,6 +132,9 @@ def govern_audit_cmd(
     skip_ids: tuple[str, ...],
     workdir: str,
     as_json: bool,
+    output_format: str = "text",
+    strict: bool = False,
+    quiet: bool = False,
     registry: CheckRegistry | None = None,
 ) -> None:
     """Run registered governance audit checks across the workspace.
@@ -80,15 +143,23 @@ def govern_audit_cmd(
     lives in ``bernstein govern audit-keys``.
 
     Exit codes:
-      0: All executed checks passed (at least one check executed).
-      1: One or more checks failed, were not measurable, or no checks were selected.
+      0: Selected measured checks passed; declared findings never affect the code.
+      1: A selected measured check failed, or no checks were selected.
+      2: A selected check is not measurable and --strict is set (takes precedence).
+
+    All selected checks are required. Without --strict, not_measurable findings
+    are reported but do not change the exit code.
     """
     reg = DEFAULT_REGISTRY if registry is None else registry
     populate_default_checks(reg)
+    if as_json:
+        output_format = "json"
 
     if list_checks:
+        if quiet:
+            raise SystemExit(EXIT_OK)
         checks = reg.list_checks(only_areas=only_areas, skip_ids=skip_ids)
-        if as_json:
+        if output_format == "json":
             payload = [
                 {
                     "check_id": c.check_id,
@@ -116,32 +187,19 @@ def govern_audit_cmd(
 
     root = Path(workdir).resolve()
     findings = reg.run_all(workdir=root, only_areas=only_areas, skip_ids=skip_ids)
+    exit_code = _exit_code(findings, strict=strict)
+
+    if quiet:
+        raise SystemExit(exit_code)
+
+    if output_format in ("json", "sarif"):
+        report = _sarif(findings) if output_format == "sarif" else [_finding_dict(f) for f in findings]
+        click.echo(json.dumps(report, indent=2))
+        raise SystemExit(exit_code)
 
     if not findings:
-        if as_json:
-            click.echo(json.dumps([], indent=2))
-        else:
-            console.print("[bold red]No checks matched the specified selector(s).[/bold red]")
-        raise SystemExit(1)
-
-    has_failed = _has_failures(findings)
-
-    if as_json:
-        payload = [
-            {
-                "check_id": f.check_id,
-                "verdict": f.verdict.value,
-                "passed": f.passed,
-                "area": f.area,
-                "summary": f.summary or f.message,
-                "remediation": f.remediation,
-                "what_would_make_it_measurable": f.what_would_make_it_measurable,
-                "evidence": [{"locator": ev.locator, "sha256": ev.sha256} for ev in f.evidence],
-            }
-            for f in findings
-        ]
-        click.echo(json.dumps(payload, indent=2))
-        raise SystemExit(1 if has_failed else 0)
+        console.print("[bold red]No checks matched the specified selector(s).[/bold red]")
+        raise SystemExit(exit_code)
 
     table = Table(title=f"Governance Audit Findings ({root.name})", show_header=True, header_style="bold cyan")
     table.add_column("Status", justify="center", no_wrap=True)
@@ -150,10 +208,12 @@ def govern_audit_cmd(
     table.add_column("Summary / Diagnostic", style="white")
 
     for f in findings:
-        if f.verdict == Verdict.PASS or f.passed:
-            status_badge = "[bold green]PASS[/bold green]"
+        if f.verdict == Verdict.DECLARED:
+            status_badge = "[bold cyan]DECLARED[/bold cyan]"
         elif f.verdict == Verdict.NOT_MEASURABLE:
             status_badge = "[bold yellow]UNMEASURED[/bold yellow]"
+        elif f.verdict == Verdict.PASS or f.passed:
+            status_badge = "[bold green]PASS[/bold green]"
         else:
             status_badge = "[bold red]FAIL[/bold red]"
 
@@ -169,13 +229,18 @@ def govern_audit_cmd(
     console.print(table)
     console.print()
 
-    passed_count = sum(1 for f in findings if f.verdict == Verdict.PASS or f.passed)
+    passed_count = sum(
+        1 for f in findings if f.verdict == Verdict.PASS or (f.verdict == Verdict.MEASURED and f.passed is True)
+    )
+    failed_count = sum(_measured_failure(f) for f in findings)
+    declared_count = sum(f.verdict == Verdict.DECLARED for f in findings)
+    unmeasured_count = sum(f.verdict == Verdict.NOT_MEASURABLE for f in findings)
     console.print(
         f"Total: [bold]{len(findings)}[/bold] | "
         f"Passed: [bold green]{passed_count}[/bold green] | "
-        f"Failed/Unmeasurable: [bold red]{len(findings) - passed_count}[/bold red]"
+        f"Failed: [bold red]{failed_count}[/bold red] | "
+        f"Declared: [bold cyan]{declared_count}[/bold cyan] | "
+        f"Unmeasurable: [bold yellow]{unmeasured_count}[/bold yellow]"
     )
 
-    if has_failed:
-        raise SystemExit(1)
-    raise SystemExit(0)
+    raise SystemExit(exit_code)
