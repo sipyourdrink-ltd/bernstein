@@ -355,15 +355,18 @@ def _fold_grants(builders: dict[str, _Builder], *, root: Path, key: bytes, now: 
 def _fold_delegation(builders: dict[str, _Builder], *, root: Path, key: bytes, now: int, errors: list[str]) -> None:
     """Fold every tamper-verified delegation chain under ``root`` into ``builders``."""
     for run_id in _run_ids(Path(root) / "delegation"):
-        result = delegation.verify_run_chain(root=Path(root), run_id=run_id, key=key)
+        result = delegation.verify_run(run_id, root=Path(root), key=key)
         if not result.chain_ok:
             errors.append(f"delegation/{run_id}: " + "; ".join(result.errors))
             continue
         if not result.valid:
             # Tamper evidence held, so the hops are real events and their
-            # parties are listed; the recomputed authority checks did not, so
+            # parties are listed; completeness or authority checks did not, so
             # nothing in this run is evidence of a ceiling in force.
-            errors.append(f"delegation/{run_id}: authority checks did not pass; scopes not counted toward a ceiling")
+            errors.append(
+                f"delegation/{run_id}: delegation incomplete or authority checks did not pass; "
+                "scopes not counted toward a ceiling"
+            )
         for receipt in result.receipts:
             for role, name in (
                 (_ROLE_ISSUER, receipt.issuer),

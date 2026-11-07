@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from bernstein.core.identity import delegation
+from tests.support.delegation import verify_declared_chain
 
 
 @pytest.fixture
@@ -123,7 +124,7 @@ class TestConcurrentRecordHop:
         assert not any(t.is_alive() for t in threads), "a delegation worker thread did not finish in time"
 
         assert errors == []
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-race", key=b"k" * 32)
+        result = verify_declared_chain(root=ledger.root, run_id="run-race", key=b"k" * 32)
         assert result.valid, result.errors
         assert result.hops == n
         # hop_index is a contiguous 0..n-1 range with no gaps or duplicates.
@@ -146,7 +147,7 @@ class TestOfflineReconstruction:
             audience="sub-agent:backend",
             act="task.spawn",
         )
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        result = verify_declared_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
         assert result.valid
         assert result.errors == []
         assert result.hops == 2
@@ -165,7 +166,7 @@ class TestOfflineReconstruction:
         path = ledger.receipt_path("run-1")
         raw = path.read_text(encoding="utf-8")
         path.write_text(raw.replace("principal:alex", "principal:mallory"), encoding="utf-8")
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        result = verify_declared_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
         assert not result.valid
         assert result.errors
 
@@ -188,11 +189,11 @@ class TestOfflineReconstruction:
         lines = path.read_text(encoding="utf-8").splitlines()
         # Drop the first hop -> linkage from the survivor breaks.
         path.write_text(lines[1] + "\n", encoding="utf-8")
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
+        result = verify_declared_chain(root=ledger.root, run_id="run-1", key=b"k" * 32)
         assert not result.valid
 
     def test_verify_missing_run_is_empty_not_error(self, tmp_path):
-        result = delegation.verify_run_chain(root=tmp_path, run_id="absent", key=b"k" * 32)
+        result = verify_declared_chain(root=tmp_path, run_id="absent", key=b"k" * 32)
         assert result.hops == 0
         assert not result.valid  # nothing to attest -> not a verified chain
 
@@ -204,5 +205,5 @@ class TestOfflineReconstruction:
             audience="s",
             act="task.spawn",
         )
-        result = delegation.verify_run_chain(root=ledger.root, run_id="run-1", key=b"other" * 6 + b"xx")
+        result = verify_declared_chain(root=ledger.root, run_id="run-1", key=b"other" * 6 + b"xx")
         assert not result.valid

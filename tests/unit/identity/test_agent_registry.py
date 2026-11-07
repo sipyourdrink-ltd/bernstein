@@ -15,6 +15,7 @@ import pytest
 
 from bernstein.core.identity import agent_registry, delegation, grants
 from bernstein.core.identity.delegation_scope import DelegationScope
+from tests.support.delegation import close_manifest
 
 KEY = b"k" * 32
 NOW = 1_800_000_000
@@ -59,6 +60,7 @@ def chain_root(tmp_path, signer):
         created=NOW - 80,
         scope=DelegationScope(permissions=frozenset({"tasks:read"})),
     )
+    close_manifest(deleg, "run-1")
     return root
 
 

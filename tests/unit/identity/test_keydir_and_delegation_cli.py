@@ -22,6 +22,7 @@ from bernstein.core.identity.delegation_scope import (
     DelegationScope,
 )
 from bernstein.core.security.agent_card_keystore import AgentCardKeystore
+from tests.support.delegation import close_manifest
 
 
 @pytest.fixture()
@@ -59,6 +60,8 @@ class TestDelegationVerify:
             audience="sub-agent:backend",
             act="task.spawn",
         )
+
+        close_manifest(ledger, "run-42")
 
     def test_verify_reports_an_unscoped_chain_as_unproven(self, runner, tmp_path, monkeypatch):
         """These receipts record no scope, so narrowing was never checked.
@@ -228,6 +231,8 @@ class TestDelegationVerifyExitCodes:
                 scope=scope,
             )
 
+        close_manifest(ledger, run)
+
     @pytest.fixture(autouse=True)
     def _key(self, monkeypatch):
         monkeypatch.setattr(delegation, "_audit_key", lambda: self.KEY)
@@ -299,3 +304,15 @@ class TestVerifyExitCodeMapping:
     def test_no_input_that_used_to_exit_one_can_now_exit_zero(self):
         for verdict in ("pass", "fail", "unproven"):
             assert _verify_exit_code(self._result(valid=False, verdict=verdict)) != 0
+
+
+@pytest.mark.parametrize("chain_ok, expected", [(True, 3), (False, 1)])
+def test_incomplete_exit_code_never_masks_a_broken_chain(chain_ok, expected):
+    result = delegation.ChainResult(
+        valid=False,
+        hops=1,
+        chain_ok=chain_ok,
+        incomplete=True,
+        verdict=ChainVerdict(verdict="pass"),
+    )
+    assert _verify_exit_code(result) == expected

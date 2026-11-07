@@ -101,6 +101,7 @@ def test_live_spawn_path_records_hops_and_the_run_verifies_from_the_manifest(wir
     shutil.rmtree(workdir / ".sdd" / "auth")
     assert not (workdir / ".sdd" / "auth").exists()
 
+    delegation.DelegationLedger(_audit_root(workdir), KEY).finalize_manifest(workdir / ".sdd", RUN)
     result = CliRunner().invoke(delegation_group, ["verify", RUN, "--root", str(_audit_root(workdir))])
     assert result.exit_code == 0, result.output
     assert "2 hop(s)" in result.output

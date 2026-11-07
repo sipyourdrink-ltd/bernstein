@@ -64,7 +64,7 @@ import os
 import sys
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
@@ -211,16 +211,17 @@ def _compute_hmac(key: bytes, prev_hmac: str, body: dict[str, Any]) -> str:
 class ChainResult:
     """Outcome of reconstructing a run's delegation chain offline.
 
-    ``chain_ok`` is the tamper-evidence verdict (linkage plus HMAC), unchanged
-    from before authority checks existed. ``valid`` is the structural verdict:
-    the chain is intact *and* the recomputed authority checks recorded no
-    violation. A widening hop therefore fails ``bernstein delegation verify``
-    even though every HMAC in the file is correct - which is the point, since
+    ``chain_ok`` checks linkage, HMAC and any supplied final head declaration.
+    ``valid`` is the structural verdict:
+    the chain matches the declared final head/count *and* the recomputed
+    authority checks recorded no violation. Without a declaration, ``incomplete``
+    is True and ``valid`` is always False. A widening hop therefore fails
+    ``bernstein delegation verify`` even though every HMAC in the file is correct - which is the point, since
     the party that wrote a widened hop holds the key that seals it.
 
-    ``valid`` does not distinguish a chain whose narrowing was checked and held
-    from a chain that recorded no scope to check: both reach the caller as
-    True, because in neither case did a check find anything. So ``valid`` on
+    For a complete chain, ``valid`` does not distinguish a chain whose narrowing
+    was checked and held from a chain that recorded no scope to check: both
+    reach the caller as True, because in neither case did a check find anything. So ``valid`` on
     its own is not a positive claim that authority narrowed. ``verdict`` is the
     additive surface that draws that line: pass, fail, or unproven, with one
     row per hop and a top-level unproven-hop count.
@@ -234,6 +235,8 @@ class ChainResult:
     authority: AuthorityReport = field(default_factory=lambda: AuthorityReport())
     #: Graded pass / fail / unproven reading of the same receipts (#2554).
     verdict: ChainVerdict = field(default_factory=ChainVerdict)
+    #: No final chain head was declared; integrity alone cannot prove completeness.
+    incomplete: bool = False
 
     @property
     def violations(self) -> list[ScopeViolation]:
@@ -398,6 +401,29 @@ class DelegationLedger:
                 fh.write(json.dumps(entry, sort_keys=True) + "\n")
         return DelegationReceipt(**entry)
 
+    def finalize_manifest(self, sdd_dir: Path, run_id: str) -> None:
+        """Commit the final tail/count atomically after the run's writers drain.
+
+        The append lock spans tail recovery through manifest replacement. A
+        repeated close cannot re-declare a different tail after truncation or
+        growth. Failure leaves the previous manifest (and its incomplete state).
+        """
+        from bernstein.core.config.manifest import load_manifest
+        from bernstein.core.persistence.atomic_write import write_atomic_json
+
+        with self._append_lock(run_id):
+            manifest = load_manifest(sdd_dir, run_id)
+            if manifest is None or manifest.run_id != run_id:
+                raise ValueError("cannot finalize delegation: missing or mismatched run manifest")
+            head, count = self._tail(run_id)
+            if manifest.delegation_head_hmac is not None or manifest.delegation_hop_count is not None:
+                if (manifest.delegation_head_hmac, manifest.delegation_hop_count) != (head, count):
+                    raise ValueError("declared delegation head mismatch at repeated close")
+                return
+            finalized = replace(manifest, delegation_head_hmac=head, delegation_hop_count=count)
+            finalized = replace(finalized, manifest_hash=finalized.compute_hash())
+            write_atomic_json(sdd_dir / "runtime" / "manifests" / f"{run_id}.json", finalized.to_dict())
+
 
 def verify_run_chain(
     *,
@@ -406,6 +432,8 @@ def verify_run_chain(
     key: bytes,
     scope_resolver: Callable[[str], DelegationScope | None] | None = None,
     root_issuers: frozenset[str] = frozenset(),
+    declared_head_hmac: str | None = None,
+    declared_hop_count: int | None = None,
 ) -> ChainResult:
     """Reconstruct and verify a run's delegation chain offline.
 
@@ -421,6 +449,9 @@ def verify_run_chain(
         key: The HMAC key (install audit key) the receipts were written with.
         scope_resolver: Optional lookup for receipts that carry only a
             content-addressed ``scope_ref`` rather than an inline scope body.
+        declared_head_hmac: Final receipt digest from the trusted run manifest.
+        declared_hop_count: Final receipt count from the same declaration.
+            Without both fields, a chain is incomplete and never valid.
         root_issuers: Identities the run declared as chain roots, supplied from
             outside the receipts (the run manifest). A hop issued by one of them
             may be a root without being first, which is what lets several agents
@@ -430,15 +461,15 @@ def verify_run_chain(
 
     Returns:
         A :class:`ChainResult`. ``valid`` is True only when at least one hop
-        exists, the whole chain verifies from genesis to tail, and every
+        exists, the whole chain verifies from genesis to its declared tail, and every
         authority check passes. ``verdict`` carries the graded reading of the
         same receipts, which separates a chain that was checked from one that
         recorded nothing to check.
 
     What a pass does not establish: that runtime enforcement matched the
     recorded scope, including consumption state such as remaining uses; that
-    any grant was appropriate policy; that the supplied receipt set is
-    complete, or that no alternate delegation path exists; that an unresolved
+    any grant was appropriate policy; that the manifest itself is authentic
+    or no alternate delegation path exists; that an unresolved
     reference would have matched; anything about execution outcomes. unproven
     is not valid, and pass is the only positive claim.
     """
@@ -484,7 +515,26 @@ def verify_run_chain(
             break
         prev_hmac = stored_hmac
 
+    incomplete = declared_head_hmac is None and declared_hop_count is None
+    if not incomplete:
+        if (
+            not isinstance(declared_head_hmac, str)
+            or len(declared_head_hmac) != 64
+            or any(c not in "0123456789abcdef" for c in declared_head_hmac)
+            or type(declared_hop_count) is not int
+            or declared_hop_count < 0
+        ):
+            errors.append("malformed declared delegation head or hop count")
+        else:
+            if prev_hmac != declared_head_hmac:
+                errors.append(f"declared delegation head mismatch: expected {declared_head_hmac}, read {prev_hmac}")
+            if len(receipts) != declared_hop_count:
+                errors.append(
+                    f"declared delegation hop count mismatch: expected {declared_hop_count}, read {len(receipts)}"
+                )
     chain_ok = not errors and len(receipts) > 0
+    if incomplete:
+        errors.append("incomplete: no declared delegation chain head")
     authority = verify_authority(receipts, scope_resolver=scope_resolver, genesis=GENESIS_HMAC)
     verdict = grade_chain(
         receipts,
@@ -494,13 +544,14 @@ def verify_run_chain(
         root_issuers=root_issuers,
     )
     return ChainResult(
-        valid=chain_ok and authority.ok,
+        valid=chain_ok and authority.ok and not incomplete,
         hops=len(receipts),
         receipts=receipts,
         errors=errors,
         chain_ok=chain_ok,
         authority=authority,
         verdict=verdict,
+        incomplete=incomplete,
     )
 
 
@@ -562,6 +613,7 @@ def verify_run(
     run_id: str,
     *,
     root: Path | None = None,
+    key: bytes | None = None,
     scope_resolver: Callable[[str], DelegationScope | None] | None = None,
     root_issuers: frozenset[str] = frozenset(),
 ) -> ChainResult:
@@ -570,15 +622,43 @@ def verify_run(
     Args:
         run_id: Run to verify.
         root: Optional root override; defaults to :data:`DEFAULT_ROOT`.
+        key: Optional audit-key override for offline projections.
         scope_resolver: Optional lookup for content-addressed scope references.
 
     Returns:
         The :class:`ChainResult` from :func:`verify_run_chain`.
     """
-    return verify_run_chain(
-        root=root or DEFAULT_ROOT,
+    from bernstein.core.config.manifest import load_manifest
+
+    audit_root = root or DEFAULT_ROOT
+    declaration_error = None
+    try:
+        manifest = load_manifest(audit_root.parent, run_id)
+        if manifest is not None and manifest.run_id != run_id:
+            raise ValueError("run manifest identity mismatch")
+        if (
+            manifest is not None
+            and (manifest.delegation_head_hmac is not None or manifest.delegation_hop_count is not None)
+            and manifest.manifest_hash != manifest.compute_hash()
+        ):
+            raise ValueError("run manifest hash mismatch")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        manifest = None
+        declaration_error = f"invalid delegation manifest: {exc}"
+    if manifest is not None and manifest.run_root_identity_id:
+        root_issuers = root_issuers | {manifest.run_root_identity_id}
+    result = verify_run_chain(
+        root=audit_root,
         run_id=run_id,
-        key=_audit_key(),
+        key=_audit_key() if key is None else key,
         scope_resolver=scope_resolver,
         root_issuers=root_issuers,
+        declared_head_hmac=manifest.delegation_head_hmac if manifest else None,
+        declared_hop_count=manifest.delegation_hop_count if manifest else None,
     )
+    if declaration_error:
+        result.valid = result.chain_ok = result.incomplete = False
+        result.errors = [error for error in result.errors if not error.startswith("incomplete:")]
+        result.errors.append(declaration_error)
+        result.verdict = grade_chain(result.receipts, chain_ok=False)
+    return result

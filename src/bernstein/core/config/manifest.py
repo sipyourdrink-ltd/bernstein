@@ -3,7 +3,8 @@
 Every ``bernstein run`` generates a manifest that captures the complete
 configuration of that orchestration run.  The manifest is:
 
-- **Immutable**: written once at run start, never mutated.
+- **Finalized**: configuration is written at start; the delegation head is
+  committed atomically at run close, with a new hash covering both.
 - **Hashable**: a SHA-256 digest over canonical JSON uniquely identifies the
   run configuration, satisfying SOC2/ISO 27001 evidence requirements.
 - **Diffable**: ``bernstein manifest diff <a> <b>`` highlights configuration
@@ -111,6 +112,9 @@ class RunManifest:
             ``bernstein delegation verify <run>`` can anchor the chain without
             reading the identity store back (#5047).  Empty when the run minted
             no root, which is every manifest written before that existed.
+        delegation_head_hmac: Last receipt HMAC declared at run close, or None
+            while the run is incomplete. An empty chain declares the genesis HMAC.
+        delegation_hop_count: Number of receipts committed at run close.
         manifest_hash: SHA-256 digest computed over all other fields.
     """
 
@@ -124,6 +128,8 @@ class RunManifest:
     provenance: Provenance = field(default_factory=Provenance)
     orchestrator_config: dict[str, Any] = field(default_factory=dict)
     run_root_identity_id: str = ""
+    delegation_head_hmac: str | None = None
+    delegation_hop_count: int | None = None
     manifest_hash: str = ""
 
     # ------------------------------------------------------------------
@@ -189,6 +195,8 @@ class RunManifest:
             ),
             orchestrator_config=dict(data.get("orchestrator_config", {})),
             run_root_identity_id=str(data.get("run_root_identity_id", "")),
+            delegation_head_hmac=data.get("delegation_head_hmac"),
+            delegation_hop_count=data.get("delegation_hop_count"),
             manifest_hash=str(data.get("manifest_hash", "")),
         )
 
