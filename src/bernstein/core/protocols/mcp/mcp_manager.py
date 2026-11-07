@@ -591,7 +591,8 @@ class MCPManager:
 
         Combines the task's requested servers (from ``task.mcp_servers``)
         with any base MCP config. Task-requested servers override base config
-        entries with the same name.
+        entries with the same name. Managed servers that are not alive are
+        excluded from the base config as well.
 
         Args:
             task_mcp_servers: Server names requested by the task, or None
@@ -602,6 +603,19 @@ class MCPManager:
             Merged ``{"mcpServers": {...}}`` dict, or None if empty.
         """
         task_config = self.build_mcp_config(server_names=task_mcp_servers)
+
+        # A rejected managed server may still be present in the original base
+        # config. Do not let the adapter start it by bypassing our load gate.
+        if base_config is not None and "mcpServers" in base_config:
+            managed_names = set(self.server_names)
+            base_config = {
+                **base_config,
+                "mcpServers": {
+                    name: entry
+                    for name, entry in base_config["mcpServers"].items()
+                    if name not in managed_names or self.is_alive(name)
+                },
+            }
 
         if base_config is task_config is None:
             return None

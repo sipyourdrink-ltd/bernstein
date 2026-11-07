@@ -749,9 +749,24 @@ class TestMCPManagerSigningMode:
 
     @pytest.mark.parametrize("mode", ["warn", "strict", "off"])
     @pytest.mark.parametrize("failed_append", [1, 2, 3])
+    @pytest.mark.parametrize("requested", [None, ["example"]])
+    @pytest.mark.parametrize("include_unmanaged", [False, True])
     def test_audit_failure_blocks_startup(
-        self, mode: str, failed_append: int, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        mode: str,
+        failed_append: int,
+        requested: list[str] | None,
+        include_unmanaged: bool,
+        tmp_path: Path,
+        make_task: Callable,
+        mock_adapter_factory: Callable,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
+        from bernstein.core.spawner import AgentSpawner
+
+        from bernstein.adapters.plugin_sdk import AdapterCapability
+
         assert "audit_chain" in inspect.signature(MCPManager).parameters
         monkeypatch.delenv("BERNSTEIN_MCP_SIGNING_MODE", raising=False)
         chain = MagicMock()
@@ -765,6 +780,39 @@ class TestMCPManagerSigningMode:
             assert popen.called is (mode == "off")
         assert chain.log_with_prev_digest.call_count == (0 if mode == "off" else failed_append)
         assert "SECRET" not in caplog.text
+
+        servers = {"example": cfg.to_mcp_config_entry()}
+        if include_unmanaged:
+            servers["unmanaged"] = {"command": "other-mcp"}
+        base = {"mcpServers": servers, "temperature": 0.2}
+        adapter = mock_adapter_factory()
+        adapter.plugin_info = MagicMock()
+        adapter.plugin_info.return_value.capabilities = (AdapterCapability.SUPPORTS_SAMPLING_PARAMS,)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            mcp_manager=mgr,
+            mcp_config=base,
+            default_model="mock-model",
+        )
+        spawner.spawn_for_tasks([make_task(mcp_servers=requested)])
+
+        adapter.spawn.assert_called_once()
+        outgoing = adapter.spawn.call_args.kwargs["mcp_config"]
+        assert outgoing is not None
+        expected_servers = {}
+        if include_unmanaged:
+            expected_servers["unmanaged"] = servers["unmanaged"]
+        if mode == "off":
+            expected_servers["example"] = servers["example"]
+        assert outgoing["mcpServers"] == expected_servers
+        assert outgoing["temperature"] == 0.2
+        assert base["mcpServers"] == servers
+        assert "example" in base["mcpServers"]
 
     @pytest.mark.parametrize("enabled,mode", [(True, "warn"), (True, "strict"), (False, "warn"), (True, "off")])
     def test_audit_construction_failure(self, tmp_path: Path, enabled: bool, mode: str) -> None:

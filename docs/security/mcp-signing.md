@@ -149,7 +149,10 @@ is enabled; this does not establish a clean scan.
 Orchestrator auditing follows `BERNSTEIN_AUDIT=1` or compliance
 `audit_logging`. Construction or append failures block startup in both warn
 and strict modes with sanitized errors, without falling back to unaudited
-loading. Explicit `audit_chain=None` preserves legacy operation. Signing mode
+loading. Managed servers that fail to start are also removed from the base
+configuration passed to adapters, so an adapter cannot start a rejected server.
+Unmanaged servers and other base configuration settings are preserved.
+Explicit `audit_chain=None` preserves legacy operation. Signing mode
 resolution and the `off` verification bypass are unchanged. Existing audit
 records are retained without migration or backfill.
 
