@@ -207,6 +207,10 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     # the dedicated supervisor command to spot a wedged worker.
     data["supervisor"] = _supervisor_status_summary(Path.cwd())
 
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
+
+    data["quarantined_declarations"] = len(DeclarationQuarantineStore(Path.cwd()).load())
+
     if as_json or is_json():
         print_json(data)
         return
@@ -222,6 +226,7 @@ def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     con = make_console(no_color=force_no_color)
 
     render_status(data, console=con, view_config=vc)
+    con.print(f"Quarantined declarations: {data['quarantined_declarations']}")
 
     supervisor_line = _supervisor_summary_line(Path.cwd())
     if supervisor_line:
@@ -1251,6 +1256,9 @@ def doctor(as_json: bool, auto_fix: bool, unattended: bool = False) -> None:
     )
 
     _doctor_check_context_and_plugins(checks, workdir)
+    from bernstein.core.security.declaration_quarantine import quarantine_summary
+
+    _add_check(checks, *quarantine_summary(workdir))
     _doctor_check_commit_attribution(checks, workdir)
     _doctor_check_compliance(checks, workdir)
     _doctor_check_schedule_supervisor(checks, workdir)

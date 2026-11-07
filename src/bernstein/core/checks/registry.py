@@ -166,12 +166,17 @@ def populate_default_checks(registry: CheckRegistry | None = None) -> None:
     from bernstein.core.checks.adapters import (
         DUPLICATION_CHECK_NAMES,
         ComplianceEncryptionAtRestAdapter,
+        DeclarationQuarantineAdapter,
         DoctorComplianceAdapter,
         DuplicationAuditAdapter,
     )
 
     reg = DEFAULT_REGISTRY if registry is None else registry
-    adapters: list[Check] = [DoctorComplianceAdapter(), ComplianceEncryptionAtRestAdapter()]
+    adapters: list[Check] = [
+        DoctorComplianceAdapter(),
+        ComplianceEncryptionAtRestAdapter(),
+        DeclarationQuarantineAdapter(),
+    ]
     adapters.extend(DuplicationAuditAdapter(name) for name in DUPLICATION_CHECK_NAMES)
     for adapter in adapters:
         if reg.get_check(adapter.check_id) is None:

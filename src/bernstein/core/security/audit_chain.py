@@ -1101,6 +1101,10 @@ EVENT_EQUIVALENCE_ATTESTATION = "eval.equivalence_attestation"
 #: to be audited and offline-verified from the chain alone.
 EVENT_TRACKER_PIPELINE_SWEEP = "tracker_pipeline.sweep"
 
+#: Issue #5108 -- one-shot declaration init failure and explicit operator release.
+EVENT_DECLARATION_QUARANTINED = "declaration.quarantined"
+EVENT_DECLARATION_REENABLED = "declaration.reenabled"
+
 
 # ---------------------------------------------------------------------------
 # AuditChainStore

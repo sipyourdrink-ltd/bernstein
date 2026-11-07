@@ -19,6 +19,7 @@ from bernstein.core.checks.registry import CheckRegistry, populate_default_check
 ACTIVE_PINNED_IDS: frozenset[str] = frozenset(
     {
         "doctor:compliance",
+        "doctor:declaration-quarantine",
         "compliance:soc2:encryption_at_rest",
         # Opt-in (#5105): run under `govern audit --only duplication`.
         "duplication:inline-canonical-bytes-sites",
