@@ -44,6 +44,37 @@ A `todo` row is intentionally non-selectable in evidence packs.
 | CISA-22 | Accuracy | Evaluation gates and trajectory receipts | `bernstein.core.security.audit_chain` | `eval.trajectory_receipt` | Partial |
 | CISA-23 | Visibility | Audit receipts and observability projections | `bernstein.core.security.audit_chain` | `otel.projection` | Covered |
 
+## Partial-control follow-up tracking
+
+The following controls are currently assessed as Partial. Their remaining
+coverage gaps do not yet have dedicated follow-up issues in this repository.
+They are listed explicitly as untracked rather than being linked to unrelated
+issues. The Partial verdicts above remain unchanged.
+
+| CISA control | Follow-up issue |
+|---|---|
+| CISA-01 | Untracked |
+| CISA-02 | Untracked |
+| CISA-03 | Untracked |
+| CISA-04 | Untracked |
+| CISA-07 | Untracked |
+| CISA-08 | Untracked |
+| CISA-10 | Untracked |
+| CISA-11 | Untracked |
+| CISA-12 | Untracked |
+| CISA-13 | Untracked |
+| CISA-14 | Untracked |
+| CISA-15 | Untracked |
+| CISA-17 | Untracked |
+| CISA-18 | Untracked |
+| CISA-19 | Untracked |
+| CISA-20 | Untracked |
+| CISA-22 | Untracked |
+
+There are currently 17 Partial controls and 6 Covered controls in this
+23-control crosswalk. A tracking reference does not change a control's
+coverage verdict.
+
 ## Evidence-pack registration
 
 The `cisa-agentic` standard is registered in
