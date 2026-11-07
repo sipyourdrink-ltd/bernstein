@@ -199,3 +199,16 @@ remediation)` dataclass. `category` is one of `installation`,
 under `provider_availability` in `bernstein.yaml` and exits non-zero when
 any declared chain element is broken. See
 [Provider availability & failover](provider-availability.md).
+
+## Aged leaked lanes
+
+The default `bernstein doctor` report includes a **Leaked lanes** advisory.
+It reads task records for worktrees and audited sandbox sessions and warns
+when a terminal task's lane is older than 24 hours. Set
+`BERNSTEIN_LEAK_MAX_AGE_SECONDS` to a finite, non-negative number of seconds to
+change the threshold. Unknown task ownership is never counted as terminal;
+unreadable sources produce an unavailable-check warning, not a clean bill of
+health. The check never deletes anything or contacts sandbox providers.
+Preview remediation with `bernstein worktrees sweep` or `bernstein sandbox
+sweep`; applying that plan requires a separate removal approval. See
+[worktree operations](worktrees.md#task-terminal-lane-sweep).

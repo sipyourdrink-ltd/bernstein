@@ -268,3 +268,71 @@ integration branch. Open the directory and commit/push or salvage the
 work. Once it is clean and merged, `gc` reaps it normally. To delete it
 regardless - destroying the unsaved work - rerun with `--force-unsaved`
 (an extra confirmation is required).
+
+## Task-terminal lane sweep
+
+`bernstein worktrees sweep` (also `bernstein sandbox sweep`) lists worktrees
+and audited sandbox sessions whose owning tasks are recorded finished in the
+task store. All owners of a batch sandbox must be finished. A missing task
+record is unknown, never proof of completion. A live PID does not hide a leak;
+`worktrees list` retains its existing PID/trace display rules.
+
+```bash
+bernstein worktrees sweep --workdir .
+bernstein sandbox sweep --json
+bernstein sandbox sweep --measure-disk
+bernstein worktrees sweep --apply --removal-approval removal.json
+```
+
+The default and `--dry-run` are read-only, including no audit writes, signing
+keys or GC lock creation. `--dry-run` outranks `--apply`. The legacy `worktrees
+gc` also accepts `--dry-run` as an alias of `--dry`; its CLI preview now makes
+no audit writes. Its existing `--yes` deletion opt-in remains supported.
+
+Rows include task ids, age and disk bytes. Worktree bytes are measured locally.
+Sandbox disk usage is `null` (`?` in the table) unless `--measure-disk` is passed
+and the backend implements `leaked_session_size_bytes(session_id)`. Docker
+reports writable-layer bytes, excluding shared images and external volumes.
+Measurement never creates or resumes a session. Other backends report unknown.
+
+Removal uses the existing destructive-operation approval model in a separate
+`removal` class. The preview prints `lane.remove:<digest>` as the exact request
+`operation`; JSON rows carry it as `removal_operation`. The digest binds the
+resources, paths, task owners and recorded lifetimes. `removal.json` contains
+`request` (the serialized `ApprovalRequest`) and `responses` (serialized
+`ApprovalResponse` objects) from the approval workflow. At least two distinct
+approvers must approve that request before its expiry; any denial vetoes it.
+This is separate from ordinary execution approval. A file from a different
+preview does not authorize this plan. For example, its shape is:
+
+```json
+{
+  "request": {
+    "request_id": "removal-request-id",
+    "operation": "lane.remove:<digest from preview>",
+    "reason": "remove reviewed leaked lanes",
+    "requester": "operator",
+    "channels": ["cli"],
+    "created_at": "2026-11-07T12:00:00+00:00",
+    "expires_at": "2026-11-07T12:05:00+00:00",
+    "required_approvals": 2
+  },
+  "responses": [
+    {"request_id": "removal-request-id", "channel": "cli", "approver": "owner", "approved": true, "timestamp": "2026-11-07T12:01:00+00:00"},
+    {"request_id": "removal-request-id", "channel": "cli", "approver": "reviewer", "approved": true, "timestamp": "2026-11-07T12:02:00+00:00"}
+  ]
+}
+```
+
+Under the shared GC lock, removal verifies the source audit chain and rereads
+task status and ownership before each deletion. Unsaved work is preserved
+unless `--force-unsaved` explicitly overrides the veto. Every intent, skip
+and result is recorded as `lane.remove`, naming `task_ids`, `approval_class`
+and `removal_approval_id`. An audit append failure before deletion prevents it.
+Successful sandbox deletion also records `sandbox.session_destroy`.
+
+Worktrees and Docker support removal. Docker reattaches only a container with
+the exact Bernstein sandbox labels and propagates teardown failures. Other
+backends must implement `destroy_leaked_session(session_id)` to support removal;
+otherwise apply refuses explicitly, leaving that session untouched. The sweep
+never provisions a replacement or uses snapshot resume for cleanup.

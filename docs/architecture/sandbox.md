@@ -603,7 +603,12 @@ can mislead it; a `sandbox.session_destroy` appended by someone without the
 audit key would hide a real leak from the listing. Run `bernstein audit verify`
 before a listing drives a removal; it rejects such a record. Removing a leaked
 session is left to the backend's own tooling (for example `docker rm`) after
-checking it holds nothing you need.
+checking it holds nothing you need. For a combined worktree/sandbox inventory
+and gated cleanup, use `bernstein sandbox sweep` (alias of `worktrees sweep`).
+It defaults to a read-only preview; apply rechecks task ownership under the GC
+lock, verifies the audit chain and journals each removal with task ids. See the
+[task-terminal lane workflow](../operations/worktrees.md#task-terminal-lane-sweep)
+for removal approvals, disk measurement and backend cleanup support.
 
 ## Observability
 
