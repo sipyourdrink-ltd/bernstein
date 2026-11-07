@@ -61,6 +61,101 @@ def test_protocol_runtime_checkable() -> None:
     assert isinstance(backend, SandboxBackend)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    ["attached", "unsupported", "not_found", "identity_mismatch", "error", "exception", "malformed"],
+)
+async def test_removal_reattach_contract(outcome: str) -> None:
+    """An optional implementation attaches by identity and never provisions."""
+    from dataclasses import FrozenInstanceError
+    from unittest.mock import AsyncMock, Mock
+
+    from bernstein.core.sandbox import backend as contract
+
+    for name in (
+        "SandboxRemovalBackend",
+        "SandboxReattachStatus",
+        "SandboxRemovalStatus",
+        "SandboxReattachResult",
+        "SandboxRemovalResult",
+    ):
+        assert hasattr(contract, name), f"missing optional removal contract: {name}"
+    attach_status = contract.SandboxReattachStatus
+    removal_status = contract.SandboxRemovalStatus
+    assert [s.value for s in attach_status] == ["attached", "unsupported", "not_found", "identity_mismatch", "error"]
+    assert [s.value for s in removal_status] == ["removed", "not_found", "identity_mismatch", "error"]
+    assert SandboxSession.removal_evidence is None
+    session = Mock(spec=SandboxSession, session_id="existing", removal_evidence={"identity": "original"})
+
+    class OptionalBackend(WorktreeSandboxBackend):
+        async def reattach_for_removal(self, session_id, *, evidence):
+            if outcome == "exception":
+                raise RuntimeError("lookup failed")
+            if evidence != {"identity": "original"}:
+                status = "error" if outcome == "malformed" else "identity_mismatch"
+            elif session_id != session.session_id:
+                status = "identity_mismatch"
+            else:
+                status = outcome
+            return contract.SandboxReattachResult(attach_status(status), session if status == "attached" else None)
+
+        async def destroy_for_removal(self, handle, *, evidence):
+            if handle is not session or evidence != session.removal_evidence:
+                return contract.SandboxRemovalResult(removal_status.IDENTITY_MISMATCH)
+            return contract.SandboxRemovalResult(removal_status.REMOVED)
+
+    legacy = WorktreeSandboxBackend()
+    assert isinstance(legacy, SandboxBackend)
+    assert not isinstance(legacy, contract.SandboxRemovalBackend)
+    backend = OptionalBackend()
+    backend.create = AsyncMock(side_effect=AssertionError("must not create"))
+    backend.resume = AsyncMock(side_effect=AssertionError("must not resume"))
+    assert isinstance(backend, SandboxBackend)
+    assert isinstance(backend, contract.SandboxRemovalBackend)
+    evidence = {"identity": "replacement"} if outcome == "identity_mismatch" else {"identity": "original"}
+    if outcome == "exception":
+        with pytest.raises(RuntimeError, match="lookup failed"):
+            await backend.reattach_for_removal("existing", evidence=evidence)
+    else:
+        malformed = [None, {}, {"identity": 1}, {1: "original"}, ["original"]]
+        for supplied in malformed if outcome == "malformed" else [evidence]:
+            result = await backend.reattach_for_removal("existing", evidence=supplied)
+            assert result.status == ("error" if outcome == "malformed" else outcome)
+            assert result.session is (session if outcome == "attached" else None)
+            assert result.detail == ""
+            with pytest.raises(FrozenInstanceError):
+                result.detail = "changed"
+        if outcome == "attached":
+            assert result.session.session_id == "existing"
+            assert result.session.removal_evidence == evidence
+            mismatch = await backend.reattach_for_removal("replacement", evidence=evidence)
+            assert mismatch.status == attach_status.IDENTITY_MISMATCH and mismatch.session is None
+            removed = await backend.destroy_for_removal(result.session, evidence=evidence)
+            assert removed.status == removal_status.REMOVED
+            refused = await backend.destroy_for_removal(result.session, evidence={"identity": "replacement"})
+            assert refused.status == removal_status.IDENTITY_MISMATCH
+
+    for status in attach_status:
+        if status != attach_status.ATTACHED:
+            assert contract.SandboxReattachResult(status).session is None
+        with pytest.raises(ValueError):
+            contract.SandboxReattachResult(status, None if status == attach_status.ATTACHED else session)
+    for status in removal_status:
+        result = contract.SandboxRemovalResult(status)
+        assert (result.status == "removed") is (status == removal_status.REMOVED)
+        assert result.detail == ""
+        with pytest.raises(FrozenInstanceError):
+            result.detail = "changed"
+    for invalid in ("unknown", None, "attached"):
+        with pytest.raises(ValueError):
+            contract.SandboxReattachResult(invalid, session)
+        with pytest.raises(ValueError):
+            contract.SandboxRemovalResult(invalid)
+    backend.create.assert_not_called()
+    backend.resume.assert_not_called()
+
+
 def test_capabilities_worktree_shape() -> None:
     """Worktree backend exposes FILE_RW + EXEC + NETWORK + SNAPSHOT.
 

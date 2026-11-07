@@ -542,6 +542,31 @@ Third-party backends must:
    `TYPE_CHECKING`) so importing the backend module never crashes on
    a missing SDK.
 
+### Optional removal contract
+
+`bernstein.core.sandbox.backend.SandboxRemovalBackend` is a separate,
+runtime-checkable protocol. Its async methods are
+`reattach_for_removal(session_id: str, *, evidence: Mapping[str, str]) -> SandboxReattachResult`
+and `destroy_for_removal(session: SandboxSession, *, evidence: Mapping[str, str]) -> SandboxRemovalResult`.
+Required methods, capabilities and conformance remain unchanged; without
+this extension a backend is unavailable for removal.
+
+Sessions may supply `removal_evidence: Mapping[str, str] | None` (default
+`None`): backend-specific, non-secret identity evidence, copied into create-event
+`details["removal_evidence"]` when present. Legacy records omit it; no migration.
+
+`SandboxReattachStatus` values are `attached`, `unsupported`, `not_found`,
+`identity_mismatch`, `error`. Only `attached` requires and permits a session;
+the backend must verify it matches both the requested id and evidence.
+`SandboxRemovalStatus` values are `removed`, `not_found`, `identity_mismatch`,
+`error`. Only `removed` confirms removal; absence is not confirmation.
+The frozen results default `detail` to `""` and reattachment `session` to `None`;
+invalid statuses and status/handle combinations are rejected. Backends must
+reject malformed evidence and recheck identity before removal. Invalid results
+and exceptions must expose no removable handle or confirmation. Reattachment
+must never provision a resource or fall back to `create` or `resume(snapshot_id)`.
+Provider implementations and removal execution are separate follow-up work.
+
 ## Integration
 
 - `SandboxBackend` / `SandboxSession` / `SandboxCapability` /

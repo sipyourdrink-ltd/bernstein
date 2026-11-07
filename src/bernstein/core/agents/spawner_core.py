@@ -6747,6 +6747,7 @@ class AgentSpawner:
         )
         from bernstein.core.security.audit import SANDBOX_SESSION_CREATE
 
+        removal_evidence = getattr(sbx_session, "removal_evidence", None)
         self._emit_sandbox_audit(
             SANDBOX_SESSION_CREATE,
             resource_id=sbx_session.session_id,
@@ -6756,6 +6757,7 @@ class AgentSpawner:
                 "backend": backend_name,
                 "agent_session_id": session_id,
                 "task_ids": list(task_ids),
+                **({"removal_evidence": dict(removal_evidence)} if removal_evidence is not None else {}),
             },
         )
         self._check_task_server_reachability(sbx_session)

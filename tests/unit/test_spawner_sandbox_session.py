@@ -585,12 +585,24 @@ def test_audit_events_appended_for_session_lifecycle(tmp_path: Path, monkeypatch
     assert valid, f"audit chain not verifiable: {errors}"
 
 
-def test_session_create_audit_names_the_owning_tasks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("evidence", [None, {"resource_id": "immutable-id", "created_at": "original"}, {}])
+def test_session_create_audit_names_the_owning_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, evidence: dict[str, str] | None
+) -> None:
     """The create record carries the spawn's task ids, so a session that is never
     destroyed can be traced to the task it was provisioned for (#5112)."""
     monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
     backend = _FakeBackend(tmp_path)
     spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+    original_create = backend.create
+
+    async def create_with_evidence(*args, **kwargs):
+        created = await original_create(*args, **kwargs)
+        if evidence is not None:
+            created.removal_evidence = evidence
+        return created
+
+    monkeypatch.setattr(backend, "create", create_with_evidence)
 
     agent_session = AgentSession(id="S-31", role="backend", task_ids=["T-a", "T-b"])
     spawner._spawn_via_sandbox_session(  # pyright: ignore[reportPrivateUsage]
@@ -608,6 +620,13 @@ def test_session_create_audit_names_the_owning_tasks(tmp_path: Path, monkeypatch
     assert len(creates) == 1
     assert creates[0].details["agent_session_id"] == "S-31"
     assert creates[0].details["task_ids"] == ["T-a", "T-b"]
+    if evidence is None:
+        assert "removal_evidence" not in creates[0].details
+    else:
+        assert "removal_evidence" in creates[0].details
+        assert creates[0].details["removal_evidence"] == evidence
+        evidence["later"] = "mutation"
+        assert "later" not in creates[0].details["removal_evidence"]
 
 
 def test_concurrent_lifecycles_keep_audit_chain_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
