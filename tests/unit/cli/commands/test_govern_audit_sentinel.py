@@ -61,7 +61,11 @@ def test_sentinel_presence_is_reported_in_the_run(
         assert read_audit_reports(workspace / ".sdd" / "lineage") == []
 
 
-def test_full_chain_detect_record_notify_fires_once(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("active_runs", [1, 2])
+def test_full_chain_detect_record_notify_fires_once_per_run(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, active_runs: int
+) -> None:
+    monkeypatch.setattr("time.time", lambda: 1_700_000_000.5)
     received: list[NotificationEvent] = []
     closed: list[bool] = []
     lineage_root = workspace / ".sdd" / "lineage"
@@ -73,8 +77,8 @@ def test_full_chain_detect_record_notify_fires_once(workspace: Path, monkeypatch
         async def deliver(self, event: NotificationEvent) -> None:
             # Record must already exist when the notification reaches its sink.
             reports = read_audit_reports(lineage_root)
-            assert len(reports) == 1
-            assert event.details["journal_entry_hash"] == reports[0].journal_entry_hash
+            assert len(reports) == len(received) + 1
+            assert event.details["journal_entry_hash"] == reports[-1].journal_entry_hash
             received.append(event)
 
         async def close(self) -> None:
@@ -90,29 +94,34 @@ def test_full_chain_detect_record_notify_fires_once(workspace: Path, monkeypatch
     )
     with monkeypatch.context() as sentinel:
         sentinel.setenv(_ENV, "1")
-        result = CliRunner().invoke(cli, ["govern", "audit", "-w", str(workspace), "--json"])
-        assert result.exit_code == 1, result.output
-        assert any(row["check_id"] == _CHECK for row in json.loads(result.stdout))
+        for _ in range(active_runs):
+            result = CliRunner().invoke(cli, ["govern", "audit", "-w", str(workspace), "--json"])
+            assert result.exit_code == 1, result.output
+            assert any(row["check_id"] == _CHECK for row in json.loads(result.stdout))
         reports = read_audit_reports(lineage_root)
-        assert len(reports) == 1
-        report = reports[0]
-        assert any(row["check_id"] == _CHECK and row["passed"] is False for row in report.findings)
-        verification = verify_audit_report(
-            lineage_root=lineage_root, hmac_key=load_or_create_audit_key(), report=report
-        )
-        assert verification.ok, verification.reason
+        assert len(reports) == active_runs
+        assert len({report.to_canonical_bytes() for report in reports}) == 1
+        assert len({report.journal_entry_hash for report in reports}) == active_runs
+        for report in reports:
+            assert any(row["check_id"] == _CHECK and row["passed"] is False for row in report.findings)
+            verification = verify_audit_report(
+                lineage_root=lineage_root, hmac_key=load_or_create_audit_key(), report=report
+            )
+            assert verification.ok, verification.reason
         spine = LineageSpine(lineage_root, run_id="govern-audit", hmac_key=load_or_create_audit_key())
-        assert len(list(spine.iter_entries())) == 1
-        assert len(received) == 1
-        assert received[0].kind.value == "synthetic"
-        assert _ENV in received[0].body
-        assert _REASON in received[0].body
-        assert closed == [True]
+        assert len(list(spine.iter_entries())) == active_runs
+        assert len(received) == active_runs
+        assert len({event.event_id for event in received}) == active_runs
+        for event in received:
+            assert event.kind.value == "synthetic"
+            assert _ENV in event.body
+            assert _REASON in event.body
+        assert closed == [True] * active_runs
 
     assert _ENV not in os.environ
     clean = CliRunner().invoke(cli, ["govern", "audit", "-w", str(workspace), "--json"])
     assert clean.exit_code == 0, clean.output
     assert all(row["check_id"] != _CHECK for row in json.loads(clean.stdout))
     assert _ENV not in clean.output
-    assert len(received) == 1
-    assert len(read_audit_reports(lineage_root)) == 1
+    assert len(received) == active_runs
+    assert len(read_audit_reports(lineage_root)) == active_runs

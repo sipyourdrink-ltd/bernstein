@@ -241,6 +241,9 @@ event is dispatched. The existing notification bridge handles delivery, retries
 and sink filtering: enable `notifications` in `bernstein.yaml` and subscribe a
 sink to `synthetic` events with severity `error` (or leave those filters unset).
 The event includes the sentinel name, fixed reason, check ID and journal anchor.
+Repeated active runs within one second may produce identical report bytes;
+each run has its own journal anchor, verifies against that anchor, and dispatches
+its own notification event.
 Without configured, enabled sinks, the run is still recorded but no delivery is
 claimed. Excluding the check produces neither its journal entry nor its event.
 Ordinary audits' recording and notification behaviour is unchanged.
@@ -249,8 +252,9 @@ An environment variable is canonical because it can be scoped to one command
 and leaves no sentinel file behind. If exported in a shell or CI environment,
 clear it with `unset BERNSTEIN_GOVERN_AUDIT_SENTINEL`. The selftest in
 `tests/unit/cli/commands/test_govern_audit_sentinel.py` sets and clears it,
-verifies the real journal and a local recording notification sink, then runs
-again to confirm there is no new injection, journal entry or notification.
+verifies the real journal and a local recording notification sink for one or
+two active runs with identical report bytes, then runs again with the sentinel
+cleared to confirm there is no new injection, journal entry or notification.
 
 ## Declared discovery probes
 
