@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bernstein.core.protocols.mcp.mcp_signing_policy import MCPSigningPolicy
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
 
@@ -256,11 +257,13 @@ class MCPManager:
         *,
         signing_mode: SigningMode | None = None,
         signing_policy: MCPSigningPolicy | None = None,
+        audit_chain: AuditChainStore | None = None,
     ) -> None:
         self._configs: list[MCPServerConfig] = list(configs) if configs else []
         self._servers: dict[str, _ServerState] = {}
         self._signing_mode: SigningMode = _resolve_signing_mode(mode=signing_mode)
         self._signing_policy: MCPSigningPolicy | None = signing_policy
+        self._audit_chain = audit_chain
 
     @property
     def signing_mode(self) -> SigningMode:
@@ -375,6 +378,8 @@ class MCPManager:
                 enforce_mcp_server_load,
             )
         except Exception:
+            if self._audit_chain is not None:
+                raise RuntimeError("MCP signing audit gate unavailable") from None
             logger.exception(
                 "MCP signing policy module unavailable; cannot enforce mode=%s for server '%s'",
                 self._signing_mode,
@@ -445,6 +450,7 @@ class MCPManager:
             signature_b64=signature_b64,
             bundle_files=None,
             policy=policy,
+            audit_chain=self._audit_chain,
         )
 
     def stop_all(self) -> None:

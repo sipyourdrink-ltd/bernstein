@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -718,6 +719,73 @@ class TestMCPManagerSigningMode:
         )
 
         reset_metrics_for_test()
+
+    @pytest.mark.parametrize("scan_bundle,reason", [(True, "bundle_unavailable"), (False, "policy_disabled")])
+    def test_records_verification_and_scan_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scan_bundle: bool, reason: str
+    ) -> None:
+        from bernstein.core.protocols.mcp.mcp_signing_policy import MCPSigningPolicy
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        assert "audit_chain" in inspect.signature(MCPManager).parameters
+        monkeypatch.delenv("BERNSTEIN_MCP_SIGNING_MODE", raising=False)
+        chain = AuditChainStore(tmp_path, key=b"k" * 32)
+        cfg = MCPServerConfig(name="example", transport="sse", url="http://localhost")
+        mgr = MCPManager([cfg], audit_chain=chain, signing_policy=MCPSigningPolicy(scan_bundle=scan_bundle))
+        mgr.start_all()
+        assert mgr.is_alive("example")
+        verification, scan, decision = chain.query()
+        assert verification.details["verdict"] == "unsigned"
+        assert scan.details == dict(
+            verification_hmac=verification.hmac,
+            status="skipped",
+            skip_reason=reason,
+            findings=[],
+            prev_chain_digest=verification.hmac,
+        )
+        assert decision.details["allowed"] is True
+        assert decision.details["scan_hmac"] == scan.hmac
+        assert chain.verify() == (True, [])
+
+    @pytest.mark.parametrize("mode", ["warn", "strict", "off"])
+    @pytest.mark.parametrize("failed_append", [1, 2, 3])
+    def test_audit_failure_blocks_startup(
+        self, mode: str, failed_append: int, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        assert "audit_chain" in inspect.signature(MCPManager).parameters
+        monkeypatch.delenv("BERNSTEIN_MCP_SIGNING_MODE", raising=False)
+        chain = MagicMock()
+        chain.log_with_prev_digest.side_effect = [MagicMock(hmac="h")] * (failed_append - 1) + [OSError("SECRET")]
+        cfg = MCPServerConfig(name="example", command=["echo"])
+        with patch("bernstein.core.protocols.mcp_manager.subprocess.Popen") as popen:
+            popen.return_value.poll.return_value = None
+            mgr = MCPManager([cfg], signing_mode=mode, audit_chain=chain)
+            mgr.start_all()
+            assert mgr.is_alive("example") is (mode == "off")
+            assert popen.called is (mode == "off")
+        assert chain.log_with_prev_digest.call_count == (0 if mode == "off" else failed_append)
+        assert "SECRET" not in caplog.text
+
+    @pytest.mark.parametrize("enabled,mode", [(True, "warn"), (True, "strict"), (False, "warn"), (True, "off")])
+    def test_audit_construction_failure(self, tmp_path: Path, enabled: bool, mode: str) -> None:
+        from bernstein.core.orchestration import orchestrator
+
+        assert hasattr(orchestrator, "_start_mcp_manager")
+        with (
+            patch("bernstein.core.security.audit_chain.AuditChainStore", side_effect=OSError("SECRET")),
+            patch("bernstein.core.protocols.mcp_manager.subprocess.Popen") as popen,
+        ):
+            popen.return_value.poll.return_value = None
+            configs = [MCPServerConfig(name="example", command=["echo"])]
+            if enabled and mode != "off":
+                with pytest.raises(RuntimeError, match="^MCP audit initialization failed$"):
+                    orchestrator._start_mcp_manager(configs, signing_mode=mode, audit_enabled=True, workdir=tmp_path)
+                popen.assert_not_called()
+            else:
+                mgr = orchestrator._start_mcp_manager(
+                    configs, signing_mode=mode, audit_enabled=enabled, workdir=tmp_path
+                )
+                assert mgr.is_alive("example")
 
     def test_default_mode_is_warn(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BERNSTEIN_MCP_SIGNING_MODE", raising=False)

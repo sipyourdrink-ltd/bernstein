@@ -132,6 +132,27 @@ decision = enforce_mcp_server_load(
 )
 ```
 
+When supplied `audit_chain=AuditChainStore(...)`, the gate appends
+`mcp.signature_verification`, `mcp.bundle_scan`, then `mcp.load_decision`
+through `log_with_prev_digest()` before returning or refusing a load. All
+three identify the server with actor `mcp_signing_policy` and resource type
+`mcp_server`. Scan and decision records reference the verification HMAC;
+the decision also references the scan HMAC. Records contain verdicts,
+policy flags and findings limited to rule, severity and CWE (default `""`),
+never keys, signatures, manifests or source.
+
+Completed scans have an empty skip reason. Skipped scans have no findings
+and an explicit `policy_disabled` or `bundle_unavailable` reason. The manager
+currently supplies no bundle, so it records `bundle_unavailable` when scanning
+is enabled; this does not establish a clean scan.
+
+Orchestrator auditing follows `BERNSTEIN_AUDIT=1` or compliance
+`audit_logging`. Construction or append failures block startup in both warn
+and strict modes with sanitized errors, without falling back to unaudited
+loading. Explicit `audit_chain=None` preserves legacy operation. Signing mode
+resolution and the `off` verification bypass are unchanged. Existing audit
+records are retained without migration or backfill.
+
 ### Strict vs warn-only
 
 | Mode | Unsigned / bad sig / untrusted publisher | Critical scanner finding |
