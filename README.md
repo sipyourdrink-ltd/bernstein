@@ -140,6 +140,11 @@ bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
 
+`bernstein doctor --json` also exposes audit-contract `findings`, identical to
+`bernstein govern audit --only INS --json` for the same installation observations.
+The normal doctor report keeps its existing display. See the
+[doctor operations guide](docs/operations/doctor.md) for stable check IDs.
+
 pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://docs.bernstein.run/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">

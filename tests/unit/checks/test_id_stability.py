@@ -6,6 +6,8 @@ never reused, and cannot be removed without an explicit tombstone.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from bernstein.core.checks.contract import Evidence, Finding, Verdict
@@ -27,6 +29,7 @@ ACTIVE_PINNED_IDS: frozenset[str] = frozenset(
         "duplication:receipt-verify-kinds",
         "duplication:registry-duplicate-ids",
         "duplication:verification-result-shapes",
+        *(f"INS-{number:03}" for number in range(1, 21)),
     }
 )
 
@@ -59,13 +62,17 @@ def test_active_pinned_ids_match_default_registry() -> None:
 
 
 def test_check_ids_are_properly_namespaced() -> None:
-    """Check IDs must be non-empty and strictly namespaced with a colon."""
+    """Check IDs use a colon namespace or a stable installation INS-nnn ID."""
     registry = CheckRegistry()
     populate_default_checks(registry)
 
     for check in registry.iter_checks(include_opt_in=True):
         cid = check.check_id
         assert isinstance(cid, str) and cid.strip() == cid
+        if cid.startswith("INS-"):
+            assert re.fullmatch(r"INS-\d{3}", cid)
+            assert check.area == "INS"
+            continue
         assert ":" in cid, f"Check ID '{cid}' is not namespaced with a colon"
         assert not cid.startswith(":"), f"Check ID '{cid}' has leading colon"
         assert not cid.endswith(":"), f"Check ID '{cid}' has trailing colon"

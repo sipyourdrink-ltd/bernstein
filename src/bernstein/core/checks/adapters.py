@@ -10,14 +10,173 @@ Adapts:
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import lru_cache, wraps
+from inspect import signature
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec
 
 from bernstein.core.checks.contract import Evidence, Finding, Verdict
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     from bernstein.core.govern.duplication_audit import DuplicationReport
+
+
+# Stable installation IDs, in the legacy doctor's display order. Backend
+# helpers share storage's ID: postgres/redis are alternate implementations.
+INSTALLATION_CHECKS: tuple[tuple[str, str], ...] = (
+    ("INS-001", "python"),
+    ("INS-002", "adapters"),
+    ("INS-003", "last_green"),
+    ("INS-004", "version_posture"),
+    ("INS-005", "auth"),
+    ("INS-006", "port"),
+    ("INS-007", "workspace"),
+    ("INS-008", "stale_pids"),
+    ("INS-009", "guardrails"),
+    ("INS-010", "ci_tools"),
+    ("INS-011", "storage"),
+    ("INS-012", "secrets"),
+    ("INS-013", "readiness"),
+    ("INS-014", "context_and_plugins"),
+    ("INS-015", "commit_attribution"),
+    ("INS-016", "compliance"),
+    ("INS-017", "schedule_supervisor"),
+    ("INS-018", "eval_gate_power"),
+    ("INS-019", "otel_export"),
+    ("INS-020", "audit_anchoring"),
+)
+
+_P = ParamSpec("_P")
+
+
+def _installation_finding(
+    check_id: str,
+    rows: list[dict[str, Any]],
+    observation: Any = None,
+    env: Mapping[str, str] | None = None,
+) -> Finding:
+    """Bind a doctor's display rows to one stable, evidence-backed outcome."""
+    prerequisite = ""
+    if not rows:
+        prerequisite = (
+            "Install a tracked adapter CLI (e.g. agy) with a readable version to measure its posture."
+            if check_id in {"INS-003", "INS-004"}
+            else "Configure this check's subject to collect installation observations."
+        )
+    elif check_id == "INS-005":
+        import shutil
+
+        auth_tools = {"Auth: claude": "claude", "Auth: codex": "codex", "Auth: gemini": "gcloud"}
+        missing = [
+            auth_tools[row["name"]]
+            for row in rows
+            if not row["ok"]
+            and shutil.which(auth_tools[row["name"]], path=env.get("PATH") if env is not None else None) is None
+        ]
+        if missing:
+            prerequisite = f"Install authentication probe tools and ensure they are on PATH: {', '.join(missing)}."
+    elif check_id == "INS-010":
+        prerequisite = "; ".join(f"{row['name']}: {row['detail']}. {row['fix']}" for row in rows if not row["ok"])
+    elif check_id == "INS-015":
+        import shutil
+
+        if shutil.which("git") is None:
+            prerequisite = "Install git and ensure it is on PATH to measure commit attribution."
+    elif check_id == "INS-011" and any("asyncpg not installed" in row["detail"] for row in rows):
+        prerequisite = "Install asyncpg (bernstein[postgres]) to measure PostgreSQL connectivity."
+    elif check_id == "INS-012" and any("CLI (op) not installed" in row["detail"] for row in rows):
+        prerequisite = "Install the 1Password CLI (op) to measure secrets provider connectivity."
+
+    summary = "; ".join(f"{row['name']}: {row['detail']}" for row in rows)
+    payload = {"checks": rows}
+    if check_id == "INS-004" and observation is not None:
+        # A receipt includes the observation time. Hash the measured versions,
+        # not that changing timestamp, while doctor still displays the receipt.
+        payload = observation
+        summary = rows[0]["detail"].split("; receipt sha256:", 1)[0]
+    verdict = Verdict.PASS if all(row["ok"] for row in rows) else Verdict.FAIL
+    if prerequisite:
+        verdict = Verdict.NOT_MEASURABLE
+    return Finding(
+        check_id=check_id,
+        area="INS",
+        verdict=verdict,
+        evidence=(Evidence.from_payload(check_id, payload),),
+        summary=summary or "No installation observations collected.",
+        remediation="; ".join(row["fix"] for row in rows if row["fix"]),
+        what_would_make_it_measurable=prerequisite or None,
+    )
+
+
+def doctor_producer(check_id: str) -> Callable[[Callable[_P, Any]], Callable[_P, Finding]]:
+    """Turn a legacy row emitter into a Finding producer, retaining its rows.
+
+    Both the list and callback forms used by doctor keep the same display
+    data. The return value is always the audit-contract Finding.
+    """
+
+    def decorate(emit: Callable[_P, Any]) -> Callable[_P, Finding]:
+        parameters = signature(emit)
+
+        @wraps(emit)
+        def produce(*args: _P.args, **kwargs: _P.kwargs) -> Finding:
+            bound = parameters.bind(*args, **kwargs)
+            rows = bound.arguments.get("checks")
+            if rows is None:
+                rows = []
+                callback = bound.arguments["_check"]
+
+                def record(*values: Any, **named: Any) -> None:
+                    row = {"fix": "", "fix_id": ""}
+                    row.update(zip(("name", "ok", "detail", "fix", "fix_id"), values, strict=False))
+                    row.update(named)
+                    rows.append(row)
+                    callback(*values, **named)
+
+                bound.arguments["_check"] = record
+            start = len(rows)
+            observation = emit(*bound.args, **bound.kwargs)
+            return _installation_finding(check_id, rows[start:], observation, bound.arguments.get("env"))
+
+        produce.__annotations__ = {**emit.__annotations__, "return": Finding}
+        produce.__signature__ = parameters.replace(return_annotation=Finding)  # type: ignore[attr-defined]
+        produce.check_id = check_id  # type: ignore[attr-defined]
+        return produce
+
+    return decorate
+
+
+class DoctorInstallationAdapter:
+    """An opt-in install check, sharing the exact producer used by doctor."""
+
+    area = "INS"
+    opt_in = True
+
+    def __init__(self, check_id: str, name: str) -> None:
+        self.check_id = check_id
+        self._name = name
+        self.title = name.replace("_", " ").capitalize()
+        self.description = f"Doctor installation check: {self.title}"
+
+    def run(self, workdir: Path | None = None) -> Finding:
+        from bernstein.cli.commands import status_cmd
+
+        helper = getattr(status_cmd, f"_doctor_check_{self._name}")
+        rows: list[dict[str, Any]] = []
+        arguments: dict[str, Any] = {}
+        for name in signature(helper).parameters:
+            if name == "checks":
+                arguments[name] = rows
+            elif name == "workdir":
+                arguments[name] = workdir or Path.cwd()
+            elif name == "_check":
+                arguments[name] = lambda *args: status_cmd._add_check(rows, *args)
+        return helper(**arguments)
+
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
 
 
 class DoctorComplianceAdapter:

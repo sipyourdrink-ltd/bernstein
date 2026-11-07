@@ -127,19 +127,7 @@ def govern_audit_cmd(
     has_failed = _has_failures(findings)
 
     if as_json:
-        payload = [
-            {
-                "check_id": f.check_id,
-                "verdict": f.verdict.value,
-                "passed": f.passed,
-                "area": f.area,
-                "summary": f.summary or f.message,
-                "remediation": f.remediation,
-                "what_would_make_it_measurable": f.what_would_make_it_measurable,
-                "evidence": [{"locator": ev.locator, "sha256": ev.sha256} for ev in f.evidence],
-            }
-            for f in findings
-        ]
+        payload = [f.to_dict() for f in findings]
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(1 if has_failed else 0)
 
