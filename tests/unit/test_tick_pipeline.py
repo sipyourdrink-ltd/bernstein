@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bernstein.core.models import Complexity, DispatchTier, Task
 from bernstein.core.tick_pipeline import (
     complete_task,
     compute_total_spent,
@@ -16,6 +17,36 @@ from bernstein.core.tick_pipeline import (
     parse_backlog_file,
     total_spent_cache,
 )
+
+from bernstein.core.tasks.task_grouping import compact_small_tasks
+
+
+@pytest.mark.parametrize("batch_size", [1, 2], ids=["singletons", "existing_batch"])
+@pytest.mark.parametrize("left_tier", list(DispatchTier))
+@pytest.mark.parametrize("right_tier", list(DispatchTier))
+def test_compaction_preserves_dispatch_tiers(
+    batch_size: int, left_tier: DispatchTier, right_tier: DispatchTier
+) -> None:
+    tasks = [
+        Task(
+            id=f"T-{i}",
+            title="Small task",
+            description="A small independent change.",
+            role="backend",
+            complexity=Complexity.LOW,
+            estimated_minutes=1,
+            cli="codex",
+            model="gpt-5",
+            dispatch_tier=left_tier if i < batch_size else right_tier,
+        )
+        for i in range(batch_size + 1)
+    ]
+
+    batches = compact_small_tasks([tasks[:batch_size], tasks[batch_size:]], max_per_batch=3)
+
+    assert len(batches) == (1 if left_tier == right_tier else 2)
+    assert all(len({task.dispatch_tier for task in batch}) == 1 for batch in batches)
+    assert sorted(task.id for batch in batches for task in batch) == [task.id for task in tasks]
 
 
 def test_parse_backlog_file_uses_safe_defaults_when_parser_returns_none() -> None:
