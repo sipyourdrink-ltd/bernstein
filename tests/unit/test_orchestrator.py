@@ -20,6 +20,7 @@ from bernstein.core.models import (
     AgentSession,
     CompletionSignal,
     Complexity,
+    DispatchTier,
     OrchestratorConfig,
     Scope,
     Task,
@@ -315,6 +316,34 @@ class TestTaskFromDict:
 
 
 class TestGroupByRole:
+    @pytest.mark.parametrize("merge_path", ["file_affinity", "file_bridge", "agent_affinity", "packing"])
+    @pytest.mark.parametrize("left_tier", list(DispatchTier))
+    @pytest.mark.parametrize("right_tier", list(DispatchTier))
+    def test_dispatch_tiers_stay_separate(
+        self, merge_path: str, left_tier: DispatchTier, right_tier: DispatchTier
+    ) -> None:
+        tasks = [_make_task(id=f"T-{i}") for i in range(3)]
+        for task, tier in zip(tasks, (left_tier, right_tier, left_tier), strict=True):
+            task.dispatch_tier = tier
+            task.cli = "codex"
+            task.model = "gpt-5"
+        affinity = None
+        if merge_path == "file_affinity":
+            for task in tasks:
+                task.owned_files = ["shared.py"]
+        elif merge_path == "file_bridge":
+            tasks[0].owned_files = ["a.py"]
+            tasks[1].owned_files = ["b.py"]
+            tasks[2].owned_files = ["a.py", "b.py"]
+        elif merge_path == "agent_affinity":
+            affinity = {task.id: "agent-1" for task in tasks}
+
+        batches = group_by_role(tasks, max_per_batch=3, agent_affinity=affinity)
+
+        assert len(batches) == (1 if left_tier == right_tier else 2)
+        assert all(len({task.dispatch_tier for task in batch}) == 1 for batch in batches)
+        assert sorted(task.id for batch in batches for task in batch) == [task.id for task in tasks]
+
     def test_single_role_single_batch(self) -> None:
         tasks = [_make_task(id="T-1"), _make_task(id="T-2")]
         batches = group_by_role(tasks, max_per_batch=3)
