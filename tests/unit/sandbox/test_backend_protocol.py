@@ -61,14 +61,16 @@ def test_protocol_runtime_checkable() -> None:
     assert isinstance(backend, SandboxBackend)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "outcome",
-    ["attached", "unsupported", "not_found", "identity_mismatch", "error", "exception", "malformed"],
-)
-async def test_removal_reattach_contract(outcome: str) -> None:
-    """An optional implementation attaches by identity and never provisions."""
-    from dataclasses import FrozenInstanceError
+def test_removal_reattach_contract() -> None:
+    """Exercise the production protocol and value objects, without a fake policy.
+
+    Identity/evidence validation, exception handling, fallback prevention and
+    removal confirmation need a removal consumer. This slice only declares
+    that contract; a fake implementing those policies cannot verify them.
+    """
+    from dataclasses import FrozenInstanceError, replace
+    from inspect import Parameter, iscoroutinefunction, signature
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
     from bernstein.core.sandbox import backend as contract
@@ -86,74 +88,77 @@ async def test_removal_reattach_contract(outcome: str) -> None:
     assert [s.value for s in attach_status] == ["attached", "unsupported", "not_found", "identity_mismatch", "error"]
     assert [s.value for s in removal_status] == ["removed", "not_found", "identity_mismatch", "error"]
     assert SandboxSession.removal_evidence is None
-    session = Mock(spec=SandboxSession, session_id="existing", removal_evidence={"identity": "original"})
-
-    class OptionalBackend(WorktreeSandboxBackend):
-        async def reattach_for_removal(self, session_id, *, evidence):
-            if outcome == "exception":
-                raise RuntimeError("lookup failed")
-            if evidence != {"identity": "original"}:
-                status = "error" if outcome == "malformed" else "identity_mismatch"
-            elif session_id != session.session_id:
-                status = "identity_mismatch"
-            else:
-                status = outcome
-            return contract.SandboxReattachResult(attach_status(status), session if status == "attached" else None)
-
-        async def destroy_for_removal(self, handle, *, evidence):
-            if handle is not session or evidence != session.removal_evidence:
-                return contract.SandboxRemovalResult(removal_status.IDENTITY_MISMATCH)
-            return contract.SandboxRemovalResult(removal_status.REMOVED)
-
     legacy = WorktreeSandboxBackend()
     assert isinstance(legacy, SandboxBackend)
     assert not isinstance(legacy, contract.SandboxRemovalBackend)
-    backend = OptionalBackend()
-    backend.create = AsyncMock(side_effect=AssertionError("must not create"))
-    backend.resume = AsyncMock(side_effect=AssertionError("must not resume"))
-    assert isinstance(backend, SandboxBackend)
-    assert isinstance(backend, contract.SandboxRemovalBackend)
-    evidence = {"identity": "replacement"} if outcome == "identity_mismatch" else {"identity": "original"}
-    if outcome == "exception":
-        with pytest.raises(RuntimeError, match="lookup failed"):
-            await backend.reattach_for_removal("existing", evidence=evidence)
-    else:
-        malformed = [None, {}, {"identity": 1}, {1: "original"}, ["original"]]
-        for supplied in malformed if outcome == "malformed" else [evidence]:
-            result = await backend.reattach_for_removal("existing", evidence=supplied)
-            assert result.status == ("error" if outcome == "malformed" else outcome)
-            assert result.session is (session if outcome == "attached" else None)
-            assert result.detail == ""
-            with pytest.raises(FrozenInstanceError):
-                result.detail = "changed"
-        if outcome == "attached":
-            assert result.session.session_id == "existing"
-            assert result.session.removal_evidence == evidence
-            mismatch = await backend.reattach_for_removal("replacement", evidence=evidence)
-            assert mismatch.status == attach_status.IDENTITY_MISMATCH and mismatch.session is None
-            removed = await backend.destroy_for_removal(result.session, evidence=evidence)
-            assert removed.status == removal_status.REMOVED
-            refused = await backend.destroy_for_removal(result.session, evidence={"identity": "replacement"})
-            assert refused.status == removal_status.IDENTITY_MISMATCH
 
+    # Structural detection must require both optional methods, independently
+    # of the required create/resume/destroy protocol.
+    backend = SimpleNamespace(reattach_for_removal=AsyncMock(), destroy_for_removal=AsyncMock())
+    assert isinstance(backend, contract.SandboxRemovalBackend)
+    assert not isinstance(backend, SandboxBackend)
+    for missing in ("reattach_for_removal", "destroy_for_removal"):
+        partial = SimpleNamespace(**{name: value for name, value in vars(backend).items() if name != missing})
+        assert not isinstance(partial, contract.SandboxRemovalBackend)
+
+    for method_name, argument, result_type in (
+        ("reattach_for_removal", "session_id", "SandboxReattachResult"),
+        ("destroy_for_removal", "session", "SandboxRemovalResult"),
+    ):
+        method = getattr(contract.SandboxRemovalBackend, method_name)
+        assert iscoroutinefunction(method)
+        sig = signature(method)
+        assert list(sig.parameters) == ["self", argument, "evidence"]
+        assert sig.parameters["evidence"].kind is Parameter.KEYWORD_ONLY
+        assert sig.parameters["evidence"].default is Parameter.empty
+        assert sig.return_annotation == result_type
+
+    # These constructors are the enforcement implemented in this slice.
+    # Check every status/handle combination, including explicit None.
+    session = Mock(spec=SandboxSession)
+    attached = contract.SandboxReattachResult(attach_status.ATTACHED, session)
+    assert attached.status is attach_status.ATTACHED
+    assert attached.session is session
+    assert attached.detail == ""
+    with pytest.raises(ValueError, match="requires and permits a session"):
+        contract.SandboxReattachResult(attach_status.ATTACHED)
     for status in attach_status:
-        if status != attach_status.ATTACHED:
-            assert contract.SandboxReattachResult(status).session is None
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="requires and permits a session"):
             contract.SandboxReattachResult(status, None if status == attach_status.ATTACHED else session)
+        if status is attach_status.ATTACHED:
+            continue
+        result = contract.SandboxReattachResult(status)
+        assert result.status is status
+        assert result.session is None
+        assert result.detail == ""
+        with pytest.raises(ValueError, match="requires and permits a session"):
+            replace(attached, status=status)
+        for field, value in (("status", attach_status.ATTACHED), ("session", session), ("detail", "changed")):
+            with pytest.raises(FrozenInstanceError):
+                setattr(result, field, value)
+    for field, value in (("status", attach_status.ERROR), ("session", None), ("detail", "changed")):
+        with pytest.raises(FrozenInstanceError):
+            setattr(attached, field, value)
+    assert replace(attached, detail="verified").detail == "verified"
+
     for status in removal_status:
         result = contract.SandboxRemovalResult(status)
-        assert (result.status == "removed") is (status == removal_status.REMOVED)
+        # Preserve the explicit outcome; no consumer confirms removal yet.
+        assert result.status is status
         assert result.detail == ""
-        with pytest.raises(FrozenInstanceError):
-            result.detail = "changed"
-    for invalid in ("unknown", None, "attached"):
-        with pytest.raises(ValueError):
+        for field, value in (("status", removal_status.REMOVED), ("detail", "changed")):
+            with pytest.raises(FrozenInstanceError):
+                setattr(result, field, value)
+        assert replace(result, detail="provider detail").detail == "provider detail"
+
+    # Raw strings (even known values) and the other enum must not bypass the
+    # constructors' enum-type validation through StrEnum string equality.
+    for invalid in ("unknown", None, *[s.value for s in attach_status], *removal_status):
+        with pytest.raises(ValueError, match="status must be a SandboxReattachStatus"):
             contract.SandboxReattachResult(invalid, session)
-        with pytest.raises(ValueError):
+    for invalid in ("unknown", None, *[s.value for s in removal_status], *attach_status):
+        with pytest.raises(ValueError, match="status must be a SandboxRemovalStatus"):
             contract.SandboxRemovalResult(invalid)
-    backend.create.assert_not_called()
-    backend.resume.assert_not_called()
 
 
 def test_capabilities_worktree_shape() -> None:
