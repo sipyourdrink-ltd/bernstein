@@ -20,6 +20,7 @@ ACTIVE_PINNED_IDS: frozenset[str] = frozenset(
     {
         "doctor:compliance",
         "compliance:soc2:encryption_at_rest",
+        "sentinel:failure",
         # Opt-in (#5105): run under `govern audit --only duplication`.
         "duplication:inline-canonical-bytes-sites",
         "duplication:orphan-modules",
