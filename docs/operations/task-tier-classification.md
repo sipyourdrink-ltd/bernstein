@@ -99,6 +99,16 @@ site records `tier: error` and dispatches exactly as an unmapped role
 would (`model` pin). A broken classifier must never read as a cheap-tier
 verdict.
 
+## Task grouping and dispatch tiers
+
+Tasks with different internal `Task.dispatch_tier` values (`local`, `edge`,
+`search`, `research`, `sandbox`) never merge, even when their role, CLI and
+model match. This applies to file affinity (including transitive overlaps),
+agent affinity, batch packing and later small-task compaction. Equal tiers
+remain eligible to merge under the existing compatibility and size rules.
+These backend dispatch tiers are separate from the classifier's
+`light` / `standard` / `heavy` / `critical` bands above.
+
 ## Related
 
 - Classifier: `src/bernstein/core/routing/task_tier.py`
