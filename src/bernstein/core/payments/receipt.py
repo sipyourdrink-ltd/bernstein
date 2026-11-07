@@ -51,6 +51,7 @@ __all__ = [
     "receipt_artefact_path",
     "receipts_dir",
     "verify_receipt",
+    "verify_transaction_receipt",
 ]
 
 #: Receipt schema version.
@@ -343,7 +344,7 @@ def _find_lineage_entry(store: LineageStore, receipt: TransactionReceipt) -> tup
     return None
 
 
-def verify_receipt(
+def verify_transaction_receipt(
     *,
     workdir: Path,
     hmac_key: bytes,
@@ -454,3 +455,7 @@ def verify_receipt(
         decision=receipt.decision,
         refusal_reason=receipt.refusal_reason,
     )
+
+
+# Backward-compat alias for old import path
+verify_receipt = verify_transaction_receipt

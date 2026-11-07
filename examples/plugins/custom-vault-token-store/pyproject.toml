@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bernstein-example-custom-vault-token-store"
+version = "0.1.0"
+description = "Example bernstein plugin: HashiCorp Vault backend for ExternalSecretStore"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+dependencies = [
+    "bernstein",
+]
+
+[project.entry-points."bernstein.plugins"]
+custom_vault_token_store = "custom_vault_token_store:VaultTokenStorePlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/custom_vault_token_store"]

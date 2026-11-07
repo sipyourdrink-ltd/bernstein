@@ -103,7 +103,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",
     "@types/vscode": "^1.100.0",
-    "@vscode/vsce": "^3.0.0",
+    "@vscode/vsce": "^4.0.0",
     "ovsx": "^1.0.0",
     "esbuild": "^0.28.1",
     "jest": "^30.0.0",
@@ -116,6 +116,7 @@
     "js-yaml": ">=4.3.2 <6",
     "@istanbuljs/load-nyc-config": {
       "js-yaml": ">=3.15.1 <6"
-    }
+    },
+    "@azure/msal-node": "^7.1.2"
   }
 }

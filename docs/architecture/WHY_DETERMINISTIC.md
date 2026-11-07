@@ -144,15 +144,18 @@ in the file?" - rather than trusting the agent's claim. An agent that says
 
 ### LLMs appear only at explicit leaf nodes
 
-Three places in Bernstein call an LLM, all optional and named:
+The main places Bernstein calls an LLM:
 
 | Module | Purpose | When called |
 |--------|---------|-------------|
 | `core/orchestration/manager.py` | Decompose a high-level goal into tasks | Once per goal, if no plan file is provided |
-| `core/quality/review_pipeline/` | Review completed code for quality | After janitor verification, if `reviewer.enabled: true` |
+| `core/quality/review_pipeline/` | Review completed code for quality | After janitor verification, when an LLM review step is configured |
+| `core/quality/janitor.py` | `llm_review` (runs `claude -p --model sonnet`) and `llm_judge` (`judge_task()` via `call_llm`) completion checks | When a task declares those completion signals |
 | `core/quality/cross_model_verifier.py` | Independent diff verification | For high-stakes tasks, if configured |
 
-*(Resolved via `core.__init__` redirect map - legacy imports `core/manager.py`, `core/reviewer.py`, `core/cross_model_verifier.py` still work via `_CoreRedirectFinder`.)*
+*(Resolved via `core.__init__` redirect map - legacy imports `core/manager.py` and `core/cross_model_verifier.py` still work via `_CoreRedirectFinder`.)*
+
+The manager is also invoked for a queue review when the orchestrator detects a stalled queue (`_run_manager_queue_review` in `orchestration/orchestrator.py`); its corrections go through the task server, never around it. The janitor also accepts `llm_review` and `llm_judge` completion signals.
 
 None of these are in the scheduling critical path. If the manager falls asleep
 mid-decomposition, the orchestrator is unaffected - you re-run the decomposition
@@ -190,10 +193,9 @@ task specs - which you need anyway for any automated system to do useful work.
 The `Orchestrator` class has no import of any LLM client. Any LLM call must
 go through an explicitly named module (`orchestration/manager.py`, `quality/review_pipeline/`,
 `quality/cross_model_verifier.py`). When you read the orchestrator code, there are no
-surprise model calls. When you grep for LLM usage, you find exactly three
-files, each clearly named for its purpose.
-
-This is not just a policy. The import graph enforces it.
+surprise model calls. When you grep for LLM usage, you find a short list of
+named modules, each clearly named for its purpose. The orchestrator imports
+`ManagerAgent` lazily, inside the queue-review method only.
 
 ---
 

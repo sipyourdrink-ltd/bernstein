@@ -31,6 +31,10 @@ _EXPECTED: dict[str, tuple[ToolTier, frozenset[str]]] = {
     "bernstein_complete": ("standard", frozenset({"makes network requests"})),
     "bernstein_context": ("standard", frozenset({"reads files", "writes files"})),
     "bernstein_cost": ("core", frozenset({"makes network requests"})),
+    "bernstein_create_task": (
+        "standard",
+        frozenset({"writes files", "makes network requests"}),
+    ),
     "bernstein_create_subtask": (
         "core",
         frozenset({"writes files", "spawns agent processes", "makes network requests"}),
@@ -51,6 +55,7 @@ _EXPECTED: dict[str, tuple[ToolTier, frozenset[str]]] = {
     "bernstein_scenarios": ("all", frozenset({"reads files"})),
     "bernstein_shutdown_orchestrator": ("standard", frozenset({"writes files"})),
     "bernstein_status": ("core", frozenset({"makes network requests"})),
+    "bernstein_subscribe": ("standard", frozenset({"makes network requests"})),
     "bernstein_stop": ("standard", frozenset({"writes files"})),
     "bernstein_task_capsule": ("standard", frozenset({"reads files", "writes files"})),
     "bernstein_task_handle": ("core", frozenset({"reads files"})),

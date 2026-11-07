@@ -386,7 +386,7 @@ def _walk_journal_bytes(payload: bytes) -> tuple[str, int, list[str]]:
     return head_hash, steps, errors
 
 
-def verify_receipt(
+def verify_receipt_tarball(
     receipt_path: Path,
     *,
     expected_head: str | None = None,
@@ -486,6 +486,9 @@ def open_receipt(receipt_path: Path):  # type: ignore[no-untyped-def]
         yield tar
 
 
+# Backward-compat alias for callers still using the old name
+verify_receipt = verify_receipt_tarball
+
 __all__ = [
     "MANIFEST_NAME",
     "ExportResult",
@@ -496,4 +499,5 @@ __all__ = [
     "export_receipt",
     "open_receipt",
     "verify_receipt",
+    "verify_receipt_tarball",
 ]

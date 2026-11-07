@@ -41,7 +41,7 @@ class NormalizedFinding:
     severity: Severity  # info | low | medium | high | critical
     category: str  # coarse class: security | perf | style | ...
     title: str  # short title, used for fuzzy dedup + display
-    evidence: Evidence
+    evidence: Evidence = field(default_factory=Evidence)
     confidence: float = 1.0  # bot self-reported, [0.0, 1.0]
 ```
 

@@ -9,122 +9,122 @@
     {
       "url": "https://bernstein.run/attestations/audit-receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-audit-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-audit-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/audit/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-audit-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-audit-v1"
     },
     {
       "url": "https://bernstein.run/attestations/authority-envelope/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-authority-envelope-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-authority-envelope-v1"
     },
     {
       "url": "https://bernstein.run/attestations/clean-room-verify/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-clean-room-verify-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-clean-room-verify-v1"
     },
     {
       "url": "https://bernstein.run/attestations/conduct/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-conduct-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-conduct-v1"
     },
     {
       "url": "https://bernstein.run/attestations/consent/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-consent-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-consent-v1"
     },
     {
       "url": "https://bernstein.run/attestations/diagnosis-receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-diagnosis-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-diagnosis-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/evidence-envelope/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-evidence-envelope-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-evidence-envelope-v1"
     },
     {
       "url": "https://bernstein.run/attestations/govern-apply-receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-govern-apply-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-govern-apply-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/key-succession/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-key-succession-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-key-succession-v1"
     },
     {
       "url": "https://bernstein.run/attestations/result-receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-result-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-result-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/run-attestation-receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-run-attestation-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-run-attestation-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/run-receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-run-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-run-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/scorecard/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-scorecard-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-scorecard-v1"
     },
     {
       "url": "https://bernstein.run/attestations/trajectory-receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-trajectory-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-trajectory-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/volunteer/claim/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-volunteer-claim-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-volunteer-claim-v1"
     },
     {
       "url": "https://bernstein.run/attestations/volunteer/project_card/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-volunteer-project-card-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-volunteer-project-card-v1"
     },
     {
       "url": "https://bernstein.run/attestations/volunteer/receipt/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-volunteer-receipt-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-volunteer-receipt-v1"
     },
     {
       "url": "https://bernstein.run/attestations/volunteer/submission/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-volunteer-submission-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-volunteer-submission-v1"
     },
     {
       "url": "https://bernstein.run/attestations/volunteer/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-volunteer-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-volunteer-v1"
     },
     {
       "url": "https://bernstein.run/attestations/volunteer/verdict/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-volunteer-verdict-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-volunteer-verdict-v1"
     },
     {
       "url": "https://bernstein.run/attestations/volunteer/worker_card/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#attestations-volunteer-worker-card-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#attestations-volunteer-worker-card-v1"
     },
     {
       "url": "https://bernstein.run/compliance/ai-bom/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#compliance-ai-bom-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#compliance-ai-bom-v1"
     },
     {
       "url": "https://bernstein.run/compliance/pack-manifest/v1",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#compliance-pack-manifest-v1"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#compliance-pack-manifest-v1"
     },
     {
       "url": "https://bernstein.run/mcp-catalog.json",
@@ -133,7 +133,7 @@
     {
       "url": "https://bernstein.run/oscal",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#oscal"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#oscal"
     },
     {
       "url": "https://bernstein.run/schema/sdd/ticket.v1.json",
@@ -192,17 +192,17 @@
     {
       "url": "https://bernstein.run/spdx/{id}",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/reference/published-identifiers/#spdx-id"
+      "target": "https://docs.bernstein.run/en/latest/reference/published-identifiers/#spdx-id"
     },
     {
       "url": "https://bernstein.run/trace/records",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/observability/trace-export/#trace-records"
+      "target": "https://docs.bernstein.run/en/latest/observability/trace-export/#trace-records"
     },
     {
       "url": "https://bernstein.run/trace/verifier",
       "kind": "redirect",
-      "target": "https://bernstein.readthedocs.io/en/latest/observability/trace-export/#trace-verifier"
+      "target": "https://docs.bernstein.run/en/latest/observability/trace-export/#trace-verifier"
     }
   ]
 }

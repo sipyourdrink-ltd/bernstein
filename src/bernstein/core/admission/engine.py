@@ -43,7 +43,7 @@ from bernstein.core.admission.projection import (
 from bernstein.core.admission.receipts import (
     WaiverReceipt,
     assemble_waiver_receipt,
-    sign_receipt,
+    sign_admission_receipt,
 )
 
 if TYPE_CHECKING:
@@ -316,7 +316,7 @@ class AdmissionEngine:
             granted_ts=granted_ts,
             prev_chain_digest=prev_chain_digest,
         )
-        signed = sign_receipt(receipt, private_key_pem=self.private_key_pem)
+        signed = sign_admission_receipt(receipt, private_key_pem=self.private_key_pem)
         self._append(
             kind=KIND_WAIVE,
             task_id=task_id,
@@ -521,7 +521,7 @@ class AdmissionEngine:
             assemble_tag_conformance_receipt,
         )
         from bernstein.core.admission.receipts import (
-            sign_receipt as sign_conformance,
+            sign_admission_receipt as sign_conformance,
         )
         from bernstein.core.admission.tags import check_conformance
 

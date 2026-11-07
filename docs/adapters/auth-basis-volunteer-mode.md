@@ -27,7 +27,7 @@ Volunteer donor budgets (`VolunteerBudget`) enforce adapter selection through `f
 | `claude` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `ANTHROPIC_API_KEY` |
 | `codex` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `OPENAI_API_KEY` |
 | `gemini` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `GEMINI_API_KEY` |
-| `antigravity` | `api_key` | Yes (`local_ok`) / No (`local_only`) | Enterprise / API-key lane |
+| `antigravity` | `subscription_oauth` | Yes (`local_ok`) / No (`local_only`) | Alias of `agy`; consumer lane |
 | `aider` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `OPENAI_API_KEY` / multi-provider |
 | `amp` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `AMP_API_KEY` |
 | `copilot` | `subscription_oauth` | Yes (`local_ok`) / No (`local_only`) | GitHub Copilot auth |
@@ -35,7 +35,7 @@ Volunteer donor budgets (`VolunteerBudget`) enforce adapter selection through `f
 | `qwen` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `DASHSCOPE_API_KEY` |
 | `ollama` | — | — | No contract; `local_models` via Aider + local endpoint |
 | `gptme` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `OPENAI_API_KEY` |
-| `crush` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `ANTHROPIC_API_KEY` (Charm) |
+| `charm` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `ANTHROPIC_API_KEY` (Charm) |
 | `droid` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `FACTORY_API_KEY` / multi-provider |
 | `forge` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `FORGE_API_KEY` |
 | `goose` | `api_key` | Yes (`local_ok`) / No (`local_only`) | `ANTHROPIC_API_KEY` |

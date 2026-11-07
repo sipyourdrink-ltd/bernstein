@@ -9,7 +9,7 @@ These cover the deterministic, side-effect-light helper functions that the
   * ``_generate_default_yaml`` - bootstrap config rendering
   * ``is_codespace_runtime`` - remote-runtime env detection
   * ``_build_synthetic_plan`` - synthetic TaskPlan construction
-  * ``_load_plan_goal`` - goal extraction from JSON / markdown plan files
+  * ``_load_plan_goal`` - goal extraction from YAML / JSON / markdown plan files
   * ``_save_plan_markdown`` - timestamped plan-markdown persistence
   * ``_load_dry_run_tasks`` - plan-file load error handling
 
@@ -320,3 +320,72 @@ def test_load_dry_run_tasks_plan_load_error_exits_one(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         _load_dry_run_tasks(bad_plan)
     assert exc.value.code == 1
+
+
+class TestLoadPlanGoalFromYaml:
+    """`--from-plan` has to read the YAML the docs tell people to write.
+
+    `_load_plan_goal` runs BEFORE `load_plan`, so a failure here stops the file
+    ever reaching the loader that understands it. It handled `.json` and a
+    markdown `**Goal:**` line and nothing else, so
+    `bernstein run --from-plan plan.yaml` -- the exact command in
+    `docs/architecture/plans.md` -- died with "Could not extract goal from plan
+    file" on a well-formed plan, and per-step model routing had no reachable
+    entry point at all (#6080).
+    """
+
+    def test_reads_a_staged_plan_s_name(self, tmp_path: Path) -> None:
+        """`PlanConfig.name` is documented as the orchestration goal."""
+        plan = tmp_path / "plan.yaml"
+        plan.write_text(
+            "name: Rate limit the public API\nstages:\n  - name: build\n    steps:\n      - title: add the limiter\n",
+            encoding="utf-8",
+        )
+
+        assert _load_plan_goal(plan) == "Rate limit the public API"
+
+    def test_reads_a_top_level_goal(self, tmp_path: Path) -> None:
+        """A seed-shaped file states its goal outright, and the issue names this case.
+
+        `load_plan` refuses such a file a moment later with a message naming
+        `--seed`. Refusing it here instead would lose that message and report a
+        missing goal on a file whose goal is on line one.
+        """
+        plan = tmp_path / "plan.yaml"
+        plan.write_text("goal: Ship the rate limiter\nmodel: sonnet\n", encoding="utf-8")
+
+        assert _load_plan_goal(plan) == "Ship the rate limiter"
+
+    def test_goal_wins_over_name(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.yaml"
+        plan.write_text("name: a plan\ngoal: the actual goal\nstages: []\n", encoding="utf-8")
+
+        assert _load_plan_goal(plan) == "the actual goal"
+
+    def test_accepts_the_yml_spelling_too(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.yml"
+        plan.write_text("name: Rate limit the public API\nstages: []\n", encoding="utf-8")
+
+        assert _load_plan_goal(plan) == "Rate limit the public API"
+
+    def test_still_refuses_a_yaml_plan_that_names_no_goal(self, tmp_path: Path) -> None:
+        """Absence is still an error; this widens what counts as present."""
+        plan = tmp_path / "plan.yaml"
+        plan.write_text("stages:\n  - name: build\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Could not extract goal"):
+            _load_plan_goal(plan)
+
+    def test_malformed_yaml_is_an_extraction_failure_not_a_crash(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.yaml"
+        plan.write_text("name: [unclosed\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Could not extract goal"):
+            _load_plan_goal(plan)
+
+    def test_a_markdown_plan_still_works(self, tmp_path: Path) -> None:
+        """The path that worked before must keep working."""
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Plan\n\n**Goal:** Ship the thing\n", encoding="utf-8")
+
+        assert _load_plan_goal(plan) == "Ship the thing"

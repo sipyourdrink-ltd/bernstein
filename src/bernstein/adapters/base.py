@@ -86,6 +86,16 @@ class StandingCapError(SpawnError):
         self.reason_code = reason_code
 
 
+class AdapterCooldownError(SpawnError):
+    """Raised when the adapter is in a spawn backoff, not the task.
+
+    The backoff follows a recent agent failure (or a health-monitor trip) and
+    applies to every task routed to the adapter. The claimed tasks did not
+    fail: they go back to the open pool without consuming their retry budget
+    and are claimed again once the backoff ends.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Rate-limit meter (per-adapter observability surface)
 # ---------------------------------------------------------------------------

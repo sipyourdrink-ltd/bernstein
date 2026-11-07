@@ -7,10 +7,12 @@ Given a :class:`SubmissionBundle`, this module:
 
 1. Replays every task's receipt (byte-identical) with no access to the
    submitter's machine.
-2. Re-derives the verdict using the deterministic harness scoring.
+2. Re-derives the verdict AND the score using the deterministic harness scoring.
 3. Reports MATCH or names the exact task whose replay diverged.
-4. Rejects bundles whose score was fabricated (verdict flipped without a
-   matching replayable run) and bundles with missing / corrupted receipts.
+4. Rejects bundles whose verdict or score was fabricated (not what the
+   replay produces) and bundles with missing / corrupted receipts.
+5. Rejects bundles that do not cover the suite exactly once: empty, a
+   subset, a repeated task, or a task the suite does not define.
 
 Receipt integrity check
 -----------------------
@@ -29,12 +31,20 @@ admission gate is the integrity property — not a policy.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import math
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from bernstein.eval.bench.bundle import harness_fingerprint, is_refusal
+from bernstein.eval.bench.signer import BUNDLE_JWS_TYP, StubSigner
+
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
     from bernstein.eval.bench.runner import ReplayAdapter
     from bernstein.eval.bench.suite import BenchSuite, BenchTask
@@ -50,6 +60,18 @@ class VerificationStatus(Enum):
     MISSING_RECEIPT = "MISSING_RECEIPT"
     HASH_MISMATCH = "HASH_MISMATCH"
     FABRICATED_SCORE = "FABRICATED_SCORE"
+    #: The bundle does not cover the suite exactly once: it is empty, omits suite tasks, repeats a
+    #: task, or carries a task the suite does not define.
+    #:
+    #: Every task that IS present can replay clean while the headline numbers are still chosen by
+    #: the submitter -- drop the failures, or repeat a pass -- so per-task MATCH is not enough.
+    COVERAGE_MISMATCH = "COVERAGE_MISMATCH"
+    #: The bundle's signature is absent, does not verify, or resolves to no trusted key.
+    #:
+    #: Distinct from HASH_MISMATCH on purpose: the hashes can all be recomputed by whoever
+    #: rebuilt the bundle, so a bundle that is internally consistent and unsigned is a different
+    #: finding from one whose contents were altered (#5856).
+    UNSIGNED = "UNSIGNED"
 
 
 @dataclass
@@ -97,6 +119,67 @@ class BundleVerificationResult:
         return "\n".join(lines)
 
 
+def verify_signature(
+    bundle: SubmissionBundle,
+    trusted_keys: Mapping[str, bytes] | None = None,
+    *,
+    allow_stub: bool = False,
+) -> str:
+    """Return a problem description, or an empty string when the signature verifies.
+
+    Mirrors ``ReliabilityVerifier._check_signature``: the same two paths, the same fail-closed
+    rule, and the same reason for it. A signature nobody checks is a field, not an attestation --
+    and every hash in a bundle can be recomputed by whoever rebuilt it, so the signature is the
+    only part that a forger cannot reproduce without a key (#5856).
+
+    ``allow_stub`` exists because the stub key is a PUBLIC CONSTANT: a stub-signed bundle proves
+    nothing about who produced it, so it verifies only when the caller has said it is running
+    against stub output.
+    """
+    if not bundle.signature or not bundle.signer_fingerprint:
+        return "Bundle is unsigned (signature or signer_fingerprint is empty)."
+
+    if bundle.signer_fingerprint == StubSigner.fingerprint():
+        if not allow_stub:
+            return (
+                "Bundle is signed with the STUB key, which is a public constant in "
+                "bernstein.eval.bench.signer and proves nothing about its origin. "
+                "Pass --stub-signer if you meant to verify stub output."
+            )
+        if not hmac.compare_digest(bundle.signature, StubSigner.expected_signature(bundle)):
+            return "Stub signature does not verify against the bundle hash."
+        return ""
+
+    # Install-identity path: resolve the fingerprint to a trusted public key and verify the
+    # detached Ed25519 JWS over the bundle hash. Fail closed -- an unverifiable signature is
+    # treated as unsigned, never as "probably fine".
+    public_pem = (trusted_keys or {}).get(bundle.signer_fingerprint)
+    if public_pem is None:
+        return (
+            f"Signer fingerprint {bundle.signer_fingerprint!r} does not resolve to a trusted "
+            "public key; an unverifiable signature is treated as unsigned."
+        )
+    from bernstein.core.security.agent_card_signer import (
+        verify_detached_jws_over_canonical,
+    )
+
+    if not verify_detached_jws_over_canonical(
+        bundle.bundle_hash().encode(),
+        bundle.signature,
+        public_pem,
+        expected_typ=BUNDLE_JWS_TYP,
+    ):
+        return "Install-identity signature does not verify against the trusted public key."
+    return ""
+
+
+def _scores_agree(stored: object, replayed: float) -> bool:
+    """Whether a stored score is the replayed one (a number, and equal to float noise)."""
+    if isinstance(stored, bool) or not isinstance(stored, int | float):
+        return False
+    return math.isclose(stored, replayed, rel_tol=0.0, abs_tol=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # Verifier
 # ---------------------------------------------------------------------------
@@ -112,9 +195,23 @@ class BenchVerifier:
     the verifier re-derives the verdict from the stored receipt bytes.
     """
 
-    def __init__(self, suite: BenchSuite, adapter: ReplayAdapter) -> None:
+    def __init__(
+        self,
+        suite: BenchSuite,
+        adapter: ReplayAdapter,
+        trusted_keys: Mapping[str, bytes] | None = None,
+        *,
+        allow_stub_signature: bool = False,
+        require_signature: bool = True,
+    ) -> None:
         self._suite = suite
         self._adapter = adapter
+        self._trusted_keys: dict[str, bytes] = dict(trusted_keys or {})
+        self._allow_stub_signature = allow_stub_signature
+        # Defaults to ON. A verifier that has to be asked to check the signature is the state
+        # this fix exists to leave behind; a caller with no trusted keys can still opt out
+        # explicitly, which is a decision in the log rather than an omission.
+        self._require_signature = require_signature
         # Build a task-id → BenchTask index for O(1) lookup.
         self._task_index: dict[str, BenchTask] = {t.id: t for t in suite.tasks}
 
@@ -124,17 +221,32 @@ class BenchVerifier:
 
         Steps
         -----
-        1. Confirm bundle.suite_hash matches the suite we loaded.
+        0. Verify the signature (unless `require_signature=False`).
+        1. Confirm bundle.suite_hash matches the suite we loaded, and that the
+           stored harness_fingerprint matches the bundle's scheduler_config.
         2. For each task result:
            a. Confirm the *stored* receipt_hash matches sha256(live receipt bytes).
               A mismatch means the receipt was tampered after the bundle was signed.
            b. Confirm the task_hash matches the suite's copy of the task.
            c. Re-run harness scoring against the receipt.
-           d. Compare replayed verdict to the stored verdict.
-        3. Overall status is MATCH iff every task is MATCH.
+           d. Compare replayed verdict and score to the stored ones.
+        3. Confirm the task results cover the suite exactly once.
+        4. Overall status is MATCH iff every task is MATCH and coverage is exact.
         """
         task_results: list[TaskVerificationResult] = []
         overall_ok = True
+
+        # --- 0. Signature -----------------------------------------------
+        # Computed first and reported LAST. It is the only check a forger cannot satisfy by
+        # recomputing -- every hash in a bundle is exactly what `from_dict` rebuilds -- so it
+        # decides the headline. But it does not short-circuit: a bundle that fails here is usually
+        # one whose contents were altered, and "task_b's receipt does not match its hash" is a more
+        # actionable sentence than "the signature did not verify". The reader gets both (#5856).
+        signature_problem = (
+            verify_signature(bundle, self._trusted_keys, allow_stub=self._allow_stub_signature)
+            if self._require_signature
+            else ""
+        )
 
         # --- 1. Suite hash check ----------------------------------------
         if bundle.suite_hash != self._suite.suite_hash:
@@ -142,8 +254,31 @@ class BenchVerifier:
                 bundle_hash=bundle.bundle_hash(),
                 suite_hash=bundle.suite_hash,
                 status=VerificationStatus.HASH_MISMATCH,
-                detail=(
-                    f"Bundle suite_hash {bundle.suite_hash!r} does not match loaded suite {self._suite.suite_hash!r}."
+                detail=" ".join(
+                    part
+                    for part in (
+                        f"Bundle suite_hash {bundle.suite_hash!r} does not match loaded suite "
+                        f"{self._suite.suite_hash!r}.",
+                        signature_problem,
+                    )
+                    if part
+                ),
+            )
+
+        # harness_fingerprint sits outside bundle_hash (it is derived from scheduler_config, which
+        # is inside), so the signature does not cover it. Recompute it rather than trust it.
+        if bundle.harness_fingerprint != harness_fingerprint(bundle.scheduler_config):
+            return BundleVerificationResult(
+                bundle_hash=bundle.bundle_hash(),
+                suite_hash=bundle.suite_hash,
+                status=VerificationStatus.HASH_MISMATCH,
+                detail=" ".join(
+                    part
+                    for part in (
+                        "Stored harness_fingerprint does not match the bundle's scheduler_config.",
+                        signature_problem,
+                    )
+                    if part
                 ),
             )
 
@@ -154,17 +289,55 @@ class BenchVerifier:
             if tvr.status != VerificationStatus.MATCH:
                 overall_ok = False
 
-        overall_status = VerificationStatus.MATCH if overall_ok else VerificationStatus.DIVERGED
+        # An unsigned bundle is never a MATCH, whatever its contents replay to: a verdict nobody
+        # can attribute is not evidence. A DIVERGED bundle keeps that headline, because the
+        # divergence is the more specific finding and the signature detail rides alongside it.
+        # --- 3. Coverage ---------------------------------------------------
+        # Checked after the per-task pass so the report still names every task that diverged, but
+        # it is not optional: a bundle whose tasks all replay clean is still not a run of the suite
+        # when it leaves some out or counts one twice.
+        coverage_problem = self._coverage_problem(bundle)
+
+        detail = " ".join(part for part in (coverage_problem, signature_problem) if part)
+        if not overall_ok:
+            overall_status = VerificationStatus.DIVERGED
+        elif coverage_problem:
+            overall_status = VerificationStatus.COVERAGE_MISMATCH
+        elif signature_problem:
+            overall_status = VerificationStatus.UNSIGNED
+        else:
+            overall_status = VerificationStatus.MATCH
         return BundleVerificationResult(
             bundle_hash=bundle.bundle_hash(),
             suite_hash=bundle.suite_hash,
             status=overall_status,
             task_results=task_results,
+            detail=detail,
         )
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _coverage_problem(self, bundle: SubmissionBundle) -> str:
+        """A description of how *bundle* fails to cover the suite exactly once, or ``""``."""
+        if not bundle.task_results:
+            return "Bundle contains no task results; it does not cover the suite."
+        counts = Counter(r.task_id for r in bundle.task_results)
+        suite_ids = list(self._task_index)
+        problems: list[str] = []
+        duplicated = sorted(task_id for task_id, n in counts.items() if n > 1)
+        if duplicated:
+            problems.append(f"duplicate task results: {', '.join(duplicated)}")
+        missing = [task_id for task_id in suite_ids if task_id not in counts]
+        if missing:
+            problems.append(f"suite tasks with no result: {', '.join(missing)}")
+        extra = sorted(task_id for task_id in counts if task_id not in self._task_index)
+        if extra:
+            problems.append(f"results for tasks the suite does not define: {', '.join(extra)}")
+        if not problems:
+            return ""
+        return "Bundle does not cover the suite exactly once (" + "; ".join(problems) + ")."
 
     def _verify_task_result(self, result: TaskResult) -> TaskVerificationResult:
         task_id = result.task_id
@@ -216,6 +389,34 @@ class BenchVerifier:
                 ),
             )
 
+        # --- b2. Refusal receipts (#5464) -------------------------------
+        #
+        # A task the runner refused (budget exhausted) never ran, so there is
+        # no harness output to replay; scoring the refusal receipt would give
+        # whatever the adapter says about an empty run and call the honest
+        # verdict "fabricated". What a refusal receipt has to prove instead is
+        # that the bundle claims nothing for the task: passed is False and the
+        # score is zero. Anything else is a score attached to work not done.
+        if is_refusal(result.receipt):
+            if result.passed or result.score != 0.0:
+                return TaskVerificationResult(
+                    task_id=task_id,
+                    status=VerificationStatus.FABRICATED_SCORE,
+                    replayed_score=0.0,
+                    replayed_passed=False,
+                    detail=(
+                        f"Refusal receipt carries a verdict: stored passed={result.passed}, "
+                        f"score={result.score}. A refused task scores nothing."
+                    ),
+                )
+            return TaskVerificationResult(
+                task_id=task_id,
+                status=VerificationStatus.MATCH,
+                replayed_score=0.0,
+                replayed_passed=False,
+                detail=f"refused: {result.receipt.get('refusal_reason', '(no reason recorded)')}",
+            )
+
         # --- c. Re-derive verdict from receipt --------------------------
         try:
             replayed_passed, replayed_score, _ = self._adapter.score_task(task, result.receipt)
@@ -236,6 +437,22 @@ class BenchVerifier:
                 detail=(
                     f"Verdict mismatch: stored passed={result.passed} "
                     f"but replay produced passed={replayed_passed}. "
+                    "Score appears to have been fabricated."
+                ),
+            )
+
+        # The score is what the leaderboard number is averaged from, so it is replayed like the
+        # verdict. A stored score the replay does not produce is a score attached to work the
+        # receipt does not show, even when `passed` agrees.
+        if not _scores_agree(result.score, replayed_score):
+            return TaskVerificationResult(
+                task_id=task_id,
+                status=VerificationStatus.FABRICATED_SCORE,
+                replayed_score=replayed_score,
+                replayed_passed=replayed_passed,
+                detail=(
+                    f"Score mismatch: stored score={result.score!r} "
+                    f"but replay produced score={replayed_score!r}. "
                     "Score appears to have been fabricated."
                 ),
             )

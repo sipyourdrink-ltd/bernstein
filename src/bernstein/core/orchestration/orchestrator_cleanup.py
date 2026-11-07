@@ -80,8 +80,8 @@ def drain_before_cleanup(orch: Any, timeout_s: float | None = None) -> None:
     from bernstein.core.agent_lifecycle import reap_dead_agents
     from bernstein.core.orchestration.orchestrator import TickResult
 
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         active_sessions = [
             session
             for session in orch._agents.values()

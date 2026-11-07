@@ -569,11 +569,13 @@ def test_step_completion_signals(tmp_path: Path) -> None:
     assert signals[1].type == "test_passes"
     assert signals[1].value == "pytest -x"
     assert signals[2].type == "file_contains"
-    assert signals[2].value == "README.md"
+    # The janitor's spec, "<path> :: <needle>". This used to be "README.md", the
+    # needle dropped, which the janitor can never pass (#5960).
+    assert signals[2].value == "README.md :: Usage"
 
 
-def test_step_invalid_completion_signal_skipped(tmp_path: Path) -> None:
-    """Invalid signal types are skipped with a warning, not a hard failure."""
+def test_unknown_declared_completion_gate_rejects_plan(tmp_path: Path) -> None:
+    """A malformed gate must not leave a task with weaker completion checks."""
     plan_file = _write_plan(
         tmp_path,
         {
@@ -593,13 +595,11 @@ def test_step_invalid_completion_signal_skipped(tmp_path: Path) -> None:
             ]
         },
     )
-    tasks = load_plan_from_yaml(plan_file)
-    # Only the valid signal survives
-    assert len(tasks[0].completion_signals) == 1
-    assert tasks[0].completion_signals[0].type == "path_exists"
+    with pytest.raises(PlanLoadError, match="invalid_type"):
+        load_plan_from_yaml(plan_file)
 
 
-def test_step_empty_signal_value_skipped(tmp_path: Path) -> None:
+def test_declared_completion_gate_requires_a_value(tmp_path: Path) -> None:
     plan_file = _write_plan(
         tmp_path,
         {
@@ -618,8 +618,8 @@ def test_step_empty_signal_value_skipped(tmp_path: Path) -> None:
             ]
         },
     )
-    tasks = load_plan_from_yaml(plan_file)
-    assert tasks[0].completion_signals == []
+    with pytest.raises(PlanLoadError, match="non-empty"):
+        load_plan_from_yaml(plan_file)
 
 
 # ---------------------------------------------------------------------------

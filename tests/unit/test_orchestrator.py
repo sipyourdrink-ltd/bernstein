@@ -7,7 +7,8 @@ import json
 import logging
 import subprocess
 import time
-from dataclasses import replace
+from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -43,7 +44,6 @@ from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
-from bernstein.core.agents import spawner_core
 from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.security.run_closure import RunClosureOutcome, RunClosureStatus, project_run_closure
 
@@ -51,6 +51,29 @@ if TYPE_CHECKING:
     from bernstein.core.bulletin import BulletinBoard
 
 # --- Helpers ---
+
+
+@pytest.fixture(autouse=True)
+def _join_test_owned_executors(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Join every real pool this test creates, including a failed initializer's.
+
+    These tests call tick/helpers directly rather than running the production
+    run-loop's drain. Register cleanup at construction so direct constructors
+    and factory calls share ownership. Passed-in clients remain borrowed.
+    """
+    initialize = Orchestrator.__init__
+    with ExitStack() as resources:
+
+        def initialize_owned(self: Orchestrator, *args: Any, **kwargs: Any) -> None:
+            try:
+                initialize(self, *args, **kwargs)
+            finally:
+                executor = getattr(self, "_executor", None)
+                if executor is not None:
+                    resources.callback(executor.shutdown, wait=True, cancel_futures=True)
+
+        monkeypatch.setattr(Orchestrator, "__init__", initialize_owned)
+        yield
 
 
 def _make_task(
@@ -2130,9 +2153,14 @@ class TestFileOwnership:
             _mock_transport({"GET /tasks": httpx.Response(200, json=[_task_as_dict(task)])}),
             adapter=adapter,
         )
+        # The tick releases locks no live session holds, so the owner is a live session.
+        owner = AgentSession(id="qa-owner", role="qa", pid=7, task_ids=["T-owner"])
+        owner.status = "working"
+        owner.heartbeat_ts = time.time()
+        orch._agents[owner.id] = owner
         orch._lock_manager.acquire(
             ["src/locked.py"],
-            agent_id="backend-owner",
+            agent_id="qa-owner",
             task_id="T-owner",
             task_title="Owns locked file",
         )
@@ -2140,7 +2168,7 @@ class TestFileOwnership:
         orch.tick()
 
         prompt = adapter.spawn.call_args.kwargs["prompt"]
-        assert "src/locked.py (by backend-owner)" in prompt
+        assert "src/locked.py (by qa-owner)" in prompt
 
 
 # --- Feature 3: Metrics Emission ---
@@ -3204,19 +3232,7 @@ class TestDeadAgentFileOwnershipEdgeCases:
     def test_file_overlap_cleared_after_dead_agent_allows_respawn(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Spawn is blocked while an agent owns a file; after it dies the next tick spawns.
-
-        The dead agent's crash now correctly records a per-adapter failure
-        timestamp (#5875), which would otherwise put every subsequent spawn
-        on the same adapter into a 5-minute cooldown. That cooldown is
-        orthogonal to what this test exercises (file-ownership release), so
-        it is disabled here to isolate the behavior under test.
-        """
-        monkeypatch.setattr(
-            spawner_core,
-            "SPAWN",
-            replace(spawner_core.SPAWN, spawn_failure_cooldown_s=0.0),
-        )
+        """Spawn is blocked while an agent owns a file; after it dies the next tick spawns."""
         task1 = _make_task(id="T-owner", role="backend")
         task1.owned_files = ["src/shared.py"]
         task2 = _make_task(id="T-waiter", role="qa")
@@ -7039,3 +7055,15 @@ class TestCostPolicyDispatchWiring:
 
         assert result.cost_dispatch_halt is None
         assert len(result.spawned) == 1
+
+
+def test_administrative_members_are_not_spawned(tmp_path: Path) -> None:
+    """Manual container members stay claimable without automatic agent creation."""
+    task = _make_task(id="T-manual")
+    task.metadata["administrative_run_id"] = "admin-" + "a" * 32
+    transport = _mock_transport({"GET /tasks?status=open": httpx.Response(200, json=[task.to_dict()])})
+    adapter = _mock_adapter()
+    orch = _build_orchestrator(tmp_path, transport, adapter=adapter)
+    result = orch.tick()
+    assert result.spawned == []
+    adapter.spawn.assert_not_called()

@@ -1,14 +1,16 @@
-"""Test SubmissionBundle stores lambda_value and computes three rates correctly.
+"""Test SubmissionBundle stores lambda_value and does not invent the three rates.
 
 Acceptance criterion: test_bundle_records_lambda_and_the_three_rates
-Verify that SubmissionBundle stores lambda_value and computes resolve_rate,
-abstain_rate, confident_error_rate correctly from task results.
+Verify that SubmissionBundle stores lambda_value, ranks with it, and reports the
+rates it has no data for as unavailable.
 """
 
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
 
@@ -70,7 +72,6 @@ class TestBundleLambdaValue:
             suite_version="v1",
             task_results=[_make_task_result("t1", True)],
             scheduler_config={},
-            lambda_value=0.9,
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bundle.json"
@@ -85,145 +86,56 @@ class TestBundleLambdaValue:
         assert loaded.lambda_value == 0.5
 
 
-class TestBundleResolveRate:
-    """SubmissionBundle computes resolve_rate correctly from task results."""
+class TestRatesThatNeedAbstentionDataAreUnavailable:
+    """A task result records no abstention, so resolve / abstain / confident-error are not numbers.
 
-    def test_resolve_rate_all_passed(self) -> None:
-        """All tasks passed = 100% resolve rate."""
-        bundle = SubmissionBundle(
+    They used to be derived from pass/fail alone -- abstain_rate a constant 0.0, confident_error_rate
+    every failure, resolve_rate pass_rate -- and written to the bundle as measurements.
+    """
+
+    def _bundle(self, *passed: bool) -> SubmissionBundle:
+        return SubmissionBundle(
             suite_hash="test-suite",
             suite_version="v1",
-            task_results=[
-                _make_task_result("t1", True),
-                _make_task_result("t2", True),
-                _make_task_result("t3", True),
-            ],
+            task_results=[_make_task_result(f"t{i}", p) for i, p in enumerate(passed)],
             scheduler_config={},
         )
-        assert bundle.resolve_rate == 1.0
 
-    def test_resolve_rate_half_passed(self) -> None:
-        """Half tasks passed = 50% resolve rate."""
-        bundle = SubmissionBundle(
+    @pytest.mark.parametrize("results", [(), (True, True), (True, False), (False,)])
+    @pytest.mark.parametrize("rate", ["resolve_rate", "abstain_rate", "confident_error_rate"])
+    def test_rate_is_none_whatever_the_results(self, rate: str, results: tuple[bool, ...]) -> None:
+        assert getattr(self._bundle(*results), rate) is None
+
+    def test_pass_rate_is_still_measured(self) -> None:
+        assert self._bundle(True, False).pass_rate == 0.5
+
+
+class TestExpectedValue:
+    """expected_value = (passed - lambda * wrong) / total, with the bundle's own lambda_value."""
+
+    def _bundle(self, lam: float, *passed: bool) -> SubmissionBundle:
+        return SubmissionBundle(
             suite_hash="test-suite",
             suite_version="v1",
-            task_results=[
-                _make_task_result("t1", True),
-                _make_task_result("t2", False),
-            ],
+            task_results=[_make_task_result(f"t{i}", p) for i, p in enumerate(passed)],
             scheduler_config={},
+            lambda_value=lam,
         )
-        assert bundle.resolve_rate == 0.5
 
-    def test_resolve_rate_none_passed(self) -> None:
-        """No tasks passed = 0% resolve rate."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[
-                _make_task_result("t1", False),
-                _make_task_result("t2", False),
-            ],
-            scheduler_config={},
-        )
-        assert bundle.resolve_rate == 0.0
+    def test_default_lambda(self) -> None:
+        assert self._bundle(0.5, True, False).expected_value() == 0.25
 
-    def test_resolve_rate_empty_bundle(self) -> None:
-        """Empty bundle has 0% resolve rate (no division by zero)."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[],
-            scheduler_config={},
-        )
-        assert bundle.resolve_rate == 0.0
+    def test_lambda_changes_the_value(self) -> None:
+        assert self._bundle(2.0, True, False).expected_value() == -0.5
 
-
-class TestBundleAbstainRate:
-    """SubmissionBundle computes abstain_rate correctly from task results."""
-
-    def test_abstain_rate_default_zero(self) -> None:
-        """Without explicit abstention tracking, abstain_rate is 0."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[
-                _make_task_result("t1", True),
-                _make_task_result("t2", False),
-            ],
-            scheduler_config={},
-        )
-        assert bundle.abstain_rate == 0.0
-
-    def test_abstain_rate_empty_bundle(self) -> None:
-        """Empty bundle has 0% abstain rate."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[],
-            scheduler_config={},
-        )
-        assert bundle.abstain_rate == 0.0
-
-
-class TestBundleConfidentErrorRate:
-    """SubmissionBundle computes confident_error_rate correctly from task results."""
-
-    def test_confident_error_rate_all_passed(self) -> None:
-        """All tasks passed = 0% confident error rate."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[
-                _make_task_result("t1", True),
-                _make_task_result("t2", True),
-            ],
-            scheduler_config={},
-        )
-        assert bundle.confident_error_rate == 0.0
-
-    def test_confident_error_rate_half_failed(self) -> None:
-        """Half tasks failed = 50% confident error rate."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[
-                _make_task_result("t1", True),
-                _make_task_result("t2", False),
-            ],
-            scheduler_config={},
-        )
-        assert bundle.confident_error_rate == 0.5
-
-    def test_confident_error_rate_all_failed(self) -> None:
-        """All tasks failed = 100% confident error rate."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[
-                _make_task_result("t1", False),
-                _make_task_result("t2", False),
-            ],
-            scheduler_config={},
-        )
-        assert bundle.confident_error_rate == 1.0
-
-    def test_confident_error_rate_empty_bundle(self) -> None:
-        """Empty bundle has 0% confident error rate."""
-        bundle = SubmissionBundle(
-            suite_hash="test-suite",
-            suite_version="v1",
-            task_results=[],
-            scheduler_config={},
-        )
-        assert bundle.confident_error_rate == 0.0
+    def test_empty_bundle_is_zero(self) -> None:
+        assert self._bundle(0.5).expected_value() == 0.0
 
 
 class TestBundleRatesInSerialization:
-    """Rates appear in to_dict output."""
+    """Unavailable rates are serialised as null, not as numbers."""
 
-    def test_to_dict_includes_all_rates(self) -> None:
-        """to_dict must include resolve_rate, abstain_rate, confident_error_rate."""
+    def test_to_dict_reports_unavailable_rates_as_null(self) -> None:
         bundle = SubmissionBundle(
             suite_hash="test-suite",
             suite_version="v1",
@@ -235,11 +147,8 @@ class TestBundleRatesInSerialization:
             lambda_value=0.6,
         )
         d = bundle.to_dict()
-        assert "lambda_value" in d
-        assert "resolve_rate" in d
-        assert "abstain_rate" in d
-        assert "confident_error_rate" in d
         assert d["lambda_value"] == 0.6
-        assert d["resolve_rate"] == 0.5
-        assert d["abstain_rate"] == 0.0
-        assert d["confident_error_rate"] == 0.5
+        assert d["pass_rate"] == 0.5
+        assert d["resolve_rate"] is None
+        assert d["abstain_rate"] is None
+        assert d["confident_error_rate"] is None

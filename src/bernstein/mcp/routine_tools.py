@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -25,6 +24,7 @@ import httpx
 from bernstein.core.planning.routine_bridge import build_task_payloads, estimate_minutes
 from bernstein.core.planning.scenario_library import (
     load_scenario_library,
+    packaged_scenarios_dir,
 )
 from bernstein.mcp.input_validation import (
     ValidationError,
@@ -33,12 +33,14 @@ from bernstein.mcp.input_validation import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
 # Default scenario directory shipped with the package.
-_SCENARIOS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "templates" / "scenarios"
+_SCENARIOS_DIR = packaged_scenarios_dir()
 
 # HTTP timeout for the task-server calls these tools make (seconds).
 _HTTP_TIMEOUT = 5.0

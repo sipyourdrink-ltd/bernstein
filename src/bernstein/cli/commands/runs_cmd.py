@@ -28,6 +28,8 @@ from bernstein.core.persistence.run_scorecard import (
 )
 from bernstein.core.persistence.runs_report import RunOutcome, list_finished_runs
 from bernstein.core.persistence.work_ledger import WorkLedger, run_ledger_dir
+from bernstein.core.replay.journal import JournalPathError
+from bernstein.core.worktrees.run_helpers import read_run_helper_records, run_helpers_path
 
 #: Rich style per outcome class, for the table renderer only -- the
 #: ``--json`` rows never carry color.
@@ -101,6 +103,68 @@ def runs_report_cmd(since: str | None, workdir: Path | None, output_json: bool) 
         style = _OUTCOME_STYLE.get(run.outcome, "")
         outcome_text = f"[{style}]{run.outcome.value}[/{style}]" if style else run.outcome.value
         table.add_row(run.run_id, run.branch or "-", outcome_text, run.evidence)
+    console.print(table)
+
+
+@runs_group.command("helpers")
+@click.argument("run_id")
+@click.option(
+    "--workdir",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Project root (defaults to current directory).",
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Emit stable machine-readable rows instead of a table.",
+)
+def runs_helpers_cmd(run_id: str, workdir: Path | None, output_json: bool) -> None:
+    """List the agent-written helpers captured for RUN_ID (#5322).
+
+    Reads ``.sdd/runs/<run_id>/run_helpers.jsonl``: each executed,
+    agent-created file with its origin step, execution count, exit codes and
+    content hash. A row whose record hash no longer recomputes is left out.
+    ``worktrees gc`` does not capture helpers yet, so today this lists only
+    what a direct call to the capture library recorded.
+
+    \b
+      bernstein runs helpers <run-id>
+      bernstein runs helpers <run-id> --json
+    """
+    sdd_dir = (workdir or Path.cwd()).resolve() / ".sdd"
+    try:
+        run_helpers_path(sdd_dir, run_id)
+    except JournalPathError as exc:
+        raise click.BadParameter(str(exc), param_hint="RUN_ID") from exc
+    records = read_run_helper_records(sdd_dir, run_id)
+
+    if output_json:
+        rows = [{**record.to_dict(), "record_hash": record.record_hash} for record in records]
+        console.print_json(json.dumps({"run_id": run_id, "helpers": rows}))
+        return
+
+    if not records:
+        console.print(f"[dim]No run helpers recorded for run {run_id}.[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Path")
+    table.add_column("Origin step", justify="right")
+    table.add_column("Runs", justify="right")
+    table.add_column("Exit codes")
+    table.add_column("Content hash", style="dim")
+    for record in records:
+        codes = ", ".join("?" if code is None else str(code) for code in record.exit_codes)
+        table.add_row(
+            record.path,
+            str(record.origin_step),
+            str(record.execution_count),
+            codes,
+            record.content_hash[:16] + "...",
+        )
     console.print(table)
 
 

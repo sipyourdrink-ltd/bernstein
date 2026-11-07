@@ -589,3 +589,43 @@ def test_spawn_for_tasks_writes_task_metadata_to_worktree(tmp_path: Path):
     assert meta_file.exists()
     task_ids = json.loads(meta_file.read_text())
     assert "T-meta-write" in task_ids
+
+
+# ---------------------------------------------------------------------------
+# File locks stay only with live sessions
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_releases_file_locks_no_live_session_holds(tmp_path: Path):
+    """A killed session and a session of an earlier orchestrator process lose their locks.
+
+    ``spawner.kill()`` marks the session dead itself, so the dead-agent path
+    never runs for it, and a lock persisted by an earlier process names a
+    session this orchestrator never tracked. Either lock would refuse every
+    retry of its task until the lock TTL.
+    """
+    orch, _ = _make_orchestrator(tmp_path)
+    live = AgentSession(id="s-live", role="backend", pid=1, task_ids=["T-live"])
+    live.status = "working"
+    killed = AgentSession(id="s-killed", role="backend", pid=2, task_ids=["T-killed"])
+    killed.status = "dead"
+    orch._agents.update({"s-live": live, "s-killed": killed})
+    orch._lock_manager.acquire(["src/live.py"], agent_id="s-live", task_id="T-live")
+    orch._lock_manager.acquire(["src/killed.py"], agent_id="s-killed", task_id="T-killed")
+    orch._lock_manager.acquire(["src/previous.py"], agent_id="s-previous-run", task_id="T-prev")
+    orch._spawner.check_alive = MagicMock(return_value=True)  # type: ignore[assignment]
+
+    orch._refresh_agent_states({"claimed": [], "open": [], "done": [], "failed": []})
+
+    assert [lock.file_path for lock in orch._lock_manager.all_locks()] == ["src/live.py"]
+
+
+def test_refresh_keeps_file_locks_of_batch_sessions(tmp_path: Path):
+    """Batch-API sessions are tracked outside ``_agents``; their locks stay."""
+    orch, _ = _make_orchestrator(tmp_path)
+    orch._batch_sessions = {"s-batch": AgentSession(id="s-batch", role="backend", task_ids=["T-batch"])}
+    orch._lock_manager.acquire(["src/batch.py"], agent_id="s-batch", task_id="T-batch")
+
+    orch._refresh_agent_states({"claimed": [], "open": [], "done": [], "failed": []})
+
+    assert [lock.agent_id for lock in orch._lock_manager.all_locks()] == ["s-batch"]

@@ -119,10 +119,11 @@ _ROLE_PERMISSIONS: dict[AuthRole, frozenset[str]] = {
             # config writer - held only by ADMIN.  OPERATOR and VIEWER must
             # NOT have this permission or they could SIGTERM the server.
             "admin:manage",
-            # Reading the SCIM provisioning surface is an identity-admin
-            # task.  ``scim:write`` is deliberately absent: no write route
-            # is mounted, so nothing may hold the authority to reach one.
+            # Reading and changing the SCIM provisioning surface (principal
+            # deprovisioning) is an identity-admin task.  No other role holds
+            # either permission.
             "scim:read",
+            "scim:write",
         }
     ),
     AuthRole.OPERATOR: frozenset(

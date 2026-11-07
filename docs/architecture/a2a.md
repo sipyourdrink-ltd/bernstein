@@ -31,7 +31,7 @@ Bernstein's card carries the v1.0-mandated fields:
 | `name`, `description`, `version` | Server identity and current Bernstein version. |
 | `protocolVersion` | Constant `"1.0"`. |
 | `url`, `documentationUrl` | Public base URL and human-readable docs. |
-| `supportedInterfaces[]` | Wire formats this server speaks. Today only `HTTP+JSON`. |
+| `supportedInterfaces[]` | Wire formats this server speaks. `HTTP+JSON`, plus `JSONRPC` when `BERNSTEIN_A2A_SERVER_ENABLED` is set. |
 | `securitySchemes[]` | Bearer JWT (active) plus an `mtls` stub for forward-compat. |
 | `capabilities[]` | High-level coarse capabilities (`task-crud`, `bulletin`, `status`). |
 | `skills[]` | Finer-grained capability index. |
@@ -144,9 +144,9 @@ This blocks an SSO token minted for some other audience from being
 replayed against Bernstein. Source: `_resource_indicator_check` in
 `src/bernstein/core/security/auth_middleware.py`.
 
-The configured indicator comes from `BERNSTEIN_RESOURCE_INDICATOR`
-(comma-separated allowlist) or the `auth.resource_indicators` key in
-`bernstein.yaml`.
+The configured indicator comes from the `BERNSTEIN_AUTH_EXPECTED_RESOURCE`
+environment variable (comma-separated allowlist), or `.env`; there is no
+`bernstein.yaml` key for it.
 
 ---
 
@@ -171,10 +171,11 @@ Bernstein uses `threading.RLock` so the nested acquire succeeds. Source:
 | Path | Auth | Purpose |
 |---|---|---|
 | `GET /.well-known/agent.json` | none | A2A v1.0 signed agent card. |
+| `GET /.well-known/agent-card.json` | none | Same signed card, served under the A2A v1.0 canonical name. |
 | `GET /.well-known/agent.json/keys` | none | JWKS for verifying the card signatures. |
 | `GET /llms.txt` | none | Markdown rendering of the same surface for LLM consumers. |
 
-All three live in `AUTH_PUBLIC_PATHS` so any network caller can read
+All of them live in `AUTH_PUBLIC_PATHS` so any network caller can read
 them without provisioning a token. They expose only the public surface;
 no task data, no secrets.
 
@@ -190,7 +191,7 @@ For the full index of `.well-known` discovery paths (agent card, JWKS,
 |---|---|---|
 | `BERNSTEIN_PUBLIC_BASE_URL` | `http://127.0.0.1:8052` | URL advertised in the card body. |
 | `BERNSTEIN_AGENT_CARD_KEY_DIR` | `.bernstein/keys` | On-disk directory backing the keystore. |
-| `BERNSTEIN_RESOURCE_INDICATOR` | unset | RFC 8707 audience(s) the orchestrator accepts. |
+| `BERNSTEIN_AUTH_EXPECTED_RESOURCE` | unset | RFC 8707 audience(s) the orchestrator accepts. |
 | `BERNSTEIN_AUTH_DISABLED` | `0` | Local-dev opt-out for bearer auth on protected paths. |
 
 Operators rotate the signing key with
@@ -203,19 +204,20 @@ race.
 
 ## Limitations
 
-- One signing key per installation. Multi-tenant signing (per-tenant
-  `kid`) is not modelled here; tenant isolation lives at the audit-log
-  layer.
+- The default tenant signs with the installation's key in the top-level
+  key directory; every other tenant gets its own key under
+  `tenants/<tenant-id>/` and a card carrying a `tenantId` field.
 - JCS canonicalisation in
   `src/bernstein/core/security/agent_card_signer.py` covers the value
-  shapes the card produces (strings, bools, ints, floats, lists, dicts)
-  but does not implement the full RFC 8785 numeric-edge-case rules.
-  Cards do not emit `NaN`, `±Infinity`, or integers past 2^53 today.
+  shapes the card produces (strings, bools, ints, floats, lists, dicts),
+  including ES6 number formatting and UTF-16 key ordering. `NaN` and
+  `±Infinity` are refused, and integers are emitted exactly rather than
+  through the double model, so a value past 2^53 is not rounded.
 - Multi-process deployments share the keystore directory and rely on
   `O_EXCL` on first-run generation. Pre-provision the keypair if you
   want to skip the race.
 - `mtls` is published in `securitySchemes[]` as a forward-compat stub.
-  Client-cert verification at the middleware layer is not active yet.
+  A client certificate is only checked when a bearer token is bound to it; `mtls` is not yet an authentication scheme of its own.
 
 ---
 

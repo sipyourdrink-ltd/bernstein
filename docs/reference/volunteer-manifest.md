@@ -218,7 +218,7 @@ sandbox would be more dangerous than no manifest at all.
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://bernstein.dev/schemas/volunteer-manifest-v1.json",
+  "$id": "bernstein://volunteer-manifest/v1",
   "title": "Bernstein volunteer project manifest",
   "type": "object",
   "required": ["version", "license", "gates", "sandbox", "max_wall_clock_minutes"],

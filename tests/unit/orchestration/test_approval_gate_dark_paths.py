@@ -163,6 +163,15 @@ def test_publish_actor_event_swallows_publish_error(monkeypatch: pytest.MonkeyPa
 # ---------------------------------------------------------------------------
 
 
+def _operator_decides(workdir: Path, task_id: str, outcome: Any) -> None:
+    """Land a signed CLI decision record for the open request (once)."""
+    from bernstein.core.approval.models import local_shell_principal
+    from bernstein.core.orchestration.approval_gate import record_decision
+
+    if not (workdir / ".sdd" / "runtime" / "approvals" / f"{task_id}.{outcome}").exists():
+        record_decision(workdir, task_id, outcome, source="cli", principal=local_shell_principal().to_dict())
+
+
 def test_wait_for_approval_mirrors_actor_events_on_approve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[Any] = []
     monkeypatch.setattr(
@@ -170,9 +179,6 @@ def test_wait_for_approval_mirrors_actor_events_on_approve(tmp_path: Path, monke
         lambda _sid, event: events.append(event) or True,
     )
     spec = ApprovalSpec(prompt="ship?", timeout_seconds=5)
-    approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
-    approvals_dir.mkdir(parents=True)
-    (approvals_dir / "T-actor.approved").write_text("approved")
 
     outcome = wait_for_approval(
         "T-actor",
@@ -180,6 +186,7 @@ def test_wait_for_approval_mirrors_actor_events_on_approve(tmp_path: Path, monke
         workdir=tmp_path,
         audit_log=None,
         session_id="sess-actor",
+        sleep=lambda _s: _operator_decides(tmp_path, "T-actor", "approved"),
     )
     assert outcome == "approved"
     kinds = [e.kind for e in events]
@@ -194,9 +201,6 @@ def test_wait_for_approval_mirrors_actor_events_on_reject(tmp_path: Path, monkey
         lambda _sid, event: events.append(event) or True,
     )
     spec = ApprovalSpec(prompt="ship?", timeout_seconds=5)
-    approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
-    approvals_dir.mkdir(parents=True)
-    (approvals_dir / "T-actor-rej.rejected").write_text("rejected")
 
     outcome = wait_for_approval(
         "T-actor-rej",
@@ -204,6 +208,7 @@ def test_wait_for_approval_mirrors_actor_events_on_reject(tmp_path: Path, monkey
         workdir=tmp_path,
         audit_log=None,
         session_id="sess-actor",
+        sleep=lambda _s: _operator_decides(tmp_path, "T-actor-rej", "rejected"),
     )
     assert outcome == "rejected"
     kinds = [e.kind for e in events]

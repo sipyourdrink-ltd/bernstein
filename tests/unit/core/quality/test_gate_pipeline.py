@@ -42,7 +42,18 @@ class TestConstants:
         assert "type_check" in VALID_GATE_NAMES
         assert "tests" in VALID_GATE_NAMES
         assert "coverage_delta" in VALID_GATE_NAMES
-        assert "incident_evals" in VALID_GATE_NAMES
+
+    def test_incident_evals_is_not_a_registered_gate(self) -> None:
+        """#6156: it was in ``VALID_GATE_NAMES`` with no dispatch handler,
+        so any pipeline naming it crashed at run time with ``ValueError:
+        Unsupported gate name`` instead of failing config validation.
+        Removed rather than wired up: nothing in the default pipeline, the
+        gate-evasion corpus, or any other consumer names it today (see the
+        issue thread) -- ``run_incident_eval_gate()`` in
+        ``eval/incident_synthesizer.py`` stays available as a library
+        function for a future gate that does have a real caller.
+        """
+        assert "incident_evals" not in VALID_GATE_NAMES
 
     def test_valid_gate_conditions_is_frozenset(self) -> None:
         assert isinstance(VALID_GATE_CONDITIONS, frozenset)

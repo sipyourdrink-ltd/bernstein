@@ -10,9 +10,9 @@ from hypothesis import strategies as st
 
 from bernstein.core.replay import (
     GatewayMode,
+    ReplayDivergenceError,
     ReplayGateway,
     ReplayKeySchemeMismatchError,
-    ReplayMissError,
     derive_replay_key,
     parse_stored_key,
 )
@@ -132,7 +132,7 @@ def test_older_scheme_corpus_yields_scheme_mismatch_on_every_row(
     same = ReplayGateway("run-v1", tmp_path, mode=GatewayMode.REPLAY, key_scheme="v1")
     for key in keys:
         assert same.dispatch(kind="llm", key=key, invoke=_explode) == f"resp-{key}"
-    with pytest.raises(ReplayMissError):
+    with pytest.raises(ReplayDivergenceError):
         same.dispatch(kind="llm", key="extra", invoke=_explode)
 
 

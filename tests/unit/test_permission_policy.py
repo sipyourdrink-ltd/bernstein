@@ -359,3 +359,19 @@ class TestCheckToolCall:
             profile=profile,
         )
         assert decision.type == DecisionType.DENY
+
+
+# ---------------------------------------------------------------------------
+# Identity records are outside every built-in profile
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("profile_name", [PROFILE_READ_ONLY, PROFILE_BUILDER, PROFILE_REVIEWER])
+@pytest.mark.parametrize("tool", ["fs.read", "fs.write"])
+def test_sdd_auth_is_denied_by_every_builtin_profile(profile_name: str, tool: str) -> None:
+    """``.sdd/auth/`` holds the agent identity records; no profile reaches it."""
+    checker = PolicyChecker(get_builtin_profile(profile_name))
+
+    decision = checker.check(ToolCall(tool=tool, path="project/.sdd/auth/agent_identities/worker-1.json"))
+
+    assert decision.type == DecisionType.DENY

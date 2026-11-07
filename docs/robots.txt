@@ -47,5 +47,5 @@ Disallow: /
 User-agent: *
 Allow: /
 
-Sitemap: https://bernstein.readthedocs.io/sitemap.xml
-Host: https://bernstein.readthedocs.io/
+Sitemap: https://docs.bernstein.run/sitemap.xml
+Host: https://docs.bernstein.run/

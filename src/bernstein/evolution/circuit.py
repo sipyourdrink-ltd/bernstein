@@ -146,12 +146,20 @@ class CircuitBreaker:
         week_ago = now - 7 * 86400
         self.recent_rollbacks = [t for t in self.recent_rollbacks if t > week_ago]
 
-        # Check halt conditions
+        # ANY rollback inside 48h trips, and `now` was just appended, so this is
+        # in practice "any rollback trips at all" - which is the policy
+        # `test_rollback_trips` pins, and the right one for a system that edits
+        # itself.
+        #
+        # There used to be an `elif len(self.recent_rollbacks) > 2` arm here
+        # reading ">2 rollbacks in 7 days". It could never run: the append above
+        # puts `now` into the list, so `recent_48h` is non-empty whenever the
+        # list is, and the `elif` was unreachable for every possible history.
+        # Removed rather than left, because a rule stated in code that cannot
+        # fire reads as a policy the system has and does not.
         recent_48h = [t for t in self.recent_rollbacks if t > now - 48 * 3600]
         if recent_48h:
             self._trip(f"Rollback detected (proposal {proposal_id})")
-        elif len(self.recent_rollbacks) > 2:
-            self._trip(">2 rollbacks in 7 days")
         self._save_state()
 
     def record_sandbox_failure(self, proposal_id: str) -> None:

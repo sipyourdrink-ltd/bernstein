@@ -67,7 +67,7 @@ class AdapterCase:
 
 def _which_gemini() -> list[Any]:
     def _stub(name: str) -> str | None:
-        return f"/usr/local/bin/{name}" if name in ("antigravity", "gemini") else None
+        return f"/usr/local/bin/{name}" if name == "gemini" else None
 
     return [patch("bernstein.adapters.gemini.shutil.which", side_effect=_stub)]
 

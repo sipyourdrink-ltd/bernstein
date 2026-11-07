@@ -179,13 +179,13 @@ def sla_verify(receipt_file: str) -> None:
     checks the Ed25519 signature. Exit codes: 0 = verified, 1 = no receipt,
     2 = mismatch (tamper).
     """
-    from bernstein.core.orchestration.sla_receipt import read_receipt_file, verify_receipt
+    from bernstein.core.orchestration.sla_receipt import read_receipt_file, verify_sla_receipt
 
     receipt = read_receipt_file(Path(receipt_file))
     if receipt is None:
         click.echo(f"NO RECEIPT -- could not read {receipt_file}", err=True)
         raise SystemExit(1)
-    result = verify_receipt(receipt)
+    result = verify_sla_receipt(receipt)
     if result.ok:
         click.echo(f"OK -- receipt {receipt.receipt_id} verifies offline (contract {receipt.contract_hash[:16]}...)")
         raise SystemExit(0)

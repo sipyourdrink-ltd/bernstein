@@ -602,8 +602,8 @@ class NodeHeartbeatClient:
             )
             if resp.status_code == 200:
                 return True
-            if resp.status_code == 404:
-                # Node was evicted; re-register on next cycle
+            if resp.status_code in (404, 410):
+                # Node unknown (410) or evicted (404, older servers); re-register on next cycle
                 logger.warning("Node %s not found on server; will re-register", self._node_id)
                 self._node_id = None
                 self._registered.clear()

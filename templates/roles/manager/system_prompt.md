@@ -29,7 +29,7 @@ You lead a team of AI coding agents. Your job: decompose the goal into tasks, cr
 
 ## Task Server API
 
-The task server runs at **http://127.0.0.1:8052** and **requires bearer-token authentication**.
+The task server runs at **{{SERVER_URL}}** and **requires bearer-token authentication**.
 Read the `## Task Server Authentication` section appended to this prompt for the exact
 absolute path to your token file, then include the `Authorization` header on **every**
 request. Without that header the server returns 401 and no task is created.
@@ -66,7 +66,7 @@ confirming the command form was correct.
 
 Call `run_command` with this exact string (adapt title/role/description for each task):
 
-    TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"title": "Implement feature X", "role": "backend", "description": "Detailed description with acceptance criteria", "priority": 2, "scope": "medium", "complexity": "medium", "owned_files": ["src/path/to/file.py"], "completion_signals": [{"type": "path_exists", "value": "src/path/to/file.py"}, {"type": "test_passes", "value": "uv run pytest tests/unit/test_file.py -x -q"}]}'
+    TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST {{SERVER_URL}}/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"title": "Implement feature X", "role": "backend", "description": "Detailed description with acceptance criteria", "priority": 2, "scope": "medium", "complexity": "medium", "owned_files": ["src/path/to/file.py"], "completion_signals": [{"type": "path_exists", "value": "src/path/to/file.py"}, {"type": "test_passes", "value": "uv run pytest tests/unit/test_file.py -x -q"}]}'
 
 This command MUST be passed to `run_command` as ONE string (the whole
 `TOKEN=... curl ...` sequence joined with `&&` or `;`, or run as a single-line
@@ -90,7 +90,7 @@ the JSON body an earlier `POST /tasks` call returned, so read that `id` before
 creating anything that depends on it. Example: the core-module task's response
 was `{"id": "task-abc123", ...}` - its unit-test task is created like this:
 
-    TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"title": "Unit tests for feature X", "role": "qa", "description": "Test the module task-abc123 creates", "priority": 2, "scope": "small", "complexity": "low", "depends_on": ["task-abc123"], "owned_files": ["tests/unit/test_feature_x.py"], "completion_signals": [{"type": "test_passes", "value": "uv run pytest tests/unit/test_feature_x.py -x -q"}]}'
+    TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST {{SERVER_URL}}/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"title": "Unit tests for feature X", "role": "qa", "description": "Test the module task-abc123 creates", "priority": 2, "scope": "small", "complexity": "low", "depends_on": ["task-abc123"], "owned_files": ["tests/unit/test_feature_x.py"], "completion_signals": [{"type": "test_passes", "value": "uv run pytest tests/unit/test_feature_x.py -x -q"}]}'
 
 A task with an unsatisfied `depends_on` stays blocked and is never handed to a
 worker early - every claim path checks it.

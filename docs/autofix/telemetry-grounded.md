@@ -20,7 +20,7 @@ uses. The dispatch loop is identical to the CI flow:
 
 ## Sources
 
-| Source        | Status   | Endpoint                                | Secret env (default)                       |
+| Source        | Status   | Endpoint                                | Secret env (example)                       |
 |---------------|----------|-----------------------------------------|---------------------------------------------|
 | `sentry`      | full     | `/webhooks/telemetry/sentry/`           | `BERNSTEIN_SENTRY_WEBHOOK_SECRET`           |
 | `gha_failure` | full     | `/webhooks/telemetry/gha_failure/`      | `BERNSTEIN_GHA_WEBHOOK_SECRET`              |
@@ -60,7 +60,7 @@ Fields:
 | `source`           | One of `sentry`, `gha_failure`, `datadog`, `loki`, `custom_jsonl`. |
 | `enabled`          | Master switch. The receiver still accepts the request when disabled, but the dispatcher records `skipped`. |
 | `endpoint`         | Mount path the upstream should POST to. |
-| `secret_env`       | Env var holding the shared HMAC secret. Empty disables signature checks (test-only). |
+| `secret_env`       | Env var holding the shared HMAC secret. No default; the names in the table above are the conventional choice. Empty disables signature checks (test-only). |
 | `fingerprint_path` | Optional dotted path into the payload that overrides the adapter's default fingerprint extraction. |
 | `cost_cap_usd`     | Hard per-event cap. Zero refuses to spawn. |
 
@@ -71,7 +71,7 @@ Fields:
 2. Set the webhook URL to
    `https://<your-host>/webhooks/telemetry/sentry/`.
 3. Copy the integration's shared secret into the env var named in
-   `secret_env` (default `BERNSTEIN_SENTRY_WEBHOOK_SECRET`).
+   `secret_env` (for example `BERNSTEIN_SENTRY_WEBHOOK_SECRET`).
 4. Flip `enabled: true` on the `sentry` entry in `bernstein.yaml`.
 
 The adapter expects the standard issue-alert envelope:

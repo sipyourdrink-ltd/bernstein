@@ -30,7 +30,9 @@ operator shell  ──BERNSTEIN_AUTH_TOKEN──▶  bernstein gui serve  ──
 operator browser  ──localStorage.bernstein_token──▶  Authorization: Bearer ...
 ```
 
-Set the browser side once per machine:
+Set the browser side once per machine. The UI asks for it whenever the server
+refuses the stored token (a banner under the top bar, or **Settings → Auth
+token**); from devtools:
 
 ```js
 localStorage.setItem("bernstein_token", "<value of BERNSTEIN_AUTH_TOKEN>")

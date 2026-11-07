@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+
 #: Default number of consecutive errors before fallback is triggered.
 DEFAULT_529_STRIKE_LIMIT: int = 3
 

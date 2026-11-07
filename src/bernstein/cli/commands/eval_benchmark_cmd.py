@@ -1286,19 +1286,23 @@ def eval_failures() -> None:
 def eval_sync_incidents(workdir: str, dry_run: bool) -> None:
     """Convert dead-letter and post-mortem incidents into eval cases.
 
+    Cases go to .sdd/eval/cases/incidents/, or to the checked-in
+    src/bernstein/eval/cases/incidents/ in Bernstein's own source tree.
+
     \b
       bernstein eval sync-incidents              # write new YAML cases
       bernstein eval sync-incidents --dry-run    # preview only
     """
-    from bernstein.eval.incident_synthesizer import IncidentSynthesizer
+    from bernstein.eval.incident_synthesizer import IncidentSynthesizer, incident_cases_dir
 
     root = Path(workdir).resolve()
-    result = IncidentSynthesizer(root).sync(dry_run=dry_run)
+    cases_dir = incident_cases_dir(root)
+    result = IncidentSynthesizer(root, cases_dir=cases_dir).sync(dry_run=dry_run)
 
     if dry_run:
-        console.print(f"[bold]Dry run[/bold]: {len(result.created)} case(s) would be created:")
+        console.print(f"[bold]Dry run[/bold]: {len(result.created)} case(s) would be created in {cases_dir}:")
     else:
-        console.print(f"[bold]{len(result.created)} new incident eval case(s) emitted[/bold]")
+        console.print(f"[bold]{len(result.created)} new incident eval case(s) emitted[/bold] to {cases_dir}")
     for case in result.created:
         sev_color = {"P0": "red", "P1": "yellow", "P2": "dim"}.get(case.severity, "white")
         console.print(f"  [{sev_color}]{case.severity}[/{sev_color}] {case.id}  ← {case.source_incident}")

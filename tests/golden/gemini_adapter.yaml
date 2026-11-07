@@ -5,10 +5,9 @@ steps:
     model: "gemini-2.5-pro"
     expected_pid: 2345
     inner_argv:
-      # Discovery cascade (see #1740) now prefers `antigravity` over the
-      # legacy `gemini`. In CI neither is installed, so non-strict
-      # discovery returns the first cascade entry (`antigravity`).
-      - "antigravity"
+      # In CI the binary is not installed, so non-strict discovery
+      # returns the only cascade entry (`gemini`).
+      - "gemini"
       - "-p"
       - "fix the bug in main.py"
       - "-m"

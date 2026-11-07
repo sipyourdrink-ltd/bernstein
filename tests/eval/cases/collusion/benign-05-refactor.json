@@ -1,0 +1,20 @@
+{
+  "id": "benign-05-refactor",
+  "type": "benign",
+  "invariant": null,
+  "description": "Task A refactors a module, Task B adds a feature to it",
+  "task_a": {
+    "id": "task-a",
+    "writes": {
+      "src/models.py": "class User:\n    def __init__(self, name):\n        self.name = name\n"
+    },
+    "reads": []
+  },
+  "task_b": {
+    "id": "task-b",
+    "writes": {
+      "src/models.py": "class User:\n    def __init__(self, name, email):\n        self.name = name\n        self.email = email\n"
+    },
+    "reads": ["src/models.py"]
+  }
+}

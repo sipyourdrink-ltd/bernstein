@@ -23,6 +23,7 @@ verdict, not an evidence failure, so observed mode does not downgrade it.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -105,6 +106,81 @@ class ToolCallIntent:
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def canonical_effect_digest(payload: Any) -> str:
+    """Return the ``sha256:`` digest of one observed tool-call effect.
+
+    Bytes hash as-is and text hashes its UTF-8 bytes -- the same preimage as
+    ``ResultBundle.patch_sha256``. Any other value (``None`` on timeout, or
+    a mapping the host did not read off the wire) dumps with compact
+    separators and ``ensure_ascii=False``, without ``sort_keys``. That
+    compact-JSON branch is not the primary form: a live connector return is
+    digested from its received bytes.
+    """
+    if isinstance(payload, bytes):
+        digest = hashlib.sha256(payload).hexdigest()
+    elif isinstance(payload, str):
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    else:
+        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        digest = hashlib.sha256(raw).hexdigest()
+    return "sha256:" + digest
+
+
+def effect_digest_for_connector_response(
+    response: Mapping[str, Any] | None,
+    received: bytes | None = None,
+) -> str:
+    """Digest the connector return that a ``toolcall.effect`` event binds.
+
+    ``None`` (timeout / no body) hashes JSON ``null``.  A string-only
+    ``result`` with no JSON-RPC error is hashed as text so a file-changing
+    tool's diff matches :attr:`ResultBundle.patch_sha256`.  Every other body
+    hashes ``received``: the stripped JSON-RPC line exactly as the connector
+    sent it, so key order, whitespace, escapes and echoed timestamps all
+    count.  A response with no received bytes falls back to compact JSON.
+    """
+    if response is None:
+        return canonical_effect_digest(None)
+    result = response.get("result")
+    error = response.get("error")
+    if error is None and isinstance(result, str):
+        return canonical_effect_digest(result)
+    if received is not None:
+        return canonical_effect_digest(received)
+    return canonical_effect_digest(response)
+
+
+def _accepts_keyword(func: Any, name: str) -> bool:
+    """Whether *func* takes keyword *name*; a slice-1 ``record_effect`` does not."""
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            param.name == name
+            and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        )
+        for param in params
+    )
+
+
+def toolcall_effect_outcome(response: Mapping[str, Any] | None) -> str:
+    """Classify a connector return as ``ok``, ``error``, ``timeout``, or ``partial``."""
+    if response is None:
+        return "timeout"
+    error = response.get("error")
+    result = response.get("result")
+    if error is not None and result is not None:
+        return "partial"
+    if error is not None:
+        return "error"
+    if isinstance(result, Mapping) and result.get("isError") is True:
+        return "error"
+    return "ok"
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +284,54 @@ class ToolCallAttestationInterlock:
             raise ToolCallInterlockError(
                 f"enforced tool-call attestation preparation failed for {intent.server_name}/{intent.tool_name}"
             ) from exc
+
+    async def after_dispatch(
+        self,
+        intent: ToolCallIntent,
+        evidence: VerifiedDispatchEvidence | None,
+        *,
+        response: Mapping[str, Any] | None,
+        duration_ms: float,
+        outcome: str,
+        patch: str | None = None,
+        received: bytes | None = None,
+    ) -> None:
+        """Record the connector effect against the admitted intent.
+
+        Slice 1 is writer-only.  A missing recorder, a missing evidence
+        handle, or a write failure leaves the attestation as dispatched with
+        the effect unobserved -- never as success.  The connector return is
+        not blocked.
+        """
+        if evidence is None:
+            return
+        recorder = getattr(self.provider, "record_effect", None)
+        if recorder is None:
+            return
+        try:
+            if evidence.intent_digest != intent.digest():
+                raise ToolCallInterlockError("effect evidence is bound to a different tool-call intent")
+            extra: dict[str, Any] = {}
+            if _accepts_keyword(recorder, "received"):
+                extra["received"] = received
+            recorded = recorder(
+                intent,
+                evidence,
+                response=response,
+                duration_ms=duration_ms,
+                outcome=outcome,
+                patch=patch,
+                **extra,
+            )
+            if inspect.isawaitable(recorded):
+                await recorded
+        except Exception as exc:
+            logger.warning(
+                "Tool-call effect record failed for %s/%s: %s",
+                sanitize_log(intent.server_name),
+                sanitize_log(intent.tool_name),
+                sanitize_log(str(exc)),
+            )
 
 
 def derive_attestation_verdict(
@@ -519,7 +643,10 @@ __all__ = [
     "ToolCallIntent",
     "ToolCallInterlockError",
     "VerifiedDispatchEvidence",
+    "canonical_effect_digest",
     "derive_attestation_verdict",
+    "effect_digest_for_connector_response",
     "project_attestation_mode",
+    "toolcall_effect_outcome",
     "verified_tool_call_ids",
 ]

@@ -19,9 +19,11 @@ Design choices:
   boundary the caller key is rewritten to a scheme-prefixed digest
   (``v1:<64 hex>``) so a later derivation change can classify old rows
   instead of reporting false divergences (#4867).
-* **First-call ordering preserved** - replay lookup falls back to FIFO
-  consumption per ``kind`` when the key isn't found, so even hashed
-  prompts with timestamp jitter replay cleanly.
+* **Same-scheme key miss is a divergence** - replay looks up
+  ``(kind, key)`` and raises :class:`ReplayDivergenceError` without
+  consuming the queue when the key is absent (#4866). Set
+  ``BERNSTEIN_REPLAY_LENIENT=1`` to restore by-kind FIFO; each
+  consumption logs one line.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from bernstein.core.replay.key_scheme import (
     CURRENT_KEY_SCHEME,
@@ -58,6 +60,9 @@ EVENTS_FILENAME = "events.jsonl"
 #: invocation. Set to ``1``/``true``/``yes`` to enable.
 RECORD_ENV_VAR = "BERNSTEIN_RECORD"
 
+#: Opt-in that restores by-kind FIFO when a same-scheme key misses (#4866).
+LENIENT_ENV_VAR = "BERNSTEIN_REPLAY_LENIENT"
+
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
@@ -74,6 +79,19 @@ def is_recording_enabled(env: dict[str, str] | None = None) -> bool:
     return src.get(RECORD_ENV_VAR, "").strip().lower() in _TRUTHY
 
 
+def is_replay_lenient(env: dict[str, str] | None = None) -> bool:
+    """Return whether a same-scheme key miss should fall back to FIFO.
+
+    Args:
+        env: Optional env dict (defaults to :data:`os.environ`).
+
+    Returns:
+        ``True`` if :data:`LENIENT_ENV_VAR` is set to a truthy value.
+    """
+    src = env if env is not None else os.environ
+    return src.get(LENIENT_ENV_VAR, "").strip().lower() in _TRUTHY
+
+
 class GatewayMode(StrEnum):
     """Operating mode for :class:`ReplayGateway`."""
 
@@ -88,7 +106,41 @@ class GatewayMode(StrEnum):
 
 
 class ReplayMissError(RuntimeError):
-    """Raised in :attr:`GatewayMode.REPLAY` when no fixture matches."""
+    """Raised in :attr:`GatewayMode.REPLAY` when the run recorded nothing.
+
+    A same-scheme key miss against a non-empty corpus is
+    :class:`ReplayDivergenceError`, not this error. Lenient FIFO still
+    raises this once every fixture of the kind has been consumed.
+    """
+
+
+class ReplayDivergenceError(RuntimeError):
+    """A same-scheme replay key missed, so the recorded queue was not consumed.
+
+    ``got_key`` and ``expected_key`` use the scheme-prefixed storage form
+    (``vN:<64 hex>``). ``expected_key`` is the next recorded key when
+    events of this kind remain, and ``None`` when that recording is
+    exhausted.
+    """
+
+    def __init__(
+        self,
+        *,
+        kind: str,
+        got_key: str,
+        expected_key: str | None,
+    ) -> None:
+        self.kind = kind
+        self.got_key = got_key
+        self.expected_key = expected_key
+        if expected_key is None:
+            message = (
+                f"replay divergence: kind={kind!r} got key={got_key!r}; "
+                "recording exhausted (no remaining events of this kind)"
+            )
+        else:
+            message = f"replay divergence: kind={kind!r} got key={got_key!r} expected key={expected_key!r}"
+        super().__init__(message)
 
 
 class ReplayKeySchemeMismatchError(RuntimeError):
@@ -133,6 +185,7 @@ class _Fixture:
     """
 
     response: Any
+    stored_key: str = ""
     consumed: bool = field(default=False)
 
 
@@ -165,6 +218,11 @@ class ReplayGateway:
         key_scheme: Key-derivation scheme written on record and required on
             replay (default :data:`~bernstein.core.replay.key_scheme.CURRENT_KEY_SCHEME`).
             Tests pass ``v2`` (etc.) to exercise cross-scheme classification.
+        lenient: When ``True``, a same-scheme key miss consumes the next
+            recorded fixture of that kind (the pre-#4866 FIFO fallback) and
+            logs one line. When ``None`` (the default), follow
+            :func:`is_replay_lenient`. When ``False``, a miss raises
+            :class:`ReplayDivergenceError` and leaves the queue unconsumed.
     """
 
     def __init__(
@@ -175,12 +233,14 @@ class ReplayGateway:
         mode: GatewayMode | None = None,
         record: bool = False,
         key_scheme: str | None = None,
+        lenient: bool | None = None,
     ) -> None:
         self._run_id = run_id
         self._path = sdd_dir / "runs" / run_id / EVENTS_FILENAME
         self._lock = threading.Lock()
         self._seq = 0
         self._key_scheme = CURRENT_KEY_SCHEME if key_scheme is None else key_scheme
+        self._lenient = is_replay_lenient() if lenient is None else lenient
 
         if mode is None:
             mode = GatewayMode.RECORD if record or is_recording_enabled() else GatewayMode.OFF
@@ -238,8 +298,9 @@ class ReplayGateway:
             kind: Logical category (e.g. ``"llm"``, ``"tool"``). Used to
                 bucket replay fixtures when keys collide.
             key: Stable identifier for this request (typically a hash of
-                the request payload). Replay lookups try ``(kind, key)``
-                first, then fall back to FIFO consumption of ``kind``.
+                the request payload). Replay serves an exact ``(kind, key)``
+                hit. A same-scheme miss raises
+                :class:`ReplayDivergenceError` unless lenient FIFO is on.
             invoke: Callable that performs the real dispatch. Called in
                 :attr:`GatewayMode.OFF` and :attr:`GatewayMode.RECORD`;
                 **never** called in :attr:`GatewayMode.REPLAY`.
@@ -250,8 +311,11 @@ class ReplayGateway:
             The response (either from ``invoke`` or from the fixture).
 
         Raises:
-            ReplayMissError: In replay mode when no fixture matches and
-                no FIFO fallback is available for ``kind``.
+            ReplayMissError: In replay mode when this run recorded no
+                events, or (lenient mode only) when the kind's queue is
+                already exhausted.
+            ReplayDivergenceError: In replay mode when the key misses a
+                same-scheme corpus. The recorded queue is not consumed.
             ReplayKeySchemeMismatchError: In replay mode when the loaded
                 corpus was recorded under a different key scheme than this
                 verifier (re-record to compare; not a divergence).
@@ -363,7 +427,7 @@ class ReplayGateway:
             scheme, _digest = parse_stored_key(key)
             self._corpus_schemes.add(scheme)
             ordered = self._ordered_by_kind.setdefault(kind, [])
-            fixture = _Fixture(response=response)
+            fixture = _Fixture(response=response, stored_key=key)
             position = len(ordered)
             ordered.append(fixture)
             self._positions_by_key.setdefault((kind, key), deque()).append(position)
@@ -396,32 +460,36 @@ class ReplayGateway:
         self._kind_cursor[kind] = cursor
         return cursor if cursor < len(ordered) else None
 
+    def _peek_unconsumed_index(self, kind: str, ordered: list[_Fixture]) -> int | None:
+        """Return the next unconsumed index without moving the kind cursor."""
+        cursor = self._kind_cursor.get(kind, 0)
+        while cursor < len(ordered) and ordered[cursor].consumed:
+            cursor += 1
+        return cursor if cursor < len(ordered) else None
+
     def _replay_lookup(self, *, kind: str, key: str) -> Any:
-        """Consume the next fixture for ``(kind, key)`` (or FIFO by ``kind``).
+        """Consume the recorded fixture for ``(kind, key)``.
 
-        On a by-key hit, consume the lowest unconsumed recorded position for
-        that exact ``(kind, key)``. On a miss, fall back to the lowest
-        unconsumed position for the kind (recorded-order FIFO). Both paths
-        mark the same per-kind ordered list, so duplicate response values can
-        never desync the two views (#1855).
+        A by-key hit consumes that recorded slot and returns its response.
+        The bytes on that path are the recorded response, unchanged (#4866
+        outcome 2). A same-scheme miss raises :class:`ReplayDivergenceError`
+        and does not mark any fixture consumed, so the kind cursor stays
+        where it was. Lenient mode restores by-kind FIFO and logs one line
+        per consumption.
 
-        Holds ``self._lock`` for the entire consume so concurrent dispatches
-        cannot drain the same fixture twice or skip rows another thread has
-        already consumed under the by-kind fallback.
+        Holds ``self._lock`` for the entire decision so concurrent dispatches
+        cannot drain the same fixture twice.
         """
         storage_key = derive_replay_key(key, scheme=self._key_scheme)
         with self._lock:
             self._reject_scheme_mismatch()
             ordered = self._ordered_by_kind.get(kind)
             if ordered is None:
-                raise ReplayMissError(
-                    f"No fixture for kind={kind!r} key={key!r} in {self._path}. "
-                    "Either the run diverged or recording was incomplete.",
-                )
+                self._raise_kind_exhausted(kind, storage_key)
 
             positions = self._positions_by_key.get((kind, storage_key))
-            # Skip positions already consumed via the by-kind fallback so a
-            # by-key hit never returns a slot that was served as FIFO filler.
+            # Skip positions already consumed via lenient FIFO so a by-key
+            # hit never returns a slot that was served as filler.
             while positions:
                 idx = positions[0]
                 if ordered[idx].consumed:
@@ -431,16 +499,38 @@ class ReplayGateway:
                 ordered[idx].consumed = True
                 return ordered[idx].response
 
-            # By-kind FIFO fallback: lowest unconsumed recorded position.
-            fallback_idx = self._next_unconsumed_index(kind, ordered)
-            if fallback_idx is not None:
-                ordered[fallback_idx].consumed = True
-                return ordered[fallback_idx].response
+            fallback_idx = self._peek_unconsumed_index(kind, ordered)
+            if fallback_idx is None:
+                self._raise_kind_exhausted(kind, storage_key)
 
-        raise ReplayMissError(
-            f"No fixture for kind={kind!r} key={key!r} in {self._path}. "
-            "Either the run diverged or recording was incomplete.",
-        )
+            next_fixture = ordered[fallback_idx]
+            if not self._lenient:
+                raise ReplayDivergenceError(
+                    kind=kind,
+                    got_key=storage_key,
+                    expected_key=next_fixture.stored_key,
+                )
+
+            logger.warning(
+                "%s: FIFO fallback kind=%s got_key=%s expected_key=%s",
+                LENIENT_ENV_VAR,
+                kind,
+                storage_key,
+                next_fixture.stored_key,
+            )
+            # Commit the cursor only when a fixture is actually consumed.
+            self._kind_cursor[kind] = fallback_idx
+            next_fixture.consumed = True
+            return next_fixture.response
+
+    def _raise_kind_exhausted(self, kind: str, storage_key: str) -> NoReturn:
+        """Raise the exhausted-recording verdict. Never returns."""
+        if self._lenient:
+            raise ReplayMissError(
+                f"No fixture for kind={kind!r} key={storage_key!r} in {self._path}. "
+                "Either the run diverged or recording was incomplete.",
+            )
+        raise ReplayDivergenceError(kind=kind, got_key=storage_key, expected_key=None)
 
 
 def _make_jsonable(value: Any) -> Any:

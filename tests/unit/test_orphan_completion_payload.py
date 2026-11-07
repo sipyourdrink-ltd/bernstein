@@ -118,7 +118,7 @@ def test_death_cleanup_runs_when_orphan_handling_raises(tmp_path: Path) -> None:
 
     with (
         patch.object(agent_lifecycle, "handle_orphaned_task", side_effect=TypeError("not serializable")),
-        patch.object(agent_lifecycle, "_save_partial_work") as save_partial,
+        patch.object(agent_lifecycle, "_dispose_dead_worktree") as dispose,
         patch.object(agent_lifecycle, "_capture_agent_crash"),
         patch.object(agent_lifecycle, "_propagate_abort_to_children"),
         patch.object(agent_lifecycle, "_preserve_runner_logs"),
@@ -128,5 +128,4 @@ def test_death_cleanup_runs_when_orphan_handling_raises(tmp_path: Path) -> None:
     ):
         _handle_dead_agent(orch, session, {"claimed": [], "open": [], "in_progress": [], "done": []})
 
-    save_partial.assert_called_once()
-    orch._spawner.cleanup_worktree.assert_called_once_with(session.id)
+    dispose.assert_called_once_with(orch, session, reason="dead_agent")

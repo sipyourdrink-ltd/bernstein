@@ -20,15 +20,15 @@ catalog's total surface area.
 Above a configurable token threshold, the agent's prompt contains:
 
 ```
-Available tools (search to expand):
-- tool_search(query: str) -> {names, summaries}
-- expand_tools(names: list[str]) -> {schemas}
+MCP tool catalog is large; use the meta-tool below to load schemas on demand.
+tool_search(query, limit=10): search the MCP tool directory by keyword. Returns ranked tool names + summaries. Call expand_tools(names=[...]) to fetch full JSON schemas before invoking.
 
-Compact directory (217 tools, full schemas available via expand_tools):
-- gh.issue_create - open a GitHub issue
-- gh.issue_comment - post a comment
-- pg.query - run a SQL query against the configured Postgres
+Directory (names + 1-line summaries):
+- gh.issue_create (gh): open a GitHub issue
+- gh.issue_comment (gh): post a comment
+- pg.query (pg): run a SQL query against the configured Postgres
 - ...
+... (N more tools, search to discover)
 ```
 
 Below the threshold, the agent gets the full catalog in-prompt as
@@ -36,14 +36,19 @@ before. The behaviour is automatic; the agent does not need to know.
 
 ## How to use it
 
-Default-on, no config required. To tune:
+The lazy-loading prompt builder (`mcp_manager.build_tools_prompt_section`)
+is not yet called from the spawn path. `tuning.mcp_tool_search.*` is
+accepted by the config loader but has no effect today: the builder reads
+the import-time `MCP_TOOL_SEARCH_ENABLED` / `MCP_TOOL_SEARCH_THRESHOLD_TOKENS`
+constants and a fixed 1500-token directory budget. The accepted keys:
 
 ```yaml
 # bernstein.yaml
-mcp:
-  tool_search:
+tuning:
+  mcp_tool_search:
     enabled: true                  # default
     threshold_tokens: 6000         # below this, ship full catalog
+    directory_budget_tokens: 1500  # cap for the compact directory
 ```
 
 To inspect the search engine directly:
@@ -51,17 +56,19 @@ To inspect the search engine directly:
 ```python
 from bernstein.core.protocols.mcp.mcp_tool_search import (
     ToolCatalog,
+    ToolEntry,
     ToolSearchEngine,
+    expand_tools,
 )
 
-catalog = ToolCatalog.from_registered_servers()
+catalog = ToolCatalog([ToolEntry(name="gh.diff", summary="show a PR diff", server="gh", schema={})])
 engine = ToolSearchEngine(catalog)
 
-hits = engine.search("git diff", k=10)
+hits = engine.search("diff", limit=10)
 for hit in hits:
     print(hit.name, hit.summary, hit.score)
 
-schemas = engine.expand_tools(["gh.diff", "git.diff"])
+schemas = expand_tools(catalog, ["gh.diff"])
 ```
 
 ## Configuration
@@ -69,11 +76,12 @@ schemas = engine.expand_tools(["gh.diff", "git.diff"])
 | Knob | Default | Controls |
 |---|--:|---|
 | `defaults.MCP_TOOL_SEARCH_ENABLED` | `true` | Master switch. |
+| `defaults.MCP_TOOL_SEARCH.directory_budget_tokens` | `1500` | Token cap for the compact directory after the swap. |
 | `defaults.MCP_TOOL_SEARCH_THRESHOLD_TOKENS` | `6000` | Total catalog token budget; above this, switch to tool_search. |
 | Ranker | BM25 over `name + summary` | Lexical ranking only. |
 
-Metric: `mcp_tool_search_invocations_total{outcome}` -
-`hit` / `miss` / `expand`.
+Metric: `mcp_tool_search_invocations_total{mode}` -
+`search` / `expand`.
 
 ## Limitations
 

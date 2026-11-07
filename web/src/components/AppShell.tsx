@@ -27,6 +27,8 @@ import { apiGet } from '@/lib/api';
 import { formatUSD } from '@/lib/format';
 import { useTheme } from './ThemeProvider';
 import { CommandPalette } from './CommandPalette';
+import { BrandMark } from './BrandMark';
+import { AuthTokenPrompt } from './AuthTokenPrompt';
 
 type GuiMeta = { version: string; commit: string; build_time: string };
 
@@ -288,9 +290,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <aside className="relative w-[220px] shrink-0 border-r border-border bg-secondary flex flex-col">
           <div className="px-[18px] pt-[18px] pb-[16px] border-b border-border-subtle">
             <Link to="/tasks" className="flex items-center gap-[10px]">
-              <span className="size-[26px] grid place-items-center rounded-[6px] bg-primary text-primary-foreground font-mono text-[13px] font-semibold">
-                B
-              </span>
+              <BrandMark size={26} className="shrink-0" />
               <span className="text-[15px] font-semibold tracking-[-0.01em]">Bernstein</span>
             </Link>
             <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-meta-foreground">
@@ -476,6 +476,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
           </header>
+
+          {/* One prompt for a refused token, instead of a dead end per screen */}
+          <AuthTokenPrompt />
 
           {/* Page body */}
           <div className="flex-1 min-h-0 overflow-auto">{children}</div>

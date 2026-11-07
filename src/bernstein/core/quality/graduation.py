@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.replay.journal import JournalLoadResult, JournalSeal
+
 logger = logging.getLogger(__name__)
 
 
@@ -179,6 +181,213 @@ class StageMetrics:
             total_cost_usd=d.get("total_cost_usd", 0.0),
             total_duration_s=d.get("total_duration_s", 0.0),
         )
+
+
+# ---------------------------------------------------------------------------
+# Read-only observations from sealed evidence (partial #5475)
+# ---------------------------------------------------------------------------
+
+
+GRADUATION_OBSERVATION_RULE_VERSION = "terminal-event-observations-v1"
+
+# These cannot be established from terminal-event counts. In particular,
+# journal ts/elapsed_s are unauthenticated, and the recorder's cost_usd on a
+# completion is cumulative run spend, not that task's incremental cost.
+_UNSUPPORTED_OBSERVATION_METRICS = (
+    "stage_attribution",
+    "terminal_outcome_coverage",
+    "tasks_total",
+    "success_rate",
+    "consecutive_failures",
+    "started_at",
+    "last_updated",
+    "hours_elapsed",
+    "total_cost_usd",
+    "total_duration_s",
+    "avg_duration_s",
+)
+
+
+class GraduationEvidenceError(ValueError):
+    """The declared evidence window could not establish an observation."""
+
+
+@dataclass(frozen=True)
+class GraduationEvidenceWindow:
+    """Caller-declared inclusive range in an independently sealed journal.
+
+    The seal must come from a trusted, independent commitment, never from
+    the candidate rows being checked. This type does not authenticate its
+    caller or infer which journal range belongs to a graduation stage.
+    """
+
+    journal_id: str
+    seal: JournalSeal | None
+    first_index: int
+    last_index: int
+
+    def describe(self) -> str:
+        """Identify the original requested window in refusal messages."""
+        return f"{self.journal_id}[{self.first_index}:{self.last_index}]"
+
+
+@dataclass(frozen=True)
+class GraduationObservations:
+    """Observed terminal-event rows; never a full StageMetrics attestation.
+
+    Counts are of explicit rows, not deduplicated tasks. A trailing failure
+    streak ignores nonterminal observations and is not the authoritative
+    StageMetrics.consecutive_failures. Unknown/nonterminal events remain
+    visible, and neither outcome coverage nor stage attribution is proven.
+    """
+
+    window: GraduationEvidenceWindow
+    stage: GraduationStage
+    completed_indices: tuple[int, ...]
+    failed_indices: tuple[int, ...]
+    trailing_failed_indices: tuple[int, ...]
+    unsupported_event_types: tuple[str, ...]
+    rule_version: str = GRADUATION_OBSERVATION_RULE_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        """Render observations with explicit ranges and unsupported claims."""
+        seal = self.window.seal
+        assert seal is not None  # Required before the projection is built.
+        counts = {}
+        for name, indices in (
+            ("task_completed", self.completed_indices),
+            ("task_failed", self.failed_indices),
+            ("trailing_task_failed", self.trailing_failed_indices),
+        ):
+            counts[name] = {
+                "count": len(indices),
+                "event_index_range": {
+                    "first": indices[0] if indices else None,
+                    "last": indices[-1] if indices else None,
+                },
+            }
+        return {
+            "rule_version": self.rule_version,
+            "declared_stage": self.stage.value,
+            "evidence_window": {
+                "journal_id": self.window.journal_id,
+                "first_index": self.window.first_index,
+                "last_index": self.window.last_index,
+                "sealed_head": seal.head,
+                "sealed_event_count": seal.event_count,
+            },
+            "observed_counts": counts,
+            "unsupported_event_types": list(self.unsupported_event_types),
+            "unsupported_metrics": list(_UNSUPPORTED_OBSERVATION_METRICS),
+            "stage_metrics_parity": "not_established",
+        }
+
+    def canonical_bytes(self) -> bytes:
+        """Use the existing receipt-family canonical JSON encoding."""
+        from bernstein.core.security.audit_receipt import _canonical_json_bytes
+
+        return _canonical_json_bytes(self.to_dict())
+
+    def compare_stored(self, metrics: StageMetrics) -> dict[str, Any]:
+        """Compare numbers diagnostically, without attesting stored metrics.
+
+        Equality only means a mutable counter equals an observed row count;
+        it proves neither complete terminal coverage nor stage attribution.
+        """
+        if metrics.stage != self.stage:
+            raise GraduationEvidenceError(f"{self.window.describe()}: stored stage differs from declared stage")
+        comparisons = {}
+        for name, observed in (
+            ("tasks_completed", len(self.completed_indices)),
+            ("tasks_failed", len(self.failed_indices)),
+            ("consecutive_failures", len(self.trailing_failed_indices)),
+        ):
+            stored = getattr(metrics, name)
+            comparisons[name] = {"stored": stored, "observed": observed, "matches_observed_count": stored == observed}
+        return {
+            "observed_count_comparisons": comparisons,
+            "unsupported_metrics": list(_UNSUPPORTED_OBSERVATION_METRICS),
+            "stage_metrics_parity": "not_established",
+        }
+
+
+def derive_graduation_observations(
+    loaded: JournalLoadResult,
+    *,
+    window: GraduationEvidenceWindow,
+    stage: GraduationStage,
+    rule_version: str = GRADUATION_OBSERVATION_RULE_VERSION,
+) -> GraduationObservations:
+    """Purely project one complete snapshot after verifying its independent seal.
+
+    Verify the whole journal before selecting the declared inclusive range,
+    so an intact prefix never hides a damaged or removed tail. All citations
+    use list offsets: the row's index envelope is not authenticated. No clock,
+    filesystem, environment, counter file or policy is read here.
+    """
+    from bernstein.core.replay.journal import verify_events
+
+    label = window.describe()
+    if rule_version != GRADUATION_OBSERVATION_RULE_VERSION:
+        raise GraduationEvidenceError(f"{label}: unsupported rule version {rule_version!r}")
+    seal = window.seal
+    if (
+        not isinstance(window.journal_id, str)
+        or not window.journal_id.strip()
+        or seal is None
+        or not isinstance(seal.head, str)
+        or not seal.head
+        or type(seal.event_count) is not int
+        or seal.event_count <= 0
+    ):
+        raise GraduationEvidenceError(f"{label}: an independent nonempty journal seal is required")
+    if loaded.discarded_line_indices:
+        raise GraduationEvidenceError(f"{label}: journal reader discarded lines {loaded.discarded_line_indices}")
+    verified = verify_events(loaded.events)
+    if not verified.chain_consistent or verified.head != seal.head or verified.count != seal.event_count:
+        raise GraduationEvidenceError(f"{label}: complete journal does not verify against its independent seal")
+    if (
+        type(window.first_index) is not int
+        or type(window.last_index) is not int
+        or not 0 <= window.first_index <= window.last_index < verified.count
+    ):
+        raise GraduationEvidenceError(f"{label}: invalid or empty event-index range")
+
+    completed: list[int] = []
+    failed: list[int] = []
+    trailing: list[int] = []
+    unsupported: set[str] = set()
+    for index in range(window.first_index, window.last_index + 1):
+        event = loaded.events[index].get("event")
+        if event == "task_completed":
+            completed.append(index)
+            trailing.clear()
+        elif event == "task_failed":
+            failed.append(index)
+            trailing.append(index)
+        else:
+            unsupported.add(str(event))
+    return GraduationObservations(
+        window=window,
+        stage=stage,
+        completed_indices=tuple(completed),
+        failed_indices=tuple(failed),
+        trailing_failed_indices=tuple(trailing),
+        unsupported_event_types=tuple(sorted(unsupported)),
+        rule_version=rule_version,
+    )
+
+
+def derive_graduation_observations_from_path(
+    path: Path,
+    *,
+    window: GraduationEvidenceWindow,
+    stage: GraduationStage,
+) -> GraduationObservations:
+    """Load once, then verify and fold that same complete snapshot."""
+    from bernstein.core.replay.journal import load_events
+
+    return derive_graduation_observations(load_events(path), window=window, stage=stage)
 
 
 # ---------------------------------------------------------------------------

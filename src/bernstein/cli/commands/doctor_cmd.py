@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import click
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import datetime
 
 from bernstein.cli.helpers import SERVER_URL
@@ -67,11 +68,14 @@ def check_python_version() -> dict[str, Any]:
     }
 
 
-def check_adapters_installed() -> list[dict[str, Any]]:
+def check_adapters_installed(*, env: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
     """Check which CLI adapters are on PATH."""
+    path_val = env.get("PATH") if env is not None else None
     results: list[dict[str, Any]] = []
     for name in ("agy", "claude", "codex", "gemini", "qwen", "aider"):
-        found = shutil.which(name) is not None
+        found = (
+            shutil.which(name, path=path_val) is not None if path_val is not None else shutil.which(name) is not None
+        )
         results.append(
             {
                 "name": f"Adapter: {name}",
@@ -83,7 +87,7 @@ def check_adapters_installed() -> list[dict[str, Any]]:
     return results
 
 
-def _probe_adapter_version(name: str) -> str | None:
+def _probe_adapter_version(name: str, *, env: Mapping[str, str] | None = None) -> str | None:
     """Return the installed version string for an adapter binary, or None.
 
     Runs ``<name> --version`` and extracts the first dotted-numeric token.
@@ -92,7 +96,8 @@ def _probe_adapter_version(name: str) -> str | None:
     """
     import re
 
-    exe = shutil.which(name)
+    path_val = env.get("PATH") if env is not None else None
+    exe = shutil.which(name, path=path_val) if path_val is not None else shutil.which(name)
     if exe is None:
         return None
     try:
@@ -102,6 +107,7 @@ def _probe_adapter_version(name: str) -> str | None:
             text=True,
             timeout=10,
             check=False,
+            env=dict(env) if env is not None else None,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -121,7 +127,7 @@ _POSTURE_UNKNOWN = "unknown_version"
 _VERSION_POSTURE_SCHEMA_VERSION = 1
 
 
-def collect_version_posture() -> list[dict[str, Any]]:
+def collect_version_posture(*, env: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
     """Structured version posture for each installed tracked adapter (#2515).
 
     For every adapter with a curated minimum-safe floor that is installed on
@@ -137,11 +143,15 @@ def collect_version_posture() -> list[dict[str, Any]]:
         check_adapter_version,
     )
 
+    path_val = env.get("PATH") if env is not None else None
     entries: list[dict[str, Any]] = []
     for name, advisory in sorted(ADAPTER_MIN_SAFE_VERSIONS.items()):
-        if shutil.which(name) is None:
+        is_installed = (
+            shutil.which(name, path=path_val) is not None if path_val is not None else shutil.which(name) is not None
+        )
+        if not is_installed:
             continue  # adapter not installed: nothing to report
-        version = _probe_adapter_version(name)
+        version = _probe_adapter_version(name, env=env)
         if version is None:
             verdict = _POSTURE_UNKNOWN
         elif check_adapter_version(name, version) is not None:
@@ -160,7 +170,7 @@ def collect_version_posture() -> list[dict[str, Any]]:
     return entries
 
 
-def check_adapter_advisories() -> list[dict[str, Any]]:
+def check_adapter_advisories(*, env: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
     """Report a supply-chain version-floor status for each tracked adapter.
 
     A projection of :func:`collect_version_posture` (the same rows the signed
@@ -180,7 +190,7 @@ def check_adapter_advisories() -> list[dict[str, Any]]:
     from bernstein.adapters.advisories import ADAPTER_MIN_SAFE_VERSIONS
 
     results: list[dict[str, Any]] = []
-    for entry in collect_version_posture():
+    for entry in collect_version_posture(env=env):
         name = entry["adapter"]
         version = entry["installed_version"]
         floor = entry["floor"]
@@ -235,7 +245,7 @@ def build_version_posture_receipt(entries: list[dict[str, Any]], *, generated_at
     }
 
 
-def emit_version_posture_receipt(workdir: Path) -> dict[str, Any]:
+def emit_version_posture_receipt(workdir: Path, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Seal the version posture into a receipt and anchor it in the chain (#2515).
 
     The console version-posture rows become a projection of this receipt:
@@ -252,7 +262,7 @@ def emit_version_posture_receipt(workdir: Path) -> dict[str, Any]:
 
     from bernstein.adapters.security_floor import receipt_sha256
 
-    entries = collect_version_posture()
+    entries = collect_version_posture(env=env)
     receipt = build_version_posture_receipt(entries, generated_at=datetime.now(UTC).isoformat())
     sha = receipt_sha256(receipt)
     anchored = False
@@ -275,7 +285,11 @@ def emit_version_posture_receipt(workdir: Path) -> dict[str, Any]:
     return {"receipt": receipt, "receipt_sha256": sha, "entries": entries, "anchored": anchored}
 
 
-def check_canary_last_green(*, now: datetime | None = None) -> list[dict[str, Any]]:
+def check_canary_last_green(
+    *,
+    now: datetime | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Advise on the local adapter posture against the canary last-green.
 
     The nightly adapter conformance canary regenerates a per-adapter
@@ -295,6 +309,7 @@ def check_canary_last_green(*, now: datetime | None = None) -> list[dict[str, An
     Args:
         now: Injected clock for the staleness comparison (deterministic
             tests pass a fixed value); defaults to the current UTC time.
+        env: Optional environment mapping used to resolve and probe binaries.
     """
     from datetime import UTC
     from datetime import datetime as _datetime
@@ -308,6 +323,7 @@ def check_canary_last_green(*, now: datetime | None = None) -> list[dict[str, An
         load_last_green,
     )
 
+    path_val = env.get("PATH") if env is not None else None
     current = now if now is not None else _datetime.now(UTC)
     entries = load_last_green()
     # Union: every matrix adapter plus any adapter that carries a row, so an
@@ -319,7 +335,12 @@ def check_canary_last_green(*, now: datetime | None = None) -> list[dict[str, An
     results: list[dict[str, Any]] = []
     for name in sorted(binaries):
         binary = binaries[name]
-        if shutil.which(binary) is None:
+        is_installed = (
+            shutil.which(binary, path=path_val) is not None
+            if path_val is not None
+            else shutil.which(binary) is not None
+        )
+        if not is_installed:
             continue  # adapter not installed: nothing to advise on
         label = f"Adapter last-green: {name}"
         entry = entries.get(name)
@@ -339,7 +360,7 @@ def check_canary_last_green(*, now: datetime | None = None) -> list[dict[str, An
                 }
             )
             continue
-        version = _probe_adapter_version(binary)
+        version = _probe_adapter_version(binary, env=env)
         if version is None:
             continue  # unknown version is already surfaced by advisories
         try:
@@ -582,7 +603,10 @@ def _spiffe_socket_reachable(endpoint: str) -> bool:
         return False
     if not _stat.S_ISSOCK(mode):
         return False
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    af_unix = getattr(socket, "AF_UNIX", None)
+    if af_unix is None:
+        return False
+    probe = socket.socket(af_unix, socket.SOCK_STREAM)
     try:
         probe.settimeout(0.5)
         probe.connect(path)
@@ -1194,8 +1218,20 @@ def _run_endpoint_certification(
     default=False,
     help="Report which host applications have Bernstein registered.",
 )
+@click.option(
+    "--unattended",
+    is_flag=True,
+    default=False,
+    help="Run probes through spawner environment (unattended parity).",
+)
 @click.pass_context
-def doctor_cmd(ctx: click.Context, as_json: bool, auto_fix: bool, substrate_only: bool) -> None:
+def doctor_cmd(
+    ctx: click.Context,
+    as_json: bool,
+    auto_fix: bool,
+    substrate_only: bool,
+    unattended: bool = False,
+) -> None:
     """Run health checks on the Bernstein installation.
 
     \b
@@ -1227,4 +1263,4 @@ def doctor_cmd(ctx: click.Context, as_json: bool, auto_fix: bool, substrate_only
     # Delegate to the existing full doctor implementation which has more checks
     from bernstein.cli.status_cmd import doctor as _doctor_impl
 
-    ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix)
+    ctx.invoke(_doctor_impl, as_json=as_json, auto_fix=auto_fix, unattended=unattended)

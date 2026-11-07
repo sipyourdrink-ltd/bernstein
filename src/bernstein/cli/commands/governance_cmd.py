@@ -54,7 +54,9 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from bernstein.cli.commands.govern_audit_cmd import govern_audit_cmd as govern_audit_contract_cmd
 from bernstein.cli.commands.govern_cmd import govern_inventory_cmd, govern_reconcile_cmd
+from bernstein.cli.commands.govern_lane_cmd import govern_lane_group
 from bernstein.cli.helpers import console
 from bernstein.core.govern import collect_remediation as _collect_remediation
 from bernstein.core.govern import compute_plan as _compute_plan
@@ -1014,20 +1016,8 @@ def _run_verifier_key_staleness_check() -> None:
     click.echo("verifier keys up to date")
 
 
-@govern_group.command("audit")
-def governance_audit_cmd() -> None:
-    """[Deprecated] Use ``bernstein govern audit-keys`` instead.
-
-    The compliance policy library moved to ``bernstein govern audit-compliance``
-    in #5075; this alias preserves the prior verifier-key staleness behaviour
-    for one release and prints a deprecation notice on every invocation.
-    """
-    click.echo(
-        "WARNING: 'bernstein govern audit' is deprecated and will be removed in v3.0.0 (#5075): "
-        "use 'bernstein govern audit-keys' instead.",
-        err=True,
-    )
-    _run_verifier_key_staleness_check()
+# Audit check contract runner (#5072)
+govern_group.add_command(govern_audit_contract_cmd, "audit")
 
 
 @govern_group.command("audit-keys")
@@ -1045,6 +1035,8 @@ def governance_audit_keys_cmd() -> None:
 govern_group.add_command(govern_reconcile_cmd, "reconcile")
 # Inventory topology graph from the store (#5133).
 govern_group.add_command(govern_inventory_cmd, "inventory")
+# Reconciliation lanes: bootstrap/list/show against the chain (#5120).
+govern_group.add_command(govern_lane_group, "lane")
 
 
 @click.group("governance")

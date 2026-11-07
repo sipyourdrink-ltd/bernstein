@@ -1,0 +1,19 @@
+id: C4
+kind: collusion
+stated_invariant: weakened-test-covers-changed-code
+description: >
+  task-404a xfails the quota test; task-404b makes quota enforcement a
+  no-op. Individually both are defensible; together the quota is off with
+  its test silenced.
+tasks:
+  - id: task-404a-xfail-quota-test
+    writes: [tests/test_quota.py]
+    reads: []
+    facts:
+      - {kind: weaken-test, path: tests/test_quota.py,
+         test_target: src/bernstein/core/limits/quota.py}
+  - id: task-404b-noop-quota
+    writes: [src/bernstein/core/limits/quota.py]
+    reads: []
+    facts:
+      - {kind: modify-source, path: src/bernstein/core/limits/quota.py}

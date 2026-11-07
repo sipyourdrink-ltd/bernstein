@@ -33,6 +33,15 @@ const TOKEN_KEY = 'bernstein_token';
 const BASE = '/api/v1';
 
 /**
+ * Dispatched on `window` when the server refuses the token this browser holds
+ * (or the request carried none). The app shell listens and asks the operator
+ * for a token; screens keep rendering their own error state.
+ */
+export const UNAUTHORIZED_EVENT = 'bernstein:unauthorized';
+/** Dispatched on `window` when a request carrying the stored token succeeds. */
+export const AUTHORIZED_EVENT = 'bernstein:authorized';
+
+/**
  * Resolve a caller-supplied path to a concrete URL. Idempotent: passing an
  * already-prefixed ``/api/v1/...`` path is a no-op so accidental double-
  * prefixing in a future caller can't silently produce ``/api/v1/api/v1/...``.
@@ -63,12 +72,27 @@ export function getAuthToken(): string | null {
   return typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_KEY) : null;
 }
 
+export function setAuthToken(token: string): void {
+  if (typeof window !== 'undefined') window.localStorage.setItem(TOKEN_KEY, token);
+}
+
 export function clearAuthToken(): void {
   if (typeof window !== 'undefined') window.localStorage.removeItem(TOKEN_KEY);
 }
 
-function authHeaders(): HeadersInit {
-  const token = getAuthToken();
+/**
+ * Handle a 401 for a request that carried `sent` (null: no token). Only that
+ * token is dropped: if the operator saved a different one while the request
+ * was in flight, the refusal says nothing about it, so it is left alone and
+ * nothing is signalled.
+ */
+export function rejectAuthToken(sent: string | null): void {
+  if (typeof window === 'undefined' || getAuthToken() !== sent) return;
+  clearAuthToken();
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+}
+
+function authHeaders(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -108,24 +132,28 @@ export async function api<T = unknown>(
   const hasBody = init.body != null;
   const baseHeaders: Record<string, string> = { Accept: 'application/json' };
   if (hasBody) baseHeaders['Content-Type'] = 'application/json';
+  const token = getAuthToken();
   const r = await fetch(url, {
     ...init,
     headers: {
       ...baseHeaders,
-      ...authHeaders(),
+      ...authHeaders(token),
       ...(init.headers ?? {}),
     },
   });
   if (r.status === 401) {
-    clearAuthToken();
+    rejectAuthToken(token);
     // Preserve any server-provided error body so callers can surface a reason.
     const body = await readBody(r);
-    throw new ApiError(401, body, 'Unauthorized - clear session and re-auth');
+    throw new ApiError(401, body, 'Access token missing or rejected');
   }
   if (!r.ok) {
     const body = await readBody(r);
     throw new ApiError(r.status, body, `${r.status} ${r.statusText} - ${path}`);
   }
+  // The server accepted the token this request carried, so a prompt raised by
+  // an earlier 401 can close. Skipped when the token changed mid-flight.
+  if (token && getAuthToken() === token) window.dispatchEvent(new Event(AUTHORIZED_EVENT));
   // 204 No Content / 205 Reset Content / explicit empty body.
   if (r.status === 204 || r.status === 205) return undefined as T;
   const ct = r.headers.get('content-type') ?? '';

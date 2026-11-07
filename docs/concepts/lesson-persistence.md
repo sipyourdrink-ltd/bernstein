@@ -30,7 +30,7 @@ entry carries:
 `file_lesson()` accepts a `memory_type` that sets how fast the lesson's
 effective confidence decays with age:
 
-| Type | Decay half-life |
+| Type | Decay period (confidence x 0.7 per period, applied once the lesson is older than one period) |
 |---|---|
 | `feedback` (human corrections) | 7 days |
 | `project` (project conventions) | 14 days |
@@ -86,9 +86,10 @@ assigned to an agent and calls `gather_lessons_for_context()`. That function:
 3. Formats up to 5 lessons as a `## Prior Agent Lessons` markdown block,
    each with type, tags, confidence, source task, and (if stale) a
    staleness note.
-4. Truncates at a 5,000-token budget (`DEFAULT_CATEGORY_BUDGETS["lessons"]`
-   in `core/tokens/context_compression.py`), appending a truncation notice
-   if lessons had to be dropped.
+4. Stops at 4,000 characters (`_MAX_LESSON_CHARS`), appending a truncation
+   notice if lessons had to be dropped; `spawn_prompt._get_lesson_context`
+   then applies the 5,000-token `DEFAULT_CATEGORY_BUDGETS["lessons"]` cap
+   as a second limit.
 
 The block is included in every agent's spawn prompt except the `manager`
 and `visionary` roles (`SECTION_RULES["lessons"]` in
@@ -133,18 +134,21 @@ receipt's signature and its anchoring entry. A receipt whose rule text was
 rewritten in the store, or whose anchor was hand-appended to the log, fails and
 is named.
 
-## Limitation: nothing files corrections automatically yet
+## Limitation: filing is narrow
 
-`file_review_correction()` — like `file_lesson()` before it — is implemented,
-tested, and safe to call, but no code path in the shipped orchestrator calls it.
-Filing is currently an explicit act: a plugin, a hook, or direct use of the
-Python API. Until something in the review path calls it, `.sdd/memory/lessons.jsonl`
-and `.sdd/conventions/receipts/` stay empty on a fresh install, and the
-read/decay/injection path above remains a no-op — an empty
-`## Prior Agent Lessons` block.
+The one shipped caller is the cross-model verifier
+(`core/quality/cross_model_verifier.py`): when a review verdict is
+`request_changes`, each issue is filed through `file_review_finding()`, a
+wrapper over `file_review_correction()` that logs and swallows any filing
+failure. That is the only automatic path into `.sdd/memory/lessons.jsonl`
+and `.sdd/conventions/receipts/`. Runs that never produce a
+`request_changes` verdict leave both empty, and the read/decay/injection
+path above stays a no-op - an empty `## Prior Agent Lessons` block.
 
 General task-completion outcomes are a separate, broader gap: nothing reads a
-task's outcome and files a lesson on completion either.
+task's outcome and files a lesson on completion. Direct use of
+`file_lesson()` is otherwise an explicit act: a plugin, a hook, or the Python
+API.
 
 
 ## Related, different subsystem

@@ -35,7 +35,7 @@ def _steps(job: object) -> list[dict[str, object]]:
     return [step for step in steps if isinstance(step, dict)]
 
 
-def test_push_coverage_runs_inside_ubuntu_313_shards(ci_doc: dict[str, object]) -> None:
+def test_main_full_suite_coverage_runs_inside_ubuntu_313_shards(ci_doc: dict[str, object]) -> None:
     """Coverage must reuse the sharded test pass, not start a serial full rerun."""
     test_job = _jobs(ci_doc).get("test")
     steps = _steps(test_job)
@@ -47,6 +47,8 @@ def test_push_coverage_runs_inside_ubuntu_313_shards(ci_doc: dict[str, object]) 
     assert "matrix.python-version" in str(run_step.get("env", {}).get("PYTHON_VERSION"))
     assert "3.13" in run_body
     assert "push" in run_body
+    assert "workflow_dispatch" in run_body
+    assert "refs/heads/main" in run_body
 
     step_names = [str(step.get("name", "")) for step in steps]
     assert "Generate coverage and JUnit reports (ubuntu, 3.13, shard 1 only)" not in step_names
@@ -58,10 +60,13 @@ def test_ubuntu_313_shards_upload_coverage_data(ci_doc: dict[str, object]) -> No
     steps = _steps(test_job)
 
     prepare = next(step for step in steps if step.get("name") == "Prepare coverage shard artifact")
+    assert "workflow_dispatch" in str(prepare.get("if", ""))
+    assert "refs/heads/main" in str(prepare.get("if", ""))
     assert "matrix.shard" in str(prepare.get("run", ""))
     assert ".coverage.${{ matrix.shard }}" in str(prepare.get("run", ""))
 
     upload = next(step for step in steps if step.get("name") == "Upload coverage shard artifact")
+    assert "workflow_dispatch" in str(upload.get("if", ""))
     assert "actions/upload-artifact" in str(upload.get("uses", ""))
     with_block = upload.get("with")
     assert isinstance(with_block, dict)
@@ -72,12 +77,17 @@ def test_ubuntu_313_shards_upload_coverage_data(ci_doc: dict[str, object]) -> No
 
 
 def test_coverage_report_job_merges_shard_data(ci_doc: dict[str, object]) -> None:
-    """A separate push-only job must combine shard data into a single coverage.xml."""
+    """Full main runs combine shard data into a single coverage.xml."""
     coverage_job = _jobs(ci_doc).get("coverage-report")
     assert isinstance(coverage_job, dict), "CI workflow must define a coverage-report job"
     assert coverage_job.get("name") == "Coverage report"
     assert coverage_job.get("needs") == ["test"]
-    assert "github.event_name == 'push'" in str(coverage_job.get("if", ""))
+    condition = str(coverage_job.get("if", ""))
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "github.event_name == 'push'" in condition
+    assert "chore(release)" in condition
+    assert "release:" in condition
+    assert "refs/heads/main" in condition
 
     steps = _steps(coverage_job)
     download = next(step for step in steps if step.get("name") == "Download coverage shard artifacts")
@@ -101,8 +111,8 @@ def test_coverage_report_job_merges_shard_data(ci_doc: dict[str, object]) -> Non
     assert upload_with.get("if-no-files-found") == "error"
 
 
-def test_ci_gate_requires_coverage_report_on_push(ci_doc: dict[str, object]) -> None:
-    """The aggregator must fail push CI if the coverage artifact job fails."""
+def test_ci_gate_requires_coverage_report_on_full_main_runs(ci_doc: dict[str, object]) -> None:
+    """Only ordinary cheap pushes may intentionally skip full-suite coverage."""
     gate = _jobs(ci_doc).get("ci-gate")
     assert isinstance(gate, dict)
     needs = gate.get("needs")
@@ -111,6 +121,7 @@ def test_ci_gate_requires_coverage_report_on_push(ci_doc: dict[str, object]) -> 
 
     rollup = next(step for step in _steps(gate) if step.get("id") == "roll-up")
     run_body = str(rollup.get("run", ""))
-    assert "PUSH_ONLY" in run_body
+    assert "POST_MERGE_PUSH_SKIPPABLE" in run_body
     assert '"coverage-report"' in run_body
-    assert 'event != "push"' in run_body
+    assert "ordinary_main_push" in run_body
+    assert "coverage_required" in run_body

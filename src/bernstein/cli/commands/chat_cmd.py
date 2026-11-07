@@ -289,12 +289,12 @@ class ChatSession:
     async def _on_approve(self, msg: ChatMessage) -> None:
         if not await self._gate(msg):
             return
-        await self._resolve_oldest_pending(msg.thread_id, decision="approve")
+        await self._resolve_oldest_pending(msg.thread_id, decision="approve", user_id=msg.user_id)
 
     async def _on_reject(self, msg: ChatMessage) -> None:
         if not await self._gate(msg):
             return
-        await self._resolve_oldest_pending(msg.thread_id, decision="reject")
+        await self._resolve_oldest_pending(msg.thread_id, decision="reject", user_id=msg.user_id)
 
     async def _on_switch(self, msg: ChatMessage) -> None:
         if not await self._gate(msg):
@@ -425,8 +425,18 @@ class ChatSession:
         await self.bridge.send_message(msg.thread_id, "\n".join(body_lines))
 
     async def _on_button(self, thread_id: str, approval_id: str, decision: str) -> None:
-        """Persist an approve/reject decision to the security handshake dir."""
-        _write_approval_decision(self.workdir, approval_id, decision)
+        """Persist an approve/reject decision to the security handshake dir.
+
+        A button press carries no sender identity here, so the decision is
+        attributed to the chat channel and thread rather than to a person.
+        """
+        principal = {
+            "identifier": f"chat:{self.bridge.platform}",
+            "auth_method": "chat-button",
+            "kind": "human",
+            "grant": thread_id,
+        }
+        _write_approval_decision(self.workdir, approval_id, decision, principal=principal)
         await self.bridge.send_message(
             thread_id,
             f"Approval {approval_id}: {decision}.",
@@ -446,8 +456,8 @@ class ChatSession:
         )
         return False
 
-    async def _resolve_oldest_pending(self, thread_id: str, *, decision: str) -> None:
-        """Find the oldest pending approval and emit a decision file."""
+    async def _resolve_oldest_pending(self, thread_id: str, *, decision: str, user_id: str = "") -> None:
+        """Find the oldest pending approval and emit a decision record."""
         pending_dir = self.workdir / ".sdd" / "runtime" / "pending_approvals"
         if not pending_dir.exists():
             await self.bridge.send_message(thread_id, "No pending approvals.")
@@ -460,7 +470,13 @@ class ChatSession:
             await self.bridge.send_message(thread_id, "No pending approvals.")
             return
         approval_id = pending[0].stem
-        _write_approval_decision(self.workdir, approval_id, decision)
+        principal = {
+            "identifier": f"chat:{self.bridge.platform}:{user_id or 'unknown'}",
+            "auth_method": "chat-allow-list",
+            "kind": "human",
+            "grant": thread_id,
+        }
+        _write_approval_decision(self.workdir, approval_id, decision, principal=principal)
         await self.bridge.send_message(
             thread_id,
             f"Approval {approval_id}: {decision}.",
@@ -578,21 +594,31 @@ class _ChatTaskRequest:
         return None
 
 
-def _write_approval_decision(workdir: Path, approval_id: str, decision: str) -> None:
-    """Write ``<approval_id>.approved`` or ``.rejected`` for the security gate.
+def _write_approval_decision(
+    workdir: Path,
+    approval_id: str,
+    decision: str,
+    *,
+    principal: dict[str, str] | None = None,
+) -> None:
+    """Write a signed ``<approval_id>.approved`` / ``.rejected`` decision record.
 
     The id arrives over a chat bridge, so it goes through the same identifier
-    rule and containment check as every other approvals sink.
+    rule and containment check as every other approvals sink. The record is
+    attributed to the ``chat`` decision path and bound to the open request.
 
     Raises:
         UnsafeApprovalIdError: The id would escape the approvals directory.
     """
-    from bernstein.core.orchestration.approval_gate import approval_path
+    from bernstein.core.orchestration.approval_gate import record_decision
 
-    suffix = ".approved" if decision == "approve" else ".rejected"
-    target = approval_path(workdir, approval_id, suffix)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("via chat bridge\n", encoding="utf-8")
+    record_decision(
+        workdir,
+        approval_id,
+        "approved" if decision == "approve" else "rejected",
+        source="chat",
+        principal=principal or {"identifier": "chat:unknown", "auth_method": "chat-bridge", "kind": "human"},
+    )
 
 
 # ---------------------------------------------------------------------------

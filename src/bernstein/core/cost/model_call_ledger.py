@@ -176,6 +176,8 @@ class ModelCallRecord:
     reused_from: str = ""
     replay_of: str = ""
     schema_version: int = MODEL_CALL_SCHEMA_VERSION
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
     @classmethod
     def new(
@@ -190,6 +192,8 @@ class ModelCallRecord:
         input_text: str = "",
         journal_entry_id: str = "",
         replay_of: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
     ) -> ModelCallRecord:
         """Build a ``pending`` record with a fresh id and ``created_at``.
 
@@ -204,6 +208,8 @@ class ModelCallRecord:
             input_text: What is being sent.
             journal_entry_id: Work-ledger entry this call belongs to.
             replay_of: Id of the record this one replays.
+            prompt_tokens: Number of prompt tokens for hosted inference.
+            completion_tokens: Number of completion tokens for hosted inference.
 
         Returns:
             A new ``pending`` record.
@@ -220,6 +226,8 @@ class ModelCallRecord:
             journal_entry_id=journal_entry_id,
             replay_of=replay_of,
             created_at=time.time(),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
     @property
@@ -250,6 +258,8 @@ class ModelCallRecord:
             "input": self.input_text,
             "model": self.model_identifier,
             "parameters": _canonical(self.parameters),
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
         }
         encoded = json.dumps(document, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -275,6 +285,8 @@ class ModelCallRecord:
             "reused_from": self.reused_from,
             "replay_of": self.replay_of,
             "schema_version": self.schema_version,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
             "content_hash": self.content_hash(),
         }
 
@@ -313,6 +325,8 @@ class ModelCallRecord:
             reused_from=str(data.get("reused_from", "")),
             replay_of=str(data.get("replay_of", "")),
             schema_version=int(data.get("schema_version", MODEL_CALL_SCHEMA_VERSION)),
+            prompt_tokens=int(data.get("prompt_tokens", 0)),
+            completion_tokens=int(data.get("completion_tokens", 0)),
         )
 
 

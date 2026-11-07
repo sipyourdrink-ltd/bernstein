@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any, cast
 import yaml
 
 from bernstein.core.models import CompletionSignal, Complexity, Scope, Task, TaskStatus, TaskType
-from bernstein.core.tasks.artifacts import ArtifactSpec, ArtifactSpecError, parse_artifact_spec
+from bernstein.core.planning.signal_contract import parse_completion_signal
+from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecError, parse_artifact_spec
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,33 +81,22 @@ class PlanConfig:
     repos: list[RepoRef] = field(default_factory=list)
 
 
-def _parse_completion_signals(raw_signals: list[object]) -> list[CompletionSignal]:
-    """Parse a list of completion signal dicts from YAML into CompletionSignal objects.
+#: Most completion signals one task may carry. The task server's TaskCreate caps
+#: every list field at this; restated here so a plan is refused at load time, and
+#: pinned equal to the server's value by a test.
+_MAX_COMPLETION_SIGNALS = 100
 
-    Invalid entries are logged and skipped.
 
-    Args:
-        raw_signals: List of raw YAML signal dicts.
-
-    Returns:
-        List of valid CompletionSignal instances.
-    """
-    valid_types: set[str] = {"path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"}
+def _parse_completion_signals(raw_signals: object, context: str = "") -> list[CompletionSignal]:
+    """Preserve every declared native gate or reject the plan before dispatch."""
+    if not isinstance(raw_signals, list):
+        raise PlanLoadError(f"{context}: completion_signals must be an array")
     signals: list[CompletionSignal] = []
     for i, raw in enumerate(raw_signals):
-        if not isinstance(raw, dict):
-            logger.warning("completion_signals[%d] is not a mapping - skipping", i)
-            continue
-        sig_type = raw.get("type", "")
-        # Support 'value' or 'path'/'command'/'contains' as the signal value
-        sig_value = raw.get("value") or raw.get("path") or raw.get("command") or raw.get("contains") or ""
-        if sig_type not in valid_types:
-            logger.warning("completion_signals[%d] has invalid type %r - skipping", i, sig_type)
-            continue
-        if not sig_value:
-            logger.warning("completion_signals[%d] has empty value - skipping", i)
-            continue
-        signals.append(CompletionSignal(type=sig_type, value=str(sig_value)))  # type: ignore[arg-type]
+        try:
+            signals.append(parse_completion_signal(raw))
+        except ValueError as exc:
+            raise PlanLoadError(f"{context}: completion_signals[{i}]: {exc}") from exc
     return signals
 
 
@@ -397,8 +387,8 @@ def _parse_step(
         else:
             logger.warning("Stage %r depends on unknown stage %r", stage_name, dep_stage)
 
-    raw_signals: list[object] = list(step.get("completion_signals") or [])
-    signals = _parse_completion_signals(raw_signals)
+    raw_signals = step.get("completion_signals", [])
+    signals = _parse_completion_signals(raw_signals, _step_context(stage_name, step_index))
     # Reject scalar / non-list shapes and non-string items so direct loads
     # match the CLI pre-check (validate_plan) boundary for list[string] fields.
     raw_files: object = step.get("files")
@@ -438,6 +428,22 @@ def _parse_step(
             artifact_spec = parse_artifact_spec(raw_artifact)
         except ArtifactSpecError as exc:
             raise PlanLoadError(f"Step {step_index} in stage {stage_name!r}: {exc}") from exc
+
+    # The task server's own rules for the body this step becomes (TaskCreate).
+    # Checked here so `plan validate` and `load_plan` refuse the plan up front:
+    # found at POST time, the run aborts after earlier steps already exist on
+    # the server (#5960). The planner posts artifact_spec only when it is not
+    # the default code_diff contract, so that is the case that can collide.
+    if len(signals) > _MAX_COMPLETION_SIGNALS:
+        raise PlanLoadError(
+            f"{_step_context(stage_name, step_index)}: {len(signals)} completion_signals, "
+            f"the task server accepts at most {_MAX_COMPLETION_SIGNALS}"
+        )
+    if artifact_spec.kind is not ArtifactKind.CODE_DIFF and any(sig.type == "llm_judge" for sig in signals):
+        raise PlanLoadError(
+            f"{_step_context(stage_name, step_index)}: a step cannot declare both an artifact_spec "
+            "and an llm_judge completion signal (the task server refuses the pair)"
+        )
 
     metadata: dict[str, object] = {}
     phases_raw = step.get("phases")

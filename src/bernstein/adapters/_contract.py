@@ -111,6 +111,10 @@ class ContractSpec:
     security_advisory_id: str | None = None
     #: Authentication mechanism declared in the contract YAML.
     auth_basis: AuthBasis = AuthBasis.UNKNOWN
+    #: Explicit reasoning-effort values the adapter forwards to its CLI.
+    #: Empty means no declared effort capability; older contracts keep their
+    #: meaning. This is a CLI request, not evidence of provider enforcement.
+    supported_efforts: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, name: str, contracts_dir: Path | None = None) -> ContractSpec:
@@ -167,6 +171,7 @@ class ContractSpec:
             security_floor=security_floor,
             security_advisory_id=security_advisory_id,
             auth_basis=auth_basis,
+            supported_efforts=tuple(data.get("supported_efforts") or ()),
         )
 
     def resolved_help_command(self) -> list[str]:
@@ -684,15 +689,6 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.STREAM_JSON,
     ),
-    # Antigravity is the upstream rename of the Gemini CLI binary
-    # (transition deadline 2026-06-18 for free / Pro / Ultra). Same
-    # strategy on every axis - it is the same adapter, only the
-    # discovered binary name differs.
-    "antigravity": AdapterStrategy(
-        resume=ResumeStrategy.UNSUPPORTED,
-        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
-        event_channel=EventChannel.STREAM_JSON,
-    ),
     # agy is the successor CLI for the discontinued non-enterprise hosted
     # gemini backend; separate adapter (single binary, print mode, sandbox
     # pinned) -- see docs/adapters/agy.md. Dangerous mode is
@@ -701,6 +697,14 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     # has --conversation <id> resume, but native reattach is not wired
     # yet, so resume stays declared unsupported (fresh-session fallback).
     "agy": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.CLI_FLAG,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
+    # "antigravity" is the product name of the same CLI and a second
+    # registry key for AgyAdapter, so it shares the agy strategy on every
+    # axis.
+    "antigravity": AdapterStrategy(
         resume=ResumeStrategy.UNSUPPORTED,
         dangerous_mode=DangerousModeStrategy.CLI_FLAG,
         event_channel=EventChannel.TEXT_SIGNALS,
@@ -766,6 +770,16 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
         dangerous_mode=DangerousModeStrategy.ENV_VAR,
     ),
     "gptme": AdapterStrategy(),
+    # gpt-researcher is a deep-research agent: it reads sources and writes a report, and
+    # its unit of work is that report bound to its source list by digest
+    # (deep_research_artifact), not a commit. The report stays in the run directory; nothing
+    # publishes it to a task's artifact path, so this row does not declare ``artifact``.
+    # No native resume; runs unattended.
+    "gpt_researcher": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
     # Hermes is driven through its one-shot mode, which auto-bypasses approvals
     # rather than exposing a flag to do so - the CLI is unattended by
     # construction there, so the axis is always-on, not unsupported. Declaring
@@ -853,6 +867,16 @@ STRATEGY_MATRIX: dict[str, AdapterStrategy] = {
     "q_dev": AdapterStrategy(),
     "qwen": AdapterStrategy(),
     "ralphex": AdapterStrategy(),
+    # Tongyi DeepResearch is a deep-research agent: it reads sources and writes a report, and
+    # its unit of work is that report bound to its source list by digest
+    # (deep_research_artifact), not a commit. The report stays in the run directory; nothing
+    # publishes it to a task's artifact path, so this row does not declare ``artifact``.
+    # No native resume; runs unattended.
+    "tongyi_deepresearch": AdapterStrategy(
+        resume=ResumeStrategy.UNSUPPORTED,
+        dangerous_mode=DangerousModeStrategy.UNSUPPORTED,
+        event_channel=EventChannel.TEXT_SIGNALS,
+    ),
 }
 
 
@@ -1222,14 +1246,12 @@ _SYSTEM_PROMPT_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
 #: model. The base ``CLIAdapter.spawn`` contract permits this fallback.
 _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
     {
-        # "antigravity" is the upstream rename of the "gemini" CLI binary and
-        # shares GeminiAdapter's spawn() body verbatim -- see the twin
-        # AdapterStrategy declarations above -- so it carries the same
-        # system_addendum channel.
-        "antigravity",
         "codex",
         "devin_terminal",
         "gemini",
+        # The deep-research adapters write the addendum after the task text
+        # into the runner's prompt file (DeepResearchAdapter.spawn).
+        "gpt_researcher",
         "junie",
         "muse",
         "opencode",
@@ -1237,6 +1259,7 @@ _PROMPT_APPEND_ADDENDUM_ADAPTERS: frozenset[str] = frozenset(
         "q_dev",
         "qwen",
         "ralphex",
+        "tongyi_deepresearch",
     }
 )
 

@@ -597,7 +597,7 @@ class TrustRecordEmitter:
         run_id: str,
         exec_id: str,
         *,
-        kid: str,
+        kid: str | None = None,
         parent_record: str | None = None,
         credential_id: str | None = None,
         cnf_jwk_members: Mapping[str, Any] | None = None,
@@ -704,7 +704,7 @@ class TrustRecordEmitter:
         run_id: str,
         exec_id: str,
         *,
-        kid: str,
+        kid: str | None = None,
         parent_record: str | None = None,
         credential_id: str | None = None,
         cnf_jwk_members: Mapping[str, Any] | None = None,
@@ -789,11 +789,13 @@ class TrustRecordEmitter:
         public_key_raw = _ed25519_public_key_raw(self._get_private_key_pem())
         from bernstein.core.security.agent_card_signer import _b64url
 
+        x = _b64url(public_key_raw)
+        effective_kid = kid if kid is not None else _rfc7638_thumbprint(x)
         jwk: dict[str, Any] = {
             "kty": "OKP",
             "crv": "Ed25519",
-            "x": _b64url(public_key_raw),
-            "kid": kid,
+            "x": x,
+            "kid": effective_kid,
         }
         if cnf_jwk_members:
             jwk.update(cnf_jwk_members)
@@ -895,14 +897,10 @@ class TrustRecordEmitter:
         Returns:
             Canonical JSON string of the signed Trust Record.
         """
-        install_rev = self._get_install_rev()
-        kid = f"install-{install_rev}"
-
         record = self._build_unsigned_record(
             journal_path,
             run_id,
             exec_id,
-            kid=kid,
             parent_record=parent_record,
             credential_id=credential_id,
             cnf_jwk_members=cnf_jwk_members,
@@ -985,19 +983,16 @@ class TrustRecordEmitter:
             _require_spiffe_segment(agent_id, "agent_id")
             hop_events = [event for event in events if event.get("agent_id") == agent_id]
             has_tool_calls = any(event.get("event") == "tool_call" for event in hop_events)
-            install_rev = self._get_install_rev()
-            kid = f"install-{install_rev}"
             tool_transcript = _build_tool_transcript(events, agent_id=agent_id) if has_tool_calls else None
-            record = self._build_unsigned_record_for_events(
+            hop_record = self._build_unsigned_record_for_events(
                 events,
                 journal_path,
                 run_id,
                 agent_id,
-                kid=kid,
                 tool_transcript=tool_transcript,
                 agent_id=agent_id,
             )
-            signed = self._sign_record(record)
+            signed = self._sign_record(hop_record)
             output = _record_dict_without_signature(signed)
             output["signature"] = signed.signature
             records.append(
@@ -1092,9 +1087,6 @@ class TrustRecordEmitter:
                 msg = f"a member record is not valid JSON: {exc}"
                 raise ValueError(msg) from exc
 
-        install_rev = self._get_install_rev()
-        kid = f"install-{install_rev}"
-
         subject = spiffe_subject_for_aggregate(run_id)
         iat = max(int(member["iat"]) for member in members)
         model = dict(members[-1]["model"])
@@ -1142,12 +1134,13 @@ class TrustRecordEmitter:
         public_key_raw = _ed25519_public_key_raw(self._get_private_key_pem())
         from bernstein.core.security.agent_card_signer import _b64url
 
+        x = _b64url(public_key_raw)
         cnf: dict[str, Any] = {
             "jwk": {
                 "kty": "OKP",
                 "crv": "Ed25519",
-                "x": _b64url(public_key_raw),
-                "kid": kid,
+                "x": x,
+                "kid": _rfc7638_thumbprint(x),
             }
         }
 
@@ -1331,6 +1324,23 @@ def _ed25519_public_key_raw(private_key_pem: bytes) -> bytes:
         serialization.Encoding.Raw,
         serialization.PublicFormat.Raw,
     )
+
+
+def _rfc7638_thumbprint(x: str) -> str:
+    """Return the RFC 7638 JWK thumbprint for an Ed25519 OKP key with public key ``x``.
+
+    Computes SHA-256 over the canonical JSON ``{"crv":"Ed25519","kty":"OKP","x":"<x>"}``
+    (lexicographically ordered keys, no whitespace) per RFC 7638 §3 and returns the
+    base64url-encoded digest without padding.
+    """
+    from bernstein.core.security.agent_card_signer import _b64url
+
+    canonical = json.dumps(
+        {"crv": "Ed25519", "kty": "OKP", "x": x},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return _b64url(hashlib.sha256(canonical).digest())
 
 
 def _sign_raw_ed25519(canonical_bytes: bytes, private_key_pem: bytes) -> bytes:

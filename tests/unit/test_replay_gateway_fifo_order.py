@@ -3,8 +3,8 @@
 When two distinct keys recorded the same response value, the by-kind FIFO
 fallback must still pop responses in recorded order. The old by-value removal
 on a by-key hit deleted the wrong by-kind slot, silently desyncing the two
-structures. These tests pin the recorded-order contract under duplicate
-response values and mixed by-key / by-kind lookups.
+structures. These tests pin that recorded-order contract under the lenient
+hatch (``lenient=True``). The default miss path is a divergence (#4866).
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def test_bykey_hit_does_not_corrupt_bykind_fifo_with_dup_values(tmp_path: Path) 
         ],
     )
 
-    gw = ReplayGateway("dup-1", tmp_path, mode=GatewayMode.REPLAY)
+    gw = ReplayGateway("dup-1", tmp_path, mode=GatewayMode.REPLAY, lenient=True)
 
     # By-key hit on B consumes B's recorded slot (seq 2).
     assert gw.dispatch(kind="tool", key="B", invoke=_explode) == "R"
@@ -90,7 +90,7 @@ def test_bykey_hit_steals_wrong_bykind_slot_corrupts_fallback(tmp_path: Path) ->
         ],
     )
 
-    gw = ReplayGateway("dup-corrupt", tmp_path, mode=GatewayMode.REPLAY)
+    gw = ReplayGateway("dup-corrupt", tmp_path, mode=GatewayMode.REPLAY, lenient=True)
     # Consume C by key (its recorded response is R at seq 3).
     assert gw.dispatch(kind="tool", key="C", invoke=_explode) == "R"
     # Remaining unconsumed slots are A (R, seq 1) and B (S, seq 2). A by-kind
@@ -130,7 +130,7 @@ def test_bykind_fallback_strict_seq_order_with_dups(tmp_path: Path) -> None:
         ],
     )
 
-    gw = ReplayGateway("dup-3", tmp_path, mode=GatewayMode.REPLAY)
+    gw = ReplayGateway("dup-3", tmp_path, mode=GatewayMode.REPLAY, lenient=True)
     # All keys miss -> FIFO by seq: ok, ok, not-ok.
     out = [gw.dispatch(kind="tool", key=f"x{i}", invoke=_explode) for i in range(3)]
     assert out == [{"ok": True}, {"ok": True}, {"ok": False}]
@@ -150,7 +150,7 @@ def test_mixed_interleave_returns_recorded_position(tmp_path: Path) -> None:
         ],
     )
 
-    gw = ReplayGateway("dup-4", tmp_path, mode=GatewayMode.REPLAY)
+    gw = ReplayGateway("dup-4", tmp_path, mode=GatewayMode.REPLAY, lenient=True)
     # by-key C (seq 3), then by-kind (seq 1 = A), by-key A would now miss but
     # we instead consume by-kind twice more (seq 2, seq 4). All return "R" and
     # crucially the bucket never under/over-drains.
@@ -174,7 +174,7 @@ def test_replay_is_byte_identical_across_two_runs_with_dups(tmp_path: Path) -> N
     _write_events(run_dir, rows)
 
     def _drain() -> list[object]:
-        gw = ReplayGateway("dup-5", tmp_path, mode=GatewayMode.REPLAY)
+        gw = ReplayGateway("dup-5", tmp_path, mode=GatewayMode.REPLAY, lenient=True)
         return [
             gw.dispatch(kind="tool", key="B", invoke=_explode),
             gw.dispatch(kind="tool", key="miss-1", invoke=_explode),

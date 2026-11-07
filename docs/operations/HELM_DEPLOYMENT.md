@@ -11,11 +11,13 @@ Deploy Bernstein to Kubernetes using Helm with automatic worker scaling based on
 
 ## Basic Installation
 
-### 1. Add the Helm Repository (when published)
+### 1. Get the chart
+
+The chart ships in this repository under `deploy/helm/bernstein`; there is no separate chart repository.
 
 ```bash
-helm repo add bernstein https://charts.bernstein.dev
-helm repo update
+git clone https://github.com/sipyourdrink-ltd/bernstein
+cd bernstein
 ```
 
 ### 2. Install the Chart

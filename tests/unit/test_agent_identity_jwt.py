@@ -11,6 +11,7 @@ import pytest
 from bernstein.core.auth import verify_jwt
 
 from bernstein.core.identity.agent_jwt import AgentIdentityStore
+from tests.unit._identity_record_helpers import seal
 
 
 def _token_hash(token: str) -> str:
@@ -53,42 +54,57 @@ def test_authenticate_jwt_token_updates_last_authenticated(tmp_path: Path, monke
     assert identity.last_authenticated_at > 0
 
 
-def test_authenticate_legacy_opaque_token_remains_supported(tmp_path: Path) -> None:
-    """Persisted pre-JWT opaque tokens should continue to authenticate during the compatibility window."""
+def _legacy_opaque_record(token: str) -> dict[str, object]:
+    """A record in the pre-JWT opaque shape, with no ``token_type`` key."""
+
+    return {
+        "id": "legacy-1",
+        "role": "backend",
+        "session_id": "legacy-1",
+        "permissions": ["files:read", "files:write", "status:read", "tasks:claim", "tasks:read", "tests:run"],
+        "status": "active",
+        "created_at": 1.0,
+        "last_authenticated_at": 0.0,
+        "revoked_at": 0.0,
+        "revocation_reason": "",
+        "credential": {
+            "token_hash": _token_hash(token),
+            "created_at": 1.0,
+            "expires_at": 0.0,
+            "revoked": False,
+        },
+        "parent_identity_id": None,
+        "metadata": {},
+    }
+
+
+def test_authenticated_opaque_record_still_authenticates(tmp_path: Path) -> None:
+    """The opaque credential kind keeps working for a record this install authenticated."""
 
     legacy_token = "legacy-opaque-token"
     identity_path = tmp_path / "agent_identities" / "legacy-1.json"
     identity_path.parent.mkdir(parents=True, exist_ok=True)
-    identity_path.write_text(
-        json.dumps(
-            {
-                "id": "legacy-1",
-                "role": "backend",
-                "session_id": "legacy-1",
-                "permissions": ["files:read", "files:write", "status:read", "tasks:claim", "tasks:read", "tests:run"],
-                "status": "active",
-                "created_at": 1.0,
-                "last_authenticated_at": 0.0,
-                "revoked_at": 0.0,
-                "revocation_reason": "",
-                "credential": {
-                    "token_hash": _token_hash(legacy_token),
-                    "created_at": 1.0,
-                    "expires_at": 0.0,
-                    "revoked": False,
-                },
-                "parent_identity_id": None,
-                "metadata": {},
-            }
-        ),
-        encoding="utf-8",
-    )
+    identity_path.write_text(json.dumps(seal(_legacy_opaque_record(legacy_token))), encoding="utf-8")
 
     store = AgentIdentityStore(tmp_path)
     identity = store.authenticate(legacy_token)
 
     assert identity is not None
     assert identity.id == "legacy-1"
+
+
+def test_unauthenticated_opaque_record_is_refused(tmp_path: Path) -> None:
+    """A record written without the install's MAC is not an identity, opaque or not."""
+
+    legacy_token = "legacy-opaque-token"
+    identity_path = tmp_path / "agent_identities" / "legacy-1.json"
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_path.write_text(json.dumps(_legacy_opaque_record(legacy_token)), encoding="utf-8")
+
+    store = AgentIdentityStore(tmp_path)
+
+    assert store.authenticate(legacy_token) is None
+    assert store.get("legacy-1") is None
 
 
 def test_expired_jwt_token_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,15 +122,19 @@ def test_expired_jwt_token_is_rejected(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_jwt_secret_persists_without_env(tmp_path: Path) -> None:
-    """A persisted agent JWT secret should make tokens survive store restarts."""
+    """Tokens survive store restarts without any secret under the auth dir.
+
+    The default signing secret is derived from the out-of-tree install key,
+    so a fresh store verifies what the first one signed while nothing next to
+    the records can sign a token.
+    """
 
     store1 = AgentIdentityStore(tmp_path)
     _, token = store1.create_identity("persist-1", "backend")
 
-    secret_path = tmp_path / "agent_identity_jwt_secret"
     store2 = AgentIdentityStore(tmp_path)
 
-    assert secret_path.exists()
+    assert not (tmp_path / "agent_identity_jwt_secret").exists()
     assert store2.authenticate(token) is not None
 
 

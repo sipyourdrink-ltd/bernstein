@@ -8,59 +8,59 @@
     },
     "aider": {
       "binary": "aider",
-      "receipt_sha256": "04602e9f2eb45772396aa65f857b2ad662121644277bf8b5a6358b64d0904cf6",
-      "recorded_at": "2026-09-24T09:35:51Z",
+      "receipt_sha256": "7d7ed4a5a8ea24014dc58dcbefd3edad3e746c71eec87a5d45dd517c056c2f53",
+      "recorded_at": "2026-11-06T12:32:45Z",
       "version": "0.86.2"
     },
     "claude": {
       "binary": "claude",
-      "receipt_sha256": "75814fce81c762425f8c0105ab18da97a7513a19cf70659afaf5aaa86b840bba",
-      "recorded_at": "2026-09-24T09:35:51Z",
-      "version": "2.1.281"
+      "receipt_sha256": "0b81c2776c12d75c43395a2310e2c1d7b8539694e2ad2172e99ed3b73c8f866a",
+      "recorded_at": "2026-11-06T12:32:45Z",
+      "version": "2.1.318"
     },
     "codex": {
       "binary": "codex",
-      "receipt_sha256": "92e499586a9f1f2a7ff006bfa10eb455a5b1708b1420f62b4c2bb9a1688b1806",
-      "recorded_at": "2026-09-24T09:35:51Z",
-      "version": "0.156.1"
+      "receipt_sha256": "13bdc609c8b5b9a05b0c65112f166dbfd4de1054f90c29713d396e3465ff13ec",
+      "recorded_at": "2026-11-06T12:32:45Z",
+      "version": "0.167.0"
     },
     "copilot": {
       "binary": "copilot",
-      "receipt_sha256": "1c34867df6ea6c95340b5e79d880fee128c01ab5a329a825a4b0530ddea5aab9",
-      "recorded_at": "2026-09-24T09:35:51Z",
-      "version": "1.0.88"
+      "receipt_sha256": "a86e51ac20db0ad3d65dbee93db4d12ab34eed78aec687a3dd98b48320c2e2ca",
+      "recorded_at": "2026-11-06T12:32:45Z",
+      "version": "1.0.106"
     },
     "gemini": {
       "binary": "gemini",
-      "receipt_sha256": "8f544f7dde394d83cf947b3ec1d154b451cd7de77bae310e12907918c4ceb1cb",
-      "recorded_at": "2026-09-24T09:35:51Z",
-      "version": "0.61.0"
+      "receipt_sha256": "56869c1a7ef0786b9db78806efe2d1e84aacde3f67672e884bd5377ff0b1ddb3",
+      "recorded_at": "2026-11-06T12:32:45Z",
+      "version": "0.67.0"
     },
     "kimi": {
       "binary": "kimi",
-      "receipt_sha256": "b65ad3c6a1f8cd3754d4e046532f6a54932272c1b5e16f5ef4534ceb46a266cf",
-      "recorded_at": "2026-09-22T09:31:26Z",
+      "receipt_sha256": "adbcddb2e8aaf3e5c3912ff74e32ccea62fa84463e40c4b51fabc9488bd6364f",
+      "recorded_at": "2026-11-06T12:32:45Z",
       "version": "1.51.0"
     },
     "opencode": {
       "binary": "opencode",
-      "receipt_sha256": "0ffc91f0ab4163fe8faf2ded5d9b8ed751ed765a8a805a37f0c682583c4ca036",
-      "recorded_at": "2026-09-24T09:35:51Z",
-      "version": "1.18.32"
+      "receipt_sha256": "767e16fd7e54293f7bc0898334e8e2d0d580b72712c29a3e0d0e0fe2941ad8e9",
+      "recorded_at": "2026-11-06T12:32:45Z",
+      "version": "1.19.5"
     },
     "pydantic_ai": {
       "binary": "clai",
-      "receipt_sha256": "ab681dc118a257837b968bd17b8fa3cb0a8c34d4a2fdb0e50970da337f8a5733",
-      "recorded_at": "2026-09-24T09:35:51Z",
-      "version": "2.49.0"
+      "receipt_sha256": "071ce889bc0d4608162ccea5044bae2161adaa63496be91988941590114be549",
+      "recorded_at": "2026-11-06T12:32:45Z",
+      "version": "2.66.0"
     },
     "qwen": {
       "binary": "qwen",
-      "receipt_sha256": "e751f5d05742cd592c526be28e633d982c868d004c83924c4aa82865d366efcd",
-      "recorded_at": "2026-09-24T09:35:51Z",
-      "version": "0.24.4"
+      "receipt_sha256": "cdb25642c77261a459c14a03cf0306c9f4d226a82e2b65df274cd18b1e3d6208",
+      "recorded_at": "2026-11-06T12:32:45Z",
+      "version": "0.26.8"
     }
   },
-  "projection_sha256": "78f2f5236f33a140d140babd42d356041ebee69eeebe92316def19f94fd03fac",
+  "projection_sha256": "86a96664d3863f7983725193809e04b5d029a2cdcb4264b6e9d388b4985d849f",
   "schema_version": 2
 }

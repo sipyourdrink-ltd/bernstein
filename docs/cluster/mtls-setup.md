@@ -43,7 +43,8 @@ where you don't have a CA yet, Bernstein ships a one-shot helper.
 bernstein cluster bootstrap-ca
 ```
 
-Writes the trio above to `~/.bernstein/cluster/`. Private keys are
+Writes `ca.crt`, `ca.key`, and the server and node cert/key pairs to `~/.bernstein/cluster/`.
+Keep `ca.key` on the operator machine only. Private keys are
 chmod 0600. Pass `--out-dir` to override the destination, `--server-san`
 (repeatable) to add DNS SANs to the server cert.
 
@@ -60,7 +61,7 @@ automatically.
 
 ```python
 from pathlib import Path
-from bernstein.core.models import ClusterConfig
+from bernstein.core.tasks.models import ClusterConfig
 from bernstein.core.protocols.cluster.cluster_tls import TLSConfig
 
 tls = TLSConfig(
@@ -120,11 +121,13 @@ After bringing up a 2-node cluster with `tls.verify_mode=required`:
 curl --cacert ~/.bernstein/cluster/ca.crt \
      --cert   ~/.bernstein/cluster/server.crt \
      --key    ~/.bernstein/cluster/server.key \
-     https://localhost:8052/cluster/health
-# expected: {"status":"ok"}
+     -H "Authorization: Bearer $BERNSTEIN_AUTH_TOKEN" \
+     https://localhost:8052/cluster/status
+# expected: the JSON cluster summary (topology, node counts, ...)
+# (or probe the public https://localhost:8052/health for a TLS-only check)
 
 # Same call without --cert/--key should fail at the TLS handshake.
-curl --cacert ~/.bernstein/cluster/ca.crt https://localhost:8052/cluster/health
+curl --cacert ~/.bernstein/cluster/ca.crt https://localhost:8052/cluster/status
 # expected: SSL handshake error / 400 No required SSL certificate was sent.
 ```
 

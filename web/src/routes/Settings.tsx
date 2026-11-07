@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Eye, EyeOff, Trash2 } from 'lucide-react';
 import { useTheme, type Theme } from '@/components/ThemeProvider';
+import { clearAuthToken, getAuthToken, setAuthToken } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-const TOKEN_STORAGE_KEY = 'bernstein_token';
 const FLEET_STORAGE_KEY = 'bernstein-fleet-mode';
 
 const THEMES: { value: Theme; label: string; hint: string }[] = [
@@ -13,8 +14,7 @@ const THEMES: { value: Theme; label: string; hint: string }[] = [
 ];
 
 function readToken(): string {
-  if (typeof window === 'undefined') return '';
-  return window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? '';
+  return getAuthToken() ?? '';
 }
 
 function readFleetMode(): boolean {
@@ -24,6 +24,7 @@ function readFleetMode(): boolean {
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
+  const queryClient = useQueryClient();
   const [tokenInput, setTokenInput] = useState<string>(() => readToken());
   const [savedToken, setSavedToken] = useState<string>(() => readToken());
   const [reveal, setReveal] = useState<boolean>(false);
@@ -38,20 +39,20 @@ export default function Settings() {
   }, [savedAt]);
 
   const handleSaveToken = () => {
-    if (typeof window === 'undefined') return;
     const trimmed = tokenInput.trim();
     if (trimmed) {
-      window.localStorage.setItem(TOKEN_STORAGE_KEY, trimmed);
+      setAuthToken(trimmed);
     } else {
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      clearAuthToken();
     }
     setSavedToken(trimmed);
     setSavedAt(Date.now());
+    // Retry everything that failed under the previous token.
+    void queryClient.invalidateQueries();
   };
 
   const handleClearToken = () => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    clearAuthToken();
     setTokenInput('');
     setSavedToken('');
     setSavedAt(Date.now());

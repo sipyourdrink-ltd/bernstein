@@ -37,15 +37,21 @@ approval actually protects.
 Every other job that used to sit behind the same `pypi` environment
 (`github-release`, `publish-npm`, `publish-mcp-registry`, and the single
 job in each of `publish-docker.yml`, `publish-homebrew.yml`, `sbom.yml`)
-authenticates a different way -- `GITHUB_TOKEN`, a long-lived `NPM_TOKEN`
-or `HOMEBREW_TAP_TOKEN`, or an OIDC audience that is not scoped by
-environment at all (the MCP registry's GitHub OIDC exchange grants
+authenticates a different way -- `GITHUB_TOKEN`, a long-lived
+`HOMEBREW_TAP_TOKEN`, npm trusted publishing (the registry-side publisher
+is bound to this repository, `publish.yml` and `release-channels`; no token
+is stored), or an OIDC audience that is not scoped by environment at all (the MCP registry's GitHub OIDC exchange grants
 `io.github.<owner>/*` off the token's repository-owner claim only). None
 of them had a credential the approval was protecting, so they now run
 under `release-channels`, an environment with the same branch/tag
 restriction as `pypi` (`main`, `v*`, `ext-v*`) but no required reviewer.
 
-PyPI waits for a human; the other channels do not.
+PyPI waits for a human; the other channels do not. The one exception is the
+Copr RPM job: it runs under its own `copr` environment, which carries
+`COPR_CONFIG` and the same reviewer gate and branch/tag restriction as `pypi`.
+Keeping it off `pypi` means its deployments and failures are recorded apart
+from the PyPI upload, so a Copr build failure does not mark the PyPI
+deployment as failed.
 
 ## Release Milestones
 
@@ -110,6 +116,30 @@ The list the workflow commits is held to the generator's own
 manifest cannot fall out of the bump the same way. Note that `.mcp.json` is an
 *input* to that generator, not an output; it is read to project `mcp.json`.
 
+## Security supported-versions table
+
+`SECURITY.md`'s Supported Versions table names the current minor release line
+as the only supported one (no backport branch), so a **minor or major** bump
+changes it: `pyproject.toml` moves to the new `X.Y`, and the table must move
+with it. `scripts/bump_version.py` does not touch `SECURITY.md`, and
+`release-major-minor.yml`'s `add-paths` does not carry it either, so this is
+a manual edit on the bump PR, the same as writing the version's release-notes
+page is. A **patch** bump (`vX.Y.Z` with the same `X.Y`) needs no edit here.
+
+Update both rows to the new minor:
+
+```
+| X.Y.x | Yes |
+| < X.Y | No  |
+```
+
+`tests/unit/test_security_md.py` derives the expected line from
+`pyproject.toml`'s version at test time and fails on a stale table instead of
+letting it ship. It carries `pytest.mark.whole_tree_guard`, so
+`scripts/run_tests.py --affected` selects it on the bump PR itself -- not just
+on the next PR that happens to touch `SECURITY.md` -- which is what makes this
+a gate on the bump rather than a drift nobody notices until the next report.
+
 ## Release notes
 
 Release history lives in `docs/release-notes/`, one `vX.Y.Z.md` page per tagged
@@ -138,11 +168,15 @@ entries to them.
 | Fact | Value |
 |---|---|
 | Copr project | <https://copr.fedorainfracloud.org/coprs/alexchernysh/bernstein/> |
-| Repository secret | `COPR_CONFIG` |
+| Environment secret | `COPR_CONFIG`, on the `copr` environment |
 | Publishing job | `publish-copr` in `.github/workflows/publish.yml` |
 | Spec | `packaging/rpm/bernstein.spec` |
 | Builder | `scripts/build_copr_srpm.py` |
 | Build watcher | `scripts/copr_build_watch.py` |
+
+`COPR_CONFIG` is defined on the `copr` environment, not as a repository secret
+and not on `pypi`: an environment secret does not follow a job across
+environments, so the job reads an empty value anywhere else.
 
 `COPR_CONFIG` holds a complete `copr-cli` configuration file — the same
 content `~/.config/copr` has on a workstation, including the `[copr-cli]`

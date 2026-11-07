@@ -269,3 +269,63 @@ async def test_dry_run_prints_the_claim_decision_without_calling_claim() -> None
     # Dry-run calls claim_next to see what would be claimed, but then doesn't run/submit
     assert source.run_count == 0
     assert len(source.submitted) == 0
+
+
+class _ReofferingSource(InMemoryTaskSource):
+    """A stateless source: a released task is offered again on the next call."""
+
+    def __init__(self, task: FakeTask) -> None:
+        super().__init__([task])
+        self._task = task
+        self.offers = 0
+
+    async def claim_next(self, profile: VolunteerProfile) -> FakeTask | None:
+        self.offers += 1
+        if self.offers > 50:  # a runaway loop must fail the test, not hang it
+            raise AssertionError("claim_next called without bound")
+        self.claimed.append(self._task.id)
+        return self._task
+
+
+@pytest.mark.asyncio
+async def test_a_source_that_re_offers_a_released_task_does_not_spin_the_loop() -> None:
+    profile = VolunteerProfile.from_flags(allowed_projects=["owner/repo"], max_size="m")
+    source = _ReofferingSource(FakeTask(id="big", project="owner/repo", size="xl", task_type="bug"))
+
+    await asyncio.wait_for(AutopilotLoop(profile=profile, source=source, max_iterations=1).run(), timeout=5)
+
+    assert source.offers <= 3
+    assert source.run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_stop_request_ends_the_claim_scan() -> None:
+    profile = VolunteerProfile.from_flags(allowed_projects=["owner/repo"], max_size="m")
+    source = InMemoryTaskSource(
+        [FakeTask(id=f"big{i}", project="owner/repo", size="xl", task_type="bug") for i in range(5)]
+    )
+    loop = AutopilotLoop(profile=profile, source=source)
+    release = source.release
+
+    async def release_then_stop(task: FakeTask) -> None:
+        await release(task)
+        loop.request_stop()
+
+    source.release = release_then_stop  # type: ignore[method-assign]
+
+    await asyncio.wait_for(loop.run(), timeout=5)
+
+    assert source.released == ["big0"]
+    assert source.run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_does_not_keep_the_claim_it_took() -> None:
+    profile = VolunteerProfile.from_flags(allowed_projects=["owner/repo"], max_size="m")
+    source = InMemoryTaskSource([FakeTask(id="t1", project="owner/repo", size="s", task_type="bug")])
+
+    await AutopilotLoop(profile=profile, source=source, dry_run=True).run()
+
+    assert source.claimed == []
+    assert source.released == ["t1"]
+    assert source.run_count == 0

@@ -42,8 +42,12 @@ __all__ = [
     "WaiverReceipt",
     "assemble_tag_conformance_receipt",
     "assemble_waiver_receipt",
+    "canonical_admission_receipt_bytes",
+    # Backward-compat aliases for old import paths
     "canonical_receipt_bytes",
+    "sign_admission_receipt",
     "sign_receipt",
+    "verify_admission_receipt",
     "verify_receipt",
 ]
 
@@ -51,13 +55,17 @@ __all__ = [
 RECEIPT_SCHEMA_VERSION: str = "1.0.0"
 
 
-def canonical_receipt_bytes(payload: dict[str, Any]) -> bytes:
+def canonical_admission_receipt_bytes(payload: dict[str, Any]) -> bytes:
     """Return deterministic signing bytes: sorted keys, compact, UTF-8."""
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+# Backward-compat alias for old import path
+canonical_receipt_bytes = canonical_admission_receipt_bytes
+
+
 def _payload_digest(payload: dict[str, Any]) -> str:
-    return hashlib.sha256(canonical_receipt_bytes(payload)).hexdigest()
+    return hashlib.sha256(canonical_admission_receipt_bytes(payload)).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,15 +194,19 @@ def _with_digest(receipt: WaiverReceipt | TagConformanceReceipt) -> Any:
     return dataclasses.replace(receipt, payload_digest=digest)
 
 
-def sign_receipt(receipt: WaiverReceipt | TagConformanceReceipt, *, private_key_pem: str) -> Any:
+def sign_admission_receipt(receipt: WaiverReceipt | TagConformanceReceipt, *, private_key_pem: str) -> Any:
     """Attach a detached Ed25519 signature over the canonical signing bytes."""
     import dataclasses
 
-    signature = sign_payload(canonical_receipt_bytes(receipt.signing_payload()), private_key_pem)
+    signature = sign_payload(canonical_admission_receipt_bytes(receipt.signing_payload()), private_key_pem)
     return dataclasses.replace(receipt, signature=signature)
 
 
-def verify_receipt(
+# Backward-compat alias for old import path
+sign_receipt = sign_admission_receipt
+
+
+def verify_admission_receipt(
     receipt: WaiverReceipt | TagConformanceReceipt,
     *,
     public_key_pem: str,
@@ -214,7 +226,7 @@ def verify_receipt(
         return False, "receipt is unsigned"
     try:
         outcome = verify_payload(
-            canonical_receipt_bytes(receipt.signing_payload()),
+            canonical_admission_receipt_bytes(receipt.signing_payload()),
             receipt.signature,
             public_key_pem,
             allow_unverified=True,
@@ -224,3 +236,7 @@ def verify_receipt(
     if not outcome.verified:
         return False, outcome.reason
     return True, ""
+
+
+# Backward-compat alias for old import path
+verify_receipt = verify_admission_receipt

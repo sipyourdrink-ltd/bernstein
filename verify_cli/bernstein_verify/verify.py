@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,7 +63,8 @@ _KIND_ARTICLE12 = "article-12"
 _KIND_RETENTION = "retention"
 _KIND_INCIDENT = "incident"
 _KIND_OVERSIGHT = "oversight"
-_REGULATOR_KINDS = frozenset({_KIND_RETENTION, _KIND_INCIDENT, _KIND_OVERSIGHT})
+_KIND_AI_RMF = "ai-rmf"
+_REGULATOR_KINDS = frozenset({_KIND_RETENTION, _KIND_INCIDENT, _KIND_OVERSIGHT, _KIND_AI_RMF})
 
 
 # ---------- RFC 8785 JCS ----------
@@ -85,6 +87,83 @@ def jcs_canonicalise(d: dict[str, Any]) -> bytes:
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
+
+
+# ---------- RFC 6962 Merkle (copy of bernstein_verify_receipt) ----------
+#
+# Copied, not imported: this wheel must not depend on bernstein.* or on the
+# sibling receipt verifier. The copy is cross-tested against the runtime
+# hashing in tests/test_verify.py so a drift cannot silently diverge.
+
+
+_LEAF_TAG = b"\x00"
+_INTERNAL_TAG = b"\x01"
+EMPTY_TREE_ROOT = hashlib.sha256(b"empty-tree").hexdigest()
+
+
+def _leaf_digest(data: bytes) -> str:
+    """RFC 6962 style leaf hash: H(0x00 || data)."""
+    return hashlib.sha256(_LEAF_TAG + data).hexdigest()
+
+
+def _combine_internal(left: str, right: str) -> str:
+    """RFC 6962 style internal node: H(0x01 || left || right)."""
+    return hashlib.sha256(_INTERNAL_TAG + left.encode() + right.encode()).hexdigest()
+
+
+def _merkle_root(leaves: list[str]) -> str:
+    """Merkle root over leaves (lone odd node promoted unchanged)."""
+    if not leaves:
+        return EMPTY_TREE_ROOT
+    level = list(leaves)
+    while len(level) > 1:
+        nxt: list[str] = []
+        for i in range(0, len(level), 2):
+            if i + 1 < len(level):
+                nxt.append(_combine_internal(level[i], level[i + 1]))
+            else:
+                nxt.append(level[i])
+        level = nxt
+    return level[0]
+
+
+def _root_from_inclusion(leaf_hash: str, audit_path: list[dict[str, Any]]) -> str:
+    """Fold an inclusion proof from leaf up to root."""
+    node = leaf_hash
+    for step in audit_path:
+        sibling = str(step.get("hash", ""))
+        if step.get("left"):
+            node = _combine_internal(sibling, node)
+        else:
+            node = _combine_internal(node, sibling)
+    return node
+
+
+def _canonical_sth_bytes(signed_tree_head: dict[str, Any]) -> bytes:
+    """Canonical bytes the log signed: the tree head without the signature."""
+    body = {key: value for key, value in signed_tree_head.items() if key != "signature_b64"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _is_positive_int(value: object) -> bool:
+    """True for a real ``int`` >= 1; ``bool``, ``float`` and ``str`` never qualify."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _select_pinned_log_key(hint: object, pinned: tuple[str, ...] | list[str]) -> str | None:
+    """Pick an operator-pinned key; the artefact key is only a hint."""
+    unique = list(dict.fromkeys(key.strip().lower() for key in pinned if key.strip()))
+    if not unique:
+        return None
+    if isinstance(hint, str) and hint.strip():
+        normalized = hint.strip().lower()
+        return normalized if normalized in unique else None
+    return unique[0] if len(unique) == 1 else None
+
+
+def _transparency_log_leaf(head_sha256: str) -> str:
+    """RFC 6962 leaf over the bare sealed-head digest (raw 32 bytes)."""
+    return _leaf_digest(bytes.fromhex(head_sha256))
 
 
 # ---------- RFC 7515 detached JWS ----------
@@ -540,8 +619,95 @@ def _canonical_any(obj: Any) -> bytes:
     )
 
 
-def _verify_manifest_anchor(manifest: dict[str, Any]) -> list[str]:
-    """Confirm ``output_hash`` self-anchors the canonical manifest body."""
+def _verify_transparency_log_anchor(
+    record: dict[str, Any],
+    *,
+    sealed_head: str | None = None,
+    trusted_log_keys: tuple[str, ...] | list[str] = (),
+) -> list[str]:
+    """Offline-check a ``transparency-log`` seal-anchor record.
+
+    Recomputes the leaf from the sealed head, walks the audit path, and
+    verifies the tree-head signature against an operator-pinned log key.
+    The key inside the artefact is only a hint. No network.
+    """
+    pins = [key for key in trusted_log_keys if key.strip()]
+    if not pins:
+        return [
+            "transparency-log: no trusted log public keys supplied - "
+            "the tree-head signature was not checked"
+        ]
+    errors: list[str] = []
+    head = sealed_head if sealed_head is not None else record.get("head_sha256")
+    leaf_hash = record.get("leaf_hash")
+    tree_size = record.get("tree_size")
+    audit_path = record.get("audit_path")
+    sth = record.get("signed_tree_head")
+    log_public_key = record.get("log_public_key")
+    if not isinstance(head, str):
+        return ["transparency-log: missing head_sha256"]
+    if not isinstance(leaf_hash, str) or not _is_positive_int(tree_size):
+        return ["transparency-log: missing leaf_hash or a positive integer tree_size"]
+    if not isinstance(audit_path, list) or not isinstance(sth, dict):
+        return ["transparency-log: missing audit_path or signed_tree_head"]
+
+    selected = _select_pinned_log_key(
+        log_public_key if isinstance(log_public_key, str) else None, pins
+    )
+    if selected is None:
+        return ["transparency-log: embedded log public key is not in the operator pin set"]
+
+    try:
+        recomputed_leaf = _transparency_log_leaf(head)
+    except ValueError as exc:
+        return [f"transparency-log: sealed head is not hex: {exc}"]
+    if recomputed_leaf != leaf_hash:
+        errors.append(
+            f"transparency-log: leaf_hash {leaf_hash} does not recompute from sealed head {head}"
+        )
+
+    computed_root = _root_from_inclusion(recomputed_leaf, audit_path)
+    sth_root = sth.get("root_hash")
+    sth_size = sth.get("tree_size")
+    signature_b64 = sth.get("signature_b64")
+    if not isinstance(sth_root, str) or not isinstance(signature_b64, str):
+        return ["transparency-log: signed_tree_head is missing root_hash or signature_b64"]
+    if not _is_positive_int(sth_size):
+        return [
+            f"transparency-log: signed tree head tree_size {sth_size!r} is not a positive integer"
+        ]
+    if computed_root != sth_root:
+        errors.append(
+            "transparency-log: inclusion proof recomputes root "
+            f"{computed_root}, signed tree head has {sth_root}"
+        )
+    if sth_size != tree_size:
+        errors.append(
+            "transparency-log: signed tree head tree_size "
+            f"{sth_size!r} does not match stored {tree_size}"
+        )
+
+    try:
+        signature = base64.b64decode(signature_b64, validate=True)
+        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(selected))
+        public_key.verify(signature, _canonical_sth_bytes(sth))
+    except (InvalidSignature, ValueError) as exc:
+        errors.append(f"transparency-log: tree-head signature: {exc}")
+    return errors
+
+
+def _verify_manifest_anchor(
+    manifest: dict[str, Any],
+    *,
+    trusted_log_keys: tuple[str, ...] | list[str] = (),
+) -> list[str]:
+    """Confirm ``output_hash`` self-anchors the canonical manifest body.
+
+    A ``transparency-log`` seal-anchor record is verified as an inclusion
+    proof instead: the pack-manifest ``output_hash`` contract does not apply.
+    """
+    if manifest.get("anchor_kind") == "transparency-log":
+        return _verify_transparency_log_anchor(manifest, trusted_log_keys=trusted_log_keys)
     output_hash = manifest.get("output_hash")
     if not isinstance(output_hash, str):
         return [f"{_MANIFEST_NAME}: missing output_hash"]
@@ -763,6 +929,114 @@ def _verify_incident(
         )
 
 
+def _verify_ai_rmf(
+    zf: zipfile.ZipFile,
+    manifest: dict[str, Any],
+    errors: list[str],
+    stats: dict[str, Any],
+) -> None:
+    """Check the NIST AI RMF projection: canonical evidence, hashes in the log.
+
+    An ``empty`` or ``unmatched`` window is valid and must not claim a Covered
+    row was evidenced. A cited hash that is absent from ``lineage-log.jsonl``
+    fails. Member-byte tamper is already reported by ``_verify_member_integrity``.
+    """
+    raw = _read_bytes_member(zf, "subcategory-evidence.json")
+    if raw is None:
+        errors.append("subcategory-evidence.json: missing")
+        return
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError:
+        errors.append("subcategory-evidence.json: invalid JSON")
+        return
+    if not isinstance(doc, dict) or _canonical_any(doc) != raw:
+        errors.append("subcategory-evidence.json: non-canonical bytes")
+        return
+
+    claim = doc.get("window_claim")
+    if claim not in {"empty", "unmatched", "evidenced"}:
+        errors.append(
+            "subcategory-evidence.json: window_claim must be empty, unmatched, or evidenced"
+        )
+    mapping_sha256 = doc.get("mapping_sha256")
+    if not isinstance(mapping_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", mapping_sha256):
+        errors.append(
+            "subcategory-evidence.json: mapping_sha256 must be 64 lowercase hex characters"
+        )
+    rows = doc.get("rows")
+    if not isinstance(rows, list):
+        errors.append("subcategory-evidence.json: rows missing")
+        rows = []
+
+    log = _read_bytes_member(zf, "lineage-log.jsonl")
+    if log is None:
+        errors.append("lineage-log.jsonl: missing")
+        return
+    hashes: set[str] = set()
+    line_count = 0
+    if log and not log.endswith(b"\n"):
+        errors.append("lineage-log.jsonl: missing trailing newline")
+    for lineno, line in enumerate(_split_jsonl_bytes(log), start=1):
+        if line == b"":
+            continue
+        line_count += 1
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            errors.append(f"lineage-log.jsonl:{lineno}: invalid JSON")
+            continue
+        if not isinstance(obj, dict) or _canonical_any(obj) != line:
+            errors.append(f"lineage-log.jsonl:{lineno}: non-canonical line bytes")
+            continue
+        hashes.add(_sha256_hex(line))
+
+    entry_count = doc.get("entry_count")
+    if entry_count != line_count:
+        errors.append(
+            f"subcategory-evidence.json: entry_count {entry_count} "
+            f"disagrees with lineage log ({line_count})"
+        )
+    if manifest.get("entry_count") != entry_count:
+        errors.append("pack-manifest.json: entry_count disagrees with subcategory-evidence.json")
+    if manifest.get("window_claim") != claim:
+        errors.append("pack-manifest.json: window_claim disagrees with subcategory-evidence.json")
+
+    ids = {row.get("id") for row in rows if isinstance(row, dict)}
+    evidenced_rows = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            errors.append("subcategory-evidence.json: row is not an object")
+            continue
+        row_id = str(row.get("id", ""))
+        cited = row.get("chain_entry_hashes", [])
+        if not isinstance(cited, list):
+            errors.append(f"{row_id}: chain_entry_hashes is not a list")
+            continue
+        if row.get("verdict") in {"Not-covered", "Partial"} and (cited or row.get("evidenced")):
+            errors.append(f"{row_id}: {row.get('verdict')} row claims chain evidence")
+        if claim in {"empty", "unmatched"} and (cited or row.get("evidenced")):
+            errors.append(f"{row_id}: {claim} window must not claim chain evidence")
+        if row.get("evidenced"):
+            evidenced_rows += 1
+            if not cited:
+                errors.append(f"{row_id}: evidenced row has no chain entries")
+        ref = row.get("genai_profile_ref")
+        if ref is not None and ref not in ids:
+            errors.append(f"{row_id}: genai_profile_ref {ref!r} is not a subcategory in this pack")
+        for digest in cited:
+            if digest not in hashes:
+                errors.append(f"{row_id}: chain entry {digest} is not in lineage-log.jsonl")
+
+    if claim == "empty" and hashes:
+        errors.append("window_claim empty but lineage-log.jsonl has entries")
+    if claim == "evidenced" and evidenced_rows == 0:
+        errors.append("window_claim evidenced but no Covered row carries chain entries")
+    stats["entry_count"] = len(hashes)
+    stats["window_claim"] = claim
+    stats["evidenced_rows"] = evidenced_rows
+
+
 def _verify_regulator_pack(
     zf: zipfile.ZipFile,
     manifest: dict[str, Any] | None,
@@ -787,5 +1061,7 @@ def _verify_regulator_pack(
         _verify_oversight(zf, manifest, errors, stats)
     elif kind == _KIND_INCIDENT:
         _verify_incident(zf, manifest, errors, stats)
+    elif kind == _KIND_AI_RMF:
+        _verify_ai_rmf(zf, manifest, errors, stats)
 
     return VerifyResult(ok=not errors, errors=errors, stats=stats)

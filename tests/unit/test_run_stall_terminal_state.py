@@ -677,3 +677,41 @@ class TestZeroTerminalRunReachesATerminalState:
         assert "run_stall_check: NOT confirmed" in caplog.text, (
             "the confirmation pass must be the thing that aborted the stop, not an earlier guard"
         )
+
+
+class TestClosedOnlyRunSelfStops:
+    def test_closed_only_run_self_stops_and_journals_quiescence(self, tmp_path: Path, fast_stall_env: None) -> None:
+        """#5968: every task archived to ``closed`` is a finished run, not an idle one."""
+        closed = {
+            "id": "t-closed",
+            "title": "archived",
+            "description": "d",
+            "role": "manager",
+            "status": "closed",
+            "created_at": time.time() - 120.0,
+            "depends_on": [],
+            "owned_files": [],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "GET" and url.path == "/tasks":
+                status = url.params.get("status")
+                return httpx.Response(200, json=[dict(closed)] if status in (None, "closed") else [])
+            if request.method == "GET" and url.path == "/orchestrator/holds":
+                return httpx.Response(200, json={"holds": []})
+            return httpx.Response(200, json={})
+
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler))
+        orch._running = True
+
+        for _ in range(_TICK_BUDGET):
+            orch.tick()
+            if not orch._running:
+                break
+
+        assert not orch._running, "a run whose only tasks are closed must self-stop"
+        assert orch._final_retrospective_regenerated is True
+
+        orch._record_run_quiescence()
+        assert '"event": "run_quiescence"' in orch._recorder.path.read_text()

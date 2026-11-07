@@ -52,7 +52,7 @@ class TestKimiAdapterSpawn:
             )
         msg = str(exc_info.value)
         assert "kimi not found" in msg
-        assert "uv tool install kimi-cli" in msg
+        assert "uv tool install kimi-cli==1.51.0" in msg
 
 
 class TestKimiAdapterName:

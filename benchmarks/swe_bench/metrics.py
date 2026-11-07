@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import statistics
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 #: What one instance did.
 #:
@@ -54,6 +58,26 @@ class InstanceResult:
     #: abstention is not one. Separate from `error_message`, which says the
     #: HARNESS broke; this says the run worked and declined to answer.
     abstention_reason: str = ""
+    #: The run's *declared* probability that its patch resolves the instance,
+    #: ∈ [0, 1], or ``None`` when the run declared nothing. Used by
+    #: Brier-calibration scoring (#5923): ``mean((confidence - outcome)**2)``
+    #: over evaluated instances that declared a confidence.
+    #:
+    #: ``None``, never a default value. A result written before this field
+    #: existed made no prediction, and defaulting it to 1.0 would score that
+    #: silence as maximal overconfidence -- a failed legacy result would
+    #: contribute ``(1.0 - 0)**2 = 1.0``, the worst possible Brier term, from
+    #: a run that never expressed a confidence. Calibration measures what the
+    #: run said; a number it did not say is not data about it.
+    confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        # A probability outside [0, 1] is not one, and Brier does not notice:
+        # a confidence of 5.0 on a failed instance yields a term of 25 and
+        # drags the mean without erroring. Refuse it where it enters.
+        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
+            msg = f"confidence must be a probability in [0, 1], got {self.confidence!r}"
+            raise ValueError(msg)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -61,9 +85,14 @@ class InstanceResult:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> InstanceResult:
         payload = dict(data)
-        traces = [AgentTrace(**t) for t in payload.pop("agent_traces", [])]  # type: ignore[arg-type]
+        raw_traces = payload.pop("agent_traces", [])
+        traces = [AgentTrace(**t) for t in raw_traces] if isinstance(raw_traces, list) else []  # type: ignore[arg-type]
         # Results written before #5567 have no abstention field.
         payload.setdefault("abstention_reason", "")
+        # Results written before #5923 have no confidence field, and absence
+        # is the honest value: they declared none. `None` deserialises them
+        # identically to the old default without inventing a prediction.
+        payload.setdefault("confidence", None)
         return cls(**payload, agent_traces=traces)  # type: ignore[arg-type]
 
 
@@ -92,6 +121,18 @@ class ScenarioSummary:
     #: because a run can raise its resolve rate by guessing and this rate is what
     #: that costs.
     confident_error_rate: float = 0.0
+    #: Weight of a wrong answer in :attr:`expected_value`:
+    #: ``EV = (resolved - lambda * wrong) / attempted``. Operator-set risk appetite;
+    #: higher lambda penalises confident wrong answers more heavily (#5923).
+    lambda_penalty: float = 0.5
+    #: ``(resolved - lambda_penalty * wrong) / attempted`` -- a single scalar
+    #: reward that lets one run be ranked against another under a stated risk
+    #: appetite. The three rates describe behaviour; this ranks it.
+    expected_value: float = 0.0
+    #: ``mean((confidence - outcome)**2)`` over evaluated instances (not skipped,
+    #: not abstained, not errored). Measures how well the declared
+    #: :pyattr:`InstanceResult.confidence` predicts the actual outcome.
+    brier_score: float = 0.0
     verified: bool = False
     source_type: SummarySourceType = "mock"
     dataset: str = "princeton-nlp/SWE-bench_Lite"
@@ -138,6 +179,10 @@ class ScenarioSummary:
         payload.setdefault("abstained", 0)
         payload.setdefault("abstain_rate", 0.0)
         payload.setdefault("confident_error_rate", 0.0)
+        # A summary written before #5923 has no EV/Brier fields.
+        payload.setdefault("lambda_penalty", 0.5)
+        payload.setdefault("expected_value", 0.0)
+        payload.setdefault("brier_score", 0.0)
         payload.setdefault("verified", False)
         payload.setdefault("source_type", "mock")
         payload.setdefault("dataset", "princeton-nlp/SWE-bench_Lite")
@@ -170,8 +215,17 @@ def _coerce_int(value: object) -> int:
     return 0
 
 
-def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
-    """Compute summary statistics for a list of instance results."""
+def aggregate(results: list[InstanceResult], *, lambda_penalty: float = 0.5) -> ScenarioSummary:
+    """Compute summary statistics for a list of instance results.
+
+    Args:
+        results: The per-instance results to summarise.
+        lambda_penalty: Weight of a wrong answer in :attr:`expected_value`,
+            the operator's stated risk appetite. Ranking runs *under a stated
+            appetite* is the point of the metric, so it is a parameter rather
+            than a constant; the recorded value travels on the summary so a
+            reader knows which appetite produced the number.
+    """
     if not results:
         raise ValueError("Cannot aggregate empty results list")
 
@@ -211,6 +265,30 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         else 0.0
     )
 
+    # -- Expected value (#5923) ------------------------------------------------
+    # EV = (resolved - lambda * wrong) / attempted. `wrong` is `failed`: a
+    # harness error is not the run being confidently wrong, and counting it as
+    # one would move EV for something the run did not cause. Same exclusion
+    # rule as `confident_error_rate` above.
+    expected_value = (resolved - lambda_penalty * failed) / attempted if attempted > 0 else 0.0
+
+    # -- Brier calibration score (#5923) ---------------------------------------
+    # mean((confidence - outcome)^2) over evaluated instances. Evaluated means
+    # the run made a prediction: not skipped, not abstained, not a harness error,
+    # and it declared a confidence. `outcome` is 1 when resolved, 0 otherwise.
+    #
+    # A result with no declared confidence leaves the mean entirely rather than
+    # contributing an assumed one: Brier measures how well a declared
+    # probability tracked reality, and there is nothing to score when none was
+    # declared.
+    evaluated = [r for r in results if r.status not in ("skipped", "error", "abstained") and r.confidence is not None]
+    if evaluated:
+        brier_score = statistics.mean(
+            (r.confidence - (1.0 if r.resolved else 0.0)) ** 2 for r in evaluated if r.confidence is not None
+        )
+    else:
+        brier_score = 0.0
+
     return ScenarioSummary(
         scenario_name=scenario_name,
         total_instances=total,
@@ -222,6 +300,9 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         abstained=abstained,
         abstain_rate=abstain_rate,
         confident_error_rate=confident_error_rate,
+        lambda_penalty=lambda_penalty,
+        expected_value=expected_value,
+        brier_score=brier_score,
         mean_wall_time_s=mean_wall,
         median_wall_time_s=median_wall,
         total_cost_usd=total_cost,
@@ -230,6 +311,53 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         sample_size=total,
         scenarios=[scenario_name],
     )
+
+
+def _repair_torn_tail(path: Path) -> None:
+    """Make the file end on a line boundary before anything is appended to it.
+
+    Every complete write ends in ``\\n``, so a file whose last byte is anything
+    else was cut off mid-append. Appending straight after that fuses the
+    fragment and the new result into one invalid line. ``load`` then drops the
+    result the resumed run just paid for, and the append after that pushes the
+    bad line into the middle of the file, where ``load`` raises on every read.
+
+    Two cases, decided the way ``load`` decides them. A tail that parses is a
+    whole result that lost only its newline, and ``load`` already counts it, so
+    it gets the newline. A tail that does not parse is the fragment ``load``
+    already dropped, so it is cut back to the last newline. Either way the
+    bytes on disk now say what the reader was already reporting.
+    """
+    if not path.exists():
+        return
+    with path.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        if f.tell() == 0:
+            return
+        f.seek(-1, os.SEEK_END)
+        if f.read(1) == b"\n":
+            return
+        f.seek(0)
+        data = f.read()
+    keep = data.rfind(b"\n") + 1
+    tail = data[keep:]
+    try:
+        json.loads(tail)
+    except ValueError:
+        with path.open("r+b") as f:
+            f.truncate(keep)
+            f.flush()
+            os.fsync(f.fileno())
+        logger.warning(
+            "%s: removed a torn final line (%d bytes) before appending, left by an interrupted append.",
+            path,
+            len(tail),
+        )
+        return
+    with path.open("ab") as f:
+        f.write(b"\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
 class ResultStore:
@@ -243,22 +371,78 @@ class ResultStore:
         return self.results_dir / f"{scenario_name}.jsonl"
 
     def append(self, result: InstanceResult) -> None:
-        """Append one result to the scenario's JSONL file."""
+        """Append one result to the scenario's JSONL file, durably.
+
+        ``fsync`` because this file IS the resume point. Without it a finished
+        instance can sit in the OS page cache when the process dies, and the
+        next run re-evaluates it - which on SWE-Bench is a real model call and
+        real money, paid again for work that was already done.
+        """
         path = self._path_for(result.scenario_name)
+        _repair_torn_tail(path)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(result.to_dict()) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def load(self, scenario_name: str) -> list[InstanceResult]:
-        """Load all results for a scenario."""
+        """Load all results for a scenario.
+
+        A torn FINAL line is dropped; a malformed line anywhere else raises.
+
+        The distinction is the whole point. Appending is not atomic, so a
+        process killed mid-write leaves a partial last line - and a bare
+        ``json.loads`` over every line made that one fragment poison the file:
+        ``already_evaluated`` raised, so a crashed benchmark run could not
+        resume, and every instance it HAD completed was re-evaluated. That is
+        the opposite of what this file is for.
+
+        Skipping every unparseable line would trade that for something worse -
+        silent data loss in the middle of a file, where corruption means
+        something went wrong that nobody will now hear about. Only the last
+        line can be torn by an interrupted append, so only the last line is
+        forgiven.
+
+        No tear can parse as an incomplete result: a proper prefix of a JSON
+        object is never valid JSON, so a final line that parses is complete.
+
+        ``load`` only reads. The torn bytes stay on disk until the next
+        ``append`` removes them, which is what keeps the first resumed result
+        from being written onto the end of the fragment.
+        """
         path = self._path_for(scenario_name)
         if not path.exists():
             return []
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            # Every line this store writes is ASCII (``json.dumps`` escapes the
+            # rest), so a tear cannot split a character. Bytes that do not
+            # decode are corruption, and get the same contract as any other.
+            raise ValueError(f"{path}: not valid UTF-8, so it is corrupt rather than torn.") from exc
+        lines = [line.strip() for line in text.splitlines()]
+        populated = [(index, line) for index, line in enumerate(lines) if line]
         results: list[InstanceResult] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
+        for position, (index, line) in enumerate(populated):
+            try:
                 data: dict[str, object] = json.loads(line)
-                results.append(InstanceResult.from_dict(data))
+            except ValueError as exc:
+                is_last = position == len(populated) - 1
+                if not is_last:
+                    raise ValueError(
+                        f"{path}: line {index + 1} is not valid JSON, and it is not the last line. "
+                        "A torn final line is a crash artefact; one in the middle is corruption, "
+                        "and dropping it would lose a completed result silently."
+                    ) from exc
+                logger.warning(
+                    "%s: dropping a torn final line (%d chars) - an append was interrupted. "
+                    "The %d complete result(s) before it are intact.",
+                    path,
+                    len(line),
+                    len(results),
+                )
+                break
+            results.append(InstanceResult.from_dict(data))
         return results
 
     def load_all(self) -> dict[str, list[InstanceResult]]:

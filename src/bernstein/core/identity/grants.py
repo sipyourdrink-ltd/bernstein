@@ -54,7 +54,7 @@ One JSONL line per record under ``<root>/grants/<run_id>.jsonl``::
       "issuer": "manager:...",          # or a spiffe:// id under SPIFFE mode
       "issuer_pubkey": "-----BEGIN PUBLIC KEY----- ...",
       "token_id": "",                   # set on grant_exchanged
-      "reason": "",                     # set on revoked / refused
+      "reason": "",                     # set on revoked / refused, or why an issue was made
       "created": 1730000000,
       "prev_hmac": "<hex>",
       "signature": "<hex ed25519>",
@@ -567,6 +567,7 @@ class GrantLedger:
         grant_id: str | None = None,
         created: int | None = None,
         principal: str = "",
+        reason: str = "",
     ) -> GrantReceipt:
         """Issue a scoped grant and append it as a ``grant_issued`` record.
 
@@ -582,6 +583,8 @@ class GrantLedger:
             principal: Optional agent principal the grant is issued to. When
                 set, the grant stays valid only while that principal is
                 provisioned (:mod:`bernstein.core.identity.principals`).
+            reason: Optional note on why the grant was issued, written into the
+                signed ``reason`` field (for example a policy-driven approval).
 
         Returns:
             The freshly-appended :class:`GrantReceipt`.
@@ -596,7 +599,7 @@ class GrantLedger:
             expiry=expiry,
             capability_ceiling=capability_ceiling,
             token_id="",
-            reason="",
+            reason=reason,
             created=created,
             principal=principal,
         )

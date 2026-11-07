@@ -76,6 +76,9 @@ extend-exclude = [
     # Translated READMEs - typos has only an English dictionary, every
     # non-English word would be a false positive.
     "docs/i18n/**",
+    # Community recognition translations - non-English content, every word
+    # would be a false positive with English-only dictionary.
+    "community/recognition/translations/**",
     # Latin-script translated READMEs at the repo root - same false-positive
     # profile; the English README.md does not match this glob and stays in scope.
     "README.*.md",

@@ -1,5 +1,15 @@
 {% extends "base.html" %}
 
+{#- Fonts from the type ramp in docs/design/tokens.md: Inter for text and UI,
+    Fraunces for headings and the header lock-up, JetBrains Mono for code and
+    labels. Loaded here rather than through theme.font so the 500 and 600
+    weights the ramp uses are present. -#}
+{% block fonts %}
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+{% endblock %}
+
 {% block extrahead %}
   <meta name="author" content="Alex Chernysh" />
   <link rel="author" href="https://alexchernysh.com" />
@@ -7,10 +17,10 @@
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Bernstein - The Open-Source Governance Layer for AI Agents" />
   <meta property="og:description" content="No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically. Signed lineage plus an opt-in HMAC audit chain, verified offline." />
-  <meta property="og:url" content="https://bernstein.readthedocs.io/" />
-  <meta property="og:image" content="https://bernstein.readthedocs.io/en/latest/assets/banner_one_command_1536x1024.png" />
+  <meta property="og:url" content="https://docs.bernstein.run/" />
+  <meta property="og:image" content="https://docs.bernstein.run/en/latest/assets/brand/bernstein-og-1200x630.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Bernstein - The Open-Source Governance Layer for AI Agents" />
   <meta name="twitter:description" content="No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically. Signed lineage plus an opt-in HMAC audit chain, verified offline." />
-  <meta name="twitter:image" content="https://bernstein.readthedocs.io/en/latest/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:image" content="https://docs.bernstein.run/en/latest/assets/brand/bernstein-og-1200x630.png" />
 {% endblock %}

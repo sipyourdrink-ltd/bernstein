@@ -439,3 +439,131 @@ def test_verify_receipt_offline_accepts_a_genuinely_anchored_receipt(keys: dict,
 
     record = json.dumps(receipt.to_dict()).encode("utf-8")
     assert verify_receipt_offline(record, str(runtime_dir / "chain.db")) is True
+
+
+def _refusal(paths):
+    from bernstein.core.git.read_set_receipt import ReadSetRefusalReceipt
+
+    return ReadSetRefusalReceipt(v=1, task_id="t1", base_commit="abc", target_branch="main", changed_paths=paths)
+
+
+def test_receipt_hash_independent_of_changed_paths_order(sample_changed_paths):
+    fwd = _refusal(list(sample_changed_paths))
+    rev = _refusal(list(reversed(sample_changed_paths)))
+    key = lambda c: (c.path, c.old_commit, c.new_commit)  # noqa: E731
+    assert rev.changed_paths != sorted(rev.changed_paths, key=key), "fixture must not already be sorted"
+    assert fwd.canonical_bytes() == rev.canonical_bytes()
+    assert fwd.receipt_hash() == rev.receipt_hash()
+
+
+def test_receipt_hash_stable_across_pythonhashseed():
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "from bernstein.core.git.read_set_receipt import ChangedPath, ReadSetRefusalReceipt\n"
+        "ps={ChangedPath(f'f{i}.py', f'o{i}', f'n{i}') for i in range(20)}\n"
+        "r=ReadSetRefusalReceipt(v=1, task_id='t', base_commit='b', target_branch='m', changed_paths=list(ps))\n"
+        "print(r.receipt_hash())"
+    )
+    out = {
+        subprocess.run(
+            [sys.executable, "-c", code],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for seed in ("1", "2", "3")
+    }
+    assert len(out) == 1
+
+
+def test_sign_and_verify_with_reordered_input(sample_changed_paths, keys: dict) -> None:
+    from bernstein.core.git.read_set_receipt import build_refusal_receipt, verify_refusal_receipt
+
+    rev = list(reversed(sample_changed_paths))
+    receipt = build_refusal_receipt(
+        task_id="t1",
+        base_commit="abc",
+        target_branch="main",
+        changed_paths=rev,
+        private_key_pem=keys["private"],
+        public_key_pem=keys["public"],
+    )
+    assert verify_refusal_receipt(receipt) is True
+    assert receipt.receipt_hash() == _refusal(list(sample_changed_paths)).receipt_hash()
+
+
+def test_legacy_unsorted_receipt_still_verifies(sample_changed_paths, keys: dict) -> None:
+    from bernstein.core.git.read_set_receipt import (
+        READ_SET_REFUSAL_KID,
+        ReadSetRefusalReceipt,
+        verify_refusal_receipt,
+    )
+    from bernstein.core.lineage.identity import sign_detached
+
+    unsorted = list(reversed(sample_changed_paths))
+    unsigned = _refusal(unsorted)
+    assert unsigned.canonical_bytes(legacy_order=True) != unsigned.canonical_bytes()
+    # Mint the way the pre-#6298 code did: sign over the as-stored order.
+    sig = sign_detached(unsigned.signing_input(legacy_order=True), keys["private"], kid=READ_SET_REFUSAL_KID)
+    legacy = ReadSetRefusalReceipt(
+        v=1,
+        task_id="t1",
+        base_commit="abc",
+        target_branch="main",
+        changed_paths=unsorted,
+        signer_public_key_pem=keys["public"],
+        signature=sig,
+    )
+    assert verify_refusal_receipt(legacy) is True
+    tampered = dataclasses.replace(legacy, task_id="other")
+    assert verify_refusal_receipt(tampered) is False
+
+
+def test_verify_receipt_offline_accepts_legacy_unsorted_anchor(
+    sample_changed_paths, keys: dict, tmp_path: Path
+) -> None:
+    import json
+
+    from bernstein.core.git.read_set_receipt import (
+        READ_SET_REFUSAL_KID,
+        ReadSetRefusalReceipt,
+        verify_receipt_offline,
+    )
+    from bernstein.core.lineage.identity import sign_detached
+    from bernstein.core.security.audit_chain import AuditChainStore, record_read_set_refusal
+
+    unsorted = list(reversed(sample_changed_paths))
+    base = _refusal(unsorted)
+    receipt = ReadSetRefusalReceipt(
+        v=1,
+        task_id="t1",
+        base_commit="abc",
+        target_branch="main",
+        changed_paths=unsorted,
+        signer_public_key_pem=keys["public"],
+        signature=sign_detached(base.signing_input(legacy_order=True), keys["private"], kid=READ_SET_REFUSAL_KID),
+    )
+    runtime_dir = tmp_path / ".sdd" / "runtime"
+    chain = AuditChainStore(runtime_dir)
+    record_read_set_refusal(
+        chain=chain,
+        task_id="t1",
+        base_commit="abc",
+        target_branch="main",
+        receipt_hash=receipt.receipt_hash(legacy_order=True),
+    )
+    # A genuine pre-#6298 on-disk record: as-stored order and the legacy hash.
+    row = receipt.to_canonical_dict(legacy_order=True)
+    row.update(
+        timestamp=0,
+        signer_public_key_pem=receipt.signer_public_key_pem,
+        signature=receipt.signature,
+        receipt_hash=receipt.receipt_hash(legacy_order=True),
+    )
+    assert [p["path"] for p in row["changed_paths"]] == [p.path for p in unsorted]
+    record = json.dumps(row).encode("utf-8")
+    assert verify_receipt_offline(record, str(runtime_dir / "chain.db")) is True

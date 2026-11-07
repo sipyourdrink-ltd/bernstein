@@ -2,7 +2,7 @@
 
 For tasks tagged "complex" or "ambiguous", Bernstein can spawn K
 parallel candidate agents in isolated worktrees, score each candidate
-with automated signals (tests pass, lint clean, diff size) plus an
+with automated signals (tests pass, lint clean, runtime) plus an
 LLM-as-judge rubric, and merge only the winner. Losing candidates'
 worktrees are cleaned up automatically.
 
@@ -20,35 +20,35 @@ the candidate-selection layer on top.
 
 ## How to use it
 
-Mark a task with `best_of_n` in the plan or via the API:
-
-```yaml
-stages:
-  - name: refactor
-    steps:
-      - role: backend
-        goal: "Migrate the auth module from Flask to FastAPI"
-        best_of_n: 3
-```
-
-Or programmatically:
+The plan loader and the task-server API do not accept `best_of_n` yet; a
+`best_of_n:` key on a plan step is ignored. Set it on a `Task` object in
+Python and drive the fan-out with `BestOfNRunner` directly:
 
 ```python
 task = Task(
     id="...",
-    goal="Migrate the auth module from Flask to FastAPI",
+    title="Migrate the auth module",
+    description="Migrate the auth module from Flask to FastAPI",
+    role="backend",
     best_of_n=3,
 )
 ```
 
-When the orchestrator picks up a task with `best_of_n=K`, it:
+The orchestrator does not fan out best-of-N tasks yet: nothing in `src/`
+constructs `BestOfNRunner`, and `tick_pipeline.partition_best_of_n` (a
+helper that separates best-of-N tasks) has no caller. A caller that runs
+`BestOfNRunner.run(task, n)` gets:
 
-1. Spawns K agents into K isolated worktrees.
-2. Awaits all K to finish (or hit the per-candidate timeout).
-3. Computes `score_candidate(result)` for each - weighted sum of
-   tests-passing, lint-score, diff size, runtime.
-4. Asks a cheap-tier LLM judge to rank candidates against a rubric.
-5. Merges the highest combined score; deletes the other worktrees.
+1. The `spawner` callback invoked for n candidates (clamped to
+   `max_candidates`).
+2. The `awaiter` callback returning `CandidateResult`s.
+3. The optional `judge` callback scoring candidates that have a diff
+   (skipped when `judge` is None or `judge_enabled` is false).
+4. `select_best` picking the highest blended score (tests, lint, runtime,
+   judge).
+5. The optional `reclaimer` called for each loser.
+
+It returns a `BestOfNOutcome`; merging the winner is left to the caller.
 
 The cross-model verifier still runs **on the winner** before merge.
 Best-of-N does not replace verification - it picks a candidate to
@@ -59,18 +59,23 @@ verify.
 | Knob | Default | Controls |
 |---|--:|---|
 | `defaults.BEST_OF_N.enabled` | `false` | Master switch; tasks must set `best_of_n=K` *and* this must be on to fan out. |
-| `defaults.BEST_OF_N.default_candidates` | `1` (off) | Default `best_of_n` for tasks that don't set one. |
+| `defaults.BEST_OF_N.default_candidates` | `1` (off) | Declared but currently unread. |
 | `defaults.BEST_OF_N.max_candidates` | `5` | Hard cap, regardless of what a plan asks for. |
-| `defaults.BEST_OF_N.judge_model` | `haiku` | Cheap-tier model the LLM judge runs on. |
+| `defaults.BEST_OF_N.judge_model` | `haiku` | Declared but currently unread; the judge is whatever `judge=` callable is passed to `BestOfNRunner`. |
 
+These are the `best_of_n` section of the `tuning:` block in `bernstein.yaml`.
+The code reads only `enabled`, `max_candidates` (via `clamp_n`) and
+`judge_enabled` (default `true`). The `score_weight_*` fields on
+`BEST_OF_N` are also unread: scoring uses `ScoreWeights` (tests 0.5 /
+lint 0.2 / judge 0.2 / runtime 0.1), overridable via `weights=` on
+`BestOfNRunner`.
 The judge rubric is an in-module default (`_DEFAULT_RUBRIC`); override
 it per run by passing `rubric=` to `BestOfNRunner`.
 
 Metrics:
 
-- `best_of_n_judge_score` (histogram)
-- `best_of_n_candidates_total{outcome}` - `winner` / `loser` /
-  `error`.
+- `bernstein_best_of_n_judge_score{role}` (histogram)
+- `bernstein_best_of_n_candidates_total{outcome,role}` - `winner` / `loser`.
 
 ## Limitations
 

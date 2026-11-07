@@ -1,0 +1,27 @@
+# Contract for the Ollama / OpenAI-compatible local adapter (adapter: ollama).
+#
+# The adapter drives aider against a local endpoint (Ollama, vLLM, llama.cpp,
+# LM Studio); the flags below are the always-passed ones from
+# src/bernstein/adapters/ollama.py.  No provider credential is involved: the
+# endpoint is donor-controlled, so the auth basis is "local".
+adapter: ollama
+binary: aider
+install:
+  method: pipx
+  spec: "aider-chat"
+  python: "3.12"
+auth:
+  required_for_help: false
+  required_for_models: false
+  basis: local
+required_flags:
+  - "--model"
+  - "--message"
+  - "--yes-always"
+  - "--auto-commits"
+  - "--map-tokens"
+  - "--no-auto-lint"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

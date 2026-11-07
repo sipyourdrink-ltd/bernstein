@@ -1,8 +1,8 @@
-"""Kilo CLI adapter (Stackblitz)."""
+"""Kilo CLI adapter (Kilo Code)."""
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -12,12 +12,21 @@ from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnRe
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
+logger = logging.getLogger(__name__)
+
 
 class KiloAdapter(CLIAdapter):
-    """Spawn and monitor Kilo CLI sessions (Stackblitz).
+    """Spawn and monitor Kilo CLI sessions (Kilo Code).
 
     Kilo supports headless mode, ACP/MCP protocols, and session management.
-    CLI invocation: ``kilo run --prompt "<task>" --model <provider/model>``
+    CLI invocation: ``kilo run --model <provider/model> --auto -- "<task>"``,
+    from ``@kilocode/cli``.
+
+    ``kilo run`` takes the message as a positional argument and auto-approves
+    with ``--auto``. It has no ``--prompt``, ``--yes`` or ``--mcp``: given any
+    of them, kilo 7.8 prints its usage and exits 1 before running anything.
+    ``--`` ends the options, so a prompt that starts with ``-`` is still the
+    message. MCP servers come from Kilo's own configuration (``kilo mcp``).
     """
 
     def spawn(
@@ -42,16 +51,21 @@ class KiloAdapter(CLIAdapter):
         cmd = [
             "kilo",
             "run",
-            "--prompt",
-            prompt,
             "--model",
             model_config.model,
-            "--yes",  # non-interactive: auto-approve all actions
+            "--auto",  # non-interactive: auto-approve permissions not explicitly denied
+            "--",
+            prompt,
         ]
 
-        # MCP config injection via --mcp flag
+        # `kilo run` has no flag that takes MCP servers; passing one made kilo
+        # refuse the whole run. Say so rather than drop the servers silently.
         if mcp_config:
-            cmd += ["--mcp", json.dumps(mcp_config)]
+            logger.warning(
+                "kilo takes MCP servers from its own configuration (`kilo mcp`), not from the "
+                "command line; the %d server(s) passed for this task are not given to the agent",
+                len(mcp_config.get("mcpServers", mcp_config)),
+            )
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
@@ -78,7 +92,9 @@ class KiloAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError("kilo not found in PATH. Install from https://kilocode.ai") from exc
+                raise RuntimeError(
+                    "kilo not found in PATH. Install: npm install -g @kilocode/cli (see https://kilocode.ai)"
+                ) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing kilo: {exc}") from exc
 

@@ -40,10 +40,12 @@ ESSENTIAL_TRAFFIC_DENY_ON_MISS: frozenset[str] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# Default API endpoint.  Operators can override via ``api_url`` constructor arg.
+# There is no default policy endpoint: the client fetches only from the URL an
+# operator passes as ``api_url``.  Without one it serves the local cache (if
+# any) and the fail-open defaults, and never opens a network connection.
 # ---------------------------------------------------------------------------
 
-_DEFAULT_API_URL = "https://api.bernstein.dev/v1/policy-limits"
+_DEFAULT_API_URL: str | None = None
 _CACHE_FILENAME = "policy-limits.json"
 _POLL_INTERVAL_SECONDS = 3600  # 1 hour
 _INIT_TIMEOUT_SECONDS = 30
@@ -241,7 +243,7 @@ class PolicyLimitsClient:
 
     def __init__(
         self,
-        api_url: str = _DEFAULT_API_URL,
+        api_url: str | None = _DEFAULT_API_URL,
         cache_dir: Path | None = None,
         poll_interval: float = _POLL_INTERVAL_SECONDS,
         init_timeout: float = _INIT_TIMEOUT_SECONDS,
@@ -329,6 +331,9 @@ class PolicyLimitsClient:
         """
         if self._poll_task is not None and not self._poll_task.done():
             return
+        if not self._api_url:
+            logger.debug("No policy limits endpoint configured; not polling")
+            return
 
         try:
             loop = asyncio.get_running_loop()
@@ -352,6 +357,9 @@ class PolicyLimitsClient:
 
     async def _refresh(self) -> None:
         """Fetch fresh limits from the API and update cache."""
+        if not self._api_url:
+            logger.debug("No policy limits endpoint configured; skipping fetch")
+            return
         payload, new_etag = await _fetch_limits_from_api(
             self._api_url,
             etag=self._snapshot.etag,
@@ -394,7 +402,7 @@ _global_client: PolicyLimitsClient | None = None
 
 
 def get_client(
-    api_url: str = _DEFAULT_API_URL,
+    api_url: str | None = _DEFAULT_API_URL,
     cache_dir: Path | None = None,
 ) -> PolicyLimitsClient:
     """Return a (lazily created) module-level :class:`PolicyLimitsClient`.
@@ -455,7 +463,7 @@ class managed_policy_limits:
 
     def __init__(
         self,
-        api_url: str = _DEFAULT_API_URL,
+        api_url: str | None = _DEFAULT_API_URL,
         cache_dir: Path | None = None,
         poll: bool = True,
     ) -> None:

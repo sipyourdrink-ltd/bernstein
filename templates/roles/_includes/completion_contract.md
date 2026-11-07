@@ -4,7 +4,7 @@ Report your terminal outcome as a structured JSON payload. The task server valid
 
 When the work is complete and verified:
 ```bash
-curl -s -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete \
+curl -s -w '\n%{http_code}' -X POST {{SERVER_URL}}/tasks/{{TASK_ID}}/complete \
   -H "Content-Type: application/json" \
   -d '{"payload": {"contract": "worker-completion/v1", "summary": "<what was done>", "files_changed": ["<repo-relative path>"], "verification": {"command": "<command you ran>", "exit_code": 0}}}'
 ```
@@ -18,7 +18,7 @@ Payload fields:
 
 If you cannot proceed as specified, do NOT improvise and do NOT mark the task complete or failed. Report a typed refusal instead; the task ends in the terminal `refused` state, distinct from failure, and the orchestrator routes it deterministically:
 ```bash
-curl -s -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete \
+curl -s -w '\n%{http_code}' -X POST {{SERVER_URL}}/tasks/{{TASK_ID}}/complete \
   -H "Content-Type: application/json" \
   -d '{"payload": {"contract": "worker-completion/v1", "kind": "<kind>", "detail": "<why you cannot proceed>", "<kind-specific field>": "<value>"}}'
 ```

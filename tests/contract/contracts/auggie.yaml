@@ -1,0 +1,23 @@
+# Contract for the Auggie (Augment Code) CLI (adapter: auggie).
+#
+# Always-passed flags from src/bernstein/adapters/auggie.py. `--print` is the
+# one a spawned agent cannot run without: with no TTY, auggie 0.36 announces a
+# switch to print mode and then does not exit.
+adapter: auggie
+binary: auggie
+install:
+  method: npm
+  spec: "@augmentcode/auggie@latest"
+auth:
+  # ``auggie --help`` works without authentication.
+  required_for_help: false
+  required_for_models: false
+  secret_env: "AUGMENT_SESSION_AUTH"
+  basis: subscription_oauth
+required_flags:
+  - "--print"
+  - "--allow-indexing"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

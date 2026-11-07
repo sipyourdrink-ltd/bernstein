@@ -523,8 +523,8 @@ def stop(workdir: Path, *, timeout_seconds: float = 10.0) -> int:
     except ProcessLookupError as exc:
         raise DaemonNotRunningError("Autofix daemon vanished before signal.") from exc
 
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
         if not _process_alive(pid):
             break
         time.sleep(0.1)

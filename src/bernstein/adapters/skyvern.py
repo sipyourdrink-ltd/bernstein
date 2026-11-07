@@ -213,8 +213,8 @@ class SkyvernAdapter(ComputerUseAdapter):
         log_path: Path,
     ) -> None:
         """Poll the run endpoint until completion or timeout."""
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
             try:
                 req = urllib.request.Request(
                     f"{base_url}/v1/runs/{run_id}",

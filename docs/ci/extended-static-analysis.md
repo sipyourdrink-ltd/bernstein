@@ -10,7 +10,7 @@ Workflow: `.github/workflows/static-analysis-extended.yml`.
 
 | Job          | Tool      | Lane                     | Gate           | SARIF | Where findings show |
 |--------------|-----------|--------------------------|----------------|-------|---------------------|
-| `semgrep`    | Semgrep CE| push-to-main / cron      | Fail on new    | Yes   | Security tab        |
+| `semgrep`    | Semgrep CE| push-to-main / cron      | Report only    | Yes   | Security tab        |
 | `trivy-fs`   | Trivy     | push-to-main / cron      | Fail HIGH/CRIT | Yes   | Security tab        |
 | `trivy-iac`  | Trivy     | push-to-main / cron      | Fail HIGH/CRIT | Yes   | Security tab        |
 | `vulture`    | vulture   | weekly cron only         | Advisory       | Yes   | Security tab        |
@@ -30,7 +30,7 @@ stays a security signal (issue #2764).
 | Semgrep CE| Pattern-based Python issues that CodeQL free tier skips      |
 | Trivy fs  | CVEs in lockfile deps + leaked secrets in tracked files      |
 | Trivy IaC | Dockerfile / docker-compose / helm / kustomize misconfigs    |
-| vulture   | Unused functions / classes / vars across the 40-adapter tree |
+| vulture   | Unused functions / classes / vars across the `src/` tree |
 | refurb    | Outdated Python idioms with cleaner modern equivalents       |
 | perflint  | Hot-path antipatterns (string concat in loops, etc.)         |
 
@@ -56,8 +56,12 @@ same commits against a ref that persists.
 
 ### Semgrep
 
-The gate is git-baseline based: `semgrep scan --baseline-commit=<base-sha>`
-on pull requests, so only new findings introduced by the PR fail the job.
+The step is baseline-aware: when the run is for a pull request it adds
+`--baseline-commit=<base-sha>` so only findings new since the base are
+reported. The workflow currently triggers on push to `main`, the weekly
+schedule and `workflow_dispatch`, so those runs scan the full `src/` tree
+without a baseline. The step does not pass `--error`, so findings are
+uploaded as SARIF to the Security tab and do not fail the job.
 
 To list the current findings on any ref:
 
@@ -105,7 +109,8 @@ uv tool run semgrep scan --config p/python --config p/security-audit \
     --severity ERROR --severity WARNING --metrics off src/
 
 # Trivy filesystem
-trivy fs --severity HIGH,CRITICAL --ignore-unfixed .
+trivy fs --severity HIGH,CRITICAL --ignore-unfixed \
+    --skip-dirs tests/fixtures/scanners/trivy/target,tests/fixtures/scanners/gitleaks/target .
 
 # Trivy IaC
 # .clusterfuzzlite/ is skipped: the fuzzing harness inherits the

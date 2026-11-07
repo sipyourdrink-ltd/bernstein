@@ -41,6 +41,7 @@ module, and agents nobody has profiled at all are still served by the
 | `max_parallel_workers` | Concurrent workers within one session; `1` is sequential |
 | `agents_md` | Reads `AGENTS.md` project instructions |
 | `resume` / `dangerous_mode` / `event_channel` | The three strategy axes shared with `STRATEGY_MATRIX` |
+| `auth_basis` | Authentication mechanism declared by the adapter contract (`AuthBasis`) |
 | `provides` | Provider-name aliases for routing |
 
 `InvocationSpec` describes the **always-passed** surface - the tokens

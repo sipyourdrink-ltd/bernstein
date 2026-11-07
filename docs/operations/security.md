@@ -4,6 +4,28 @@ Operator-facing runbook for security posture signals. See also
 [security-and-identity.md](security-and-identity.md) for the runtime
 security and identity stack.
 
+## Caller-less modules under `core/security/`
+
+A module under `src/bernstein/core/security/` with no runtime caller is a
+**defect**, not a staging area. A green unit suite without an import edge
+from a command, route, or other reachable package reads as a working
+feature, gets extended and reviewed, and CI pays for a suite that
+protects nothing.
+
+The shrink-only guard is `tests/unit/test_orphan_security_modules.py`
+(#5505, following the `core/tokens/` pattern). Every entry on its
+`KNOWN_ORPHAN_REASONS` map must carry a machine-checkable reason:
+
+- `#NNNN` (optionally comma-separated) — the issue that schedules wiring
+  or deletion; or
+- `remove-by:YYYY-MM-DD` — a dated removal schedule. An elapsed date
+  without striking the entry fails CI, so the schedule cannot become a
+  freezer.
+
+Do not add a security module without a caller. Do not land a caller-less
+module onto the known-orphans list without one of those reasons. Wiring
+or deleting a listed module strikes its entry in the same pull request.
+
 ## OSSF Scorecard
 
 Weekly Scorecard runs via `.github/workflows/scorecard.yml`. Results are

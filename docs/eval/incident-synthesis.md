@@ -25,8 +25,8 @@ That closes the loop.
 Run on demand or on the `task_terminally_failed` lifecycle hook:
 
 ```bash
-# Sync now: read every incident, emit YAML cases under
-# src/bernstein/eval/cases/incidents/
+# Sync now: read every incident, emit YAML cases into the project's
+# incident corpus (see "Where cases live" below)
 bernstein eval sync-incidents
 
 # Dry-run to see what would be generated without writing
@@ -42,6 +42,30 @@ The synthesiser:
    failing tool-call sequence.
 4. Writes one YAML per incident, idempotent by content hash *and*
    `source_incident` key.
+
+### Where cases live
+
+The corpus directory depends on the project the synthesiser runs against:
+
+| Project | Corpus directory |
+|---|---|
+| Bernstein's own source tree, where the corpus is checked in | `src/bernstein/eval/cases/incidents/` |
+| Any other project | `.sdd/eval/cases/incidents/` |
+
+A project Bernstein orchestrates never receives incident cases in its
+source tree. They stay with the rest of the run state under `.sdd/`,
+which the orchestrator never stages for a commit. The synthesiser, the P0
+gate (`run_incident_eval_gate`) and
+`bernstein audit diagnose --signal incident:<case-id>` resolve the
+directory the same way (`incident_cases_dir` in
+`eval/incident_synthesizer.py`), so the writer and every reader agree.
+`bernstein eval sync-incidents` prints the directory it used.
+
+Earlier versions wrote every project's cases under
+`src/bernstein/eval/cases/incidents/`. In a project that is not
+Bernstein's source tree, that leftover directory is no longer read or
+extended: delete it, or move its files into `.sdd/eval/cases/incidents/`
+to keep them in the corpus.
 
 ### CI-failure postmortems
 
@@ -97,7 +121,6 @@ P2 print warnings.
 | Knob | Default | Controls |
 |---|--:|---|
 | `eval.incident_sync.on_terminal_failure` | `true` | Auto-sync on every dead-letter event. |
-| `eval.incident_sync.write_path` | `src/bernstein/eval/cases/incidents/` | Where the YAML cases live. |
 | `eval.gate_severity_blocking` | `["P0"]` | Which severities block merge. |
 
 Metrics:

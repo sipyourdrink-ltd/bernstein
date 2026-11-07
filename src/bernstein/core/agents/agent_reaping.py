@@ -7,6 +7,7 @@ continue to work after the code was consolidated.
 """
 
 from bernstein.core.agents.agent_lifecycle import (
+    _dispose_dead_worktree,
     _has_git_commits_on_branch,
     _maybe_preserve_worktree,
     _propagate_abort_to_children,
@@ -21,6 +22,7 @@ from bernstein.core.agents.agent_lifecycle import (
 )
 
 __all__ = [
+    "_dispose_dead_worktree",
     "_has_git_commits_on_branch",
     "_maybe_preserve_worktree",
     "_propagate_abort_to_children",

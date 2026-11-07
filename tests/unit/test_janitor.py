@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json as jsonlib
 import os
 import subprocess
 import sys
@@ -1034,6 +1035,8 @@ class TestCreateFixTasks:
             assert "/tasks" in url
             assert "Fix:" in json["title"]
             assert "T-FAIL" in json["description"]
+            assert json["completion_signals"] == []
+            assert json["depends_on"] == []
             return httpx.Response(
                 status_code=201,
                 json={"id": "fix-001"},
@@ -1044,6 +1047,51 @@ class TestCreateFixTasks:
             ids = await create_fix_tasks(task, ["path_exists: missing.py"], "http://localhost:8052")
 
         assert ids == ["fix-001"]
+
+    @pytest.mark.asyncio
+    async def test_retry_preserves_signals_owned_files_and_dependencies(self) -> None:
+        import httpx
+
+        from bernstein.core.server.server_models import TaskCreate
+
+        task = Task(
+            id="T-SIGNALS",
+            title="Implement feature",
+            description="Implement and verify the feature.",
+            role="backend",
+            completion_signals=[
+                CompletionSignal(type="test_passes", value="pytest tests/test_example.py"),
+                CompletionSignal(type="file_contains", value="feature is ready"),
+                CompletionSignal(type="path_exists", value="src/feature.py"),
+            ],
+            owned_files=["src/feature.py", "tests/test_example.py"],
+            depends_on=["T-DEP-1", "T-DEP-2"],
+        )
+        expected_signals = [
+            {"type": "test_passes", "value": "pytest tests/test_example.py"},
+            {"type": "file_contains", "value": "feature is ready"},
+            {"type": "path_exists", "value": "src/feature.py"},
+        ]
+
+        async def mock_post(self: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:  # type: ignore[type-arg]
+            assert url == "http://localhost:8052/tasks"
+            assert json["completion_signals"] == expected_signals
+            assert json["owned_files"] == task.owned_files
+            assert json["depends_on"] == task.depends_on
+            assert jsonlib.loads(jsonlib.dumps(json))["completion_signals"] == expected_signals
+            assert [
+                signal.model_dump() for signal in TaskCreate.model_validate(json).completion_signals
+            ] == expected_signals
+            retry = Task.from_dict({**json, "id": "fix-signals-001"})
+            assert retry.completion_signals == task.completion_signals
+            assert retry.owned_files == task.owned_files
+            assert retry.depends_on == task.depends_on
+            return httpx.Response(status_code=201, json={"id": "fix-signals-001"}, request=httpx.Request("POST", url))
+
+        with patch.object(httpx.AsyncClient, "post", mock_post):
+            ids = await create_fix_tasks(task, ["test_passes: pytest tests/test_example.py"], "http://localhost:8052")
+
+        assert ids == ["fix-signals-001"]
 
     @pytest.mark.asyncio
     async def test_handles_server_error_gracefully(self, tmp_path: Path) -> None:
@@ -1377,6 +1425,8 @@ class TestRunJanitorWithJudge:
                 CompletionSignal(type="llm_judge", value="Check impl"),
             ],
         )
+        task.owned_files = ["impl.py"]
+        task.depends_on = ["T-PREREQUISITE"]
 
         mock_diff = subprocess.CompletedProcess(
             args=[],
@@ -1394,6 +1444,17 @@ class TestRunJanitorWithJudge:
             assert "judge retry 1" in json["title"]
             assert "[judge_retry:1]" in json["description"]
             assert "Missing error handling" in json["description"]
+            assert json["completion_signals"] == [
+                {"type": "path_exists", "value": "impl.py"},
+                {"type": "llm_judge", "value": "Check impl"},
+            ]
+            assert json["owned_files"] == ["impl.py"]
+            assert json["depends_on"] == ["T-PREREQUISITE"]
+            assert jsonlib.loads(jsonlib.dumps(json))["completion_signals"] == json["completion_signals"]
+            retry = Task.from_dict({**json, "id": "fix-judge-001"})
+            assert retry.completion_signals == task.completion_signals
+            assert retry.owned_files == task.owned_files
+            assert retry.depends_on == task.depends_on
             return httpx.Response(
                 status_code=201,
                 json={"id": "fix-judge-001"},

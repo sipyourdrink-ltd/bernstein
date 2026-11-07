@@ -53,6 +53,9 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.core.persistence.work_ledger import (
     KIND_RUN_CLOSED,
+    KIND_TASK_COMPLETED,
+    KIND_TASK_FAILED,
+    KIND_TASK_STARTED,
     RUN_KINDS,
     LedgerError,
     LedgerReader,
@@ -214,6 +217,8 @@ class FinishedRun:
             when it never closed).
         elapsed_seconds: ``ended_at - started_at``.
         host: Host that executed the run, as recorded on its entries.
+        capability_id: Capability that performed the run, when recorded.
+        adapter_id: Adapter that performed the run, when recorded.
         parent_run_id: Run that spawned this one, when it recorded one.
         steps: Per-step timings, ordered by start instant.
     """
@@ -228,6 +233,8 @@ class FinishedRun:
     ended_at: float = 0.0
     elapsed_seconds: float = 0.0
     host: str = ""
+    capability_id: str = ""
+    adapter_id: str = ""
     parent_run_id: str = ""
     steps: tuple[RunStepTiming, ...] = ()
 
@@ -395,6 +402,8 @@ def classify_ledger_dir(ledger_dir: Path, *, run_id: str) -> FinishedRun | None:
         ended_at=ended_at,
         elapsed_seconds=ended_at - started_at,
         host=_run_field(entries, "host"),
+        capability_id=_run_field(entries, "capability_id"),
+        adapter_id=_run_field(entries, "adapter_id"),
         parent_run_id=_run_field(entries, "parent_run_id"),
         steps=_step_timings(entries),
     )
@@ -750,15 +759,13 @@ class MaskedFailureReport:
 def _run_owner(run: FinishedRun) -> str:
     """Attribution for one run.
 
-    The HOST, because it is the attribution runs actually carry today. Grouping
-    by the owning capability or adapter is what the issue ultimately wants, and
-    it needs runs to record that first (#5107); this reports the real number
-    against the real key rather than inventing a bucket.
-
-    A run whose entries never recorded a host groups under ``unattributed``,
-    named rather than dropped: a run with no host is still a run that retried,
-    and silently omitting it would understate the very number being reported.
+    Group by capability ID if present, otherwise adapter ID, then host.
+    Fall back to unattributed if none are available.
     """
+    if run.capability_id:
+        return run.capability_id
+    if run.adapter_id:
+        return run.adapter_id
     return run.host if run.host else "unattributed"
 
 
@@ -801,3 +808,145 @@ def masked_failures(runs: list[FinishedRun]) -> MaskedFailureReport:
         finished=len(runs),
         by_owner={owner: (masked, finished) for owner, (masked, finished) in counts.items()},
     )
+
+
+# ---------------------------------------------------------------------------
+# Task-level retry sequences (#5106 slice 1)
+# ---------------------------------------------------------------------------
+#
+# `masked_failures` reports at run granularity, from `FinishedRun.attempt_count`
+# -- the *sum* of every task's `task.started` count in the run. That sum
+# cannot tell a run where one task alone retried three times apart from a run
+# where three different tasks each retried once: the identity of which task
+# actually failed and recovered is lost in the addition.
+#
+# `task_id` is the natural key for "the same logical task retried" within one
+# ledger root -- it is already stable across a retry (the writer reuses it;
+# see `TaskState` in work_ledger.py), so no new identity concept is needed.
+# `TaskState.attempts` is not enough on its own either: it counts
+# `task.started` transitions but keeps only the *latest* state, not the
+# sequence, so it cannot say whether the failures were consecutive before the
+# eventual success. This reads the raw, `seq`-ordered entries instead.
+
+
+@dataclass(frozen=True)
+class TaskRetrySequence:
+    """One task's retry-then-succeed history within a single ledger root.
+
+    Attributes:
+        run_id: The ledger root this sequence was read from.
+        task_id: The task's stable identity within that ledger root.
+        failed_attempts: Total ``task.failed`` entries recorded for this
+            task id before its first ``task.completed``. Not necessarily
+            consecutive or adjacent to the completion: a ``task.scheduled``
+            or ``task.started`` entry between two failures neither resets
+            nor breaks the count (see :func:`task_retry_sequences`).
+        succeeded: Whether the task id has a ``task.completed`` entry at
+            all. Always ``True`` for a row :func:`task_retry_sequences`
+            returns -- the field exists so the type can represent a
+            not-yet-succeeded task id if a future caller needs that, without
+            a second, parallel type.
+        started_at: Unix instant of the task id's first ``task.started``
+            entry, or ``None`` when this task id has no ``task.started``
+            entry at all. Never a substitute instant from another event
+            kind (e.g. ``task.scheduled``) -- a caller that gets ``None``
+            here is being told the fact isn't known, not handed a
+            plausible-looking guess (#6179 review).
+        completed_at: Unix instant of the ``task.completed`` entry, or
+            ``None`` when the task id never completed.
+    """
+
+    run_id: str
+    task_id: str
+    failed_attempts: int
+    succeeded: bool
+    started_at: float | None
+    completed_at: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON row shape, mirroring the other report rows in this module."""
+        return {
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "failed_attempts": self.failed_attempts,
+            "succeeded": self.succeeded,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+        }
+
+
+def task_retry_sequences(ledger_dir: Path, *, run_id: str) -> list[TaskRetrySequence]:
+    """Return every task id in one ledger root that failed and then succeeded.
+
+    Reads the raw, ``seq``-ordered entries (never sorted by ``ts``: ``seq``
+    is the ledger's only ordering guarantee) and groups them by ``task_id``,
+    preserving each task's own relative order. For each task id, consecutive
+    ``task.failed`` entries are counted up to its first ``task.completed``;
+    ``task.scheduled`` and ``task.started`` entries in between do not reset
+    or inflate the count (a restart is the retry mechanism itself, not a
+    failure), matching how ``TaskState.attempts`` already treats a
+    suspend/resume cycle as a non-event.
+
+    Args:
+        ledger_dir: The run's ledger directory (see
+            :func:`~bernstein.core.persistence.work_ledger.run_ledger_dir`).
+        run_id: The run this ledger root belongs to, carried onto each row
+            so a caller merging sequences from multiple runs can tell them
+            apart -- task ids are only unique within one ledger root.
+
+    Returns:
+        One :class:`TaskRetrySequence` per task id that failed at least once
+        and then completed, ordered by ``task_id`` for a deterministic,
+        byte-identical report over the same ledger. A task id that
+        succeeded on its first attempt, or that never completed, is not a
+        masked failure and is omitted -- this returns exactly the rows the
+        issue calls "masked", not every task id in the run.
+    """
+    reader = LedgerReader(ledger_dir)
+    if not reader.exists():
+        return []
+
+    per_task: dict[str, list[LedgerEntry]] = {}
+    for entry in reader.entries():
+        if not entry.task_id or entry.kind in RUN_KINDS:
+            continue
+        per_task.setdefault(entry.task_id, []).append(entry)
+
+    # `task.scheduled` and `task.started` are the only other kinds that
+    # normally appear here; neither resets or inflates the failed-run count
+    # (a restart is the retry mechanism itself, not a failure -- the same
+    # treatment `TaskState.attempts` already gives a suspend/resume cycle).
+    # Anything else for this task id (`task.abandoned`, an unknown
+    # forward-compat kind) is simply not `task.completed`, so the loop below
+    # reaches the end of that task's entries without ever appending a row --
+    # a task id with no completion is not a masked failure.
+    rows: list[TaskRetrySequence] = []
+    for task_id, task_entries in per_task.items():
+        # `task_entries[0]` is usually `task.scheduled`, not `task.started`
+        # -- the docstring promises the latter, so pick it explicitly rather
+        # than the group's first entry of any kind. `None` when this task
+        # id has no `task.started` entry at all, rather than substituting
+        # another event's timestamp: a row that silently reports the
+        # scheduled instant as the started one asserts a fact the ledger
+        # never recorded (#6179 review).
+        started_at = next((e.ts for e in task_entries if e.kind == KIND_TASK_STARTED), None)
+        failed_run = 0
+        for entry in task_entries:
+            if entry.kind == KIND_TASK_FAILED:
+                failed_run += 1
+            elif entry.kind == KIND_TASK_COMPLETED:
+                if failed_run > 0:
+                    rows.append(
+                        TaskRetrySequence(
+                            run_id=run_id,
+                            task_id=task_id,
+                            failed_attempts=failed_run,
+                            succeeded=True,
+                            started_at=started_at,
+                            completed_at=entry.ts,
+                        )
+                    )
+                break
+
+    rows.sort(key=lambda row: row.task_id)
+    return rows

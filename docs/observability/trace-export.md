@@ -81,7 +81,7 @@ see its docstring for the canonical shape.
 | `tool_transcript` | `{"hash": <sha256>, "call_count": <int>}` — hash over tool-call entries in the journal. |
 | `build_provenance` | `{"slsa_level": 0, "digest": <sha256>, "provenance_uri": <release page URL>}`. |
 | `appraisal` | `{"status": "none", "verifier": "https://bernstein.run/trace/verifier", "timestamp": <int>}`. |
-| `cnf` | `{"jwk": {"kty": "OKP", "crv": "Ed25519", "x": <base64url>, "kid": <key-id>}}` — the public Ed25519 key for the install identity that produced `signature`. `kid` names that key. |
+| `cnf` | `{"jwk": {"kty": "OKP", "crv": "Ed25519", "x": <base64url>, "kid": <key-id>}}` — the public Ed25519 key for the install identity that produced `signature`. `kid` is the RFC 7638 JWK thumbprint computed from `crv`, `kty`, and `x`. |
 | `delegation` | Present only on delegated child hops: `{"parent_record_hash": <sha256>, "credential_id": <str>}`. Absent (not null) on root/solo executions. |
 | `references` | Produced-artifact pointers (`rel: "produced-artifact"`) when the execution produced any; absent (not an empty list) otherwise. |
 | `signature` | Base64url (no padding) Ed25519 signature over the JCS canonicalisation of every other field. |

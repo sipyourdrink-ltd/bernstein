@@ -1,4 +1,4 @@
-"""agents sub-package."""
+"""Agent discovery and bounded registered detector execution (``detector_runtime.py``)."""
 
 import importlib
 import pkgutil

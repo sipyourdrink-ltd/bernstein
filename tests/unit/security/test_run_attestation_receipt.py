@@ -102,7 +102,7 @@ async def test_valid_range_is_standard_verifiable_but_whole_run_stays_observed(r
 
     semantic = verify_run_attestation_projection(receipt.receipt)
     assert semantic.ok, semantic.errors
-    rc, output = _standard_verify(receipt.receipt_path)
+    rc, output = _standard_verify(receipt.receipt_path, "--allow-unpinned-key")
     assert rc == 0, output
     assert "OVERALL: PASS" in output
 

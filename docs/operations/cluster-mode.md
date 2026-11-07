@@ -105,6 +105,15 @@ Capacity is set with `--slots`. Internally the worker tracks `available_slots
 adapter processes the host can comfortably run. There is no auto-detection -
 oversubscribing a worker just queues longer.
 
+Run end with remote workers: the central orchestrator does not end a run while
+any task is `claimed` or `in_progress`, whichever process holds it - its own
+agent or a remote worker. A worker's claim belongs to no local agent, so the
+run stays up until that claim finishes and the steps it unblocks are
+scheduled. A step whose role no worker lists in `--roles` (for example
+`reviewer`) is run by the central orchestrator's own spawner, or not at all
+when the central runs with no local agents: list every role your plans use
+across the workers.
+
 Worker environment requirements:
 
 - A logged-in CLI agent (`claude`, `codex`, `gemini`, `qwen`, `aider`).
@@ -124,6 +133,46 @@ Worker environment requirements:
 > `/workspace`. Bind-mount the repo (`-v /path/to/repo:/workspace`) or run an
 > init step that clones it, so `/workspace` is a git checkout with a commit
 > before `bernstein worker` starts.
+
+### Central behind Cloudflare Access
+
+A central server can be published to workers outside its network through a
+Cloudflare tunnel with an Access application in front of it. Access then
+rejects, at the edge, every request without an Access service token, before
+the server's own bearer check runs. Give the worker the service token as two
+environment variables next to the bearer:
+
+```bash
+export CF_ACCESS_CLIENT_ID=<service-token client id>
+export CF_ACCESS_CLIENT_SECRET=<service-token client secret>
+bernstein worker --server https://central.example.com --token "$BERNSTEIN_AUTH_TOKEN"
+```
+
+When both are set, the worker sends `CF-Access-Client-Id` and
+`CF-Access-Client-Secret` on every request (register, heartbeat, claim,
+report). The same headers go out from every CLI call that talks to the server
+(`bernstein task complete`, `bernstein status`), and both variables pass the
+agent environment allowlist, so agents spawned on the worker reach the
+central through the same edge. With only one of the two set, neither is sent,
+and the edge's 403 shows the misconfiguration. The bearer token is still
+required: Access decides whether a request may reach the server, and the
+server still decides what the caller may do.
+
+### Proxied and tunnelled workers: restarts and rate limits
+
+| Variable | Default | Effect |
+|---|---|---|
+| `BERNSTEIN_TRUSTED_PROXY_IPS` | unset | Comma-separated proxy peer IPs whose `X-Forwarded-For` is honoured for rate-limit keys. |
+| `BERNSTEIN_NODES_PERSIST_PATH` | unset | Absolute path of the node registry file. When set, registered nodes are always persisted there and reloaded as `offline` after a central restart; their next heartbeat brings them back `online`. Without it, persistence is only on when the task store lives in `.sdd/runtime/`. |
+| `BERNSTEIN_RATE_LIMIT_WRITE_RPM` | 30 | Default per-client write (POST/PUT/PATCH/DELETE) limit per minute. |
+| `BERNSTEIN_RATE_LIMIT_READ_RPM` | 300 | Default per-client read (GET/HEAD/OPTIONS) limit per minute. |
+| `BERNSTEIN_RATE_LIMIT_HEARTBEAT_RPM` | 600 | Limit per minute for `POST /cluster/nodes/{id}/heartbeat` and `POST /agents/{id}/heartbeat` (with or without `/api/v1`). |
+
+Heartbeats are counted in their own `heartbeat` bucket. Authenticated
+heartbeats are keyed by the node or agent id in the path, so many workers
+behind one proxy IP do not share one budget. Heartbeats without an
+`Authorization` header stay keyed by client IP. Invalid or non-positive
+values fall back to the defaults.
 
 ### Workspace preflight
 
@@ -195,8 +244,11 @@ an admin-scoped token — the same credential the drain and cordon primitives
 already need.
 
 The worker side of the flow lives in `worker_cmd.py:134-164` (registration)
-and `:165-190` (heartbeat). On HTTP 404 from the heartbeat the worker
-re-registers automatically (eviction recovery).
+and `:165-190` (heartbeat). A heartbeat for a node id the central does not
+know returns HTTP 410 Gone with
+`{"error": "node_unknown", "node_id": ..., "hint": "re-register via POST /cluster/nodes"}`;
+the worker then re-registers automatically (it also accepts 404 from older
+servers). Other node routes keep returning 404 for unknown ids.
 
 ### The gRPC cluster surface
 

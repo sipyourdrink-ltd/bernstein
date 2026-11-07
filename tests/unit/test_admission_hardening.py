@@ -123,12 +123,12 @@ def test_absent_keypair_generates_a_matched_pair(tmp_path: Path) -> None:
     eng = AdmissionEngine(sdd_dir=sdd)
     assert eng.private_key_pem and eng.public_key_pem
     # The generated pair must actually match: a signed receipt verifies.
-    from bernstein.core.admission.receipts import verify_receipt
+    from bernstein.core.admission.receipts import verify_admission_receipt
 
     seal = eng.seal_tag_conformance(
         task_id="T1", worker_id="w1", declared_tags=("docs-only",), changed_paths=("docs/x.md",)
     )
-    ok, reason = verify_receipt(seal, public_key_pem=eng.public_key_pem)
+    ok, reason = verify_admission_receipt(seal, public_key_pem=eng.public_key_pem)
     assert ok, reason
 
 

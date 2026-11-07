@@ -1432,6 +1432,29 @@ def test_completion_seals_evidence_for_task_with_declared_producers(tmp_path: Pa
     orch._spawner.cleanup_worktree.assert_called_once_with(session.id)
 
 
+def test_failed_task_in_the_terminal_chain_is_registered_not_processed(tmp_path: Path, make_task: Any) -> None:
+    """A failed task passed in with the done ones (the quiescence pass does) is only
+    registered for the drain tracker. It has no completion to verify or merge, and the
+    retry machinery already decided it: a janitor FAIL here used to reopen retried and
+    permanently failed tasks, so superseded copies of one task ran side by side."""
+    done = make_task(id="T-done", title="ship it", description="Done.", status=TaskStatus.DONE)
+    failed = make_task(id="T-failed", title="ship it", description="Done.", status=TaskStatus.FAILED)
+    session = _session_for(failed.id, exit_code=1)
+    orch = _seal_wiring_orch(tmp_path, session)
+
+    with (
+        patch("bernstein.core.tasks.task_lifecycle._enqueue_alive_exit_janitor_pass", return_value=None) as janitor,
+        patch("bernstein.core.tasks.task_lifecycle._process_single_completed_task") as chain,
+    ):
+        process_completed_tasks(orch, [done, failed], TickResult())
+
+    assert list(orch._processed_done_tasks) == [done.id, failed.id]
+    assert [c.args[1].id for c in janitor.call_args_list] == [done.id]
+    assert [c.args[1].id for c in chain.call_args_list] == [done.id]
+    orch._spawner.reap_completed_agent.assert_not_called()
+    orch._client.post.assert_not_called()
+
+
 def test_completion_untouched_when_task_declares_no_producers(tmp_path: Path, make_task: Any) -> None:
     """The seal is still invoked, but with an empty producer set it is a no-op
     (proven by the helper's own tests); the completion path is unchanged."""
@@ -1482,8 +1505,12 @@ def test_completion_survives_evidence_gate_exception(tmp_path: Path, make_task: 
 
 
 def _incident_cases_dir(workdir: Path) -> Path:
-    """Return the corpus directory IncidentSynthesizer writes cases into."""
-    return workdir / "src" / "bernstein" / "eval" / "cases" / "incidents"
+    """Return the corpus directory IncidentSynthesizer writes cases into.
+
+    The tmp workdir is not Bernstein's source tree, so the case belongs with
+    the run state, never in the managed project's own source tree.
+    """
+    return workdir / ".sdd" / "eval" / "cases" / "incidents"
 
 
 def test_dead_lettered_task_writes_an_incident_eval_case(tmp_path: Path, make_task: Any) -> None:
@@ -1509,6 +1536,7 @@ def test_dead_lettered_task_writes_an_incident_eval_case(tmp_path: Path, make_ta
     body = written[0].read_text(encoding="utf-8")
     assert "Stabilize parser" in body
     assert "max_retries_exceeded" in body
+    assert not (tmp_path / "src").exists(), "the managed project's source tree must not receive the case"
 
 
 def test_repeated_dead_letter_does_not_duplicate_the_incident_case(tmp_path: Path, make_task: Any) -> None:
@@ -1617,3 +1645,56 @@ def test_bandit_outcome_records_the_effort_the_session_actually_ran_at(
     bandit.record_outcome.assert_called_once()
     _, kwargs = bandit.record_outcome.call_args
     assert kwargs["effort"] == "high"
+
+
+def _recording_post(calls: list[str]) -> Any:
+    """POST stub that records URLs and answers every call with a 200."""
+
+    def _post(url: str, **kwargs: Any) -> SimpleNamespace:
+        del kwargs
+        calls.append(url)
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None)
+
+    return _post
+
+
+def test_adapter_cooldown_releases_claim_without_spending_retry_budget(tmp_path: Path, make_task: Any) -> None:
+    """An adapter backoff hands the claim back instead of failing the task.
+
+    Failing it here created a retry on every tick of the backoff, so a few
+    ticks spent the lineage's retry budget, the task failed for good and its
+    dependents were blocked although no agent had ever run.
+    """
+    from bernstein.adapters.base import AdapterCooldownError
+
+    orch = _claim_orch(tmp_path)
+    task = make_task(id="T-cool", role="qa")
+    calls: list[str] = []
+    orch._client.post.side_effect = _recording_post(calls)
+    orch._spawner.spawn_for_tasks.side_effect = AdapterCooldownError("Agent codex is in cooldown after recent failure")
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    assert [c.rsplit("/", 1)[-1] for c in calls] == ["claim", "release"]
+    assert calls[-1].endswith("/tasks/T-cool/release")
+    assert orch._spawn_failures == {}
+    assert result.errors == []
+
+
+def test_transient_spawn_failure_still_fails_and_counts(tmp_path: Path, make_task: Any) -> None:
+    """Control: a transient failure of the spawn itself keeps the fail-and-count path."""
+    from bernstein.adapters.base import SpawnError
+
+    orch = _claim_orch(tmp_path)
+    task = make_task(id="T-flaky", role="qa")
+    calls: list[str] = []
+    orch._client.post.side_effect = _recording_post(calls)
+    orch._spawner.spawn_for_tasks.side_effect = SpawnError("agent process exited during startup: connection reset")
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    assert calls[-1].endswith("/tasks/T-flaky/fail")
+    assert orch._spawn_failures
+    assert result.errors

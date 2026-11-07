@@ -3,16 +3,18 @@
 Guarantees:
 1. `get_adapter(key)` stamps `instance.registry_name = key` on the returned instance.
 2. `registry_name_for` returns the selected key for instances resolved via `get_adapter`.
-3. An ambiguous class registered under multiple keys (e.g. `GeminiAdapter`) returns `None`
-   from `registry_name_for` when instantiated directly without stamping, rather than silently
-   relying on dictionary insertion order.
+3. An ambiguous class registered under multiple keys returns `None` from `registry_name_for`
+   when instantiated directly without stamping, rather than silently relying on dictionary
+   insertion order. A class that declares its own `registry_name` (e.g. `AgyAdapter`, keyed as
+   both `agy` and `antigravity`) resolves to that declared key.
 4. Single-key adapters continue to resolve correctly when unstamped.
-5. Admission evidence for `gemini` vs `antigravity` names their own adapter key and binary.
+5. Admission evidence for `gemini`, `agy` and `antigravity` names their own adapter key and binary.
 """
 
 from __future__ import annotations
 
 from bernstein.adapters.admission import gather_admission_evidence
+from bernstein.adapters.agy import AgyAdapter
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.base import CLIAdapter
 from bernstein.adapters.claude import ClaudeCodeAdapter
@@ -47,20 +49,30 @@ def test_get_adapter_stamps_registry_name() -> None:
     assert claude.registry_name == "claude"
 
 
-def test_registry_name_for_gemini_and_antigravity() -> None:
-    """registry_name_for disambiguates GeminiAdapter instances by their stamped key."""
-    gemini = get_adapter("gemini")
-    assert registry_name_for(gemini) == "gemini"
-
+def test_antigravity_key_resolves_to_agy_adapter() -> None:
+    """The ``antigravity`` key is the agy adapter; ``gemini`` stays on GeminiAdapter."""
     antigravity = get_adapter("antigravity")
+    assert isinstance(antigravity, AgyAdapter)
     assert registry_name_for(antigravity) == "antigravity"
 
+    agy = get_adapter("agy")
+    assert isinstance(agy, AgyAdapter)
+    assert registry_name_for(agy) == "agy"
 
-def test_registry_name_for_ambiguous_class_returns_none_when_unstamped() -> None:
-    """An unstamped instance of a dual-registered class returns None rather than guessing."""
-    bare_gemini = GeminiAdapter()
-    assert getattr(bare_gemini, "registry_name", "") == ""
-    assert registry_name_for(bare_gemini) is None
+    gemini = get_adapter("gemini")
+    assert isinstance(gemini, GeminiAdapter)
+    assert registry_name_for(gemini) == "gemini"
+
+
+def test_dual_registered_class_with_declared_key_resolves_unstamped() -> None:
+    """An unstamped AgyAdapter resolves to its declared key, not by dict order."""
+    bare_agy = AgyAdapter()
+    assert registry_name_for(bare_agy) == "agy"
+
+
+def test_gemini_resolves_when_unstamped() -> None:
+    """GeminiAdapter is single-key again and resolves by class reverse-lookup."""
+    assert registry_name_for(GeminiAdapter()) == "gemini"
 
 
 def test_single_key_adapters_continue_to_resolve_when_unstamped() -> None:
@@ -103,7 +115,7 @@ def test_multi_registered_custom_adapter_disambiguation() -> None:
 
 
 def test_admission_evidence_for_gemini_and_antigravity() -> None:
-    """Admission evidence for gemini and antigravity names their own key and binary."""
+    """Admission evidence names each key; ``antigravity`` pins the ``agy`` binary."""
     ev_gemini = gather_admission_evidence("gemini")
     assert ev_gemini.adapter == "gemini"
     assert ev_gemini.binary == "gemini"
@@ -111,5 +123,5 @@ def test_admission_evidence_for_gemini_and_antigravity() -> None:
 
     ev_antigravity = gather_admission_evidence("antigravity")
     assert ev_antigravity.adapter == "antigravity"
-    assert ev_antigravity.binary == "antigravity"
+    assert ev_antigravity.binary == "agy"
     assert ev_antigravity.contract_hash != ""

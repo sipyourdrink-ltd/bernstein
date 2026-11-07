@@ -81,6 +81,21 @@ from bernstein.core.tasks.suspension import (
 _KEY = b"0" * 32
 
 
+def _land_approval(approvals: Path, task_id: str) -> None:
+    """Write the signed decision record ``bernstein approve`` would write."""
+    from bernstein.core.approval.models import local_shell_principal
+    from bernstein.core.security.approval_decision import build_decision_record, write_decision_record
+
+    record = build_decision_record(
+        task_id=task_id,
+        outcome="approved",
+        source="cli",
+        principal=local_shell_principal().to_dict(),
+        nonce="",
+    )
+    write_decision_record(approvals / f"{task_id}.approved", record)
+
+
 def _chain(tmp_path: Path) -> AuditChainStore:
     return AuditChainStore(tmp_path / "audit", key=_KEY)
 
@@ -669,7 +684,7 @@ def test_until_approval_resumes_when_approval_lands(tmp_path: Path) -> None:
     # bernstein approve lands the decision file.
     approvals = sdd / "runtime" / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
-    (approvals / "T-appr.approved").write_text("approved", encoding="utf-8")
+    _land_approval(approvals, "T-appr")
     approval_ref = approval_decision_ref(workdir, "T-appr")
     assert approval_ref  # non-empty digest binding the approval record
 
@@ -1031,7 +1046,7 @@ def test_resume_without_approval_is_rejected_before_any_journal_mutation(tmp_pat
     # Once the decision lands the same resume succeeds.
     approvals = sdd / "runtime" / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
-    (approvals / "T-gate.approved").write_text("approved", encoding="utf-8")
+    _land_approval(approvals, "T-gate")
     resume = resume_task(
         sdd_dir=sdd,
         suspend_row=park.suspend_row,
@@ -1076,7 +1091,7 @@ def test_resume_marker_never_escapes_the_approvals_directory(tmp_path: Path) -> 
 def test_approval_paths_accept_ordinary_task_ids(tmp_path: Path) -> None:
     approvals = tmp_path / ".sdd" / "runtime" / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
-    (approvals / "T-abc_123.def.approved").write_text("approved", encoding="utf-8")
+    _land_approval(approvals, "T-abc_123.def")
     assert approval_decision_ref(tmp_path, "T-abc_123.def")
     marker = write_resume_marker(tmp_path, "T-abc_123.def", "cafe")
     assert marker.read_text(encoding="utf-8") == "cafe"
@@ -1376,7 +1391,7 @@ def test_one_approval_authorises_exactly_one_resume(tmp_path: Path) -> None:
     )
     approvals = sdd / "runtime" / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
-    (approvals / "T-once.approved").write_text("approved", encoding="utf-8")
+    _land_approval(approvals, "T-once")
     approval_ref = approval_decision_ref(tmp_path, "T-once")
 
     first = resume_task(
@@ -1424,7 +1439,7 @@ def test_settled_park_refuses_replay_through_the_cli(tmp_path: Path) -> None:
 
     approvals = root / ".sdd" / "runtime" / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
-    (approvals / "T-cli.approved").write_text("approved", encoding="utf-8")
+    _land_approval(approvals, "T-cli")
 
     outcomes = [
         runner.invoke(task_group, ["resume", "T-cli", "--workdir", str(root), "--worktree", str(wt), "--json"])
@@ -1780,7 +1795,7 @@ def test_settlement_survives_deletion_of_the_audit_chain_tail(tmp_path: Path) ->
     )
     approvals = sdd / "runtime" / "approvals"
     approvals.mkdir(parents=True, exist_ok=True)
-    (approvals / "T-tail.approved").write_text("approved", encoding="utf-8")
+    _land_approval(approvals, "T-tail")
     approval_ref = approval_decision_ref(tmp_path, "T-tail")
     resume_task(
         sdd_dir=sdd,

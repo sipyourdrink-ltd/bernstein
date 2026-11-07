@@ -227,7 +227,10 @@ def test_a_restart_during_the_window_cancels_the_verdict(tmp_path: Path, monkeyp
     with (
         patch.object(rb, "server_get", side_effect=fake_get),
         patch.object(rb.time, "sleep", return_value=None),
+        # Both clocks: the wait is bounded on ``monotonic`` and ``sleep`` is a
+        # no-op here, so the real one would never reach the deadline.
         patch.object(rb.time, "time", side_effect=fake_time),
+        patch.object(rb.time, "monotonic", side_effect=fake_time),
         patch.object(rb, "_signal_orchestrator_shutdown"),
     ):
         verdict = rb._wait_for_run_completion(timeout_s=120.0)

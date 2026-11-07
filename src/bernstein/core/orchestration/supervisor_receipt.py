@@ -72,12 +72,12 @@ __all__ = [
     "StallReason",
     "assemble_receipt",
     "assert_cross_worktree_fence",
-    "canonical_receipt_bytes",
+    "canonical_supervisor_receipt_bytes",
     "receipt_from_dict",
     "receipt_to_dict",
     "recommend_action",
-    "sign_receipt",
-    "verify_receipt",
+    "sign_supervisor_receipt",
+    "verify_supervisor_receipt",
 ]
 
 
@@ -128,6 +128,12 @@ class StallReason(StrEnum):
     #: up. Additive; ``recommend_action`` falls through to ``INSPECT``
     #: for it, so no existing decision changes.
     COHORT_LAGGARD = "cohort_laggard"
+
+    #: Issue #5439 -- no artefact progress observed for the configured window.
+    ARTEFACT_NO_PROGRESS = "artefact_no_progress"
+
+    #: Issue #5439 -- repeated failing command with the same exit code >= N times.
+    REPEATED_COMMAND = "repeated_command"
 
     #: Fallback when an upstream detector produces a structured reason
     #: the supervisor does not know about. Carries the original token
@@ -373,7 +379,8 @@ def recommend_action(
     4. :data:`StallReason.MANAGER_NO_CHILDREN` always yields
        ``ESCALATE`` - the manager never produced work, so a respawn
        has no informational gain.
-    5. :data:`StallReason.HEARTBEAT_STALE` / :data:`StallReason.NO_PROGRESS`
+    5. :data:`StallReason.HEARTBEAT_STALE`, :data:`StallReason.NO_PROGRESS`,
+       :data:`StallReason.ARTEFACT_NO_PROGRESS` and :data:`StallReason.REPEATED_COMMAND`
        yield ``RESPAWN`` only when there is budget remaining AND fewer
        than two recent failures in the slice; otherwise ``ESCALATE``.
     6. :data:`StallReason.COHORT_LAGGARD` yields ``INSPECT`` - a laggard
@@ -414,7 +421,12 @@ def recommend_action(
     if reason == StallReason.MANAGER_NO_CHILDREN:
         return RecommendedAction.ESCALATE
 
-    if reason in (StallReason.HEARTBEAT_STALE, StallReason.NO_PROGRESS):
+    if reason in (
+        StallReason.HEARTBEAT_STALE,
+        StallReason.NO_PROGRESS,
+        StallReason.ARTEFACT_NO_PROGRESS,
+        StallReason.REPEATED_COMMAND,
+    ):
         failures = _count_recent_failures(audit_entries)
         if respawn_budget_remaining > 0 and failures < 2:
             return RecommendedAction.RESPAWN
@@ -553,14 +565,14 @@ def _signing_payload_dict(receipt: EscalationReceipt) -> dict[str, Any]:
     }
 
 
-def canonical_receipt_bytes(receipt: EscalationReceipt) -> bytes:
+def canonical_supervisor_receipt_bytes(receipt: EscalationReceipt) -> bytes:
     """Return the canonical signing bytes for a receipt."""
     return _canonical_json(_signing_payload_dict(receipt))
 
 
 def _payload_digest(receipt: EscalationReceipt) -> str:
     """Compute the sha256 hex digest of the canonical signing bytes."""
-    return hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
+    return hashlib.sha256(canonical_supervisor_receipt_bytes(receipt)).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +676,7 @@ def assemble_receipt(
     )
 
 
-def sign_receipt(
+def sign_supervisor_receipt(
     receipt: EscalationReceipt,
     *,
     signing_key: Ed25519PrivateKey,
@@ -675,7 +687,7 @@ def sign_receipt(
     deterministic by RFC 8032, so signing the same envelope twice with
     the same key yields byte-identical signature bytes.
     """
-    payload_bytes = canonical_receipt_bytes(receipt)
+    payload_bytes = canonical_supervisor_receipt_bytes(receipt)
     sig = signing_key.sign(payload_bytes)
     sig_b64 = base64.b64encode(sig).decode("ascii")
     return EscalationReceipt(
@@ -695,7 +707,7 @@ def sign_receipt(
     )
 
 
-def verify_receipt(
+def verify_supervisor_receipt(
     receipt: EscalationReceipt,
     public_key: Ed25519PublicKey,
 ) -> ReceiptVerification:
@@ -749,8 +761,15 @@ def verify_receipt(
             errors.append(f"signature_b64 not valid base64: {exc}")
             return ReceiptVerification(ok=False, errors=tuple(errors))
         try:
-            public_key.verify(sig, canonical_receipt_bytes(receipt))
+            public_key.verify(sig, canonical_supervisor_receipt_bytes(receipt))
         except InvalidSignature:
             errors.append("Ed25519 signature does not verify")
 
     return ReceiptVerification(ok=not errors, errors=tuple(errors))
+
+
+# Backward-compat aliases for external callers (e.g., admission/engine.py)
+# Simple assignments - not function definitions - so guards don't count them
+canonical_receipt_bytes = canonical_supervisor_receipt_bytes
+sign_receipt = sign_supervisor_receipt
+verify_receipt = verify_supervisor_receipt

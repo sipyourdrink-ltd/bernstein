@@ -85,7 +85,7 @@ Everyone below has had at least one pull request merged, most recent first.
 
 Security reporters are credited on the published advisory and in the release
 notes carrying the fix, as described in the
-[bug bounty page](https://bernstein.readthedocs.io/en/latest/security/bug-bounty/).
+[bug bounty page](https://docs.bernstein.run/en/latest/security/bug-bounty/).
 
 ## Community
 

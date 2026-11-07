@@ -37,9 +37,9 @@ Default behaviour:
 | Error rate < 5% sustained ~2 min (within the 10 min window) | Effective max raises by 1 (up to configured max). |
 | Load average per CPU above the pause threshold | Spawning paused (`effective_max = 0`) until load drops. |
 
-Surface: `bernstein status` and the
-`bernstein_parallelism_level` Prometheus gauge expose the
-current effective ceiling.
+Surface: the effective ceiling is recorded every tick as the
+`parallelism_level` metric (metric collector; the Datadog exporter maps it
+to a gauge).
 
 ### 2. Deadline enforcement
 
@@ -64,8 +64,8 @@ fire in sequence:
 
 | Threshold | Default | Action |
 |---|--:|---|
-| Warn | 80% | Soft warning surfaced in operator views and Prometheus. |
-| Critical | 95% | Hard warning; non-essential work is queued for shutdown. |
+| Warn | 80% | One-time `Budget warning` log line from the cost tracker; `should_warn` is exposed in the costs/status API. The orchestrator's default `BudgetPolicy` also returns PAUSE from 80%, holding new spawns (running agents continue). |
+| Critical | 95% | One-time `BUDGET CRITICAL` log line; no action of its own. (From 90% the default `BudgetPolicy` returns DOWNGRADE_MODEL: ready tasks are rewritten to a cheaper model tier and spawning resumes on that tier.) |
 | Stop | 100% | `should_stop` flips; the orchestrator drains live agents and aborts. |
 
 The cap source resolves with the following precedence:
@@ -73,7 +73,7 @@ The cap source resolves with the following precedence:
 1. `BERNSTEIN_MAX_COST_USD` env var (set by the
    `bernstein run --max-cost-usd N` flag).
 2. `.sdd/runtime/run_config.json` (`run_config_value`).
-3. `bernstein.yaml` `seed.budget_usd` (`seed_value`).
+3. `bernstein.yaml` `budget` (`seed_value`, surfaced as `seed.budget_usd`).
 4. Default `0.0` (= unlimited).
 
 Non-positive values mean "unlimited" and are normalised to `0.0`.
@@ -86,18 +86,17 @@ silently disables the guard.
 |---|---|---|
 | `BERNSTEIN_MAX_AGENTS` | configured max | Hard ceiling on parallel agents per run. |
 | `BERNSTEIN_MAX_COST_USD` | unset | Hard cap on cumulative routed spend per run. |
-| `seed.budget_usd` | unset | Per-run budget read from `bernstein.yaml`. |
+| `budget` (`bernstein.yaml`) | unset | Per-run budget read from `bernstein.yaml`. |
 | `defaults.PARALLELISM.error_rate_high` | `0.20` | Error rate above which adaptive parallelism shrinks. |
 | `defaults.PARALLELISM.cpu_pause_threshold` | `300.0` | Load-average percent-per-CPU above which spawning pauses (default ~3 pinned cores). |
 
 ## Metrics
 
-| Metric | Type | Meaning |
-|---|---|---|
-| `bernstein_parallelism_level` | gauge | Current effective max agent count. |
-| `bernstein_task_deadline_exceeded_total` | counter | Tasks failed by the deadline check. |
-| `bernstein_run_cost_usd` | gauge | Cumulative routed spend for the active run. |
-| `bernstein_run_budget_remaining_usd` | gauge | Remaining headroom before the budget hard-stop. |
+The metric collector records `parallelism_level` (current effective max
+agent count) each tick. Deadline outcomes are reported as the
+`task.deadline_warning` / `task.deadline_exceeded` events rather than
+counters, and budget state is exposed through the cost tracker's
+`BudgetStatus` (`should_warn`, `should_stop`).
 
 ### 4. Commit-completion check (retry-with-continuation)
 

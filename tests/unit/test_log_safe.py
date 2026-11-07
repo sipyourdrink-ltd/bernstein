@@ -119,3 +119,60 @@ def test_an_object_whose_str_raises_returns_a_placeholder() -> None:
 def test_never_raises_regardless_of_input_shape(bad: object) -> None:
     """The one hard guarantee: whatever is handed in, this returns a string."""
     assert isinstance(for_log(bad), str)
+
+
+# ---------------------------------------------------------------------------
+# escape_nonprintable: the characters sanitize_log leaves in place
+# ---------------------------------------------------------------------------
+#
+# sanitize_log escapes record boundaries and control characters. It does not
+# touch Unicode format characters, private-use code points, or non-ASCII
+# separators, none of which split a record but all of which change what an
+# operator sees: U+202E reverses the text after it, U+200B/U+FEFF make two
+# different ids render the same. Callers that log identifiers opt in.
+
+
+@pytest.mark.parametrize(
+    ("codepoint", "escaped"),
+    [
+        (0x202E, "\\u202e"),  # RIGHT-TO-LEFT OVERRIDE
+        (0x2066, "\\u2066"),  # LEFT-TO-RIGHT ISOLATE
+        (0x200F, "\\u200f"),  # RIGHT-TO-LEFT MARK
+        (0x200B, "\\u200b"),  # ZERO WIDTH SPACE
+        (0xFEFF, "\\ufeff"),  # ZERO WIDTH NO-BREAK SPACE / BOM
+        (0x00AD, "\\u00ad"),  # SOFT HYPHEN
+        (0xE000, "\\ue000"),  # private use, BMP
+        (0xF0000, "\\U000f0000"),  # private use, plane 15
+        (0x00A0, "\\u00a0"),  # NO-BREAK SPACE
+    ],
+)
+def test_escape_nonprintable_escapes_what_sanitize_log_leaves(codepoint: int, escaped: str) -> None:
+    raw = "a" + chr(codepoint) + "b"
+    result = for_log(raw, escape_nonprintable=True)
+    assert result == "a" + escaped + "b"
+    assert chr(codepoint) not in result
+
+
+def test_escape_nonprintable_is_off_by_default() -> None:
+    """Existing for_log callers keep their output; the wider class is opt-in."""
+    raw = "a" + chr(0x202E) + "b"
+    assert for_log(raw) == raw
+
+
+def test_escape_nonprintable_keeps_sanitize_log_escapes_for_record_boundaries() -> None:
+    """The extra pass runs after sanitize_log, so CR/LF/NEL/U+2028 keep their escape form."""
+    raw = "a\rb\nc" + chr(0x2028) + "d" + chr(0x85) + "z"
+    assert for_log(raw, escape_nonprintable=True) == "a\\rb\\nc\\u2028d\\x85z"
+
+
+def test_escape_nonprintable_leaves_printable_non_ascii_alone() -> None:
+    """Escaping must not mangle legitimate text in a non-Latin script."""
+    assert for_log("café-日本-ß", escape_nonprintable=True) == "café-日本-ß"
+
+
+def test_escape_nonprintable_runs_before_the_length_cap() -> None:
+    """A value cut at the limit carries no raw non-printable character."""
+    raw = chr(0x202E) * 300
+    result = for_log(raw, limit=256, escape_nonprintable=True)
+    assert result == ("\\u202e" * 300)[:256] + "...(truncated)"
+    assert chr(0x202E) not in result

@@ -96,6 +96,7 @@ from bernstein.evolution.types import (
     PredictedEffect,
     ProposalStatus,
     RiskLevel,
+    RollbackError,
     SandboxResult,
 )
 
@@ -156,6 +157,7 @@ __all__ = [
     "QualityMetrics",
     "RiskLevel",
     "RiskScorer",
+    "RollbackError",
     "SandboxResult",
     "SandboxValidator",
     "TaskMetrics",
@@ -353,10 +355,23 @@ class EvolutionCoordinator:
                     executed.append(proposal)
                 else:
                     # Execution failed - attempt rollback
-                    if self.executor.rollback_upgrade(proposal):
-                        proposal.status = UpgradeStatus.ROLLED_BACK
-                    else:
+                    try:
+                        rolled_back = self.executor.rollback_upgrade(proposal)
+                    except RollbackError:
+                        # The files this proposal changed could not be put back,
+                        # so the tree is in a state nobody declared. Record the
+                        # proposal as REJECTED (what a failed rollback has always
+                        # meant here) and stop: applying the next approved
+                        # proposal on top of an unknown tree is what raising
+                        # was meant to prevent. The rest stay APPROVED and are
+                        # retried on the next pass.
+                        logger.exception(
+                            "Rollback of upgrade %s failed; not executing further upgrades this pass",
+                            proposal.id,
+                        )
                         proposal.status = UpgradeStatus.REJECTED
+                        break
+                    proposal.status = UpgradeStatus.ROLLED_BACK if rolled_back else UpgradeStatus.REJECTED
 
         # Remove resolved proposals from pending
         self._pending_upgrades = [
