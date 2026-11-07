@@ -286,15 +286,17 @@ def _read_sandbox_events(audit_dir: Path, *, require_verified: bool = False) -> 
     try:
         audit = AuditLog(audit_dir, key=key)
         if require_verified:
-            report = audit.verify_detailed()
+            report = audit.verify_detailed(include_events=True)
             if not report.ok:
                 reasons = [*report.hard_errors, *(tear.describe() for tear in report.unacknowledged_tears)]
                 raise SandboxSweepUnavailableError(f"audit verification failed: {'; '.join(reasons)}")
             if report.tears:
-                # Acknowledgement does not authenticate records query can return from damaged spans.
+                # Acknowledgement does not authenticate records from damaged spans.
                 reasons = [tear.describe() for tear in report.tears]
                 raise SandboxSweepUnavailableError(f"audit contains tear evidence: {'; '.join(reasons)}")
-        events = audit.query(include_archived=True, unreadable=unreadable)
+            events = report.events
+        else:
+            events = audit.query(include_archived=True, unreadable=unreadable)
     except OSError as exc:
         raise SandboxSweepUnavailableError(f"cannot read the audit log at {audit_dir}: {exc}") from exc
     if unreadable:

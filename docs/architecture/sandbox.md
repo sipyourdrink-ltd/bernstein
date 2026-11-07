@@ -607,10 +607,12 @@ checking it holds nothing you need.
 
 The separate Python API `prepare_sandbox_removal_proposal(workdir,
 sandbox_session_id, create_hmac=...)` prepares read-only evidence for one
-leaked lifetime. It first requires `AuditLog.verify_detailed().ok`; a damaged
-chain or unreadable archived segment refuses the proposal with its reason.
+leaked lifetime. It requires `AuditLog.verify_detailed(include_events=True).ok`
+and projects records from the same immutable segment bytes verified by that
+call, without a second journal read. A damaged chain or unreadable archived
+segment refuses the proposal with its reason.
 Acknowledged tears also refuse preparation: acknowledgement does not
-authenticate records that the query can still return from damaged spans.
+authenticate records from damaged spans.
 It reuses the listing's lifetime pairing and strict task-log replay, including
 `LANE_FINISHED_STATUSES`, so a reopened task or torn task-log line cannot
 produce a proposal. Excluded, superseded, missing and ambiguous selections

@@ -183,8 +183,8 @@ def test_removal_proposal_requires_verified_leaked_lifetime(
     verified: list[bool] = []
     original_verify = AuditLog.verify_detailed
 
-    def verify(log: AuditLog) -> ChainVerifyReport:
-        report = original_verify(log)
+    def verify(log: AuditLog, *, include_events: bool = False) -> ChainVerifyReport:
+        report = original_verify(log, include_events=include_events)
         verified.append(report.ok)
         return report
 
@@ -205,6 +205,51 @@ def test_removal_proposal_requires_verified_leaked_lifetime(
         assert candidate.session.create_hmac == proposal.create_hmac
     assert verified == [case not in {"invalid-hmac", "unreadable-archive"}]
     assert _tree(tmp_path) == before, "proposal preparation must not write anything"
+
+
+@pytest.mark.parametrize("archived", [False, True], ids=["live", "archived"])
+def test_removal_proposal_uses_verified_snapshot(
+    tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch, archived: bool
+) -> None:
+    import gzip
+
+    from bernstein.core.sandbox.leak_sweep import prepare_sandbox_removal_proposal
+
+    _record_task(tmp_path, "T-1", "done")
+    _record_task(tmp_path, "T-2", "done")
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    create = _audit(tmp_path, audit_key).query()[0]
+    segment = next((tmp_path / ".sdd" / "audit").glob("*.jsonl"))
+    if archived:
+        archive = segment.parent / "archive" / f"{segment.name}.gz"
+        archive.parent.mkdir()
+        archive.write_bytes(gzip.compress(segment.read_bytes()))
+        segment.unlink()
+        segment = archive
+
+    original_verify = AuditLog.verify_detailed
+    verified: list[bool] = []
+
+    def verify_then_change(log: AuditLog, **kwargs: bool) -> ChainVerifyReport:
+        report = original_verify(log, **kwargs)
+        verified.append(report.ok)
+        raw = gzip.decompress(segment.read_bytes()) if archived else segment.read_bytes()
+        record = json.loads(raw)
+        record["details"].update(backend="e2b", agent_session_id="unverified-agent", task_ids=["T-2"])
+        changed = (json.dumps(record) + "\n").encode()
+        segment.write_bytes(gzip.compress(changed) if archived else changed)
+        return report
+
+    monkeypatch.setattr(AuditLog, "verify_detailed", verify_then_change)
+    proposal = prepare_sandbox_removal_proposal(tmp_path, "sbx-1", create_hmac=create.hmac)
+
+    assert verified == [True]
+    assert proposal.create_hmac == create.hmac
+    assert proposal.sandbox_session_id == create.resource_id
+    assert proposal.backend == create.details["backend"]
+    assert proposal.agent_session_id == create.details["agent_session_id"]
+    assert proposal.task_ids == tuple(create.details["task_ids"])
+    assert not original_verify(_audit(tmp_path, audit_key)).ok, "the changed record must fail authentication"
 
 
 # ---------------------------------------------------------------------------
