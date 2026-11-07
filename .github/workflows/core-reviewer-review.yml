@@ -1,0 +1,118 @@
+name: Core reviewer review
+
+# Routing only: quorum.yml decides whose approvals count. Like the area
+# steward router, this handles fork PRs without checking out any PR code.
+# The roster is data from the base SHA; event fields pass through env and
+# are never interpolated into a run block. Only review requests need write.
+on:  # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+concurrency:
+  group: core-reviewer-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  request-core-reviewer:
+    name: Request one core reviewer
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - name: Request the least recently requested core reviewer
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import calendar
+          import json
+          import os
+          import subprocess
+          import tomllib
+          from datetime import datetime, timezone, date
+
+          repo = os.environ["REPO"]
+          number = os.environ["PR_NUMBER"]
+          author = os.environ["PR_AUTHOR"].casefold()
+          base = os.environ["BASE_SHA"]
+
+          def api(*args, payload=None):
+              return subprocess.run(
+                  ["gh", "api", *args], input=payload,
+                  check=True, capture_output=True, text=True,
+              ).stdout
+
+          # Public repository reads need no additional token permissions.
+          roster = tomllib.loads(api(
+              f"repos/{repo}/contents/.github/quorum-roster.toml?ref={base}",
+              "-H", "Accept: application/vnd.github.raw+json",
+          ))
+          today = datetime.now(timezone.utc).date()
+          core = {}
+          for entry in roster["core_reviewers"]:
+              if isinstance(entry, str):
+                  login = entry
+              else:
+                  login = entry["login"]
+                  expiry = entry.get("expires")
+                  if expiry is None and entry.get("granted") is not None:
+                      grant = date.fromisoformat(str(entry["granted"]))
+                      month_index = grant.month - 1 + 6
+                      year = grant.year + month_index // 12
+                      month = month_index % 12 + 1
+                      expiry = date(year, month, min(grant.day, calendar.monthrange(year, month)[1]))
+                  if expiry is not None and today >= date.fromisoformat(str(expiry)):
+                      continue
+              if login.casefold() != author:
+                  core[login.casefold()] = login
+
+          def route():
+              if not core:
+                  print("No eligible core reviewer other than the author; no request made.")
+                  return
+              pr = json.loads(api(f"repos/{repo}/pulls/{number}"))
+              if pr["draft"]:
+                  print("PR is now a draft; no request made.")
+                  return
+              pending = {r["login"].casefold() for r in pr["requested_reviewers"]}
+              if pending & core.keys():
+                  print("A core reviewer is already requested; keeping that request.")
+                  return
+
+              # Include closed PRs and fulfilled/removed requests: current
+              # requested_reviewers alone is load, not request recency.
+              pages = json.loads(api(
+                  f"repos/{repo}/issues/events?per_page=100", "--paginate", "--slurp",
+              ))
+              latest = dict.fromkeys(core, "")
+              for page in pages:
+                  for event in page:
+                      if event["event"] != "review_requested":
+                          continue
+                      login = (event.get("requested_reviewer") or {}).get("login", "").casefold()
+                      if login in latest:
+                          latest[login] = max(latest[login], event["created_at"])
+              for login in sorted(core):
+                  print(f"{core[login]}: last requested {latest[login] or 'not in history'}")
+              chosen = min(core, key=lambda login: (latest[login], login))
+              api(
+                  "--method", "POST", f"repos/{repo}/pulls/{number}/requested_reviewers",
+                  "--input", "-", payload=json.dumps({"reviewers": [core[chosen]]}),
+              )
+              print(f"Requested {core[chosen]} on #{number} (roster base {base}).")
+
+          route()
+          PY

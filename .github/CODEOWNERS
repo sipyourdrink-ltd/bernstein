@@ -4,7 +4,8 @@
 # There is no catch-all line on purpose. The approval counts the charter
 # asks for (s2) are checked by scripts/quorum_check.py against
 # .github/quorum-roster.toml, and the reviews a change still needs are
-# requested from the roster by the hourly sweep, so a catch-all here would
+# routed to one core reviewer on opening (core-reviewer-review.yml), with
+# missing approvals requested by the hourly sweep. A catch-all here would
 # only route every pull request to every core reviewer at once.
 #
 # Later entries win. The entries below are the paths the charter protects
