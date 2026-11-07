@@ -13,6 +13,7 @@ import logging
 import time
 import uuid
 from collections import deque
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NotRequired, Protocol, cast
@@ -58,6 +59,7 @@ from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
 
+    from bernstein.core.admission.models import PoolSpec
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.tasks.contracts import ContractViolation, WorkerCompletion, WorkerRefusal
 
@@ -448,6 +450,11 @@ class EmptyCompletionError(TaskDomainError):
         )
 
 
+class AttachmentPreview(NamedTuple):
+    tasks: tuple[Task, ...]
+    manifest_sha256: str
+
+
 class TaskStore:
     """Thread-safe in-memory task store with JSONL persistence.
 
@@ -518,6 +525,56 @@ class TaskStore:
         # is skipped rather than the transition refused.
         self._audit_chain: AuditChainStore | None = None
         self.administrative_runs: Any = None
+
+    def read_store_identity(self) -> str:
+        """Read a pre-initialized identity; never create or repair one."""
+        from bernstein.core.server.server_models import TaskStoreIdentity
+
+        try:
+            raw = Path(str(self._jsonl_path) + ".identity.json").read_bytes()
+            return TaskStoreIdentity.from_json(raw).store_id
+        except OSError as exc:
+            raise ValueError("missing or unreadable task store identity") from exc
+
+    async def initialize_store_identity(self) -> str:
+        """Explicit, create-once initialization, independent of task records."""
+        async with self._lock:
+            path = Path(str(self._jsonl_path) + ".identity.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with fsynced_write(path, mode="x") as handle:
+                    json.dump({"schema_version": "task-store-identity/v1", "store_id": uuid.uuid4().hex}, handle)
+            except FileExistsError:
+                pass
+            return self.read_store_identity()
+
+    async def preview_attachment(self, raw: str | bytes, pools: Mapping[str, PoolSpec]) -> AttachmentPreview:
+        """Validate and copy only selected tasks under the lock, without admission."""
+        from bernstein.core.admission.models import PoolSpec, Posture, canonical_name
+        from bernstein.core.server.server_models import AttachmentManifest
+
+        async with self._lock:
+            manifest = AttachmentManifest.from_json(raw)
+            if manifest.store_id != self.read_store_identity():
+                raise ValueError("attachment store_id mismatch")
+            name = manifest.limits.resources.pool
+            pool = pools.get(name)
+            if (
+                not isinstance(pool, PoolSpec)
+                or pool.name != name
+                or canonical_name(pool.name) != name
+                or pool.posture is not Posture.ENFORCE
+                or type(pool.slots) is not int
+                or pool.slots < 0
+            ):
+                raise ValueError("attachment requires an existing valid ENFORCE pool")
+            selected: list[Task] = []
+            for entry in sorted(manifest.tasks, key=lambda entry: entry.task_id):
+                task = self._tasks.get(entry.task_id)
+                if task is None or task.version != entry.version or task.tenant_id != manifest.tenant_id:
+                    raise ValueError(f"missing, stale or cross-tenant attachment task: {entry.task_id}")
+                selected.append(deepcopy(task))
+            return AttachmentPreview(tuple(selected), manifest.digest())
 
     # -- claim ledger --------------------------------------------------------
 
