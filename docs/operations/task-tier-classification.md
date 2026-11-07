@@ -1,5 +1,26 @@
 # Task-tier classification at dispatch
 
+## Backend dispatch tier
+
+The task API field `dispatch_tier` selects the backend tier and maps directly
+to `Task.dispatch_tier` (`DispatchTier`). Accepted strings are `local`, `edge`,
+`search`, `research` and `sandbox`. Omission defaults to `local`; explicit
+`null`, other types and unknown strings are validation errors (HTTP 422 on
+REST creation). There is no `tier` alias.
+
+The shared request builder, single and batch creation, REST responses, JSONL
+and PostgreSQL retain this field. Storage writes the enum value as a string
+and restores the enum on read. Legacy fieldless JSONL tasks and existing
+PostgreSQL rows default to `local`. JSONL replay keeps the latest explicitly
+recorded value even if a later record omits it; existing records are not
+rewritten. PostgreSQL adds the column through an idempotent startup migration.
+
+This backend field is separate from the model classification below
+(`light`, `standard`, `heavy`, `critical`); it does not change classification
+or provider routing.
+
+## Model classification
+
 Bernstein can optionally map a task onto a small closed **tier**
 (`light` | `standard` | `heavy` | `critical`) and pick the model for that
 tier from `role_model_policy.<role>.tier_models`. Roles without
