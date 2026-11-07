@@ -127,9 +127,7 @@ class TestStandardMap:
         # DORA and FINOS AIGF remain tracked under #1316 and must NOT be
         # selectable until their clause mappings are validated; emitting
         # TODO-only bundles would mislead operators.
-        assert set(SUPPORTED_STANDARDS) == {
-            "ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai", "cisa-agentic"
-        }
+        assert set(SUPPORTED_STANDARDS) == {"ai-act", "owasp-asi", "owasp-skills", "iso-42001", "cosai", "cisa-agentic"}
         assert "dora" not in SUPPORTED_STANDARDS
         assert "finos-aigf" not in SUPPORTED_STANDARDS
 

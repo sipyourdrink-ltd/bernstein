@@ -107,10 +107,7 @@ def test_cisa_selectors_reference_real_event_types(
             if token not in source_event_types:
                 unknown.append((control["control_id"], token))
 
-    assert not unknown, (
-        "cisa-agentic cites event types not defined in src: "
-        f"{unknown}"
-    )
+    assert not unknown, f"cisa-agentic cites event types not defined in src: {unknown}"
 
 
 def test_cisa_control_map_returns_copy() -> None:
