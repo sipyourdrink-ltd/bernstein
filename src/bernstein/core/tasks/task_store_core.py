@@ -39,6 +39,7 @@ from bernstein.core.tasks.lifecycle import (
 from bernstein.core.tasks.models import (
     AgentSession,
     CompletionSignal,
+    DispatchTier,
     ProgressSnapshot,
     RiskAssessment,
     RollbackPlan,
@@ -133,6 +134,7 @@ class TaskRecord(TypedDict):
     description: str
     role: str
     priority: int
+    dispatch_tier: NotRequired[str]
     scope: str
     complexity: str
     estimated_minutes: int | None
@@ -225,6 +227,7 @@ class TaskCreateRequest(Protocol):
     description: str
     role: str
     priority: int
+    dispatch_tier: DispatchTier
     scope: str
     complexity: str
     estimated_minutes: int | None
@@ -775,6 +778,8 @@ class TaskStore:
                     task = self._tasks[task_id]
                     self._index_remove(task)
                     task.status = TaskStatus(record.get("status", task.status.value))
+                    if "dispatch_tier" in record:
+                        task.dispatch_tier = DispatchTier(record["dispatch_tier"])
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
                     task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
@@ -1189,6 +1194,7 @@ class TaskStore:
             "description": task.description,
             "role": task.role,
             "priority": task.priority,
+            "dispatch_tier": task.dispatch_tier.value,
             "scope": task.scope.value,
             "complexity": task.complexity.value,
             "estimated_minutes": task.estimated_minutes,
@@ -1571,6 +1577,7 @@ class TaskStore:
             repo=getattr(req, "repo", None),
             depends_on_repo=getattr(req, "depends_on_repo", None),
             task_type=TaskType(req.task_type),
+            dispatch_tier=DispatchTier(getattr(req, "dispatch_tier", DispatchTier.LOCAL)),
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
             effort=req.effort,
@@ -2013,6 +2020,7 @@ class TaskStore:
                     repo=getattr(req, "repo", None),
                     depends_on_repo=getattr(req, "depends_on_repo", None),
                     task_type=TaskType(req.task_type),
+                    dispatch_tier=DispatchTier(getattr(req, "dispatch_tier", DispatchTier.LOCAL)),
                     upgrade_details=_parse_upgrade_dict(req.upgrade_details),
                     model=req.model,
                     effort=req.effort,
