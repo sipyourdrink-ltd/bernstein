@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from contextlib import nullcontext
+from copy import deepcopy
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -736,13 +738,9 @@ class TestMCPManagerSigningMode:
         assert mgr.is_alive("example")
         verification, scan, decision = chain.query()
         assert verification.details["verdict"] == "unsigned"
-        assert scan.details == dict(
-            verification_hmac=verification.hmac,
-            status="skipped",
-            skip_reason=reason,
-            findings=[],
-            prev_chain_digest=verification.hmac,
-        )
+        expected_scan = dict(status="skipped", skip_reason=reason, findings=[])
+        expected_scan.update(verification_hmac=verification.hmac, prev_chain_digest=verification.hmac)
+        assert scan.details == expected_scan
         assert decision.details["allowed"] is True
         assert decision.details["scan_hmac"] == scan.hmac
         assert chain.verify() == (True, [])
@@ -765,8 +763,6 @@ class TestMCPManagerSigningMode:
     ) -> None:
         from bernstein.core.spawner import AgentSpawner
 
-        from bernstein.adapters.plugin_sdk import AdapterCapability
-
         assert "audit_chain" in inspect.signature(MCPManager).parameters
         monkeypatch.delenv("BERNSTEIN_MCP_SIGNING_MODE", raising=False)
         chain = MagicMock()
@@ -784,15 +780,12 @@ class TestMCPManagerSigningMode:
         servers = {"example": cfg.to_mcp_config_entry()}
         if include_unmanaged:
             servers["unmanaged"] = {"command": "other-mcp"}
-        base = {"mcpServers": servers, "temperature": 0.2}
+        base = {"mcpServers": servers, "custom": "keep"}
+        original_base = deepcopy(base)
         adapter = mock_adapter_factory()
-        adapter.plugin_info = MagicMock()
-        adapter.plugin_info.return_value.capabilities = (AdapterCapability.SUPPORTS_SAMPLING_PARAMS,)
-        templates_dir = tmp_path / "templates" / "roles"
-        templates_dir.mkdir(parents=True)
         spawner = AgentSpawner(
             adapter,
-            templates_dir,
+            tmp_path,
             tmp_path,
             use_worktrees=False,
             mcp_manager=mgr,
@@ -803,16 +796,9 @@ class TestMCPManagerSigningMode:
 
         adapter.spawn.assert_called_once()
         outgoing = adapter.spawn.call_args.kwargs["mcp_config"]
-        assert outgoing is not None
-        expected_servers = {}
-        if include_unmanaged:
-            expected_servers["unmanaged"] = servers["unmanaged"]
-        if mode == "off":
-            expected_servers["example"] = servers["example"]
-        assert outgoing["mcpServers"] == expected_servers
-        assert outgoing["temperature"] == 0.2
-        assert base["mcpServers"] == servers
-        assert "example" in base["mcpServers"]
+        expected_servers = {name: entry for name, entry in servers.items() if name != "example" or mode == "off"}
+        assert outgoing == {"mcpServers": expected_servers, "custom": "keep"}
+        assert base == original_base
 
     @pytest.mark.parametrize("enabled,mode", [(True, "warn"), (True, "strict"), (False, "warn"), (True, "off")])
     def test_audit_construction_failure(self, tmp_path: Path, enabled: bool, mode: str) -> None:
@@ -825,15 +811,12 @@ class TestMCPManagerSigningMode:
         ):
             popen.return_value.poll.return_value = None
             configs = [MCPServerConfig(name="example", command=["echo"])]
-            if enabled and mode != "off":
-                with pytest.raises(RuntimeError, match="^MCP audit initialization failed$"):
-                    orchestrator._start_mcp_manager(configs, signing_mode=mode, audit_enabled=True, workdir=tmp_path)
-                popen.assert_not_called()
-            else:
-                mgr = orchestrator._start_mcp_manager(
+            blocked = enabled and mode != "off"
+            with pytest.raises(RuntimeError, match="^MCP audit initialization failed$") if blocked else nullcontext():
+                assert orchestrator._start_mcp_manager(
                     configs, signing_mode=mode, audit_enabled=enabled, workdir=tmp_path
-                )
-                assert mgr.is_alive("example")
+                ).is_alive("example")
+            assert popen.called is not blocked
 
     def test_default_mode_is_warn(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BERNSTEIN_MCP_SIGNING_MODE", raising=False)
