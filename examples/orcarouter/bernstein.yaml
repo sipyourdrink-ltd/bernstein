@@ -1,0 +1,35 @@
+# Optional OrcaRouter endpoint through the existing openai_agents adapter.
+# Install bernstein[openai] and supply ORCAROUTER_API_KEY on the host.
+# Add ORCAROUTER_API_KEY to BERNSTEIN_ALLOWED_API_KEY_ENVS on the host.
+# Before loading this config, certify the exact URL/model for backend:
+#   bernstein endpoints certify --base-url https://api.orcarouter.ai/v1 \
+#     --model openai/gpt-4o-mini --engine orcarouter \
+#     --api-key-env ORCAROUTER_API_KEY --role backend
+# See docs/operations/orcarouter.md for qualification and offline verification.
+
+goal: "Fix the failing tests in the sample package."
+cli: auto
+internal_llm_provider: none
+
+local_endpoints:
+  orcarouter:
+    base_url: https://api.orcarouter.ai/v1
+    model: openai/gpt-4o-mini
+    api_key_env: ORCAROUTER_API_KEY
+    engine: orcarouter
+    timeout: 120
+
+role_model_policy:
+  backend:
+    cli: openai_agents
+    endpoint: orcarouter
+
+# Enable this entry only after certification passes for backend.
+# Other roles retain their existing adapter selection.
+provider_availability:
+  roles:
+    backend:
+      chain:
+        - adapter: openai_agents
+          model: openai/gpt-4o-mini
+          conformance: basic
