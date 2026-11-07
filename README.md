@@ -190,7 +190,7 @@ Each goal moves through four stages:
 3. **Verify**. The janitor checks concrete signals: tests pass, files exist, lint clean, types correct.
 4. **Merge**. Verified work lands in main. Failed tasks get retried or routed to a different model.
 
-Keep `test_passes` completion signals scoped to the package or files a task changes, so verification stays fast. Each check defaults to a 120-second timeout; set `BERNSTEIN_SIGNAL_TIMEOUT_S=300` in the orchestrator environment for slower checks. See the [configuration reference](docs/operations/CONFIG.md#3-environment-variables).
+Keep `test_passes` completion signals scoped to the package or files a task changes, so verification stays fast. Each check defaults to a 120-second timeout; set `BERNSTEIN_SIGNAL_TIMEOUT_S=300` in the orchestrator environment for slower checks. See the [configuration reference](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/CONFIG.md#3-environment-variables).
 
 Why the scheduler is plain Python, and what that trades away: [why deterministic](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/WHY_DETERMINISTIC.md).
 
