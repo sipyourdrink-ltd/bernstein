@@ -312,7 +312,6 @@ bernstein.core.tokens.image_optimizer: #4526 audit in flight
 bernstein.core.tokens.prompt_injection: #4526 audit in flight
 bernstein.core.tokens.token_binding: #4526 audit in flight
 bernstein.core.tokens.token_breakdown: #4526 audit in flight
-bernstein.core.tokens.token_counter: #4526 audit in flight
 bernstein.core.tournament.runner: #4526 audit in flight
 bernstein.core.trackers.odata_writeback: #4526 audit in flight
 bernstein.core.trigger_sources.artifact: #4526 audit in flight

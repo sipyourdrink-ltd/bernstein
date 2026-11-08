@@ -44,7 +44,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `errors/`                   | Structured first-run error categorization for Bernstein |
 | `events/`                   | Eventing v2 - the chain-projected unified event feed (#2548) |
 | `evidence/`                 | Verification evidence bundles (issue #2362) |
-| `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
+| `fleet/`                    | Fleet dashboard and worker capability selection (``selection.py``) |
 | `git/`                      | git sub-package |
 | `govern/`                   | Governance planning and declared probe execution (``probe_runtime.py``) |
 | `grpc_gen/`                 | Generated gRPC stubs - run ``scripts/generate_proto.sh`` to populate |

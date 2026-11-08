@@ -10,6 +10,7 @@ Adapts:
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache, wraps
 from inspect import signature
 from pathlib import Path
@@ -22,31 +23,6 @@ if TYPE_CHECKING:
 
     from bernstein.core.govern.duplication_audit import DuplicationReport
 
-
-# Stable installation IDs, in the legacy doctor's display order. Backend
-# helpers share storage's ID: postgres/redis are alternate implementations.
-INSTALLATION_CHECKS: tuple[tuple[str, str], ...] = (
-    ("INS-001", "python"),
-    ("INS-002", "adapters"),
-    ("INS-003", "last_green"),
-    ("INS-004", "version_posture"),
-    ("INS-005", "auth"),
-    ("INS-006", "port"),
-    ("INS-007", "workspace"),
-    ("INS-008", "stale_pids"),
-    ("INS-009", "guardrails"),
-    ("INS-010", "ci_tools"),
-    ("INS-011", "storage"),
-    ("INS-012", "secrets"),
-    ("INS-013", "readiness"),
-    ("INS-014", "context_and_plugins"),
-    ("INS-015", "commit_attribution"),
-    ("INS-016", "compliance"),
-    ("INS-017", "schedule_supervisor"),
-    ("INS-018", "eval_gate_power"),
-    ("INS-019", "otel_export"),
-    ("INS-020", "audit_anchoring"),
-)
 
 _P = ParamSpec("_P")
 
@@ -156,32 +132,36 @@ def doctor_producer(check_id: str) -> Callable[[Callable[_P, Any]], Callable[_P,
     return decorate
 
 
-class DoctorInstallationAdapter:
-    """An opt-in install check, sharing the exact producer used by doctor."""
+class AuditSentinelCheck:
+    """Harmless, explicitly labelled failure for the audit selftest (#5091)."""
 
-    area = "INS"
-    opt_in = True
+    check_id = "sentinel:failure"
+    area = "sentinel"
+    title = "Governance Audit Failure Sentinel"
+    description = "Force a synthetic measured failure with BERNSTEIN_GOVERN_AUDIT_SENTINEL=1."
+    env_var = "BERNSTEIN_GOVERN_AUDIT_SENTINEL"
+    failure_reason = "Injected governance audit failure (selftest sentinel)."
 
-    def __init__(self, check_id: str, name: str) -> None:
-        self.check_id = check_id
-        self._name = name
-        self.title = name.replace("_", " ").capitalize()
-        self.description = f"Doctor installation check: {self.title}"
+    @property
+    def active(self) -> bool:
+        return os.environ.get(self.env_var) == "1"
+
+    @property
+    def opt_in(self) -> bool:
+        # An inactive sentinel must not change the default check set.
+        return not self.active
 
     def run(self, workdir: Path | None = None) -> Finding:
-        from bernstein.cli.commands import status_cmd
-
-        helper = getattr(status_cmd, f"_doctor_check_{self._name}")
-        rows: list[dict[str, Any]] = []
-        arguments: dict[str, Any] = {}
-        for name in signature(helper).parameters:
-            if name == "checks":
-                arguments[name] = rows
-            elif name == "workdir":
-                arguments[name] = workdir or Path.cwd()
-            elif name == "_check":
-                arguments[name] = lambda *args: status_cmd._add_check(rows, *args)
-        return helper(**arguments)
+        active = self.active
+        return Finding(
+            check_id=self.check_id,
+            verdict=Verdict.MEASURED,
+            passed=not active,
+            reason=self.failure_reason if active else None,
+            message=f"{self.env_var}=1 active: {self.failure_reason}" if active else "Selftest sentinel inactive.",
+            remediation=f"Unset {self.env_var}." if active else "",
+            evidence=(Evidence.from_payload(f"env://{self.env_var}", {"active": active}),),
+        )
 
     def __call__(self, workdir: Path | None = None) -> Finding:
         return self.run(workdir)

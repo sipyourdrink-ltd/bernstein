@@ -70,6 +70,18 @@ def test_doctor_and_installation_audit_report_identical_findings(installation: P
     assert {f["check_id"] for f in payload["findings"]} == {f"INS-{n:03}" for n in range(1, 21)}
 
 
+def test_installation_audit_lists_cli_catalog_without_running_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in vars(status_cmd):
+        if name.startswith("_doctor_check_"):
+            monkeypatch.setattr(status_cmd, name, Mock(side_effect=AssertionError("listing must not run a probe")))
+    result = CliRunner().invoke(cli, ["govern", "audit", "--list", "--only", "INS", "--json"])
+    assert result.exit_code == 0, result.output
+    catalog = json.loads(result.output)
+    assert len(catalog) == 20
+    assert {row["check_id"] for row in catalog} == {f"INS-{number:03}" for number in range(1, 21)}
+    assert all(row["area"] == "INS" and row["title"] for row in catalog)
+
+
 def test_every_doctor_helper_is_a_finding_producer(installation: Path) -> None:
     helpers = {name: helper for name, helper in vars(status_cmd).items() if name.startswith("_doctor_check_")}
     for name, helper in helpers.items():

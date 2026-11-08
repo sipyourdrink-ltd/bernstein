@@ -1612,10 +1612,13 @@ class ChainVerifyReport:
     ``hard_errors`` are chain damage that is *not* tear-shaped (mid-history
     tampering, broken linkage with verified records after it); ``tears`` are
     crash-shaped tail damage, each durable until acknowledged.
+    ``events`` contains the verified snapshot only when explicitly requested
+    and the chain has neither hard errors nor tears.
     """
 
     hard_errors: list[str] = field(default_factory=list)
     tears: list[TearEvidence] = field(default_factory=list)
+    events: list[AuditEvent] = field(default_factory=list)
 
     @property
     def unacknowledged_tears(self) -> list[TearEvidence]:
@@ -2868,7 +2871,7 @@ class AuditLog:
         """
         return self.verify()
 
-    def verify_detailed(self) -> ChainVerifyReport:
+    def verify_detailed(self, *, include_events: bool = False) -> ChainVerifyReport:
         """Verify the chain, separating tear evidence from hard corruption.
 
         The tear model is garbage-tolerant: a crashed append can leave a
@@ -2888,11 +2891,16 @@ class AuditLog:
         ``(segment, byte_offset)``; an unacknowledged tear is reported on
         every run - it never clears itself, in particular not by re-sealing.
 
+        With ``include_events=True``, project events from the same immutable
+        segment bytes that were verified, without rereading the journal. They
+        are returned only for a clean chain, including no acknowledged tears.
+
         Returns:
             A :class:`ChainVerifyReport`.
         """
         errors: list[str] = []
         ctx = _ChainWalkContext()
+        snapshot: list[bytes] = []
         archived = _archived_segment_paths(self._audit_dir)
         live_files = sorted(self._audit_dir.glob(_JSONL_GLOB))
         if not archived and not live_files:
@@ -2907,6 +2915,8 @@ class AuditLog:
                 # live files from a wrong (genesis) prev_hmac.
                 return ChainVerifyReport(hard_errors=errors)
             prev_hmac = _verify_log_bytes(raw, gz_path.name, prev_hmac, self._key, errors, ctx)
+            if include_events:
+                snapshot.append(raw)
         for log_path in live_files:
             raw = _read_live_segment(log_path, self._audit_dir)
             if raw is None:
@@ -2916,8 +2926,16 @@ class AuditLog:
                 errors.append(f"{log_path.name}: segment disappeared during verification")
                 return ChainVerifyReport(hard_errors=errors)
             prev_hmac = _verify_log_bytes(raw, log_path.name, prev_hmac, self._key, errors, ctx)
+            if include_events:
+                snapshot.append(raw)
 
-        return _build_verify_report(errors, ctx)
+        report = _build_verify_report(errors, ctx)
+        if report.ok and not report.tears:
+            for raw in snapshot:
+                report.events.extend(
+                    _events_from_text(_decode_segment_text(raw), event_type=None, actor=None, since=None, until=None)
+                )
+        return report
 
     # -- retention & archive ------------------------------------------------
 

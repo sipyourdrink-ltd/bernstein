@@ -13,6 +13,8 @@ uses exactly the same schema and producers as the installation audit's JSON
 array. The text report, display order, readiness calculation, exit behavior and
 `--fix` workflow remain unchanged. Installation checks are opt-in in the audit
 registry: use `--only INS` to measure the host rather than just the workspace.
+The audit CLI explicitly composes the installation catalog into its runner;
+the core default registry remains independent of CLI doctor implementations.
 
 Each producer has a stable ID, even when it emits several display rows or has
 no configured subject:
