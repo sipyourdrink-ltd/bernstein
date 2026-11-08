@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,83 @@ def _record(
 
 
 # --- happy path -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "agent_id",
+    ["agent:datasource-1", "agent/worker", r"agent\worker", "../worker", "CON", "worker. "],
+)
+def test_card_directory_is_portable(tmp_path: Path, keypair, operator_key, agent_id: str) -> None:
+    card, private_key = keypair
+    card = replace(card, agent_id=agent_id)
+    store = _store(tmp_path, (card, private_key), operator_key)
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+
+    _, receipt = _record(tmp_path, store, db)
+
+    card_paths = list((store.root / "identity").rglob("card.json"))
+    assert len(card_paths) == 1
+    card_path = card_paths[0]
+    assert card_path.parent.parent == store.root / "identity"
+    directory_name = card_path.parent.name
+    assert directory_name and all(character in "0123456789abcdef" for character in directory_name)
+    assert json.loads(card_path.read_text(encoding="utf-8"))["agent_id"] == agent_id
+    verifier = _store(tmp_path, (card, private_key), operator_key)
+    assert verifier.verify(receipt.receipt_id).ok
+
+
+@pytest.mark.parametrize("field", ["agent_id", "kid"])
+def test_misfiled_card_cannot_impersonate_signer(tmp_path: Path, keypair, operator_key, field: str) -> None:
+    store = _store(tmp_path, keypair, operator_key)
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    _, receipt = _record(tmp_path, store, db)
+    (card_path,) = list((store.root / "identity").rglob("card.json"))
+    data = json.loads(card_path.read_text(encoding="utf-8"))
+    data[field] = "other-signer"
+    card_path.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome = store.verify(receipt.receipt_id)
+
+    assert not outcome.ok
+    assert outcome.checks.get("signature") is not True
+
+
+@pytest.mark.parametrize("operation", ["mkdir", "write_text"])
+def test_card_failure_does_not_seal_receipt(tmp_path: Path, keypair, operator_key, monkeypatch, operation: str) -> None:
+    store = _store(tmp_path, keypair, operator_key)
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    original = getattr(Path, operation)
+
+    def fail_card_io(path: Path, *args, **kwargs):
+        if path.is_relative_to(store.root / "identity"):
+            raise OSError("card persistence failed")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, operation, fail_card_io)
+    with pytest.raises(OSError, match="card persistence failed"):
+        _record(tmp_path, store, db)
+
+    log = store.root / "lineage" / "log.jsonl"
+    assert not log.exists() or not log.read_text(encoding="utf-8")
+    assert not list((store.root / "lineage").rglob("*.jws"))
+    assert not store.audit_path.exists()
+    assert not list(store.receipts_dir.glob("*.json"))
+    assert not list(store.results_dir.glob("*.bin"))
+
+
+def test_legacy_card_layout_still_verifies(tmp_path: Path, keypair, operator_key) -> None:
+    card, private_key = keypair
+    card = replace(card, agent_id="legacy-worker")
+    store = _store(tmp_path, (card, private_key), operator_key)
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    _, receipt = _record(tmp_path, store, db)
+    (card_path,) = list((store.root / "identity").rglob("card.json"))
+    legacy_dir = store.root / "identity" / card.agent_id
+    if card_path.parent != legacy_dir:
+        card_path.parent.rename(legacy_dir)
+
+    verifier = _store(tmp_path, (card, private_key), operator_key)
+    assert verifier.verify(receipt.receipt_id).ok
 
 
 def test_record_then_verify_ok(tmp_path: Path, keypair, operator_key) -> None:

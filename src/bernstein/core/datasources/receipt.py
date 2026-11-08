@@ -284,6 +284,7 @@ class QueryReceiptStore:
         binding = compute_binding(core)
 
         artefact_path = _artefact_path(connection.id, qhash, phash)
+        self._persist_card()
         # ``span_id`` is deliberately repurposed here: instead of an OTel span
         # context, it carries the receipt-core ``binding`` digest so the binding
         # is signed and HMAC'd along with the rest of the entry. ``seal_write``
@@ -336,8 +337,6 @@ class QueryReceiptStore:
             encoding="utf-8",
         )
         self._append_audit(receipt)
-        # Persist the public agent card so an offline verifier has the key.
-        self._persist_card()
         return receipt
 
     def _append_audit(self, receipt: QueryReceipt) -> None:
@@ -360,7 +359,7 @@ class QueryReceiptStore:
     def _persist_card(self) -> None:
         identity_dir = self.root / "identity"
         identity_dir.mkdir(parents=True, exist_ok=True)
-        card_dir = identity_dir / self._card.agent_id
+        card_dir = identity_dir / hashlib.sha256(self._card.agent_id.encode("utf-8")).hexdigest()
         card_dir.mkdir(parents=True, exist_ok=True)
         (card_dir / "card.json").write_text(
             json.dumps(
@@ -472,21 +471,20 @@ class QueryReceiptStore:
         return VerifyOutcome(ok=not failures, receipt_id=receipt.receipt_id, checks=checks, failures=failures)
 
     def _load_card(self, agent_id: str, kid: str) -> AgentCard | None:
-        card_path = self.root / "identity" / agent_id / "card.json"
-        if not card_path.exists():
-            return None
-        try:
-            data = json.loads(card_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-        if data.get("agent_id") != agent_id or data.get("kid") != kid:
-            return None
-        return AgentCard(
-            agent_id=str(data["agent_id"]),
-            kid=str(data["kid"]),
-            public_key_pem=str(data["public_key_pem"]),
-            protocol_version=str(data.get("protocol_version", "a2a/1.0")),
-        )
+        for card_path in (self.root / "identity").glob("*/card.json"):
+            try:
+                data = json.loads(card_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if data.get("agent_id") != agent_id or data.get("kid") != kid:
+                continue
+            return AgentCard(
+                agent_id=str(data["agent_id"]),
+                kid=str(data["kid"]),
+                public_key_pem=str(data["public_key_pem"]),
+                protocol_version=str(data.get("protocol_version", "a2a/1.0")),
+            )
+        return None
 
     # -- drift --------------------------------------------------------------
 
