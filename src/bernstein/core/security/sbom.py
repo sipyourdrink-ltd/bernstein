@@ -300,7 +300,6 @@ def _collect_python_packages() -> list[SBOMComponent]:
             purl = _purl_for_python_package(name, version)
             if purl in seen:
                 continue
-            seen.add(purl)
             description = dist.metadata.get("Summary", "") or ""
             license_val = dist.metadata.get("License", "") or ""
             licenses = [license_val] if license_val and license_val != "UNKNOWN" else []
@@ -313,6 +312,8 @@ def _collect_python_packages() -> list[SBOMComponent]:
                     licenses=licenses,
                 )
             )
+            # A failed collection must not hide a later healthy sighting.
+            seen.add(purl)
         except Exception:
             continue
     return sorted(components, key=lambda c: c.name.lower())

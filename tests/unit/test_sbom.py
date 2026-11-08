@@ -597,3 +597,48 @@ def test_collect_python_packages_emits_one_component_per_distribution(monkeypatc
 
     assert [c.purl for c in components] == ["pkg:pypi/pip@26.2.1", "pkg:pypi/requests@2.28.0"]
     assert len({c.purl for c in components}) == len(components)
+
+
+@pytest.mark.parametrize("failed_key", ["Summary", "License"])
+@pytest.mark.parametrize("faulty_first", [True, False], ids=["faulty-first", "healthy-first"])
+def test_collect_python_packages_keeps_first_successful_sighting(
+    monkeypatch: pytest.MonkeyPatch, failed_key: str, faulty_first: bool
+) -> None:
+    """An unreadable sighting must not hide a healthy copy of the same purl."""
+    import importlib.metadata
+
+    from bernstein.core.security.sbom import _collect_python_packages
+
+    class _Meta(dict[str, str]):
+        fail_on: str | None = None
+
+        def get(self, key: str, default: str = "") -> str:  # type: ignore[override]
+            if key == self.fail_on:
+                raise OSError("synthetic metadata read failure")
+            return dict.get(self, key, default)
+
+    class _Dist:
+        def __init__(self, name: str, version: str, summary: str, license_val: str, fail_on: str | None = None) -> None:
+            self.metadata = _Meta(Name=name, Version=version, Summary=summary, License=license_val)
+            self.metadata.fail_on = fail_on
+
+    faulty = _Dist("probe-pkg", "1.0", "unreadable summary", "UNKNOWN", failed_key)
+    healthy = _Dist("probe-pkg", "1.0", "healthy summary", "MIT")
+    sightings = [faulty, healthy] if faulty_first else [healthy, faulty]
+    sightings = [
+        _Dist("", "1.0", "missing name", "MIT"),
+        _Dist("probe-pkg", "", "missing version", "MIT"),
+        *sightings,
+        _Dist("other-pkg", "1.0", "sibling summary", "BSD-3-Clause"),
+        _Dist("probe-pkg", "2.0", "other version summary", "Apache-2.0"),
+        _Dist("probe-pkg", "1.0", "later duplicate summary", "Apache-2.0"),
+    ]
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda: iter(sightings))
+
+    components = _collect_python_packages()
+
+    assert [(c.purl, c.description, c.licenses) for c in components] == [
+        ("pkg:pypi/other-pkg@1.0", "sibling summary", ["BSD-3-Clause"]),
+        ("pkg:pypi/probe-pkg@1.0", "healthy summary", ["MIT"]),
+        ("pkg:pypi/probe-pkg@2.0", "other version summary", ["Apache-2.0"]),
+    ]
