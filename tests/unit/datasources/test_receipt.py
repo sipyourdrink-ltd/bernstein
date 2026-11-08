@@ -132,7 +132,9 @@ def test_unrelated_non_object_cards_do_not_abort_verification(
     other_card = AgentCard(agent_id="agent:other", kid="other-key", public_key_pem=other_public_key)
     other_store = _store(tmp_path, (other_card, other_private_key), operator_key)
     _record(tmp_path, other_store, db)
-    (other_card_path,) = [candidate for candidate in identity_dir.glob("*/card.json") if candidate != requested_card_path]
+    (other_card_path,) = [
+        candidate for candidate in identity_dir.glob("*/card.json") if candidate != requested_card_path
+    ]
 
     malformed_paths = []
     for index, document in enumerate(documents):
@@ -165,7 +167,9 @@ def test_unrelated_non_object_cards_do_not_abort_verification(
     assert [candidate.read_text(encoding="utf-8") for candidate in malformed_paths] == list(documents)
 
 
-def test_unrelated_non_utf8_card_does_not_abort_verification(tmp_path: Path, keypair, operator_key, monkeypatch) -> None:
+def test_unrelated_non_utf8_card_does_not_abort_verification(
+    tmp_path: Path, keypair, operator_key, monkeypatch
+) -> None:
     store = _store(tmp_path, keypair, operator_key)
     db = _make_db(tmp_path / "a.db", [(1, "a")])
     _, receipt = _record(tmp_path, store, db)
