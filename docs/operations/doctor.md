@@ -15,6 +15,8 @@ array. The text report, display order, readiness calculation, exit behavior and
 registry: use `--only INS` to measure the host rather than just the workspace.
 The audit CLI explicitly composes the installation catalog into its runner;
 the core default registry remains independent of CLI doctor implementations.
+See [installation check composition](../sdd/installation-check-composition.md)
+for the ownership boundary and its regression checks.
 
 Each producer has a stable ID, even when it emits several display rows or has
 no configured subject:
