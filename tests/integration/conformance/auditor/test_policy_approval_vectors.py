@@ -1,6 +1,6 @@
 """Policy and human sign-off questions 6, 11, 12 and 13 (#5060).
 
-Only exported audit events are read. Missing decision-time policy references
+Only exported bundle receipts are read. Missing decision-time policy references
 and approval evidence remain strict expected failures, not invented evidence.
 """
 
@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from bernstein.core.replay.run_receipt import verify_run_receipt
 from tests.integration.conformance.auditor.bundle_reader import BundleReader
 
 
@@ -32,6 +33,23 @@ def _tool_decision(auditor_bundle: BundleReader) -> dict[str, Any]:
     )
     assert decision.get("verdict") == "allow", "the decision did not allow this tool call"
     return decision
+
+
+def _verified_run_receipt(auditor_bundle: BundleReader) -> dict[str, Any]:
+    receipt = auditor_bundle.read_json("run-receipt.json")
+    assert isinstance(receipt.get("audit_range"), dict), "missing exported signed tool event audit range"
+    tool_events = [
+        event for event in receipt.get("audit_range", {}).get("events", []) if event.get("event_type") == "tool.invoked"
+    ]
+    assert len(tool_events) == 1, "missing unique exported signed tool event"
+    # Only exported bytes are evidence. This pure verifier checks integrity
+    # without a workspace or HMAC key; operator-key trust remains separate.
+    integrity = verify_run_receipt(json.dumps(receipt).encode("utf-8"))
+    assert integrity.ok, f"exported run receipt integrity failed: {integrity.errors}"
+    assert tool_events[0] == _action(auditor_bundle, "tool.invoked"), (
+        "tool decision attachment differs from the signed tool event"
+    )
+    return receipt
 
 
 def _final_approval(auditor_bundle: BundleReader) -> dict[str, Any]:
@@ -123,7 +141,7 @@ def test_which_policy_version_was_in_force_at_decision_time_not_export_time(
     assert decision.get("policy_version"), "missing decision-time policy_version, not schema v"
     assert decision.get("journal_entry_hash"), "the policy reference must be anchored with the decision"
 
-    run_receipt = auditor_bundle.read_json("run-receipt.json")
+    run_receipt = _verified_run_receipt(auditor_bundle)
     anchors = [
         entry for entry in run_receipt["spine"]["entries"] if entry["entry_hash"] == decision["journal_entry_hash"]
     ]
@@ -149,7 +167,7 @@ def test_which_policy_version_was_in_force_at_decision_time_not_export_time(
     )
 
 
-@pytest.mark.parametrize("anchor_kind", ["arbitrary", "unrelated"])
+@pytest.mark.parametrize("anchor_kind", ["arbitrary", "unrelated", "edited_anchor"])
 def test_q13_rejects_policy_labels_without_a_decision_anchor(auditor_bundle: BundleReader, anchor_kind: str) -> None:
     """Negative controls edit a receipt in memory, never the scenario export."""
     receipt = auditor_bundle.read_json("audit-receipt.json")
@@ -163,11 +181,60 @@ def test_q13_rejects_policy_labels_without_a_decision_anchor(auditor_bundle: Bun
         "policy_version": "export-time-version",
         "journal_entry_hash": "arbitrary-nonempty" if anchor_kind == "arbitrary" else unrelated["entry_hash"],
     }
+    if anchor_kind == "edited_anchor":
+        decision = tool_call["details"]["governance_decision"]
+        decision.update(
+            v=1,
+            run_id=run_receipt["run_id"],
+            subject=tool_call["actor"],
+            action=tool_call["resource_id"],
+            inputs_hash="sha256:" + "0" * 64,
+            context={"policy_id": decision["policy_id"], "policy_version": decision["policy_version"]},
+        )
+        binding = {
+            key: value
+            for key, value in decision.items()
+            if key not in {"journal_entry_hash", "policy_id", "policy_version"}
+        }
+        canonical = json.dumps(binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        # Deliberately invalid evidence: retain the old entry hash and signed
+        # head while replacing the bytes that they supposedly anchor.
+        unrelated["actor"] = "bernstein.governance"
+        unrelated["content_hash"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
 
     class EditedReceipt(BundleReader):
         def read_json(self, name: str) -> dict[str, Any]:
-            return receipt if name == "audit-receipt.json" else auditor_bundle.read_json(name)
+            return {"audit-receipt.json": receipt, "run-receipt.json": run_receipt}[name]
 
-    message = "no unique exported spine entry" if anchor_kind == "arbitrary" else "not a governance decision"
+    message = "run receipt integrity failed" if anchor_kind == "edited_anchor" else "differs from the signed tool event"
     with pytest.raises(AssertionError, match=message):
         test_which_policy_version_was_in_force_at_decision_time_not_export_time(EditedReceipt(auditor_bundle.root))
+
+
+@pytest.mark.parametrize("edit", ["audit_only_attachment", "missing_signed_event"])
+def test_policy_binding_requires_the_exported_signed_tool_event(auditor_bundle: BundleReader, edit: str) -> None:
+    receipt = auditor_bundle.read_json("audit-receipt.json")
+    run_receipt = auditor_bundle.read_json("run-receipt.json")
+    if edit == "audit_only_attachment":
+        next(event for event in receipt["events"] if event["event_type"] == "tool.invoked")["details"][
+            "governance_decision"
+        ] = {"policy_id": "export-only"}
+    else:
+        run_receipt.pop("audit_range")
+
+    class EditedReceipt(BundleReader):
+        def read_json(self, name: str) -> dict[str, Any]:
+            return {"audit-receipt.json": receipt, "run-receipt.json": run_receipt}[name]
+
+    message = (
+        "differs from the signed tool event"
+        if edit == "audit_only_attachment"
+        else "missing exported signed tool event"
+    )
+    with pytest.raises(AssertionError, match=message):
+        _verified_run_receipt(EditedReceipt(auditor_bundle.root))
+
+
+def test_exported_tool_action_matches_its_signed_run_receipt(auditor_bundle: BundleReader) -> None:
+    """Positive control uses the real, unedited export, with no added evidence."""
+    _verified_run_receipt(auditor_bundle)

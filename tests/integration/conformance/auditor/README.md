@@ -85,8 +85,13 @@ identity/version bound at decision time and explicit approval requirement,
 outcome, approver and sign-off time. An expired wait is not a human grant
 (#5051), and absent evidence is not proof that no approval was required.
 No producer or fixture fields are added by this slice.
-Q13 matches the decision's anchor to an exported governance spine entry and
-recomputes its canonical content hash, including the policy in the decision
-context. A nonempty hash or export-time labels alone cannot answer it. Two
-unmarked negative controls reject an arbitrary hash and an unrelated real
-spine entry; they do not add evidence to the scenario or answer question 13.
+Q13 verifies the exported run receipt's chain and signature, checks that its
+signed audit range covers the exact tool action, matches the decision's anchor
+to a governance spine entry and recomputes its canonical content hash, including
+the policy in the decision
+context. A nonempty hash or export-time labels alone cannot answer it. Unmarked
+negative controls reject arbitrary or unrelated anchors, a changed entry
+retaining its old hash/signature, an audit-only decision attachment and a missing
+signed tool event. They do not add evidence to the scenario or answer question
+13. Receipt verification here establishes integrity under the embedded key;
+operator-key trust remains a separate requirement.
