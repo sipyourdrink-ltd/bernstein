@@ -72,11 +72,19 @@ def _installation_finding(
         missing = [
             auth_tools[row["name"]]
             for row in rows
-            if not row["ok"]
+            # Codex's configured-model fallback can succeed after a missing
+            # CLI probe. An API-key observation does not require that probe.
+            if (not row["ok"] or (row["name"] == "Auth: codex" and row["detail"].startswith("config.toml (")))
             and shutil.which(auth_tools[row["name"]], path=env.get("PATH") if env is not None else None) is None
         ]
         if missing:
             prerequisite = f"Install authentication probe tools and ensure they are on PATH: {', '.join(missing)}."
+    elif check_id == "INS-004" and observation is not None:
+        unknown = [
+            f"{entry['adapter']} --version" for entry in observation["entries"] if entry["verdict"] == "unknown_version"
+        ]
+        if unknown:
+            prerequisite = f"Make adapter version probes runnable with readable version output: {', '.join(unknown)}."
     elif check_id == "INS-010":
         prerequisite = "; ".join(f"{row['name']}: {row['detail']}. {row['fix']}" for row in rows if not row["ok"])
     elif check_id == "INS-015":

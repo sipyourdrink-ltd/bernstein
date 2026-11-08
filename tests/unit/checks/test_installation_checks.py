@@ -18,7 +18,11 @@ from bernstein.cli.commands import doctor_cmd, status_cmd
 from bernstein.cli.commit_stats import CommitStatsResult
 from bernstein.cli.main import cli
 from bernstein.core.checks.contract import Finding, Verdict
+from bernstein.core.orchestration.preflight import _codex_has_auth as real_codex_auth
+from bernstein.core.orchestration.preflight import gemini_has_auth as real_gemini_auth
 from bernstein.core.quality.ci_fix import check_test_dependencies as real_test_dependencies
+
+_REAL_PROBE_ADAPTER_VERSION = doctor_cmd._probe_adapter_version
 
 
 @pytest.fixture
@@ -130,6 +134,94 @@ def test_missing_auth_probe_is_not_measurable(tool: str, installation: Path, mon
     finding = status_cmd._doctor_check_auth([], env={})
     assert finding.verdict is Verdict.NOT_MEASURABLE
     assert tool in finding.what_would_make_it_measurable
+
+
+@pytest.mark.parametrize(
+    ("method", "installed", "expected"),
+    [
+        ("config", False, Verdict.NOT_MEASURABLE),
+        ("config", True, Verdict.PASS),
+        ("login", True, Verdict.PASS),
+        ("api_key", False, Verdict.PASS),
+        ("unauthenticated", True, Verdict.FAIL),
+    ],
+)
+def test_real_codex_auth_preserves_probe_and_api_key_semantics(
+    method: str, installed: bool, expected: Verdict, installation: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("bernstein.core.preflight._codex_has_auth", real_codex_auth)
+    monkeypatch.setattr("bernstein.core.preflight.gemini_has_auth", real_gemini_auth)
+    config = Mock(return_value=(method == "config", "fixture-model" if method == "config" else None))
+    monkeypatch.setattr("bernstein.core.preflight._codex_has_config_toml", config)
+    monkeypatch.setattr(
+        "shutil.which", lambda name, **kw: None if name == "codex" and not installed else f"/fixture/{name}"
+    )
+
+    def login(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        assert command == ["codex", "login", "status"]
+        if not installed:
+            raise FileNotFoundError("codex")
+        output = "Logged in" if method == "login" else "Not logged in"
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    probe = Mock(side_effect=login)
+    monkeypatch.setattr("subprocess.run", probe)
+    env = {"ANTHROPIC_API_KEY": "fixture-only", "GOOGLE_API_KEY": "fixture-only", "PATH": "/fixture"}
+    if method == "api_key":
+        env["OPENAI_API_KEY"] = "fixture-only"
+    rows: list[dict] = []
+    finding = status_cmd._doctor_check_auth(rows, env=env)
+
+    codex_row = next(row for row in rows if row["name"] == "Auth: codex")
+    assert codex_row["ok"] is (method != "unauthenticated")
+    if method == "config":
+        assert codex_row["detail"] == "config.toml (fixture-model)"
+    if method == "api_key":
+        probe.assert_not_called()
+    else:
+        probe.assert_called_once()
+    if method in {"config", "unauthenticated"}:
+        config.assert_called_once_with()
+    else:
+        config.assert_not_called()
+    assert finding.verdict is expected
+    if expected is Verdict.NOT_MEASURABLE:
+        assert "codex" in finding.what_would_make_it_measurable
+    else:
+        assert finding.what_would_make_it_measurable is None
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [(None, Verdict.NOT_MEASURABLE), ("1.0.0", Verdict.PASS), ("99.0.0", Verdict.PASS), ("0.1.0", Verdict.FAIL)],
+)
+def test_real_version_posture_requires_a_measured_version(
+    version: str | None, expected: Verdict, installation: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(doctor_cmd, "_probe_adapter_version", _REAL_PROBE_ADAPTER_VERSION)
+
+    def version_probe(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        assert command == ["/fixture/agy", "--version"]
+        if version is None:
+            raise FileNotFoundError("agy")
+        return subprocess.CompletedProcess(command, 0, stdout=f"agy {version}", stderr="")
+
+    probe = Mock(side_effect=version_probe)
+    monkeypatch.setattr("subprocess.run", probe)
+    rows: list[dict] = []
+    finding = status_cmd._doctor_check_version_posture(rows, installation, env={"PATH": "/fixture"})
+
+    probe.assert_called_once()
+    assert len(rows) == 1
+    assert rows[0]["ok"] is (expected is not Verdict.FAIL)
+    assert "receipt sha256:" in rows[0]["detail"]
+    assert finding.verdict is expected
+    if version is None:
+        assert "1 unknown" in rows[0]["detail"]
+        assert "agy --version" in finding.what_would_make_it_measurable
+    else:
+        assert "0 unknown" in rows[0]["detail"]
+        assert finding.what_would_make_it_measurable is None
 
 
 def test_missing_secrets_cli_is_not_measurable(installation: Path, monkeypatch: pytest.MonkeyPatch) -> None:

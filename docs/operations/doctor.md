@@ -43,6 +43,11 @@ no configured subject:
 Audit findings use `pass`, `fail`, or `not_measurable`. A tool probe that cannot
 run is `not_measurable` with the tool and prerequisite named; it never becomes
 a passing finding. Checks without observations are also `not_measurable`.
+For INS-005, a configured Codex model cannot make a missing `codex` login
+probe measurable; an observed API-key setting does not require that CLI probe.
+For INS-004, any `unknown_version` entry is `not_measurable` and names the
+adapter's unavailable `<adapter> --version` probe. Measured versions still
+pass at or above the floor and fail below it.
 These audit verdicts preserve the legacy doctor's advisory display and exit
 behavior. Version-posture evidence hashes the observed versions and anchoring
 state, excluding the receipt timestamp so repeated observations compare equal.
