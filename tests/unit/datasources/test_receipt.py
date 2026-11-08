@@ -118,6 +118,86 @@ def test_misfiled_card_cannot_impersonate_signer(tmp_path: Path, keypair, operat
     assert outcome.checks.get("signature") is not True
 
 
+@pytest.mark.parametrize("documents", [("[]", "null"), ("null", "[]")], ids=["list-first", "null-first"])
+def test_unrelated_non_object_cards_do_not_abort_verification(
+    tmp_path: Path, keypair, operator_key, monkeypatch, documents: tuple[str, str]
+) -> None:
+    store = _store(tmp_path, keypair, operator_key)
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    _, receipt = _record(tmp_path, store, db)
+    identity_dir = store.root / "identity"
+    (requested_card_path,) = list(identity_dir.glob("*/card.json"))
+
+    other_private_key, other_public_key = generate_keypair()
+    other_card = AgentCard(agent_id="agent:other", kid="other-key", public_key_pem=other_public_key)
+    other_store = _store(tmp_path, (other_card, other_private_key), operator_key)
+    _record(tmp_path, other_store, db)
+    (other_card_path,) = [candidate for candidate in identity_dir.glob("*/card.json") if candidate != requested_card_path]
+
+    malformed_paths = []
+    for index, document in enumerate(documents):
+        card_path = identity_dir / f"malformed-{index}" / "card.json"
+        card_path.parent.mkdir()
+        card_path.write_text(document, encoding="utf-8")
+        malformed_paths.append(card_path)
+
+    # Filesystem iteration order is unspecified; only control discovery order,
+    # leaving the production JSON loading and signature verification intact.
+    original_glob = Path.glob
+    ordered_paths = [*malformed_paths, other_card_path, requested_card_path]
+    discovered_paths = []
+
+    def ordered_glob(path: Path, pattern: str):
+        candidates = original_glob(path, pattern)
+        if path == identity_dir and pattern == "**/card.json":
+            discovered = sorted(candidates, key=ordered_paths.index)
+            discovered_paths.extend(discovered)
+            return iter(discovered)
+        return candidates
+
+    monkeypatch.setattr(Path, "glob", ordered_glob)
+    outcome = store.verify(receipt.receipt_id)
+
+    assert discovered_paths == ordered_paths
+    assert outcome.ok, outcome.failures
+    assert outcome.checks["signature"] is True
+    assert all(outcome.checks.values())
+    assert [candidate.read_text(encoding="utf-8") for candidate in malformed_paths] == list(documents)
+
+
+def test_unrelated_non_utf8_card_does_not_abort_verification(tmp_path: Path, keypair, operator_key, monkeypatch) -> None:
+    store = _store(tmp_path, keypair, operator_key)
+    db = _make_db(tmp_path / "a.db", [(1, "a")])
+    _, receipt = _record(tmp_path, store, db)
+    identity_dir = store.root / "identity"
+    (requested_card_path,) = list(identity_dir.rglob("card.json"))
+    malformed_path = identity_dir / "unrelated" / "card.json"
+    malformed_path.parent.mkdir()
+    malformed_path.write_bytes(b"\xff")
+
+    # Force the unreadable card first, using real filesystem discovery and
+    # leaving JSON decoding and cryptographic verification in production code.
+    original_glob = Path.glob
+    discovered_paths = []
+
+    def ordered_glob(path: Path, pattern: str):
+        candidates = original_glob(path, pattern)
+        if path == identity_dir and pattern in {"*/card.json", "**/card.json"}:
+            ordered_paths = sorted(candidates, key=lambda candidate: candidate != malformed_path)
+            discovered_paths.extend(ordered_paths)
+            return iter(ordered_paths)
+        return candidates
+
+    monkeypatch.setattr(Path, "glob", ordered_glob)
+    outcome = store.verify(receipt.receipt_id)
+
+    assert discovered_paths == [malformed_path, requested_card_path]
+    assert outcome.ok, outcome.failures
+    assert outcome.checks["signature"] is True
+    assert all(outcome.checks.values())
+    assert malformed_path.read_bytes() == b"\xff"
+
+
 @pytest.mark.parametrize("operation", ["mkdir", "write_text"])
 def test_card_failure_does_not_seal_receipt(tmp_path: Path, keypair, operator_key, monkeypatch, operation: str) -> None:
     store = _store(tmp_path, keypair, operator_key)
@@ -141,19 +221,24 @@ def test_card_failure_does_not_seal_receipt(tmp_path: Path, keypair, operator_ke
     assert not list(store.results_dir.glob("*.bin"))
 
 
-def test_legacy_card_layout_still_verifies(tmp_path: Path, keypair, operator_key) -> None:
+@pytest.mark.parametrize("agent_id", ["legacy-worker", "agent/worker"], ids=["one-level", "nested"])
+def test_legacy_card_layout_still_verifies(tmp_path: Path, keypair, operator_key, agent_id: str) -> None:
     card, private_key = keypair
-    card = replace(card, agent_id="legacy-worker")
+    card = replace(card, agent_id=agent_id)
     store = _store(tmp_path, (card, private_key), operator_key)
     db = _make_db(tmp_path / "a.db", [(1, "a")])
     _, receipt = _record(tmp_path, store, db)
     (card_path,) = list((store.root / "identity").rglob("card.json"))
     legacy_dir = store.root / "identity" / card.agent_id
     if card_path.parent != legacy_dir:
+        legacy_dir.parent.mkdir(parents=True, exist_ok=True)
         card_path.parent.rename(legacy_dir)
 
     verifier = _store(tmp_path, (card, private_key), operator_key)
-    assert verifier.verify(receipt.receipt_id).ok
+    outcome = verifier.verify(receipt.receipt_id)
+    assert outcome.ok, outcome.failures
+    assert outcome.checks["signature"] is True
+    assert all(outcome.checks.values())
 
 
 def test_record_then_verify_ok(tmp_path: Path, keypair, operator_key) -> None:

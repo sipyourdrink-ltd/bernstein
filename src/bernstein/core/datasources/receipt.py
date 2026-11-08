@@ -471,10 +471,12 @@ class QueryReceiptStore:
         return VerifyOutcome(ok=not failures, receipt_id=receipt.receipt_id, checks=checks, failures=failures)
 
     def _load_card(self, agent_id: str, kid: str) -> AgentCard | None:
-        for card_path in (self.root / "identity").glob("*/card.json"):
+        for card_path in (self.root / "identity").glob("**/card.json"):
             try:
                 data = json.loads(card_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict):
                 continue
             if data.get("agent_id") != agent_id or data.get("kid") != kid:
                 continue
