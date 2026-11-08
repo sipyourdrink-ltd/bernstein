@@ -75,4 +75,13 @@ uv run python -m tests.integration.conformance.auditor.scenario --out /tmp/audit
 | `conftest.py` | session fixtures and the question bookkeeping |
 | `test_harness.py` | the instrument's own guarantees (no question numbers) |
 | `test_vectors_integrity.py` | question 17, the worked example, plus the integrity group: 15, 16, 18, 19, 20 (#5062) |
+| `test_policy_approval_vectors.py` | policy and approval questions 6, 11, 12, 13 (#5060), all strict expected failures |
 | `test_scoreboard.py` | what `n/21` means |
+
+The policy/approval slice reads only the exported audit receipt. The current
+scenario exports no `GovernanceDecision` binding for its tool action and no
+approval record for its final repository change. The vectors require policy
+identity/version bound at decision time and explicit approval requirement,
+outcome, approver and sign-off time. An expired wait is not a human grant
+(#5051), and absent evidence is not proof that no approval was required.
+No producer or fixture fields are added by this slice.
