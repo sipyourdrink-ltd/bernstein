@@ -78,10 +78,15 @@ uv run python -m tests.integration.conformance.auditor.scenario --out /tmp/audit
 | `test_policy_approval_vectors.py` | policy and approval questions 6, 11, 12, 13 (#5060), all strict expected failures |
 | `test_scoreboard.py` | what `n/21` means |
 
-The policy/approval slice reads only the exported audit receipt. The current
+The policy/approval slice reads only the exported audit and run receipts. The current
 scenario exports no `GovernanceDecision` binding for its tool action and no
 approval record for its final repository change. The vectors require policy
 identity/version bound at decision time and explicit approval requirement,
 outcome, approver and sign-off time. An expired wait is not a human grant
 (#5051), and absent evidence is not proof that no approval was required.
 No producer or fixture fields are added by this slice.
+Q13 matches the decision's anchor to an exported governance spine entry and
+recomputes its canonical content hash, including the policy in the decision
+context. A nonempty hash or export-time labels alone cannot answer it. Two
+unmarked negative controls reject an arbitrary hash and an unrelated real
+spine entry; they do not add evidence to the scenario or answer question 13.

@@ -6,13 +6,14 @@ and approval evidence remain strict expected failures, not invented evidence.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
-if TYPE_CHECKING:
-    from tests.integration.conformance.auditor.bundle_reader import BundleReader
+from tests.integration.conformance.auditor.bundle_reader import BundleReader
 
 
 def _action(auditor_bundle: BundleReader, event_type: str) -> dict[str, Any]:
@@ -121,3 +122,52 @@ def test_which_policy_version_was_in_force_at_decision_time_not_export_time(
     assert decision.get("policy_id"), "missing decision-time policy_id"
     assert decision.get("policy_version"), "missing decision-time policy_version, not schema v"
     assert decision.get("journal_entry_hash"), "the policy reference must be anchored with the decision"
+
+    run_receipt = auditor_bundle.read_json("run-receipt.json")
+    anchors = [
+        entry for entry in run_receipt["spine"]["entries"] if entry["entry_hash"] == decision["journal_entry_hash"]
+    ]
+    assert len(anchors) == 1, "no unique exported spine entry anchors this decision"
+    anchor = anchors[0]
+    assert anchor["actor"] == "bernstein.governance", "the anchor is not a governance decision"
+    assert decision.get("run_id") == run_receipt["run_id"], "the decision belongs to another run"
+    assert anchor["timestamp"] == decision["timestamp"], "the anchor has a different decision time"
+
+    # GovernanceDecision's current canonical binding includes context, not
+    # arbitrary top-level labels. Restate its wire fields without reading the
+    # producer: an export-time policy label must also occur in the hashed bytes.
+    context = decision.get("context")
+    assert isinstance(context, dict), "missing canonical decision context"
+    for field in ("policy_id", "policy_version"):
+        assert context.get(field) == decision[field], f"{field} is not in the decision's anchored context"
+    fields = ("v", "run_id", "subject", "action", "verdict", "inputs_hash", "timestamp", "context")
+    assert all(field in decision for field in fields), "missing canonical GovernanceDecision fields"
+    binding = {field: decision[field] for field in fields}
+    canonical = json.dumps(binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    assert anchor["content_hash"] == "sha256:" + hashlib.sha256(canonical).hexdigest(), (
+        "exported policy/version or decision bytes do not match the decision-time anchor"
+    )
+
+
+@pytest.mark.parametrize("anchor_kind", ["arbitrary", "unrelated"])
+def test_q13_rejects_policy_labels_without_a_decision_anchor(auditor_bundle: BundleReader, anchor_kind: str) -> None:
+    """Negative controls edit a receipt in memory, never the scenario export."""
+    receipt = auditor_bundle.read_json("audit-receipt.json")
+    run_receipt = auditor_bundle.read_json("run-receipt.json")
+    tool_call = next(event for event in receipt["events"] if event["event_type"] == "tool.invoked")
+    unrelated = run_receipt["spine"]["entries"][0]
+    tool_call["details"]["governance_decision"] = {
+        "verdict": "allow",
+        "timestamp": unrelated["timestamp"],
+        "policy_id": "export-time-label",
+        "policy_version": "export-time-version",
+        "journal_entry_hash": "arbitrary-nonempty" if anchor_kind == "arbitrary" else unrelated["entry_hash"],
+    }
+
+    class EditedReceipt(BundleReader):
+        def read_json(self, name: str) -> dict[str, Any]:
+            return receipt if name == "audit-receipt.json" else auditor_bundle.read_json(name)
+
+    message = "no unique exported spine entry" if anchor_kind == "arbitrary" else "not a governance decision"
+    with pytest.raises(AssertionError, match=message):
+        test_which_policy_version_was_in_force_at_decision_time_not_export_time(EditedReceipt(auditor_bundle.root))
