@@ -10,7 +10,7 @@ it flags, and which it deliberately leaves alone.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import cast
 
 import pytest
@@ -91,6 +91,31 @@ def test_a_shape_with_no_live_marker_stays_with_the_line_rules_in_a_plain_assign
 
 def test_a_docstring_is_not_a_value() -> None:
     assert _rules(f'def f():\n    """Pass a key such as {LIVE}."""\n') == []
+
+
+@pytest.mark.parametrize("value", [LIVE.encode(), AWS.encode(), b"\xff" + LIVE.encode()])
+def test_byte_literals_use_the_same_rules_and_redaction(value: bytes) -> None:
+    source = f"lookup({value!r})\n"
+    findings = DLPScanner().scan_python_source(source).findings
+
+    assert len(findings) == 1
+    assert findings[0].block_merge is True
+    assert value.decode("utf-8", "replace") not in findings[0].redacted_match
+    assert LIVE not in findings[0].redacted_match
+
+
+@pytest.mark.parametrize("value", [b"ordinary text", b"sk_live_xxxxxxxx", b"AKIAIOSFODNN7EXAMPLE"])
+def test_benign_byte_literals_remain_exempt(value: bytes) -> None:
+    assert _rules(f"lookup({value!r})\n") == []
+
+
+def test_the_gate_blocks_a_live_byte_value_without_exposing_it(tmp_path: Path) -> None:
+    rel = _write(tmp_path, "app/config.py", f"KEY = {LIVE.encode()!r}\n")
+    result = _run_dlp_gate(QualityGatesConfig(), tmp_path, [rel])
+
+    assert result.blocked is True
+    assert LIVE not in result.detail
+    assert _FINDING_SIGNATURE["dlp_scan"].search(result.detail)
 
 
 def test_temporary_aws_credentials_are_recognised() -> None:
@@ -193,6 +218,24 @@ def test_the_gate_blocks_and_names_the_file(tmp_path: Path) -> None:
     assert LIVE not in result.detail
     # The evasion suite credits the gate only through this signature.
     assert _FINDING_SIGNATURE["dlp_scan"].search(result.detail)
+
+
+def test_dlp_detail_uses_posix_separators_for_windows_relative_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rel = _write(tmp_path, "app/config.py", f"lookup('{LIVE}')\n")
+    relative_to = type(tmp_path).relative_to
+
+    def windows_relative(path: Path, other: Path) -> PureWindowsPath:
+        return PureWindowsPath(*relative_to(path, other).parts)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(type(tmp_path), "relative_to", windows_relative)
+        result = _run_dlp_gate(QualityGatesConfig(), tmp_path, [rel])
+
+    assert result.blocked is True
+    assert "app/config.py (line 1)" in result.detail
+    assert LIVE not in result.detail
 
 
 def test_the_gate_skips_test_files_for_this_pass(tmp_path: Path) -> None:

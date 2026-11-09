@@ -1075,7 +1075,7 @@ def _run_dlp_gate(
     for fpath in scan_targets:
         if not fpath.is_file():
             continue
-        rel = str(fpath.relative_to(run_dir))
+        rel = fpath.relative_to(run_dir).as_posix()
         if _should_skip_dlp_file(rel, fpath.suffix, config):
             continue
         try:

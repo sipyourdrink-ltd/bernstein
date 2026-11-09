@@ -370,6 +370,11 @@ quality_gates:
     block_on_no: true
 ```
 
+The DLP credential-literal pass applies the same provider rules and
+allowlist policy to Python string and bytes literals. Bytes are decoded
+with UTF-8 replacement before matching. DLP finding paths use `/`
+separators on every platform, including Windows.
+
 When `pipeline:` is omitted, Bernstein synthesises one from the booleans
 above. To override the order (or insert custom gates), declare an
 explicit pipeline:

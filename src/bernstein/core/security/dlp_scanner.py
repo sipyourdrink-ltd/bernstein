@@ -501,7 +501,10 @@ def _docstring_nodes(tree: ast.AST) -> set[int]:
 
 
 def _argument_position_literals(tree: ast.AST) -> list[tuple[int, str, bool]]:
-    """``(lineno, value, in_argument_position)`` of every ``str`` constant that is a value.
+    """``(lineno, value, in_argument_position)`` of each string or bytes value.
+
+    Bytes are decoded with UTF-8 replacement so the same credential rules apply
+    without rejecting a literal containing non-UTF-8 bytes.
 
     Argument position covers call arguments and keyword values (``os.getenv``,
     ``dict.get``, ``setdefault``, ``field(default=...)``), parameter defaults of
@@ -524,9 +527,13 @@ def _argument_position_literals(tree: ast.AST) -> list[tuple[int, str, bool]]:
     argument_nodes = {id(c) for c in candidates if c is not None}
     docstrings = _docstring_nodes(tree)
     return [
-        (node.lineno, node.value, id(node) in argument_nodes)
+        (
+            node.lineno,
+            node.value.decode("utf-8", "replace") if isinstance(node.value, bytes) else node.value,
+            id(node) in argument_nodes,
+        )
         for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and id(node) not in docstrings
     ]
 
 
@@ -687,7 +694,7 @@ class DLPScanner:
         return _make_result(findings)
 
     def scan_python_source(self, source: str) -> DLPScanResult:
-        """Scan a Python file's string literals for provider credentials.
+        """Scan a Python file's string and bytes literals for provider credentials.
 
         The line rules read assignment-shaped text, so a credential written as
         ``os.getenv("API_KEY", "sk_live_...")``, ``settings.get("k", "...")``,
