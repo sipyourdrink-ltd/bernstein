@@ -541,8 +541,10 @@ async def test_governance_readback_detail_preserves_authorized_policy(
 @pytest.mark.parametrize("prefix", ["", "/api/v1"])
 @pytest.mark.parametrize("credential_name", [name for name in WRITE_CREDENTIALS if name != "agent_unrestricted"])
 async def test_governance_readback_claim_survives_store_replay(
-    fx: Fixture, client: AsyncClient, credential_name: str, prefix: str
+    fx: Fixture, client: AsyncClient, jsonl_path: Path, credential_name: str, prefix: str
 ) -> None:
+    from bernstein.core.tasks.task_store import TaskStore
+
     task_id = fx.task_default_id if credential_name in ("legacy_bearer", "cluster_secret") else fx.task_a_id
     expected = _seed_governance_readback(fx, task_id, owner=None)
     store = fx.app.state.store
@@ -561,17 +563,32 @@ async def test_governance_readback_claim_survives_store_replay(
     for field, value in expected.items():
         assert body[field] == value
 
-    # The real claim appends the complete domain record. Rehydrate the same
-    # fixture store before reading it back through the real authenticated route.
-    store.replay_jsonl()
-    response = await client.get(f"{prefix}/tasks/{task_id}", headers=_credential(fx, credential_name).headers)
-    assert response.status_code == 200
-    body = response.json()
-    assert body["id"] == task_id
-    assert body["status"] == "claimed"
-    assert body["version"] == before_version + 1
-    for field, value in expected.items():
-        assert body[field] == value
+    # Rebuild from every actual journal record without retaining live tasks.
+    journal = jsonl_path.read_bytes()
+    records = [json.loads(line) for line in journal.splitlines() if line.strip()]
+    assert sum(record.get("id") == task_id for record in records) >= 2
+    rebuilt = TaskStore(jsonl_path=jsonl_path, archive_path=jsonl_path.parent / "archive.jsonl")
+    assert rebuilt is not store
+    assert rebuilt.list_tasks() == []
+    rebuilt.replay_jsonl()
+    restored = rebuilt.get_task(task_id)
+    assert restored is not None
+    assert restored is not store.get_task(task_id)
+    expected_readback = {"id": task_id, "status": "claimed", "version": before_version + 1, **expected}
+    restored_record = restored.to_dict()
+    domain_readback = {field: restored_record[field] for field in expected_readback}
+    fx.app.state.store = rebuilt
+    try:
+        response = await client.get(f"{prefix}/tasks/{task_id}", headers=_credential(fx, credential_name).headers)
+        assert response.status_code == 200
+        http_readback = {field: response.json()[field] for field in expected_readback}
+        assert jsonl_path.read_bytes() == journal
+        assert {"domain": domain_readback, "http": http_readback} == {
+            "domain": expected_readback,
+            "http": expected_readback,
+        }
+    finally:
+        fx.app.state.store = store
 
 
 @pytest.mark.anyio()
