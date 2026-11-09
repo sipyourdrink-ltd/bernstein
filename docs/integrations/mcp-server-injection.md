@@ -105,10 +105,16 @@ servers, account connectors, and subagent servers referenced by name. To give a
 spawned agent one of those, declare it in `bernstein.yaml` `mcp_servers` or in
 `~/.claude/mcp.json`, which bernstein reads itself.
 
+Claude's command builder also includes `--strict-mcp-config` when called
+without an MCP payload. This hardens that helper path; normal `spawn()`
+already supplies a nonempty payload containing the Bernstein bridge.
+
 The `pi` adapter takes no `mcp_config`: pi has no MCP of its own and reaches
 MCP servers only through extensions. It is spawned with `--no-extensions`, so
 the extensions in the operator's `~/.pi/agent/extensions/` (and a repo's
 `.pi/extensions/`) do not load into a spawned agent (#5965).
+Task-supplied MCP server definitions are not delivered to Pi. Keeping the
+caller's `mcp_config` unchanged does not demonstrate server delivery.
 
 ---
 

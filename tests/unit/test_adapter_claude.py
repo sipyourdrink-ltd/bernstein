@@ -220,7 +220,7 @@ class TestSpawnCommandArgs:
         assert "--strict-mcp-config" in cmd
 
     def test_strict_mcp_config_rides_with_every_mcp_config(self, tmp_path: Path) -> None:
-        """`--strict-mcp-config` beside `--mcp-config`, and the payload is untouched (#5965).
+        """`--strict-mcp-config` is present and the payload is untouched (#5965).
 
         The flag stops Claude Code merging the servers it discovers itself
         (`claude mcp add` scopes, a repo's `.mcp.json`, plugins, connectors) on top
@@ -230,7 +230,7 @@ class TestSpawnCommandArgs:
         mcp = {"mcpServers": {"my-server": {"command": "npx"}}}
         cmd, _, __ = self._spawn(tmp_path, mcp_config=mcp)
 
-        assert cmd.index("--strict-mcp-config") == cmd.index("--mcp-config") + 2
+        assert "--strict-mcp-config" in cmd
         parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
         assert {"my-server", "bernstein"} <= set(parsed["mcpServers"])
         assert parsed["mcpServers"]["my-server"] == {"command": "npx"}
