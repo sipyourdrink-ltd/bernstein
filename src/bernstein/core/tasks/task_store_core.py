@@ -38,6 +38,7 @@ from bernstein.core.tasks.lifecycle import (
 )
 from bernstein.core.tasks.models import (
     AgentSession,
+    ApprovalSpec,
     CompletionSignal,
     ProgressSnapshot,
     RiskAssessment,
@@ -151,6 +152,8 @@ class TaskRecord(TypedDict):
     batch_eligible: bool
     eu_ai_act_risk: str
     approval_required: bool
+    approval_spec: NotRequired[dict[str, Any] | None]
+    sensitivity: NotRequired[Literal["public", "internal", "confidential"]]
     risk_level: str
     slack_context: dict[str, Any] | None
     version: int
@@ -778,6 +781,16 @@ class TaskStore:
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
                     task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
+                    # Sparse legacy records leave prior values intact. Explicit
+                    # null clears nullable policy/claim fields on later records.
+                    task.approval_required = record.get("approval_required", task.approval_required)
+                    if "approval_spec" in record:
+                        raw_spec = record["approval_spec"]
+                        task.approval_spec = ApprovalSpec.from_dict(raw_spec) if isinstance(raw_spec, dict) else None
+                    task.sensitivity = record.get("sensitivity", task.sensitivity)
+                    task.claimed_by_session = record.get("claimed_by_session", task.claimed_by_session)
+                    task.claimed_at = record.get("claimed_at", task.claimed_at)
+                    task.version = record.get("version", task.version)
                     self._index_add(task)
                 else:
                     task = Task.from_dict(cast("dict[str, Any]", record))
@@ -1207,6 +1220,8 @@ class TaskStore:
             "batch_eligible": task.batch_eligible is True,
             "eu_ai_act_risk": task.eu_ai_act_risk,
             "approval_required": task.approval_required,
+            "approval_spec": task.approval_spec.to_dict() if task.approval_spec is not None else None,
+            "sensitivity": task.sensitivity,
             "risk_level": task.risk_level,
             "slack_context": task.slack_context,
             "version": task.version,

@@ -111,7 +111,7 @@ async def test_replay_jsonl_reconstructs_latest_task_state(tmp_path: Path) -> No
 
     assert restored is not None
     assert restored.status == TaskStatus.CLAIMED
-    assert restored.version == 1
+    assert restored.version == task.version
 
 
 @pytest.mark.anyio
@@ -181,6 +181,103 @@ def test_replay_jsonl_preserves_sensitivity_and_policy(tmp_path: Path, sensitivi
     assert restored.status is TaskStatus.CLAIMED
     assert restored.version == 7
     assert restored.sensitivity == (sensitivity if sensitivity is not None else "internal")
+
+
+@pytest.mark.anyio
+async def test_governance_journal_claim_roundtrip(tmp_path: Path) -> None:
+    """Actual claim records retain policy and latest metadata after a fresh replay."""
+    path = tmp_path / "runtime" / "tasks.jsonl"
+    store = TaskStore(path)
+    task = await store.create(_task_request())
+    spec = ApprovalSpec(prompt="Synthetic journal gate", timeout_seconds=137, default_action="fail")
+    task.approval_required = True
+    task.approval_spec = spec
+    task.sensitivity = "confidential"
+    await store.claim_by_id(task.id, expected_version=task.version, claimed_by_session="synthetic-holder")
+    journal = path.read_bytes()
+    records = [json.loads(line) for line in journal.splitlines()]
+    assert len(records) >= 2
+    assert records[-1]["approval_spec"] == spec.to_dict()
+    assert records[-1]["sensitivity"] == "confidential"
+    restored_store = TaskStore(path)
+    restored_store.replay_jsonl()
+    restored = restored_store.get_task(task.id)
+    assert restored is not None and restored is not task
+    assert (restored.approval_required, restored.approval_spec, restored.sensitivity) == (True, spec, "confidential")
+    assert (restored.claimed_by_session, restored.version, restored.claimed_at) == (
+        "synthetic-holder",
+        task.version,
+        task.claimed_at,
+    )
+    assert restored_store.list_tasks(status="claimed") == [restored]
+    assert restored_store.list_tasks(status="open") == []
+    assert path.read_bytes() == journal
+
+
+@pytest.mark.parametrize("update", ["absent", "clear", "replace"])
+def test_governance_journal_sparse_updates_preserve_identity(tmp_path: Path, update: str) -> None:
+    """Absent legacy keys preserve prior values; explicit nullable values clear them."""
+    spec = ApprovalSpec(prompt="First gate", timeout_seconds=137, default_action="fail")
+    record: dict[str, Any] = {
+        "id": "synthetic-journal",
+        "title": "Synthetic",
+        "description": "Journal fixture",
+        "role": "backend",
+        "status": "open",
+        "approval_required": True,
+        "approval_spec": spec.to_dict(),
+        "sensitivity": "confidential",
+        "claimed_by_session": "first-holder",
+        "claimed_at": 10.0,
+        "version": 7,
+    }
+    path = tmp_path / "tasks.jsonl"
+    path.write_text(json.dumps(record) + "\n")
+    store = TaskStore(path)
+    store.replay_jsonl()
+    original = store.get_task(record["id"])
+    assert original is not None
+    patch: dict[str, Any] = {"id": record["id"], "status": "claimed"}
+    if update == "clear":
+        patch.update(
+            approval_required=False,
+            approval_spec=None,
+            sensitivity="internal",
+            claimed_by_session=None,
+            claimed_at=None,
+            version=8,
+        )
+    elif update == "replace":
+        patch.update(
+            approval_required=True,
+            approval_spec={"prompt": "Next gate", "timeout_seconds": 42, "default_action": "reject"},
+            sensitivity="public",
+            claimed_by_session="next-holder",
+            claimed_at=20.0,
+            version=9,
+        )
+    with path.open("a") as stream:
+        stream.write(json.dumps(patch) + "\n")
+    journal = path.read_bytes()
+    for _ in range(2):
+        store.replay_jsonl()
+        restored = store.get_task(record["id"])
+        assert restored is original
+        body = restored.to_dict()
+        for field in (
+            "approval_required",
+            "approval_spec",
+            "sensitivity",
+            "claimed_by_session",
+            "claimed_at",
+            "version",
+        ):
+            assert body[field] == patch.get(field, record[field])
+        assert store.list_tasks(status="claimed") == [original]
+        assert store.list_tasks(status="open") == []
+        assert store._by_role_status[("backend", TaskStatus.CLAIMED)] == [original.id]
+        assert store._by_role_status[("backend", TaskStatus.OPEN)] == []
+    assert path.read_bytes() == journal
 
 
 @pytest.mark.anyio
