@@ -50,6 +50,10 @@ with your configured MiniMax endpoint; `MiniMax-M3` remains available as an
 explicit model choice. Existing saved model IDs are preserved. Direct
 `https://api.minimax.io/v1` runs retain the model's `reasoning_content` across
 tool calls, alongside the assistant text, tool arguments, and tool results.
+Direct MiniMax runs require an `openai-agents` SDK that exposes the
+reasoning-content replay-policy hook. When the installed SDK lacks that hook,
+the runner reports `sdk_incompatible` and stops before dispatch rather than
+silently dropping reasoning history.
 
 Flash is estimated at $0.15 per million input tokens and $0.60 per million
 output tokens, independently of the broader M3 model name. Its published
