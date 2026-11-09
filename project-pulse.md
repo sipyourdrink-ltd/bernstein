@@ -1,14 +1,14 @@
 # Project pulse
 
-Median time from pull request opened to merged over the last 30 days: **3.9 h**.
+Median time from pull request opened to merged over the last 30 days: **3.3 h**.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse-dark.svg?v=2026-11-02">
-  <img alt="Project pulse for sipyourdrink-ltd/bernstein, 2026-11-02: median merge lag 3.9 h, 68.6% merged within 24 hours, 226 merged pull requests in 30 days, 3 unassigned up-for-grabs issues." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse.svg?v=2026-11-02" width="880">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse-dark.svg?v=2026-11-09">
+  <img alt="Project pulse for sipyourdrink-ltd/bernstein, 2026-11-09: median merge lag 3.3 h, 73.4% merged within 24 hours, 233 merged pull requests in 30 days, 0 unassigned up-for-grabs issues." src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/project-pulse/pulse.svg?v=2026-11-09" width="880">
 </picture>
 
 > [!TIP]
-> [Issues that are free to pick up](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aissue+is%3Aopen+label%3Aup-for-grabs+no%3Aassignee): 3 unassigned of 3 labelled up-for-grabs, 3 unassigned good first issues.
+> [Issues that are free to pick up](https://github.com/sipyourdrink-ltd/bernstein/issues?q=is%3Aissue+is%3Aopen+label%3Aup-for-grabs+no%3Aassignee): 0 unassigned of 0 labelled up-for-grabs, 0 unassigned good first issues.
 
 ## Trend
 
@@ -18,28 +18,28 @@ The last 8 weekly collections. The full series is `history.json` on the
 ```mermaid
 xychart-beta
     title "Merged pull requests per week"
-    x-axis ["09-14", "09-19", "09-21", "09-28", "10-05", "10-12", "10-26", "11-02"]
+    x-axis ["09-19", "09-21", "09-28", "10-05", "10-12", "10-26", "11-02", "11-09"]
     y-axis "Merged" 0 --> 2000
-    bar [1120, 1017, 996, 784, 555, 414, 343, 226]
+    bar [1017, 996, 784, 555, 414, 343, 226, 233]
 ```
 
 ```mermaid
 xychart-beta
     title "Median merge lag, hours"
-    x-axis ["09-14", "09-19", "09-21", "09-28", "10-05", "10-12", "10-26", "11-02"]
+    x-axis ["09-19", "09-21", "09-28", "10-05", "10-12", "10-26", "11-02", "11-09"]
     y-axis "Hours" 0 --> 30
-    line [3.0, 3.3, 3.3, 4.7, 10.5, 18.9, 10.5, 3.9]
+    line [3.3, 3.3, 4.7, 10.5, 18.9, 10.5, 3.9, 3.3]
 ```
 
 ## Review and merge
 
 | Metric | Value |
 | --- | --- |
-| Median PR merge lag (30 d) | 3.9 h |
-| Merged within 24 h (30 d) | 68.6% |
-| Merged PRs (30 d) | 226 |
-| Median issue open to close (30 d) | 16.8 d |
-| Issues closed (30 d) | 74 |
+| Median PR merge lag (30 d) | 3.3 h |
+| Merged within 24 h (30 d) | 73.4% |
+| Merged PRs (30 d) | 233 |
+| Median issue open to close (30 d) | 18.4 d |
+| Issues closed (30 d) | 81 |
 
 ## Who merges what
 
@@ -49,34 +49,34 @@ maintainer account nor an automation account, so the outside number is never fla
 ```mermaid
 pie showData
     title Merged pull requests by author class, 30 d
-    "Outside contributors" : 65
-    "Maintainer" : 87
-    "Automation" : 74
+    "Outside contributors" : 36
+    "Maintainer" : 119
+    "Automation" : 78
 ```
 
-Distinct outside authors with a merged PR in the last 90 days: **74**.
+Distinct outside authors with a merged PR in the last 90 days: **70**.
 
 ## Work you can pick up
 
 | Label | Open | Unassigned |
 | --- | --- | --- |
-| up-for-grabs | 3 | 3 |
-| good first issue | 3 | 3 |
+| up-for-grabs | 0 | 0 |
+| good first issue | 0 | 0 |
 
 ## Project state
 
 | Metric | Value |
 | --- | --- |
-| Commits to main (7 d) | 18 |
+| Commits to main (7 d) | 70 |
 | Days since last commit | 0 |
 | Adapters in the registry | 56 wired in, 54 selectable |
-| Latest release | v3.23.0 (2026-10-24) |
+| Latest release | v3.24.1 (2026-11-05) |
 | Translated READMEs | 23 in sync, 0 stale, of 23 |
 
 <details>
 <summary>How this page is made</summary>
 
-Generated 2026-11-02 from the public GitHub API and this repository's own tree.
+Generated 2026-11-09 from the public GitHub API and this repository's own tree.
 Aggregates only: no individual logins, no per-person ranking, no data that is not already public.
 The card, the charts and the weekly history on the `project-pulse` branch are projections of the
 same ten fields. Regenerate with `scripts/project_pulse.py`; the field allow-list is documented at
