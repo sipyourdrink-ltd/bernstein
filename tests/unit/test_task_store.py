@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from bernstein.core.models import TaskStatus
+from bernstein.core.models import ApprovalSpec, TaskStatus
 from bernstein.core.task_store import TaskStore
 from fastapi import HTTPException
 
@@ -139,6 +140,47 @@ async def test_replay_jsonl_preserves_subtask_parent_context(tmp_path: Path) -> 
 
     assert restored is not None
     assert restored.parent_context == parent_context
+
+
+@pytest.mark.parametrize(
+    "sensitivity", ["public", "internal", "confidential", None], ids=["public", "internal", "confidential", "legacy"]
+)
+def test_replay_jsonl_preserves_sensitivity_and_policy(tmp_path: Path, sensitivity: str | None) -> None:
+    """Explicit and legacy records retain classification without losing policy or identity."""
+    spec = ApprovalSpec(prompt="Synthetic operator gate?", timeout_seconds=123, default_action="fail")
+    record: dict[str, Any] = {
+        "id": "classification",
+        "title": "Synthetic task",
+        "description": "Replay classification",
+        "role": "backend",
+        "status": "claimed",
+        "tenant_id": "team-a",
+        "approval_required": True,
+        "approval_spec": spec.to_dict(),
+        "claimed_by_session": "synthetic-session",
+        "assigned_agent": "synthetic-worker",
+        "parent_session_id": "synthetic-parent",
+        "version": 7,
+    }
+    if sensitivity is not None:
+        record["sensitivity"] = sensitivity
+    jsonl_path = tmp_path / "tasks.jsonl"
+    jsonl_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    store = TaskStore(jsonl_path, archive_path=tmp_path / "archive.jsonl")
+
+    store.replay_jsonl()
+    restored = store.get_task("classification")
+
+    assert restored is not None
+    assert restored.approval_spec == spec
+    assert restored.approval_required is True
+    assert restored.claimed_by_session == "synthetic-session"
+    assert restored.assigned_agent == "synthetic-worker"
+    assert restored.parent_session_id == "synthetic-parent"
+    assert restored.tenant_id == "team-a"
+    assert restored.status is TaskStatus.CLAIMED
+    assert restored.version == 7
+    assert restored.sensitivity == (sensitivity if sensitivity is not None else "internal")
 
 
 @pytest.mark.anyio

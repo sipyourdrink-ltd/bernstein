@@ -1,5 +1,13 @@
 # Task REST API operational notes
 
+## Task classification compatibility
+
+`Task.to_dict()` includes `sensitivity`, and `Task.from_dict()` preserves
+the supported values `public`, `internal`, and `confidential`. JSONL task
+replay also retains an explicitly stored classification. Legacy task
+payloads and JSONL records without the key use the existing `internal`
+default; an omitted key does not establish a historical classification.
+
 ## `GET /tasks` response cap
 
 `GET /tasks` returns a bounded response in both shapes it supports.
