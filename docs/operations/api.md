@@ -8,6 +8,29 @@ replay also retains an explicitly stored classification. Legacy task
 payloads and JSONL records without the key use the existing `internal`
 default; an omitted key does not establish a historical classification.
 
+## Approval policy availability in responses
+
+Current task responses include `approval_spec`: a JSON object contains the
+current domain task's specification, while a present JSON `null` serializes
+its current `None` value. That null does not prove that a legacy journal
+originally recorded an absent policy. This field alone does not establish the
+task's complete effective approval policy or grant governance mutation rights.
+
+Legacy responses may omit `approval_spec`. Clients must preserve raw key
+presence if they need to distinguish an unavailable field from an explicit
+`null`; they must not infer that an omitted field proves no approval is needed.
+When parsing with `TaskResponse`, both cases produce `approval_spec is None`,
+but `"approval_spec" in response.model_fields_set` distinguishes a present
+field from an omitted one. Default JSON reserialization includes the field
+as `null` even when the original response omitted it, so a normalized payload
+alone loses that distinction. This is existing compatibility behavior, not
+a new availability marker or a guarantee about other client models.
+
+The [API compatibility tests](../../tests/unit/test_api_compat.py) cover a
+non-default specification, an explicit `null`, and a legacy response without
+the key. The [fresh-store HTTP regression](../../tests/unit/tenant_scope/test_tenant_selection.py)
+checks authorized claim/detail readback after replaying the complete journal.
+
 ## `GET /tasks` response cap
 
 `GET /tasks` returns a bounded response in both shapes it supports.
