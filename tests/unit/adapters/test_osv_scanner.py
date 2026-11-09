@@ -132,6 +132,48 @@ def test_invalid_json_is_rejected() -> None:
         parse_osv_scanner_sarif("not-json")
 
 
+def _synthetic_run(*, with_results: bool = False) -> dict[str, Any]:
+    results = [
+        {
+            "ruleId": "TEST-OSV-0001",
+            "message": {"text": "Synthetic parser fixture"},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": "Cargo.lock"}}}],
+        }
+    ]
+    return {"tool": {"driver": {"name": "osv-scanner"}}, "results": results if with_results else []}
+
+
+@pytest.mark.parametrize(
+    ("prior_runs", "prior_invocations", "with_results"),
+    [(0, 0, False), (0, 1, False), (1, 0, False), (0, 0, True)],
+)
+def test_explicit_failed_invocation_rejects_the_report(
+    prior_runs: int, prior_invocations: int, with_results: bool
+) -> None:
+    failed = _synthetic_run(with_results=with_results)
+    failed["invocations"] = [{"executionSuccessful": True}] * prior_invocations + [{"executionSuccessful": False}]
+    report = {"version": "2.1.0", "runs": [_synthetic_run()] * prior_runs + [failed]}
+
+    with pytest.raises(ValueError, match="failed execution"):
+        parse_osv_scanner_sarif(json.dumps(report))
+
+
+@pytest.mark.parametrize("with_results", [False, True])
+@pytest.mark.parametrize("invocations", [None, [], [{"executionSuccessful": True}]])
+def test_absent_or_successful_invocations_preserve_findings(
+    with_results: bool, invocations: list[dict[str, bool]] | None
+) -> None:
+    run = _synthetic_run(with_results=with_results)
+    original = parse_osv_scanner_sarif(json.dumps({"version": "2.1.0", "runs": [run]}))
+    if invocations is not None:
+        run["invocations"] = invocations
+
+    actual = parse_osv_scanner_sarif(json.dumps({"version": "2.1.0", "runs": [run]}))
+
+    assert len(actual) == int(with_results)
+    assert [finding.finding_hash() for finding in actual] == [finding.finding_hash() for finding in original]
+
+
 def test_adapter_declares_the_feed_pinned_sca_scanner_contract() -> None:
     adapter = OsvScannerAdapter()
 

@@ -330,7 +330,7 @@ def parse_osv_scanner_sarif(report: str | bytes, *, target_root: Path | None = N
         Findings in report order, exact repeats removed.
 
     Raises:
-        ValueError: If the report is not valid OSV-Scanner SARIF.
+        ValueError: If the report is invalid or explicitly records failed execution.
     """
     try:
         raw = json.loads(report)
@@ -348,6 +348,12 @@ def parse_osv_scanner_sarif(report: str | bytes, *, target_root: Path | None = N
         driver = _mapping(_mapping(run.get("tool"), "tool").get("driver"), "tool.driver")
         if driver.get("name") != "osv-scanner":
             raise ValueError("SARIF tool.driver.name must be 'osv-scanner'")
+        for invocation_index, invocation_raw in enumerate(_sequence(run.get("invocations", []), "invocations")):
+            invocation = _mapping(invocation_raw, f"invocations[{invocation_index}]")
+            if invocation.get("executionSuccessful") is False:
+                raise ValueError(
+                    f"OSV-Scanner report records failed execution at runs[{run_index}].invocations[{invocation_index}]"
+                )
         severities = _rule_severities(driver)
 
         for result_index, result_raw in enumerate(_sequence(run.get("results", []), "results")):

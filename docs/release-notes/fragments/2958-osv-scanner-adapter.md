@@ -14,3 +14,7 @@ URIs use the shared path normalizer so checkout locations do not change
 in-scope finding hashes. Any `osv-scanner.toml` ignore list in the target tree
 feeds the recorded invocation hash. Include/exclude globs and max-depth scope
 limits are refused rather than ignored. Partial implementation of #2958.
+
+SARIF reports that explicitly mark any invocation as unsuccessful are
+rejected, including reports with no findings. Absent invocation metadata
+and successful invocations preserve the existing finding normalization.
