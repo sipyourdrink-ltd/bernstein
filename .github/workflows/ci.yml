@@ -729,7 +729,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: reviewdog/action-actionlint@419a49378266e892f40c773b4f2fc6de9aa87499 # v1
+      - uses: reviewdog/action-actionlint@48e36f54d8da326b83ab061aee2cc5e01b5ca46f # v1
         with:
           reporter: github-check
           level: error
@@ -1048,7 +1048,7 @@ jobs:
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Download built wheel
@@ -1085,7 +1085,7 @@ jobs:
         # single bootstrap step without a maintained requirements file,
         # so we route the pipx install through SHA-pinned uv instead.
         # `uv tool install pipx` puts pipx on PATH via uv's tool dir.
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
       - name: Install pipx via uv
@@ -1187,7 +1187,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Download built wheel
@@ -1967,7 +1967,7 @@ jobs:
             -x -q --timeout=180
 
   test:
-    # Sharded across 4 parallel runners per (os, python) cell. The unit
+    # Sharded across 8 ubuntu or 4 windows runners per (os, python) cell. The unit
     # suite runs each of ~1.4k test files in its own subprocess (the
     # OOM-avoidance model documented in the coverage step below); per-file
     # Python startup + full-package import is a fixed ~2.7s/file, so at
@@ -1975,7 +1975,7 @@ jobs:
     # startup churn (the file count crossed a threshold when discovery
     # widened to rglob). Fanning the file list out over TEST_SHARD_COUNT
     # runners (each runs `run_tests.py --shard i/N`, a deterministic
-    # disjoint slice) cuts each runner to ~1/4 of the files. The matrix
+    # disjoint slice) cuts each ubuntu runner to ~1/8 of the files. The matrix
     # `.result` ci-gate reads is `failure` if ANY shard cell fails, so all
     # shards are still required - no shard can silently skip.
     # Ordinary pushes to main leave this expensive suite to the 45-minute
@@ -1990,7 +1990,7 @@ jobs:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
     needs: [determine-changes, lint, plan-affected-tests]  # fast-fail: don't waste 45min if lint fails
     runs-on: ${{ matrix.os }}
-    # Per-shard the unit suite is ~1/4 of the old wall time. Push-time
+    # Per-shard the ubuntu unit suite is ~1/8 of the old wall time. Push-time
     # coverage is collected during the existing ubuntu/3.13 shard runs and
     # combined by coverage-report below, so no shard performs a serial
     # full-suite coverage rerun.
@@ -2174,11 +2174,11 @@ jobs:
             while IFS= read -r test_file; do
               test_files+=("${test_file}")
             done < .sdd/affected-test-plan/selected.txt
-            uv run python scripts/run_tests.py --parallel 6 \
+            uv run python scripts/run_tests.py --parallel 8 \
               "${coverage_args[@]}" \
               "${test_files[@]}"
           else
-            uv run python scripts/run_tests.py --parallel 6 \
+            uv run python scripts/run_tests.py --parallel 8 \
               "${coverage_args[@]}" \
               --shard "${SHARD}/${SHARD_COUNT}"
           fi

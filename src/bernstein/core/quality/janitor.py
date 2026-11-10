@@ -2272,6 +2272,14 @@ def _resolve_test_path_command(command: str, workdir: Path) -> str:
     return resolved_command
 
 
+def _signal_timeout_s() -> int:
+    """Read the completion-signal timeout in seconds at check time."""
+    try:
+        return max(1, int(os.environ.get("BERNSTEIN_SIGNAL_TIMEOUT_S", "120")))
+    except ValueError:
+        return 120
+
+
 def _check_test_passes(command: str, workdir: Path) -> bool:
     """Run a shell command and check for exit code 0.
 
@@ -2282,6 +2290,7 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
     Returns:
         True if exit code is 0.
     """
+    timeout_s = _signal_timeout_s()
     try:
         # SECURITY: shell=True required because janitor commands are internally
         # constructed test invocations (e.g. "pytest tests/...") that may use shell
@@ -2291,7 +2300,7 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
             shell=True,  # nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             cwd=workdir,
             capture_output=True,
-            timeout=120,
+            timeout=timeout_s,
         )
         if result.returncode != 0:
             logger.info(
@@ -2305,9 +2314,10 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
         return result.returncode == 0
     except subprocess.TimeoutExpired as exc:
         logger.warning(
-            "janitor test_passes TIMEOUT: command=%r cwd=%s timeout=120s exc=%s",
+            "janitor test_passes TIMEOUT: command=%r cwd=%s timeout=%ss exc=%s",
             command,
             workdir,
+            timeout_s,
             exc,
         )
         return False

@@ -205,6 +205,8 @@ if TYPE_CHECKING:
     from bernstein.core.container import ContainerConfig
     from bernstein.core.permission_mode import PermissionMode
     from bernstein.core.protocols.cluster.mesh_coordinator import MeshCoordinator
+    from bernstein.core.protocols.mcp.mcp_manager import MCPManager as _MCPManager
+    from bernstein.core.protocols.mcp.mcp_manager import MCPServerConfig
     from bernstein.core.quality.quality_gates import QualityGatesConfig
     from bernstein.core.security.sandbox import SandboxRuntime
     from bernstein.core.spawner import AgentSpawner
@@ -6807,6 +6809,25 @@ def _stand_down_watchdog(workdir: Path, reason: str) -> None:
         marker.write_text(reason)
 
 
+def _start_mcp_manager(
+    configs: list[MCPServerConfig], *, signing_mode: Any, audit_enabled: bool, workdir: Path
+) -> _MCPManager:
+    """Start MCP only after enabled auditing has been successfully initialized."""
+    from bernstein.core.mcp_manager import MCPManager, _resolve_signing_mode
+
+    chain = None
+    if audit_enabled and _resolve_signing_mode(mode=signing_mode) != "off":
+        try:
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            chain = AuditChainStore(workdir / ".sdd" / "audit")
+        except Exception:
+            raise RuntimeError("MCP audit initialization failed") from None
+    manager = MCPManager(configs, signing_mode=signing_mode, audit_chain=chain)
+    manager.start_all()
+    return manager
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -7118,6 +7139,20 @@ if __name__ == "__main__":
             if mcp_config:
                 logger.info("Loaded MCP config with %d server(s)", len(mcp_config.get("mcpServers", {})))
 
+        # Resolve compliance config: env var > run_config > seed config
+        compliance_config = None
+        compliance_preset_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+        if compliance_preset_env:
+            from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+
+            compliance_config = ComplianceConfig.from_preset(CompliancePreset(compliance_preset_env.lower()))
+        elif seed and seed.compliance:
+            compliance_config = seed.compliance
+        else:
+            from bernstein.core.compliance import load_compliance_config
+
+            compliance_config = load_compliance_config(workdir / ".sdd")
+
         # Initialize MCPManager from seed mcp_servers config
         from bernstein.core.mcp_manager import MCPManager, parse_server_configs
 
@@ -7130,11 +7165,13 @@ if __name__ == "__main__":
                 # BERNSTEIN_MCP_SIGNING_MODE env-var still wins inside
                 # MCPManager - see _resolve_signing_mode.
                 signing_mode = getattr(seed, "mcp_signing_mode", "warn")
-                mcp_manager = MCPManager(
+                mcp_manager = _start_mcp_manager(
                     mcp_server_configs,
                     signing_mode=signing_mode,
+                    workdir=workdir,
+                    audit_enabled=os.environ.get("BERNSTEIN_AUDIT") == "1"
+                    or bool(compliance_config and compliance_config.audit_logging),
                 )
-                mcp_manager.start_all()
                 logger.info(
                     "MCPManager started %d server(s) with signing_mode=%s: %s",
                     len(mcp_server_configs),
@@ -7467,20 +7504,6 @@ if __name__ == "__main__":
         )
         # Env var override for workflow mode
         workflow_mode = os.environ.get("BERNSTEIN_WORKFLOW", workflow_mode or "") or None
-
-        # Resolve compliance config: env var > run_config > seed config
-        compliance_config = None
-        compliance_preset_env = os.environ.get("BERNSTEIN_COMPLIANCE")
-        if compliance_preset_env:
-            from bernstein.core.compliance import ComplianceConfig, CompliancePreset
-
-            compliance_config = ComplianceConfig.from_preset(CompliancePreset(compliance_preset_env.lower()))
-        elif seed and seed.compliance:
-            compliance_config = seed.compliance
-        else:
-            from bernstein.core.compliance import load_compliance_config
-
-            compliance_config = load_compliance_config(workdir / ".sdd")
 
         # Compliance can force governed workflow mode
         if compliance_config and compliance_config.governed_workflow and not workflow_mode:

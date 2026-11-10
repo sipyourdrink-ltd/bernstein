@@ -98,6 +98,11 @@ $ bernstein audit verify
   Pinned root       8098c03934f677b6ab3a0b58b042aacb65716ec526fe529bb203d0ef999e5061
   Pinned entries    1
 
+╭───────────────────────────────╮
+│ Hash Tile Verification Passed │
+╰───────────────────────────────╯
+  1 tile(s) checked against authenticated segment bytes.
+
 Audit history is not externally anchored (no RFC 3161 anchor recorded; a rollback of the chain and
 the checkpoints together would leave nothing to contradict it).
 To anchor: bernstein audit anchor --print-request
@@ -145,6 +150,11 @@ $ bernstein audit verify
   A fresh seal will not be produced and this conflict will not clear itself.
   After investigating: bernstein audit ack-tear --segment 2026-09-24.jsonl --offset 694 --reason
 "..."
+
+╭───────────────────────╮
+│ Hash Tiles Not Judged │
+╰───────────────────────╯
+  1 tile(s) beside a segment that failed verification were not judged (the segment is the finding).
 
 [...]
 
