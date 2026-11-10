@@ -41,9 +41,10 @@ Bernstein is the open-source governance layer for AI agents. It runs on policy a
 
 ### at a glance
 
-Four things set it apart; everything after is detail.
+Five things set it apart; everything after is detail.
 
 - **No LLM in the coordination loop.** Scheduling is plain Python, so a run is reproducible end to end. Replay yesterday's plan and get yesterday's task graph.
+- **Hardware key evidence.** Offline PIV custody and FIDO2 approval verifiers share the receipt protocol, with pinned trust and explicit time. Token custody does not raise TRACE trust levels. See [hardware key evidence](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Checkable after the fact.** The replay journal records every run, and the always-on lineage spine records every lineage-bearing step; the opt-in HMAC-chained audit log (`BERNSTEIN_AUDIT=1`) adds receipts you verify offline. Non-determinism surfaces as a hash mismatch at the exact step, not a flaky re-run. Non-code deliverables get the same treatment: a task can declare an artifact contract (report, dataset, action log, ops result) and completes on a signed lineage receipt rather than a git commit.
 - **Isolated by construction.** Each coding task gets its own git worktree behind merge gates; artifact-mode tasks get a working directory under `.sdd/workspaces/`. Agents share no mutable workspace by default; the only shared state is the task backlog, which is claimed atomically. Stricter filesystem enforcement is opt-in, from the [sandbox backends](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Disable worktrees and every task runs in the shared checkout.
 - **Broad and local.** More than 50 selectable CLI agent adapters plus a generic `--prompt` wrapper, file-based state, no SaaS hop, no third-party data plane.
@@ -150,7 +151,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-CI re-verifies the committed receipt on every push to main — and proves a tampered copy fails — so the published evidence cannot rot into a decorative file. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
+The committed receipt can be re-checked at any time with the command above, and a tampered copy fails the same check. `scripts/record_demo.sh` regenerates the recording, receipt, and key from a fresh real run; nothing inside the terminal is synthesised.
 
 A run in flight is watchable from either operator surface. Both read the same task API, so neither is a lagging mirror of the other. In `bernstein live`, the left and right columns scroll independently as whole panes, so widgets below the fold remain reachable in shorter terminals.
 
@@ -230,7 +231,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-The [donor guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) covers running a worker and the budget you set, the [project guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) covers declaring a manifest, and the [threat model](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) states what each boundary does and does not protect. The one-command runner is not shipped yet: `verify`, `browse`, `budget`, `verify-bundle` and `hub` are the working subcommands today.
+The [donor guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) covers running a worker and the budget you set, the [project guide](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) covers declaring a manifest, and the [threat model](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) states what each boundary does and does not protect. The one-command runner is not shipped yet: `verify`, `browse`, `budget`, `verify-bundle` and `hub` are the working subcommands today. `autopilot` is registered but refuses to run until a `TaskSource` is implemented.
 
 ### beyond the front page
 
@@ -239,6 +240,7 @@ Everything deep lives on the [docs site](https://docs.bernstein.run/):
 | page | what it covers |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | the full capability list: MCP server mode, signed agent cards, sandbox backends, artifact sinks, regulatory mappings |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [MCP server](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/mcp/server.md) | local stdio server, plus a hosted read-only endpoint at `mcp.bernstein.run` for receipt verification with no install; questions about this repo can be asked over MCP through [DeepWiki](https://deepwiki.com/sipyourdrink-ltd/bernstein) |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | where the value lands, and where Bernstein is the wrong tool |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | declarative YAML DAGs of agent / command / loop nodes |
@@ -268,6 +270,16 @@ The full tracked list, including every awesome-list entry, catalog listing, prio
 
 </details>
 
+### Administrative runs
+
+Use `bernstein_run(template="administrative", goal="Weekly sprint")` to create an
+empty, audited container without a planner or agent process. Add manual work with
+`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`
+and poll `bernstein_run_status(run_id="admin-...")`. Members are claimable through
+the usual claim API and excluded from automatic orchestration. A nonempty run
+completes when every member has status `done`, `closed`, or `cancelled`; an empty run
+stays open. See [the operator workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### contributing, support, license
 
 PRs welcome; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) has setup and code style. Security reports go through [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry). Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
@@ -276,6 +288,6 @@ Citation metadata lives in [CITATION.cff](https://github.com/sipyourdrink-ltd/be
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

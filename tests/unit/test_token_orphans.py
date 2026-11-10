@@ -52,7 +52,6 @@ KNOWN_ORPHANS_TOKENS = frozenset(
         "prompt_injection",
         "token_binding",
         "token_breakdown",
-        "token_counter",
     }
 )
 

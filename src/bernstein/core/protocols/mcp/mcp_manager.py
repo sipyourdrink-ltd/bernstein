@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bernstein.core.protocols.mcp.mcp_signing_policy import MCPSigningPolicy
+    from bernstein.core.security.audit_chain import AuditChainStore
 
 logger = logging.getLogger(__name__)
 
@@ -256,11 +257,13 @@ class MCPManager:
         *,
         signing_mode: SigningMode | None = None,
         signing_policy: MCPSigningPolicy | None = None,
+        audit_chain: AuditChainStore | None = None,
     ) -> None:
         self._configs: list[MCPServerConfig] = list(configs) if configs else []
         self._servers: dict[str, _ServerState] = {}
         self._signing_mode: SigningMode = _resolve_signing_mode(mode=signing_mode)
         self._signing_policy: MCPSigningPolicy | None = signing_policy
+        self._audit_chain = audit_chain
 
     @property
     def signing_mode(self) -> SigningMode:
@@ -375,6 +378,8 @@ class MCPManager:
                 enforce_mcp_server_load,
             )
         except Exception:
+            if self._audit_chain is not None:
+                raise RuntimeError("MCP signing audit gate unavailable") from None
             logger.exception(
                 "MCP signing policy module unavailable; cannot enforce mode=%s for server '%s'",
                 self._signing_mode,
@@ -445,6 +450,7 @@ class MCPManager:
             signature_b64=signature_b64,
             bundle_files=None,
             policy=policy,
+            audit_chain=self._audit_chain,
         )
 
     def stop_all(self) -> None:
@@ -585,7 +591,8 @@ class MCPManager:
 
         Combines the task's requested servers (from ``task.mcp_servers``)
         with any base MCP config. Task-requested servers override base config
-        entries with the same name.
+        entries with the same name. Managed servers that are not alive are
+        excluded from the base config as well.
 
         Args:
             task_mcp_servers: Server names requested by the task, or None
@@ -596,6 +603,19 @@ class MCPManager:
             Merged ``{"mcpServers": {...}}`` dict, or None if empty.
         """
         task_config = self.build_mcp_config(server_names=task_mcp_servers)
+
+        # A rejected managed server may still be present in the original base
+        # config. Do not let the adapter start it by bypassing our load gate.
+        if base_config is not None and "mcpServers" in base_config:
+            managed_names = set(self.server_names)
+            base_config = {
+                **base_config,
+                "mcpServers": {
+                    name: entry
+                    for name, entry in base_config["mcpServers"].items()
+                    if name not in managed_names or self.is_alive(name)
+                },
+            }
 
         if base_config is task_config is None:
             return None

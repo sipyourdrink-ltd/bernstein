@@ -59,9 +59,54 @@ write boundary.
 | -------------------------------------- | ------------------------------------------------- |
 | `bernstein trace show <task-id>`       | Pretty-print the live JSONL trace for a task.     |
 | `bernstein trace <task-id>`            | Back-compat alias of `show`.                      |
+| `bernstein trace follow <entity-id>`   | Stream trace & ledger entries for an entity (`--since`, `--out`, `--live`). |
 | `bernstein trace serve --port 8765`    | Run the read-only viewer on `127.0.0.1`.          |
 | `bernstein trace verify <trace-id>`    | Confirm the on-disk bytes match the indexed hash. |
 | `bernstein trace reindex`              | Rebuild `index.jsonl` from the blob tree.         |
+
+### `trace follow` output and stop conditions
+
+`--out` writes whatever the flags say, never what the file is called:
+
+| flags | file contents |
+| --- | --- |
+| `--out` | the rendered text table |
+| `--out --as-json` | one JSON array |
+| `--out --live` | the rendered text table, appended as rows arrive |
+| `--out --as-json --live` | JSONL, one object per line |
+| `--out --as-json --since` | JSONL, appended to the existing file |
+
+One JSON array only for a complete, one-shot capture. A stream that continues
+-- because it is followed, or because `--since` resumes an earlier capture --
+is JSONL and is appended rather than replacing the file: an array cannot be
+extended a line at a time, and truncating would throw away the capture the
+resume was relative to. A JSON resume accepts an existing JSONL capture;
+it refuses a one-shot JSON array or incompatible content before changing the
+file. Use a new output file to resume from a prior array capture.
+
+`--as-json --live` also prints one object per line on stdout, with lifecycle
+notices on stderr. Without `--live`, stdout remains one JSON array, including
+when `--since` filters it.
+
+A followed file is appended to while the run is open, which a JSON array cannot
+be, so `--live` with `--as-json` is JSONL rather than an array. The file suffix
+is not consulted: `--out trace.json` without `--as-json` is a text table.
+
+`--live` refuses outright when nothing in the trace store or the ledger
+references the entity. A trace-only entity can be followed until interrupt;
+automatic termination requires a matching work ledger. Otherwise it stops
+when the entity reaches a terminal state in the **work ledger** --
+`run.closed` for a run, or `task.completed` / `task.failed` / `task.abandoned`
+or a closed related run for a task -- or on interrupt. If a task id occurs in
+multiple runs, every occurrence must be terminal or its run closed; a closed
+historical occurrence does not stop an active one. The ledger's task kinds are a one-way lifecycle
+with no retry kind; the `task_retried` event belongs to the trace recorder, a
+different stream, so it does not reopen a task the ledger has closed.
+A manual interrupt ends following successfully (exit status 0).
+
+`--since` accepts either identifier or either content hash: `trace:<id>`, `<id>`
+and a trace's `sha256`, or `ledger:<run>:<seq>`, `<run>:<seq>` and a ledger
+entry's `entry_hash`.
 
 `trace serve` binds to loopback by default. To expose the viewer on a
 specific interface (e.g. when running inside a sandbox), pass

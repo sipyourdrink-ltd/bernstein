@@ -138,3 +138,59 @@ def test_timestamps_are_utc_so_output_does_not_follow_the_reader(
     """A local-time render would break the byte-identical guarantee across hosts."""
     _, output = _follow(store, "trace-a")
     assert "1970-01-01T00:01:40Z" in " ".join(output.split())
+
+
+def test_since_resumes_from_the_given_entry_id(store: ContentAddressedTraceStore) -> None:
+    """`--since <entry-id>` resumes, returning only entries strictly after that entry."""
+    # Resume after trace-a -> trace-b, trace-c
+    code, output = _follow(store, "T-100", "--since", "trace-a", "--as-json")
+    assert code == 0
+    entries = json.loads(output)
+    assert [entry["trace_id"] for entry in entries] == ["trace-b", "trace-c"]
+
+    # Resume after trace-b -> trace-c
+    code, output = _follow(store, "T-100", "--since", "trace-b", "--as-json")
+    assert code == 0
+    entries = json.loads(output)
+    assert [entry["trace_id"] for entry in entries] == ["trace-c"]
+
+    # Resume after trace-c (last entry) -> empty list, exit 0
+    code, output = _follow(store, "T-100", "--since", "trace-c", "--as-json")
+    assert code == 0
+    entries = json.loads(output)
+    assert entries == []
+
+    # Supports fully-qualified trace:<id> prefix
+    code, output = _follow(store, "T-100", "--since", "trace:trace-a", "--as-json")
+    assert code == 0
+    entries = json.loads(output)
+    assert [entry["trace_id"] for entry in entries] == ["trace-b", "trace-c"]
+
+    # Unknown entry id exits non-zero
+    code, output = _follow(store, "T-100", "--since", "absent-entry", "--as-json")
+    assert code == 1
+    assert "Entry not found for --since" in output
+
+
+def test_out_writes_the_per_entity_trace_to_its_own_file(
+    store: ContentAddressedTraceStore,
+    tmp_path: Path,
+) -> None:
+    """`--out <path>` writes the per-entity trace to a file."""
+    # Write JSON output
+    json_out = tmp_path / "traces.json"
+    code, _ = _follow(store, "T-100", "--out", str(json_out), "--as-json")
+    assert code == 0
+    assert json_out.exists()
+    entries = json.loads(json_out.read_text(encoding="utf-8"))
+    assert [entry["trace_id"] for entry in entries] == ["trace-a", "trace-b", "trace-c"]
+
+    # Write formatted table output
+    text_out = tmp_path / "sub" / "traces.txt"
+    code, _ = _follow(store, "T-100", "--out", str(text_out))
+    assert code == 0
+    assert text_out.exists()
+    content = text_out.read_text(encoding="utf-8")
+    assert "trace-a" in content
+    assert "trace-b" in content
+    assert "trace-c" in content

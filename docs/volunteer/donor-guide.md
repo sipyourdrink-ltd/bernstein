@@ -47,6 +47,63 @@ GitHub issue URL and begins the execution process.
    ```
    Replace `<issue-url>` with the exact GitHub issue URL you want to work on.
 
+## Federated index discovery (Python API)
+
+Federation is an explicit opt-in for Python callers. The existing
+`bernstein volunteer browse` command and unconfigured `browse_indexes()`
+keep their flat-index behavior; CLI donor-configuration support is not included.
+
+```python
+from bernstein.core.volunteer.registry import FederationPolicy, browse_indexes
+
+policy = FederationPolicy(
+    pinned_keys={"https://registry.example/index.json": maintainer_public_key},
+    denied_indexes=frozenset({"https://excluded.example/index.json"}),
+    allow_unsigned=False,
+    max_depth=3,
+    max_indexes=100,
+)
+projects, dropped = browse_indexes(
+    ["https://registry.example/index.json"],
+    federation=policy,
+)
+```
+
+`maintainer_public_key` is an Ed25519 public key acquired independently and
+pinned by the donor. Pins and denials match exact index URLs. A pinned index
+requires a valid signature even if `allow_unsigned=True`; malformed signatures,
+wrong keys and signed documents without a pin are refused. Unpinned unsigned
+indexes are accepted only with an explicit `allow_unsigned=True`. Denial takes
+precedence and prevents fetching that index.
+
+A v2 index retains the v1 `projects` rows and adds `"indexes": ["https://..."]`.
+Project rows may include `added_by`, an optional maintainer identifier retained
+on `IndexEntry`. To sign an index, use the existing
+`bernstein.core.protocols.volunteer.documents.sign_document` with
+`document_kind="registry-index"`; put the serialized DSSE envelope in a
+`signature` field. The signed document is the entire index **without** that
+field, including child URLs, project rows and unknown extensions. Verification
+checks both the pinned signature and equality with the delivered index.
+
+Traversal is breadth-first. Root depth is zero; a depth limit of zero reads
+only the configured roots. The index-count budget bounds scheduled URLs and
+actual fetches, including failed fetches. Exact URLs identify nodes: mirrors
+with identical content are distinct and consume the budget separately. Cycles
+terminate and name their members; shared children in a diamond are not cycles.
+
+`resolve_indexes(urls, policy=policy, transport=...)` returns a frozen
+`FederationResolution` with entries, fetched URLs, skipped indexes/reasons,
+cycle members and conflicting project URLs. `passed` means no refusal or
+budget truncation; `as_record()` provides structured diagnostics. A caller can
+inject the existing `HTTPTransport` for offline operation or testing.
+
+Indexes remain pointers. Conflicting row hints, including cached manifest
+digests, are reported without deciding project policy. Entries merge through
+the existing first-pointer deduplication. `browse_indexes()` then loads the
+project's actual `.bernstein/volunteer.json`; its license, status, budget and
+local-execution policy determine acceptance and its own digest is returned.
+The resolver does not fetch project manifests or distribute keys.
+
 ## Budget Controls
 
 ### Wall-Clock Budget

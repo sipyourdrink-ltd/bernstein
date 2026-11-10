@@ -453,6 +453,45 @@ class TestGlobExists:
 
 
 class TestTestPasses:
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [(None, 120), ("300", 300), ("1", 1), ("0", 1), ("-5", 1), ("invalid", 120), ("", 120), ("1.5", 120)],
+    )
+    def test_signal_timeout_configuration(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured: str | None, expected: int
+    ) -> None:
+        if configured is None:
+            monkeypatch.delenv("BERNSTEIN_SIGNAL_TIMEOUT_S", raising=False)
+        else:
+            monkeypatch.setenv("BERNSTEIN_SIGNAL_TIMEOUT_S", configured)
+        signal = CompletionSignal(type="test_passes", value="check-package")
+        with patch(
+            "bernstein.core.quality.janitor.subprocess.run",
+            return_value=subprocess.CompletedProcess("check-package", 0),
+        ) as run:
+            passed, _ = evaluate_signal(signal, tmp_path)
+
+        assert passed is True
+        assert run.call_args.kwargs["timeout"] == expected
+
+    def test_timeout_logs_configured_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("BERNSTEIN_SIGNAL_TIMEOUT_S", "300")
+        signal = CompletionSignal(type="test_passes", value="check-package")
+        with patch(
+            "bernstein.core.quality.janitor.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="check-package", timeout=300),
+        ):
+            passed, _ = evaluate_signal(signal, tmp_path)
+
+        assert passed is False
+        timeout_records = [r for r in caplog.records if "test_passes TIMEOUT" in r.message]
+        assert len(timeout_records) == 1
+        assert "timeout=300s" in timeout_records[0].message
+        assert "command='check-package'" in timeout_records[0].message
+        assert f"cwd={tmp_path}" in timeout_records[0].message
+
     def test_passes_on_exit_zero(self, tmp_path: Path) -> None:
         signal = CompletionSignal(
             type="test_passes",

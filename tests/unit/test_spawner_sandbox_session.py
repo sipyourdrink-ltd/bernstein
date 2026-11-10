@@ -585,6 +585,31 @@ def test_audit_events_appended_for_session_lifecycle(tmp_path: Path, monkeypatch
     assert valid, f"audit chain not verifiable: {errors}"
 
 
+def test_session_create_audit_names_the_owning_tasks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The create record carries the spawn's task ids, so a session that is never
+    destroyed can be traced to the task it was provisioned for (#5112)."""
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    backend = _FakeBackend(tmp_path)
+    spawner, adapter = _build_spawner_with_backend(tmp_path, backend=backend)
+
+    agent_session = AgentSession(id="S-31", role="backend", task_ids=["T-a", "T-b"])
+    spawner._spawn_via_sandbox_session(  # pyright: ignore[reportPrivateUsage]
+        session_id="S-31",
+        prompt="do the thing",
+        spawn_cwd=tmp_path,
+        model_config=ModelConfig("sonnet", "high"),
+        mcp_config=None,
+        session=agent_session,
+        adapter=adapter,
+    )
+    spawner._sandbox_exec_handles["S-31"].future.result(timeout=5.0)  # pyright: ignore[reportPrivateUsage]
+
+    creates = AuditLog(audit_dir=tmp_path / ".sdd" / "audit").query(event_type="sandbox.session_create")
+    assert len(creates) == 1
+    assert creates[0].details["agent_session_id"] == "S-31"
+    assert creates[0].details["task_ids"] == ["T-a", "T-b"]
+
+
 def test_concurrent_lifecycles_keep_audit_chain_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Concurrent emissions from spawn + exec-done threads never fork the HMAC chain.
 

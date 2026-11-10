@@ -1,0 +1,17 @@
+name: bandit-recorded-sarif
+adapter_class: bernstein.adapters.bandit.BanditAdapter
+steps:
+  - target: tests/fixtures/scanners/bandit/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/bandit/target
+    expected_finding_hashes:
+      - e961b81a91f635a1dc37faef0cf7a3d4aaab06294bf5e07acfda7a377f94abe3
+      - 2e51c7cb585c38d64d8be1ffbd05240b0f75d3eea4871ad0d94e8234612dfd25
+  - target: tests/fixtures/scanners/bandit/target
+    scope:
+      roots:
+        - tests/fixtures/scanners/bandit/target
+    expected_finding_hashes:
+      - e961b81a91f635a1dc37faef0cf7a3d4aaab06294bf5e07acfda7a377f94abe3
+      - 2e51c7cb585c38d64d8be1ffbd05240b0f75d3eea4871ad0d94e8234612dfd25

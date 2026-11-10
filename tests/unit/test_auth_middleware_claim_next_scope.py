@@ -218,3 +218,23 @@ def test_filter_digest_is_unchanged_for_an_unscoped_filter() -> None:
     unscoped = ClaimFilter(role="backend", task_ids=None)
     assert filter_digest(unscoped) == _LEGACY_BACKEND_FILTER_DIGEST
     assert filter_digest(ClaimFilter(role="backend", task_ids=frozenset({"a"}))) != filter_digest(unscoped)
+
+
+@pytest.mark.parametrize("prefix", ["", "/api/v1"])
+def test_store_receipt_claim_respects_task_scope_without_snapshot_leak(app: FastAPI, prefix: str) -> None:
+    peer = _create_task(app, "private peer", priority=1)
+    own = _create_task(app, "own brief", priority=3)
+    headers = _agent_headers(app, "backend-scoped", "backend", [own])
+    response = _client(app).post(
+        f"{prefix}/tasks/claim-receipt", headers=headers, json={"claimer_id": "worker", "role": "backend"}
+    )
+    assert response.status_code == 200, response.text
+    wire = response.json()
+    assert wire["taskId"] == own
+    assert [row["id"] for row in wire["backlogSnapshot"]] == [own]
+    assert peer not in response.text
+    assert _status(app, peer) == TaskStatus.OPEN
+    refused = _client(app).post(
+        f"{prefix}/tasks/claim-receipt", headers=headers, json={"claimer_id": "worker", "role": "docs"}
+    )
+    assert refused.status_code == 403

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.table import Table
@@ -30,6 +30,57 @@ if TYPE_CHECKING:
 def _has_failures(findings: list[Finding]) -> bool:
     """Return True if any finding is not a passing finding."""
     return any(f.verdict != Verdict.PASS and not f.passed for f in findings)
+
+
+def _record_sentinel_run(root: Path, findings: list[Finding]) -> None:
+    """Anchor the injected run, then dispatch through the existing transport."""
+    from bernstein.core.checks.adapters import AuditSentinelCheck
+
+    sentinel = next((f for f in findings if f.check_id == AuditSentinelCheck.check_id and f.passed is False), None)
+    if sentinel is None:
+        return
+
+    import asyncio
+    import time
+    from dataclasses import asdict
+
+    from bernstein.cli.commands.notify_cmd import _load_notifications_config
+    from bernstein.core.govern.audit_report import GOVERN_AUDIT_RUN_ID, AuditReport, anchor_audit_report
+    from bernstein.core.lifecycle.notify_bridge import build_bridge_from_config
+    from bernstein.core.notifications.protocol import NotificationEvent, NotificationEventKind
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    rows: tuple[dict[str, Any], ...] = tuple(asdict(f) | {"id": f.check_id} for f in findings)
+    report = anchor_audit_report(
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=load_or_create_audit_key(),
+        report=AuditReport(findings=rows, timestamp=int(time.time())),
+    )
+    config_path = root / "bernstein.yaml"
+    if not config_path.exists():
+        return
+    config = _load_notifications_config(config_path)
+    if not config.enabled:
+        return
+    bridge = build_bridge_from_config(config, runtime_dir=root / ".sdd" / "runtime", register_in_registry=False)
+    event = NotificationEvent(
+        event_id=f"govern-audit-sentinel-{report.journal_entry_hash}",
+        kind=NotificationEventKind.SYNTHETIC,
+        title="Governance audit selftest failure",
+        body=sentinel.summary,
+        severity="error",
+        run_id=GOVERN_AUDIT_RUN_ID,
+        timestamp=report.timestamp,
+        details={"check_id": sentinel.check_id, "journal_entry_hash": report.journal_entry_hash},
+    )
+
+    async def dispatch() -> None:
+        try:
+            await bridge.dispatch_event(event)
+        finally:
+            await bridge.aclose()
+
+    asyncio.run(dispatch())
 
 
 @click.command("audit")
@@ -79,6 +130,9 @@ def govern_audit_cmd(
     Note: the verifier-key staleness check this command used to run now
     lives in ``bernstein govern audit-keys``.
 
+    BERNSTEIN_GOVERN_AUDIT_SENTINEL=1 enables the harmless sentinel:failure
+    selftest, journaling its run and dispatching a synthetic notification.
+
     Exit codes:
       0: All executed checks passed (at least one check executed).
       1: One or more checks failed, were not measurable, or no checks were selected.
@@ -115,7 +169,15 @@ def govern_audit_cmd(
         raise SystemExit(0)
 
     root = Path(workdir).resolve()
+    from bernstein.core.checks.adapters import AuditSentinelCheck
+
+    if AuditSentinelCheck().active:
+        click.echo(
+            f"Sentinel active: {AuditSentinelCheck.env_var}=1 ({AuditSentinelCheck.check_id}); synthetic failure.",
+            err=True,
+        )
     findings = reg.run_all(workdir=root, only_areas=only_areas, skip_ids=skip_ids)
+    _record_sentinel_run(root, findings)
 
     if not findings:
         if as_json:
@@ -134,6 +196,7 @@ def govern_audit_cmd(
                 "passed": f.passed,
                 "area": f.area,
                 "summary": f.summary or f.message,
+                "reason": f.reason,
                 "remediation": f.remediation,
                 "what_would_make_it_measurable": f.what_would_make_it_measurable,
                 "evidence": [{"locator": ev.locator, "sha256": ev.sha256} for ev in f.evidence],
