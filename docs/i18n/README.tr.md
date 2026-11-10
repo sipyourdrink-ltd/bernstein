@@ -135,7 +135,7 @@ flowchart LR
 Her düğümü, fazın izin verdiği role sahip bir ajan üstlenir; rol çitleri ve onay kapıları, ajan görevin içinde ne yaparsa yapsın geçerli kalır. Kod düğümü, kendi git worktree'sinde merge kapılarının ardında biter. Yukarıdaki düğümler farklı biter: bir [artefakt sözleşmesi](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) çıktıyı adlandırır (rapor, veri kümesi, tarama, eylem günlüğü) ve düğüm commit yerine imzalı bir lineage makbuzuyla kapanır. Aynı zamanlayıcı, aynı journal, aynı çevrimdışı doğrulama - graf ister kod, ister araştırma, ister bir ops değişikliği, ister üçünün karışımını taşısın. Yazılım, araştırma, dokümantasyon, enterprise ve katkı akışları için hazır graflar [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) içindedir.
 
 ### 30 saniyede kurulum
-<!-- l10n: en="install in 30 seconds" hash="sha256:7762c5d67166" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein

@@ -135,7 +135,7 @@ flowchart LR
 แต่ละโหนดถูกรับโดย agent ที่บทบาทได้รับอนุญาตจากเฟสนั้น รั้วบทบาทและเกตอนุมัติยังคงอยู่ไม่ว่า agent จะทำอะไรในงาน โหนดโค้ดจบหลัง merge gate ใน git worktree ของตัวเอง โหนดข้างบนจบต่างออกไป: [สัญญาอาร์ติแฟกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ระบุผลส่งมอบ (รายงาน ชุดข้อมูล การสแกน บันทึกการกระทำ) และโหนดปิดด้วยใบรับ lineage ที่ลงนามแทนคอมมิต ตัวจัดตารางเดียวกัน เจอร์นัลเดียวกัน การตรวจสอบออฟไลน์แบบเดียวกัน - ไม่ว่ากราฟจะส่งมอบโค้ด งานวิจัย การเปลี่ยนแปลง ops หรือทั้งสามผสมกัน กราฟสำเร็จรูปสำหรับซอฟต์แวร์ วิจัย เอกสาร องค์กร และเวิร์กโฟลว์ผู้ร่วมพัฒนาอยู่ที่ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:7762c5d67166" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
