@@ -593,9 +593,7 @@ class _RecordingMockAdapter(CLIAdapter):
         return None
 
 
-def test_agent_node_dispatches_through_real_spawner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_agent_node_dispatches_through_real_spawner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An agent-typed node reaches `AgentSpawner.spawn_for_tasks`."""
     # The integration check exercises dispatch, not the host's available disk space.
     monkeypatch.setattr(
