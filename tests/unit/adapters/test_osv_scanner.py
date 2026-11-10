@@ -242,7 +242,7 @@ def test_scan_runs_offline_against_the_pinned_database(tmp_path: Path) -> None:
     assert adapter.last_invocation is not None
     assert adapter.last_invocation.tool_version == "2.2.3"
     assert adapter.last_invocation.db_identity == _DB_IDENTITY
-    assert adapter.last_invocation.config_digest == _config_digest([])
+    assert adapter.last_invocation.config_digest == _config_digest([], target=_TARGET.resolve())
 
 
 def test_a_database_that_does_not_match_the_pin_is_refused_before_scanning(tmp_path: Path) -> None:
@@ -278,6 +278,102 @@ def test_an_ignore_list_osv_scanner_would_read_changes_the_recorded_invocation(t
         with_config = adapter.last_invocation.argv_hash
 
     assert with_config != without
+
+
+def test_config_location_changes_invocation_identity(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    for directory in ("a", "b"):
+        (target / directory).mkdir(parents=True)
+    config = target / "a" / "osv-scanner.toml"
+    config.write_text('[[IgnoredVulns]]\nid = "TEST-OSV-0001"\n', encoding="utf-8")
+    adapter = OsvScannerAdapter(db_dir=tmp_path / "db")
+    which, identity, run = _patched()
+    with which, identity, run:
+        adapter.scan(target, _scope(target=target), tmp_path / "work")
+        first = adapter.last_invocation
+        config.rename(target / "b" / config.name)
+        adapter.scan(target, _scope(target=target), tmp_path / "work")
+        second = adapter.last_invocation
+    assert first is not None and second is not None
+    assert first.config_digest != second.config_digest
+    assert first.argv_hash != second.argv_hash
+
+
+def test_config_identity_is_stable_across_checkout_roots(tmp_path: Path) -> None:
+    invocations = []
+    which, identity, run = _patched()
+    with which, identity, run:
+        for checkout, directories in (("first", ("a", "b")), ("second", ("b", "a"))):
+            target = tmp_path / checkout
+            for directory in directories:
+                (target / directory).mkdir(parents=True)
+                (target / directory / "osv-scanner.toml").write_text(
+                    f'[[IgnoredVulns]]\nid = "TEST-{directory}"\n', encoding="utf-8"
+                )
+            adapter = OsvScannerAdapter(db_dir=tmp_path / "db")
+            adapter.scan(target, _scope(target=target), tmp_path / "work")
+            invocations.append(adapter.last_invocation)
+    assert invocations[0] is not None
+    assert invocations[0] == invocations[1]
+
+
+@pytest.mark.parametrize(
+    ("table", "field", "selector"),
+    [
+        ("IgnoredVulns", "ignoreUntil", 'id = "TEST-OSV-0001"'),
+        ("PackageOverrides", "effectiveUntil", 'name = "synthetic"\nignore = true'),
+        ("ignoredvulns", "IGNOREUNTIL", 'id = "TEST-OSV-0001"'),
+        ("packageoverrides", "EFFECTIVEUNTIL", 'name = "synthetic"\nignore = true'),
+    ],
+)
+@pytest.mark.parametrize("timestamp", ["2000-01-01T00:00:00Z", "2099-01-01T00:00:00Z"])
+def test_temporal_config_is_rejected_before_any_vendor_process(
+    tmp_path: Path, table: str, field: str, selector: str, timestamp: str
+) -> None:
+    target = tmp_path / "target"
+    (target / "package").mkdir(parents=True)
+    (target / "package" / "osv-scanner.toml").write_text(
+        f"[[{table}]]\n{selector}\n{field} = {timestamp}\n", encoding="utf-8"
+    )
+    adapter = OsvScannerAdapter(db_dir=tmp_path / "db")
+    which, identity, run = _patched()
+    with which, identity, run as run_mock:
+        with pytest.raises(OsvScannerError, match="time-dependent"):
+            adapter.scan(target, _scope(target=target), tmp_path / "work")
+        run_mock.assert_not_called()
+    assert adapter.last_invocation is None
+    assert not (tmp_path / "work").exists()
+
+
+def test_timeless_config_accepts_temporal_words_in_comments_and_strings(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "osv-scanner.toml").write_text(
+        "# ignoreUntil = 2099-01-01T00:00:00Z\n"
+        '[[IgnoredVulns]]\nid = "TEST-OSV-0001"\nreason = "ignoreUntil is deliberately absent"\n'
+        '[[PackageOverrides]]\nname = "synthetic"\nignore = true\n'
+        'reason = "effectiveUntil is deliberately absent"\n',
+        encoding="utf-8",
+    )
+    adapter = OsvScannerAdapter(db_dir=tmp_path / "db")
+    which, identity, run = _patched()
+    with which, identity, run as run_mock:
+        result = adapter.scan(target, _scope(target=target), tmp_path / "work")
+    assert run_mock.call_count == 2  # Mocked version and scan, no actual vendor process.
+    assert len(result.findings) == 1
+    assert adapter.last_invocation is not None
+
+
+@pytest.mark.parametrize("content", [b"[[IgnoredVulns]", b"\xff"])
+def test_unparseable_config_is_refused_before_any_vendor_process(tmp_path: Path, content: bytes) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "osv-scanner.toml").write_bytes(content)
+    which, identity, run = _patched()
+    with which, identity, run as run_mock:
+        with pytest.raises(OsvScannerError, match="Could not validate"):
+            OsvScannerAdapter(db_dir=tmp_path / "db").scan(target, _scope(target=target), tmp_path / "work")
+        run_mock.assert_not_called()
 
 
 def test_exit_codes_other_than_zero_and_one_are_a_failed_run(tmp_path: Path) -> None:

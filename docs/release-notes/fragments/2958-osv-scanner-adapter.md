@@ -18,3 +18,12 @@ limits are refused rather than ignored. Partial implementation of #2958.
 SARIF reports that explicitly mark any invocation as unsuccessful are
 rejected, including reports with no findings. Absent invocation metadata
 and successful invocations preserve the existing finding normalization.
+
+Config identity uses the versioned `osv-scanner-config-v2` digest of sorted
+target-relative POSIX paths and exact file bytes: moving an ignore list between
+package directories changes invocation identity, while moving the entire checkout
+does not. Before any vendor process, the adapter parses TOML and rejects explicit
+`IgnoredVulns.ignoreUntil` and `PackageOverrides.effectiveUntil` fields (including
+case variants), because OSV-Scanner evaluates them against the current time.
+Timeless configs and temporal words in comments or reasons remain supported;
+unreadable or invalid TOML configs are refused rather than left unvalidated.

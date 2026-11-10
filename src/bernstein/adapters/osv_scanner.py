@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -125,8 +126,8 @@ class OsvScannerAdapter(ScannerAdapter):
 
         env = build_filtered_env([])
         env[_DB_ROOT_ENV] = str(db_dir)
+        config_digest = _config_digest(_target_configs(resolved_target), target=resolved_target)
         tool_version = _read_version(binary, env)
-        config_digest = _config_digest(_target_configs(resolved_target))
 
         workdir.mkdir(parents=True, exist_ok=True)
         report_path = (workdir / "osv-scanner.sarif").resolve()
@@ -250,13 +251,28 @@ def _target_configs(target: Path) -> list[Path]:
     )
 
 
-def _config_digest(configs: list[Path]) -> str:
-    """Digest the ignore lists that can drop a finding. Empty when there are none."""
+def _config_digest(configs: list[Path], *, target: Path) -> str:
+    """Validate timeless configs and bind their relative locations and exact bytes."""
     digest = hashlib.sha256()
-    digest.update(b"osv-scanner-config-v1\0")
-    for config in configs:
-        digest.update(config.read_bytes())
-        digest.update(b"\0")
+    digest.update(b"osv-scanner-config-v2\0")
+    for config in sorted(configs, key=lambda path: path.relative_to(target).as_posix()):
+        relative = config.relative_to(target).as_posix()
+        try:
+            content = config.read_bytes()
+            parsed = tomllib.loads(content.decode("utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+            raise OsvScannerError(f"Could not validate OSV-Scanner config: {relative}") from exc
+        # v2.2.3 uses BurntSushi/toml's case-insensitive struct-field matching.
+        temporal_fields = {"ignoredvulns": "ignoreuntil", "packageoverrides": "effectiveuntil"}
+        for table, entries in parsed.items():
+            field = temporal_fields.get(table.casefold())
+            if field is not None and isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and any(key.casefold() == field for key in entry):
+                        raise OsvScannerError(f"Feed-pinned scans refuse time-dependent OSV config: {relative}")
+        for value in (relative.encode("utf-8"), content):
+            digest.update(len(value).to_bytes(8, "big"))
+            digest.update(value)
     return "sha256:" + digest.hexdigest()
 
 
