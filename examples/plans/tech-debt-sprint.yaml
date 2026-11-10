@@ -98,8 +98,8 @@ stages:
           Remove unused packages from requirements.txt / package.json / pyproject.toml.
           Run the full test suite after each file deletion to confirm no breakage.
         completion_signals:
-          - type: command
-            run: "python -m pytest tests/ -x -q"
+          - type: test_passes
+            command: "python -m pytest tests/ -x -q"
 
       - title: "Upgrade outdated dependencies"
         role: devops
@@ -112,8 +112,8 @@ stages:
           the codebase, run the test suite, and commit individually so each upgrade
           is bisectable. Do not batch-upgrade everything in one commit.
         completion_signals:
-          - type: command
-            run: "python -m pytest tests/ -x -q"
+          - type: test_passes
+            command: "python -m pytest tests/ -x -q"
 
       - title: "Add type annotations to hotspot modules"
         role: backend
@@ -126,8 +126,8 @@ stages:
           signatures, class attributes, and return types. For TypeScript: replace
           any types with specific interfaces. Do not refactor logic - annotation only.
         completion_signals:
-          - type: command
-            run: "python -m mypy src/ --ignore-missing-imports --no-error-summary"
+          - type: test_passes
+            command: "python -m mypy src/ --ignore-missing-imports --no-error-summary"
 
       - title: "Refactor top complexity hotspots"
         role: backend
@@ -141,8 +141,8 @@ stages:
           Each refactored function must have the same test coverage as before
           (add tests first if coverage is missing).
         completion_signals:
-          - type: command
-            run: "python -m pytest tests/ -x -q"
+          - type: test_passes
+            command: "python -m pytest tests/ -x -q"
 
   # ── Stage 3: Validation ──
   - name: "Validation"

@@ -14,8 +14,8 @@ PR-through-the-merge-queue path every other release takes, deleting its
 inline release creation (and its own copy of these dispatches) entirely. This
 guard is written against the property rather than against a fixed file list,
 so a future entrypoint cannot reintroduce the gap: any job that runs
-``gh release create`` owes the full dispatch set, with input names the target
-workflow actually declares.
+``gh release create`` owes the full dispatch set in its own job or a dependent
+job, with input names the target workflow actually declares.
 """
 
 from __future__ import annotations
@@ -76,6 +76,21 @@ def _release_creating_jobs() -> list[tuple[str, str, dict[str, Any]]]:
     return found
 
 
+def _followup_jobs(workflow_file: str, creator: str) -> dict[str, Any]:
+    """The creator and jobs reachable downstream in the same native graph."""
+    jobs = _jobs(_load(WORKFLOWS_DIR / workflow_file))
+    reachable = {creator}
+    while True:
+        expanded = reachable | {
+            name
+            for name, job in jobs.items()
+            if reachable.intersection([job["needs"]] if isinstance(job.get("needs"), str) else job.get("needs", []))
+        }
+        if expanded == reachable:
+            return {name: jobs[name] for name in reachable}
+        reachable = expanded
+
+
 def _dispatches(job: dict[str, Any]) -> dict[str, set[str]]:
     """Map dispatched workflow file -> the input names passed with ``-f``."""
     dispatched: dict[str, set[str]] = {}
@@ -113,47 +128,44 @@ def test_the_release_creating_entrypoints_are_the_expected_ones() -> None:
 
 
 @pytest.mark.parametrize("consumer", RELEASE_EVENT_CONSUMERS)
-def test_every_release_creating_job_dispatches_the_consumer(consumer: str) -> None:
-    """A release created with GITHUB_TOKEN emits no event, so each is dispatched."""
-    for workflow, job_id, job in _release_creating_jobs():
-        dispatched = _dispatches(job)
-        assert consumer in dispatched, (
-            f"{workflow}::{job_id} creates a GitHub Release but never dispatches "
-            f"{consumer}, which only starts on `release: published` -- an event a "
-            f"GITHUB_TOKEN release does not emit"
-        )
+def test_every_release_creator_reaches_each_consumer_once(consumer: str) -> None:
+    """Token-created releases emit no event; dispatch each consumer exactly once."""
+    for workflow, creator, _ in _release_creating_jobs():
+        matches = [
+            run
+            for job in _followup_jobs(workflow, creator).values()
+            for run in _runs(job)
+            if any(m.group("workflow") == consumer for m in _DISPATCH_RE.finditer(run))
+        ]
+        assert len(matches) == 1, f"{workflow}::{creator} must reach exactly one {consumer} dispatch"
 
 
-def test_every_release_creating_job_may_dispatch_workflows() -> None:
-    """Dispatching needs `actions: write` on the job."""
-    for workflow, job_id, job in _release_creating_jobs():
-        permissions = job.get("permissions", {})
-        assert isinstance(permissions, dict), f"{workflow}::{job_id} must declare permissions"
-        assert permissions.get("actions") == "write", (
-            f"{workflow}::{job_id} dispatches follow-up workflows and needs actions: write"
-        )
+def test_every_followup_dispatcher_may_dispatch_workflows() -> None:
+    """Each actual dispatcher needs actions:write, including dependent jobs."""
+    for workflow, creator, _ in _release_creating_jobs():
+        for name, job in _followup_jobs(workflow, creator).items():
+            if _dispatches(job):
+                assert job.get("permissions", {}).get("actions") == "write", f"{workflow}::{name}"
 
 
 def test_dispatched_inputs_match_the_target_workflow_inputs() -> None:
-    """Every `-f name=` passed on dispatch must be an input the target declares."""
-    for workflow, job_id, job in _release_creating_jobs():
-        for target, passed_inputs in _dispatches(job).items():
-            declared = _declared_dispatch_inputs(target)
-            unknown = passed_inputs - declared
-            assert not unknown, (
-                f"{workflow}::{job_id} passes {sorted(unknown)} to {target}, which declares {sorted(declared)}"
-            )
+    """Every dispatched input is declared, including those in dependent jobs."""
+    for workflow, creator, _ in _release_creating_jobs():
+        for job in _followup_jobs(workflow, creator).values():
+            for target, passed_inputs in _dispatches(job).items():
+                assert passed_inputs <= _declared_dispatch_inputs(target), f"{workflow}::{target}"
 
 
 def test_homebrew_dispatch_passes_a_bare_version_not_a_tag() -> None:
-    """publish-homebrew.yml takes `3.12.0`; a `v` prefix silently builds the wrong formula."""
-    for workflow, job_id, job in _release_creating_jobs():
-        for run in _runs(job):
-            if "publish-homebrew.yml" not in run:
-                continue
-            match = re.search(r"-f\s+version=\"?([^\"\s]+)", run)
-            assert match is not None, f"{workflow}::{job_id} dispatches homebrew without a version"
-            value = match.group(1)
-            assert not value.startswith("v"), (
-                f"{workflow}::{job_id} passes a tag ({value}) where a bare version is expected"
-            )
+    """Homebrew needs the bare version; discovery must not silently become vacuous."""
+    runs = [
+        run
+        for workflow, creator, _ in _release_creating_jobs()
+        for job in _followup_jobs(workflow, creator).values()
+        for run in _runs(job)
+        if "gh workflow run publish-homebrew.yml" in run
+    ]
+    assert len(runs) == 1
+    match = re.search(r'-f\s+version="?([^"\s]+)', runs[0])
+    assert match is not None
+    assert match.group(1) == "${TAG#v}"

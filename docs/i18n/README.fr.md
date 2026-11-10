@@ -41,11 +41,12 @@
 Bernstein est la couche de gouvernance open source pour agents IA. Il fonctionne en policy as code : vous écrivez la politique - qui a le droit de faire quoi, ce qui exige une approbation, ce qui doit être consigné - et Bernstein l'applique et produit l'enregistrement vérifiable. Un ordonnanceur déterministe - aucun modèle dans la boucle de coordination - exécute les agents en parallèle, filtre ce qu'ils produisent derrière des gates et consigne chaque étape, si bien qu'une exécution se vérifie après coup, hors ligne, à partir des seuls artefacts. Les agents CLI de code fonctionnent d'emblée (Claude Code, Codex, Gemini CLI et 50+ autres), et la même couche gouverne toute charge agentique : le livrable peut être un diff, un rapport de recherche, un dataset ou un dossier de preuves d'audit. Profil d'installation air-gap inclus. Apache-2.0.
 
 ### en un coup d'œil
-<!-- l10n: en="at a glance" hash="sha256:ab623fbd639d" -->
+<!-- l10n: en="at a glance" hash="sha256:24180098a385" -->
 
-Quatre éléments le distinguent ; le reste n'est que détail.
+Cinq points le distinguent ; tout le reste est détail.
 
 - **Aucun LLM dans la boucle de coordination.** L'ordonnancement est en pur Python, garantissant une reproductibilité de bout en bout. Rejouez le plan d'hier et obtenez exactement le graphe de tâches d'hier.
+- **Preuves de clés matérielles.** Les vérificateurs hors ligne de garde PIV et d’approbation FIDO2 partagent le protocole de reçus, avec une confiance épinglée et un instant explicite. La garde du jeton n’élève pas les niveaux de confiance TRACE. [Preuves de clés matérielles](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/hardware-key-evidence.md).
 - **Vérifiable a posteriori.** Le journal de relecture enregistre chaque exécution, et la colonne vertébrale de lignage (lineage spine) toujours active enregistre chaque étape productrice de lignage ; le journal d'audit optionnel chaîné par HMAC (`BERNSTEIN_AUDIT=1`) ajoute des reçus vérifiables hors ligne. Le non-déterminisme apparaît sous forme de non-concordance de hachage à l'étape exacte, plutôt que par un nouvel essai instable. Les livrables autres que le code reçoivent le même traitement : une tâche peut déclarer un contrat d'artefact (rapport, jeu de données, journal d'actions, résultat d'exploitation) et se conclut par un reçu de lignage signé plutôt que par un commit git.
 - **Isolé par conception.** Chaque tâche de codage obtient son propre git worktree protégé par des barrières de fusion ; les tâches en mode artefact obtiennent un répertoire de travail sous `.sdd/workspaces/`. Les agents ne partagent aucun espace de travail modifiable par défaut ; le seul état partagé est le backlog de tâches, réservé de manière atomique. Un contrôle plus strict du système de fichiers est optionnel via les [backends de sandbox](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/architecture/sandbox.md). Désactivez les worktrees et chaque tâche s'exécute dans l'espace partagé.
 - **Large et local.** Plus de 53 adaptateurs d'agents CLI plus un wrapper générique `--prompt`, état basé sur fichiers, sans dépendance SaaS, sans plan de données tiers.
@@ -134,7 +135,7 @@ flowchart LR
 Chaque nœud est pris par un agent dont le rôle est autorisé par la phase ; les clôtures de rôle et les gates d'approbation tiennent quoi que fasse l'agent dans la tâche. Un nœud de code se termine derrière des merge gates dans son propre git worktree. Les nœuds ci-dessus se terminent autrement : un [contrat d'artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomme le livrable (rapport, dataset, scan, journal d'actions), et le nœud se clôt sur un reçu de lineage signé plutôt qu'un commit. Même ordonnanceur, même journal, même vérification hors ligne - que le graphe livre du code, de la recherche, un changement d'ops ou un mélange des trois. Des graphes prêts à l'emploi pour le logiciel, la recherche, la doc, l'enterprise et les workflows de contribution vivent dans [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installation en 30 secondes
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -154,7 +155,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-L'intégration continue revérifie le reçu enregistré à chaque push sur main — et démontre qu'une copie altérée échoue — afin que la preuve publiée ne devienne pas un simple fichier décoratif. `scripts/record_demo.sh` régénère l'enregistrement, le reçu et la clé depuis une nouvelle exécution réelle ; rien dans le terminal n'est synthétisé.
+Le reçu enregistré peut être revérifié à tout moment avec la commande ci-dessus ; une copie altérée échoue à la même vérification. `scripts/record_demo.sh` régénère l'enregistrement, le reçu et la clé depuis une nouvelle exécution réelle ; rien dans le terminal n'est synthétisé.
 
 Une exécution en cours est observable depuis l'une ou l'autre des interfaces opérateur. Toutes deux lisent la même API de tâches, évitant tout décalage d'affichage. Dans `bernstein live`, les colonnes gauche et droite défilent indépendamment sous forme de panneaux entiers, maintenant les composants accessibles sur des terminaux courts.
 
@@ -230,7 +231,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Combinez différents agents au cours d'une même session : modèles locaux économiques pour le code générique, modèles cloud plus robustes pour l'architecture. `bernstein integrations list --installed` indique les outils disponibles sur votre machine.
 
 ### calcul bénévole
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Un projet peut marquer des tickets comme ouverts aux bénévoles, et n'importe qui peut en exécuter un sur sa propre machine, sans compte ni coordinateur. Le projet déclare ce qu'une tâche a le droit de faire dans un manifeste `volunteer.json` - backend de bac à sable, liste réseau autorisée, plafonds de temps et de mémoire - et les limites propres au donateur ne peuvent que le restreindre, jamais l'élargir. Le reçu produit par une tâche terminée lie le résultat à la décision de confinement sous laquelle elle a tourné, si bien qu'un mainteneur peut vérifier des mois plus tard ce que le travail avait réellement le droit de toucher.
 
@@ -239,16 +240,17 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-Le [guide du donateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) couvre l'exécution d'un worker et le budget que vous fixez, le [guide du projet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) couvre la déclaration d'un manifeste, et le [modèle de menaces](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indique ce que chaque frontière protège et ne protège pas. Le lanceur en une seule commande n'est pas encore livré : aujourd'hui `verify`, `browse`, `budget`, `verify-bundle` et `hub` sont les sous-commandes qui fonctionnent.
+Le [guide du donateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) couvre l'exécution d'un worker et le budget que vous fixez, le [guide du projet](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) couvre la déclaration d'un manifeste, et le [modèle de menaces](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) indique ce que chaque frontière protège et ne protège pas. Le lanceur en une seule commande n'est pas encore livré : aujourd'hui `verify`, `browse`, `budget`, `verify-bundle` et `hub` sont les sous-commandes qui fonctionnent. `autopilot` est enregistré mais refuse de s’exécuter tant qu’une implémentation de `TaskSource` n’est pas disponible.
 
 ### au-delà de la page d'accueil
-<!-- l10n: en="beyond the front page" hash="sha256:fcb483e081f3" -->
+<!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->
 
 Toutes les ressources approfondies sont réunies sur le [site de documentation](https://docs.bernstein.run/) :
 
 | page | contenu |
 |---|---|
 | [capabilities](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/reference/capabilities.md) | liste exhaustive des capacités : mode serveur MCP, cartes d'agent signées, moteurs de sandbox, collecteurs d'artefacts, conformité réglementaire |
+| [`bernstein_create_task`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/bare-tasks.md) | `POST /api/v1/tasks` → `bernstein_claim` → `bernstein_complete` |
 | [who this is for](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/use-cases.md) | cas d'usage pertinents et situations où Bernstein n'est pas adapté |
 | [workflows](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/workflow-manifests.md) | DAGs déclaratifs en YAML composés de nœuds agent / command / loop |
 | [web UI](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/gui/index.md) | tableau de bord web reposant sur la même API que la TUI |
@@ -278,6 +280,11 @@ La liste complète des mentions dans les listes awesome, catalogues, référence
 
 </details>
 
+### exécutions administratives
+<!-- l10n: en="Administrative runs" hash="sha256:df8939f8352a" -->
+
+Utilisez `bernstein_run(template="administrative", goal="Weekly sprint")` pour créer un conteneur vide et audité sans planificateur ni processus agent. Ajoutez des tâches manuelles avec `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` et consultez `bernstein_run_status(run_id="admin-...")`. Les tâches restent accessibles via l’API habituelle de prise en charge, mais sont exclues de l’orchestration automatique. Une exécution non vide se termine lorsque chaque tâche a le statut `done`, `closed` ou `cancelled` ; une exécution vide reste ouverte. [Procédure opérateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
+
 ### contribution, support, licence
 <!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
 
@@ -287,6 +294,6 @@ Les métadonnées de citation sont disponibles dans [CITATION.cff](https://githu
 
 ---
 
-[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run)
+[Alex Chernysh](https://alexchernysh.com) &middot; [GitHub](https://github.com/chernistry) &middot; [X](https://x.com/alex_chernysh) &middot; [bernstein.run](https://bernstein.run) &middot; [task notifications](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/notifications.md#role-task-subscriptions-sse)
 
 <!-- mcp-name: io.github.sipyourdrink-ltd/bernstein -->

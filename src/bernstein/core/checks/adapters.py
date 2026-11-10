@@ -10,6 +10,7 @@ Adapts:
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,41 @@ from bernstein.core.checks.contract import Evidence, Finding, Verdict
 
 if TYPE_CHECKING:
     from bernstein.core.govern.duplication_audit import DuplicationReport
+
+
+class AuditSentinelCheck:
+    """Harmless, explicitly labelled failure for the audit selftest (#5091)."""
+
+    check_id = "sentinel:failure"
+    area = "sentinel"
+    title = "Governance Audit Failure Sentinel"
+    description = "Force a synthetic measured failure with BERNSTEIN_GOVERN_AUDIT_SENTINEL=1."
+    env_var = "BERNSTEIN_GOVERN_AUDIT_SENTINEL"
+    failure_reason = "Injected governance audit failure (selftest sentinel)."
+
+    @property
+    def active(self) -> bool:
+        return os.environ.get(self.env_var) == "1"
+
+    @property
+    def opt_in(self) -> bool:
+        # An inactive sentinel must not change the default check set.
+        return not self.active
+
+    def run(self, workdir: Path | None = None) -> Finding:
+        active = self.active
+        return Finding(
+            check_id=self.check_id,
+            verdict=Verdict.MEASURED,
+            passed=not active,
+            reason=self.failure_reason if active else None,
+            message=f"{self.env_var}=1 active: {self.failure_reason}" if active else "Selftest sentinel inactive.",
+            remediation=f"Unset {self.env_var}." if active else "",
+            evidence=(Evidence.from_payload(f"env://{self.env_var}", {"active": active}),),
+        )
+
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
 
 
 class DoctorComplianceAdapter:

@@ -1901,6 +1901,23 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
             "pii_allowlist_prefixes",
             ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST"],
         ),
+        # DLP keys: documented beside pii_scan in docs/architecture/quality-pipeline.md
+        # and read nowhere until #6615 -- a ``dlp_scan: false`` was accepted by the
+        # schema (extra="allow") and then dropped, so the gate could not be
+        # configured or disabled from a seed. Defaults mirror QualityGatesConfig.
+        dlp_scan=_qg_bool("dlp_scan", True),
+        dlp_check_license_violations=_qg_bool("dlp_check_license_violations", True),
+        dlp_check_regulated_data=_qg_bool("dlp_check_regulated_data", True),
+        dlp_check_proprietary_data=_qg_bool("dlp_check_proprietary_data", True),
+        dlp_block_license_violations=_qg_bool("dlp_block_license_violations", True),
+        dlp_block_regulated_data=_qg_bool("dlp_block_regulated_data", True),
+        dlp_block_proprietary_data=_qg_bool("dlp_block_proprietary_data", False),
+        dlp_internal_url_patterns=_qg_str_list("dlp_internal_url_patterns", []),
+        dlp_ignore_paths=_qg_str_list("dlp_ignore_paths", []),
+        dlp_allowlist_prefixes=_qg_str_list(
+            "dlp_allowlist_prefixes",
+            ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "MOCK", "SAMPLE"],
+        ),
         run_config=_qg_bool("run_config", True),
         security_scan=_qg_bool("security_scan", False),
         security_scan_command=_qg_optional_str("security_scan_command"),
@@ -2437,6 +2454,11 @@ def parse_seed(path: Path) -> SeedConfig:
     Raises:
         SeedError: If the file is missing, unreadable, or has invalid content.
     """
+    return _parse_seed(path, apply_tuning=True)
+
+
+def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
+    """Share parsing with launch validation without rebinding parent tuning."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
 
@@ -2592,7 +2614,8 @@ def parse_seed(path: Path) -> SeedConfig:
     metrics = _parse_metrics(data.get("metrics"))
     mcp_signing_mode = _parse_mcp_signing_mode(data)
     data_class = _parse_data_class(data.get("data_class"))
-    _parse_tuning(data)
+    if apply_tuning:
+        _parse_tuning(data)
 
     return SeedConfig(
         goal=goal,

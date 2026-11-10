@@ -418,6 +418,13 @@ uv run python scripts/check_empty_test_modules.py
 
 ## Sharded unit suite
 
+For a failed subprocess, the runner reports its native exit code or signal.
+A signal takes precedence over any pytest-like summary printed by a nested
+process. Ordinary assertion failures retain their FAILURES and short-summary
+sections; when those sections are absent, the job log retains the complete
+captured stdout and stderr under separate labels. These diagnostics do not
+establish the cause of an unexplained process exit.
+
 `scripts/run_tests.py` runs each `tests/unit/test_*.py` file in its own
 subprocess (the OOM-avoidance model: a single `pytest --cov` over all
 files in one process exceeds the 7 GB runner ceiling). Each subprocess
@@ -460,14 +467,17 @@ Or merge live measurements while running:
 uv run python scripts/run_tests.py --shard 1/4 --record-durations
 ```
 
-In CI the `ubuntu`/`windows` `Test` cells fan out across a `shard`
-matrix dimension; the rolled-up `needs.test.result` the `CI gate`
+In CI the `Test` cells fan out across eight shards on Ubuntu with
+`--parallel 8` workers per runner, and four shards on Windows with
+`--parallel 4`. The existing matrix job count is unchanged; only Ubuntu's
+per-runner worker count increases. Memory-heavy files still run sequentially
+after the normal parallel batch. The rolled-up `needs.test.result` the `CI gate`
 aggregator reads is `failure` if *any* shard cell fails, so every shard
 is still required. Each ubuntu Python 3.13 shard uploads its own
 `.coverage.<shard>` artifact on pushes to main (and on manual dispatches
 on main). The `coverage-report` job, which runs on main only for a
 manual dispatch or a release commit (`chore(release)` / `release:`),
-combines the four shards and uploads to Codecov. No JUnit report is
+combines all eight Ubuntu shards and uploads to Codecov. No JUnit report is
 produced. The only shard-1 pin is the capability-matrix spawn-refusal
 integration test, so it runs once per cell. The `test-macos` job shards
 the file list across four cells (templated name; no test cell is a

@@ -72,6 +72,7 @@ Source: `core/routes/status_dashboard.py`, `core/routes/status_events.py`.
 | GET | `/dashboard` | `dashboard_html` | N | Web dashboard HTML page |
 | GET | `/dashboard/data` | `dashboard_data` | N | JSON payload for the dashboard |
 | GET | `/events` | `events_stream` | N | Server-Sent Events stream for live updates |
+| GET | `/events/thread` | `thread_events` | Y | SSE stream of one run's journal (`?run=<run_id>`; `thread.step` frames, SSE id = journal index, `Last-Event-ID` resume) |
 | GET | `/badge.json` | `badge_json` | N | Shields.io-compatible status badge |
 | GET | `/memory/audit` | `memory_audit` | Y | Inspect memory store for audit |
 | POST | `/broadcast` | `broadcast_message` | Y | Push a message to all connected clients |

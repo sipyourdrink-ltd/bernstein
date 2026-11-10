@@ -127,7 +127,7 @@ jobs:
       !startsWith(github.event.pull_request.head.ref, 'bot/contract-drift-')
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -157,7 +157,7 @@ jobs:
           # source PR. GITHUB_TOKEN-authored pushes are muted by GitHub.
           token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
 
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Sync project (dev group)
         run: uv sync --group dev
