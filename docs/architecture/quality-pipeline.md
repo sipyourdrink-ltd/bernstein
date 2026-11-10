@@ -358,7 +358,18 @@ quality_gates:
   import_cycle_check: false
   merge_conflict_check: false
   mutation_testing: false
+  mutation_command: "uv run mutmut run"
+  mutation_threshold: 0.50
   dep_audit: false
+  dep_audit_command: "pip-audit"
+  large_file_check: false
+  large_file_threshold: 500
+  migration_reversibility_check: false
+  test_expansion: false
+  agent_test_mutation: false
+  agent_test_mutation_threshold: 0.70
+  integration_test_gen: false
+  review_rubric: false
   benchmark:
     enabled: false
 
@@ -367,6 +378,11 @@ quality_gates:
     model: "google/gemini-flash-1.5"
     block_on_no: true
 ```
+
+Every field of `QualityGatesConfig` is read from this section; a key the
+parser does not know is accepted by the schema and ignored, so
+`tests/unit/test_quality_gates.py` pins the parser's keyword list against the
+dataclass and fails when a field is added without its parser line.
 
 When `pipeline:` is omitted, Bernstein synthesises one from the booleans
 above. To override the order (or insert custom gates), declare an
