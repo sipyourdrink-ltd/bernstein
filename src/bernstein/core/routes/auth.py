@@ -18,11 +18,12 @@ import time
 from enum import StrEnum
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from bernstein.core.routes._unconfigured import UNCONFIGURED_STATUS
+from bernstein.core.security.auth_rate_limiter import check_auth_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +196,7 @@ def auth_providers(request: Request) -> AuthProvidersResponse:
 
 @router.get(
     "/login",
+    dependencies=[Depends(check_auth_rate_limit)],
     responses={
         400: {"description": "Authentication provider not enabled"},
         404: {"description": "SSO authentication is not configured on this server"},
@@ -228,6 +230,7 @@ async def login(request: Request, provider: LoginProvider = LoginProvider.OIDC) 
 
 @router.get(
     "/oidc/callback",
+    dependencies=[Depends(check_auth_rate_limit)],
     responses={
         400: {"description": "Missing or invalid authorization code or state"},
         404: {"description": "SSO authentication is not configured on this server"},
@@ -309,6 +312,7 @@ window.location.href = '/dashboard';
 
 @router.post(
     "/saml/acs",
+    dependencies=[Depends(check_auth_rate_limit)],
     responses={
         400: {"description": "Missing SAMLResponse"},
         404: {"description": "SSO authentication is not configured on this server"},
@@ -355,6 +359,7 @@ def saml_metadata(request: Request) -> Response:
 
 @router.post(
     "/cli/device",
+    dependencies=[Depends(check_auth_rate_limit)],
     responses={404: {"description": "SSO authentication is not configured on this server"}},
 )
 def device_code_request(request: Request, body: DeviceCodeRequest) -> DeviceCodeResponse:
@@ -378,6 +383,7 @@ def device_code_request(request: Request, body: DeviceCodeRequest) -> DeviceCode
 
 @router.post(
     "/cli/token",
+    dependencies=[Depends(check_auth_rate_limit)],
     responses={404: {"description": "SSO authentication is not configured on this server"}},
 )
 def device_token_poll(request: Request, body: DevicePollRequest) -> DevicePollResponse:
@@ -405,6 +411,7 @@ def device_token_poll(request: Request, body: DevicePollRequest) -> DevicePollRe
 
 @router.post(
     "/cli/authorize",
+    dependencies=[Depends(check_auth_rate_limit)],
     responses={
         400: {"description": "Invalid or expired user code"},
         401: {"description": "Authentication required"},

@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -24,7 +26,7 @@ from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
 from bernstein.tui.command_palette import DEFAULT_PALETTE_COMMANDS, CommandPalette, CommandPaletteScreen, PaletteCommand
-from bernstein.tui.event_stream import JournalStreamConsumer, stream_enabled
+from bernstein.tui.event_stream import JournalStreamConsumer, SSEFrameTooLarge, stream_enabled
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
 from bernstein.tui.layout_persistence import LayoutConfig, load_layout, save_layout
 from bernstein.tui.notification_badge import NotificationCenterPanel, NotificationHistory
@@ -99,6 +101,11 @@ logger = logging.getLogger(__name__)
 
 SERVER_URL = os.environ.get("BERNSTEIN_SERVER_URL", "http://localhost:8052")
 _POLL_INTERVAL: float = 2.0
+#: Stay below the server's 3 connections / 60 s sliding window, with a
+#: one-second margin per attempt rather than reconnecting on its boundary.
+_STREAM_RECONNECT_MIN_S: float = 21.0
+#: The shared-IP limiter's cooldown when a 429 has no usable Retry-After.
+_STREAM_RETRY_AFTER_DEFAULT_S: float = 300.0
 
 #: CSS selector for the waterfall trace view widget.
 _WATERFALL_VIEW_SELECTOR = "#waterfall-view"
@@ -110,6 +117,47 @@ _SCRATCHPAD_VIEWER_SELECTOR = "#scratchpad-viewer"
 _COORDINATOR_DASHBOARD_SELECTOR = "#coordinator-dashboard"
 _TASK_CONTEXT_SELECTOR = "#task-context"
 _TOAST_OVERLAY_SELECTOR = "#toast-overlay"
+
+
+#: Env var naming the run whose journal the streamed TUI follows. Unset
+#: follows the run recorded in ``.sdd/runtime/spawner-run-owner.json``.
+STREAM_RUN_ENV_VAR = "BERNSTEIN_TUI_RUN"
+
+
+def _thread_stream_run() -> str | None:
+    """Return the run id the thread stream should follow, if one is known.
+
+    ``BERNSTEIN_TUI_RUN`` wins; otherwise the run the orchestrator recorded
+    as its owner run. ``None`` when neither names a run yet.
+    """
+    explicit = os.environ.get(STREAM_RUN_ENV_VAR, "").strip()
+    if explicit:
+        return explicit
+    from bernstein.core.orchestration.run_closure_owner import read_spawner_run_owner
+
+    try:
+        owner = read_spawner_run_owner(Path(".sdd"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return owner.run_id if owner is not None else None
+
+
+def _thread_stream_retry_after(value: str | None) -> float:
+    """Read a 429's delay-seconds or HTTP-date, falling back to the cooldown."""
+    if value is None:
+        return _STREAM_RETRY_AFTER_DEFAULT_S
+    value = value.strip()
+    try:
+        if value.isascii() and value.isdecimal():
+            delay = float(value)
+        else:
+            when = parsedate_to_datetime(value)
+            if when.tzinfo is None:
+                return _STREAM_RETRY_AFTER_DEFAULT_S
+            delay = max(0.0, when.timestamp() - time.time())
+    except (ValueError, TypeError, OverflowError):
+        return _STREAM_RETRY_AFTER_DEFAULT_S
+    return delay if math.isfinite(delay) else _STREAM_RETRY_AFTER_DEFAULT_S
 
 
 def _auth_headers() -> dict[str, str]:
@@ -541,32 +589,96 @@ class BernsteinApp(App[None]):
             self.run_worker(self._refresh_timeline())
 
     async def _consume_thread_stream(self) -> None:
-        """Drive the hot path from the audit-chain SSE stream (issue #2297).
+        """Drive the hot path from the run journal's SSE stream (issue #2297).
 
         Replaces the timer poll loop: each hash-anchored journal frame that
-        the server projects triggers a single refresh, so the rendered view
-        is an attestable projection of the executed thread rather than a
-        polled snapshot. On a dropped connection the loop reconnects with
-        ``Last-Event-ID`` so it resumes from the last journal index without
-        missing or duplicating an entry (AC5). The rendering path is
-        unchanged - only the data source is swapped.
+        the server projects on ``/events/thread`` triggers a refresh, so the
+        rendered view follows what executed rather than a timer. On a
+        dropped connection the loop reconnects with ``Last-Event-ID`` (the
+        last journal index) so it resumes without missing or duplicating a
+        row (AC5). The rendering path is unchanged - only the data source is
+        swapped.
+
+        The stream is pinned to one run per connection
+        (:func:`_thread_stream_run`). When that run changes, the open stream
+        is left and the consumer starts over for the new run, whose journal
+        indices restart at 0. While no run is known, or the server reports
+        its journal missing, snapshots refresh once per ``poll_interval``.
+        A missing journal is not retried until the run selection changes
+        or disappears and reappears. An invalid server URL is reported once
+        as a configuration error and stops the consumer.
+
+        Every received text chunk is fed to the consumer, whitespace-only
+        ones included (a lone newline can be the blank line that completes a
+        frame), and normal stream refreshes require a complete frame.
+        When a connection ends for any reason its incomplete frame is
+        discarded. Transport and HTTP failures also refresh the snapshot.
+        Other reconnects wait at least 21 seconds (or ``poll_interval`` if
+        longer), including after clean EOF, to respect the server's sliding
+        reconnect budget. A 429 can extend that wait via ``Retry-After``;
+        missing or invalid values use the 300-second cooldown. A frame
+        over the consumer's size bound ends streaming for this session and
+        switches to the polling fallback rather than skipping the frame.
         """
+        run_id: str | None = None
+        unserved_run: str | None = None
         while True:
+            current = _thread_stream_run()
+            if current is None:
+                unserved_run = None
+                self.action_refresh()
+                await asyncio.sleep(self._poll_interval)
+                continue
+            if current == unserved_run:
+                self.action_refresh()
+                await asyncio.sleep(self._poll_interval)
+                continue
+            unserved_run = None
+            if run_id is not None and current != run_id:
+                self._stream_consumer = JournalStreamConsumer()
+            run_id = current
+            reconnect_delay = max(self._poll_interval, _STREAM_RECONNECT_MIN_S)
             try:
                 headers = _auth_headers() | self._stream_consumer.reconnect_headers()
                 async with (
                     httpx.AsyncClient(timeout=None) as client,
-                    client.stream("GET", f"{SERVER_URL}/events", headers=headers) as response,
+                    client.stream(
+                        "GET", f"{SERVER_URL}/events/thread", params={"run": run_id}, headers=headers
+                    ) as response,
                 ):
-                    async for block in response.aiter_text():
-                        if not block.strip():
-                            continue
-                        delivered = list(self._stream_consumer.consume(block))
-                        if delivered:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_text():
+                        if self._stream_consumer.consume(chunk):
                             self.action_refresh()
-            except Exception:
+                        if _thread_stream_run() != run_id:
+                            break
+            except SSEFrameTooLarge as exc:
+                logger.warning(
+                    "thread stream frame exceeded %d chars; switching to polling fallback",
+                    exc.limit,
+                )
+                self.set_interval(self._poll_interval, self.action_refresh)
+                self.action_refresh()
+                return
+            except httpx.InvalidURL:
+                logger.error("Invalid thread stream URL; check BERNSTEIN_SERVER_URL configuration")
+                return
+            except httpx.HTTPError as exc:
                 logger.debug("thread stream disconnected, will reconnect", exc_info=True)
-                await asyncio.sleep(self._poll_interval)
+                if isinstance(exc, httpx.HTTPStatusError):
+                    if exc.response.status_code == 404:
+                        unserved_run = run_id
+                        reconnect_delay = self._poll_interval
+                    elif exc.response.status_code == 429:
+                        reconnect_delay = max(
+                            reconnect_delay, _thread_stream_retry_after(exc.response.headers.get("Retry-After"))
+                        )
+                self.action_refresh()
+            finally:
+                discarded = self._stream_consumer.end_stream()
+                if discarded:
+                    logger.debug("thread stream ended mid-frame; discarded %d buffered chars", discarded)
+            await asyncio.sleep(reconnect_delay)
 
     def _apply_task_filter(self) -> None:
         """Apply the current structured task filter to the cached task rows."""
