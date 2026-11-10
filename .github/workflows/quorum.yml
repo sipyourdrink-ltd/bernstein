@@ -77,6 +77,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: read
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -92,8 +93,14 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/quorum_check.py
+            scripts/quorum_evidence.py
+            scripts/quorum_request_reviews.py
+            scripts/queue_hygiene.py
             .github/quorum-roster.toml
             .github/CODEOWNERS
+            .github/workflows/quorum.yml
+            .github/workflows/quorum-rerun.yml
+            docs/governance/review-charter.md
           sparse-checkout-cone-mode: false
       - name: Check the review quorum
         env:

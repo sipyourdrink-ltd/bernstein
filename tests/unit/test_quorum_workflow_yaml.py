@@ -46,12 +46,18 @@ STALE_BASE_EXPRS = (
     "github.event.merge_group.base_sha",
 )
 
-#: The three files the check reads. A sparse checkout that drops one of them
+#: The policy files the check reads. A sparse checkout that drops one of them
 #: reads a missing roster or a missing CODEOWNERS as "no rule here".
 READS = (
     "scripts/quorum_check.py",
+    "scripts/quorum_evidence.py",
+    "scripts/quorum_request_reviews.py",
+    "scripts/queue_hygiene.py",
     ".github/quorum-roster.toml",
     ".github/CODEOWNERS",
+    ".github/workflows/quorum.yml",
+    ".github/workflows/quorum-rerun.yml",
+    "docs/governance/review-charter.md",
 )
 
 SHA_PIN = re.compile(r"^[^@]+@[0-9a-f]{40}$")
@@ -116,7 +122,7 @@ def test_the_rules_are_read_from_the_default_branch() -> None:
 
 
 def test_the_checkout_cannot_run_the_branch_under_review() -> None:
-    """Read-only, credential-free, and limited to the three files it reads."""
+    """Read-only, credential-free, and limited to the trusted policy files."""
     doc = _load()
     with_ = _checkout(doc).get("with")
     assert isinstance(with_, dict)
@@ -130,7 +136,7 @@ def test_the_checkout_cannot_run_the_branch_under_review() -> None:
     assert listed == list(READS), f"the sparse checkout must be exactly the files the check reads; got {listed}"
 
     assert doc.get("permissions") == {"contents": "read"}
-    assert _job(doc).get("permissions") == {"contents": "read", "pull-requests": "read"}
+    assert _job(doc).get("permissions") == {"contents": "read", "pull-requests": "read", "issues": "read"}
 
 
 def test_a_run_that_applied_no_rule_fails() -> None:
@@ -283,3 +289,23 @@ def test_the_sweep_runs_under_bash_so_mapfile_exists() -> None:
                 assert shell.get("shell", "bash") == "bash", "mapfile needs bash"
     step_shell = _rerun_step("Re-run quorum").get("shell", "bash")
     assert step_shell == "bash", "mapfile needs bash"
+
+
+def test_attestation_publication_recomputes_trusted_policy_and_binds_head_base() -> None:
+    doc = yaml.safe_load(RERUN.read_text(encoding="utf-8"))
+    job = doc["jobs"]["attestation"]
+    assert "issue_comment" in job["if"] and "issue.pull_request" in job["if"]
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert DEFAULT_BRANCH_EXPR in checkout["with"]["ref"]
+    assert checkout["with"]["persist-credentials"] is False
+    assert SHA_PIN.match(checkout["uses"])
+    assert job["permissions"] == {"contents": "read", "pull-requests": "read", "issues": "read", "checks": "write"}
+    step = next(step for step in job["steps"] if "run" in step)
+    run = step["run"]
+    assert "!cancelled()" in step["if"]
+    assert run.index("quorum_check.py") < run.index("publish_required_check.py")
+    assert "conclusion=failure" in run and 'if [ "$result" -eq 0 ]' in run
+    assert 'if [ "$before" != "$after" ]' in run
+    assert ".head.sha,.base.sha" in run
+    assert "github.event.comment.body" not in run
+    assert "pull_request.head" not in checkout["with"]["ref"]

@@ -39,8 +39,15 @@ The rules, in the order they are applied
    it needs the maintainer's approval.
 3. A pull request opened by `github-actions[bot]` needs the maintainer's
    approval whatever it touches: anyone who can push a branch can open one.
-4. The maintainer's own pull requests merge without approvals, and any
-   standing `changes requested` from a committer blocks them (section 6).
+4. The maintainer's own pull requests, and an authenticated exact-head
+   maintainer adoption, use a transparent technical-review policy exception:
+   one independent review ordinarily, two plus security tests on sensitive
+   changes. Human vote counts stay factual. Standing `changes requested`,
+   required CI/bundle checks and the merge queue still apply.
+   The verifier trusts maintainer attestation of actual terminal execution,
+   never PR body text or an embedded self-issued identity. The policy comes
+   from the default branch; a candidate policy cannot authorize itself.
+   Historical rules below describe the expired migration window only.
    Until 2026-10-05 a pull request the maintainer has pushed to and then
    declared adopted in the thread is treated the same way (section 3), if it
    needs only the ordinary two approvals, touches no path a CODEOWNERS line
@@ -100,6 +107,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -108,11 +116,26 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection
+
+
+def _load_evidence_module() -> Any:
+    path = Path(__file__).with_name("quorum_evidence.py")
+    spec = importlib.util.spec_from_file_location("bernstein_quorum_evidence", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("trusted quorum evidence verifier is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+evidence = _load_evidence_module()
 
 ROSTER_PATH = ".github/quorum-roster.toml"
 CODEOWNERS_PATH = ".github/CODEOWNERS"
@@ -204,6 +227,8 @@ GOVERNANCE_PATHS = (
     ".github/workflows/quorum.yml",
     ".github/workflows/quorum-rerun.yml",
     "scripts/quorum_check.py",
+    "scripts/quorum_evidence.py",
+    "scripts/quorum_request_reviews.py",
     "scripts/queue_hygiene.py",
 )
 
@@ -430,6 +455,8 @@ class PullRequest:
     # rules above fell back to the commit itself wherever one of these was
     # consulted, and the verdict says so.
     uncompared: tuple[str, ...] = ()
+    base_sha: str = ""
+    adoption: Any = None
 
     def is_current(self, sha: str) -> bool:
         """Whether a review given on `sha` was given on what is about to merge."""
@@ -845,6 +872,7 @@ def fetch_pull_request(
         update_only=update_only,
         diff_changed_at=diff_changed_at,
         uncompared=tuple(diffs.uncompared),
+        base_sha=(raw.get("base") or {}).get("sha", ""),
     )
 
 
@@ -908,6 +936,66 @@ def _names(logins: set[str] | frozenset[str]) -> str:
 def _sensitive_paths(paths: list[str]) -> list[str]:
     return sorted(
         p for p in paths if not p.startswith(SENSITIVE_EXEMPT_PREFIXES) and any(word in p for word in SENSITIVE_WORDS)
+    )
+
+
+def approval_requirements(pr: PullRequest) -> tuple[int, int]:
+    """Human (total, core) quorum; the request planner uses this same rule."""
+    return (3, 2) if pr.changed_lines > THIRD_APPROVAL_LINES or _sensitive_paths(pr.paths) else (2, 1)
+
+
+def technical_reviews_needed(pr: PullRequest) -> int:
+    """Maintainer autonomy needs a second reader on control/access boundaries."""
+    control_prefixes = (
+        ".github/",
+        "src/bernstein/core/git/",
+        "src/bernstein/core/orchestration/",
+        "src/bernstein/core/quality/",
+    )
+    control_files = (*GOVERNANCE_PATHS, "scripts/publish_required_check.py")
+    words = (*AUTOMATION_STOP_WORDS, "identity", "tokens", "secret", "credential", "access")
+    return (
+        2
+        if any(
+            path in control_files
+            or path.startswith(control_prefixes)
+            or (not path.startswith(SENSITIVE_EXEMPT_PREFIXES) and any(word in path for word in words))
+            for path in pr.paths
+        )
+        else 1
+    )
+
+
+def fetch_adoption(repo: str, pr: PullRequest, roster: Roster, root: str = ".", api: Any = None) -> Any:
+    """Only fresh API authorship authenticates the maintainer's inert declaration."""
+    call = api or gh_json
+    pages = call("api", f"repos/{repo}/issues/{pr.number}/comments", "--paginate", "--slurp")
+    comments = [comment for page in pages for comment in page]
+    if not any(
+        isinstance(comment.get("body"), str)
+        and comment["body"].startswith(evidence.MARKER)
+        and (comment.get("user") or {}).get("login", "").casefold() == roster.maintainer.casefold()
+        for comment in comments
+    ):
+        return None
+    maintainer = call("api", f"users/{roster.maintainer}")
+    if (
+        (maintainer.get("login") or "").casefold() != roster.maintainer.casefold()
+        or type(maintainer.get("id")) is not int
+        or maintainer["id"] <= 0
+    ):
+        raise ValueError("fresh maintainer API identity is unavailable")
+    return evidence.from_comments(
+        comments,
+        maintainer=roster.maintainer,
+        maintainer_id=maintainer.get("id"),
+        repository=repo,
+        number=pr.number,
+        base_sha=pr.base_sha,
+        head_sha=pr.head_sha,
+        policy_sha256=evidence.policy_digest(root),
+        authors=pr.contributors | {pr.author},
+        required_reviews=technical_reviews_needed(pr),
     )
 
 
@@ -978,7 +1066,31 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
         )
     )
 
-    if pr.author in roster.automation:
+    # This is an openly named policy exception, not invented human votes.
+    # A malformed current maintainer declaration also blocks a full quorum:
+    # unresolved findings cannot be hidden by falling back to a different path.
+    autonomous = pr.author == roster.maintainer or pr.adoption is not None
+    if autonomous:
+        need = technical_reviews_needed(pr)
+        verdict.requirements.append(
+            Requirement(
+                f"maintainer-attested exact-head technical reviews ({need} independent)"
+                + (" and security tests" if need == 2 else ""),
+                pr.adoption is not None and pr.adoption.valid,
+                f"@{roster.maintainer}, after reading actual independent terminal reports",
+            )
+        )
+        if pr.adoption is not None:
+            verdict.notes.append(f"Maintainer attestation: {pr.adoption.reason}. {pr.adoption.url}")
+        if pr.adoption is not None and pr.adoption.valid:
+            verdict.notes.append(
+                f"Maintainer integration policy exception; {len(pr.adoption.reviewer_ids)} technical reviews. "
+                f"Real current human approvals: {len(approvals & (roster.quorum_holders - {pr.author} - pr.writers))}. "
+                "Technical execution identities are maintainer-attested, not GitHub human votes or "
+                "cryptographic proof of provider independence. Contributor attribution is unchanged. "
+                "Required CI, bundle checks and the merge queue still apply."
+            )
+    elif pr.author in roster.automation:
         stops = sorted(
             p
             for p in pr.paths
@@ -1004,11 +1116,6 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
                 f"@{roster.maintainer}",
             )
         )
-    elif pr.author == roster.maintainer:
-        verdict.notes.append(
-            "The maintainer's own change merges without approvals; a committer's "
-            "*changes requested* blocks it (charter, section 6)."
-        )
     elif adopted:
         verdict.notes.append(
             "Adopted by the maintainer, who pushed to the branch and said so in the thread: "
@@ -1022,7 +1129,7 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
 
         sensitive = _sensitive_paths(pr.paths)
         large = pr.changed_lines > THIRD_APPROVAL_LINES
-        need_total, need_core = (3, 2) if (large or sensitive) else (2, 1)
+        need_total, need_core = approval_requirements(pr)
         reason = (
             f"{pr.changed_lines} changed lines"
             if large
@@ -1150,12 +1257,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument("--pr", type=int, default=None)
     parser.add_argument("--root", default=".", help="where to read the roster and CODEOWNERS from")
+    parser.add_argument("--policy-digest", action="store_true", help="print the trusted policy SHA-256 and exit")
     parser.add_argument(
         "--governance-paths",
         action="store_true",
         help="print the paths that carry the objection window, one per line, and exit",
     )
     args = parser.parse_args(argv)
+
+    if args.policy_digest:
+        print(evidence.policy_digest(args.root))
+        return 0
 
     # The hourly sweep in quorum-rerun.yml needs this list to know which pull
     # requests change verdict with the clock. It used to carry its own copy in a
@@ -1173,6 +1285,7 @@ def main(argv: list[str] | None = None) -> int:
     owners = load_codeowners(args.root)
     candidates = roster.quorum_holders | {owner for _, line in owners for owner in line}
     pr = fetch_pull_request(args.repo, number, candidates)
+    pr.adoption = fetch_adoption(args.repo, pr, roster, args.root)
     verdict = evaluate(pr, roster, owners, datetime.now(UTC))
 
     summary = verdict.summary()

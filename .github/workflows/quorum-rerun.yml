@@ -29,12 +29,14 @@ name: quorum rerun
 on:
   pull_request_review:
     types: [submitted, edited, dismissed]
+  issue_comment:
+    types: [created, edited, deleted]
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch: {}
 
 concurrency:
-  group: quorum-rerun-${{ github.event.pull_request.number || 'sweep' }}
+  group: quorum-rerun-${{ github.event.pull_request.number || github.event.issue.number || 'sweep' }}
   cancel-in-progress: false
 
 permissions:
@@ -42,6 +44,7 @@ permissions:
 
 jobs:
   rerun:
+    if: github.event_name != 'issue_comment'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -199,3 +202,54 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           QUORUM_REQUEST_REVIEWS: ${{ vars.QUORUM_REQUEST_REVIEWS }}
         run: python3 scripts/quorum_request_reviews.py
+
+  attestation:
+    name: Evaluate maintainer attestation
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '<!-- bernstein-maintainer-adoption:v1 -->')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      # issue_comment runs trusted default-branch code. Receipt text is data;
+      # nothing from the contributor's checkout is imported or executed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Recompute and publish the real policy verdict
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          before=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '[.head.sha,.base.sha] | join(" ")')
+          head=${before%% *}
+          set +e
+          python3 scripts/quorum_check.py --repo "$REPO" --pr "$PR_NUMBER" > quorum-verdict.md
+          result=$?
+          set -e
+          after=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '[.head.sha,.base.sha] | join(" ")')
+          if [ "$before" != "$after" ]; then
+            echo "::error::PR head/base changed during evaluation; no stale verdict published."
+            exit 1
+          fi
+          conclusion=failure
+          if [ "$result" -eq 0 ]; then conclusion=success; fi
+          python3 scripts/publish_required_check.py \
+            --repo "$REPO" --sha "$head" --name quorum \
+            --conclusion "$conclusion" \
+            --title "Trusted default-branch quorum evaluation" \
+            --summary "$(cat quorum-verdict.md)"

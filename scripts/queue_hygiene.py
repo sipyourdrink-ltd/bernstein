@@ -14,8 +14,8 @@ Five rules, each independent of the others:
     The earliest PR against a given issue is never the one labelled.
 
 ``needs-committer-review``
-    Set when a pull request is not a draft, every check in its status
-    rollup succeeded (or was neutral/skipped — nothing pending or failed),
+    Set when a pull request is not a draft, required technical checks passed
+    (quorum is deliberately excluded from reviewer readiness),
     GitHub has confirmed it is mergeable (an unresolved ``UNKNOWN`` status is
     treated as not ready, not as vacuously clear), and nobody has requested
     changes. Removed the moment any of that stops being true.
@@ -94,8 +94,10 @@ _CLOSES_RE = re.compile(
 )
 
 
-def gh_json(*args: str) -> Any:
-    result = subprocess.run(["gh", *args], capture_output=True, text=True, check=True)
+def gh_json(*args: str, check_results: bool = False) -> Any:
+    result = subprocess.run(["gh", *args], capture_output=True, text=True, check=not check_results)
+    if check_results and result.returncode not in (0, 1, 8):
+        result.check_returncode()
     return json.loads(result.stdout)
 
 
@@ -136,8 +138,10 @@ def parse_pr(raw: dict[str, Any]) -> PullRequest:
 
 
 def required_checks_pass(repo: str, pr_number: int) -> bool:
-    """True only when every REQUIRED check (not every job - this repo runs
-    27+ jobs and only two are required contexts) has reported and passed.
+    """Required technical checks passed, for reviewer discovery only.
+
+    Quorum cannot be a prerequisite for asking somebody to supply it. It is
+    still required by the merge ruleset; this function never permits a merge.
 
     Deliberately per-PR rather than pulling statusCheckRollup in the bulk
     `gh pr list` call: with ~90 open PRs and this many workflow jobs, the
@@ -155,7 +159,9 @@ def required_checks_pass(repo: str, pr_number: int) -> bool:
         "--required",
         "--json",
         "bucket,name",
+        check_results=True,
     )
+    checks = [c for c in checks if c.get("name") != "quorum"]
     if not checks:
         # Nothing required has reported yet - not the same as "nothing
         # required exists". Treat as not ready rather than vacuously ready.
@@ -182,10 +188,9 @@ def fetch_open_prs(repo: str) -> list[PullRequest]:
             continue  # drafts never need needs-committer-review; skip the call
         try:
             pr.checks_pass = required_checks_pass(repo, pr.number)
-        except subprocess.CalledProcessError as exc:
+        except (subprocess.CalledProcessError, ValueError) as exc:
             print(
-                f"warning: could not read required checks for #{pr.number}: "
-                f"{exc.stderr.strip() if exc.stderr else exc}",
+                f"warning: could not read required checks for #{pr.number}: {getattr(exc, 'stderr', '') or exc}",
                 file=sys.stderr,
             )
             pr.checks_pass = False
