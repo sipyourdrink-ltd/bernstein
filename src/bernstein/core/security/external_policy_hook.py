@@ -652,6 +652,20 @@ class PolicyHookRegistry:
         self._hooks.append(hook)
         logger.info("Registered external policy hook: %s", hook.name)
 
+    def with_audit_chain(self, audit_chain: AuditChainStore) -> PolicyHookRegistry:
+        """Copy registrations and settings, recording into the supplied chain.
+
+        The registration list is copied; hook instances retain their configured
+        policies. The caller's registry and its audit destination are unchanged.
+        """
+        registry = PolicyHookRegistry(
+            default_verdict=self._default_verdict,
+            fail_open=self._fail_open,
+            audit_chain=audit_chain,
+        )
+        registry._hooks = self.hooks
+        return registry
+
     def evaluate(self, request: HookRequest) -> list[HookResponse]:
         """Evaluate a request against all registered hooks.
 

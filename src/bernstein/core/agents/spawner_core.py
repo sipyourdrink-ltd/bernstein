@@ -143,6 +143,7 @@ from bernstein.core.security.executor_admission import (
     AdmissionPolicyError,
     AdmissionSubject,
 )
+from bernstein.core.security.external_policy_hook import HookRequest, HookVerdict, PolicyHookRegistry
 from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
@@ -1668,6 +1669,8 @@ class AgentSpawner:
         templates_dir: Path to templates/roles/ directory.
         workdir: Project working directory.
         agent_registry: Optional agent registry for dynamic agent types.
+        policy_hook_registry: Optional external policy registry for additional
+            fail-closed spawn admission, audited in the install chain.
     """
 
     def __init__(
@@ -1706,7 +1709,9 @@ class AgentSpawner:
         availability_prober: Callable[[ChainElement], ProbeResult] | None = None,
         adapter_pinned: bool = False,
         context_policy_config: dict[str, Any] | None = None,
+        policy_hook_registry: PolicyHookRegistry | None = None,
     ) -> None:
+        self._policy_hook_registry = policy_hook_registry
         self._enable_caching = enable_caching
         # True when the run-level adapter was explicitly selected by the
         # operator (--adapter flag, BERNSTEIN_ADAPTER env var, or a non-"auto"
@@ -2687,6 +2692,7 @@ class AgentSpawner:
             logger.error("Refusing spawn %s: invalid admission policy: %s", session_id, exc)
             raise SpawnError(f"admission policy is invalid: {exc}") from exc
         if policy is None:
+            self._enforce_external_admission(session_id=session_id, subject=subject)
             return
 
         decision = policy.evaluate(subject)
@@ -2703,6 +2709,7 @@ class AgentSpawner:
             logger.warning("Could not persist admission record for %s: %s", session_id, exc)
 
         if decision.allowed:
+            self._enforce_external_admission(session_id=session_id, subject=subject)
             return
 
         logger.error(
@@ -2714,6 +2721,42 @@ class AgentSpawner:
         )
         self._emit_admission_refusal_audit_event(session_id=session_id, decision=decision)
         raise SpawnError(f"admission refused: {decision.reason}")
+
+    def _enforce_external_admission(self, *, session_id: str, subject: AdmissionSubject) -> None:
+        """Apply the injected registry as an additional, audited spawn boundary.
+
+        Every hook is evaluated and recorded in the install's existing chain.
+        Unlike general-purpose ``first_decisive``, admission requires at least
+        one explicit allow and rejects any denial, unavailable engine or allow
+        obligation. Registry fail-open and default-verdict settings therefore
+        cannot weaken this boundary. Native admission denials never reach it.
+        """
+        registry = self._policy_hook_registry
+        if registry is None:
+            return
+
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        try:
+            chain = AuditChainStore(self._workdir / ".sdd" / "audit")
+            responses = registry.with_audit_chain(chain).evaluate(
+                HookRequest(
+                    action="spawn",
+                    resource=f"agent_session:{session_id}",
+                    agent_id=session_id,
+                    role=subject.role,
+                    metadata=subject.as_dict(),
+                )
+            )
+        except Exception as exc:
+            raise SpawnError("external admission could not evaluate or record the policy") from exc
+
+        if any(response.verdict not in (HookVerdict.ALLOW, HookVerdict.ABSTAIN) for response in responses):
+            raise SpawnError("external admission refused: policy denied or unavailable")
+        if any(response.obligations for response in responses if response.verdict == HookVerdict.ALLOW):
+            raise SpawnError("external admission refused: unsupported policy obligation")
+        if not any(response.verdict == HookVerdict.ALLOW for response in responses):
+            raise SpawnError("external admission refused: no explicit policy allow")
 
     def _admission_sandbox_tier(self, isolation_mode: IsolationMode) -> str:
         """Return the sandbox tier this spawn runs under, for admission.
