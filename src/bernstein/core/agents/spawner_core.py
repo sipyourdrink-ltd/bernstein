@@ -4924,20 +4924,29 @@ class AgentSpawner:
 
         # Executor admission (#4907).  The gate runs here rather than
         # beside the lethal-trifecta check above because the executor
-        # identity it judges - adapter, model, endpoint - is only fully
-        # resolved at this point; it is still ahead of every process
-        # start, so a refusal produces no agent.
-        self._enforce_admission_policy(
-            session_id=session_id,
-            subject=AdmissionSubject(
-                role=role,
-                adapter=resolved_endpoint_adapter_name,
-                model=resolved_endpoint_model,
-                endpoint=resolved_endpoint_base_url,
-                sandbox=self._admission_sandbox_tier(isolation_mode),
-                task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
-            ),
-        )
+        # identity it judges is sufficient for the legacy native preflight.
+        # An injected registry instead needs the actual per-attempt subject
+        # below, before the adapter action and outside its retry handlers.
+        if self._policy_hook_registry is None:
+            # Preserve the existing native-only preflight. Injected registries
+            # use this same gate below once the actual attempt is fully bound;
+            # the primary adapter must not refuse an authorized selected target.
+            self._enforce_admission_policy(
+                session_id=session_id,
+                subject=AdmissionSubject(
+                    role=role,
+                    adapter=resolved_endpoint_adapter_name,
+                    model=resolved_endpoint_model,
+                    endpoint=resolved_endpoint_base_url,
+                    sandbox=self._admission_sandbox_tier(isolation_mode),
+                    task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
+                ),
+            )
+        elif (unbound_transport := self._attachment_routing_refusal()) is not None:
+            # These paths either own another backend or may fall back to a
+            # different confinement boundary. Their execution subject is not
+            # bound by the direct-adapter contract, so never bypass the hook.
+            raise SpawnError(f"external admission cannot bind executor subject for {unbound_transport}")
 
         session = AgentSession(
             id=session_id,
@@ -5446,6 +5455,28 @@ class AgentSpawner:
                                 len(role_council.get("candidates") or ()),
                             )
 
+                    if self._policy_hook_registry is not None:
+                        endpoint = (attempt_mcp or {}).get("base_url", "")
+                        if not isinstance(endpoint, str):
+                            raise SpawnError("external admission cannot bind a non-string endpoint")
+                        try:
+                            self._enforce_admission_policy(
+                                session_id=session_id,
+                                subject=AdmissionSubject(
+                                    role=session.role,
+                                    adapter=target_adapter.name(),
+                                    model=model_config.model,
+                                    endpoint=endpoint,
+                                    sandbox=self._admission_sandbox_tier(isolation_mode),
+                                    task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
+                                ),
+                            )
+                        except SpawnError:
+                            self._release_warm_pool_slot(session_id)
+                            raise
+
+                    # Policy refusal is outside every adapter retry handler:
+                    # failure to authorize or audit B cannot select C instead.
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
                         self._notify_cost_anomaly_spawn(tasks, model_config)
@@ -5965,6 +5996,8 @@ class AgentSpawner:
         """
         if not tasks:
             raise ValueError("Cannot resume with empty task list")
+        if self._policy_hook_registry is not None:
+            raise SpawnError("external admission cannot bind executor subject for crash resume")
 
         # Sovereign posture drift gate (#2518): the resume path goes straight to
         # the adapter without ``_spawn_for_tasks_internal``, so it must apply the

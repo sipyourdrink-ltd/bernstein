@@ -178,6 +178,21 @@ recorded in the existing `.sdd/audit` HMAC chain using the install audit key.
 The request identifies the spawn session and role; its digest also binds the
 complete resolved execution subject.
 
+For an injected registry, this native-plus-external gate runs on each final
+direct-adapter attempt, including provider/model failover. It uses that
+attempt's adapter, model and effective `base_url` configuration, rather than
+the spawner's primary adapter or an earlier role-policy endpoint. Refusal is
+outside adapter retry handling: DENY, UNAVAILABLE, unsupported obligations or
+an audit failure cannot trigger another executor. An authorized selected
+adapter is not refused merely because the primary adapter would be denied.
+
+Injected registries currently support direct-adapter fresh spawns only.
+Runtime bridges, in-process backends, container/sandbox transports (including
+sandbox sessions), and crash-resume refuse before their action because this
+integration cannot bind their complete execution subject. This refusal does
+not fall back to local execution. With no injected registry these paths and
+the existing early native admission behavior are unchanged.
+
 The spawn boundary requires at least one explicit ALLOW and refuses any DENY
 or UNAVAILABLE outcome. An empty registry or only ABSTAIN outcomes refuses.
 Unlike `PolicyHookRegistry.first_decisive`, an earlier ALLOW cannot hide a

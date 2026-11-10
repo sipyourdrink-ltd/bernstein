@@ -18,6 +18,7 @@ import json
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -501,3 +502,229 @@ class TestExternalAdmission:
         (event,) = _external_records(workdir)
         assert event.details["verdict"] == "unavailable"
         assert event.details["error_digest"] == hashlib.sha256(b"synthetic engine failure").hexdigest()
+
+
+class _ResolvedAdmissionHook(_AdmissionHook):
+    def evaluate(self, request: HookRequest) -> HookResponse:
+        response = super().evaluate(request)
+        if request.metadata["adapter"] == "mockcli":
+            return HookResponse(hook_name=self.name, verdict=HookVerdict.ALLOW, reason="primary allowed")
+        return response
+
+
+def _routed_external_spawner(workdir, primary, monkeypatch, *, initial="primary", verdict=HookVerdict.DENY):
+    from bernstein.core.models import ModelConfig
+
+    backup = MagicMock(spec=CLIAdapter)
+    backup.name.return_value = "backupcli"
+    backup.spawn.return_value = SpawnResult(pid=4243, log_path=Path("/tmp/admission-backup.log"))
+    hook = _ResolvedAdmissionHook(verdict)
+    registry = PolicyHookRegistry()
+    registry.register(hook)
+    spawner = _external_spawner(workdir, primary, registry)
+    router = SimpleNamespace(
+        state=SimpleNamespace(
+            providers={
+                name: SimpleNamespace(available=True, health=SimpleNamespace(status=None))
+                for name in ("primary", "backup")
+            }
+        ),
+        select_provider_for_task=MagicMock(
+            return_value=SimpleNamespace(provider="backup", model_config=ModelConfig(model="fallback", effort="medium"))
+        ),
+        update_provider_health=MagicMock(),
+    )
+    spawner._router = router
+    monkeypatch.setattr(
+        spawner,
+        "_resolve_routing",
+        lambda *args: (
+            ModelConfig(model="approved" if initial == "primary" else "fallback", effort="medium"),
+            initial,
+            "router",
+        ),
+    )
+    monkeypatch.setattr(
+        spawner,
+        "_infer_adapter_name_for_provider",
+        lambda provider, model: "mockcli" if provider == "primary" else "backupcli",
+    )
+    monkeypatch.setattr(
+        spawner, "_get_adapter_by_name", lambda name, **kwargs: primary if name == "mockcli" else backup
+    )
+    monkeypatch.setattr(
+        spawner,
+        "_mcp_config_for_adapter",
+        lambda adapter, config: {"base_url": f"https://{adapter.name()}.example/api"},
+    )
+    return spawner, backup, hook, router
+
+
+class TestResolvedExternalAdmission:
+    def test_selected_adapter_is_evaluated_before_its_action(self, workdir, mock_adapter, make_task, monkeypatch):
+        spawner, backup, hook, _router = _routed_external_spawner(workdir, mock_adapter, monkeypatch, initial="backup")
+        with pytest.raises(SpawnError, match="external admission"):
+            spawner.spawn_for_tasks([make_task()])
+        mock_adapter.spawn.assert_not_called()
+        backup.spawn.assert_not_called()
+        assert [request.metadata["adapter"] for request in hook.requests] == ["backupcli"]
+        assert _external_records(workdir)[0].details["verdict"] == "deny"
+
+    @pytest.mark.parametrize("refusal", ["deny", "unavailable", "obligation", "audit"])
+    def test_fallback_refusal_is_not_retried(self, workdir, mock_adapter, make_task, monkeypatch, refusal):
+        from bernstein.adapters.base import RateLimitError
+
+        verdict = (
+            HookVerdict.UNAVAILABLE
+            if refusal == "unavailable"
+            else HookVerdict.ALLOW
+            if refusal in ("obligation", "audit")
+            else HookVerdict.DENY
+        )
+        spawner, backup, hook, router = _routed_external_spawner(workdir, mock_adapter, monkeypatch, verdict=verdict)
+        if refusal == "obligation":
+            hook.obligations = (Obligation(id="cannot-enforce"),)
+        mock_adapter.spawn.side_effect = RateLimitError("synthetic local throttle")
+        if refusal == "audit":
+            original = AuditChainStore.log_with_prev_digest
+
+            def fail_backup_audit(chain, *args, **kwargs):
+                details = kwargs.get("details", {})
+                if details.get("request_digest") and len(hook.requests) == 2:
+                    raise OSError("synthetic fallback audit failure")
+                return original(chain, *args, **kwargs)
+
+            monkeypatch.setattr(AuditChainStore, "log_with_prev_digest", fail_backup_audit)
+        with pytest.raises(SpawnError, match="external admission"):
+            spawner.spawn_for_tasks([make_task()])
+        mock_adapter.spawn.assert_called_once()
+        backup.spawn.assert_not_called()
+        router.select_provider_for_task.assert_called_once()
+        assert [request.metadata["model"] for request in hook.requests] == ["approved", "fallback"]
+        records = _external_records(workdir)
+        assert len(records) == (1 if refusal == "audit" else 2)
+        if refusal != "audit":
+            assert records[-1].details["verdict"] == verdict.value
+
+    def test_allowed_fallback_binds_the_actual_subject(self, workdir, mock_adapter, make_task, monkeypatch):
+        from bernstein.adapters.base import RateLimitError
+
+        spawner, backup, hook, _router = _routed_external_spawner(
+            workdir, mock_adapter, monkeypatch, verdict=HookVerdict.ALLOW
+        )
+        mock_adapter.spawn.side_effect = RateLimitError("synthetic local throttle")
+        session = spawner.spawn_for_tasks([make_task()])
+        (request_a, request_b) = hook.requests
+        assert request_a.metadata["adapter"] == "mockcli"
+        assert request_a.metadata["model"] == "approved"
+        assert request_a.agent_id == request_b.agent_id
+        assert request_b.agent_id == session.id
+        assert request_b.metadata == {
+            "role": "backend",
+            "adapter": "backupcli",
+            "model": "fallback",
+            "endpoint": "https://backupcli.example/api",
+            "sandbox": "none",
+            "task_type": "standard",
+        }
+        kwargs = backup.spawn.call_args.kwargs
+        assert kwargs["model_config"].model == request_b.metadata["model"]
+        assert kwargs["mcp_config"]["base_url"] == request_b.metadata["endpoint"]
+        records = _external_records(workdir)
+        expected = hashlib.sha256(
+            canonicalize_jcs(
+                {
+                    "action": request_b.action,
+                    "resource": request_b.resource,
+                    "agent_id": request_b.agent_id,
+                    "role": request_b.role,
+                    "scope": request_b.scope,
+                    "metadata": request_b.metadata,
+                }
+            )
+        ).hexdigest()
+        assert records[-1].details["request_digest"] == expected
+        assert records[0].details["request_digest"] != expected
+
+    def test_selected_target_can_pass_native_and_external_policy(self, workdir, mock_adapter, make_task, monkeypatch):
+        _write_admission(
+            workdir, "admission:\n  rules:\n    - id: selected-only\n      effect: allow\n      adapters: [backupcli]\n"
+        )
+        spawner, backup, hook, _router = _routed_external_spawner(
+            workdir, mock_adapter, monkeypatch, initial="backup", verdict=HookVerdict.ALLOW
+        )
+        spawner.spawn_for_tasks([make_task()])
+        backup.spawn.assert_called_once()
+        assert [request.metadata["adapter"] for request in hook.requests] == ["backupcli"]
+
+    def test_selected_target_native_deny_precedes_external_allow(self, workdir, mock_adapter, make_task, monkeypatch):
+        _write_admission(
+            workdir, "admission:\n  rules:\n    - id: primary-only\n      effect: allow\n      adapters: [mockcli]\n"
+        )
+        spawner, backup, hook, _router = _routed_external_spawner(
+            workdir, mock_adapter, monkeypatch, initial="backup", verdict=HookVerdict.ALLOW
+        )
+        with pytest.raises(SpawnError, match="admission refused"):
+            spawner.spawn_for_tasks([make_task()])
+        backup.spawn.assert_not_called()
+        mock_adapter.spawn.assert_not_called()
+        assert hook.requests == []
+        assert _external_records(workdir) == []
+
+    def test_fallback_native_deny_precedes_external_allow(self, workdir, mock_adapter, make_task, monkeypatch):
+        from bernstein.adapters.base import RateLimitError
+
+        _write_admission(
+            workdir, "admission:\n  rules:\n    - id: primary-only\n      effect: allow\n      adapters: [mockcli]\n"
+        )
+        spawner, backup, hook, router = _routed_external_spawner(
+            workdir, mock_adapter, monkeypatch, verdict=HookVerdict.ALLOW
+        )
+        mock_adapter.spawn.side_effect = RateLimitError("synthetic local throttle")
+        with pytest.raises(SpawnError, match="admission refused"):
+            spawner.spawn_for_tasks([make_task()])
+        mock_adapter.spawn.assert_called_once()
+        backup.spawn.assert_not_called()
+        router.select_provider_for_task.assert_called_once()
+        assert [request.metadata["adapter"] for request in hook.requests] == ["mockcli"]
+        assert len(_external_records(workdir)) == 1
+
+    @pytest.mark.parametrize("transport", ["bridge", "in_process", "container", "sandbox", "sandbox_session"])
+    def test_unbound_transport_refuses_without_action(self, workdir, mock_adapter, make_task, monkeypatch, transport):
+        from bernstein.core.agents.spawner_core import AgentBackend
+
+        spawner, backup, hook, _router = _routed_external_spawner(
+            workdir, mock_adapter, monkeypatch, verdict=HookVerdict.ALLOW
+        )
+        action = MagicMock()
+        if transport == "bridge":
+            spawner._runtime_bridge = SimpleNamespace(name=lambda: "test-bridge", config=SimpleNamespace(extra={}))
+            monkeypatch.setattr(spawner, "_spawn_via_runtime_bridge", action)
+        elif transport == "in_process":
+            spawner._backend = AgentBackend.IN_PROCESS
+            spawner._in_process = SimpleNamespace(run=action)
+        elif transport == "container":
+            spawner._container_mgr = SimpleNamespace()
+            monkeypatch.setattr(spawner, "_spawn_in_container", action)
+        elif transport == "sandbox":
+            spawner._sandbox = SimpleNamespace(runtime="docker")
+            monkeypatch.setattr(spawner, "_spawn_in_sandbox", action)
+        else:
+            monkeypatch.setattr(spawner, "_sandbox_session_routing_active", lambda: True)
+            monkeypatch.setattr(spawner, "_spawn_via_sandbox_session", action)
+        with pytest.raises(SpawnError, match="external admission cannot bind"):
+            spawner.spawn_for_tasks([make_task()])
+        action.assert_not_called()
+        mock_adapter.spawn.assert_not_called()
+        backup.spawn.assert_not_called()
+        assert hook.requests == []
+
+    def test_unbound_resume_refuses_without_action(self, workdir, mock_adapter, make_task, monkeypatch):
+        spawner, backup, hook, _router = _routed_external_spawner(
+            workdir, mock_adapter, monkeypatch, verdict=HookVerdict.ALLOW
+        )
+        with pytest.raises(SpawnError, match="external admission cannot bind.*resume"):
+            spawner.spawn_for_resume([make_task()], worktree_path=workdir, changed_files=[])
+        mock_adapter.spawn.assert_not_called()
+        backup.spawn.assert_not_called()
+        assert hook.requests == []
