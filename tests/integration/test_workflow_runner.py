@@ -593,8 +593,15 @@ class _RecordingMockAdapter(CLIAdapter):
         return None
 
 
-def test_agent_node_dispatches_through_real_spawner(tmp_path: Path) -> None:
+def test_agent_node_dispatches_through_real_spawner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """An agent-typed node reaches `AgentSpawner.spawn_for_tasks`."""
+    # The integration check exercises dispatch, not the host's available disk space.
+    monkeypatch.setattr(
+        "bernstein.core.agents.spawner_core.shutil.disk_usage",
+        lambda _path: MagicMock(free=2 * 1024**3),
+    )
     workdir = tmp_path / "proj"
     workdir.mkdir()
     templates_dir = workdir / "templates" / "roles" / "backend"
