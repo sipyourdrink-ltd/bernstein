@@ -188,10 +188,24 @@ comment can reveal an earlier declaration. Stale, malformed, tampered,
 non-PASS or unresolved-finding evidence blocks the exception, including when
 other human approvals exist.
 
+Before an independently authorized Ready transition, a controller can run
+`python3 scripts/quorum_check.py --evaluate-content --repo OWNER/REPO --pr N`
+from the trusted default-branch checkout. Exit zero means only that content
+and evidence qualify: the same path, exact-head, independence, sensitive-review,
+security-test, standing-objection and governance-window rules apply, with only
+draft classification excluded. It grants no quorum success, Ready transition,
+merge or public-action authority. The PR remains a draft, and full quorum must
+pass after Ready along with the independent CI, bundle and queue gates.
+Privileged required-check publishers always use full evaluation. A draft fails
+full quorum regardless of its evidence.
+
 The comment event runs `quorum-rerun.yml`'s isolated attestation job, checks
 out only trusted default-branch code, recomputes the verdict and republishes
 `quorum` through `publish_required_check.py`. It verifies that head and base
-did not move during evaluation. No report command, URL or PR source is
+did not move during evaluation. The configured maintainer's account ID is
+resolved afresh before publication; all of that maintainer's PR-comment edits
+and deletions trigger recomputation, including removal of the marker.
+No report command, URL or PR source is
 executed with this job's write token. Normal PR and merge-group checks also
 evaluate the current policy, so a candidate evaluator cannot certify itself.
 

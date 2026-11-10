@@ -611,10 +611,10 @@ def test_the_paths_are_reportable_so_the_sweep_need_not_restate_them(qc: ModuleT
 # --- drafts and plumbing ----------------------------------------------------
 
 
-def test_a_draft_is_neutral(qc: ModuleType, roster) -> None:
+def test_a_draft_cannot_publish_successful_quorum(qc: ModuleType, roster) -> None:
     verdict = _evaluate(qc, roster, _pr(qc, is_draft=True))
-    assert verdict.passed
-    assert verdict.requirements == []
+    assert not verdict.passed
+    assert any(not requirement.met and "draft" in requirement.text for requirement in verdict.requirements)
 
 
 def test_the_summary_names_the_charter_and_the_roster(qc: ModuleType, roster) -> None:

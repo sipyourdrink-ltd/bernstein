@@ -172,6 +172,33 @@ def validate(
     return identities
 
 
+def authorized_comment_event(event: dict[str, Any], *, maintainer: str, maintainer_id: int) -> bool:
+    """Authenticate a trusted issue_comment event before publishing a verdict.
+
+    Recompute all maintainer edits/deletions: a removed marker must invalidate
+    an earlier successful check too. The workflow resolves the configured
+    maintainer's ID through the fresh API, never through comment body data.
+    """
+    issue = event.get("issue") or {}
+    comment = event.get("comment") or {}
+    user = comment.get("user") or {}
+    if (
+        not issue.get("pull_request")
+        or not isinstance(user.get("login"), str)
+        or user["login"].casefold() != maintainer.casefold()
+        or type(maintainer_id) is not int
+        or maintainer_id <= 0
+        or type(user.get("id")) is not int
+        or user["id"] != maintainer_id
+    ):
+        return False
+    action = event.get("action")
+    if action in {"edited", "deleted"}:
+        return True
+    body = comment.get("body")
+    return action == "created" and isinstance(body, str) and body.startswith(MARKER)
+
+
 def from_comments(
     comments: list[dict[str, Any]],
     *,

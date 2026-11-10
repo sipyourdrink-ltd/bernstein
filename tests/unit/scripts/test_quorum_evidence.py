@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -300,3 +302,149 @@ def test_invalid_adoption_findings_cannot_fall_back_to_other_votes(qc):
     pr.reviews = [qc.Review(login, "APPROVED", HEAD, "2026-11-10T10:00:00Z") for login in ("core", "committer")]
     pr.adoption = qc.evidence.Evidence(False, "unresolved findings")
     assert not qc.evaluate(pr, _roster(qc), [], datetime(2026, 11, 10, tzinfo=UTC)).passed
+
+
+@pytest.mark.parametrize("author", ["owner", "contributor", "bot[bot]"])
+def test_qualified_draft_passes_content_only_and_never_full_quorum(qc, author):
+    pr = _pr(qc, author=author)
+    pr.is_draft = True
+    pr.adoption = qc.evidence.Evidence(True, "maintainer attested", reviewer_ids=("reviewer/one",))
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    assert not qc.evaluate(pr, _roster(qc), [], now).passed
+    content = qc.evaluate_content(pr, _roster(qc), [], now)
+    assert content.passed and pr.is_draft
+    assert "content qualification" in content.summary()
+    assert "no quorum success" in content.summary()
+    assert "public-action authority" in content.summary()
+
+
+@pytest.mark.parametrize("defect", ["invalid", "missing", "security", "objection", "window"])
+def test_content_qualification_keeps_evidence_and_sensitive_policy(qc, defect):
+    pr = _pr(qc, author="owner", paths=["scripts/quorum_check.py"])
+    pr.is_draft = True
+    row = _row(qc, sensitive=True)
+    row["reviews"].append(_report(qc, "reviewer/two"))
+    now = datetime(2026, 11, 10, tzinfo=UTC)
+    if defect == "invalid":
+        row["head_sha"] = BASE
+    elif defect == "security":
+        row["security_tests"] = None
+    elif defect == "objection":
+        pr.reviews = [qc.Review("core", "CHANGES_REQUESTED", HEAD, now.isoformat())]
+    elif defect == "window":
+        pr.last_push = now - timedelta(hours=1)
+    if defect != "missing":
+        pr.adoption = qc.evidence.from_comments(
+            [_comment(qc, row)], maintainer="owner", maintainer_id=42, **_bindings(sensitive=True)
+        )
+    assert not qc.evaluate_content(pr, _roster(qc), [], now).passed
+
+
+def test_cli_full_verdict_blocks_a_qualified_draft_and_content_grants_no_authority(qc, monkeypatch, capsys):
+    pr = _pr(qc, author="owner")
+    pr.is_draft = True
+    monkeypatch.setattr(qc, "load_roster", lambda root: _roster(qc))
+    monkeypatch.setattr(qc, "load_codeowners", lambda root: [])
+    monkeypatch.setattr(qc, "fetch_pull_request", lambda *args: pr)
+    monkeypatch.setattr(
+        qc, "fetch_adoption", lambda *args: qc.evidence.Evidence(True, "attested", reviewer_ids=("reviewer/one",))
+    )
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert qc.main(["--repo", "owner/repo", "--pr", "7"]) == 1
+    assert "::error title=quorum::" in capsys.readouterr().out
+    assert qc.main(["--evaluate-content", "--repo", "owner/repo", "--pr", "7"]) == 0
+    output = capsys.readouterr().out
+    assert "no quorum success" in output and "public-action authority" in output
+    assert "### `quorum`:" not in output
+    pr.adoption = None
+    monkeypatch.setattr(qc, "fetch_adoption", lambda *args: qc.evidence.Evidence(False, "tampered"))
+    assert qc.main(["--evaluate-content", "--repo", "owner/repo", "--pr", "7"]) == 1
+
+
+@pytest.mark.parametrize("action", ["edited", "deleted"])
+def test_authenticated_marker_removal_or_deletion_recomputes_policy(qc, action):
+    event = {
+        "action": action,
+        "issue": {"pull_request": {"url": "synthetic"}},
+        "comment": {"user": {"login": "owner", "id": 42}, "body": "marker removed"},
+    }
+    assert qc.evidence.authorized_comment_event(event, maintainer="owner", maintainer_id=42)
+    event["comment"]["user"]["id"] = 99
+    assert not qc.evidence.authorized_comment_event(event, maintainer="owner", maintainer_id=42)
+
+
+@pytest.mark.parametrize("defect", ["login", "boolean_id", "not_pr", "ordinary_create", "unknown_action"])
+def test_comment_recompute_requires_real_maintainer_identity_and_relevant_event(qc, defect):
+    event = {
+        "action": "created",
+        "issue": {"pull_request": {"url": "synthetic"}},
+        "comment": {"user": {"login": "owner", "id": 42}, "body": qc.evidence.MARKER + "{}"},
+    }
+    assert qc.evidence.authorized_comment_event(event, maintainer="owner", maintainer_id=42)
+    if defect == "login":
+        event["comment"]["user"]["login"] = "contributor"
+    elif defect == "boolean_id":
+        event["comment"]["user"]["id"] = True
+    elif defect == "not_pr":
+        event["issue"] = {}
+    elif defect == "ordinary_create":
+        event["comment"]["body"] = "ordinary comment"
+    else:
+        event["action"] = "unknown"
+    assert not qc.evidence.authorized_comment_event(event, maintainer="owner", maintainer_id=42)
+
+
+@pytest.mark.parametrize(
+    "draft,valid_evidence,conclusion", [(True, True, "failure"), (True, False, "failure"), (False, True, "success")]
+)
+def test_trusted_publisher_uses_real_full_evaluator_for_drafts(tmp_path, draft, valid_evidence, conclusion):
+    """Execute the workflow's real shell; stub GitHub reads/writes, not policy."""
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/quorum-rerun.yml").read_text())
+    run = next(
+        step["run"]
+        for step in workflow["jobs"]["attestation"]["steps"]
+        if step.get("name") == "Recompute and publish the real policy verdict"
+    )
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    gh = binary / "gh"
+    gh.write_text(f"#!{sys.executable}\nprint({(HEAD + ' ' + BASE)!r})\n")
+    gh.chmod(0o755)
+    python = binary / "python3"
+    python.write_text(
+        f"""#!{sys.executable}
+import importlib.util
+import json
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+if sys.argv[1] == "scripts/publish_required_check.py":
+    Path({str(tmp_path / "publication.json")!r}).write_text(json.dumps(sys.argv[2:]))
+    raise SystemExit(0)
+assert sys.argv[1] == "scripts/quorum_check.py"
+spec = importlib.util.spec_from_file_location("actual_quorum", {str(ROOT / "scripts/quorum_check.py")!r})
+qc = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = qc
+spec.loader.exec_module(qc)
+pr = qc.PullRequest(7, "owner", {draft!r}, {HEAD!r}, 10, ["docs/guide.md"], [],
+                   {{"owner"}}, datetime(2026, 11, 1, tzinfo=UTC), base_sha={BASE!r})
+qc.load_roster = lambda root: qc.Roster("owner", frozenset(), frozenset(), frozenset())
+qc.load_codeowners = lambda root: []
+qc.fetch_pull_request = lambda *args: pr
+qc.fetch_adoption = lambda *args: qc.evidence.Evidence({valid_evidence!r}, "synthetic API receipt",
+                                                     reviewer_ids=("independent/session",))
+raise SystemExit(qc.main(sys.argv[2:]))
+"""
+    )
+    python.chmod(0o755)
+    env = dict(os.environ, PATH=f"{binary}{os.pathsep}{os.environ['PATH']}", REPO="owner/repo", PR_NUMBER="7")
+    env.pop("GITHUB_STEP_SUMMARY", None)
+    result = subprocess.run(["bash", "-c", run], cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    publication = json.loads((tmp_path / "publication.json").read_text())
+    assert publication[publication.index("--conclusion") + 1] == conclusion
+    assert publication[publication.index("--sha") + 1] == HEAD
+    if draft:
+        assert "draft: not ready for quorum" in publication[publication.index("--summary") + 1]

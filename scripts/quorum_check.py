@@ -114,7 +114,7 @@ import re
 import subprocess
 import sys
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -912,9 +912,10 @@ class Verdict:
     title: str
     requirements: list[Requirement] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    context: str = "quorum"
 
     def summary(self) -> str:
-        lines = [f"### `quorum`: {self.title}", ""]
+        lines = [f"### `{self.context}`: {self.title}", ""]
         if self.requirements:
             lines += ["| Requirement | Met | Who can satisfy it |", "|---|---|---|"]
             for req in self.requirements:
@@ -1014,7 +1015,11 @@ def adoptable(pr: PullRequest, owners: list[tuple[str, list[str]]]) -> bool:
 
 def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]], now: datetime) -> Verdict:
     if pr.is_draft:
-        return Verdict(True, "draft, nothing to decide yet")
+        return Verdict(
+            False,
+            "draft: not ready for quorum",
+            [Requirement("pull request is not a draft", False, "the author or authorized maintainer")],
+        )
 
     standing = standing_reviews(pr.reviews)
     approvals = {
@@ -1217,6 +1222,23 @@ def evaluate(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]
     return verdict
 
 
+def evaluate_content(pr: PullRequest, roster: Roster, owners: list[tuple[str, list[str]]], now: datetime) -> Verdict:
+    """Pre-Ready qualification only; never a publishable quorum verdict.
+
+    Share every content/evidence rule with the full evaluator, excluding only
+    draft classification. The original PR remains a draft until an independently
+    authorized controller changes it, then runs full quorum again.
+    """
+    verdict = evaluate(replace(pr, is_draft=False), roster, owners, now)
+    verdict.context = "content qualification"
+    verdict.notes.insert(
+        0,
+        "Content qualification only: no quorum success, Ready transition, merge or public-action authority. "
+        "Full quorum must be evaluated after Ready; required CI, bundle and queue gates remain separate.",
+    )
+    return verdict
+
+
 def annotation(verdict: Verdict) -> str:
     """The one line GitHub shows next to the red check.
 
@@ -1259,6 +1281,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", help="where to read the roster and CODEOWNERS from")
     parser.add_argument("--policy-digest", action="store_true", help="print the trusted policy SHA-256 and exit")
     parser.add_argument(
+        "--evaluate-content",
+        action="store_true",
+        help="qualify content before Ready, excluding only draft status; grants no quorum/public-action authority",
+    )
+    parser.add_argument(
         "--governance-paths",
         action="store_true",
         help="print the paths that carry the objection window, one per line, and exit",
@@ -1278,6 +1305,9 @@ def main(argv: list[str] | None = None) -> int:
 
     number = args.pr or pr_number_from_env(dict(os.environ))
     if number is None:
+        if args.evaluate_content:
+            print("content qualification: no pull request; no quorum success or public-action authority")
+            return 1
         print("quorum: no pull request in this event; nothing to check")
         return 0
 
@@ -1286,7 +1316,8 @@ def main(argv: list[str] | None = None) -> int:
     candidates = roster.quorum_holders | {owner for _, line in owners for owner in line}
     pr = fetch_pull_request(args.repo, number, candidates)
     pr.adoption = fetch_adoption(args.repo, pr, roster, args.root)
-    verdict = evaluate(pr, roster, owners, datetime.now(UTC))
+    evaluator = evaluate_content if args.evaluate_content else evaluate
+    verdict = evaluator(pr, roster, owners, datetime.now(UTC))
 
     summary = verdict.summary()
     print(summary)
@@ -1295,7 +1326,7 @@ def main(argv: list[str] | None = None) -> int:
         with open(summary_path, "a", encoding="utf-8") as handle:
             handle.write(summary + "\n")
     if not verdict.passed:
-        print(f"::error title=quorum::{annotation(verdict)}")
+        print(f"::error title={verdict.context}::{annotation(verdict)}")
         return 1
     return 0
 
