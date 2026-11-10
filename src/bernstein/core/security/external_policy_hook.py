@@ -744,6 +744,10 @@ class PolicyHookRegistry:
     def first_decisive(self, request: HookRequest) -> HookResponse:
         """Evaluate hooks and return the first decisive response.
 
+        Retained as a public compatibility helper. Spawn admission instead consumes
+        every response from :meth:`evaluate`: a later denial, unavailable engine or
+        obligation must not be hidden by an earlier allow.
+
         An UNAVAILABLE engine is decisive and denies, unless ``fail_open`` is set, in
         which case it is treated as having no opinion and evaluation continues. Either
         way the verdict says which happened: the caller is never handed "all hooks
