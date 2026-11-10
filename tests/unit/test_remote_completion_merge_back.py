@@ -91,15 +91,20 @@ class _Spawner:
         self.cleaned: list[str] = []
         self.worktree_present_at_merge: bool | None = None
         self.workdir = Path()
+        self.registered: dict[str, Path] = {}
 
-    def get_worktree_path(self, _session_id: str) -> None:
-        return None
+    def register_remote_worktree(self, session_id: str, worktree_path: Path) -> None:
+        self.registered[session_id] = worktree_path
+
+    def get_worktree_path(self, session_id: str) -> Path | None:
+        return self.registered.get(session_id)
 
     def reap_completed_agent(self, *_a: Any, **_k: Any) -> None:
         raise AssertionError("a remote completion has no session to reap")
 
     def cleanup_worktree(self, session_id: str) -> None:
         self.cleaned.append(session_id)
+        self.registered.pop(session_id, None)
 
     def merge_remote_branch(self, session: Any) -> MergeResult | None:
         self.merged.append(session)
@@ -257,3 +262,75 @@ def test_spawner_merge_remote_branch_lands_the_branch_on_the_run_branch(
     assert result.success, result
     assert (repo / "planned.txt").read_text(encoding="utf-8") == "remote work\n"
     assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == "trunk"
+
+
+def test_failed_checkout_never_reaches_the_merge_and_keeps_the_branch(tmp_path: Path) -> None:
+    """A branch that cannot be checked out is not merged with the run checkout standing in for it."""
+    repo = _repo_with_remote_branch(tmp_path)
+    spawner = _Spawner(MergeResult(success=True, conflicting_files=[]))
+    orch = _orch(repo, spawner)
+    orch._remote_completion_branches = {_TASK: "agent/remote-T-remote-v9"}  # no such branch
+
+    _process_single_completed_task(orch, _task(), _verdict(True), _tick_result())
+
+    assert spawner.merged == []
+    assert spawner.registered == {}
+    # Non-conflict failure: the bounded merge-failure budget reopens the task.
+    assert orch._client.posts == [f"http://127.0.0.1:8052/tasks/{_TASK}/reopen"]
+    assert any(kind == "alert" and "could not check out" in text for kind, text in orch._bulletins)
+    assert _BRANCH in _git(repo, "branch", "--list", _BRANCH)
+
+
+def test_a_negative_verification_gate_blocks_the_merge_and_grades_the_branch_tree(tmp_path: Path) -> None:
+    """The local path's verification gates run on the remote branch's tree, and a FAIL stops the merge."""
+    repo = _repo_with_remote_branch(tmp_path)
+    spawner = _Spawner(MergeResult(success=True, conflicting_files=[]))
+    orch = _orch(repo, spawner)
+    orch._remote_completion_branches = {_TASK: _BRANCH}
+    graded: list[Path] = []
+
+    def _run(task: Any, run_dir: Path, workdir: Path, config: Any) -> Any:
+        graded.append(Path(run_dir))
+        assert (Path(run_dir) / "planned.txt").exists(), "the gate must see the branch's file"
+        failed = SimpleNamespace(gate="lint", blocked=True, passed=False)
+        return SimpleNamespace(passed=False, gate_results=[failed])
+
+    orch._quality_gate_config = object()
+    orch._gate_coalescer = SimpleNamespace(run=_run)
+
+    _process_single_completed_task(orch, _task(), _verdict(True), _tick_result())
+
+    assert graded == [repo / ".sdd" / "worktrees" / _SESSION]
+    assert spawner.merged == []
+    assert orch._client.posts == [f"http://127.0.0.1:8052/tasks/{_TASK}/reopen"]
+    assert spawner.cleaned == [_SESSION]
+    assert not (repo / ".sdd" / "worktrees" / _SESSION).exists()
+
+
+def test_approval_pr_mode_opens_the_pr_from_the_remote_worktree(tmp_path: Path) -> None:
+    """PR mode needs the worktree registered before the approval gate runs."""
+    repo = _repo_with_remote_branch(tmp_path)
+    spawner = _Spawner(MergeResult(success=True, conflicting_files=[]))
+    orch = _orch(repo, spawner)
+    orch._remote_completion_branches = {_TASK: _BRANCH}
+    orch._config.pr_labels = []
+    created: list[dict[str, Any]] = []
+
+    def _create_pr(task: Any, **kwargs: Any) -> str:
+        created.append({"task": task.id, **kwargs})
+        assert (Path(kwargs["worktree_path"]) / "planned.txt").exists()
+        return "https://example.invalid/pull/1"
+
+    orch._approval_gate = SimpleNamespace(
+        evaluate=lambda task, **kwargs: SimpleNamespace(rejected=False, approved=False, resolution=None),
+        create_pr=_create_pr,
+    )
+
+    _process_single_completed_task(orch, _task(), _verdict(True), _tick_result())
+
+    assert [(c["task"], c["session_id"], Path(c["worktree_path"])) for c in created] == [
+        (_TASK, _SESSION, repo / ".sdd" / "worktrees" / _SESSION)
+    ]
+    assert spawner.merged == []
+    # Held for approval: not closed, not reopened.
+    assert orch._client.posts == []
