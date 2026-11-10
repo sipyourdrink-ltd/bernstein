@@ -26,9 +26,9 @@ as `null` even when the original response omitted it, so a normalized payload
 alone loses that distinction. This is existing compatibility behavior, not
 a new availability marker or a guarantee about other client models.
 
-The [API compatibility tests](../../tests/unit/test_api_compat.py) cover a
+The [API compatibility tests](https://github.com/sipyourdrink-ltd/bernstein/blob/main/tests/unit/test_api_compat.py) cover a
 non-default specification, an explicit `null`, and a legacy response without
-the key. The [fresh-store HTTP regression](../../tests/unit/tenant_scope/test_tenant_selection.py)
+the key. The [fresh-store HTTP regression](https://github.com/sipyourdrink-ltd/bernstein/blob/main/tests/unit/tenant_scope/test_tenant_selection.py)
 checks authorized claim/detail readback after replaying the complete journal.
 
 ## `GET /tasks` response cap
