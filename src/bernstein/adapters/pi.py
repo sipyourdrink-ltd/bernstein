@@ -23,8 +23,9 @@ class PiAdapter(CLIAdapter):
 
     Pi is an npm-distributed coding agent
     (``@mariozechner/pi-coding-agent``).  The CLI takes the task prompt
-    as a positional argument; ``-c`` exists for resume but is not used
-    when spawning a fresh session.  See
+    as a positional argument after ``--``, and runs in ``--mode json`` so
+    its event stream reaches the runner log while it works; ``-c`` exists
+    for resume but is not used when spawning a fresh session.  See
     https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent.
     """
 
@@ -74,10 +75,18 @@ class PiAdapter(CLIAdapter):
         # loaded the operator's personal extensions -- their MCP servers
         # included -- into a run bernstein never configured them for (#5965).
         # bernstein passes pi no extension of its own, so none is lost.
-        cmd = ["pi", _NO_EXTENSIONS]
+        # With stdout redirected pi falls back to print mode, which writes only
+        # the final assistant text and only when the run ends, so the runner
+        # log stayed 0 bytes for the agent's whole first turn. Log-mtime is the
+        # only liveness signal for an adapter that takes no heartbeat dir, and
+        # heartbeat escalation killed agents that were mid-turn (#6943).
+        # ``--mode json`` writes JSONL events as the agent works, then exits.
+        cmd = ["pi", _NO_EXTENSIONS, "--mode", "json"]
         if model_config.model and model_config.model.lower() != "auto":
             cmd.extend(["--model", model_config.model])
-        cmd.append(prompt)
+        # ``--`` ends option parsing, so a task prompt that starts with ``-``
+        # is still the prompt and not an unknown flag.
+        cmd.extend(["--", prompt])
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
