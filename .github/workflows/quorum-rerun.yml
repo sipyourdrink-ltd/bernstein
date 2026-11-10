@@ -29,7 +29,15 @@ name: quorum rerun
 on:
   pull_request_review:
     types: [submitted, edited, dismissed]
-  issue_comment:
+  # Safety exception (zizmor dangerous-triggers): edit/delete invalidation,
+  # including marker removal, needs this event; a label cannot represent it.
+  # Only the attestation job handles comments. It runs pinned actions and
+  # trusted default-branch scripts, with no PR checkout, cache or artifact.
+  # Comment JSON is inert: no interpolation into commands, env or paths.
+  # Fresh API maintainer login + numeric ID authorize the narrow check write;
+  # no contents/reviews write or extra secret is granted. Existing security
+  # tests pin these boundaries; the exception covers only this trigger/rule.
+  issue_comment:  # zizmor: ignore[dangerous-triggers]
     types: [created, edited, deleted]
   schedule:
     - cron: "17 * * * *"
