@@ -134,6 +134,28 @@ def test_two_literals_on_one_line_do_not_print_each_other() -> None:
         assert other not in finding.redacted_match
 
 
+@pytest.mark.parametrize("escaped_dash", [r"\x2d", r"\u002d", r"\055"])
+def test_escaped_sibling_credentials_do_not_reach_gate_details(tmp_path: Path, escaped_dash: str) -> None:
+    plain = "sk" + "-live-" + "abcdefgh"
+    other = "sk" + "-live-" + "qrstuvwx"
+    escaped = "sk" + escaped_dash + "live-qrstuvwx"
+    source = f"x=('{plain}','{escaped}')\n"
+    findings = DLPScanner().scan_python_source(source).findings
+    rel = _write(tmp_path, "app/config.py", source)
+
+    result = _run_dlp_gate(QualityGatesConfig(), tmp_path, [rel])
+
+    assert len(findings) == 2
+    assert result.blocked is True
+    assert "app/config.py (line 1)" in result.detail
+    assert _FINDING_SIGNATURE["dlp_scan"].search(result.detail)
+    for rendered in [result.detail, *(finding.redacted_match for finding in findings)]:
+        assert plain not in rendered
+        assert other not in rendered
+        assert escaped not in rendered
+        assert "qrstuvwx" not in rendered
+
+
 def test_a_source_too_deep_to_parse_yields_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     def too_deep(_source: str) -> None:
         raise RecursionError

@@ -553,18 +553,12 @@ def _is_filler(matched: str, prefix: str) -> bool:
 
 
 def _redact_literal(line: str, value: str) -> str:
-    """The source line with every credential on it replaced by ``***``, at most 80 chars.
+    """Return a source-free marker; findings carry file, line and rule separately.
 
-    Every rule runs over the line, not only the finding's own value: two literals
-    on one line would otherwise print each other, and the gate's detail is cached
-    to disk.
+    Regexes over raw source cannot recognize every escaped spelling of a sibling
+    credential. Never copy that source into an excerpt or the cached gate detail.
     """
-    if value not in line:
-        return "<multi-line literal>"
-    redacted = line.strip().replace(value, "***")
-    for _label, pattern, _description, _declares_live in _CREDENTIAL_LITERAL_RULES:
-        redacted = pattern.sub("***", redacted)
-    return redacted if len(redacted) <= 80 else redacted[:77] + "..."
+    return "<credential literal: ***>"
 
 
 # ---------------------------------------------------------------------------

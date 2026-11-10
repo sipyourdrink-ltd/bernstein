@@ -374,6 +374,8 @@ The DLP credential-literal pass applies the same provider rules and
 allowlist policy to Python string and bytes literals. Bytes are decoded
 with UTF-8 replacement before matching. DLP finding paths use `/`
 separators on every platform, including Windows.
+Credential-literal findings retain the file, line and rule but use a source-free
+redacted marker, so escaped sibling credentials cannot enter gate details.
 
 When `pipeline:` is omitted, Bernstein synthesises one from the booleans
 above. To override the order (or insert custom gates), declare an
