@@ -101,6 +101,113 @@ class PytestInvocationObservation:
     phases: tuple[PytestPhaseObservation, ...]
 
 
+@dataclass(frozen=True)
+class FixProofObservations:
+    """Frozen selections and repeated observations for the proof and regression arms."""
+
+    proof_node_ids: tuple[str, ...]
+    regression_node_ids: tuple[str, ...]
+    repeats: int
+    tests_on_base: tuple[PytestInvocationObservation, ...]
+    full_change: tuple[PytestInvocationObservation, ...]
+    source_reverted: tuple[PytestInvocationObservation, ...]
+    regression_base: tuple[PytestInvocationObservation, ...]
+    regression_full: tuple[PytestInvocationObservation, ...]
+    quarantined_node_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FixProofVerdict:
+    """Deterministic interpretation of observations, without an audit receipt."""
+
+    verdict: Literal["pass", "fail", "inconclusive"]
+    reason: str
+    proof_failure_ids: tuple[str, ...] = ()
+    regression_ids: tuple[str, ...] = ()
+
+
+def _stable_assertion_failures(
+    observations: tuple[PytestInvocationObservation, ...], expected: tuple[str, ...], repeats: int
+) -> tuple[frozenset[str] | None, str]:
+    node_ids = frozenset(expected)
+    if not node_ids or len(node_ids) != len(expected) or any(not node for node in node_ids):
+        return None, "selection is empty or invalid"
+    if type(repeats) is not int or repeats < 1 or len(observations) != repeats:
+        return None, "configured observations are incomplete"
+
+    expected_phases = {(node, phase) for node in node_ids for phase in ("setup", "call", "teardown")}
+    prior: frozenset[str] | None = None
+    for observation in observations:
+        selected = observation.selected_node_ids
+        if len(selected) != len(node_ids) or frozenset(selected) != node_ids:
+            return None, "observed selection differs from the frozen node IDs"
+        phases: set[tuple[str, str]] = set()
+        failures: set[str] = set()
+        for report in observation.phases:
+            key = (report.node_id, report.phase)
+            if key in phases or key not in expected_phases:
+                return None, "phase reports are duplicated or outside the selection"
+            phases.add(key)
+            if report.phase == "call" and report.outcome == "assertion_failed":
+                failures.add(report.node_id)
+            elif report.outcome != "passed":
+                return None, "a phase reported an error, skip or unsupported outcome"
+        if phases != expected_phases:
+            return None, "one or more selected phases were not observed"
+        if observation.exit_code != int(bool(failures)):
+            return None, "exit status does not agree with observed outcomes"
+        current = frozenset(failures)
+        if prior is not None and current != prior:
+            return None, "assertion outcomes changed between repeats"
+        prior = current
+    return prior, ""
+
+
+def evaluate_fix_proof(evidence: FixProofObservations) -> FixProofVerdict:
+    """Evaluate fully observed, serial pytest arms without running tests.
+
+    The caller binds the supplied observations to their frozen trees and
+    runs the configured commands in isolation. Incomplete, unstable or
+    error-only evidence cannot establish proof.
+    """
+    if set(evidence.proof_node_ids).intersection(evidence.quarantined_node_ids):
+        return FixProofVerdict("inconclusive", "proof selection contains a quarantined test")
+
+    groups = (
+        ("tests on base", evidence.tests_on_base, evidence.proof_node_ids),
+        ("full change", evidence.full_change, evidence.proof_node_ids),
+        ("source reverted", evidence.source_reverted, evidence.proof_node_ids),
+        ("regression base", evidence.regression_base, evidence.regression_node_ids),
+        ("regression full", evidence.regression_full, evidence.regression_node_ids),
+    )
+    results: list[frozenset[str]] = []
+    for label, observations, selection in groups:
+        failures, reason = _stable_assertion_failures(observations, selection, evidence.repeats)
+        if failures is None:
+            return FixProofVerdict("inconclusive", f"{label}: {reason}")
+        results.append(failures)
+
+    red, green, reverted, baseline_regressions, full_regressions = results
+    shared_full_ids = set(evidence.proof_node_ids).intersection(evidence.regression_node_ids)
+    if (green ^ full_regressions).intersection(shared_full_ids):
+        return FixProofVerdict("inconclusive", "full-tree outcomes disagree across proof and regression selections")
+    regressions = tuple(sorted(full_regressions - baseline_regressions))
+    if regressions:
+        return FixProofVerdict("fail", "previously passing tests now fail", regression_ids=regressions)
+    if len(baseline_regressions) == len(evidence.regression_node_ids):
+        return FixProofVerdict("inconclusive", "regression base has no passing test")
+    if not red:
+        return FixProofVerdict("fail", "tests on base do not reproduce the bug")
+    if green:
+        return FixProofVerdict("fail", "proof tests fail with the full change")
+    if not reverted:
+        return FixProofVerdict("fail", "proof tests do not exercise the reverted source changes")
+    witnessed = tuple(sorted(red & reverted))
+    if not witnessed:
+        return FixProofVerdict("inconclusive", "no proof test fails in both negative arms")
+    return FixProofVerdict("pass", "stable assertion failures witness the fix", proof_failure_ids=witnessed)
+
+
 def capture_pytest_observation(args: Sequence[str]) -> PytestInvocationObservation:
     """Capture structured reports inside a dedicated pytest process.
 

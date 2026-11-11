@@ -6,11 +6,20 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from bernstein.core.flaky_detector import FlakyDetector, parse_pytest_output
 from bernstein.core.flaky_detector import TestRun as FlakyRunRecord
+
+from bernstein.core.quality.flaky_detector import (
+    FixProofObservations,
+    PytestInvocationObservation,
+    PytestPhaseObservation,
+    evaluate_fix_proof,
+)
 
 
 def _observe_pytest(tmp_path: Path, *args: str) -> dict[str, object]:
@@ -104,6 +113,104 @@ def test_structured_pytest_capture_records_collection_failure(tmp_path: Path) ->
     assert result["exit_code"] != 0
     assert result["selected_node_ids"] == []
     assert result["phases"] == [{"node_id": "test_import_error.py", "phase": "collect", "outcome": "error"}]
+
+
+def _proof_run(nodes: tuple[str, ...], *, failed: tuple[str, ...] = ()) -> PytestInvocationObservation:
+    phases: list[PytestPhaseObservation] = []
+    for node in nodes:
+        phases.extend(
+            (
+                PytestPhaseObservation(node, "setup", "passed"),
+                PytestPhaseObservation(node, "call", "assertion_failed" if node in failed else "passed"),
+                PytestPhaseObservation(node, "teardown", "passed"),
+            )
+        )
+    return PytestInvocationObservation(int(bool(failed)), nodes, tuple(phases))
+
+
+@pytest.fixture()
+def fix_proof() -> FixProofObservations:
+    proof = ("test_change.py::test_case_a", "test_change.py::test_case_b")
+    regression = ("test_existing.py::test_existing", "test_existing.py::test_preexisting_failure")
+    red = _proof_run(proof, failed=(proof[0],))
+    green = _proof_run(proof)
+    control = _proof_run(regression, failed=(regression[1],))
+    return FixProofObservations(
+        proof, regression, 2, (red, red), (green, green), (red, red), (control, control), (control, control)
+    )
+
+
+def test_fix_proof_requires_a_stable_common_witness(fix_proof: FixProofObservations) -> None:
+    verdict = evaluate_fix_proof(fix_proof)
+    assert verdict.verdict == "pass"
+    assert verdict.proof_failure_ids == fix_proof.proof_node_ids[:1]
+    assert verdict.regression_ids == ()
+
+    other_red = _proof_run(fix_proof.proof_node_ids, failed=fix_proof.proof_node_ids[1:])
+    verdict = evaluate_fix_proof(replace(fix_proof, source_reverted=(other_red, other_red)))
+    assert verdict.verdict == "inconclusive"
+
+
+@pytest.mark.parametrize(
+    ("arm", "reason"),
+    [("tests_on_base", "do not reproduce"), ("source_reverted", "do not exercise")],
+)
+def test_fix_proof_fails_when_a_negative_arm_passes(fix_proof: FixProofObservations, arm: str, reason: str) -> None:
+    verdict = evaluate_fix_proof(replace(fix_proof, **{arm: fix_proof.full_change}))
+    assert verdict.verdict == "fail"
+    assert reason in verdict.reason
+
+
+def test_fix_proof_lists_new_failures_only(fix_proof: FixProofObservations) -> None:
+    regression = _proof_run(fix_proof.regression_node_ids, failed=fix_proof.regression_node_ids)
+    verdict = evaluate_fix_proof(replace(fix_proof, regression_full=(regression, regression)))
+    assert verdict.verdict == "fail"
+    assert verdict.regression_ids == fix_proof.regression_node_ids[:1]
+
+
+def test_fix_proof_requires_full_change_to_pass(fix_proof: FixProofObservations) -> None:
+    verdict = evaluate_fix_proof(replace(fix_proof, full_change=fix_proof.tests_on_base))
+    assert verdict.verdict == "fail"
+    assert "full change" in verdict.reason
+
+
+def test_fix_proof_requires_a_passing_regression_control(fix_proof: FixProofObservations) -> None:
+    all_failed = _proof_run(fix_proof.regression_node_ids, failed=fix_proof.regression_node_ids)
+    verdict = evaluate_fix_proof(replace(fix_proof, regression_base=(all_failed, all_failed)))
+    assert verdict.verdict == "inconclusive"
+    assert "no passing test" in verdict.reason
+
+
+def test_fix_proof_cross_checks_overlap_between_full_tree_runs(fix_proof: FixProofObservations) -> None:
+    shared = fix_proof.proof_node_ids[0]
+    control = (shared, fix_proof.regression_node_ids[0])
+    baseline = _proof_run(control, failed=(shared,))
+    green = _proof_run(control)
+    evidence = replace(
+        fix_proof, regression_node_ids=control, regression_base=(baseline, baseline), regression_full=(green, green)
+    )
+    assert evaluate_fix_proof(evidence).verdict == "pass"
+    verdict = evaluate_fix_proof(replace(evidence, regression_full=(baseline, baseline)))
+    assert verdict.verdict == "inconclusive"
+    assert "full-tree outcomes disagree" in verdict.reason
+
+
+@pytest.mark.parametrize("fault", ["error", "changed-selection", "changed-outcome", "missing-repeat", "quarantined"])
+def test_fix_proof_refuses_unreliable_observations(fix_proof: FixProofObservations, fault: str) -> None:
+    first, second = fix_proof.tests_on_base
+    if fault == "error":
+        second = replace(second, phases=(PytestPhaseObservation("test_change.py", "collect", "error"),))
+    elif fault == "changed-selection":
+        second = _proof_run(fix_proof.proof_node_ids[:1], failed=fix_proof.proof_node_ids[:1])
+    elif fault == "changed-outcome":
+        second = _proof_run(fix_proof.proof_node_ids, failed=fix_proof.proof_node_ids[1:])
+
+    evidence = replace(
+        fix_proof,
+        tests_on_base=(first,) if fault == "missing-repeat" else (first, second),
+        quarantined_node_ids=fix_proof.proof_node_ids[:1] if fault == "quarantined" else (),
+    )
+    assert evaluate_fix_proof(evidence).verdict == "inconclusive"
 
 
 def test_parse_pytest_output_captures_terminal_results() -> None:
