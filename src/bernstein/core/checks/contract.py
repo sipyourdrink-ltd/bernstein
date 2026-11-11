@@ -155,6 +155,20 @@ class Finding:
         """Alias for :attr:`check_id`."""
         return self.check_id
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the shared doctor / govern audit JSON finding."""
+        return {
+            "check_id": self.check_id,
+            "verdict": self.verdict.value,
+            "passed": self.passed,
+            "area": self.area,
+            "summary": self.summary or self.message,
+            "reason": self.reason,
+            "remediation": self.remediation,
+            "what_would_make_it_measurable": self.what_would_make_it_measurable,
+            "evidence": [{"locator": ev.locator, "sha256": ev.sha256} for ev in self.evidence],
+        }
+
 
 # ---------------------------------------------------------------------------
 # Check Protocol

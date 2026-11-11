@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.canonicalization import canonical_bytes as _canonical_bytes
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 from bernstein.core.skills.catalog.signature import sign_payload, verify_payload
@@ -100,11 +101,6 @@ _IDENTITY_PUBLIC_NAME = "review-identity-public.pem"
 # ---------------------------------------------------------------------------
 # Canonical hashing helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _sha256_bytes(data: bytes) -> str:

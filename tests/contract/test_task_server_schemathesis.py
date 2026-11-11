@@ -23,9 +23,12 @@ See the comment on ``_STREAMING_OPERATIONS`` for why.
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import os
 import re
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -36,7 +39,7 @@ from hypothesis import settings
 from schemathesis import checks as st_checks
 
 if TYPE_CHECKING:
-    from collections.abc import MutableMapping
+    from collections.abc import Iterator, MutableMapping
 
 # Disable Bernstein auth before the app is built - the OpenAPI schema
 # endpoint is itself behind the auth middleware and Schemathesis cannot
@@ -239,6 +242,44 @@ def test_no_unhandled_exceptions(case: schemathesis.Case) -> None:
 
 _peer_counter = itertools.count(1)
 
+# Streams that need a query parameter to open, and the value each gets.
+# ``/events/thread`` streams one run's journal, so the probe also gives the
+# app a real journal for that run (see ``_thread_probe_journal``).
+_THREAD_STREAM_PATHS = frozenset({"/events/thread", "/api/v1/events/thread"})
+_THREAD_PROBE_RUN = "contract-probe"
+
+
+def _probe_query(path: str) -> bytes:
+    if path in {"/events/tasks", "/api/v1/events/tasks"}:
+        return b"role=backend"
+    if path in _THREAD_STREAM_PATHS:
+        return f"run={_THREAD_PROBE_RUN}".encode()
+    return b""
+
+
+@contextlib.contextmanager
+def _thread_probe_journal(path: str) -> Iterator[None]:
+    """Point the shared app at a temporary ``.sdd`` holding one run journal.
+
+    Only for the run-journal stream, and only for the length of one probe:
+    the shared app's ``sdd_dir`` is restored afterwards, and nothing is
+    written under the working tree's own ``.sdd``.
+    """
+    if path not in _THREAD_STREAM_PATHS:
+        yield
+        return
+    from bernstein.core.replay.journal import EventJournal
+
+    previous = _app.state.sdd_dir
+    with tempfile.TemporaryDirectory() as tmp:
+        sdd_dir = Path(tmp) / ".sdd"
+        EventJournal(_THREAD_PROBE_RUN, sdd_dir).record("run_started", run_id=_THREAD_PROBE_RUN)
+        _app.state.sdd_dir = sdd_dir
+        try:
+            yield
+        finally:
+            _app.state.sdd_dir = previous
+
 
 async def _open_stream_until_first_event(method: str, path: str) -> tuple[int, str, bytes]:
     """Drive one streaming operation and hang up after its first chunk.
@@ -264,7 +305,7 @@ async def _open_stream_until_first_event(method: str, path: str) -> tuple[int, s
         "scheme": "http",
         "path": path,
         "raw_path": path.encode(),
-        "query_string": b"",
+        "query_string": _probe_query(path),
         "root_path": "",
         "headers": [(b"host", b"testserver"), (b"accept", b"text/event-stream")],
         "client": (peer, 1234),
@@ -293,7 +334,8 @@ async def _open_stream_until_first_event(method: str, path: str) -> tuple[int, s
                 chunks.append(body)
                 hung_up.set()
 
-    await _app(scope, receive, send)
+    with _thread_probe_journal(path):
+        await _app(scope, receive, send)
     return status, content_type, b"".join(chunks)
 
 
