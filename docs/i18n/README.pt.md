@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### a camada de governança open source para agentes de IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ A lista completa monitorada, incluindo cada entrada em listas awesome, catálogo
 Use `bernstein_run(template="administrative", goal="Weekly sprint")` para criar um contêiner vazio e auditado sem planejador nem processos de agentes. Adicione tarefas manuais com `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` e consulte `bernstein_run_status(run_id="admin-...")`. As tarefas podem ser reivindicadas pela API habitual, mas ficam fora da orquestração automática. Uma execução com tarefas termina quando cada tarefa tem o estado `done`, `closed` ou `cancelled`; uma execução vazia permanece aberta. [Fluxo operacional](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### contribuição, suporte, licença
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 PRs são bem-vindos; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) contém configuração e estilo de código. Relatórios de segurança devem ser enviados via [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). Contato: [forte@bernstein.run](mailto:forte@bernstein.run).
 

@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AIエージェントのためのオープンソース・ガバナンスレイヤー
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ awesome リストの項目、カタログ掲載、先行研究としての引用
 `bernstein_run(template="administrative", goal="Weekly sprint")` で、プランナーやエージェントのプロセスを起動せずに監査付きの空のコンテナを作成します。`bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` で手動タスクを追加し、`bernstein_run_status(run_id="admin-...")` で状態を確認します。タスクは通常の取得 API から取得できますが、自動オーケストレーションの対象外です。空でない実行は全タスクの状態が `done`、`closed`、または `cancelled` のいずれかになると完了します。空の実行は開いたままです。 [運用手順](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### コントリビュート、サポート、ライセンス
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 PR を歓迎する。セットアップとコードスタイルは [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) にある。セキュリティ報告は [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) の手順で。連絡先: [forte@bernstein.run](mailto:forte@bernstein.run)。
 

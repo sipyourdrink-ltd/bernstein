@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI 에이전트를 위한 오픈소스 거버넌스 레이어
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ awesome 리스트 항목, 카탈로그 등재, 선행 연구로서의 인용, �
 `bernstein_run(template="administrative", goal="Weekly sprint")`으로 계획기나 에이전트 프로세스를 시작하지 않고 감사 기록이 있는 빈 컨테이너를 만듭니다. `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")`으로 수동 작업을 추가하고 `bernstein_run_status(run_id="admin-...")`으로 상태를 확인합니다. 작업은 일반 할당 API로 가져올 수 있지만 자동 오케스트레이션에서는 제외됩니다. 비어 있지 않은 실행은 모든 작업의 상태가 `done`, `closed` 또는 `cancelled` 중 하나이면 완료됩니다. 빈 실행은 열린 상태로 유지됩니다. [운영 절차](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### 기여, 지원, 라이선스
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 PR을 환영한다. 셋업과 코드 스타일은 [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md)에 있다. 보안 신고는 [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md)의 절차를 따르라. 연락처: [forte@bernstein.run](mailto:forte@bernstein.run).
 

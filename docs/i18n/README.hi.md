@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI एजेंटों के लिए ओपन-सोर्स गवर्नेंस लेयर
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 `bernstein_run(template="administrative", goal="Weekly sprint")` से प्लानर या एजेंट प्रक्रिया शुरू किए बिना ऑडिट वाला खाली कंटेनर बनाएँ। `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` से मैनुअल कार्य जोड़ें और `bernstein_run_status(run_id="admin-...")` से स्थिति देखें। सामान्य क्लेम API से कार्य लिए जा सकते हैं, लेकिन वे स्वचालित ऑर्केस्ट्रेशन से बाहर रहते हैं। गैर-खाली रन तब पूरा होता है जब हर कार्य की स्थिति `done`, `closed` या `cancelled` हो; खाली रन खुला रहता है। [संचालन प्रक्रिया](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### योगदान, सहायता, लाइसेंस
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 PR का स्वागत है; सेटअप और कोड स्टाइल [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) में हैं। सुरक्षा रिपोर्ट [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) के रास्ते जाती हैं। संपर्क: [forte@bernstein.run](mailto:forte@bernstein.run)।
 

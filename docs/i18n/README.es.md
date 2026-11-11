@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la capa de gobernanza open source para agentes de IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ La lista completa rastreada, incluyendo cada entrada en listas awesome, listados
 Usa `bernstein_run(template="administrative", goal="Weekly sprint")` para crear un contenedor vacío y auditado sin planificador ni procesos de agentes. Añade tareas manuales con `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` y consulta `bernstein_run_status(run_id="admin-...")`. Las tareas se pueden reclamar mediante la API habitual, pero quedan fuera de la orquestación automática. Una ejecución con tareas termina cuando cada tarea tiene el estado `done`, `closed` o `cancelled`; una ejecución vacía permanece abierta. [Flujo operativo](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### contribución, soporte, licencia
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 Las PRs son bienvenidas; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) contiene la configuración y el estilo de código. Los informes de seguridad se gestionan a través de [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). Contacto: [forte@bernstein.run](mailto:forte@bernstein.run).
 

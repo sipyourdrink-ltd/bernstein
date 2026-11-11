@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### la couche de gouvernance open source pour agents IA
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ La liste complète des mentions dans les listes awesome, catalogues, référence
 Utilisez `bernstein_run(template="administrative", goal="Weekly sprint")` pour créer un conteneur vide et audité sans planificateur ni processus agent. Ajoutez des tâches manuelles avec `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` et consultez `bernstein_run_status(run_id="admin-...")`. Les tâches restent accessibles via l’API habituelle de prise en charge, mais sont exclues de l’orchestration automatique. Une exécution non vide se termine lorsque chaque tâche a le statut `done`, `closed` ou `cancelled` ; une exécution vide reste ouverte. [Procédure opérateur](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### contribution, support, licence
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 Les contributions sont les bienvenues ; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) présente l'installation et les règles de style. Les signalements de sécurité s'effectuent via [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). Contact : [forte@bernstein.run](mailto:forte@bernstein.run).
 

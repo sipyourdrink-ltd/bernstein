@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### 面向 AI 代理的開源治理層
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ Bernstein 得名於美國指揮家、作曲家 Leonard Bernstein。這個專案�
 使用 `bernstein_run(template="administrative", goal="Weekly sprint")` 建立經稽核的空容器，不啟動規劃器或代理程序。透過 `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` 加入手動任務，並用 `bernstein_run_status(run_id="admin-...")` 查詢狀態。成員任務可透過一般認領 API 領取，但不會自動編排。非空執行在所有成員的狀態均為 `done`、`closed` 或 `cancelled` 時結束；空執行保持開放。 [操作流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### 貢獻、支援與授權
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 歡迎 PR；[CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) 有環境搭建和程式碼風格。安全報告透過 [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) 提交。聯絡：[forte@bernstein.run](mailto:forte@bernstein.run)。
 

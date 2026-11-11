@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI ajanları için açık kaynak governance katmanı
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ Her awesome listesi girdisi, katalog kaydı, önceki çalışma atıfı ve bült
 `bernstein_run(template="administrative", goal="Weekly sprint")` ile planlayıcı veya ajan süreçleri başlatmadan denetlenebilir boş bir kapsayıcı oluşturun. `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ile elle görev ekleyin ve `bernstein_run_status(run_id="admin-...")` ile durumu sorgulayın. Görevler normal sahiplenme API’si ile alınabilir ancak otomatik orkestrasyona dahil edilmez. Boş olmayan bir çalıştırma, her görevin durumu `done`, `closed` veya `cancelled` olduğunda biter; boş çalıştırma açık kalır. [İşletim akışı](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### katkıda bulunma, destek, lisans
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 PR'lar memnuniyetle karşılanır; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) kurulum ve kod stilini içerir. Güvenlik bildirimleri [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) üzerinden yapılır. İletişim: [forte@bernstein.run](mailto:forte@bernstein.run).
 

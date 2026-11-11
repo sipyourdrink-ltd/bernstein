@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### שכבת הגברנס בקוד פתוח לסוכני AI
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ Bernstein נקרא על שמו של ליאונרד ברנשטיין, המנצח 
 השתמשו ב־`bernstein_run(template="administrative", goal="Weekly sprint")` ליצירת מכולה ריקה עם רישום ביקורת, ללא מתכנן או תהליכי סוכנים. הוסיפו משימות ידניות דרך `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` ובדקו מצב דרך `bernstein_run_status(run_id="admin-...")`. אפשר לקבל משימות דרך ממשק הקצאת המשימות הרגיל, אך הן מוחרגות מתזמור אוטומטי. הרצה שאינה ריקה מסתיימת כשלכל משימה יש סטטוס `done`, `closed` או `cancelled`; הרצה ריקה נשארת פתוחה. [תהליך התפעול](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### תרומה, תמיכה, רישיון
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 הצעות PR מתקבלות בברכה; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) מפרט הגדרות וסגנון קוד. דיווחי אבטחה יש להעביר דרך [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). יצירת קשר: [forte@bernstein.run](mailto:forte@bernstein.run).
 

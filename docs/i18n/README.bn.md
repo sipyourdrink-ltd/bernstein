@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### AI এজেন্টদের জন্য ওপেন-সোর্স গভর্নেন্স লেয়ার
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ i wrote bernstein because i was paying $400/month in claude bills running three 
 `bernstein_run(template="administrative", goal="Weekly sprint")` দিয়ে প্ল্যানার বা এজেন্ট প্রক্রিয়া চালু না করেই নিরীক্ষিত খালি কনটেইনার তৈরি করুন। `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` দিয়ে ম্যানুয়াল কাজ যোগ করুন এবং `bernstein_run_status(run_id="admin-...")` দিয়ে অবস্থা দেখুন। সাধারণ ক্লেইম API দিয়ে কাজ নেওয়া যায়, তবে সেগুলো স্বয়ংক্রিয় অর্কেস্ট্রেশনের বাইরে থাকে। প্রতিটি কাজের অবস্থা `done`, `closed` বা `cancelled` হলে অখালি রান সম্পূর্ণ হয়; খালি রান খোলা থাকে। [পরিচালনার নির্দেশনা](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### অবদান, সহায়তা, লাইসেন্স
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 PR স্বাগত; সেটআপ ও কোড স্টাইল আছে [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) এ। নিরাপত্তা রিপোর্ট যায় [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) এর পথে। যোগাযোগ: [forte@bernstein.run](mailto:forte@bernstein.run)।
 

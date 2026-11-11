@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### опенсорсний governance-шар для AI-агентів
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ Bernstein названо на честь Леонарда Бернстайна, 
 Створіть порожній контейнер з аудитом без планувальника та процесів агентів: `bernstein_run(template="administrative", goal="Weekly sprint")`. Додавайте ручні завдання через `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` і перевіряйте стан через `bernstein_run_status(run_id="admin-...")`. Завдання можна брати через звичайний API призначення, але автоматична оркестрація їх не запускає. Непорожній запуск завершується, коли кожне завдання має статус `done`, `closed` або `cancelled`; порожній залишається відкритим. [Порядок роботи](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### участь, підтримка, ліцензія
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 Запрошуємо створювати PR; файл [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) містить правила налаштування та стилю коду. Повідомлення про вразливості приймаються через [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). Контакт: [forte@bernstein.run](mailto:forte@bernstein.run).
 

@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### die Open-Source-Governance-Schicht für KI-Agenten
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ Die vollständige Übersicht aller Awesome-List-Einträge, Katalogeinträge, Zit
 Mit `bernstein_run(template="administrative", goal="Weekly sprint")` entsteht ein leerer, auditierter Container ohne Planer oder Agentenprozesse. Manuelle Aufgaben werden mit `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` hinzugefügt; `bernstein_run_status(run_id="admin-...")` liefert den Status. Aufgaben bleiben über die übliche Claim-API abrufbar, sind aber von der automatischen Orchestrierung ausgeschlossen. Ein nicht leerer Lauf endet, sobald jede Aufgabe den Status `done`, `closed` oder `cancelled` hat; ein leerer Lauf bleibt offen. [Bedienungsablauf](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### mitwirken, support, lizenz
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 Pull Requests sind willkommen; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) beschreibt Setup und Codestil. Sicherheitsberichte bitte über [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md) einreichen. Kontakt: [forte@bernstein.run](mailto:forte@bernstein.run).
 

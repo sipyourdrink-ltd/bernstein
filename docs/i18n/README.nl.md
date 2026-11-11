@@ -7,7 +7,7 @@
 > *"To achieve great things, two things are needed: a plan and not quite enough time."* - [attributed to](https://quoteinvestigator.com/2020/08/19/plan-time/) Leonard Bernstein
 
 ### de open-source governancelaag voor AI-agents
-<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:b8ef8118bfce" -->
+<!-- l10n: en="the open-source governance layer for AI agents" hash="sha256:60d1439d3749" -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sipyourdrink-ltd/bernstein/ci.yml?branch=main&label=CI)](https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -278,7 +278,7 @@ De volledige overzichtslijst, inclusief elke vermelding op awesome-lijsten, in c
 Maak met `bernstein_run(template="administrative", goal="Weekly sprint")` een lege container met auditregistratie, zonder planner of agentprocessen. Voeg handmatige taken toe met `bernstein_create_task(title="Review brief", description="...", run_id="admin-...")` en bekijk de status met `bernstein_run_status(run_id="admin-...")`. Taken blijven via de gebruikelijke claim-API beschikbaar, maar zijn uitgesloten van automatische orkestratie. Een niet-lege run eindigt wanneer elke taak de status `done`, `closed` of `cancelled` heeft; een lege run blijft open. [Werkwijze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/administrative-runs.md).
 
 ### bijdragen, ondersteuning, licentie
-<!-- l10n: en="contributing, support, license" hash="sha256:94b6541e4b15" -->
+<!-- l10n: en="contributing, support, license" hash="sha256:cb937af4a6cc" -->
 
 Pull requests zijn welkom; [CONTRIBUTING.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/CONTRIBUTING.md) bevat installatie-instructies en codestijl. Beveiligingsmeldingen verlopen via [SECURITY.md](https://github.com/sipyourdrink-ltd/bernstein/blob/main/SECURITY.md). Contact: [forte@bernstein.run](mailto:forte@bernstein.run).
 
