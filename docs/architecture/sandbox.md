@@ -544,7 +544,7 @@ Third-party backends must:
 
 ### Optional removal contract
 
-`bernstein.core.sandbox.backend.SandboxRemovalBackend` is a separate,
+`bernstein.core.sandbox.SandboxRemovalBackend` is a separate,
 runtime-checkable protocol. Its async methods are
 `reattach_for_removal(session_id: str, *, evidence: Mapping[str, str]) -> SandboxReattachResult`
 and `destroy_for_removal(session: SandboxSession, *, evidence: Mapping[str, str]) -> SandboxRemovalResult`.
@@ -554,6 +554,10 @@ this extension a backend is unavailable for removal.
 Sessions may supply `removal_evidence: Mapping[str, str] | None` (default
 `None`): backend-specific, non-secret identity evidence, copied into create-event
 `details["removal_evidence"]` when present. Legacy records omit it; no migration.
+The spawner validates and copies a mapping with string keys and values. Invalid
+evidence is omitted with a warning; the create event is still emitted and sandbox
+execution and teardown continue normally. The removal protocol, status enums and
+result classes are also available directly from `bernstein.core.sandbox`.
 
 `SandboxReattachStatus` values are `attached`, `unsupported`, `not_found`,
 `identity_mismatch`, `error`. Only `attached` requires and permits a session;

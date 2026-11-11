@@ -14,7 +14,7 @@ import shutil
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -6823,18 +6823,33 @@ class AgentSpawner:
         )
         from bernstein.core.security.audit import SANDBOX_SESSION_CREATE
 
-        removal_evidence = getattr(sbx_session, "removal_evidence", None)
+        create_details: dict[str, Any] = {
+            "session_id": sbx_session.session_id,
+            "image": self._sandbox_options.get("image"),
+            "backend": backend_name,
+            "agent_session_id": session_id,
+            "task_ids": list(task_ids),
+        }
+        # Optional plugin evidence must not turn a successful create into a
+        # provisioning failure or prevent the leak sweep seeing the session.
+        try:
+            removal_evidence = getattr(sbx_session, "removal_evidence", None)
+            if removal_evidence is not None:
+                if not isinstance(removal_evidence, Mapping):
+                    raise TypeError("removal evidence must be a mapping")
+                evidence_copy = dict(removal_evidence)
+                if not all(isinstance(key, str) and isinstance(value, str) for key, value in evidence_copy.items()):
+                    raise TypeError("removal evidence keys and values must be strings")
+                create_details["removal_evidence"] = evidence_copy
+        except Exception:
+            logger.warning(
+                "Invalid sandbox removal evidence for %s; omitting it from the create audit event",
+                sbx_session.session_id,
+            )
         self._emit_sandbox_audit(
             SANDBOX_SESSION_CREATE,
             resource_id=sbx_session.session_id,
-            details={
-                "session_id": sbx_session.session_id,
-                "image": self._sandbox_options.get("image"),
-                "backend": backend_name,
-                "agent_session_id": session_id,
-                "task_ids": list(task_ids),
-                **({"removal_evidence": dict(removal_evidence)} if removal_evidence is not None else {}),
-            },
+            details=create_details,
         )
         self._check_task_server_reachability(sbx_session)
         return sbx_session

@@ -68,6 +68,7 @@ def test_removal_contract_structure_and_values() -> None:
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
+    from bernstein.core import sandbox
     from bernstein.core.sandbox import backend as contract
 
     for name in (
@@ -78,6 +79,8 @@ def test_removal_contract_structure_and_values() -> None:
         "SandboxRemovalResult",
     ):
         assert hasattr(contract, name), f"missing optional removal contract: {name}"
+        assert getattr(sandbox, name) is getattr(contract, name)
+        assert name in sandbox.__all__
     attach_status = contract.SandboxReattachStatus
     removal_status = contract.SandboxRemovalStatus
     assert [s.value for s in attach_status] == ["attached", "unsupported", "not_found", "identity_mismatch", "error"]
