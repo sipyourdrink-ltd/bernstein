@@ -7,6 +7,8 @@ import json
 import logging
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -18,6 +20,7 @@ from bernstein.core.models import (
     AgentSession,
     CompletionSignal,
     Complexity,
+    DispatchTier,
     OrchestratorConfig,
     Scope,
     Task,
@@ -49,6 +52,29 @@ if TYPE_CHECKING:
     from bernstein.core.bulletin import BulletinBoard
 
 # --- Helpers ---
+
+
+@pytest.fixture(autouse=True)
+def _join_test_owned_executors(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Join every real pool this test creates, including a failed initializer's.
+
+    These tests call tick/helpers directly rather than running the production
+    run-loop's drain. Register cleanup at construction so direct constructors
+    and factory calls share ownership. Passed-in clients remain borrowed.
+    """
+    initialize = Orchestrator.__init__
+    with ExitStack() as resources:
+
+        def initialize_owned(self: Orchestrator, *args: Any, **kwargs: Any) -> None:
+            try:
+                initialize(self, *args, **kwargs)
+            finally:
+                executor = getattr(self, "_executor", None)
+                if executor is not None:
+                    resources.callback(executor.shutdown, wait=True, cancel_futures=True)
+
+        monkeypatch.setattr(Orchestrator, "__init__", initialize_owned)
+        yield
 
 
 def _make_task(
@@ -290,6 +316,34 @@ class TestTaskFromDict:
 
 
 class TestGroupByRole:
+    @pytest.mark.parametrize("merge_path", ["file_affinity", "file_bridge", "agent_affinity", "packing"])
+    @pytest.mark.parametrize("left_tier", list(DispatchTier))
+    @pytest.mark.parametrize("right_tier", list(DispatchTier))
+    def test_dispatch_tiers_stay_separate(
+        self, merge_path: str, left_tier: DispatchTier, right_tier: DispatchTier
+    ) -> None:
+        tasks = [_make_task(id=f"T-{i}") for i in range(3)]
+        for task, tier in zip(tasks, (left_tier, right_tier, left_tier), strict=True):
+            task.dispatch_tier = tier
+            task.cli = "codex"
+            task.model = "gpt-5"
+        affinity = None
+        if merge_path == "file_affinity":
+            for task in tasks:
+                task.owned_files = ["shared.py"]
+        elif merge_path == "file_bridge":
+            tasks[0].owned_files = ["a.py"]
+            tasks[1].owned_files = ["b.py"]
+            tasks[2].owned_files = ["a.py", "b.py"]
+        elif merge_path == "agent_affinity":
+            affinity = {task.id: "agent-1" for task in tasks}
+
+        batches = group_by_role(tasks, max_per_batch=3, agent_affinity=affinity)
+
+        assert len(batches) == (1 if left_tier == right_tier else 2)
+        assert all(len({task.dispatch_tier for task in batch}) == 1 for batch in batches)
+        assert sorted(task.id for batch in batches for task in batch) == [task.id for task in tasks]
+
     def test_single_role_single_batch(self) -> None:
         tasks = [_make_task(id="T-1"), _make_task(id="T-2")]
         batches = group_by_role(tasks, max_per_batch=3)

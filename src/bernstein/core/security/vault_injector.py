@@ -284,7 +284,7 @@ class _AwsInjector:
         # logging rather than expose any prefix.
         from bernstein.core.security.redactor import mask
 
-        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure  # noqa: E501
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         logger.info("AWS STS credential issued: key=%s ttl=%ds", mask(access_key, keep=4), ttl)
         return env_vars, lease
 

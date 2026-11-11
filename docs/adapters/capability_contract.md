@@ -125,6 +125,60 @@ conformance harness calls `assert_strategies_declared()`, which raises
 adapter's declared strategy in its `strategy` field; `strategy_conformance_table()`
 in `conformance.py` builds the per-adapter strategy table for the live registry.
 
+## Reasoning effort
+
+The existing CLI YAML contracts also declare `supported_efforts`, loaded as
+`ContractSpec.supported_efforts`. This optional tuple is empty for older
+contracts, meaning no declared effort capability. The five strategy axes do
+not encode effort values; this small contract extension avoids a separate
+capability registry or policy engine. It does not infer support in sibling
+adapters.
+
+Codex declares `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`, and its
+required flags include `-c`. Bernstein's internal routing vocabulary also
+includes `max` and `normal`: `_select_batch_config` defaults to `normal` for a
+model-specified task and `max` for manager/architect/security roles, large scope,
+or priority 1. Routing and retry ladders additionally use `high`, `medium`, and
+`low`. `Task.effort=None` means no override; the selector resolves it before
+constructing `ModelConfig`. `ModelConfig.effort` is a string, not an enum.
+
+The adapter owns this explicit equivalence mapping at the CLI boundary:
+
+| Internal effort | Codex CLI `model_reasoning_effort` |
+| --- | --- |
+| `max` | `xhigh` |
+| `high` | `high` |
+| `normal` | `medium` |
+| `medium` | `medium` |
+| `low` | `low` |
+| `minimal` | `minimal` |
+| `none` | `none` |
+| `xhigh` | `xhigh` |
+| `""` | No override; CLI/account default |
+
+Nonempty mapped values are passed as `-c model_reasoning_effort=<value>`
+alongside the existing model argument. `max` maps up to `xhigh`, never down to
+`high`. Unknown strings raise `ValueError` before spawning the worker. The
+internal `ModelConfig` stays unchanged. These are CLI values; a particular
+model or gateway may reject them.
+
+Every spawn writes a `bernstein.codex.effort` JSON entry in the existing
+session log: `requested_effort` is the internal value, `effective_cli_effort`
+is the mapped CLI override (both are `null` for the CLI default), while
+`effective_effort` remains `null`. The CLI override records argv delivery,
+not provider enforcement. Neither a successful spawn nor CLI exit establishes
+the effective provider effort. Retry, provider routing,
+and crash resume reuse the existing `ModelConfig` and policy machinery; the
+adapter validates and maps each attempt's resolved effort anew.
+
+`TestCodexEffort` in `tests/unit/test_adapter_codex.py` checks every declared
+internal value against captured spawn argv, rejection before `Popen`,
+retry/fallback, the spawner's resume boundary, and the real `_select_batch_config`
+default branches through adapter spawn without setting task effort. A local
+executable stub through the actual worker also checks native values, both
+aliases, and the CLI default. The stub proves setting delivery, not live
+provider enforcement.
+
 ## Shipped adapter declarations
 
 | Adapter | Resume | Dangerous mode | Event channel |

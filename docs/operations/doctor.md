@@ -1,5 +1,61 @@
 # bernstein doctor
 
+The default doctor's checks also produce installation audit findings:
+
+```sh
+bernstein doctor --json
+bernstein govern audit --only INS --json
+bernstein govern audit --list --only INS
+```
+
+The doctor's JSON retains `checks` and `runtime` and adds `findings`. That array
+uses exactly the same schema and producers as the installation audit's JSON
+array. The text report, display order, readiness calculation, exit behavior and
+`--fix` workflow remain unchanged. Installation checks are opt-in in the audit
+registry: use `--only INS` to measure the host rather than just the workspace.
+The audit CLI explicitly composes the installation catalog into its runner;
+the core default registry remains independent of CLI doctor implementations.
+See [installation check composition](../sdd/installation-check-composition.md)
+for the ownership boundary and its regression checks.
+
+Each producer has a stable ID, even when it emits several display rows or has
+no configured subject:
+
+| ID | Installation check |
+| --- | --- |
+| INS-001 | Python version |
+| INS-002 | Adapter binaries |
+| INS-003 | Adapter last-green advisories |
+| INS-004 | Adapter version posture |
+| INS-005 | Adapter authentication |
+| INS-006 | Server port |
+| INS-007 | Workspace structure |
+| INS-008 | Stale PID files |
+| INS-009 | Guardrail statistics |
+| INS-010 | CI tools |
+| INS-011 | Storage backend (including PostgreSQL and Redis variants) |
+| INS-012 | Secrets manager |
+| INS-013 | Readiness |
+| INS-014 | Context files, MCP, permissions, installations and plugins |
+| INS-015 | Commit attribution |
+| INS-016 | Compliance prerequisites |
+| INS-017 | Schedule supervisor |
+| INS-018 | Eval gate power advisory |
+| INS-019 | OTLP export advisory |
+| INS-020 | Audit anchoring |
+
+Audit findings use `pass`, `fail`, or `not_measurable`. A tool probe that cannot
+run is `not_measurable` with the tool and prerequisite named; it never becomes
+a passing finding. Checks without observations are also `not_measurable`.
+For INS-005, a configured Codex model cannot make a missing `codex` login
+probe measurable; an observed API-key setting does not require that CLI probe.
+For INS-004, any `unknown_version` entry is `not_measurable` and names the
+adapter's unavailable `<adapter> --version` probe. Measured versions still
+pass at or above the floor and fail below it.
+These audit verdicts preserve the legacy doctor's advisory display and exit
+behavior. Version-posture evidence hashes the observed versions and anchoring
+state, excluding the receipt timestamp so repeated observations compare equal.
+
 `bernstein doctor` is the single-command checklist for diagnosing a
 broken Bernstein installation before opening an issue. The legacy
 `bernstein doctor` runs the same checks it always did; the new

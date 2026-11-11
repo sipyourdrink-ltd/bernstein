@@ -76,10 +76,12 @@ def _classify_batches(batches: list[list[Task]]) -> list[int]:
 def _routing_hints_compatible(batch: list[Task], candidate: list[Task]) -> bool:
     """Return False when two batches carry incompatible per-step routing hints.
 
-    The spawner only consults ``tasks[0].cli`` / ``tasks[0].model`` from a
-    batch, so merging tasks that disagree on adapter or model would silently
-    drop the second task's routing directives.
+    The spawner only consults the first task's dispatch tier, CLI and model,
+    so merging tasks that disagree would silently drop the second task's
+    routing directives.
     """
+    if len({task.dispatch_tier for task in batch + candidate}) > 1:
+        return False
     models = {t.model.strip().lower() for t in (batch + candidate) if isinstance(t.model, str) and t.model.strip()}
     if len(models) > 1:
         return False
