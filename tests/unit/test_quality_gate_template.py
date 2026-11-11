@@ -6,6 +6,7 @@ gate generated from it failed on import and was not a ``GatePlugin``.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import re
@@ -16,8 +17,11 @@ from typing import Any
 
 import pytest
 
+from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.quality.gate_pipeline import GatePipelineStep
 from bernstein.core.quality.gate_plugins import GatePlugin, GatePluginRegistry
-from bernstein.core.quality.gate_runner import GateResult
+from bernstein.core.quality.gate_runner import GateResult, GateRunner
+from bernstein.core.quality.quality_gates import QualityGatesConfig
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "quality_gate_plugin"
 _PLACEHOLDER = re.compile(r"\{\{\s*cookiecutter\.(\w+)\s*\}\}")
@@ -111,6 +115,48 @@ def test_generated_gate_is_discovered_by_the_registry(rendered: tuple[dict[str, 
 
     assert plugin is not None
     assert plugin.name == context["gate_name"]
+
+
+def test_generated_scan_error_returns_blocking_report(
+    rendered: tuple[dict[str, str], Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context, out_dir = rendered
+    workdir = tmp_path / "project"
+    gates_dir = workdir / ".bernstein" / "gates"
+    gates_dir.mkdir(parents=True)
+    module_name = f"{context['gate_name']}.py"
+    (gates_dir / module_name).write_text((out_dir / module_name).read_text(encoding="utf-8"), encoding="utf-8")
+    (workdir / "a.py").write_text("print(1)\n", encoding="utf-8")
+    step = GatePipelineStep(name=context["gate_name"], required=True, condition="any_changed")
+    runner = GateRunner(QualityGatesConfig(pipeline=[step], cache_enabled=False), workdir)
+    gate = runner._plugin_registry().get(context["gate_name"])
+    assert gate is not None
+
+    def broken_scan(changed_files: list[str], run_dir: Path) -> tuple[int, int]:
+        raise RuntimeError("tool crashed")
+
+    monkeypatch.setattr(gate, "scan", broken_scan)
+    task = Task(
+        id="template-scan-error",
+        title="title",
+        description="description",
+        role="backend",
+        scope=Scope.MEDIUM,
+        complexity=Complexity.MEDIUM,
+        owned_files=["a.py"],
+    )
+
+    report = asyncio.run(runner.run_all(task, workdir))
+
+    assert report.overall_pass is False
+    assert report.gates_run == [context["gate_name"]]
+    assert len(report.results) == 1
+    result = report.results[0]
+    assert result.status == "inconclusive"
+    assert result.reason == "runner-died-before-output"
+    assert result.required is True
+    assert result.blocked is True
+    assert "tool crashed" in result.details
 
 
 def test_generated_tests_pass(rendered: tuple[dict[str, str], Path]) -> None:

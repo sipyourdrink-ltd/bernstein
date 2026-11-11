@@ -87,12 +87,9 @@ class Test{{ cookiecutter.gate_class }}:
         assert _run(lenient, tmp_path).status == "pass"
         assert _run(strict, tmp_path).blocked is True
 
-    def test_scan_error_is_inconclusive_and_blocks(self, tmp_path: Path) -> None:
-        result = _run(Broken{{ cookiecutter.gate_class }}(), tmp_path)
-
-        assert result.status == "inconclusive"
-        assert result.reason == "runner-died-before-output"
-        assert result.blocked is True
+    def test_scan_error_propagates_to_runner(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="tool crashed"):
+            _run(Broken{{ cookiecutter.gate_class }}(), tmp_path)
 
     def test_registry_discovers_gate_from_file(self, tmp_path: Path) -> None:
         gates_dir = tmp_path / ".bernstein" / "gates"

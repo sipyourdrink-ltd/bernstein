@@ -178,7 +178,7 @@ export BERNSTEIN_SECURITY_CMD="semgrep --config=auto . --quiet"
 export BERNSTEIN_SECURITY_CMD="trivy fs . --exit-code 1 --severity HIGH,CRITICAL"
 ```
 
-**Note**: `SecurityScanGate` is a `GatePlugin`, so a failed scan blocks the task. To record and alert without blocking, return `blocked=False` from `run()` and override `required` to `False`.
+**Note**: `SecurityScanGate` is a `GatePlugin`, so a failed scan blocks the task. To record and alert without blocking, return `blocked=False` from `run()` **and** set `required: false` on the `security_scan_cmd` step in `quality_gates.pipeline` in `bernstein.yaml`. Returning `required=False` or overriding the plugin's `required` property alone is not sufficient: the pipeline step controls whether a failed result is required to block.
 
 ### Community
 

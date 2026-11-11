@@ -88,19 +88,9 @@ class {{ cookiecutter.gate_class }}(GatePlugin):
         logger.info("Running {{ cookiecutter.gate_name }} gate for task %r", task_title)
         started = time.monotonic()
 
-        try:
-            errors_found, warnings_found = self.scan(changed_files, run_dir)
-        except Exception as exc:
-            logger.error("{{ cookiecutter.gate_name }} gate could not evaluate the change: %s", exc)
-            # The gate could not reach a verdict, so it must not claim pass or
-            # fail. An inconclusive result still blocks at a required gate.
-            return self._result(
-                "inconclusive",
-                blocked=self.required,
-                details=f"Gate could not evaluate the change: {exc}",
-                started=started,
-                reason="runner-died-before-output",
-            )
+        # Let scan errors propagate: GateRunner converts plugin exceptions to
+        # inconclusive results with a reason and the pipeline's blocking policy.
+        errors_found, warnings_found = self.scan(changed_files, run_dir)
 
         metadata = {
             "errors": errors_found,
@@ -133,7 +123,6 @@ class {{ cookiecutter.gate_class }}(GatePlugin):
         details: str,
         started: float | None,
         metadata: dict[str, int] | None = None,
-        reason: str | None = None,
     ) -> GateResult:
         duration_ms = 0 if started is None else int((time.monotonic() - started) * 1000)
         return GateResult(
@@ -145,5 +134,4 @@ class {{ cookiecutter.gate_class }}(GatePlugin):
             duration_ms=duration_ms,
             details=details,
             metadata=dict(metadata or {}),
-            reason=reason,
         )

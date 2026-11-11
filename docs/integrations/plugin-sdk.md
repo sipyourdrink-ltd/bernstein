@@ -597,8 +597,11 @@ task and blocks promotion when it fails.
 `SecurityScanGate` subclasses `GatePlugin`, the extension point the built-in
 gates use, so it is a real quality gate and not a hook: a failed scan returns
 a `fail` result with `blocked=True`.  The result is also appended to
-`.sdd/metrics/custom_gates.jsonl`.  A gate that should only record and alert
-can return `blocked=False` and `required=False` instead.
+`.sdd/metrics/custom_gates.jsonl`.  For advisory mode (record and alert without
+blocking), return `blocked=False` from `run()` **and** set `required: false` on
+that gate's `quality_gates.pipeline` step in `bernstein.yaml`.  Returning
+`required=False` or overriding the plugin's `required` property alone does not
+make a required pipeline step advisory.
 
 ```python
 from __future__ import annotations
