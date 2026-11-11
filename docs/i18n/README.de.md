@@ -123,7 +123,7 @@ flowchart LR
 Jeden Knoten übernimmt ein Agent, dessen Rolle die Phase zulässt; Rollenzäune und Freigabe-Gates halten, egal was der Agent innerhalb der Aufgabe tut. Ein Code-Knoten endet hinter Merge-Gates im eigenen git worktree. Die Knoten oben enden anders: ein [Artefaktvertrag](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) benennt das Ergebnis (Bericht, Datensatz, Scan, Aktionslog), und der Knoten schließt mit einer signierten Lineage-Quittung statt eines Commits. Derselbe Scheduler, dasselbe Journal, dieselbe Offline-Verifikation - ob der Graph Code, Forschung, eine Ops-Änderung oder eine Mischung aus allen dreien liefert. Fertige Graphen für Software, Forschung, Doku, Enterprise und Contributor-Workflows liegen in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### in 30 Sekunden installieren
-<!-- l10n: en="install in 30 seconds" hash="sha256:ab5b53bf2226" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,7 +136,7 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 pipx, pip, brew, dnf, npm und Docker werden in der [Installationsanleitung](https://docs.bernstein.run/en/latest/getting-started/install/) behandelt; das Air-Gap-Wheelhouse verfügt über einen eigenen [Air-Gap-Leitfaden](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
-`bernstein worktrees sweep` zeigt eine Vorschau der von abgeschlossenen Aufgaben zurückgelassenen Worktrees und Sandbox-Sitzungen mit Alter und Speicherplatzverbrauch. Das Entfernen erfordert `--apply` und eine separate Löschfreigabe; `doctor` warnt vor älteren zurückgelassenen Ressourcen. Siehe den [Bereinigungsablauf](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees sweep` zeigt eine Vorschau der von abgeschlossenen Aufgaben zurückgelassenen Worktrees und Sandbox-Sitzungen mit Alter und Speicherplatzverbrauch. Nur Worktrees können entfernt werden, mit `--apply` und einer separaten Löschfreigabe. Sandboxes werden nur im Bericht aufgeführt (Entfernung: #6571); `doctor` warnt vor älteren zurückgelassenen Ressourcen. Siehe den [Bereinigungsablauf](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

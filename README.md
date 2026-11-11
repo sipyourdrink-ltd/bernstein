@@ -136,8 +136,9 @@ The normal doctor report keeps its existing display. See the
 pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://docs.bernstein.run/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` previews worktrees and sandbox sessions left behind
-by finished tasks, with age and disk usage. Removal requires `--apply` and a
-separate removal approval; `doctor` warns about aged leaks. See the
+by finished tasks, with age and disk usage. Only worktrees can be removed, using
+`--apply` and a separate removal approval. Sandboxes are report-only (removal:
+#6571); `doctor` warns about aged leaks. See the
 [lane cleanup workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)

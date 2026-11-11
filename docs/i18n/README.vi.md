@@ -123,7 +123,7 @@ flowchart LR
 Mỗi node được nhận bởi một agent có vai trò được phase cho phép; hàng rào vai trò và gate phê duyệt vẫn giữ nguyên bất kể agent làm gì bên trong task. Node code kết thúc sau các merge gate trong git worktree riêng. Các node ở trên kết thúc khác: một [hợp đồng artefact](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) gọi tên sản phẩm (báo cáo, dataset, bản quét, nhật ký hành động), và node đóng lại bằng biên nhận lineage có chữ ký thay vì một commit. Cùng bộ lập lịch, cùng journal, cùng cách xác minh offline - dù đồ thị mang code, nghiên cứu, thay đổi ops hay cả ba. Các đồ thị dựng sẵn cho phần mềm, nghiên cứu, tài liệu, enterprise và quy trình contributor nằm ở [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### cài đặt trong 30 giây
-<!-- l10n: en="install in 30 seconds" hash="sha256:ab5b53bf2226" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,7 +136,7 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 pipx, pip, brew, dnf, npm và Docker được trình bày trong [hướng dẫn cài đặt](https://docs.bernstein.run/en/latest/getting-started/install/); gói cài đặt cách ly mạng có [hướng dẫn air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) riêng.
 
-`bernstein worktrees sweep` xem trước các cây làm việc và phiên sandbox do tác vụ đã hoàn tất để lại, kèm thời gian tồn tại và dung lượng đĩa. Việc xóa yêu cầu `--apply` và phê duyệt xóa riêng; `doctor` cảnh báo về tài nguyên bị bỏ lại lâu ngày. Xem [quy trình dọn dẹp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees sweep` xem trước các cây làm việc và phiên sandbox do tác vụ đã hoàn tất để lại, kèm thời gian tồn tại và dung lượng đĩa. Chỉ có thể xóa cây làm việc, bằng `--apply` và với phê duyệt xóa riêng. Sandbox chỉ được liệt kê trong báo cáo (xóa: #6571); `doctor` cảnh báo về tài nguyên bị bỏ lại lâu ngày. Xem [quy trình dọn dẹp](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

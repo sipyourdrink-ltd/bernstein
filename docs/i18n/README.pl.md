@@ -123,7 +123,7 @@ flowchart LR
 Każdy węzeł przejmuje agent, którego rolę dopuszcza faza; ogrodzenia ról i bramki zatwierdzeń trzymają niezależnie od tego, co agent robi w zadaniu. Węzeł kodowy kończy się za merge gates we własnym git worktree. Węzły powyżej kończą się inaczej: [kontrakt artefaktu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nazywa rezultat (raport, dataset, skan, log działań), a węzeł zamyka podpisany kwit lineage zamiast commita. Ten sam scheduler, ten sam journal, ta sama weryfikacja offline - niezależnie czy graf niesie kod, badania, zmianę ops czy miks wszystkich trzech. Gotowe grafy dla softu, badań, dokumentacji, enterprise i procesów kontrybutorskich leżą w [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalacja w 30 sekund
-<!-- l10n: en="install in 30 seconds" hash="sha256:ab5b53bf2226" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,7 +136,7 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 pipx, pip, brew, dnf, npm oraz Docker zostały opisane w [przewodniku instalacji](https://docs.bernstein.run/en/latest/getting-started/install/); izolowany pakiet instalacyjny posiada dedykowany [przewodnik air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
-`bernstein worktrees sweep` wyświetla podgląd drzew roboczych i sesji sandbox pozostawionych przez zakończone zadania, wraz z ich wiekiem i zużyciem dysku. Usunięcie wymaga `--apply` i osobnej zgody na usunięcie; `doctor` ostrzega o zasobach pozostawionych od dawna. Zobacz [procedurę sprzątania](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+`bernstein worktrees sweep` wyświetla podgląd drzew roboczych i sesji sandbox pozostawionych przez zakończone zadania, wraz z ich wiekiem i zużyciem dysku. Usuwać można tylko drzewa robocze, z użyciem `--apply` i osobnej zgody na usunięcie. Sandboxy są jedynie uwzględniane w raporcie (usuwanie: #6571); `doctor` ostrzega o zasobach pozostawionych od dawna. Zobacz [procedurę sprzątania](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

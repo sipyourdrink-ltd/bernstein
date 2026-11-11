@@ -266,7 +266,9 @@ change the threshold. Unknown task ownership is never counted as terminal;
 unreadable sources produce an unavailable-check warning, not a clean bill of
 health. The check never deletes anything or contacts sandbox providers.
 Preview remediation with `bernstein worktrees sweep` or `bernstein sandbox
-sweep`; applying that plan requires a separate removal approval. See
+sweep`; applying the worktree removal plan requires a separate removal
+approval. Sandbox lanes are report-only (removal: #6571) and are never stopped
+or removed by sweep. See
 [worktree operations](worktrees.md#task-terminal-lane-sweep).
 
 ## Proposed structured aged-leak finding (#6572)

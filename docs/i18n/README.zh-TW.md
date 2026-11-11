@@ -123,7 +123,7 @@ flowchart LR
 每個節點由角色獲該階段允許的代理認領;無論代理在任務內做什麼,角色圍欄與核准閘門始終有效。程式碼節點在自己的 git worktree 裡、合併閘門之後完成。上面這些節點的完成方式不同:[工件契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(報告、資料集、掃描、操作日誌),節點以簽章的 lineage 收據而非提交收尾。同一個排程器、同一份日誌、同樣的離線驗證 - 無論圖裡裝的是程式碼、研究、維運變更,還是三者混合。面向軟體、研究、文件、企業與貢獻者工作流的現成圖都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:ab5b53bf2226" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,7 +136,7 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 pipx、pip、brew、dnf、npm 和 Docker 都涵蓋在[安裝指南](https://docs.bernstein.run/en/latest/getting-started/install/)中；離線 wheelhouse 有單獨的 [air-gap 指南](https://docs.bernstein.run/en/latest/installation/air-gap/)。
 
-`bernstein worktrees sweep` 預覽已完成任務遺留的工作樹和沙箱工作階段，並顯示存續時間與磁碟用量。刪除需要 `--apply` 和獨立的刪除核准；`doctor` 會對長期遺留的資源發出警告。參見[清理流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)。
+`bernstein worktrees sweep` 預覽已完成任務遺留的工作樹和沙箱工作階段，並顯示存續時間與磁碟用量。只有工作樹可以刪除，且需要使用 `--apply` 並取得獨立的刪除核准。沙箱僅列入報告（刪除功能：#6571）；`doctor` 會對長期遺留的資源發出警告。參見[清理流程](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)。
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

@@ -420,13 +420,21 @@ class LeakedLane:
     path: Path | None = None
     backend: str = "worktree"
     created_at: str = ""
-    has_unsaved_work: bool = False
+    has_unsaved_work: bool | None = None
     create_hmac: str = ""
+
+    @property
+    def removal_eligible(self) -> bool:
+        """Only worktrees are removable; sandbox removal belongs to #6571."""
+        return self.kind == "worktree"
 
     def to_dict(self) -> dict[str, object]:
         from dataclasses import asdict
 
-        return {**asdict(self), "path": str(self.path) if self.path is not None else None}
+        row = {**asdict(self), "path": str(self.path) if self.path is not None else None}
+        if not self.removal_eligible:
+            row.update(removal_status="report_only", removal_reason="report only (removal: #6571)")
+        return row
 
 
 def sweep_leaked_lanes(
@@ -504,13 +512,14 @@ def sweep_leaked_lanes(
 
 
 def lane_removal_operation(lanes: Iterable[LeakedLane]) -> str:
-    """Bind a removal approval to these exact resources, owners and lifetimes."""
+    """Bind approval to exact worktrees, owners and lifetimes, excluding sandboxes."""
     import hashlib
     import json
 
     identities = sorted(
         (lane.kind, lane.backend, lane.resource_id, lane.task_ids, str(lane.path), lane.created_at, lane.create_hmac)
         for lane in lanes
+        if lane.removal_eligible
     )
     digest = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
     return f"lane.remove:{digest}"

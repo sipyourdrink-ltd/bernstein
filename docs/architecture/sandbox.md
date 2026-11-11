@@ -604,11 +604,12 @@ audit key would hide a real leak from the listing. Run `bernstein audit verify`
 before a listing drives a removal; it rejects such a record. Removing a leaked
 session is left to the backend's own tooling (for example `docker rm`) after
 checking it holds nothing you need. For a combined worktree/sandbox inventory
-and gated cleanup, use `bernstein sandbox sweep` (alias of `worktrees sweep`).
-It defaults to a read-only preview; apply rechecks task ownership under the GC
-lock, verifies the audit chain and journals each removal with task ids. See the
-[task-terminal lane workflow](../operations/worktrees.md#task-terminal-lane-sweep)
-for removal approvals, disk measurement and backend cleanup support.
+use `bernstein sandbox sweep` (alias of `worktrees sweep`). Sandbox lanes are
+report-only (removal: #6571): sweep never stops or removes their containers.
+Only worktrees support gated removal; apply rechecks the worktree plan under
+the GC lock, verifies the audit chain and journals removal with task ids. See
+the [task-terminal lane workflow](../operations/worktrees.md#task-terminal-lane-sweep)
+for worktree removal approvals and read-only sandbox disk measurement.
 
 The separate Python API `prepare_sandbox_removal_proposal(workdir,
 sandbox_session_id, create_hmac=...)` prepares read-only evidence for one

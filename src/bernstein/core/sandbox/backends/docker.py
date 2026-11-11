@@ -641,12 +641,6 @@ class DockerSandboxBackend:
             raise ValueError("Docker did not report writable-layer disk usage")
         return size
 
-    def destroy_leaked_session(self, session_id: str) -> None:
-        """Remove only the labelled container; propagate every teardown failure."""
-        container = self._leaked_container(session_id)
-        container.remove(force=True)
-        self._sessions.pop(session_id, None)
-
     async def destroy_all(self) -> None:
         """Destroy every session this backend still tracks.
 

@@ -123,7 +123,7 @@ flowchart LR
 แต่ละโหนดถูกรับโดย agent ที่บทบาทได้รับอนุญาตจากเฟสนั้น รั้วบทบาทและเกตอนุมัติยังคงอยู่ไม่ว่า agent จะทำอะไรในงาน โหนดโค้ดจบหลัง merge gate ใน git worktree ของตัวเอง โหนดข้างบนจบต่างออกไป: [สัญญาอาร์ติแฟกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ระบุผลส่งมอบ (รายงาน ชุดข้อมูล การสแกน บันทึกการกระทำ) และโหนดปิดด้วยใบรับ lineage ที่ลงนามแทนคอมมิต ตัวจัดตารางเดียวกัน เจอร์นัลเดียวกัน การตรวจสอบออฟไลน์แบบเดียวกัน - ไม่ว่ากราฟจะส่งมอบโค้ด งานวิจัย การเปลี่ยนแปลง ops หรือทั้งสามผสมกัน กราฟสำเร็จรูปสำหรับซอฟต์แวร์ วิจัย เอกสาร องค์กร และเวิร์กโฟลว์ผู้ร่วมพัฒนาอยู่ที่ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:ab5b53bf2226" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -136,7 +136,7 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 
 pipx, pip, brew, dnf, npm และ Docker มีเนื้อหาอยู่ใน [คู่มือการติดตั้ง](https://docs.bernstein.run/en/latest/getting-started/install/) ส่วนแพ็กเกจสำหรับระบบแยกเครือข่ายมี [คู่มือ air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) โดยเฉพาะ
 
-`bernstein worktrees sweep` แสดงตัวอย่างเวิร์กทรีและเซสชัน sandbox ที่งานซึ่งเสร็จแล้วทิ้งไว้ พร้อมอายุและพื้นที่ดิสก์ที่ใช้ การลบต้องใช้ `--apply` และการอนุมัติการลบแยกต่างหาก โดย `doctor` จะเตือนเกี่ยวกับทรัพยากรที่ตกค้างมานาน ดู[ขั้นตอนการล้างทรัพยากร](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)
+`bernstein worktrees sweep` แสดงตัวอย่างเวิร์กทรีและเซสชัน sandbox ที่งานซึ่งเสร็จแล้วทิ้งไว้ พร้อมอายุและพื้นที่ดิสก์ที่ใช้ ลบได้เฉพาะเวิร์กทรี โดยใช้ `--apply` และต้องได้รับการอนุมัติการลบแยกต่างหาก ส่วน sandbox จะแสดงในรายงานเท่านั้น (การลบ: #6571) โดย `doctor` จะเตือนเกี่ยวกับทรัพยากรที่ตกค้างมานาน ดู[ขั้นตอนการล้างทรัพยากร](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep)
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

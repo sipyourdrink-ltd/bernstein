@@ -277,6 +277,12 @@ task store. All owners of a batch sandbox must be finished. A missing task
 record is unknown, never proof of completion. A live PID does not hide a leak;
 `worktrees list` retains its existing PID/trace display rules.
 
+Only worktree lanes can be removed. Sandbox lanes are marked **report only
+(removal: #6571)** in the preview and remain untouched by apply, regardless of
+approval. Sweep never stops or removes a container. Sandbox contents and
+process liveness are not probed; their unsaved-work value is `null` (`?`), not
+`false`. Sandbox removal is a separate workflow tracked by #6571.
+
 ```bash
 bernstein worktrees sweep --workdir .
 bernstein sandbox sweep --json
@@ -298,8 +304,9 @@ Measurement never creates or resumes a session. Other backends report unknown.
 Removal uses the existing destructive-operation approval model in a separate
 `removal` class. The preview prints `lane.remove:<digest>` as the exact request
 `operation`; JSON rows carry it as `removal_operation`. The digest binds the
-resources, paths, task owners and recorded lifetimes, including the sandbox
-create event HMAC. `removal.json` contains
+worktree resources, paths, task owners and recorded lifetimes. Sandbox rows
+are excluded from the digest and the removal set; changes to report-only
+sandboxes do not change the approved worktree operation. `removal.json` contains
 `request` (the serialized `ApprovalRequest`) and `responses` (serialized
 `ApprovalResponse` objects) from the approval workflow. At least two distinct
 approvers must approve that request before its expiry; any denial vetoes it.
@@ -325,30 +332,26 @@ preview does not authorize this plan. For example, its shape is:
 }
 ```
 
-Under the shared GC lock, removal verifies the source audit chain and rereads
-task status and ownership before each deletion. Sandbox removal also reuses
-the verified proposal API, which rejects every audit tear (even acknowledged
-ones) and binds the exact create event before attaching to a backend. Sweep always
-preserves unsaved work and worktrees whose recorded worker PID is alive, including
-corrupt directories. Both checks run again immediately before removal. These
-lanes remain listed and their skipped outcomes are journaled. Sweep does not
-accept `--force-unsaved`; that flag belongs only to the separate legacy `gc`
-workflow. Every intent, skip
-and result is recorded as `lane.remove`, naming `task_ids`, `approval_class`
-and `removal_approval_id`. An audit append failure before deletion prevents it.
-Successful sandbox deletion also records `sandbox.session_destroy`.
+Under the shared GC lock, removal verifies the source audit chain and
+recomputes the full worktree removal digest before the first deletion. A
+changed plan aborts without deleting any worktrees. It also rereads task
+status and ownership before each deletion. Unsaved work and live worker PIDs
+veto worktree removal, including for corrupt directories. Both checks run
+again immediately before removal, on a best-effort basis: workers do not take
+the GC lock, so a write or spawn after the final check can race with deletion.
+Vetoed worktrees remain listed and their skipped outcomes are journaled.
+Sweep does not accept `--force-unsaved`; that flag belongs only to the separate
+legacy `gc` workflow. Every worktree intent, skip and result is recorded as
+`lane.remove`, naming `task_ids`, `approval_class` and `removal_approval_id`.
+An audit append failure before deletion prevents it. Report-only sandboxes
+produce no removal intent or `sandbox.session_destroy` event.
 
-Worktrees and Docker support removal. Docker reattaches only a container with
-the exact Bernstein sandbox labels and propagates teardown failures. Other
-backends must implement `destroy_leaked_session(session_id)` to support removal;
-otherwise apply refuses explicitly, leaving that session untouched. The sweep
-never provisions a replacement or uses snapshot resume for cleanup.
-
-Apply reports each lane as `removed`, `skipped`, `failed`, or `not_attempted`.
+Apply reports worktrees as `removed`, `skipped`, `failed`, or `not_attempted`;
+sandboxes remain `report_only`, with reason `report only (removal: #6571)`.
 JSON keeps the listing shape and adds `removal_status`, plus `removal_reason`
-for a skip or `removal_error` for a failure. If a lane fails, the sweep stops,
-reports earlier removals and all remaining lanes, and exits 1; it does not claim
-an atomic rollback. A failed backend call may have partially affected its
-resource and must be investigated before retrying. If deletion succeeds but
-the following audit append fails, the outcome remains `removed` with its audit
-error, and the command still exits 1.
+for a skip or report-only row, or `removal_error` for a failure. If a worktree
+fails, the sweep stops, reports earlier removals and all remaining lanes, and
+exits 1; it does not claim an atomic rollback. If deletion succeeds but the
+following audit append fails, the outcome remains `removed` with its audit
+error, and the command still exits 1. A fully vetoed plan exits 0 with `0
+removed`; automation must inspect `removal_status` to distinguish that outcome.

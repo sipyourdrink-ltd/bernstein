@@ -913,7 +913,7 @@ def test_removal_gate_refuses_invalid_approval(
     assert live_worktree.exists()
 
 
-def test_sandbox_removal_is_gated_measured_and_journaled(
+def test_sandbox_is_measured_but_never_removed_with_valid_approval(
     tmp_path: Path,
     audit_key: bytes,
     monkeypatch: pytest.MonkeyPatch,
@@ -935,13 +935,20 @@ def test_sandbox_removal_is_gated_measured_and_journaled(
     lanes = _lane_api("sweep_leaked_lanes")(tmp_path, measure_disk=True)
     assert lanes[0].size_bytes == 8192
     container.remove.assert_not_called()
-    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 1
-    container.remove.assert_called_once_with(force=True)
-    client.containers.get.assert_called_with("bernstein-sbx-1")
-    assert sweep_leaked_sandboxes(tmp_path) == []
-    entries = [e for e in _audit(tmp_path, audit_key).query() if e.event_type == "lane.remove"]
-    assert entries[-1].details["removed"] is True
-    assert entries[-1].details["task_ids"] == ["T-1"]
+    outcomes = []
+    assert (
+        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes), outcomes=outcomes)
+        == 0
+    )
+    container.remove.assert_not_called()
+    container.stop.assert_not_called()
+    client.containers.get.assert_called_once_with("bernstein-sbx-1")
+    assert sweep_leaked_sandboxes(tmp_path)[0].is_leaked
+    assert outcomes == [{"removal_status": "report_only", "removal_reason": "report only (removal: #6571)"}]
+    entries = [
+        e for e in _audit(tmp_path, audit_key).query() if e.event_type in {"lane.remove", SANDBOX_SESSION_DESTROY}
+    ]
+    assert entries == []
 
 
 def test_docker_refuses_a_container_with_different_owner() -> None:
@@ -952,7 +959,7 @@ def test_docker_refuses_a_container_with_different_owner() -> None:
     client = MagicMock()
     client.containers.get.return_value.attrs = {"Config": {"Labels": {"bernstein.sandbox.session_id": "other"}}}
     with pytest.raises(ValueError, match="ownership"):
-        DockerSandboxBackend(client=client).destroy_leaked_session("sbx-1")
+        DockerSandboxBackend(client=client).leaked_session_size_bytes("sbx-1")
     client.containers.get.return_value.remove.assert_not_called()
 
 
@@ -996,7 +1003,7 @@ def test_unknown_worktree_owner_is_excluded(tmp_path: Path, live_worktree: Path)
     assert _lane_api("sweep_leaked_lanes")(tmp_path) == []
 
 
-def test_unsupported_backend_refuses_without_destroy_record(
+def test_unsupported_backend_is_report_only_without_lookup(
     tmp_path: Path,
     audit_key: bytes,
     monkeypatch: pytest.MonkeyPatch,
@@ -1005,10 +1012,13 @@ def test_unsupported_backend_refuses_without_destroy_record(
 
     _record_task(tmp_path, "T-1", "done")
     _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"], backend="custom")
-    monkeypatch.setattr(registry, "get_backend", lambda name: object())
+
+    def refuse_lookup(name):
+        pytest.fail("report-only sandbox must not attach to a backend")
+
+    monkeypatch.setattr(registry, "get_backend", refuse_lookup)
     lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
-    with pytest.raises(SandboxSweepUnavailableError, match="cannot safely attach"):
-        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 0
     assert sweep_leaked_sandboxes(tmp_path)[0].is_leaked
 
 
@@ -1042,7 +1052,7 @@ def test_legacy_gc_accepts_dry_run_alias(tmp_path: Path, audit_key: bytes, live_
     assert _tree(tmp_path) == before
 
 
-def test_sandbox_teardown_failure_stays_open_and_is_journaled(
+def test_sandbox_teardown_is_never_attempted(
     tmp_path: Path,
     audit_key: bytes,
     monkeypatch: pytest.MonkeyPatch,
@@ -1057,16 +1067,13 @@ def test_sandbox_teardown_failure_stays_open_and_is_journaled(
     backend.destroy_leaked_session.side_effect = OSError("teardown failed")
     monkeypatch.setattr(registry, "get_backend", lambda name: backend)
     lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
-    with pytest.raises(OSError, match="teardown failed"):
-        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 0
+    backend.destroy_leaked_session.assert_not_called()
     assert sweep_leaked_sandboxes(tmp_path)[0].is_leaked
-    events = [e for e in _audit(tmp_path, audit_key).query() if e.event_type == "lane.remove"]
-    assert events[-1].details["phase"] == "failed"
-    assert events[-1].details["removed"] is False
-    assert events[-1].details["task_id"] == "T-1"
+    assert not any(e.event_type == "lane.remove" for e in _audit(tmp_path, audit_key).query())
 
 
-def test_removal_operation_binds_verified_sandbox_create(tmp_path: Path, audit_key: bytes) -> None:
+def test_sandbox_create_evidence_is_retained_but_not_bound_to_removal(tmp_path: Path, audit_key: bytes) -> None:
     from dataclasses import replace
 
     _record_task(tmp_path, "T-1", "done")
@@ -1076,10 +1083,10 @@ def test_removal_operation_binds_verified_sandbox_create(tmp_path: Path, audit_k
     assert lane.create_hmac == create.hmac
     changed = replace(lane, create_hmac="different-lifetime")
     operation = _lane_api("lane_removal_operation")
-    assert operation([lane]) != operation([changed])
+    assert operation([lane]) == operation([changed]) == operation([])
 
 
-def test_removal_reuses_verified_sandbox_proposal(
+def test_removal_does_not_invoke_sandbox_proposal(
     tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from unittest.mock import MagicMock
@@ -1099,8 +1106,7 @@ def test_removal_reuses_verified_sandbox_proposal(
         raise SandboxSweepUnavailableError("verified proposal refused")
 
     monkeypatch.setattr(leak_sweep, "prepare_sandbox_removal_proposal", refuse_proposal)
-    with pytest.raises(SandboxSweepUnavailableError, match="verified proposal refused"):
-        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 0
     backend.destroy_leaked_session.assert_not_called()
     assert not any(e.event_type == "lane.remove" for e in _audit(tmp_path, audit_key).query())
 
@@ -1201,7 +1207,7 @@ def test_vanished_worktree_is_controlled_failure(
     def disappear(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return classify(*args, **kwargs) if calls == 1 else []
+        return classify(*args, **kwargs) if calls <= 2 else []
 
     monkeypatch.setattr(classifier, "classify_worktrees", disappear)
     with pytest.raises(RuntimeError, match="worktree disappeared"):
@@ -1211,36 +1217,46 @@ def test_vanished_worktree_is_controlled_failure(
 
 @pytest.mark.parametrize("as_json", [False, True])
 def test_partial_apply_reports_every_lane_and_fails(
-    tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch, as_json: bool
+    tmp_path: Path, audit_key: bytes, dead_worktree: Path, monkeypatch: pytest.MonkeyPatch, as_json: bool
 ) -> None:
+    import subprocess
     from dataclasses import asdict
-    from unittest.mock import MagicMock
 
     from bernstein.cli.commands.worktrees_cmd import worktrees_group
-    from bernstein.core.sandbox import registry
+    from bernstein.core.worktrees import classifier
 
-    _record_task(tmp_path, "T-1", "done")
-    for name in ("first", "second", "third"):
-        _record_create(tmp_path, audit_key, name, task_ids=["T-1"])
+    # Keep partial-apply coverage on the only removable resource: worktrees.
+    for name in ("second", "third"):
+        path = dead_worktree.parent / name
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "worktree", "add", "-b", name, str(path), "main"],
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / f".sdd/runtime/pids/{name}.json").write_text(json.dumps({"task_id": "T-1"}))
     lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    assert len(lanes) == 3
     approval = _removal_approval(lanes)
     approval_path = tmp_path / "approval.json"
     approval_path.write_text(
         json.dumps({"request": asdict(approval.request), "responses": [asdict(r) for r in approval.responses]})
     )
-    backend = MagicMock()
-    backend.destroy_leaked_session.side_effect = [None, OSError("teardown failed")]
-    monkeypatch.setattr(registry, "get_backend", lambda name: backend)
+    reap = classifier.reap_worktree
+    calls = []
+
+    def fail_second(workdir, row):
+        calls.append(row.session_id)
+        if len(calls) == 2:
+            raise OSError("teardown failed")
+        return reap(workdir, row)
+
+    monkeypatch.setattr(classifier, "reap_worktree", fail_second)
     command = ["sweep", "--workdir", str(tmp_path), "--apply", "--removal-approval", str(approval_path)]
     if as_json:
         command.append("--json")
     result = CliRunner().invoke(worktrees_group, command)
     assert result.exit_code == 1, result.output
-    assert backend.destroy_leaked_session.call_count == 2
-    assert [call.args[0] for call in backend.destroy_leaked_session.call_args_list] == [
-        lanes[0].resource_id,
-        lanes[1].resource_id,
-    ]
+    assert calls == [lane.resource_id for lane in lanes[:2]]
     if as_json:
         rows = json.loads(result.stdout)
         assert [row["resource_id"] for row in rows] == [lane.resource_id for lane in lanes]
@@ -1251,8 +1267,8 @@ def test_partial_apply_reports_every_lane_and_fails(
             assert lane.resource_id in result.output
             assert status in result.output
     assert "teardown failed" in result.stderr
-    remaining = {candidate.session.sandbox_session_id for candidate in sweep_leaked_sandboxes(tmp_path)}
-    assert remaining == {lane.resource_id for lane in lanes[1:]}
+    assert not lanes[0].path.exists()
+    assert all(lane.path.exists() for lane in lanes[1:])
 
 
 def test_false_reap_result_is_failure(
@@ -1303,3 +1319,120 @@ def test_unsaved_work_added_after_approval_is_preserved(tmp_path: Path, audit_ke
     (dead_worktree / "only-copy.txt").write_text("save me")
     assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=approval) == 0
     assert (dead_worktree / "only-copy.txt").read_text() == "save me"
+
+
+@pytest.mark.parametrize("group", ["worktrees", "sandbox"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_sandbox_preview_is_report_only(tmp_path: Path, audit_key: bytes, group: str, as_json: bool) -> None:
+    from bernstein.cli.commands.worktrees_cmd import worktrees_group
+
+    _record_task(tmp_path, "T-1", "done")
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    command = worktrees_group if group == "worktrees" else sandbox_group
+    args = ["sweep", "--workdir", str(tmp_path)]
+    if as_json:
+        args.append("--json")
+    result = CliRunner().invoke(command, args)
+    assert result.exit_code == 0, result.output
+    if as_json:
+        (row,) = json.loads(result.output)
+        assert row["removal_status"] == "report_only"
+        assert row["removal_reason"] == "report only (removal: #6571)"
+        assert row["has_unsaved_work"] is None
+    else:
+        assert "report only" in result.output and "#6571" in result.output
+
+
+def test_sandbox_not_in_worktree_removal_digest(tmp_path: Path, audit_key: bytes, dead_worktree: Path) -> None:
+    from dataclasses import replace
+
+    (worktree,) = _lane_api("sweep_leaked_lanes")(tmp_path)
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    sandbox = next(lane for lane in lanes if lane.kind == "sandbox")
+    operation = _lane_api("lane_removal_operation")
+    assert operation(lanes) == operation([worktree])
+    assert operation([sandbox]) == operation([])
+    assert operation([replace(worktree, created_at="different")]) != operation([worktree])
+    assert _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes)) == 1
+    assert not dead_worktree.exists()
+    assert sweep_leaked_sandboxes(tmp_path)[0].is_leaked
+    assert all(
+        event.resource_id != "sbx-1"
+        for event in _audit(tmp_path, audit_key).query()
+        if event.event_type == "lane.remove"
+    )
+
+
+def test_whole_removal_plan_rechecked_under_lock(
+    tmp_path: Path, audit_key: bytes, dead_worktree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+    from dataclasses import replace
+
+    from bernstein.cli.commands import worktrees_cmd
+    from bernstein.core.sandbox import leak_sweep
+
+    (first,) = leak_sweep.sweep_leaked_lanes(tmp_path)
+    second = replace(first, resource_id="second", created_at="second-lifetime")
+    lanes = [first, second]
+    locked = False
+
+    @contextmanager
+    def lock(workdir):
+        nonlocal locked
+        locked = True
+        yield
+
+    def current(*args, **kwargs):
+        assert locked
+        return [first, replace(second, created_at="changed-lifetime")]
+
+    monkeypatch.setattr(worktrees_cmd, "lock_gc", lock)
+    monkeypatch.setattr(leak_sweep, "sweep_leaked_lanes", current)
+    with pytest.raises(RuntimeError, match="plan changed"):
+        worktrees_cmd.remove_leaked_lanes(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    assert dead_worktree.exists()
+    assert not any(event.event_type == "lane.remove" for event in _audit(tmp_path, audit_key).query())
+
+
+@pytest.mark.parametrize("group", ["worktrees", "sandbox"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_apply_leaves_sandbox_report_only(
+    tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch, group: str, as_json: bool
+) -> None:
+    from dataclasses import asdict
+
+    from bernstein.cli.commands.worktrees_cmd import worktrees_group
+    from bernstein.core.sandbox import registry
+
+    _record_task(tmp_path, "T-1", "done")
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    approval = _removal_approval(lanes)
+    approval_path = tmp_path / "approval.json"
+    approval_path.write_text(
+        json.dumps({"request": asdict(approval.request), "responses": [asdict(r) for r in approval.responses]})
+    )
+
+    def refuse_lookup(name):
+        pytest.fail("apply must not attach to a report-only sandbox")
+
+    monkeypatch.setattr(registry, "get_backend", refuse_lookup)
+    command = worktrees_group if group == "worktrees" else sandbox_group
+    args = ["sweep", "--workdir", str(tmp_path), "--apply", "--removal-approval", str(approval_path)]
+    if as_json:
+        args.append("--json")
+    result = CliRunner().invoke(command, args)
+    assert result.exit_code == 0, result.output
+    if as_json:
+        (row,) = json.loads(result.output)
+        assert row["removal_status"] == "report_only"
+        assert row["removal_reason"] == "report only (removal: #6571)"
+    else:
+        assert "report only" in result.output and "#6571" in result.output
+        assert "0 removed" in result.output
+    assert sweep_leaked_sandboxes(tmp_path)[0].is_leaked
+    assert not any(
+        event.event_type in {"lane.remove", SANDBOX_SESSION_DESTROY} for event in _audit(tmp_path, audit_key).query()
+    )
