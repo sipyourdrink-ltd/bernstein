@@ -241,10 +241,30 @@ def test_copr_job_fails_loudly_when_the_secret_is_absent(workflow: dict[str, Any
     assert "exit 0" not in run
 
 
-def test_copr_cli_install_is_version_pinned(workflow: dict[str, Any]) -> None:
-    """An unpinned installer lets an upstream release change what runs here."""
+COPR_CLI_REQUIREMENTS = ".github/requirements/copr-cli-requirements.txt"
+
+
+def _copr_cli_pin() -> str | None:
+    text = (REPO_ROOT / COPR_CLI_REQUIREMENTS).read_text(encoding="utf-8")
+    match = re.search(r"^copr-cli==(\S+)", text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def test_copr_cli_install_is_hash_pinned(workflow: dict[str, Any]) -> None:
+    """An unpinned installer lets an upstream release change what runs here.
+
+    copr-cli and every dependency are installed from a hashed requirements
+    file, so neither a new release nor a replaced file on the index changes
+    what runs in the job that holds the publishing credential.
+    """
     run = _step(workflow, COPR_JOB, "Install rpmbuild and copr-cli")["run"]
-    assert re.search(r"copr-cli==\d+\.\d+", run), "copr-cli must be installed from a pinned version"
+    assert "--require-hashes" in run
+    assert COPR_CLI_REQUIREMENTS in run
+    assert _copr_cli_pin(), f"{COPR_CLI_REQUIREMENTS} must pin copr-cli to one version"
+    text = (REPO_ROOT / COPR_CLI_REQUIREMENTS).read_text(encoding="utf-8")
+    pinned = re.findall(r"^[A-Za-z0-9_.-]+==\S+", text, re.MULTILINE)
+    assert pinned, f"{COPR_CLI_REQUIREMENTS} pins nothing"
+    assert text.count("--hash=sha256:") >= len(pinned), "every pinned requirement needs a hash"
 
 
 def test_copr_job_can_be_replayed_for_an_already_published_tag(workflow: dict[str, Any]) -> None:
@@ -384,11 +404,10 @@ def test_dispatched_inputs_match_the_target_workflow_inputs(workflow: dict[str, 
 COPR_CLI_RELEASES_WITH_UNDECLARED_IMPORTS = frozenset({"2.5"})
 
 
-def test_copr_cli_pin_avoids_releases_with_undeclared_imports(workflow: dict[str, Any]) -> None:
-    run = _step(workflow, COPR_JOB, "Install rpmbuild and copr-cli")["run"]
-    match = re.search(r"copr-cli==(\S+?)\"", run)
-    assert match is not None, "copr-cli must be installed from a pinned version"
-    assert match.group(1) not in COPR_CLI_RELEASES_WITH_UNDECLARED_IMPORTS
+def test_copr_cli_pin_avoids_releases_with_undeclared_imports() -> None:
+    pin = _copr_cli_pin()
+    assert pin is not None, "copr-cli must be installed from a pinned version"
+    assert pin not in COPR_CLI_RELEASES_WITH_UNDECLARED_IMPORTS
 
 
 def test_copr_cli_install_is_proven_to_run_before_the_credential_is_written(
@@ -397,7 +416,7 @@ def test_copr_cli_install_is_proven_to_run_before_the_credential_is_written(
     """Running the CLI once at install time turns an unusable install into an
     install-step failure instead of a failure after the token is on disk."""
     run = _step(workflow, COPR_JOB, "Install rpmbuild and copr-cli")["run"]
-    install_pos = run.find("copr-cli==")
+    install_pos = run.find(COPR_CLI_REQUIREMENTS)
     smoke_pos = run.find("copr-cli --version")
     assert smoke_pos != -1, "the install step must run copr-cli once to prove it imports"
     assert install_pos < smoke_pos
