@@ -37,7 +37,7 @@ from bernstein.core.plugin_policy import (
     load_plugin_policy,
 )
 from bernstein.core.workspace import is_workspace_trusted
-from bernstein.plugins import hookimpl
+from bernstein.plugins import _QualityGate, hookimpl
 from bernstein.plugins.hookspecs import (
     BernsteinSpec,
     ElicitationResponse,
@@ -1284,8 +1284,6 @@ class PluginManager:
         Args:
             config_plugins: List of import-path strings from the config file.
         """
-        from bernstein.core.quality.gate_plugins import GatePlugin
-
         for spec in config_plugins:
             # Use the short name (after the last dot/colon) for policy checks.
             policy_name = spec.rsplit(":", 1)[-1].rsplit(".", 1)[-1] if (":" in spec or "." in spec) else spec
@@ -1300,7 +1298,7 @@ class PluginManager:
                     obj = mod
 
                 plugin = obj() if isinstance(obj, type) else obj
-                if isinstance(plugin, GatePlugin) and not any(
+                if isinstance(plugin, _QualityGate) and not any(
                     self._pm.parse_hookimpl_opts(plugin, attr) is not None for attr in dir(plugin)
                 ):
                     raise ValueError(

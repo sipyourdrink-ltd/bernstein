@@ -6,9 +6,11 @@ import importlib.util
 import inspect
 import logging
 import sys
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
+
+from bernstein.plugins import _QualityGate
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,13 +20,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GatePlugin(ABC):
+class GatePlugin(_QualityGate):
     """Base class for user-defined quality gates."""
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Unique gate name."""
 
     @property
     def required(self) -> bool:
