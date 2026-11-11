@@ -16,14 +16,20 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.defaults import TOKEN
 from bernstein.core.tokens.prompt_precheck import (
     estimate_prompt_tokens,
     resolve_context_limit,
 )
+from bernstein.core.tokens.token_counter import count_tokens_via_estimation
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +75,40 @@ def get_spawn_prompt_budget(session_id: str) -> SpawnPromptBudgetResult | None:
     empty or the check was skipped).
     """
     return _budget_results.get(session_id)
+
+
+@dataclass(frozen=True)
+class _InjectedToolDefinitionCount:
+    total_tokens: int | None
+    per_server_tokens: dict[str, int | None]
+
+
+def _count_injected_tool_definitions(
+    definitions_by_server: Mapping[str, Sequence[Mapping[str, Any]] | None],
+    *,
+    counter: Callable[[str], int] | None = None,
+) -> _InjectedToolDefinitionCount:
+    """Count full definitions locally; absent discovery makes the total unknown.
+
+    Each tool is compact, key-sorted JSON with Unicode preserved. A supplied
+    synchronous counter receives that JSON; otherwise use the JSON byte estimate.
+    Empty lists cost zero. No API/model counting cascade is used.
+    """
+    per_server: dict[str, int | None] = {}
+    for server, definitions in definitions_by_server.items():
+        if definitions is None:
+            per_server[server] = None
+            continue
+        tokens = 0
+        for definition in definitions:
+            canonical = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            tokens += (
+                counter(canonical) if counter is not None else count_tokens_via_estimation(canonical, file_type="json")
+            )
+        per_server[server] = tokens
+    known_counts = [value for value in per_server.values() if value is not None]
+    total = sum(known_counts) if len(known_counts) == len(per_server) else None
+    return _InjectedToolDefinitionCount(total, per_server)
 
 
 def check_spawn_prompt_budget(

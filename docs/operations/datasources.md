@@ -286,5 +286,13 @@ cas/                      content-addressed store for the query driver's
                           canonical result bytes)
 ```
 
+Query receipt signer cards are stored at
+`identity/<sha256-of-UTF-8-agent-id>/card.json`, using lowercase hexadecimal
+directory names that are safe on Windows. Verification discovers cards by their
+own `agent_id` and `kid` fields, not directory names, so existing
+`identity/<agent_id>/card.json` layouts remain readable. The public card is
+persisted before sealing a query receipt; a card persistence failure leaves no
+new lineage entry or audit event.
+
 The audit mirror records the connection id, the query/params/content hashes, the
 row count and the truncation flag — never a DSN and never raw query parameters.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import httpx
@@ -14,6 +15,9 @@ from bernstein.core.quality.janitor import evaluate_signal
 from bernstein.core.server import create_app
 from bernstein.core.server.server_models import TaskCreate
 from bernstein.core.tasks.backlog_parser import ParsedBacklogTask
+from bernstein.core.tasks.models import DispatchTier
+from bernstein.core.tasks.task_body import build_task_body
+from bernstein.core.tasks.task_store import TaskStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -94,3 +98,57 @@ def test_backlog_payload_emits_janitor_signals() -> None:
     payload = bt.to_task_payload()
     assert payload["completion_signals"] == [{"type": "path_exists", "value": "x.py"}]
     TaskCreate(**payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", ["local", "edge", "search", "research", "sandbox", "omitted"])
+async def test_dispatch_tier_round_trip(tmp_path: Path, tier: str) -> None:
+    expected = DispatchTier.LOCAL if tier == "omitted" else DispatchTier(tier)
+    body = build_task_body(Task(id="source", title="tier", description="d", role="backend", dispatch_tier=expected))
+    assert body.get("dispatch_tier") == expected.value
+    assert "tier" not in body
+    if tier == "omitted":
+        del body["dispatch_tier"]
+    path = tmp_path / "tasks.jsonl"
+    app = create_app(jsonl_path=path)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://server") as client:
+        response = await client.post("/tasks", json=body)
+        assert response.status_code == 201, response.text
+        data = response.json()
+        assert data["dispatch_tier"] == expected.value
+        assert "tier" not in data
+        task_id = data["id"]
+        assert (await client.get(f"/tasks/{task_id}")).json()["dispatch_tier"] == expected.value
+        for invalid in [None, 1, 1.5, True, [], {}, "unknown", "LOCAL", ""]:
+            rejected = await client.post("/tasks", json={**body, "dispatch_tier": invalid})
+            assert rejected.status_code == 422, rejected.text
+            assert any(error["loc"][-1] == "dispatch_tier" for error in rejected.json()["detail"])
+
+    store = app.state.store
+    assert store.get_task(task_id).dispatch_tier is expected
+    single = await store.create(TaskCreate(**{**body, "title": "single"}))
+    batch, skipped = await store.create_batch([TaskCreate(**{**body, "title": "batch"})])
+    assert skipped == []
+    assert single.dispatch_tier is expected
+    assert batch[0].dispatch_tier is expected
+    original = path.read_bytes()
+    records = [json.loads(line) for line in original.splitlines()]
+    assert all(record["dispatch_tier"] == expected.value for record in records)
+    restarted = TaskStore(path)
+    restarted.replay_jsonl()
+    for task in [store.get_task(task_id), single, batch[0]]:
+        assert restarted.get_task(task.id).dispatch_tier is expected
+    assert path.read_bytes() == original
+
+    legacy = {key: value for key, value in records[0].items() if key != "dispatch_tier"}
+    legacy["id"] = "legacy"
+    with path.open("a") as stream:
+        stream.write(json.dumps(legacy) + "\n")
+        for recorded in ["edge", "research", expected.value]:
+            stream.write(json.dumps({"id": task_id, "dispatch_tier": recorded}) + "\n")
+            stream.write(json.dumps({"id": task_id, "status": "open"}) + "\n")
+            stream.flush()
+            replayed = TaskStore(path)
+            replayed.replay_jsonl()
+            assert replayed.get_task(task_id).dispatch_tier is DispatchTier(recorded)
+            assert replayed.get_task("legacy").dispatch_tier is DispatchTier.LOCAL

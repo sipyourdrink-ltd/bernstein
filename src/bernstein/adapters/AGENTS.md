@@ -18,7 +18,7 @@ One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 
 | `http_429_classifier.py` | Classifies HTTP 429 errors into standing quotas vs. transient rate limits |
 | `canary.py`, `onboarding.py` | Nightly conformance matrix; interactive probe and capability discovery for new agent CLIs |
 | `mock.py` | Mock agent for zero-API-key demos; produces the same completion evidence real agents do (`Modified:` log lines plus a per-fix commit scoped to the mutated file) |
-| `scanner.py`, `scanner_registry.py`, `scanner_conformance.py` | Scanner contract, registry (bandit, checkov, gitleaks, nmap, semgrep, trivy built-ins), and golden-transcript conformance; canonical per-finding hashes |
+| `scanner.py`, `scanner_registry.py`, `scanner_conformance.py` | Scanner contract, registry (bandit, checkov, gitleaks, nmap, osv-scanner, semgrep, trivy built-ins), and golden-transcript conformance; canonical per-finding hashes |
 | `bandit.py`, `nmap.py`, `semgrep.py` | Bandit SARIF normalization and version/configuration provenance (`bandit[sarif]` required); Nmap XML, host policy and port validation; Semgrep SARIF and ruleset digest |
 | `deep_research.py` | Shared machinery for `gpt_researcher.py` and `tongyi_deepresearch.py`: per-agent gateway variables, egress check, standalone runner, digest-checked read-back |
 | `crew_ingest.py`, `directory/`, `digest/` | Ingest of role-and-crew traces as delegation receipts; SCIM directory provisioning; deterministic tool-output digesters |

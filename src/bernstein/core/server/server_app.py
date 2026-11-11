@@ -295,6 +295,7 @@ def task_to_response(task: Task) -> TaskResponse:
         role=task.role,
         tenant_id=task.tenant_id,
         priority=task.priority,
+        dispatch_tier=task.dispatch_tier,
         scope=task.scope.value,
         complexity=task.complexity.value,
         eu_ai_act_risk=task.eu_ai_act_risk,
