@@ -232,6 +232,22 @@ def bench_gate_evasion_baseline(baseline: Path, update: bool, reason: str) -> No
 # ---------------------------------------------------------------------------
 
 
+def _load_trusted_keys(entries: tuple[str, ...]) -> dict[str, bytes]:
+    keys: dict[str, bytes] = {}
+    for entry in entries:
+        fingerprint, sep, key_path = entry.partition("=")
+        if not sep or not fingerprint or not key_path:
+            raise click.ClickException(f"--trusted-key expects FINGERPRINT=PATH, got {entry!r}")
+        pem = Path(key_path)
+        try:
+            keys[fingerprint] = pem.read_bytes()
+        except FileNotFoundError as exc:
+            raise click.ClickException(f"Trusted key file not found: {pem}") from exc
+        except OSError as exc:
+            raise click.ClickException(f"Could not read trusted key file {pem}: {exc}") from exc
+    return keys
+
+
 @bench_group.command(name="run")
 @click.argument("suite")
 @click.option("--out", default="bundle.json", show_default=True, help="Output path for the submission bundle.")
@@ -311,6 +327,13 @@ def bench_gate_evasion_baseline(baseline: Path, update: bool, reason: str) -> No
     help="Path to baseline submission bundle .json for delta scorecard comparison.",
 )
 @click.option(
+    "--trusted-key",
+    "trusted_keys",
+    multiple=True,
+    metavar="FINGERPRINT=PATH",
+    help="A trusted signer fingerprint and its public PEM file for --baseline. Repeatable.",
+)
+@click.option(
     "--regression-threshold",
     # A negative tolerance would invert the gate: a perfect run "regresses".
     type=click.FloatRange(min=0.0),
@@ -346,6 +369,7 @@ def bench_run(
     regression_threshold: float = 0.0,
     repo: str = "",
     head_sha: str = "",
+    trusted_keys: tuple[str, ...] = (),
 ) -> None:
     """Execute a suite and emit a signed submission bundle.
 
@@ -387,6 +411,9 @@ def bench_run(
 
     if baseline and not Path(baseline).is_file():
         raise click.ClickException(f"Baseline bundle not found: {baseline}")
+    if trusted_keys and not baseline:
+        raise click.ClickException("--trusted-key requires --baseline")
+    keys = _load_trusted_keys(trusted_keys)
 
     # A baseline, a repo or a head SHA is a request for the comparison it
     # feeds. Accepting one and producing nothing left an operator reading a
@@ -512,13 +539,14 @@ def bench_run(
                     f"({type(exc).__name__}: {exc}). Result is neutral."
                 )
 
-        verifier = BenchVerifier(suite=suite_obj, adapter=adapter, allow_stub_signature=stub_signer)
+        verifier = BenchVerifier(suite=suite_obj, adapter=adapter, trusted_keys=keys, allow_stub_signature=stub_signer)
         scorecard = evaluate_ci_scorecard(
             bundle=bundle,
             suite=suite_obj,
             baseline_bundle=baseline_bundle,
             verifier=verifier,
             regression_threshold=regression_threshold,
+            trusted_keys=keys,
         )
         if baseline_problem is not None:
             scorecard.summary = baseline_problem
@@ -625,15 +653,7 @@ def bench_verify(
     suite_obj = _get_suite(suite)
 
     adapter = _resolve_adapter(suite_obj)
-    keys: dict[str, bytes] = {}
-    for entry in trusted_keys:
-        fingerprint, sep, key_path = entry.partition("=")
-        if not sep or not fingerprint or not key_path:
-            raise click.ClickException(f"--trusted-key expects FINGERPRINT=PATH, got {entry!r}")
-        pem = Path(key_path)
-        if not pem.exists():
-            raise click.ClickException(f"Trusted key file not found: {pem}")
-        keys[fingerprint] = pem.read_bytes()
+    keys = _load_trusted_keys(trusted_keys)
 
     verifier = BenchVerifier(
         suite=suite_obj,
