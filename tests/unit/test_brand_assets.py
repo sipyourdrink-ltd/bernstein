@@ -28,7 +28,7 @@ PAPER_BG = "#F8F1E7"
 
 # The wordmark paths are hotlinked from PyPI and the website repository -
 # content may change, the paths may not (docs/design/brand.md § The wordmark).
-HOTLINKED = ("logo-dark.svg", "logo-light.svg", "banner-readme.webp")
+HOTLINKED = ("logo-dark.svg", "logo-light.svg", "logo-readme.svg", "banner-readme.webp")
 
 EXPECTED_PNG_SIZES = {
     **{f"bernstein-mark-{s}.png": (s, s) for s in (32, 64, 128, 256, 512, 1024)},
@@ -116,6 +116,21 @@ def test_wordmarks_carry_the_mark_and_outlined_text(name: str) -> None:
     text = (ASSETS / name).read_text(encoding="utf-8")
     assert AMBER in text
     assert "<text" not in text, "the wordmark is outlines, not a <text> element that needs a font"
+
+
+def test_readme_logo_carries_its_own_background() -> None:
+    """GitHub's prefers-color-scheme follows the OS, not the GitHub theme, so the
+    README header is one image whose ink always sits on its own opaque panel."""
+    path = ASSETS / "logo-readme.svg"
+    root = _svg_root(path)
+    text = path.read_text(encoding="utf-8")
+    first = next(child for child in root if child.tag == "{http://www.w3.org/2000/svg}rect")
+    assert first.get("fill") == DARK_BG, "the panel is the first shape and uses the dark token background"
+    assert first.get("rx"), "the panel has rounded corners"
+    assert "<text" not in text and AMBER in text
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "docs/assets/logo-readme.svg" in readme
+    assert "logo-light.svg" not in readme and "prefers-color-scheme" not in readme.split("</div>")[0]
 
 
 def _names_listed_in_guide() -> set[str]:
