@@ -630,6 +630,24 @@ before a listing drives a removal; it rejects such a record. Removing a leaked
 session is left to the backend's own tooling (for example `docker rm`) after
 checking it holds nothing you need.
 
+The separate Python API `prepare_sandbox_removal_proposal(workdir,
+sandbox_session_id, create_hmac=...)` prepares read-only evidence for one
+leaked lifetime. It requires `AuditLog.verify_detailed(include_events=True).ok`
+and projects records from the same immutable segment bytes verified by that
+call, without a second journal read. A damaged chain or unreadable archived
+segment refuses the proposal with its reason.
+Acknowledged tears also refuse preparation: acknowledgement does not
+authenticate records from damaged spans.
+It reuses the listing's lifetime pairing and strict task-log replay, including
+`LANE_FINISHED_STATUSES`, so a reopened task or torn task-log line cannot
+produce a proposal. Excluded, superseded, missing and ambiguous selections
+are refused. Supply the create record's HMAC to distinguish reused session
+ids. The immutable proposal binds that HMAC, backend, sandbox session id,
+agent session id and owning task ids. It makes no backend call, grants no
+removal approval and writes no journal. It describes the state at preparation;
+later removal still needs its own approval and fresh checks. The advisory
+`sandbox leaks` command retains its existing output, cost and exit codes.
+
 ## Observability
 
 Sandbox sessions have these Prometheus metrics. `created_total` and

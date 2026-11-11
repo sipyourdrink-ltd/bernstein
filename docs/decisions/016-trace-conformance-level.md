@@ -25,17 +25,21 @@ install can support.
 
 1. **Conformance is executable, with no privileged path.** A versioned profile
    plus a test corpus states what a conforming producer must emit and what a
-   conforming verifier must reject. `bernstein trace conform` runs the corpus
-   against any implementation and reports pass or fail per requirement. Our
-   own writer is measured against the same corpus as an external one; if our
-   writer fails, the corpus is right and the writer is wrong.
+   conforming verifier must reject. `bernstein audit receipt conform` runs the
+   corpus against any implementation and reports pass or fail per requirement.
+   Our own writer is measured against the same corpus as an external one; if
+   our writer fails, the corpus is right and the writer is wrong.
 
 2. **We claim Level 0 only.** A software-only install exports a TRACE 0.2
    record that passes Level 0. Level 1 requires properties of the deployment
    - a hardware TEE and a verifier-supplied nonce - that a software-only
-   install does not have. The all-zero runtime digest is the honest way to say
-   "no hardware measurement exists", and it is not claimed to be anything
-   else.
+   install does not have. The exported record carries an all-zero
+   `runtime.measurement`, which is not a hardware measurement and is not
+   claimed to be anything else. The specification (see
+   [TRACE trust levels](https://trace.agentrust-io.com/docs/trust-levels/))
+   reserves that value for a producer with no commitment to offer at all and
+   describes a software-only record as carrying a software commitment that a
+   verifier can recompute. Carrying such a commitment is not implemented.
 
 ## Rejected alternative: claim the highest level the format allows
 

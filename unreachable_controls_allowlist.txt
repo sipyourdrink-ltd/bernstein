@@ -207,7 +207,7 @@ src/bernstein/core/security/evidence_envelope.py::envelope_jws_header           
 src/bernstein/core/security/evidence_envelope.py::envelope_signing_input                       # exercised by tests only; no production caller
 src/bernstein/core/security/external_policy_hook.py::CedarHook                                 # exercised by tests only; no production caller
 src/bernstein/core/security/external_policy_hook.py::OPAHook                                   # exercised by tests only; no production caller
-src/bernstein/core/security/external_policy_hook.py::PolicyHookRegistry                        # exercised by tests only; no production caller
+src/bernstein/core/security/external_policy_hook.py::PolicyHookRegistry.first_decisive         # public compatibility helper; spawn admission evaluates every response so later denials and obligations cannot be hidden by an earlier allow
 src/bernstein/core/security/governance.py::BudgetRefused                                       # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/governance.py::check_budget_decision                               # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/grant_precondition.py::DispatchGrantGate                           # exercised by tests only; no production caller

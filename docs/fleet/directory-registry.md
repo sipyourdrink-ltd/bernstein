@@ -38,9 +38,33 @@ $BERNSTEIN_FLEET_ROOT/
 | `name`            | directory basename                 | Must be unique across the fleet root.                                 |
 | `path`            | the instance directory             | Absolute or relative to the instance directory.                       |
 | `task_server_url` | `http://127.0.0.1:8052`            | Base URL of this instance's task server.                              |
+| `workers`         | `[]`                               | Optional worker capability matrix for routing eligibility.             |
 
 A completely empty file is valid and yields an instance named after
 its directory with default values for the rest.
+
+```yaml
+workers:
+  - worker_id: python-local
+    task_types: [standard, fix]
+    dispatch_tiers: [local]
+    capabilities: [python, testing]
+```
+
+Each row requires a nonempty `worker_id`, unique within the instance, and
+nonempty `task_types` and `dispatch_tiers` lists of existing `TaskType` and
+`DispatchTier` values. Optional `capabilities` defaults to `[]`; entries must
+be nonempty, case-sensitive strings. Unknown row fields, wrong types, invalid
+enum values, or duplicate IDs invalidate the entire matrix, even if another
+row matches. The registry collects a `FleetConfigError`, clears routing
+eligibility, and preserves the instance's dashboard registration.
+
+`select_fleet_instance(task, instances)` selects enabled instances where one
+worker matches the task's type, exact dispatch tier and every `requires`
+string. It never combines rows or infers capabilities from dashboard roles.
+The smallest instance name lexicographically wins; no match returns `None`.
+Absent or empty `workers` means dashboard-only participation. Declarations
+grant no permissions, credentials, capacity or spending authority.
 
 ## Disabling an instance
 
