@@ -482,7 +482,9 @@ the durable fix for that is the merge queue (see *Concurrency policy*).
 
 Advisory lanes are kept cheap instead of removed:
 `pr-observability-summary` runs only on PRs labelled `deep-review`,
-`dependabot-auto-merge` gates its only job on the Dependabot user id,
+`dependabot-auto-merge` gates its only job on the Dependabot user id
+and never arms a Draft (its `ready_for_review` event brings the update
+back through the same gates),
 `pr-policy` and `pr-labels` are consolidated single-job lanes, and the
 vulture / refurb / perflint jobs run weekly rather than per PR.
 

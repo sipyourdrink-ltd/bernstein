@@ -33,6 +33,7 @@ from bernstein.core.persistence.store import BaseTaskStore, RoleSummary, StatusS
 from bernstein.core.tasks.models import (
     CompletionSignal,
     Complexity,
+    DispatchTier,
     RiskAssessment,
     RollbackPlan,
     Scope,
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     estimated_minutes INTEGER     NOT NULL DEFAULT 30,
     status            TEXT        NOT NULL DEFAULT 'open',
     task_type         TEXT        NOT NULL DEFAULT 'standard',
+    dispatch_tier     TEXT        NOT NULL DEFAULT 'local',
     upgrade_details   JSONB,
     depends_on        TEXT[]      NOT NULL DEFAULT '{}',
     owned_files       TEXT[]      NOT NULL DEFAULT '{}',
@@ -106,6 +108,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 -- land in the default tenant - the only interpretation available.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by_session TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS dispatch_tier TEXT NOT NULL DEFAULT 'local';
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status        ON tasks (status);
 CREATE INDEX IF NOT EXISTS idx_tasks_role_status   ON tasks (role, status);
@@ -285,6 +288,7 @@ def _row_to_task(row: Any) -> Task:
         estimated_minutes=raw["estimated_minutes"],
         status=TaskStatus(raw["status"]),
         task_type=TaskType(raw["task_type"]),
+        dispatch_tier=DispatchTier(raw.get("dispatch_tier", "local")),
         upgrade_details=upgrade_details,
         depends_on=list(raw.get("depends_on") or []),
         owned_files=list(raw.get("owned_files") or []),
@@ -399,6 +403,7 @@ class PostgresTaskStore(BaseTaskStore):
             json.dumps(task.progress_log),  # type: ignore[reportUnknownMemberType]
             task.version,
             normalize_tenant_id(task.tenant_id),
+            task.dispatch_tier.value,
         )
 
     # -- task mutations ------------------------------------------------------
@@ -433,6 +438,7 @@ class PostgresTaskStore(BaseTaskStore):
             owned_files=req.owned_files,
             cell_id=req.cell_id,
             task_type=TaskType(req.task_type),
+            dispatch_tier=DispatchTier(getattr(req, "dispatch_tier", DispatchTier.LOCAL)),
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
             effort=req.effort,
@@ -461,10 +467,10 @@ class PostgresTaskStore(BaseTaskStore):
                     estimated_minutes, status, task_type, upgrade_details,
                     depends_on, owned_files, assigned_agent, result_summary,
                     cell_id, model, effort, completion_signals,
-                    created_at, progress_log, version, tenant_id
+                    created_at, progress_log, version, tenant_id, dispatch_tier
                 ) VALUES (
                     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                    $16,$17,$18,$19,$20,$21,$22,$23
+                    $16,$17,$18,$19,$20,$21,$22,$23,$24
                 )
                 """,
                 *self._task_params(task),

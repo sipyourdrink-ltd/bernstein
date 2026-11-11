@@ -285,7 +285,7 @@ async def call_llm(
         )
 
     # API-based providers go through the OpenAI-compatible client.
-    _API_PROVIDERS = {"openrouter", "openrouter_free", "oxen", "together", "g4f"}
+    _API_PROVIDERS = {"openrouter", "openrouter_free", "oxen", "together", "g4f", "openai"}
 
     if provider in _API_PROVIDERS:
         result = await _call_api_provider(prompt, model, provider, max_tokens=max_tokens, temperature=temperature)

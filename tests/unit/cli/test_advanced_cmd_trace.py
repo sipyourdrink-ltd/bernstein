@@ -37,11 +37,22 @@ def create_mock_run_journal(base_path: Path, run_id: str = "test-run-123", *, wi
 def test_trace_export_needs_trace_extra() -> None:
     """``bernstein trace export`` should require the trace extra."""
     runner = CliRunner()
-    with runner.isolated_filesystem():
+    with runner.isolated_filesystem(), patch.dict("sys.modules", {"agentrust_trace": None}):
         result = runner.invoke(trace_cmd, ["export", "test-run-123"])
     # The trace extra gate always runs first
     assert result.exit_code == 1, result.output
     assert "The trace extra is required" in result.output
+
+
+def test_trace_export_checks_run_after_trace_extra_is_available() -> None:
+    """An available extra reaches run lookup, independent of local installs."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(), patch.dict("sys.modules", {"agentrust_trace": MagicMock()}):
+        result = runner.invoke(trace_cmd, ["export", "test-run-123"])
+
+    assert result.exit_code == 1, result.output
+    assert "No such run: test-run-123" in result.output
+    assert "The trace extra is required" not in result.output
 
 
 def test_trace_export_projection_no_journal_events() -> None:
