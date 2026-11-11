@@ -124,6 +124,17 @@ def test_tampered_install_baseline_stays_neutral_after_hash_recomputation(baseli
     assert "does not verify" in scorecard.summary
 
 
+def test_malformed_serialized_signer_fingerprint_stays_neutral(baseline: SignedBaseline) -> None:
+    raw = {**baseline.bundle.to_dict(), "signer_fingerprint": ["malformed"]}
+    malformed = SubmissionBundle.from_dict(raw)
+
+    scorecard = evaluate_ci_scorecard(baseline.bundle, baseline.suite, malformed, baseline.verifier)
+
+    assert scorecard.conclusion == "neutral"
+    assert scorecard.pass_rate_delta is None
+    assert "signature verification raised TypeError" in scorecard.summary
+
+
 def test_malformed_install_signature_stays_neutral(baseline: SignedBaseline) -> None:
     malformed = replace(baseline.bundle, signature="not-a-detached-jws")
     scorecard = evaluate_ci_scorecard(

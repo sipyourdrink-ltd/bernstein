@@ -90,7 +90,10 @@ def _baseline_signature_problem(
             "Baseline bundle's stub signature does not verify against its hash; the bundle was altered after signing."
         )
     if baseline_bundle.signer_fingerprint != StubSigner.fingerprint():
-        return verify_signature(baseline_bundle, trusted_keys) or None
+        try:
+            return verify_signature(baseline_bundle, trusted_keys) or None
+        except Exception as exc:
+            return f"Baseline signature verification raised {type(exc).__name__}: {exc}. Result is neutral."
     return None
 
 
