@@ -794,3 +794,42 @@ def _make_fake_entry_point(name: str, plugin: Any) -> Any:
             return plugin_class  # return the class; manager will instantiate
 
     return _FakeEP()
+
+
+def test_old_quality_gate_config_warns_and_does_not_register(
+    pm: PluginManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    spec = "examples.plugins.quality_gate_plugin:SecurityScanGate"
+    (tmp_path / "bernstein.yaml").write_text(f"plugins:\n  - {spec}\n", encoding="utf-8")
+
+    with patch("bernstein.plugins.manager.entry_points", return_value=[]):
+        with pytest.warns(UserWarning, match=r"GatePlugin.*plugins:.*\.bernstein/gates/.*quality_gates.pipeline"):
+            pm.load_from_workdir(tmp_path)
+
+    assert spec not in pm.registered_names
+    resolution = next(item for item in pm.resolutions if item.declared == spec)
+    assert resolution.loaded is False
+    assert "security_scan_cmd" in resolution.failure
+
+
+def test_config_gate_with_hook_implementation_keeps_its_hook(
+    pm: PluginManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    from examples.plugins import quality_gate_plugin
+
+    calls: list[str] = []
+
+    class HybridGate(quality_gate_plugin.SecurityScanGate):
+        @hookimpl
+        def on_task_completed(self, task_id: str) -> None:
+            calls.append(task_id)
+
+    monkeypatch.setattr(quality_gate_plugin, "HybridGate", HybridGate, raising=False)
+    spec = "examples.plugins.quality_gate_plugin:HybridGate"
+    pm.discover_config_plugins([spec])
+    pm.fire_task_completed(task_id="t-1", role="qa", result_summary="passed")
+
+    assert spec in pm.registered_names
+    assert calls == ["t-1"]

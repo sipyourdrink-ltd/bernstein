@@ -166,7 +166,7 @@ Run automated checks on each task's change. Log results, alert on failure, block
 
 | Plugin | Description | Install |
 |--------|-------------|---------|
-| `SecurityScanGate` | Runs `bandit` (or any configurable command) on every task. A failed scan blocks the task. Records results to `.sdd/metrics/custom_gates.jsonl`. | Copy `examples/plugins/quality_gate_plugin.py` to `.bernstein/gates/`, then add `security_scan_cmd` to `quality_gates.pipeline` |
+| `SecurityScanGate` | Runs `bandit` (or any configurable command) on every task. A failed required scan blocks the task. The runner records results in the project root at `.sdd/runtime/gates/<task_id>.json` and metrics in `.sdd/metrics/quality_gates.jsonl`. | Copy `examples/plugins/quality_gate_plugin.py` to `.bernstein/gates/`, then add `security_scan_cmd` to `quality_gates.pipeline` |
 
 **SecurityScanGate** - configuration:
 
@@ -178,7 +178,7 @@ export BERNSTEIN_SECURITY_CMD="semgrep --config=auto . --quiet"
 export BERNSTEIN_SECURITY_CMD="trivy fs . --exit-code 1 --severity HIGH,CRITICAL"
 ```
 
-**Note**: `SecurityScanGate` is a `GatePlugin`, so a failed scan blocks the task. To record and alert without blocking, return `blocked=False` from `run()` **and** set `required: false` on the `security_scan_cmd` step in `quality_gates.pipeline` in `bernstein.yaml`. Returning `required=False` or overriding the plugin's `required` property alone is not sufficient: the pipeline step controls whether a failed result is required to block.
+**Note**: `SecurityScanGate` returns `blocked=False` so the pipeline controls blocking. Set `required: false` on the `security_scan_cmd` step in `quality_gates.pipeline` for an advisory scan. The runner keeps its reports and metrics outside the temporary agent worktree. When this example is importable, registering it under `plugins:` emits a migration warning; use `.bernstein/gates/` or `bernstein.gates` and the pipeline instead.
 
 ### Community
 

@@ -5,11 +5,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-import pytest
-from bernstein.core.quality.gate_plugins import GatePlugin, GatePluginRegistry
-
 import {{ cookiecutter.gate_name }} as gate_module
+import pytest
 from {{ cookiecutter.gate_name }} import {{ cookiecutter.gate_class }}, {{ cookiecutter.gate_class }}Config
+
+from bernstein.core.quality.gate_plugins import GatePlugin, GatePluginRegistry
 
 
 def _run(gate: {{ cookiecutter.gate_class }}, run_dir: Path):
@@ -60,12 +60,12 @@ class Test{{ cookiecutter.gate_class }}:
         assert result.status == "pass"
         assert result.blocked is False
 
-    def test_gate_fail_blocks(self, tmp_path: Path) -> None:
+    def test_gate_fail_leaves_blocking_to_runner(self, tmp_path: Path) -> None:
         # TODO: Replace the fixed findings with a real failing scenario
         result = _run(Fixed{{ cookiecutter.gate_class }}(errors=1, warnings=0), tmp_path)
 
         assert result.status == "fail"
-        assert result.blocked is True
+        assert result.blocked is False
         assert result.required is True
 
     def test_gate_threshold(self, tmp_path: Path) -> None:
@@ -76,16 +76,16 @@ class Test{{ cookiecutter.gate_class }}:
 
         assert within.status == "pass"
         assert above.status == "fail"
-        assert above.blocked is True
+        assert above.blocked is False
 
     def test_warnings_fail_only_when_configured(self, tmp_path: Path) -> None:
         lenient = Fixed{{ cookiecutter.gate_class }}(errors=0, warnings=2)
-        strict = Fixed{{ cookiecutter.gate_class }}(
-            errors=0, warnings=2, config={{ cookiecutter.gate_class }}Config(fail_on="warning")
-        )
+        config = {{ cookiecutter.gate_class }}Config(fail_on="warning")
+        strict = Fixed{{ cookiecutter.gate_class }}(errors=0, warnings=2, config=config)
 
         assert _run(lenient, tmp_path).status == "pass"
-        assert _run(strict, tmp_path).blocked is True
+        assert _run(strict, tmp_path).status == "fail"
+        assert _run(strict, tmp_path).blocked is False
 
     def test_scan_error_propagates_to_runner(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="tool crashed"):
