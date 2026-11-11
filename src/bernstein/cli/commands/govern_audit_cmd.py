@@ -11,6 +11,7 @@ import json
 from inspect import signature
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, unquote, urlsplit
 
 import click
 from rich.table import Table
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
 EXIT_OK = 0
 EXIT_FAILED = 1
-EXIT_NOT_MEASURABLE = 2
+EXIT_NOT_MEASURABLE = 3
 
 
 def _finding_kind(finding: Finding) -> str:
@@ -41,17 +42,15 @@ def _finding_kind(finding: Finding) -> str:
 
 
 def _measured_failure(finding: Finding) -> bool:
-    return finding.verdict == Verdict.FAIL or (finding.verdict == Verdict.MEASURED and finding.passed is False)
+    return finding.verdict == Verdict.FAIL or (finding.verdict == Verdict.MEASURED and finding.passed is not True)
 
 
-def _exit_code(findings: list[Finding], *, strict: bool) -> int:
-    """All selected checks are required; declarations do not affect the gate."""
-    if not findings:
+def _exit_code(findings: list[Finding], *, strict: bool, execution_failed: bool = False) -> int:
+    """Preserve main's fail-closed gate; distinguish strict incompleteness."""
+    if not findings or execution_failed or any(_measured_failure(f) for f in findings):
         return EXIT_FAILED
-    if strict and any(f.verdict == Verdict.NOT_MEASURABLE for f in findings):
-        return EXIT_NOT_MEASURABLE
-    if any(_measured_failure(f) for f in findings):
-        return EXIT_FAILED
+    if any(f.verdict == Verdict.NOT_MEASURABLE for f in findings):
+        return EXIT_NOT_MEASURABLE if strict else EXIT_FAILED
     return EXIT_OK
 
 
@@ -60,23 +59,79 @@ def _finding_dict(finding: Finding) -> dict[str, Any]:
     return finding.to_dict()
 
 
-def _sarif(findings: list[Finding]) -> dict[str, Any]:
-    """Keep audit verdicts in a property bag, separate from SARIF result kinds."""
+def _sarif_location(finding: Finding, root: Path) -> dict[str, Any]:
+    """Use reported files; workspace-only evidence points to its root config."""
+    for evidence in finding.evidence:
+        locator = evidence.locator
+        # These producers prefix the evaluated workspace path with a check name.
+        for prefix in ("doctor:compliance:", "compliance:encryption_at_rest:"):
+            if locator.startswith(prefix):
+                locator = locator.removeprefix(prefix)
+                break
+        parsed = urlsplit(locator)
+        if parsed.scheme == "file" and parsed.netloc in ("", "localhost"):
+            path = Path(unquote(parsed.path))
+        elif not parsed.scheme:
+            path = Path(locator)
+        else:
+            continue
+        path = (root / path).resolve()
+        if path.is_dir() or not (path.is_file() or path.suffix):
+            continue
+        break
+    else:
+        # A missing configuration is itself a useful diagnostic at this path.
+        path = next(
+            (root / name for name in ("bernstein.yaml", "bernstein.yml") if (root / name).is_file()),
+            root / "bernstein.yaml",
+        )
+    try:
+        uri = quote(path.relative_to(root).as_posix(), safe="/")
+    except ValueError:
+        uri = path.as_uri()
+    return {"physicalLocation": {"artifactLocation": {"uri": uri}}}
+
+
+def _sarif(findings: list[Finding], root: Path) -> dict[str, Any]:
+    """Describe checks and locations without counting passing checks as issues."""
+    rules = [
+        {"id": check_id, "shortDescription": {"text": check_id}} for check_id in dict.fromkeys(f.id for f in findings)
+    ]
+    rule_indices = {rule["id"]: index for index, rule in enumerate(rules)}
+    results = []
+    for finding in findings:
+        if _measured_failure(finding):
+            kind, level = "fail", "error"
+        elif finding.verdict == Verdict.NOT_MEASURABLE:
+            kind, level = "review", "warning"
+        elif finding.verdict == Verdict.DECLARED:
+            kind, level = "informational", "none"
+        else:
+            kind, level = "pass", "none"
+        results.append(
+            {
+                "ruleId": finding.id,
+                "ruleIndex": rule_indices[finding.id],
+                "kind": kind,
+                "level": level,
+                "message": {"text": finding.summary or finding.message or finding.reason or finding.id},
+                "locations": [_sarif_location(finding, root)],
+                "properties": {**_finding_dict(finding), "kind": _finding_kind(finding)},
+            }
+        )
     return {
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
         "version": "2.1.0",
         "runs": [
             {
-                "tool": {"driver": {"name": "bernstein govern audit"}},
-                "results": [
-                    {
-                        "ruleId": f.id,
-                        "level": "error" if _measured_failure(f) else "note",
-                        "message": {"text": f.summary or f.message or f.reason or f.id},
-                        "properties": {**_finding_dict(f), "kind": _finding_kind(f)},
+                "tool": {
+                    "driver": {
+                        "name": "bernstein govern audit",
+                        "informationUri": "https://github.com/sipyourdrink-ltd/bernstein",
+                        "rules": rules,
                     }
-                    for f in findings
-                ],
+                },
+                "results": results,
             }
         ],
     }
@@ -232,7 +287,7 @@ def _record_sentinel_run(root: Path, findings: list[Finding]) -> None:
     show_default=True,
     help="Output format (SARIF 2.1.0 for code scanning).",
 )
-@click.option("--strict", is_flag=True, help="Exit 2 if any selected check is not measurable.")
+@click.option("--strict", is_flag=True, help="Exit 3 for unmeasurable checks unless a check fails or crashes (exit 1).")
 @click.option("--quiet", is_flag=True, help="Print nothing; report the result only through the exit code.")
 @click.option(
     "--json",
@@ -262,15 +317,20 @@ def govern_audit_cmd(
 
     Exit codes:
       0: Selected measured checks passed; declared findings never affect the code.
-      1: A selected measured check failed, or no checks were selected.
-      2: A selected check is not measurable and --strict is set (takes precedence).
+      1: A check failed/crashed, no checks matched, or not_measurable without --strict.
+      2: Invalid command-line arguments (Click usage error).
+      3: A check is not measurable with --strict and no check failed or crashed.
 
-    All selected checks are required. Without --strict, not_measurable findings
-    are reported but do not change the exit code.
+    All selected checks are required. Failures and crashes take precedence over
+    strict incompleteness. Unexpected tool errors also fail closed with code 1.
     """
     reg = DEFAULT_REGISTRY if registry is None else registry
     populate_default_checks(reg)
     populate_installation_checks(reg)
+    if as_json and output_format == "sarif":
+        raise click.UsageError("--json/--json-output cannot be combined with --format sarif")
+    if list_checks and output_format == "sarif":
+        raise click.UsageError("--list does not support --format sarif")
     if as_json:
         output_format = "json"
 
@@ -312,15 +372,22 @@ def govern_audit_cmd(
             f"Sentinel active: {AuditSentinelCheck.env_var}=1 ({AuditSentinelCheck.check_id}); synthetic failure.",
             err=True,
         )
-    findings = reg.run_all(workdir=root, only_areas=only_areas, skip_ids=skip_ids)
+    execution_errors: list[str] = []
+    findings = reg.run_all(
+        workdir=root,
+        only_areas=only_areas,
+        skip_ids=skip_ids,
+        on_error=execution_errors.append,
+        log_errors=not quiet,
+    )
     _record_sentinel_run(root, findings)
-    exit_code = _exit_code(findings, strict=strict)
+    exit_code = _exit_code(findings, strict=strict, execution_failed=bool(execution_errors))
 
     if quiet:
         raise SystemExit(exit_code)
 
     if output_format in ("json", "sarif"):
-        report = _sarif(findings) if output_format == "sarif" else [_finding_dict(f) for f in findings]
+        report = _sarif(findings, root) if output_format == "sarif" else [_finding_dict(f) for f in findings]
         click.echo(json.dumps(report, indent=2))
         raise SystemExit(exit_code)
 

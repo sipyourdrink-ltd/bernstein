@@ -178,7 +178,7 @@ Ein Run-Receipt bindet den Journal-Head, den Lineage-Head (sofern Einträge gesc
 
 Dieselbe Prüfbarkeit gilt für Evaluierungsmetriken. `bernstein bench run <suite> --reliability k` (auch `bernstein eval --reliability k`) führt jede Aufgabe `k`-mal unter fester Koordination aus und berichtet die Untergrenze `pass^k` (alle `k` Versuche müssen bestehen) neben der Obergrenze `pass@1`. Dieses Ergebnis wird in einem signierten Beleg versiegelt, den `bernstein bench reliability-verify` offline nachrechnet, sodass fingierte Werte die Verifikation nicht bestehen. Details: [pass^k Zuverlässigkeits-Untergrenze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Verwende `bernstein govern audit --format json` oder `--format sarif` für maschinenlesbare Prüfergebnisse und `--strict --quiet` als Freigabekriterium in der CI. Siehe [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Verwenden Sie `bernstein govern audit --format json` oder `--format sarif` für maschinenlesbare Prüfergebnisse und `--strict --quiet` als Freigabekriterium in der CI. Siehe [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
 
 ### wie es funktioniert
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

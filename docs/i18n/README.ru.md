@@ -178,7 +178,7 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 
 Та же проверяемость распространяется на цифры оценки. `bernstein bench run <suite> --reliability k` (то же самое пишется как `bernstein eval --reliability k`) прогоняет каждую задачу `k` раз при фиксированной координации и выдаёт нижнюю границу `pass^k` (должны пройти все `k` попыток) рядом с потолком `pass@1`. Результат запечатан в подписанной квитанции, которую `bernstein bench reliability-verify` пересчитывает офлайн, так что выдуманная нижняя граница проверку не проходит. Подробности: [нижняя граница надёжности pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
-Для машиночитаемых результатов проверок используйте `bernstein govern audit --format json` или `--format sarif`, а для проверки в CI — `--strict --quiet`. Подробнее: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
+Для машиночитаемых результатов проверок используй `bernstein govern audit --format json` или `--format sarif`, а для проверки в CI — `--strict --quiet`. Подробнее: [govern audit](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/governance.md#govern-audit-machine-readable-output-and-ci-gates).
 
 ### как это работает
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

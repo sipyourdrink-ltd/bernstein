@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from jsonschema import Draft7Validator, FormatChecker, ValidationError
 
 from bernstein.cli.commands import govern_audit_cmd as audit
 from bernstein.core.checks.contract import Evidence, Finding, Verdict
@@ -58,8 +60,10 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> CheckRegistry:
         (Verdict.MEASURED, True, True, 0),
         (Verdict.MEASURED, False, False, 1),
         (Verdict.MEASURED, False, True, 1),
-        (Verdict.NOT_MEASURABLE, None, False, 0),
-        (Verdict.NOT_MEASURABLE, None, True, 2),
+        (Verdict.MEASURED, None, False, 1),
+        (Verdict.MEASURED, None, True, 1),
+        (Verdict.NOT_MEASURABLE, None, False, 1),
+        (Verdict.NOT_MEASURABLE, None, True, 3),
         (Verdict.DECLARED, None, False, 0),
         (Verdict.DECLARED, False, True, 0),
         (Verdict.DECLARED, True, True, 0),
@@ -79,7 +83,7 @@ def test_exit_truth_table(registry, verdict, passed, strict, expected, output_fo
     assert result.exit_code == expected, result.output
 
 
-def test_strict_incomplete_takes_precedence_over_failure(registry: CheckRegistry) -> None:
+def test_failure_takes_precedence_over_strict_incomplete(registry: CheckRegistry) -> None:
     registry.clear()
     for index, (verdict, passed) in enumerate(
         [(Verdict.MEASURED, False), (Verdict.NOT_MEASURABLE, None), (Verdict.DECLARED, None)]
@@ -87,7 +91,7 @@ def test_strict_incomplete_takes_precedence_over_failure(registry: CheckRegistry
         registry.register(FixtureCheck(_finding(index, verdict, passed)))
     result = CliRunner().invoke(audit.govern_audit_cmd, ["--strict"])
     assert "No such option" not in result.output
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 1, result.output
 
 
 def test_json_preserves_every_contract_field(registry: CheckRegistry) -> None:
@@ -116,7 +120,7 @@ def test_sarif_carries_finding_ids_and_three_state_kind(registry, measured_verdi
     for finding in findings:
         registry.register(FixtureCheck(finding))
     result = CliRunner().invoke(audit.govern_audit_cmd, ["--format", "sarif"])
-    assert result.exit_code == (1 if measured_verdict == Verdict.FAIL else 0), result.output
+    assert result.exit_code == 1, result.output
     payload = json.loads(result.output)
     assert payload["version"] == "2.1.0"
     assert payload["$schema"].endswith("sarif-schema-2.1.0.json")
@@ -139,7 +143,7 @@ def test_sarif_carries_finding_ids_and_three_state_kind(registry, measured_verdi
     [
         (Verdict.MEASURED, True, 0),
         (Verdict.MEASURED, False, 1),
-        (Verdict.NOT_MEASURABLE, None, 2),
+        (Verdict.NOT_MEASURABLE, None, 3),
     ],
 )
 def test_quiet_prints_nothing(registry, output_format, verdict, passed, expected) -> None:
@@ -161,3 +165,169 @@ def test_quiet_empty_selection_prints_nothing(registry: CheckRegistry) -> None:
     result = CliRunner().invoke(audit.govern_audit_cmd, ["--only", "absent", "--quiet"])
     assert result.output == ""
     assert result.exit_code == 1
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("quiet", [False, True])
+@pytest.mark.parametrize("output_format", ["text", "json", "sarif"])
+def test_crashing_check_fails_closed_and_quiet_suppresses_warning(
+    registry: CheckRegistry, caplog: pytest.LogCaptureFixture, strict: bool, quiet: bool, output_format: str
+) -> None:
+    class CrashingCheck:
+        check_id = "fixture:crash"
+
+        def run(self, workdir: Path | None = None) -> Finding:
+            handler.setStream(sys.stderr)
+            raise RuntimeError("fixture crash")
+
+    registry.register(CrashingCheck())
+    args = ["--format", output_format]
+    if strict:
+        args.append("--strict")
+    if quiet:
+        args.append("--quiet")
+    # A real stderr handler catches warnings even when pytest captures logging.
+    import sys
+
+    handler = logging.StreamHandler(sys.stderr)
+    logger = logging.getLogger("bernstein.core.checks.registry")
+    logger.addHandler(handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            result = CliRunner().invoke(audit.govern_audit_cmd, args)
+    finally:
+        logger.removeHandler(handler)
+    assert result.exit_code == 1, result.output
+    if quiet:
+        assert result.stdout == result.stderr == ""
+        assert "fixture crash" not in caplog.text
+    else:
+        assert "fixture crash" in caplog.text
+        assert "fixture crash" in result.stderr
+    if output_format == "json" and not quiet:
+        rows = json.loads(result.stdout)
+        assert len(rows) == 4
+        assert rows[-1]["reason"] == "RuntimeError"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--format", "xml"],
+        ["--unknown"],
+        ["--workdir", "/path/that/does/not/exist"],
+        ["--json", "--format", "sarif"],
+        ["--json-output", "--format", "sarif"],
+        ["--list", "--format", "sarif"],
+    ],
+)
+def test_usage_errors_are_distinct_from_strict_incomplete(registry: CheckRegistry, args: list[str]) -> None:
+    from bernstein.cli.main import cli
+
+    result = CliRunner().invoke(cli, ["govern", "audit", *args])
+    assert result.exit_code == 2, result.output
+    assert "Error:" in result.stderr
+
+
+def test_registry_reports_invalid_return_as_execution_error(registry: CheckRegistry) -> None:
+    class InvalidCheck:
+        check_id = "fixture:invalid"
+
+        def run(self, workdir: Path | None = None) -> Finding:
+            return {}  # type: ignore[return-value]
+
+    registry.register(InvalidCheck())
+    result = CliRunner().invoke(audit.govern_audit_cmd, ["--strict", "--quiet"])
+    assert result.exit_code == 1
+    assert result.stdout == result.stderr == ""
+
+
+def _validate_sarif(payload: dict) -> None:
+    schema_path = Path(__file__).parents[2] / "fixtures/sarif/govern-audit-2.1.0.schema.json"
+    schema = json.loads(schema_path.read_text())
+    Draft7Validator.check_schema(schema)
+    Draft7Validator(schema, format_checker=FormatChecker()).validate(payload)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_sarif_validates_offline_and_links_rules_and_locations(
+    registry: CheckRegistry, tmp_path: Path, empty: bool
+) -> None:
+    registry.clear()
+    if not empty:
+        for index, verdict in enumerate(Verdict):
+            registry.register(FixtureCheck(_finding(index, verdict, False if verdict == Verdict.MEASURED else None)))
+    result = CliRunner().invoke(audit.govern_audit_cmd, ["--format", "sarif", "-w", str(tmp_path)])
+    payload = json.loads(result.stdout)
+    _validate_sarif(payload)
+    run = payload["runs"][0]
+    rules = run["tool"]["driver"]["rules"]
+    assert len(rules) == len(list(Verdict)) if not empty else len(rules) == 0
+    for row in run["results"]:
+        assert rules[row["ruleIndex"]]["id"] == row["ruleId"]
+        assert row["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "bernstein.yaml"
+        verdict = row["properties"]["verdict"]
+        if verdict == "pass":
+            assert (row["kind"], row["level"]) == ("pass", "none")
+        elif verdict == "not_measurable":
+            assert (row["kind"], row["level"]) == ("review", "warning")
+        elif verdict in ("fail", "measured"):
+            assert (row["kind"], row["level"]) == ("fail", "error")
+        elif verdict == "declared":
+            assert (row["kind"], row["level"]) == ("informational", "none")
+
+
+@pytest.mark.parametrize("broken", ["missing_location", "invalid_level", "missing_rules", "invalid_message"])
+def test_offline_sarif_validation_rejects_invalid_output(registry: CheckRegistry, broken: str) -> None:
+    result = CliRunner().invoke(audit.govern_audit_cmd, ["--format", "sarif"])
+    payload = json.loads(result.stdout)
+    run = payload["runs"][0]
+    if broken == "missing_location":
+        run["results"][0]["locations"] = []
+    elif broken == "invalid_level":
+        run["results"][0]["level"] = "critical"
+    elif broken == "missing_rules":
+        del run["tool"]["driver"]["rules"]
+    else:
+        run["results"][0]["message"] = {}
+    with pytest.raises(ValidationError):
+        _validate_sarif(payload)
+
+
+@pytest.mark.parametrize("locator_kind", ["relative", "absolute", "uri", "opaque", "workspace", "outside"])
+def test_sarif_uses_reported_file_or_evaluated_config(
+    registry: CheckRegistry, tmp_path: Path, locator_kind: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "bernstein.yml").write_text("{}")
+    file = root / "src" / "a file.py"
+    file.parent.mkdir()
+    file.write_text("# Evidence\n")
+    outside = tmp_path / "outside.py"
+    outside.write_text("# External evidence\n")
+    locators = {
+        "relative": "src/a file.py",
+        "absolute": str(file),
+        "uri": file.as_uri(),
+        "opaque": "env://SETTING",
+        "workspace": f"doctor:compliance:{root}",
+        "outside": str(outside),
+    }
+    finding = Finding(
+        check_id="fixture:location",
+        verdict=Verdict.FAIL,
+        evidence=(Evidence(locator=locators[locator_kind], sha256="a" * 64),),
+    )
+    registry.clear()
+    registry.register(FixtureCheck(finding))
+    result = CliRunner().invoke(audit.govern_audit_cmd, ["--format", "sarif", "-w", str(root)])
+    payload = json.loads(result.stdout)
+    _validate_sarif(payload)
+    uri = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    if locator_kind in ("opaque", "workspace"):
+        assert uri == "bernstein.yml"
+    elif locator_kind == "outside":
+        assert uri == outside.as_uri()
+    else:
+        assert uri == "src/a%20file.py"

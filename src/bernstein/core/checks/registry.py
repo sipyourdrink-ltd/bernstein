@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from bernstein.core.checks.contract import Finding, Verdict
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
     from bernstein.core.checks.contract import Check
@@ -120,12 +120,17 @@ class CheckRegistry:
         workdir: Path | None = None,
         only_areas: Sequence[str] | None = None,
         skip_ids: Sequence[str] | None = None,
+        *,
+        on_error: Callable[[str], None] | None = None,
+        log_errors: bool = True,
     ) -> list[Finding]:
         """Execute registered checks against *workdir* with optional filtering.
 
         Catches exceptions raised by individual checks, recording them as
         ``not_measurable`` findings with the exception class name as reason,
-        and proceeds to execute all remaining checks.
+        and proceeds to execute all remaining checks. ``on_error`` receives
+        each crashed check ID so callers can distinguish execution errors from
+        expected missing prerequisites. ``log_errors=False`` silences warnings.
         """
         findings: list[Finding] = []
         for check in self.iter_checks(only_areas=only_areas, skip_ids=skip_ids):
@@ -136,12 +141,15 @@ class CheckRegistry:
                         f"Check '{check.check_id}' run() returned {type(finding).__name__}, expected Finding"
                     )
             except Exception as exc:
-                logger.warning(
-                    "Check '%s' raised %s: %s; reporting as not_measurable",
-                    check.check_id,
-                    exc.__class__.__name__,
-                    exc,
-                )
+                if on_error is not None:
+                    on_error(check.check_id)
+                if log_errors:
+                    logger.warning(
+                        "Check '%s' raised %s: %s; reporting as not_measurable",
+                        check.check_id,
+                        exc.__class__.__name__,
+                        exc,
+                    )
                 finding = Finding(
                     check_id=check.check_id,
                     verdict=Verdict.NOT_MEASURABLE,

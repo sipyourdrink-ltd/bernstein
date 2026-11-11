@@ -203,25 +203,46 @@ including every `Finding` field and its `id` alias: `check_id`, `verdict`,
 `evidence` (locator and SHA-256 pairs), `what_would_make_it_measurable`, `reason`,
 `message`, `summary`, `remediation`, `area`, and `passed`.
 The existing `--json` and `--json-output` flags remain aliases for JSON output
-and take precedence over `--format` when combined. `doctor --json` uses the
+and may be combined with `--format json` or the default text format.
+Combining either alias with `--format sarif`, or using `--list --format sarif`,
+is a usage error. `doctor --json` uses the
 same complete finding objects in its `findings` array.
 
-SARIF 2.1.0 includes one result per finding, with `ruleId = finding.id` and
-the complete finding in `properties`. `properties.kind` carries `measured`,
-`declared`, or `not_measurable`; legacy `pass`/`fail` verdicts map to `measured`
-there, while the original verdict and `passed` remain available.
+SARIF 2.1.0 includes one rule per check ID and one result per finding, with
+`ruleId = finding.id`, a matching `ruleIndex`, and the complete finding in
+`properties`. Each result has a physical location: a file reported by the
+check's evidence, or the workspace's root `bernstein.yaml` / `bernstein.yml`
+configuration for workspace-level evidence. When configuration is missing,
+the location identifies the expected `bernstein.yaml`. Repository paths are
+relative, URI-encoded paths; reported files outside the workspace use file URIs.
+Passing results have `kind: pass` and `level: none`, so they are not code-scanning
+findings. Failures have `kind: fail` and `level: error`; unmeasurable results
+have `kind: review` and `level: warning`; declarations are informational with
+`level: none`. `properties.kind` carries `measured`, `declared`, or
+`not_measurable`; legacy `pass`/`fail` verdicts map to `measured` there, while
+the original verdict and `passed` remain available. An offline JSON Schema
+profile tests the emitted SARIF 2.1.0 subset, including rules and locations;
+validation never fetches the `$schema` URL.
 
 All checks selected by `--only` and `--skip` are required for this gate.
 
 | Exit | Condition |
 |---|---|
-| `0` | No selected measured check failed; without `--strict`, unmeasurable findings do not change the exit code. |
-| `1` | A selected measured check failed, or no checks matched the selectors. |
-| `2` | With `--strict`, any selected check is `not_measurable`; this takes precedence over a measured failure. |
+| `0` | At least one check ran, all selected measured checks passed, and none was unmeasurable; or a valid `--list` invocation completed. |
+| `1` | A selected check failed or crashed, a measured result had no explicit pass, no checks matched, or a check was unmeasurable without `--strict`. Unexpected tool exceptions also exit `1`. |
+| `2` | Invalid CLI usage, such as an unknown format, nonexistent workdir, or incompatible output flags. |
+| `3` | With `--strict`, a selected check is `not_measurable`, and no check failed or crashed. |
 
-Declared findings never affect the exit code. `--quiet` suppresses the report
-in every format, including empty selections and `--list`; the exit code is the
-only answer. `--list` does not execute checks and exits `0`.
+Declared findings never affect the exit code. Failures and crashes take
+precedence over strict incompleteness. As on `main`, unmeasurable checks fail
+the default gate; `--strict` distinguishes missing prerequisites with code `3`
+without reclassifying check crashes. The registry still reports a crashed
+check as `not_measurable` and continues the remaining checks.
+
+`--quiet` suppresses the report and registry crash warnings in every format,
+including empty selections and `--list`. It preserves sentinel journaling and
+notification dispatch. CLI usage diagnostics still go to stderr. `--list` does
+not execute checks and exits `0`.
 
 ## `govern audit --only duplication`: duplicate implementations in this install
 
