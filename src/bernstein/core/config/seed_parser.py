@@ -2460,10 +2460,10 @@ def parse_seed(path: Path, *, require_goal: bool = True) -> SeedConfig:
         SeedError: If the file is missing, unreadable, or has invalid content.
             When ``require_goal=False``, a missing goal does not raise.
     """
-    return _parse_seed(path, apply_tuning=True)
+    return _parse_seed(path, apply_tuning=True, require_goal=require_goal)
 
 
-def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
+def _parse_seed(path: Path, *, apply_tuning: bool, require_goal: bool = True) -> SeedConfig:
     """Share parsing with launch validation without rebinding parent tuning."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
