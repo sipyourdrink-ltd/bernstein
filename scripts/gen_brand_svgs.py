@@ -23,6 +23,7 @@ Outputs (all overwritten):
     docs/assets/brand/bernstein-social-1280x640.svg     GitHub social preview
     docs/assets/brand/bernstein-og-1200x630.svg         docs site og:image
     docs/assets/logo-dark.svg, docs/assets/logo-light.svg   wordmark (hotlink-stable paths)
+    docs/assets/logo-readme.svg                         wordmark on its own dark panel (README header)
     packages/vscode/media/bernstein-icon.svg            activity-bar icon (mono)
 
 PNG exports come from scripts/render_brand_assets.sh (rsvg-convert).
@@ -45,6 +46,7 @@ INK_DARK_BG = "#13130F"  # tokens: bg dark
 PAPER_BG = "#F8F1E7"  # tokens: bg light
 TEXT_ON_DARK = "#F2EFE6"  # tokens: text dark
 TEXT_ON_PAPER = "#181614"  # tokens: text light
+PANEL_STROKE_DARK = "#3B3830"  # hairline that keeps the README panel edge visible on a dark page
 MUTED_ON_DARK = "#A39D8C"
 MUTED_ON_PAPER = "#575552"
 
@@ -183,16 +185,37 @@ def write(path: Path, content: str) -> None:
     print(f"wrote {path.relative_to(ROOT)}")
 
 
-def wordmark(fraunces, dark: bool) -> str:
+def wordmark_body(fraunces, dark: bool) -> str:
     text_fill = TEXT_ON_DARK if dark else TEXT_ON_PAPER
     d, _adv = text_path(fraunces, "bernstein", size=46, x=76, baseline=55)
     # the mark, scaled from its tight 640 box to 60 px tall, left of the word
-    body = f"""  <g transform="translate(8 10) scale(0.09375) translate(-80 -80)">
+    return f"""  <g transform="translate(8 10) scale(0.09375) translate(-80 -80)">
 {mark_group()}
   </g>
   <path fill="{text_fill}" d="{d}"/>"""
+
+
+def wordmark(fraunces, dark: bool) -> str:
     theme = "dark" if dark else "light"
-    return svg(400, 80, "0 0 400 80", body, f"Bernstein wordmark, {theme} surfaces.")
+    return svg(400, 80, "0 0 400 80", wordmark_body(fraunces, dark), f"Bernstein wordmark, {theme} surfaces.")
+
+
+def readme_logo(fraunces) -> str:
+    """The wordmark on its own opaque panel, for the README header.
+
+    GitHub's `prefers-color-scheme` follows the reader's OS or browser, not the
+    GitHub theme setting, so a light/dark `<picture>` can pick ink that matches
+    neither the page nor the setting. This image carries its own background and
+    reads the same on any page.
+    """
+    pad_x, pad_y = 24, 16
+    width, height = 400 + 2 * pad_x, 80 + 2 * pad_y
+    body = (
+        f'  <rect x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" rx="12" '
+        f'fill="{INK_DARK_BG}" stroke="{PANEL_STROKE_DARK}"/>\n'
+        f'  <g transform="translate({pad_x} {pad_y})">\n{wordmark_body(fraunces, dark=True)}\n  </g>'
+    )
+    return svg(width, height, f"0 0 {width} {height}", body, "Bernstein wordmark on its own dark panel.")
 
 
 def banner(fraunces, geist, width: int, height: int) -> str:
@@ -238,6 +261,7 @@ def main() -> None:
         )
     write(ROOT / "docs" / "assets" / "logo-dark.svg", wordmark(fraunces, dark=True))
     write(ROOT / "docs" / "assets" / "logo-light.svg", wordmark(fraunces, dark=False))
+    write(ROOT / "docs" / "assets" / "logo-readme.svg", readme_logo(fraunces))
     write(BRAND / "bernstein-social-1280x640.svg", banner(fraunces, geist, 1280, 640))
     write(BRAND / "bernstein-og-1200x630.svg", banner(fraunces, geist, 1200, 630))
     write(

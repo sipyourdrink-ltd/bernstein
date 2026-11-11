@@ -132,7 +132,8 @@ jobs:
               npm install -g "$SPEC"
               ;;
             pipx)
-              python -m pip install --user pipx
+              # pipx itself is hash-pinned; the adapter SPEC stays the contract pin.
+              python -m pip install --user --require-hashes -r .github/requirements/pipx-requirements.txt
               python -m pipx install "$SPEC"
               # pipx default user bin
               echo "$HOME/.local/bin" >> "$GITHUB_PATH"
