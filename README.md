@@ -135,6 +135,8 @@ The normal doctor report keeps its existing display. See the
 
 pipx, pip, brew, dnf, npm, and Docker are covered in the [install guide](https://docs.bernstein.run/en/latest/getting-started/install/); the air-gapped wheelhouse has its own [air-gap guide](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
+Skill initialization failures are [quarantined](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) with a persisted reason and audit event. `bernstein status` shows the count; `doctor` and `govern audit` report the disabled declarations. After fixing the cause, explicitly release the marker with `bernstein quarantine re-enable DECLARATION_ID`.
+
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">

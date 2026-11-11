@@ -123,7 +123,7 @@ flowchart LR
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:345e77a973c1" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` також виводить результати контракту аудиту `findings`, які збігаються з результатами `bernstein govern audit --only INS --json` за однакових спостережень за станом встановлення. Звичайний звіт doctor зберігає попередній вигляд. Стабільні ідентифікатори перевірок описано в [посібнику з експлуатації doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
 pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://docs.bernstein.run/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+У разі збою ініціалізації навичка потрапляє до [карантину](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) зі збереженням причини та події аудиту. `bernstein status` показує кількість; `doctor` і `govern audit` повідомляють про вимкнені оголошення. Після усунення причини явно зніміть позначку командою `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

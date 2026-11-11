@@ -123,7 +123,7 @@ flowchart LR
 各ノードは、フェーズが許可するロールを持つエージェントが取ります。ロールの柵と承認ゲートは、エージェントがタスク内で何をしようと保持されます。コードのノードは自分専用の git worktree でマージゲートの先に完了します。上のノードは違う終わり方をします: [アーティファクト契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)が成果物(レポート、データセット、スキャン、アクションログ)を名指しし、ノードはコミットではなく署名付き lineage レシートで閉じます。同じスケジューラ、同じジャーナル、同じオフライン検証 - グラフが運ぶのがコードでも、調査でも、ops 変更でも、その混在でも。ソフトウェア、リサーチ、ドキュメント、エンタープライズ、コントリビューターワークフロー向けの既製グラフは [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios) にあります。
 
 ### 30 秒でインストール
-<!-- l10n: en="install in 30 seconds" hash="sha256:345e77a973c1" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` は監査契約に基づく `findings` も出力します。同じインストール観測結果に対して、これらは `bernstein govern audit --only INS --json` の結果と同一です。通常の doctor レポートの表示は変わりません。安定したチェック ID については、[doctor 運用ガイド](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)を参照してください。
 
 pipx、pip、brew、dnf、npm、Docker については[インストールガイド](https://docs.bernstein.run/en/latest/getting-started/install/)を参照。エアギャップ環境向けの wheelhouse には専用の[エアギャップガイド](https://docs.bernstein.run/en/latest/installation/air-gap/)がある。
+
+スキルの初期化に失敗すると、理由と監査イベントを永続化して[隔離](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md)します。`bernstein status` は件数を表示し、`doctor` と `govern audit` は無効化された宣言を報告します。原因を修正した後、`bernstein quarantine re-enable DECLARATION_ID` でマーカーを明示的に解除してください。
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

@@ -123,7 +123,7 @@ flowchart LR
 Cada nodo lo reclama un agente cuyo rol permite la fase; las vallas de rol y los gates de aprobación se mantienen haga lo que haga el agente dentro de la tarea. Un nodo de código termina tras merge gates en su propio git worktree. Los nodos de arriba terminan distinto: un [contrato de artefacto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nombra el entregable (informe, dataset, escaneo, registro de acciones) y el nodo se cierra con un recibo de lineage firmado en lugar de un commit. Mismo planificador, mismo journal, misma verificación offline - ya lleve el grafo código, investigación, un cambio de ops o una mezcla de los tres. Hay grafos listos para software, investigación, documentación, enterprise y flujos de contribución en [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### instalación en 30 segundos
-<!-- l10n: en="install in 30 seconds" hash="sha256:345e77a973c1" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` también expone los hallazgos del contrato de auditoría (`findings`), idénticos a los de `bernstein govern audit --only INS --json` para las mismas observaciones de instalación. El informe habitual de doctor conserva su presentación actual. Consulta la [guía de operaciones de doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) para conocer los identificadores estables de las comprobaciones.
 
 pipx, pip, brew, dnf, npm y Docker están cubiertos en la [guía de instalación](https://docs.bernstein.run/en/latest/getting-started/install/); el wheelhouse air-gap tiene su propia [guía air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
+
+Los fallos de inicialización de habilidades se ponen en [cuarentena](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md), con el motivo y un evento de auditoría guardados de forma persistente. `bernstein status` muestra la cantidad; `doctor` y `govern audit` informan de las declaraciones deshabilitadas. Tras corregir la causa, retira explícitamente la marca con `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

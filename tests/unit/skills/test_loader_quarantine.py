@@ -12,8 +12,13 @@ why, and the rest of the set loads.
 
 from __future__ import annotations
 
+import json
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+
+import pytest
+from click.testing import CliRunner
 
 from bernstein.core.skills.loader import (
     DuplicateSkillError,
@@ -25,6 +30,178 @@ from bernstein.core.skills.source import SkillArtifact, SkillSource
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.fixture
+def persistent_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Exercise the production factory, with only synthetic plugin sources."""
+    from bernstein.core.skills.loader import default_loader_from_templates
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "audit.key"))
+    broken = _ThrowingSource("broken-plugin", RuntimeError("entry point blew up"))
+    healthy = _InMemorySource("healthy", [_artifact("alpha", "from-healthy")])
+    monkeypatch.setattr(
+        "bernstein.core.skills.sources.plugin.scan_plugin_sources",
+        lambda: SimpleNamespace(sources=[broken, healthy], resolutions=()),
+    )
+
+    def load():
+        return default_loader_from_templates(tmp_path / "templates" / "roles")
+
+    return load
+
+
+def _persisted(tmp_path: Path):
+    path = tmp_path / ".sdd/runtime/declaration-quarantine.json"
+    assert path.exists(), "initialisation failure must leave a persisted disabled marker"
+    return json.loads(path.read_text())
+
+
+def test_quarantine_is_journaled_with_reason_and_timestamp(tmp_path: Path, persistent_failure) -> None:
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    before = time.time()
+    loader = persistent_failure()
+    after = time.time()
+    assert [s.name for s in loader.list_all()] == ["alpha"]
+    (record,) = _persisted(tmp_path)
+    assert record["kind"] == "skill"
+    assert record["disabled_by_failure"] is True
+    assert record["reason"] == "entry point blew up"
+    assert before <= record["at"] <= after
+    chain = AuditChainStore(tmp_path / ".sdd/audit")
+    (event,) = chain.query(event_type="declaration.quarantined")
+    assert event.details["reason"] == record["reason"]
+    assert event.details["at"] == record["at"]
+    assert chain.verify() == (True, [])
+
+
+def test_quarantined_source_is_not_retried(tmp_path: Path, persistent_failure, monkeypatch) -> None:
+    persistent_failure()
+    _persisted(tmp_path)
+
+    def forbidden(_self):
+        pytest.fail("a quarantined source was retried without explicit re-enable")
+
+    monkeypatch.setattr(_ThrowingSource, "iter_skills", forbidden)
+    assert [s.name for s in persistent_failure().list_all()] == ["alpha"]
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    assert len(AuditChainStore(tmp_path / ".sdd/audit").query(event_type="declaration.quarantined")) == 1
+
+
+def test_duplicate_marker_only_blocks_the_conflicting_artifact(tmp_path: Path, persistent_failure, monkeypatch) -> None:
+    from bernstein.core.skills.loader import default_loader_from_templates
+
+    monkeypatch.setattr(
+        "bernstein.core.skills.sources.plugin.scan_plugin_sources",
+        lambda: SimpleNamespace(
+            sources=[
+                _InMemorySource("first", [_artifact("conflict", "first")]),
+                _InMemorySource("second", [_artifact("conflict", "second"), _artifact("beta", "second-beta")]),
+            ],
+            resolutions=(),
+        ),
+    )
+    roles = tmp_path / "templates/roles"
+    default_loader_from_templates(roles)
+    (record,) = _persisted(tmp_path)
+    assert record["origin"] == "second"
+    # The losing artifact stays blocked; the winner and its healthy sibling load.
+    original_register = SkillLoader._register
+
+    def register(self, source, artifact):
+        assert artifact.origin != "second", "quarantined artifact was registered again"
+        original_register(self, source, artifact)
+
+    monkeypatch.setattr(SkillLoader, "_register", register)
+    loader = default_loader_from_templates(roles)
+    assert [s.name for s in loader.list_all()] == ["beta", "conflict"]
+
+
+@pytest.mark.parametrize("as_json", [True, False])
+def test_status_reports_quarantine_count(persistent_failure, monkeypatch, as_json) -> None:
+    from bernstein.cli.commands.status_cmd import status
+
+    persistent_failure()
+    monkeypatch.setattr("bernstein.cli.commands.status_cmd.server_get", lambda *a, **kw: {})
+    result = CliRunner().invoke(status, ["--json"] if as_json else [])
+    assert result.exit_code == 0, result.output
+    if as_json:
+        assert json.loads(result.output).get("quarantined_declarations") == 1
+    else:
+        assert "Quarantined declarations: 1" in result.output
+
+
+def test_reenable_clears_marker_and_journals_actor(tmp_path: Path, persistent_failure, monkeypatch) -> None:
+    from bernstein.cli.commands.advanced_cmd import quarantine_group
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    persistent_failure()
+    (record,) = _persisted(tmp_path)
+    monkeypatch.setattr("getpass.getuser", lambda: "test-operator")
+    result = CliRunner().invoke(quarantine_group, ["re-enable", record["declaration_id"]])
+    assert result.exit_code == 0, result.output
+    assert _persisted(tmp_path) == []
+    (event,) = AuditChainStore(tmp_path / ".sdd/audit").query(event_type="declaration.reenabled")
+    assert event.actor == "test-operator"
+    assert event.resource_id == record["declaration_id"]
+    # Fixed code is only eligible again after the explicit command.
+    monkeypatch.setattr(_ThrowingSource, "iter_skills", lambda self: [_artifact("recovered", "fixed")])
+    assert [s.name for s in persistent_failure().list_all()] == ["alpha", "recovered"]
+
+
+def test_doctor_and_govern_audit_report_quarantined_declarations(persistent_failure, tmp_path) -> None:
+    from bernstein.cli.commands.govern_audit_cmd import govern_audit_cmd
+    from bernstein.cli.commands.status_cmd import doctor
+
+    persistent_failure()
+    result = CliRunner().invoke(doctor, ["--json"])
+    assert result.exit_code == 1, result.output
+    checks = json.loads(result.output)["checks"]
+    findings = [check for check in checks if check["name"] == "Declaration quarantine"]
+    assert findings, "doctor must report disabled declarations"
+    assert findings[0]["ok"] is False
+    assert "entry point blew up" in findings[0]["detail"]
+    result = CliRunner().invoke(govern_audit_cmd, ["--only", "doctor", "--json", "-w", str(tmp_path)])
+    assert result.exit_code == 1, result.output
+    findings = [f for f in json.loads(result.output) if f["check_id"] == "doctor:declaration-quarantine"]
+    assert findings, "govern audit must report disabled declarations"
+    assert findings[0]["verdict"] == "fail"
+    assert "entry point blew up" in findings[0]["summary"]
+
+
+def test_a_failed_audit_append_preserves_isolation_and_marker(
+    persistent_failure, tmp_path, monkeypatch, caplog
+) -> None:
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("audit sink unavailable")
+
+    monkeypatch.setattr("bernstein.core.security.audit_chain.AuditChainStore.log_with_prev_digest", unavailable)
+    loader = persistent_failure()
+    assert [s.name for s in loader.list_all()] == ["alpha"]
+    assert len(_persisted(tmp_path)) == 1
+    assert "audit sink unavailable" in caplog.text
+
+    def forbidden(_self):
+        pytest.fail("audit failure released a quarantined source")
+
+    monkeypatch.setattr(_ThrowingSource, "iter_skills", forbidden)
+    assert [s.name for s in persistent_failure().list_all()] == ["alpha"]
+
+
+@pytest.mark.parametrize("damaged", ["{", "{}", "[{}]"])
+def test_damaged_quarantine_is_a_finding_not_a_silent_release(persistent_failure, tmp_path, damaged) -> None:
+    from bernstein.core.checks.adapters import DeclarationQuarantineAdapter
+    from bernstein.core.security.declaration_quarantine import quarantine_summary
+
+    persistent_failure()
+    (tmp_path / ".sdd/runtime/declaration-quarantine.json").write_text(damaged)
+    _name, ok, detail, _fix = quarantine_summary(tmp_path)
+    assert ok is False
+    assert "Cannot read" in detail
+    assert DeclarationQuarantineAdapter().run(tmp_path).passed is False
 
 
 class _InMemorySource(SkillSource):

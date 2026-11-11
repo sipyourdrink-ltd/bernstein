@@ -123,7 +123,7 @@ flowchart LR
 แต่ละโหนดถูกรับโดย agent ที่บทบาทได้รับอนุญาตจากเฟสนั้น รั้วบทบาทและเกตอนุมัติยังคงอยู่ไม่ว่า agent จะทำอะไรในงาน โหนดโค้ดจบหลัง merge gate ใน git worktree ของตัวเอง โหนดข้างบนจบต่างออกไป: [สัญญาอาร์ติแฟกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ระบุผลส่งมอบ (รายงาน ชุดข้อมูล การสแกน บันทึกการกระทำ) และโหนดปิดด้วยใบรับ lineage ที่ลงนามแทนคอมมิต ตัวจัดตารางเดียวกัน เจอร์นัลเดียวกัน การตรวจสอบออฟไลน์แบบเดียวกัน - ไม่ว่ากราฟจะส่งมอบโค้ด งานวิจัย การเปลี่ยนแปลง ops หรือทั้งสามผสมกัน กราฟสำเร็จรูปสำหรับซอฟต์แวร์ วิจัย เอกสาร องค์กร และเวิร์กโฟลว์ผู้ร่วมพัฒนาอยู่ที่ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:345e77a973c1" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:991493a03407" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -135,6 +135,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 `bernstein doctor --json` แสดง `findings` ตามสัญญาการตรวจสอบด้วย ซึ่งเหมือนกับผลของ `bernstein govern audit --only INS --json` เมื่อใช้ข้อมูลสังเกตการติดตั้งชุดเดียวกัน รูปแบบการแสดงผลของรายงาน doctor ปกติยังคงเดิม ดูรหัสการตรวจสอบที่คงที่ได้ใน[คู่มือการใช้งาน doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)
 
 pipx, pip, brew, dnf, npm และ Docker มีเนื้อหาอยู่ใน [คู่มือการติดตั้ง](https://docs.bernstein.run/en/latest/getting-started/install/) ส่วนแพ็กเกจสำหรับระบบแยกเครือข่ายมี [คู่มือ air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) โดยเฉพาะ
+
+ทักษะที่เริ่มต้นทำงานไม่สำเร็จจะถูก[กักกัน](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) โดยบันทึกสาเหตุและเหตุการณ์ตรวจสอบไว้อย่างถาวร `bernstein status` แสดงจำนวน ส่วน `doctor` และ `govern audit` รายงานรายการประกาศที่ถูกปิดใช้งาน หลังแก้ไขสาเหตุแล้ว ให้ล้างเครื่องหมายอย่างชัดเจนด้วย `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

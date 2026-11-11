@@ -167,12 +167,18 @@ def populate_default_checks(registry: CheckRegistry | None = None) -> None:
         DUPLICATION_CHECK_NAMES,
         AuditSentinelCheck,
         ComplianceEncryptionAtRestAdapter,
+        DeclarationQuarantineAdapter,
         DoctorComplianceAdapter,
         DuplicationAuditAdapter,
     )
 
     reg = DEFAULT_REGISTRY if registry is None else registry
-    adapters: list[Check] = [DoctorComplianceAdapter(), ComplianceEncryptionAtRestAdapter(), AuditSentinelCheck()]
+    adapters: list[Check] = [
+        DoctorComplianceAdapter(),
+        ComplianceEncryptionAtRestAdapter(),
+        DeclarationQuarantineAdapter(),
+        AuditSentinelCheck(),
+    ]
     adapters.extend(DuplicationAuditAdapter(name) for name in DUPLICATION_CHECK_NAMES)
     for adapter in adapters:
         if reg.get_check(adapter.check_id) is None:
