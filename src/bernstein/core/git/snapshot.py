@@ -316,26 +316,26 @@ def _resolve_ref(cwd: Path, ref: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def _metadata_path(cwd: Path, snapshot_id: str) -> Path:
+def _snapshot_metadata_dir(cwd: Path) -> Path:
     """Filesystem location for the snapshot's metadata JSON.
 
     The shared Git directory keeps sidecars visible wherever the refs
     are visible, even after the creating worktree is removed. A clone
     does not copy these sidecars. The directory is created lazily.
     """
-    base = _git_directory(cwd, shared=True) / "bernstein" / "snapshots"
-    base.mkdir(parents=True, exist_ok=True)
-    return base / f"{snapshot_id}.json"
+    return _git_directory(cwd, shared=True) / "bernstein" / "snapshots"
 
 
 def _write_metadata(cwd: Path, snapshot: Snapshot) -> None:
-    _metadata_path(cwd, snapshot.snapshot_id).write_text(
+    directory = _snapshot_metadata_dir(cwd)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{snapshot.snapshot_id}.json").write_text(
         json.dumps(snapshot.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
     )
 
 
-def _read_metadata(cwd: Path, snapshot_id: str) -> Snapshot | None:
-    path = _metadata_path(cwd, snapshot_id)
+def _read_metadata(directory: Path, snapshot_id: str) -> Snapshot | None:
+    path = directory / f"{snapshot_id}.json"
     if not path.exists():
         return None
     try:
@@ -467,12 +467,17 @@ class SnapshotStore:
         record from the ref alone so an operator can still ``undo``
         when the sidecar was purged manually.
         """
+        return self._get(snapshot_id)
+
+    def _get(self, snapshot_id: str, metadata_dir: Path | None = None) -> Snapshot | None:
         _validate_snapshot_id(snapshot_id)
         ref = f"{SNAPSHOT_REF_PREFIX}{snapshot_id}"
         tree_sha = _resolve_ref(self.cwd, ref)
         if tree_sha is None:
             return None
-        meta = _read_metadata(self.cwd, snapshot_id)
+        if metadata_dir is None:
+            metadata_dir = _snapshot_metadata_dir(self.cwd)
+        meta = _read_metadata(metadata_dir, snapshot_id)
         if meta is not None:
             return meta
         # Sidecar was purged; synthesise a record so undo still works.
@@ -503,15 +508,16 @@ class SnapshotStore:
             ["for-each-ref", "--format=%(refname)", SNAPSHOT_REF_PREFIX],
             self.cwd,
         )
-        if not result.ok:
+        if not result.ok or not result.stdout.strip():
             return []
+        metadata_dir = _snapshot_metadata_dir(self.cwd)
         snapshots: list[Snapshot] = []
         for line in result.stdout.strip().splitlines():
             ref = line.strip()
             if not ref.startswith(SNAPSHOT_REF_PREFIX):
                 continue
             snapshot_id = ref[len(SNAPSHOT_REF_PREFIX) :]
-            snap = self.get(snapshot_id)
+            snap = self._get(snapshot_id, metadata_dir)
             if snap is None:
                 continue
             if task_id is not None and snap.task_id != task_id:
@@ -607,7 +613,7 @@ class SnapshotStore:
         ref = f"{SNAPSHOT_REF_PREFIX}{snapshot_id}"
         existed = _resolve_ref(self.cwd, ref) is not None
         _delete_ref(self.cwd, ref)
-        meta_path = _metadata_path(self.cwd, snapshot_id)
+        meta_path = _snapshot_metadata_dir(self.cwd) / f"{snapshot_id}.json"
         if meta_path.exists():
             try:
                 meta_path.unlink()
