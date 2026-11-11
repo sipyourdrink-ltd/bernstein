@@ -64,9 +64,11 @@ bernstein doctor \
 
 Both commands run the existing reachability, chat completion, tool calling,
 patch fidelity, timeout and context-floor probes. Require exit code 0 and
-a passing verdict for every intended role before adding the entry to a
-`provider_availability` chain. Repeat `--role` for additional roles; omitting
-it evaluates only the default low-stakes tier.
+a passing verdict for every intended role before dispatch, and before adding
+an entry to a `provider_availability` chain. This example does not configure
+such a chain, so no binary availability probe is used for its adapter.
+Repeat `--role` for additional roles; omitting it evaluates only the default
+low-stakes tier.
 
 The signed receipt is stored under
 `.sdd/endpoints/certifications/<fingerprint>.json`, bound to the exact
@@ -88,12 +90,12 @@ for the role tiers and receipt contract.
 
 ## Routing boundaries
 
-The example declares a single qualified `(openai_agents, model)` chain
-entry. Bernstein still selects from the declared order and recorded probe
-outcomes; routing receipts, replay and offline verification use the existing
-implementation. A chain entry does not carry its own URL or key: those
-come from the role's endpoint profile. Keep models sharing this role profile
-on that endpoint and qualify each model before extending the chain.
+This example selects `openai_agents` for `backend` through `role_model_policy`
+and does not declare a Bernstein `provider_availability` chain. The adapter
+uses the role's endpoint profile for its URL and key. If you add a chain,
+qualify each model first; Bernstein then selects from the declared order and
+recorded probe outcomes, with routing receipts, replay and offline verification
+using the existing implementation.
 
 OrcaRouter's own routing and provider failover happen behind the endpoint;
 they are not Bernstein routing decisions or evidence of a fixed upstream.

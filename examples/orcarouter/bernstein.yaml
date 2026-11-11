@@ -24,12 +24,5 @@ role_model_policy:
     cli: openai_agents
     endpoint: orcarouter
 
-# Enable this entry only after certification passes for backend.
-# Other roles retain their existing adapter selection.
-provider_availability:
-  roles:
-    backend:
-      chain:
-        - adapter: openai_agents
-          model: openai/gpt-4o-mini
-          conformance: basic
+# No provider_availability chain is configured: the openai_agents adapter is
+# selected by role_model_policy, avoiding the default binary availability probe.
