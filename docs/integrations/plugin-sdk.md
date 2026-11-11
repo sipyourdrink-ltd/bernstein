@@ -594,24 +594,32 @@ Sample output in `.sdd/metrics/plugin_events.jsonl`:
 `examples/plugins/quality_gate_plugin.py` - runs a security scan on every
 task and blocks promotion when it fails.
 
-`SecurityScanGate` subclasses `GatePlugin`, the extension point the built-in
-gates use, so it is a real quality gate and not a hook: a failed scan returns
-a `fail` result with `blocked=True`.  The result is also appended to
-`.sdd/metrics/custom_gates.jsonl`.  For advisory mode (record and alert without
-blocking), return `blocked=False` from `run()` **and** set `required: false` on
-that gate's `quality_gates.pipeline` step in `bernstein.yaml`.  Returning
-`required=False` or overriding the plugin's `required` property alone does not
-make a required pipeline step advisory.
+`SecurityScanGate` subclasses `GatePlugin`, so it runs in the quality-gate
+pipeline. It returns `blocked=False` and lets `GateRunner` apply the pipeline
+step's policy: `required: true` blocks on failure; `required: false` records an
+advisory failure. Changing the plugin's `required` property alone does not
+override an explicit pipeline step.
+
+The runner stores the result, output and command in the project root's
+`.sdd/runtime/gates/<task_id>.json`. Normal task execution also records a metric
+in `.sdd/metrics/quality_gates.jsonl`. Both survive removal of the agent worktree;
+the example no longer writes a separate `custom_gates.jsonl` there. Calling
+`run()` directly only returns a result; use the runner to persist it.
+
+Old configurations using
+`plugins: [examples.plugins.quality_gate_plugin:SecurityScanGate]` now emit a
+migration warning and do not register the object as a hook plugin. Move the
+file to `.bernstein/gates/` (or use `bernstein.gates`) and configure the pipeline
+step as shown below. The former `workdir=` constructor argument is unnecessary:
+scan commands use the runner-provided task directory, and the runner owns storage.
 
 ```python
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 
 from bernstein.core.quality.gate_plugins import GatePlugin
@@ -628,8 +636,9 @@ class SecurityScanGate(GatePlugin):
     The scan command defaults to ``bandit -r . -ll -q`` (medium+ severity).
     Override via the ``BERNSTEIN_SECURITY_CMD`` environment variable.
 
-    A non-zero exit, a timeout or a command that cannot start returns a
-    blocking result.  Results are appended to ``.sdd/metrics/custom_gates.jsonl``.
+    A non-zero exit, a timeout or a command that cannot start returns ``fail``.
+    The pipeline step's ``required`` setting controls blocking. The runner
+    records results under the project root, not the temporary scan directory.
     """
 
     def __init__(self, command: str | None = None, timeout_s: int = 60) -> None:
@@ -648,17 +657,16 @@ class SecurityScanGate(GatePlugin):
         task_title: str,
         task_description: str,
     ) -> GateResult:
-        """Run the scan in ``run_dir`` and return a blocking result on failure."""
+        """Scan ``run_dir``; let the runner apply blocking and persist the result."""
         started = time.monotonic()
         passed, output = self._run_scan(run_dir)
-        self._record(run_dir, task_title, passed, output)
         if not passed:
             log.warning("SecurityScanGate: scan failed for task %r:\n%s", task_title, output[:500])
         return GateResult(
             name=self.name,
             status="pass" if passed else "fail",
             required=self.required,
-            blocked=not passed,
+            blocked=False,
             cached=False,
             duration_ms=int((time.monotonic() - started) * 1000),
             details=output,
@@ -688,24 +696,6 @@ class SecurityScanGate(GatePlugin):
             return False, f"Timed out after {self._timeout_s}s"
         except OSError as exc:
             return False, f"Command error: {exc}"
-
-    def _record(self, run_dir: Path, task_title: str, passed: bool, output: str) -> None:
-        """Append result to .sdd/metrics/custom_gates.jsonl."""
-        metrics_dir = run_dir / ".sdd" / "metrics"
-        record = {
-            "ts": datetime.now(UTC).isoformat(),
-            "gate": self.name,
-            "task": task_title,
-            "command": self._command,
-            "passed": passed,
-            "output": output[:500],
-        }
-        try:
-            metrics_dir.mkdir(parents=True, exist_ok=True)
-            with (metrics_dir / "custom_gates.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps(record) + "\n")
-        except OSError as exc:
-            log.warning("SecurityScanGate: could not write result: %s", exc)
 ```
 
 Enable it: copy the file to `.bernstein/gates/security_scan_gate.py` (or

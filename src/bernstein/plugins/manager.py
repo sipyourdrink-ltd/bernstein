@@ -1284,6 +1284,8 @@ class PluginManager:
         Args:
             config_plugins: List of import-path strings from the config file.
         """
+        from bernstein.core.quality.gate_plugins import GatePlugin
+
         for spec in config_plugins:
             # Use the short name (after the last dot/colon) for policy checks.
             policy_name = spec.rsplit(":", 1)[-1].rsplit(".", 1)[-1] if (":" in spec or "." in spec) else spec
@@ -1298,6 +1300,12 @@ class PluginManager:
                     obj = mod
 
                 plugin = obj() if isinstance(obj, type) else obj
+                if isinstance(plugin, GatePlugin):
+                    raise ValueError(
+                        "GatePlugin cannot run under plugins:; move its file to .bernstein/gates/ "
+                        "(or register it under bernstein.gates) and add "
+                        f"{plugin.name!r} to quality_gates.pipeline"
+                    )
                 name = spec
                 self._pm.register(plugin, name=name)
                 self._registered_names.append(name)

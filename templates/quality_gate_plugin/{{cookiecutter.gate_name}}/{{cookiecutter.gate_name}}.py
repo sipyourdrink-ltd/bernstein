@@ -45,6 +45,8 @@ class {{ cookiecutter.gate_class }}(GatePlugin):
             - { name: "{{ cookiecutter.gate_name }}", required: true, condition: "any_changed" }
 
     A ``fail`` result at a required gate blocks the task from being promoted.
+    Set ``required: false`` on the pipeline step for advisory mode. This gate
+    returns ``blocked=False`` so GateRunner applies the step's blocking policy.
     """
 
     def __init__(self, config: {{ cookiecutter.gate_class }}Config | None = None) -> None:
@@ -57,7 +59,7 @@ class {{ cookiecutter.gate_class }}(GatePlugin):
 
     @property
     def required(self) -> bool:
-        """Whether a failure blocks the task."""
+        """Default result metadata; the runner uses the pipeline step setting."""
         return True
 
     @property
@@ -100,7 +102,7 @@ class {{ cookiecutter.gate_class }}(GatePlugin):
         if errors_found > self._config.threshold:
             return self._result(
                 "fail",
-                blocked=self.required,
+                blocked=False,
                 details=f"Found {errors_found} errors (threshold: {self._config.threshold})",
                 started=started,
                 metadata=metadata,
@@ -108,7 +110,7 @@ class {{ cookiecutter.gate_class }}(GatePlugin):
         if warnings_found > 0 and self._config.fail_on == "warning":
             return self._result(
                 "fail",
-                blocked=self.required,
+                blocked=False,
                 details=f"Found {warnings_found} warnings",
                 started=started,
                 metadata=metadata,

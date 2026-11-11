@@ -172,3 +172,29 @@ def test_generated_tests_pass(rendered: tuple[dict[str, str], Path]) -> None:
     )
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("required", [True, False], ids=["required", "advisory"])
+@pytest.mark.parametrize("findings", [(1, 0), (0, 1)], ids=["errors", "warnings"])
+def test_generated_failure_follows_pipeline_required(
+    rendered: tuple[dict[str, str], Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    required: bool,
+    findings: tuple[int, int],
+) -> None:
+    context, out_dir = rendered
+    module = _import_generated(context, out_dir, monkeypatch)
+    gate = getattr(module, context["gate_class"])(getattr(module, f"{context['gate_class']}Config")(fail_on="warning"))
+    monkeypatch.setattr(gate, "scan", lambda changed_files, run_dir: findings)
+    step = GatePipelineStep(name=gate.name, required=required, condition="always")
+    runner = GateRunner(QualityGatesConfig(pipeline=[step], cache_enabled=False), tmp_path)
+    runner._plugin_registry().register(gate)
+    task = Task(id="template-failure", title="title", description="description", role="backend")
+
+    report = asyncio.run(runner.run_all(task, tmp_path))
+
+    assert report.results[0].status == "fail"
+    assert report.results[0].required is required
+    assert report.results[0].blocked is required
+    assert report.overall_pass is (not required)
