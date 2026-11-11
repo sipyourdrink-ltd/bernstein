@@ -9,6 +9,7 @@ the rest of the check suite.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from bernstein.core.checks.contract import Finding, Verdict
@@ -41,7 +42,7 @@ class CheckRegistry:
 
         Raises:
             TypeError: If ``check`` does not conform to the :class:`Check` protocol or ``check_id`` is not a string.
-            ValueError: If ``check.check_id`` is invalid, not namespaced, or already registered.
+            ValueError: If ``check.check_id`` is invalid (neither namespaced nor INS-nnn), or already registered.
         """
         if isinstance(check, type):  # type: ignore[reportUnnecessaryIsInstance]
             raise TypeError(f"Expected Check instance, got class '{check.__name__}'")
@@ -54,10 +55,9 @@ class CheckRegistry:
         if not check_id or not check_id.strip():
             raise ValueError("check_id must be a non-empty string")
 
-        if ":" not in check_id or check_id.startswith(":") or check_id.endswith(":"):
-            raise ValueError(
-                f"check_id '{check_id}' must be namespaced with a colon delimiter (e.g. 'namespace:check_name')"
-            )
+        installation_id = re.fullmatch(r"INS-\d{3}", check_id) is not None
+        if not installation_id and (":" not in check_id or check_id.startswith(":") or check_id.endswith(":")):
+            raise ValueError(f"check_id '{check_id}' must be namespaced with a colon delimiter or use INS-nnn")
 
         if check_id in self._checks:
             raise ValueError(f"Check with id '{check_id}' is already registered")
