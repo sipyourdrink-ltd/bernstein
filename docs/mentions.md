@@ -20,7 +20,7 @@ when they appear; if one goes dead, open an issue or a PR.
 - [explainx.ai - Bernstein: An Open-Source Governance Layer for AI Coding Agents](https://explainx.ai/blog/bernstein-open-source-governance-layer-ai-coding-agents-policy-as-code-53-adapters-2026): Yash Thakker, 29 October 2026; explainer of the scheduler, the janitor gates and the offline-verifiable record, with a clear note on what the governance claim does not cover.
 - [RuntimeWire - Bernstein v3.23.0 makes artifact checks gate signed success receipts](https://runtimewire.com/article/bernstein-agent-governance-alex-chernysh): Ryan Merket, 29 October 2026; release write-up of v3.23.0.
 - [Linux Foundation TRACE - Bernstein Platform Profile](https://trace.agentrust-io.com/docs/platforms/bernstein/): official platform profile listing Bernstein as the reference governance layer for runtime attestation, trust records, and offline compliance verification.
-- [Computerra - Оркестратор для ИИ-агентов](https://www.computerra.ru/): 17 August 2026; editorial profile covering deterministic scheduling, git worktree isolation, and multi-agent execution.
+- [Computerra - Разработчик в одиночку создал систему для управления флотом ИИ-агентов](https://www.computerra.ru/357006/razrabotchik-v-odinochku-sozdal-sistemu-dlya-upravleniya-flotom-ii-agentov/): 17 August 2026; editorial profile covering deterministic scheduling, git worktree isolation, and multi-agent execution.
 
 ## Awesome lists
 
@@ -98,8 +98,8 @@ Places where somebody else did the packaging work:
 - [zwl4488-new/aiagent-club](https://github.com/zwl4488-new/aiagent-club)
 - [patrickclery/awesomer](https://github.com/patrickclery/awesomer)
 - [jaimevalero/managing-awesome-lists-frontend](https://github.com/jaimevalero/managing-awesome-lists-frontend)
-- [Enterprise DNA - AI Agent Frameworks & Governance](https://enterprisedna.co): educational catalog and framework review.
-- [SkillsLLM - Deterministic Multi-Agent Coding Workflows with Bernstein](https://skillsllm.com): skill catalog entry.
+- [Enterprise DNA - Bernstein MCP Profile](https://enterprisedna.co/directories/mcp/sipyourdrink-ltd-bernstein/): educational directory entry for Bernstein Model Context Protocol integration.
+- [SkillsLLM - Deterministic Multi-Agent Coding Workflows with Bernstein](https://skillsllm.com/skill/sipyourdrink-ltd-bernstein): skill catalog entry.
 - [PyDigger](https://github.com/szabgab/pydigger-data/blob/main/data/pypi/be/bernstein.json): automated PyPI metadata index.
 
 Most of the entries in this section are auto-generated crawls rather than
