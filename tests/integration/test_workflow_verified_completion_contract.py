@@ -112,12 +112,14 @@ def _wait_for(predicate: Callable[[], bool], what: str, timeout: float = BOUND_S
 
 
 def _pid_alive(pid: int) -> bool:
-    """True only for a live (non-zombie) controlled child with this pid."""
+    """Probe a controlled child; procfs also excludes zombies and checks its marker."""
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return False
-    except OSError:  # no procfs: fall back to signal 0
+    except OSError as exc:
+        if isinstance(exc, FileNotFoundError) and Path("/proc").is_dir():
+            return False
+        # No procfs (for example, macOS): probe the PID instead. A missing
+        # /proc entry only proves exit when procfs itself is available.
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
@@ -484,6 +486,7 @@ def test_harness_sentinel_dispatcher_and_reaper_are_sound(env: _Env) -> None:
     sp = env.spawner(_Plan(mode="block"))
     session = sp.spawn_for_tasks([Task(id="h-probe", title="probe", description="probe", role="backend")])
     assert sp.procs[0].poll() is None
+    assert _pid_alive(sp.procs[0].pid), "the liveness probe must detect a running controlled child"
     task = env.driver.task("h-probe")
     assert task is not None
     assert task.status is TaskStatus.CLAIMED

@@ -27,6 +27,25 @@ replace them. It changes no runtime code. The executable evidence is in
   and every failure is on the property itself, not on a harness precondition.
   See section 5.
 
+### Post-merge revalidation
+
+After merging `origin/main` at `85a8ac239e71`, the contract suite still reports
+**18 failed, 8 passed** on macOS with Python 3.14.3. All 18 failures remain on
+the proposed properties; the acceptance interface is still absent. No runtime
+contract is implemented by this PR, and these assertions remain unchanged.
+
+The harness now falls back to a signal-0 PID probe when procfs is unavailable.
+Previously, a missing `/proc/<pid>/stat` on macOS incorrectly meant "exited",
+which could omit a surviving child of a killed runner from cleanup. The
+existing harness soundness test now asserts that a live child is detected
+before verifying that it is reaped. That assertion failed before the fix and
+passes afterward.
+
+The related integration selection (`test_workflow_runner.py`,
+`test_abandon_lifecycle.py`, `test_adapter_conformance_lifecycle.py`) passes
+42 tests. Main now includes the abort regression and fix discussed in
+section 7; the original base observations below are historical.
+
 ## 2. Native interfaces (verified at base)
 
 | Need | Existing native carrier | Gap |
@@ -160,7 +179,7 @@ Totals:
 
 ## 6. Implementation follow-on (NOT_RELEASED)
 
-**Stage 0 (independent, no gate needed).** See section 7, first finding.
+**Stage 0 (landed on the merged main).** See section 7, first finding.
 - Files: `workflow_runner.py`, `tests/integration/test_workflow_runner.py`,
   and a release-notes fragment.
 
@@ -212,6 +231,8 @@ by the native close/verification path and bound to the attempt.
   - Reproduction: in the DAG `a: exit 1`, `b: true`, `c` depends on `b`, the
     run returns `[(a, failed), (b, success), (c, skipped), (c, success)]` and
     `c` writes its side effect.
+  - Resolved on the merged main; the current
+    `test_run_dispatches_nothing_in_layers_after_an_abort` passes.
 - **`run()` with an existing `run_id` never compares digests.** It rewrites
   the snapshot without the digest check its docstring promises (`:592-593`,
   `:617`).
@@ -234,7 +255,8 @@ uv run python -m pytest -q -p no:randomly tests/integration/test_workflow_verifi
 
 - The run is expected to be RED (18 failed, 8 passed) until stages 1 to 3b
   land.
-- It is POSIX-only: it uses process groups and procfs liveness.
+- It is POSIX-only: it uses process groups, with procfs liveness where
+  available and a signal-0 PID probe otherwise.
 - It runs on Python 3.12 or later. This review used 3.12.3.
 - It is offline and synthetic. No provider, model, credential, remote executor
   or production state is involved.
