@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import hmac
 import json
 import logging
 import subprocess
@@ -115,6 +116,7 @@ class RunManifest:
         delegation_head_hmac: Last receipt HMAC declared at run close, or None
             while the run is incomplete. An empty chain declares the genesis HMAC.
         delegation_hop_count: Number of receipts committed at run close.
+        delegation_seal: Audit-key HMAC authenticating the final declaration and configuration.
         manifest_hash: SHA-256 digest computed over all other fields.
     """
 
@@ -130,6 +132,7 @@ class RunManifest:
     run_root_identity_id: str = ""
     delegation_head_hmac: str | None = None
     delegation_hop_count: int | None = None
+    delegation_seal: str | None = None
     manifest_hash: str = ""
 
     # ------------------------------------------------------------------
@@ -143,6 +146,10 @@ class RunManifest:
         """
         d = asdict(self)
         d.pop("manifest_hash", None)
+        # Unset additive fields must not change pre-upgrade manifest hashes.
+        for name in ("delegation_head_hmac", "delegation_hop_count", "delegation_seal"):
+            if d[name] is None:
+                d.pop(name)
         return d
 
     def canonical_json(self) -> str:
@@ -157,13 +164,20 @@ class RunManifest:
         """Compute SHA-256 over the canonical JSON payload."""
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
 
+    def compute_delegation_seal(self, key: bytes) -> str:
+        """Authenticate the final declaration and its configuration with the audit key."""
+        payload = self._canonical_payload()
+        payload.pop("delegation_seal", None)
+        body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hmac.new(key, b"bernstein.delegation.manifest.v1\0" + body.encode(), hashlib.sha256).hexdigest()
+
     # ------------------------------------------------------------------
     # Serialization helpers
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
         """Full dict including the manifest_hash."""
-        return asdict(self)
+        return {**self._canonical_payload(), "manifest_hash": self.manifest_hash}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RunManifest:
@@ -197,6 +211,7 @@ class RunManifest:
             run_root_identity_id=str(data.get("run_root_identity_id", "")),
             delegation_head_hmac=data.get("delegation_head_hmac"),
             delegation_hop_count=data.get("delegation_hop_count"),
+            delegation_seal=data.get("delegation_seal"),
             manifest_hash=str(data.get("manifest_hash", "")),
         )
 

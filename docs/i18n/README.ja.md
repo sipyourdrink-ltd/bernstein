@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — ターミナルダッシュボード | `bernstein gui serve` — ブラウザダッシュボード |
 
 ### 実行を証明する
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 ここでの決定性は、信じるものではなく確かめるものである。監査を有効にして一度走らせ、記録された内容を検証する:
 

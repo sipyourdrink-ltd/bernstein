@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — টার্মিনাল ড্যাশবোর্ড | `bernstein gui serve` — ব্রাউজার ড্যাশবোর্ড |
 
 ### একটি রান প্রমাণ করুন
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 এখানে ডিটারমিনিজম বিশ্বাস করার জিনিস নয়, যাচাই করার জিনিস। অডিট চালু রেখে একবার চালান, তারপর যা লেখা হলো তা যাচাই করুন:
 

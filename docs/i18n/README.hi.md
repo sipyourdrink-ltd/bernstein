@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — टर्मिनल डैशबोर्ड | `bernstein gui serve` — ब्राउज़र डैशबोर्ड |
 
 ### रन को साबित कीजिए
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 यहाँ डिटर्मिनिज़्म भरोसे की चीज़ नहीं, जाँचने की चीज़ है। ऑडिट चालू करके एक बार चलाइए, फिर जो दर्ज हुआ उसे सत्यापित कीजिए:
 

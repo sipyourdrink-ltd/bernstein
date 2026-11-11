@@ -166,7 +166,10 @@ def verify_cmd(run: str, root: Path | None, as_json: bool) -> None:
         console.print(f"[green]delegation chain intact[/green] ({result.hops} hop(s))")
         raise SystemExit(0)
     if code == 3 and result.incomplete:
-        console.print("[yellow]delegation chain incomplete[/yellow]: no final head declared in the run manifest")
+        console.print(
+            "[yellow]delegation chain incomplete[/yellow]: no final head declared in the run manifest; "
+            "pre-upgrade runs cannot be backfilled from the remaining receipts"
+        )
         raise SystemExit(3)
     if code == 3:
         detail = f", {', '.join(result.verdict.reasons)}" if result.verdict.reasons else ""

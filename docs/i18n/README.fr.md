@@ -156,7 +156,7 @@ Une exécution en cours est observable depuis l'une ou l'autre des interfaces op
 | `bernstein live` — le tableau de bord terminal | `bernstein gui serve` — le tableau de bord navigateur |
 
 ### prouver une exécution
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Le déterminisme est ici un élément vérifiable, non un acte de foi. Lancez une exécution avec audit activé, puis vérifiez les enregistrements :
 

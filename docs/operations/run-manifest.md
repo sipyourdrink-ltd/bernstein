@@ -37,23 +37,29 @@ payloads.
 | `agent_adapter` | CLI adapter, model, max agents, max tasks per agent. |
 | `provenance` | `triggered_by` (OS user), `triggered_at_iso`, `commit_sha` (`git rev-parse HEAD`). |
 | `orchestrator_config` | Snapshot of the run's `OrchestratorConfig` fields (poll interval, retries, merge strategy, recovery mode, dry-run, plan mode, and more). |
-| `delegation_head_hmac` / `delegation_hop_count` | Last delegation receipt HMAC and receipt count, declared at close; null before close. |
+| `delegation_head_hmac` / `delegation_hop_count` | Last delegation receipt HMAC and receipt count, declared at close; absent before close. |
+| `delegation_seal` | Audit-key HMAC authenticating the final declaration and configuration. |
 | `manifest_hash` | SHA-256 over the canonical JSON of every other field. |
 
 ## Hashing and finalization
 
 `manifest_hash` is computed over the canonical (sorted-key, minimal-separator)
-JSON serialization of the manifest with `manifest_hash` itself excluded, so
+JSON serialization of the manifest with `manifest_hash` itself excluded and
+unset delegation fields omitted (preserving pre-upgrade hashes), so
 the hash identifies the configuration and, after close, the delegation head.
 Configuration fields stay fixed. After writers drain, the orchestrator adds
-the final receipt digest/count and recomputes `manifest_hash`, committing all
-three in one atomic replacement under the delegation append lock. A failed
+the final receipt digest/count, seals the declaration with the audit key, and
+recomputes `manifest_hash`, committing the result in one atomic replacement under the delegation append lock. A failed
 write leaves the startup manifest intact. Older or unclosed manifests without
 a head produce an incomplete delegation verification (exit `3`), never valid.
 See [delegation verification](delegation-verify.md).
 
-The SHA-256 digest is a checksum, not a signature. Receipt completeness is
-checked relative to an externally trusted copy of this run declaration.
+The SHA-256 digest is a checksum, not a signature. `delegation_seal` is an
+audit-key HMAC over the manifest fields except the seal and public checksum.
+Verification checks this seal as well as the head/count. A keyless writer cannot
+forge a shorter declaration by recomputing the checksum. See
+[delegation verification](delegation-verify.md) for export layout, legacy behavior
+and replay/key-holder limits.
 
 ## Where it lives
 

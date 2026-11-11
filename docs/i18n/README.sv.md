@@ -156,7 +156,7 @@ En pågående körning kan följas från båda operatörsgränssnitten. Båda l�
 | `bernstein live` — terminalpanelen | `bernstein gui serve` — webbläsarpanelet |
 
 ### bevisa en körning
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Determinism är här något du verifierar, inte något du accepterar på god tro. Kör en gång med granskning aktiverad och kontrollera sedan vad som loggades:
 

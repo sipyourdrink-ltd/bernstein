@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — панель у терміналі | `bernstein gui serve` — панель у браузері |
 
 ### підтвердження виконання
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Детермінізм тут — це властивість, яку ви перевіряєте, а не те, що приймається на віру. Запустіть один раз з увімкненим аудитом, а потім перевірте збережені записи:
 

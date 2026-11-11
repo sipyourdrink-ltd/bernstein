@@ -156,7 +156,7 @@ Uma execução em andamento pode ser assistida a partir de qualquer uma das inte
 | `bernstein live` — o dashboard no terminal | `bernstein gui serve` — o dashboard no navegador |
 
 ### comprovar uma execução
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 O determinismo aqui é algo que você confere, não algo que você aceita por fé. Execute uma vez com auditoria habilitada e depois verifique o que foi registrado:
 

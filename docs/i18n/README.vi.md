@@ -156,7 +156,7 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 | `bernstein live` — bảng điều khiển terminal | `bernstein gui serve` — bảng điều khiển trình duyệt |
 
 ### chứng minh một phiên chạy
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Tính tất định ở đây là điều bạn có thể tự kiểm chứng, không phải điều bạn chấp nhận dựa trên niềm tin. Chạy một lần với tính năng kiểm toán được bật, sau đó xác minh những gì đã ghi lại:
 

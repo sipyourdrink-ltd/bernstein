@@ -156,7 +156,7 @@ Un'esecuzione in corso può essere monitorata da entrambe le interfacce operator
 | `bernstein live` — la dashboard da terminale | `bernstein gui serve` — la dashboard da browser |
 
 ### provare un'esecuzione
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Il determinismo qui è una proprietà che puoi verificare, non un dogma da accettare per fede. Esegui una volta con l'audit abilitato, quindi verifica quanto registrato:
 

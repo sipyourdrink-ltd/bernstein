@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — לוח הבקרה במסוף | `bernstein gui serve` — לוח הבקרה בדפדפן |
 
 ### הוכחת ריצה
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 דטרמיניזם כאן הוא מאפיין שאתה בודק בעצמך, לא משהו שמקבלים כמובן מאליו. הרץ פעם אחת עם ביקורת מופעלת, ואז אמת את מה שתועד:
 

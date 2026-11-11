@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — терминальный дашборд | `bernstein gui serve` — браузерный дашборд |
 
 ### проверить прогон
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Детерминизм здесь — то, что проверяют, а не то, что принимают на веру. Прогони один раз с включённым аудитом, потом проверь записанное:
 

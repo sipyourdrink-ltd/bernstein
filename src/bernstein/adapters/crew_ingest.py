@@ -25,6 +25,7 @@ from bernstein.core.identity.delegation import (
     DelegationLedger,
     DelegationReceipt,
     _compute_hmac,
+    _valid_manifest_seal,
     verify_run,
     verify_run_chain,
 )
@@ -431,6 +432,8 @@ class CrewIngestAdapter:
                     manifest.delegation_hop_count,
                 ) != (head, len(hmacs)):
                     raise ValueError("declared delegation head mismatch at repeated ingest")
+                if manifest.delegation_head_hmac is not None and not _valid_manifest_seal(manifest, ledger._key):
+                    raise ValueError("invalid delegation manifest seal")
             existing: list[DelegationReceipt] = []
             if path.is_file():
                 for line in path.read_text(encoding="utf-8").splitlines():
@@ -449,10 +452,8 @@ class CrewIngestAdapter:
                     root=ledger.root,
                     run_id=run.run_id,
                     key=ledger._key,
-                    declared_head_hmac=head,
-                    declared_hop_count=len(hmacs),
                 )
-                if not result.valid:
+                if not result.chain_ok or not result.authority.ok:
                     raise ValueError(
                         f"Existing receipts for run {run.run_id!r} fail verification: {'; '.join(result.errors)}"
                     )
@@ -482,6 +483,7 @@ class CrewIngestAdapter:
                 delegation_head_hmac=head,
                 delegation_hop_count=len(hmacs),
             )
+            finalized = replace(finalized, delegation_seal=finalized.compute_delegation_seal(ledger._key))
             finalized = replace(finalized, manifest_hash=finalized.compute_hash())
             write_atomic_json(ledger.root.parent / "runtime" / "manifests" / f"{run.run_id}.json", finalized.to_dict())
             return recorded

@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — แดชบอร์ดในเทอร์มินัล | `bernstein gui serve` — แดชบอร์ดในเบราว์เซอร์ |
 
 ### พิสูจน์รอบการทำงาน
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 การกำหนดผลลัพธ์แน่นอนในที่นี้คือสิ่งที่คุณตรวจสอบได้จริง ไม่ใช่สิ่งที่ต้องยอมรับด้วยความเชื่อ รันหนึ่งครั้งโดยเปิดใช้งานการตรวจสอบ แล้วตรวจดูสิ่งที่บันทึกไว้:
 

@@ -177,8 +177,11 @@ One run receipt binds the journal head, the lineage-spine head when the run wrot
 The same checkability applies to evaluation numbers. `bernstein bench run <suite> --reliability k` (also spelled `bernstein eval --reliability k`) runs every task `k` times under fixed coordination, then reports a `pass^k` floor (all `k` attempts must pass) alongside the `pass@1` ceiling. That result is sealed in a signed receipt which `bernstein bench reliability-verify` recomputes offline, so a fabricated floor fails verification. Details: [pass^k reliability floor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
 
 `bernstein delegation verify RUN` compares the receipt chain with the final
-head and hop count declared in the run manifest, detecting tail truncation.
-A run without that declaration is incomplete (exit `3`), never valid. See the
+head and hop count sealed in the run manifest with the audit-key HMAC, detecting
+tail deletion, substitution and post-close growth, including keyless rewrites of
+the declaration. Removing the declaration leaves the run incomplete (exit `3`),
+never valid. This does not detect replay of an older authentic snapshot or protect
+against a writer holding the audit key. See the
 [delegation verification workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### how it works

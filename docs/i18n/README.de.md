@@ -156,7 +156,7 @@ Ein laufender Durchlauf kann über beide Bedienoberflächen beobachtet werden. B
 | `bernstein live` — das Terminal-Dashboard | `bernstein gui serve` — das Browser-Dashboard |
 
 ### einen Durchlauf nachweisen
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Determinismus ist hier etwas, das Sie überprüfen, statt darauf zu vertrauen. Einmal mit aktiviertem Audit ausführen und die Aufzeichnungen verifizieren:
 

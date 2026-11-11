@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — 終端機儀表板 | `bernstein gui serve` — 瀏覽器儀表板 |
 
 ### 證明一次執行
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 這裡的確定性是你要去核查的東西，而不是憑空相信。啟用稽核執行一次，然後驗證記錄的內容：
 

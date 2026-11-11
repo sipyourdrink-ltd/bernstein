@@ -156,7 +156,7 @@ Trwający przebieg można obserwować w dowolnym interfejsie operatora. Oba korz
 | `bernstein live` — panel w terminalu | `bernstein gui serve` — panel w przeglądarce |
 
 ### udowodnij poprawność przebiegu
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Determinizm w tym projekcie można sprawdzić, zamiast przyjmować go na wiarę. Uruchom zadanie z włączonym audytem, a następnie zweryfikuj zarejestrowane dane:
 

@@ -156,7 +156,7 @@ Devam eden bir çalıştırma, her iki operatör arayüzünden de izlenebilir. H
 | `bernstein live` — terminal kontrol paneli | `bernstein gui serve` — tarayıcı kontrol paneli |
 
 ### bir çalıştırmayı kanıtlayın
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Buradaki determinizm, inanca dayalı kabul ettiğiniz bir şey değil, bizzat kontrol ettiğiniz bir şeydir. Denetim etkinleştirilmiş olarak bir kez çalıştırın, ardından kaydedilenleri doğrulayın:
 

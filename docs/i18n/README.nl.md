@@ -156,7 +156,7 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 | `bernstein live` — het terminaldashboard | `bernstein gui serve` — het browserdashboard |
 
 ### een run bewijzen
-<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
+<!-- l10n: en="prove a run" hash="sha256:19d7dd0aafc0" -->
 
 Determinisme is hier iets wat u controleert, niet iets wat u op goed vertrouwen aanneemt. Voer eenmaal uit met audit ingeschakeld en controleer wat is vastgelegd:
 

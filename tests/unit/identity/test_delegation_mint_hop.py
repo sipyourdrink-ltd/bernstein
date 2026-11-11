@@ -57,7 +57,9 @@ def _write_manifest(sdd_dir, root_identity_id: str) -> None:
     """
     from bernstein.core.config.manifest import RunManifest, save_manifest
 
-    save_manifest(RunManifest(run_id=RUN, run_root_identity_id=root_identity_id), sdd_dir)
+    manifest = RunManifest(run_id=RUN, run_root_identity_id=root_identity_id)
+    object.__setattr__(manifest, "manifest_hash", manifest.compute_hash())
+    save_manifest(manifest, sdd_dir)
 
 
 def _mint_orchestrator(store):
@@ -145,6 +147,7 @@ def _declare_head(audit_root, **overrides):
         **overrides,
     }
     manifest = RunManifest.from_dict(fields)
+    object.__setattr__(manifest, "delegation_seal", manifest.compute_delegation_seal(KEY))
     object.__setattr__(manifest, "manifest_hash", manifest.compute_hash())
     save_manifest(manifest, audit_root.parent)
     return manifest
@@ -385,7 +388,9 @@ def test_finalizing_twice_cannot_redeclare_a_changed_chain(store, audit_root):
 
     parent = _mint_orchestrator(store)
     _mint_child(store, "child", parent, task_ids=["t1"])
-    save_manifest(RunManifest(run_id=RUN), audit_root.parent)
+    manifest = RunManifest(run_id=RUN)
+    object.__setattr__(manifest, "manifest_hash", manifest.compute_hash())
+    save_manifest(manifest, audit_root.parent)
     ledger = delegation.DelegationLedger(audit_root, KEY)
     ledger.finalize_manifest(audit_root.parent, RUN)
     closed = load_manifest(audit_root.parent, RUN)
@@ -416,3 +421,60 @@ def test_cli_rejects_an_unusable_final_manifest(store, audit_root, damage):
     payload = json.loads(result.output)
     assert not payload["valid"]
     assert result.exit_code == (3 if damage == "missing" else 1)
+
+
+def test_keyless_manifest_rewrite_cannot_hide_tail_truncation(store, audit_root):
+    from dataclasses import replace
+
+    from bernstein.core.config.manifest import load_manifest, save_manifest
+
+    parent = _mint_orchestrator(store)
+    for index in range(3):
+        _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"])
+    _declare_head(audit_root, run_root_identity_id=parent.id)
+    path = audit_root / "delegation" / f"{RUN}.jsonl"
+    lines = path.read_text().splitlines()[:-1]
+    path.write_text("\n".join(lines) + "\n")
+    manifest = load_manifest(audit_root.parent, RUN)
+    forged = replace(manifest, delegation_head_hmac=json.loads(lines[-1])["hmac"], delegation_hop_count=len(lines))
+    forged = replace(forged, manifest_hash=forged.compute_hash())
+    save_manifest(forged, audit_root.parent)
+    result = delegation.verify_run(RUN, root=audit_root, key=KEY)
+    assert not result.valid and not result.chain_ok
+    assert any("seal" in error for error in result.errors)
+
+
+def test_different_validly_keyed_tail_is_rejected(store, audit_root):
+    from dataclasses import replace
+
+    parent = _mint_orchestrator(store)
+    for index in range(2):
+        _mint_child(store, f"child-{index}", parent, task_ids=[f"t{index}"])
+    _declare_head(audit_root, run_root_identity_id=parent.id)
+    receipts = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY).receipts
+    alternate = replace(receipts[-1], act="alternate.valid.action")
+    body = alternate.body()
+    alternate = replace(alternate, hmac=delegation._compute_hmac(KEY, alternate.prev_hmac, body))
+    path = audit_root / "delegation" / f"{RUN}.jsonl"
+    lines = path.read_text().splitlines()
+    lines[-1] = json.dumps({**body, "hmac": alternate.hmac})
+    path.write_text("\n".join(lines) + "\n")
+    result = delegation.verify_run_chain(root=audit_root, run_id=RUN, key=KEY)
+    assert not result.valid
+    assert result.hops == 2
+    assert any("head mismatch" in error for error in result.errors)
+    assert not any("receipt tampered" in error for error in result.errors)
+
+
+def test_close_refuses_to_rehash_tampered_startup_manifest(store, audit_root):
+    from dataclasses import replace
+
+    from bernstein.core.config.manifest import RunManifest, save_manifest
+
+    parent = _mint_orchestrator(store)
+    _mint_child(store, "child", parent, task_ids=["t1"])
+    manifest = RunManifest(run_id=RUN)
+    manifest = replace(manifest, manifest_hash=manifest.compute_hash())
+    save_manifest(replace(manifest, run_root_identity_id="tampered"), audit_root.parent)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        delegation.DelegationLedger(audit_root, KEY).finalize_manifest(audit_root.parent, RUN)

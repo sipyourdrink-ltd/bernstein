@@ -69,6 +69,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from bernstein.core.identity.delegation_scope import (
+    VERDICT_PASS,
+    VERDICT_UNPROVEN,
     AuthorityReport,
     ChainVerdict,
     DecisionBinding,
@@ -81,6 +83,8 @@ from bernstein.core.identity.principal import AgentPrincipal, principal_ref
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+
+    from bernstein.core.config.manifest import RunManifest
 
 if sys.platform == "win32":
     fcntl = None  # type: ignore[assignment]
@@ -415,14 +419,29 @@ class DelegationLedger:
             manifest = load_manifest(sdd_dir, run_id)
             if manifest is None or manifest.run_id != run_id:
                 raise ValueError("cannot finalize delegation: missing or mismatched run manifest")
+            if manifest.manifest_hash != manifest.compute_hash():
+                raise ValueError("cannot finalize delegation: run manifest hash mismatch")
             head, count = self._tail(run_id)
             if manifest.delegation_head_hmac is not None or manifest.delegation_hop_count is not None:
                 if (manifest.delegation_head_hmac, manifest.delegation_hop_count) != (head, count):
                     raise ValueError("declared delegation head mismatch at repeated close")
+                if not _valid_manifest_seal(manifest, self._key):
+                    raise ValueError("cannot finalize delegation: invalid or missing manifest seal")
                 return
             finalized = replace(manifest, delegation_head_hmac=head, delegation_hop_count=count)
+            finalized = replace(finalized, delegation_seal=finalized.compute_delegation_seal(self._key))
             finalized = replace(finalized, manifest_hash=finalized.compute_hash())
             write_atomic_json(sdd_dir / "runtime" / "manifests" / f"{run_id}.json", finalized.to_dict())
+
+
+def _valid_manifest_seal(manifest: RunManifest, key: bytes) -> bool:
+    seal = manifest.delegation_seal
+    return (
+        isinstance(seal, str)
+        and len(seal) == 64
+        and all(c in "0123456789abcdef" for c in seal)
+        and _hmac.compare_digest(seal, manifest.compute_delegation_seal(key))
+    )
 
 
 def verify_run_chain(
@@ -432,8 +451,6 @@ def verify_run_chain(
     key: bytes,
     scope_resolver: Callable[[str], DelegationScope | None] | None = None,
     root_issuers: frozenset[str] = frozenset(),
-    declared_head_hmac: str | None = None,
-    declared_hop_count: int | None = None,
 ) -> ChainResult:
     """Reconstruct and verify a run's delegation chain offline.
 
@@ -449,9 +466,6 @@ def verify_run_chain(
         key: The HMAC key (install audit key) the receipts were written with.
         scope_resolver: Optional lookup for receipts that carry only a
             content-addressed ``scope_ref`` rather than an inline scope body.
-        declared_head_hmac: Final receipt digest from the trusted run manifest.
-        declared_hop_count: Final receipt count from the same declaration.
-            Without both fields, a chain is incomplete and never valid.
         root_issuers: Identities the run declared as chain roots, supplied from
             outside the receipts (the run manifest). A hop issued by one of them
             may be a root without being first, which is what lets several agents
@@ -468,11 +482,34 @@ def verify_run_chain(
 
     What a pass does not establish: that runtime enforcement matched the
     recorded scope, including consumption state such as remaining uses; that
-    any grant was appropriate policy; that the manifest itself is authentic
+    any grant was appropriate policy; that no earlier authentic manifest was replayed
     or no alternate delegation path exists; that an unresolved
     reference would have matched; anything about execution outcomes. unproven
     is not valid, and pass is the only positive claim.
     """
+    from bernstein.core.config.manifest import load_manifest
+
+    declaration_error = None
+    try:
+        manifest = load_manifest(Path(root).parent, run_id)
+        if manifest is not None:
+            if manifest.run_id != run_id:
+                raise ValueError("run manifest identity mismatch")
+            if manifest.manifest_hash != manifest.compute_hash():
+                raise ValueError("run manifest hash mismatch")
+            has_declaration = any(
+                value is not None
+                for value in (manifest.delegation_head_hmac, manifest.delegation_hop_count, manifest.delegation_seal)
+            )
+            if has_declaration and not _valid_manifest_seal(manifest, key):
+                raise ValueError("invalid or missing delegation manifest seal")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        manifest = None
+        declaration_error = f"invalid delegation manifest: {exc}"
+    if manifest is not None and manifest.run_root_identity_id:
+        root_issuers = root_issuers | {manifest.run_root_identity_id}
+    declared_head_hmac = manifest.delegation_head_hmac if manifest else None
+    declared_hop_count = manifest.delegation_hop_count if manifest else None
     ledger_dir = Path(root) / _SUBDIR
     safe = run_id.replace("/", "_").replace("\\", "_")
     path = ledger_dir / f"{safe}.jsonl"
@@ -486,7 +523,7 @@ def verify_run_chain(
         )
 
     receipts: list[DelegationReceipt] = []
-    errors: list[str] = []
+    errors: list[str] = [declaration_error] if declaration_error else []
     prev_hmac = GENESIS_HMAC
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines()):
         raw = raw.strip()
@@ -515,7 +552,7 @@ def verify_run_chain(
             break
         prev_hmac = stored_hmac
 
-    incomplete = declared_head_hmac is None and declared_hop_count is None
+    incomplete = not declaration_error and declared_head_hmac is None and declared_hop_count is None
     if not incomplete:
         if (
             not isinstance(declared_head_hmac, str)
@@ -543,6 +580,8 @@ def verify_run_chain(
         chain_ok=chain_ok,
         root_issuers=root_issuers,
     )
+    if incomplete and verdict.verdict == VERDICT_PASS:
+        verdict = replace(verdict, verdict=VERDICT_UNPROVEN)
     return ChainResult(
         valid=chain_ok and authority.ok and not incomplete,
         hops=len(receipts),
@@ -628,37 +667,10 @@ def verify_run(
     Returns:
         The :class:`ChainResult` from :func:`verify_run_chain`.
     """
-    from bernstein.core.config.manifest import load_manifest
-
-    audit_root = root or DEFAULT_ROOT
-    declaration_error = None
-    try:
-        manifest = load_manifest(audit_root.parent, run_id)
-        if manifest is not None and manifest.run_id != run_id:
-            raise ValueError("run manifest identity mismatch")
-        if (
-            manifest is not None
-            and (manifest.delegation_head_hmac is not None or manifest.delegation_hop_count is not None)
-            and manifest.manifest_hash != manifest.compute_hash()
-        ):
-            raise ValueError("run manifest hash mismatch")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        manifest = None
-        declaration_error = f"invalid delegation manifest: {exc}"
-    if manifest is not None and manifest.run_root_identity_id:
-        root_issuers = root_issuers | {manifest.run_root_identity_id}
-    result = verify_run_chain(
-        root=audit_root,
+    return verify_run_chain(
+        root=root or DEFAULT_ROOT,
         run_id=run_id,
         key=_audit_key() if key is None else key,
         scope_resolver=scope_resolver,
         root_issuers=root_issuers,
-        declared_head_hmac=manifest.delegation_head_hmac if manifest else None,
-        declared_hop_count=manifest.delegation_hop_count if manifest else None,
     )
-    if declaration_error:
-        result.valid = result.chain_ok = result.incomplete = False
-        result.errors = [error for error in result.errors if not error.startswith("incomplete:")]
-        result.errors.append(declaration_error)
-        result.verdict = grade_chain(result.receipts, chain_ok=False)
-    return result
