@@ -1160,6 +1160,17 @@ def _inject_alibaba_enable_thinking(
     return kwargs
 
 
+def _gpt5_mini_responses_rejects_sampling(manifest: RunnerManifest, base_url: str | None) -> bool:
+    """Identify the standard Responses route for GPT-5 mini."""
+    if manifest.council is not None or base_url:
+        return False
+    env_base_url = os.environ.get("OPENAI_BASE_URL")
+    return (not env_base_url or env_base_url.rstrip("/") == "https://api.openai.com/v1") and manifest.model in {
+        "gpt-5-mini",
+        "gpt-5-mini-2025-08-07",
+    }
+
+
 def _build_model_settings_kwargs(
     manifest: RunnerManifest,
     *,
@@ -1193,10 +1204,11 @@ def _build_model_settings_kwargs(
         Kwargs for ``agents.ModelSettings``, possibly empty.
     """
     kwargs: dict[str, Any] = {}
-    if manifest.temperature is not None:
-        kwargs["temperature"] = manifest.temperature
-    if manifest.top_p is not None:
-        kwargs["top_p"] = manifest.top_p
+    if not _gpt5_mini_responses_rejects_sampling(manifest, base_url):
+        if manifest.temperature is not None:
+            kwargs["temperature"] = manifest.temperature
+        if manifest.top_p is not None:
+            kwargs["top_p"] = manifest.top_p
     if manifest.top_k is not None:
         kwargs["extra_args"] = {"top_k": manifest.top_k}
     if manifest.max_tokens and _model_settings_accepts(model_settings_cls, "max_tokens"):
@@ -1877,6 +1889,10 @@ def run(manifest: RunnerManifest) -> int:
         extra_dirs,
     )
 
+    omit_sampling = _gpt5_mini_responses_rejects_sampling(manifest, manifest.base_url)
+    if omit_sampling and (manifest.temperature is not None or manifest.top_p is not None):
+        logger.info("Omitting unsupported temperature and top_p for %s on Responses", manifest.model)
+
     # Every effective sampling/endpoint param is logged here.  The key
     # itself is never logged - only the NAME of the env var that holds it.
     emit_event(
@@ -1885,8 +1901,8 @@ def run(manifest: RunnerManifest) -> int:
             "session_id": manifest.session_id,
             "model": manifest.model,
             "sandbox_provider": manifest.sandbox_provider,
-            "temperature": manifest.temperature,
-            "top_p": manifest.top_p,
+            "temperature": None if omit_sampling else manifest.temperature,
+            "top_p": None if omit_sampling else manifest.top_p,
             "top_k": manifest.top_k,
             "base_url": manifest.base_url,
             "api_key_env": manifest.api_key_env,

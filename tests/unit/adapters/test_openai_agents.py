@@ -1175,6 +1175,36 @@ class TestRunnerHelpers:
         # top_k field but OpenAI-compatible endpoints accept it.
         assert kwargs["extra_args"] == {"top_k": 40}
 
+    @pytest.mark.parametrize("model", ["gpt-5-mini", "gpt-5-mini-2025-08-07"])
+    def test_gpt5_mini_responses_omits_unsupported_sampling(self, model: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        from dataclasses import dataclass
+
+        @dataclass
+        class ModelSettings:
+            max_tokens: int | None = None
+
+        manifest = RunnerManifest(
+            session_id="s",
+            prompt="p",
+            workdir="/workspace",
+            model=model,
+            temperature=0.3,
+            top_p=0.8,
+            max_tokens=4096,
+        )
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        assert _build_model_settings_kwargs(manifest, model_settings_cls=ModelSettings) == {"max_tokens": 4096}
+        assert _build_model_settings_kwargs(manifest, base_url="") == {}
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1/")
+        assert _build_model_settings_kwargs(manifest, model_settings_cls=ModelSettings) == {"max_tokens": 4096}
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
+        assert _build_model_settings_kwargs(manifest) == {"temperature": 0.3, "top_p": 0.8}
+        monkeypatch.delenv("OPENAI_BASE_URL")
+        assert _build_model_settings_kwargs(manifest, base_url="https://example.invalid/v1") == {
+            "temperature": 0.3,
+            "top_p": 0.8,
+        }
+
     def test_build_model_settings_kwargs_omits_max_tokens_without_sdk(self) -> None:
         # Without an SDK class to probe, max_tokens is not forwarded so the
         # runner never passes a kwarg the installed SDK might reject.
@@ -1574,7 +1604,7 @@ class TestRunnerRun:
             session_id="abc",
             prompt="hello",
             workdir="/workspace",
-            model="gpt-5-mini",
+            model="gpt-4.1-mini",
             temperature=0.3,
             top_p=0.8,
             top_k=20,
@@ -1597,6 +1627,29 @@ class TestRunnerRun:
             extra_args={"top_k": 20},
         )
         assert fake_agent_cls.call_args.kwargs["model_settings"] is settings_sentinel
+
+    def test_gpt5_mini_start_event_reports_applied_sampling(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        manifest = RunnerManifest(
+            session_id="abc",
+            prompt="hello",
+            workdir="/workspace",
+            model="gpt-5-mini",
+            temperature=0.3,
+            top_p=0.8,
+        )
+        fake_runner = MagicMock()
+        fake_runner.run_sync.return_value = _FakeResult(summary="ok")
+        fake_sdk = MagicMock(Runner=fake_runner)
+        with patch.dict(sys.modules, {"agents": fake_sdk}):
+            assert run(manifest) == EXIT_OK
+        fake_sdk.ModelSettings.assert_not_called()
+        events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        start = next(event for event in events if event["type"] == "start")
+        assert start["temperature"] is None
+        assert start["top_p"] is None
 
     def test_run_attaches_builtin_tools_when_tool_source_builtin(
         self,
