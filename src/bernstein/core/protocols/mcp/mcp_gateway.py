@@ -29,7 +29,6 @@ import json
 import logging
 import sys
 import time
-from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -37,7 +36,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.protocols.mcp_catalog import MCPServerCapabilities, ServerCapabilitiesStore
     from bernstein.core.protocols.payments.x402 import X402SettlementCoordinator
     from bernstein.core.replay.journal import EventJournal
     from bernstein.core.security.audit_chain import AuditChainStore
@@ -226,6 +225,7 @@ class MCPGateway:
         self._reader_task: asyncio.Task[None] | None = None
         self._upstream_tools_available: bool | None = None
         self._capability_task: asyncio.Task[None] | None = None
+        self._capability_commit_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Capability drift
@@ -242,30 +242,35 @@ class MCPGateway:
         Updates store and emits audit event if drift detected. No-op if
         no capabilities store or audit chain is configured.
         """
-        if self._capabilities_store is None or self._audit_chain is None:
+        store, chain = self._capabilities_store, self._audit_chain
+        if store is None or chain is None:
             return
         digest = self._compute_tool_digest(tool_names)
-        prior = self._capabilities_store.get_capabilities(self._server_name)
-        if prior is not None and prior.capability_digest == digest:
-            return
-        # Get run_id from the wal_writer for the audit chain event
         run_id = self._wal_writer._run_id
-        try:
+
+        def record(prior: MCPServerCapabilities | None) -> None:
             record_mcp_capability_drift(
-                chain=self._audit_chain,
+                chain=chain,
                 run_id=run_id,
                 server_name=self._server_name,
                 current_tools=tool_names,
                 previous_tools=tuple(sorted(prior.tool_names)) if prior is not None else None,
             )
+
+        try:
+            store.set_capabilities(self._server_name, frozenset(tool_names), digest, before_change=record)
         except Exception:
             logger.warning(
                 "Failed to record MCP capability drift for %s",
                 self._server_name,
                 exc_info=True,
             )
-            return
-        self._capabilities_store.set_capabilities(self._server_name, frozenset(tool_names), digest)
+
+    async def _persist_capability_observation(self, tool_names: tuple[str, ...]) -> None:
+        try:
+            await asyncio.to_thread(self._process_capability_drift, tool_names)
+        except Exception as exc:
+            logger.warning("Capability drift check failed for %s: %s", self._server_name, exc)
 
     async def _check_capability_drift(self) -> None:
         """Record tool names after the upstream MCP initialization handshake."""
@@ -302,7 +307,11 @@ class MCPGateway:
                         if not isinstance(cursor, str) or not cursor or cursor in seen:
                             raise ValueError("upstream returned an invalid or repeated tool cursor")
                         seen.add(cursor)
-            self._process_capability_drift(tuple(sorted(tool_names)))
+            # Snapshot and audit file locks may contend with other processes.
+            self._capability_commit_task = asyncio.create_task(
+                self._persist_capability_observation(tuple(sorted(tool_names)))
+            )
+            await asyncio.shield(self._capability_commit_task)
         except Exception as exc:
             logger.warning("Capability drift check failed for %s: %s", self._server_name, exc)
 
@@ -316,6 +325,9 @@ class MCPGateway:
             return
         if not self._upstream_cmd:
             return
+        if self._capability_commit_task is not None:
+            await asyncio.shield(self._capability_commit_task)
+            self._capability_commit_task = None
         self._upstream_tools_available = None
         self._capability_task = None
         self._proc = await asyncio.create_subprocess_exec(
@@ -329,10 +341,16 @@ class MCPGateway:
     async def stop(self) -> None:
         """Terminate the upstream process gracefully."""
         try:
-            if self._capability_task is not None:
-                self._capability_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await self._capability_task
+            probe = self._capability_task
+            if probe is not None:
+                if not probe.done() and not probe.cancelling():
+                    probe.cancel()
+                # Treat the probe's cancellation as its result, distinct from
+                # cancellation of this shutdown waiter.
+                await asyncio.shield(asyncio.gather(probe, return_exceptions=True))
+            # A cancelled waiter never owns cancellation of the shared write.
+            if self._capability_commit_task is not None:
+                await asyncio.shield(self._capability_commit_task)
         finally:
             if self._proc and self._proc.returncode is None:
                 self._proc.terminate()
