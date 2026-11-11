@@ -358,8 +358,8 @@ class Lease:
 
         Only a file this lease still owns is unlinked: once another claimant
         has reclaimed an expired lease, releasing the stale handle must not
-        delete the new holder's record. An unreadable or incomplete payload
-        does not prove ownership and is left for normal stale reclamation.
+        delete the new holder's record. An unreadable record or one without
+        this lease's ID is left untouched.
         """
         if self.released:
             return
