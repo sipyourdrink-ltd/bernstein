@@ -230,6 +230,13 @@ This means plugin authors can be liberal with exceptions; they won't take down
 the system.  However, it also means silent failures are possible, so log
 liberally inside your plugins.
 
+During worker and task-server discovery, a failing import, factory or
+registration for a configured plugin or a `bernstein.plugins` entry point
+records a workspace [declaration quarantine](../operations/declaration-quarantine.md).
+Other plugin declarations continue loading. Fix the cause, explicitly
+re-enable the declaration, then reload discovery or restart the affected
+process. Diagnostic discovery honors active markers without writing new ones.
+
 ---
 
 ## Example plugins

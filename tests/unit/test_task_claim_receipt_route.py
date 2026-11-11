@@ -382,3 +382,26 @@ async def test_default_application_persists_creation_on_reload(tmp_path: Path, m
     assert len(events) == 1
     assert events[0].details["description"] == "Persist without an orchestrator"
     assert events[0].details["role"] == "docs"
+
+
+async def test_unavailable_plugin_quarantine_blocks_creation_but_preserves_completion(
+    app, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bernstein.plugins.manager import PluginQuarantineUnavailable
+
+    payload = {"title": "Plugin fixture", "description": "Fixture", "role": "backend", "priority": 1}
+    created = await client.post("/tasks", json=payload)
+    assert created.status_code == 201, created.text
+    task_id = created.json()["id"]
+    claimed = await client.post("/tasks/claim-receipt", json={"claimer_id": "worker-1", "role": "backend"})
+    assert claimed.status_code == 200, claimed.text
+
+    def unavailable(*_args, **_kwargs):
+        raise PluginQuarantineUnavailable("Plugin declaration quarantine is unavailable")
+
+    monkeypatch.setattr("bernstein.core.routes.task_crud.get_plugin_manager", unavailable)
+    blocked = await client.post("/tasks", json={**payload, "title": "Blocked plugin fixture"})
+    assert blocked.status_code == 503, blocked.text
+    completed = await client.post(f"/tasks/{task_id}/complete", json={"result_summary": "Fixture complete"})
+    assert completed.status_code == 200, completed.text
+    assert app.state.store.get_task(task_id).status.value == "done"
