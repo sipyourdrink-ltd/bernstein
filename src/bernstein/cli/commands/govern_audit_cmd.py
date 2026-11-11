@@ -8,7 +8,7 @@ three-state verdict vocabulary.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from inspect import signature
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,7 +57,7 @@ def _exit_code(findings: list[Finding], *, strict: bool) -> int:
 
 def _finding_dict(finding: Finding) -> dict[str, Any]:
     """Preserve every contract field, including the public id alias."""
-    return {**asdict(finding), "id": finding.id}
+    return finding.to_dict()
 
 
 def _sarif(findings: list[Finding]) -> dict[str, Any]:
@@ -80,6 +80,121 @@ def _sarif(findings: list[Finding]) -> dict[str, Any]:
             }
         ],
     }
+
+
+# Stable installation IDs, in the legacy doctor's display order. Backend
+# helpers share storage's ID: postgres/redis are alternate implementations.
+INSTALLATION_CHECKS: tuple[tuple[str, str], ...] = (
+    ("INS-001", "python"),
+    ("INS-002", "adapters"),
+    ("INS-003", "last_green"),
+    ("INS-004", "version_posture"),
+    ("INS-005", "auth"),
+    ("INS-006", "port"),
+    ("INS-007", "workspace"),
+    ("INS-008", "stale_pids"),
+    ("INS-009", "guardrails"),
+    ("INS-010", "ci_tools"),
+    ("INS-011", "storage"),
+    ("INS-012", "secrets"),
+    ("INS-013", "readiness"),
+    ("INS-014", "context_and_plugins"),
+    ("INS-015", "commit_attribution"),
+    ("INS-016", "compliance"),
+    ("INS-017", "schedule_supervisor"),
+    ("INS-018", "eval_gate_power"),
+    ("INS-019", "otel_export"),
+    ("INS-020", "audit_anchoring"),
+)
+
+
+class DoctorInstallationAdapter:
+    """An opt-in install check, sharing the exact producer used by doctor."""
+
+    area = "INS"
+    opt_in = True
+
+    def __init__(self, check_id: str, name: str) -> None:
+        self.check_id = check_id
+        self._name = name
+        self.title = name.replace("_", " ").capitalize()
+        self.description = f"Doctor installation check: {self.title}"
+
+    def run(self, workdir: Path | None = None) -> Finding:
+        from bernstein.cli.commands import status_cmd
+
+        helper = getattr(status_cmd, f"_doctor_check_{self._name}")
+        rows: list[dict[str, Any]] = []
+        arguments: dict[str, Any] = {}
+        for name in signature(helper).parameters:
+            if name == "checks":
+                arguments[name] = rows
+            elif name == "workdir":
+                arguments[name] = workdir or Path.cwd()
+            elif name == "_check":
+                arguments[name] = lambda *args: status_cmd._add_check(rows, *args)
+        return helper(**arguments)
+
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
+
+
+def populate_installation_checks(registry: CheckRegistry) -> None:
+    """Compose the CLI-owned doctor checks explicitly into this audit runner."""
+    for check_id, name in INSTALLATION_CHECKS:
+        if registry.get_check(check_id) is None:
+            registry.register(DoctorInstallationAdapter(check_id, name))
+
+
+def _record_sentinel_run(root: Path, findings: list[Finding]) -> None:
+    """Anchor the injected run, then dispatch through the existing transport."""
+    from bernstein.core.checks.adapters import AuditSentinelCheck
+
+    sentinel = next((f for f in findings if f.check_id == AuditSentinelCheck.check_id and f.passed is False), None)
+    if sentinel is None:
+        return
+
+    import asyncio
+    import time
+    from dataclasses import asdict
+
+    from bernstein.cli.commands.notify_cmd import _load_notifications_config
+    from bernstein.core.govern.audit_report import GOVERN_AUDIT_RUN_ID, AuditReport, anchor_audit_report
+    from bernstein.core.lifecycle.notify_bridge import build_bridge_from_config
+    from bernstein.core.notifications.protocol import NotificationEvent, NotificationEventKind
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    rows: tuple[dict[str, Any], ...] = tuple(asdict(f) | {"id": f.check_id} for f in findings)
+    report = anchor_audit_report(
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=load_or_create_audit_key(),
+        report=AuditReport(findings=rows, timestamp=int(time.time())),
+    )
+    config_path = root / "bernstein.yaml"
+    if not config_path.exists():
+        return
+    config = _load_notifications_config(config_path)
+    if not config.enabled:
+        return
+    bridge = build_bridge_from_config(config, runtime_dir=root / ".sdd" / "runtime", register_in_registry=False)
+    event = NotificationEvent(
+        event_id=f"govern-audit-sentinel-{report.journal_entry_hash}",
+        kind=NotificationEventKind.SYNTHETIC,
+        title="Governance audit selftest failure",
+        body=sentinel.summary,
+        severity="error",
+        run_id=GOVERN_AUDIT_RUN_ID,
+        timestamp=report.timestamp,
+        details={"check_id": sentinel.check_id, "journal_entry_hash": report.journal_entry_hash},
+    )
+
+    async def dispatch() -> None:
+        try:
+            await bridge.dispatch_event(event)
+        finally:
+            await bridge.aclose()
+
+    asyncio.run(dispatch())
 
 
 @click.command("audit")
@@ -142,6 +257,9 @@ def govern_audit_cmd(
     Note: the verifier-key staleness check this command used to run now
     lives in ``bernstein govern audit-keys``.
 
+    BERNSTEIN_GOVERN_AUDIT_SENTINEL=1 enables the harmless sentinel:failure
+    selftest, journaling its run and dispatching a synthetic notification.
+
     Exit codes:
       0: Selected measured checks passed; declared findings never affect the code.
       1: A selected measured check failed, or no checks were selected.
@@ -152,6 +270,7 @@ def govern_audit_cmd(
     """
     reg = DEFAULT_REGISTRY if registry is None else registry
     populate_default_checks(reg)
+    populate_installation_checks(reg)
     if as_json:
         output_format = "json"
 
@@ -186,7 +305,15 @@ def govern_audit_cmd(
         raise SystemExit(0)
 
     root = Path(workdir).resolve()
+    from bernstein.core.checks.adapters import AuditSentinelCheck
+
+    if AuditSentinelCheck().active and not quiet:
+        click.echo(
+            f"Sentinel active: {AuditSentinelCheck.env_var}=1 ({AuditSentinelCheck.check_id}); synthetic failure.",
+            err=True,
+        )
     findings = reg.run_all(workdir=root, only_areas=only_areas, skip_ids=skip_ids)
+    _record_sentinel_run(root, findings)
     exit_code = _exit_code(findings, strict=strict)
 
     if quiet:

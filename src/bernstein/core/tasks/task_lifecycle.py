@@ -463,6 +463,9 @@ def _choose_retry_escalation(
     instruction, not a default, and substituting a tier name for it hands the
     configured provider a model it does not serve (#4274).
 
+    A supplied provider-prefixed model is retained instead of a bare Claude
+    tier. Effort follows the existing branch policy independently.
+
     Returns (new_model, new_effort).
     """
     from bernstein.core.tasks.models import Scope as _Scope
@@ -470,7 +473,14 @@ def _choose_retry_escalation(
     terminal_reason = task.terminal_reason
 
     def _model(escalated: str) -> str:
-        return pinned_model or escalated
+        # A pinned model is an instruction; never substitute a bare tier name for it.
+        if pinned_model:
+            return pinned_model
+        # Retain the supplied provider/model identity; the local Claude ladder
+        # cannot establish a replacement in that provider's model catalog.
+        if "/" in current_model and escalated in _MODEL_LADDER:
+            return current_model
+        return escalated
 
     match terminal_reason:
         case "error_max_turns":
@@ -1489,6 +1499,10 @@ def retry_or_fail_task(
 
         if operator_pinned_model:
             retry_model = operator_pinned_model
+        elif task.model and "/" in task.model:
+            # This independent retry creator must preserve the same supplied
+            # provider/model identity as _choose_retry_escalation (#6605).
+            retry_model = task.model
         elif adapter_is_claude_compatible:
             retry_model = tier_model
         else:

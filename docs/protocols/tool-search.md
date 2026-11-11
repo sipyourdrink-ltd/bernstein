@@ -73,6 +73,17 @@ schemas = expand_tools(catalog, ["gh.diff"])
 
 ## Configuration
 
+The internal spawn-budget measurement counts full discovered tool definitions
+per server, including input/output schemas, annotations and extension fields.
+Each definition is serialized as compact, key-sorted JSON with Unicode preserved;
+the server count sums its tools, and the total sums the server counts. Callers
+may supply a local synchronous counter. Otherwise the JSON byte-based estimate
+(`count_tokens_via_estimation(..., file_type="json")`) is used, without API or
+model calls. This is an estimate of definitions only, excluding protocol framing
+and adapter prompt overhead. An empty discovered list counts as zero; missing
+discovery is unknown (`None`), including the total if any server is unknown.
+This measurement does not change spawn behaviour or the configuration sent to agents.
+
 | Knob | Default | Controls |
 |---|--:|---|
 | `defaults.MCP_TOOL_SEARCH_ENABLED` | `true` | Master switch. |

@@ -46,9 +46,6 @@ ALLOWED_IMAGE_HOSTS = frozenset(
         "raw.githubusercontent.com",
         "github.com",
         "img.shields.io",
-        "api.securityscorecards.dev",
-        "mcptoplist.com",
-        "deepwiki.com",
     }
 )
 
@@ -174,7 +171,7 @@ def test_every_readme_image_resolves_to_an_asset_this_repo_actually_ships() -> N
     and the markdown form (used inside the surface table, where the cell sizes
     the image) are checked, because the README uses both.
 
-    ``<source srcset>`` inside the logo's ``<picture>`` is checked too. PyPI's
+    ``<source srcset>`` inside a ``<picture>`` is checked too. PyPI's
     sanitiser keeps only the ``<img>`` fallback, which is what a fallback is
     for - the theme switch is a GitHub enhancement, and dropping it there costs
     the reader nothing. On GitHub it is the element that actually renders in

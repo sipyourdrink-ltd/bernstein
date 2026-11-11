@@ -95,10 +95,10 @@ required-context coverage by
 | `typecheck (packages/vscode)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (web)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
 | `typecheck (templates/cloudflare-mcp-server)` | `typecheck-ts.yml` :: `typecheck` | Yes - `merge_group: {}` | **No - see below** |
-| `quorum` | `quorum.yml` :: `quorum` | Yes - `merge_group: {}` | **Yes - required by name through an organization ruleset** |
+| `quorum` | `quorum.yml` :: `quorum` | Yes - `merge_group: {}` | **Yes - required by name through the repository ruleset `main-merge-queue`** |
 
-`quorum` is required through an organization ruleset rather than the
-repository one, but by context name like every other row. It was pinned as a
+`quorum` is required through the repository ruleset `main-merge-queue`, by
+context name like every other row. It was pinned as a
 required *workflow* until 2026-09-17, and that form could only be satisfied
 by a run of the file itself: part of the verdict turns on elapsed time - the
 72-hour objection window in the charter - so a pull request whose window had

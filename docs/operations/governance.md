@@ -203,7 +203,8 @@ including every `Finding` field and its `id` alias: `check_id`, `verdict`,
 `evidence` (locator and SHA-256 pairs), `what_would_make_it_measurable`, `reason`,
 `message`, `summary`, `remediation`, `area`, and `passed`.
 The existing `--json` and `--json-output` flags remain aliases for JSON output
-and take precedence over `--format` when combined.
+and take precedence over `--format` when combined. `doctor --json` uses the
+same complete finding objects in its `findings` array.
 
 SARIF 2.1.0 includes one result per finding, with `ruleId = finding.id` and
 the complete finding in `properties`. `properties.kind` carries `measured`,
@@ -249,6 +250,45 @@ A count over the expected one is `fail`, with the count and the first offending
 subject does not exist yet is `not_measurable`, with the issue that would make it
 measurable, and is never reported as a pass. The findings carry no score or
 grade. Two runs over one install produce byte-identical `--json` output.
+
+## Audit failure sentinel
+
+Use the single canonical sentinel to exercise a harmless, labelled failure:
+
+```bash
+BERNSTEIN_GOVERN_AUDIT_SENTINEL=1 bernstein govern audit --workdir . --json
+```
+
+Only the exact value `1` activates it. The named check `sentinel:failure`
+reports `verdict: measured`, `passed: false`, evidence of the environment
+switch, and the fixed reason `Injected governance audit failure (selftest sentinel).`
+Other checks still run normally. The command exits `1` for the injected failure.
+The check is listed by `--list`, but is omitted from default runs when inactive.
+`--only sentinel` can inspect its inactive, passing state explicitly.
+
+An active sentinel prints its name and check ID to stderr unless `--quiet` is
+set, including when `--only` or `--skip` excludes the check; JSON on stdout
+remains parseable. Quiet mode still records and notifies an executed sentinel.
+When the failure is raised, the run is persisted as one chain-anchored
+`AuditReport` under `.sdd/lineage/govern-audit/reports/` before one notification
+event is dispatched. The existing notification bridge handles delivery, retries
+and sink filtering: enable `notifications` in `bernstein.yaml` and subscribe a
+sink to `synthetic` events with severity `error` (or leave those filters unset).
+The event includes the sentinel name, fixed reason, check ID and journal anchor.
+Repeated active runs within one second may produce identical report bytes;
+each run has its own journal anchor, verifies against that anchor, and dispatches
+its own notification event.
+Without configured, enabled sinks, the run is still recorded but no delivery is
+claimed. Excluding the check produces neither its journal entry nor its event.
+Ordinary audits' recording and notification behaviour is unchanged.
+
+An environment variable is canonical because it can be scoped to one command
+and leaves no sentinel file behind. If exported in a shell or CI environment,
+clear it with `unset BERNSTEIN_GOVERN_AUDIT_SENTINEL`. The selftest in
+`tests/unit/cli/commands/test_govern_audit_sentinel.py` sets and clears it,
+verifies the real journal and a local recording notification sink for one or
+two active runs with identical report bytes, then runs again with the sentinel
+cleared to confirm there is no new injection, journal entry or notification.
 
 ## Declared discovery probes
 

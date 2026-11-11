@@ -9,6 +9,21 @@ new session off the recorded checkpoint (**fork**), or restart from zero
 (**cold**) -- and every one of those decisions is a deterministic,
 journal-anchored record.
 
+## Provider/model identity
+
+Both task retry creation paths retain a supplied provider-prefixed task model
+such as `openai/review-combo` instead of replacing it with a bare Claude tier.
+An explicit per-role model pin still takes precedence over the run-level pin,
+which takes precedence over the prior task model. This includes deliberately
+bare model aliases chosen by the operator. Effort follows each retry path's
+existing policy; retry limits, backoff and checkpoint decisions are unchanged.
+
+This retention does not query a provider catalog or prove model availability.
+If the task has no model and no explicit run/role pin reaches the retry path,
+propagating the first attempt's effective model remains unresolved (#6605).
+An endpoint URL alone does not identify that model. Unprefixed task models
+without an operator pin remain governed by the existing adapter/tier policy.
+
 ## Per-adapter capability
 
 What an adapter can offer is derived from the resume strategy it already
