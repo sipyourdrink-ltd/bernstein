@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator, Sequence
+
+    import pytest
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,81 @@ class FlakyDetectorResult:
 
 
 type PytestOutcome = Literal["PASSED", "FAILED", "ERROR", "SKIPPED", "XFAIL", "XPASS"]
+type PytestPhase = Literal["collect", "setup", "call", "teardown"]
+type PytestPhaseOutcome = Literal["passed", "assertion_failed", "error", "skipped", "xfailed", "xpassed"]
+
+
+@dataclass(frozen=True)
+class PytestPhaseObservation:
+    """One structured pytest report, without exception text or test output."""
+
+    node_id: str
+    phase: PytestPhase
+    outcome: PytestPhaseOutcome
+
+
+@dataclass(frozen=True)
+class PytestInvocationObservation:
+    """Observed exit, final collection, and reports for a single invocation."""
+
+    exit_code: int
+    selected_node_ids: tuple[str, ...]
+    phases: tuple[PytestPhaseObservation, ...]
+
+
+def capture_pytest_observation(args: Sequence[str]) -> PytestInvocationObservation:
+    """Capture structured reports inside a dedicated pytest process.
+
+    The caller owns process isolation and environment setup. Capture is
+    process-local and assumes serial pytest, without distributed workers.
+    An exit code or assertion alone does not prove a fix.
+    """
+    import pytest
+
+    selected: list[str] = []
+    phases: list[PytestPhaseObservation] = []
+
+    class Observer:
+        @pytest.hookimpl(trylast=True)
+        def pytest_collection_finish(self, session: pytest.Session) -> None:
+            selected.extend(item.nodeid for item in session.items)
+
+        def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+            if report.failed:
+                phases.append(PytestPhaseObservation(report.nodeid, "collect", "error"))
+            elif report.skipped:
+                phases.append(PytestPhaseObservation(report.nodeid, "collect", "skipped"))
+
+        @pytest.hookimpl(wrapper=True, tryfirst=True)
+        def pytest_runtest_makereport(
+            self, item: pytest.Item, call: pytest.CallInfo[None]
+        ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+            report = yield
+            outcome: PytestPhaseOutcome
+            if hasattr(report, "wasxfail"):
+                outcome = "xfailed" if report.skipped else "xpassed"
+            elif (
+                report.when == "call"
+                and report.failed
+                and call.excinfo is None
+                and isinstance(report.longrepr, str)
+                and report.longrepr.startswith("[XPASS(strict)] ")
+            ):
+                # Pytest marks strict XPASS failed without setting wasxfail.
+                outcome = "xpassed"
+            elif report.passed:
+                outcome = "passed"
+            elif report.skipped:
+                outcome = "skipped"
+            elif report.when == "call" and call.excinfo is not None and call.excinfo.errisinstance(AssertionError):
+                outcome = "assertion_failed"
+            else:
+                outcome = "error"
+            phases.append(PytestPhaseObservation(item.nodeid, report.when, outcome))
+            return report
+
+    code = pytest.main(list(args), plugins=[Observer()])
+    return PytestInvocationObservation(int(code), tuple(selected), tuple(phases))
 
 
 def iter_pytest_outcomes(output: str) -> Iterator[tuple[str, PytestOutcome]]:
