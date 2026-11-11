@@ -39,4 +39,11 @@ The status command still requires the task server, as for its other counts.
 
 This store is separate from task quarantine (`.sdd/runtime/quarantine.json`);
 `quarantine list` and `quarantine clear` retain their task-only behavior. Tracker
-adapter, plugin-factory import and routine isolation remain follow-up work.
+adapter and plugin-factory import isolation remain follow-up work.
+
+The scheduler, webhook task gate and manual trigger command share the routine
+markers. A named routine that fails to load is disabled while valid neighbors
+continue. For a directly mapped event with no matching active rule, an enabled
+quarantined rule for that source suppresses task creation. An unknown source
+or unreadable policy also blocks that fallback. `bernstein triggers list`
+shows quarantined entries without recording new failures.

@@ -459,11 +459,19 @@ def _get_trigger_manager(request: Request) -> TriggerManager | None:
     ``bernstein triggers list`` skips construction when the file is absent.
     """
     from bernstein.core.orchestration.trigger_manager import TriggerManager
+    from bernstein.core.security.declaration_quarantine import DeclarationQuarantineStore
 
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
-    if sdd_dir is None or not (sdd_dir / "config" / "triggers.yaml").exists():
+    if sdd_dir is None:
         return None
-    return TriggerManager(sdd_dir)
+    try:
+        (sdd_dir / "config" / "triggers.yaml").stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError:
+        # Let the manager report unavailable policy and suppress mapped tasks.
+        pass
+    return TriggerManager(sdd_dir, quarantine_store=DeclarationQuarantineStore(sdd_dir.parent))
 
 
 def _push_trigger_event(event: Any) -> Any:
