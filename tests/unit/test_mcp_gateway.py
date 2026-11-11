@@ -446,3 +446,157 @@ class TestProxiedCallAnchoring:
             gateway._anchor_proxied_call("tools/call", {"name": "echo", "arguments": {}})
 
         assert "Failed to anchor proxied mcp.stateless_call" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_live_capability_snapshot_waits_for_initialized_notification(
+    tmp_path: Any, caplog: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import EVENT_MCP_CAPABILITY_DRIFT, AuditChainStore
+
+    script = tmp_path / "stdio_upstream.py"
+    script.write_text(
+        """
+import json
+import sys
+
+tools = json.loads(sys.argv[1])
+initialized = False
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request["method"]
+    if method == "notifications/initialized":
+        initialized = True
+        continue
+    response = {"jsonrpc": "2.0", "id": request["id"]}
+    if method == "initialize":
+        response["result"] = {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "fixture", "version": "1"},
+        }
+    elif method == "tools/list" and initialized and tools is not None:
+        cursor = request.get("params", {}).get("cursor")
+        if cursor is None:
+            response["result"] = {"tools": [{"name": tools[0]}], "nextCursor": "next-page"}
+        else:
+            response["result"] = {"tools": [{"name": tools[1]}]}
+    else:
+        response["error"] = {"code": -32603, "message": "fixture tool list unavailable"}
+    print(json.dumps(response), flush=True)
+""",
+        encoding="utf-8",
+    )
+    import json
+
+    chain = AuditChainStore(tmp_path / ".sdd" / "audit", key=b"fixture-only-gateway-capability-key")
+    store = ServerCapabilitiesStore(str(tmp_path))
+
+    async def connect(tools: list[str] | None) -> None:
+        gateway = MCPGateway(
+            upstream_cmd=[sys.executable, str(script), json.dumps(tools)],
+            wal_writer=_make_wal_writer(tmp_path),
+            server_name="fixture",
+            capabilities_store=store,
+            audit_chain=chain,
+        )
+        prior = store.get_digest("fixture")
+        await gateway.start()
+        try:
+            assert store.get_digest("fixture") == prior
+            reply = await gateway.handle_jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "fixture-client", "version": "1"},
+                    },
+                }
+            )
+            assert reply is not None and "result" in reply
+            assert store.get_digest("fixture") == prior
+            assert await gateway.handle_jsonrpc({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+            assert gateway._capability_task is not None
+            await gateway._capability_task
+        finally:
+            await gateway.stop()
+            assert gateway._reader_task is not None
+            await gateway._reader_task
+
+    await connect(["alpha", "beta"])
+    original = store.get_capabilities("fixture")
+    assert original is not None and original.tool_names == {"alpha", "beta"}
+    await connect(["alpha", "gamma"])
+    updated = ServerCapabilitiesStore(str(tmp_path)).get_capabilities("fixture")
+    assert updated is not None and updated.tool_names == {"alpha", "gamma"}
+    assert updated.capability_digest != original.capability_digest
+    events = chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)
+    assert len(events) == 2
+    assert events[-1].details["added_tools"] == ["gamma"]
+    assert events[-1].details["removed_tools"] == ["beta"]
+    await connect(None)
+    assert "Capability drift check failed" in caplog.text
+    assert store.get_digest("fixture") == updated.capability_digest
+    assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 2
+
+    def unavailable(**_kwargs: Any) -> None:
+        raise OSError("fixture audit unavailable")
+
+    with monkeypatch.context() as patch_audit:
+        patch_audit.setattr("bernstein.core.protocols.mcp.mcp_gateway.record_mcp_capability_drift", unavailable)
+        await connect(["alpha", "delta"])
+    assert store.get_digest("fixture") == updated.capability_digest
+    assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 2
+    await connect(["alpha", "delta"])
+    assert len(chain.query(event_type=EVENT_MCP_CAPABILITY_DRIFT)) == 3
+
+    def invalid_store(*_args: Any) -> None:
+        raise TypeError("fixture capability store shape is invalid")
+
+    with monkeypatch.context() as patch_store:
+        patch_store.setattr(MCPGateway, "_process_capability_drift", invalid_store)
+        await connect(["alpha", "epsilon"])
+    assert "fixture capability store shape is invalid" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_initialized_notification_does_not_wait_for_optional_probe(tmp_path: Any) -> None:
+    from types import SimpleNamespace
+
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+    from bernstein.core.security.audit_chain import AuditChainStore
+
+    gateway = MCPGateway(
+        upstream_cmd=[],
+        wal_writer=_make_wal_writer(tmp_path),
+        capabilities_store=ServerCapabilitiesStore(str(tmp_path)),
+        audit_chain=AuditChainStore(tmp_path / "audit", key=b"fixture-only-probe-key"),
+    )
+    gateway._proc = SimpleNamespace(returncode=0)
+    gateway._upstream_tools_available = True
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def probe() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    with (
+        patch.object(gateway, "_send_upstream", new_callable=AsyncMock),
+        patch.object(gateway, "_check_capability_drift", side_effect=probe),
+    ):
+        await asyncio.wait_for(
+            gateway.handle_jsonrpc({"jsonrpc": "2.0", "method": "notifications/initialized"}), timeout=1
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await gateway.stop()
+    assert cancelled.is_set()
