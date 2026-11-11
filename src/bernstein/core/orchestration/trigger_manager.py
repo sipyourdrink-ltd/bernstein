@@ -238,6 +238,7 @@ def _matches_filter(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     _SOURCE_MATCHERS: dict[str, Callable[[TriggerEvent, TriggerConfig], bool]] = {
         "github_push": _matches_github_push,
         "github_workflow_run": _matches_github_workflow_run,
+        "gitlab_webhook": _matches_gitlab_webhook,
         "slack": _matches_slack,
         "file_watch": _matches_file_watch,
         "webhook": _matches_webhook,
@@ -315,6 +316,14 @@ def _matches_file_watch(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     return not (allowed_events and event.metadata.get("event_type") not in allowed_events)
 
 
+def _matches_gitlab_webhook(event: TriggerEvent, trigger: TriggerConfig) -> bool:
+    event_types = trigger.filters.get("events", [])
+    if event_types and event.metadata.get("event_type") not in event_types:
+        return False
+    branches = trigger.filters.get("branches", [])
+    return not branches or _glob_match_any(branches, [event.branch])
+
+
 def _matches_webhook(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     """Filter logic for webhook triggers."""
     filters = trigger.filters
@@ -346,6 +355,8 @@ def compute_dedup_key(trigger_name: str, event: TriggerEvent) -> str:
         parts.append(event.metadata["channel"])
     if event.metadata.get("request_path"):
         parts.append(event.metadata["request_path"])
+    if event.source == "gitlab_webhook" and event.metadata.get("delivery_identity"):
+        parts.append(event.metadata["delivery_identity"])
     # For sources without a unique key (cron, file_watch), use a 60s bucket
     if event.source in ("cron", "file_watch"):
         bucket = str(int(event.timestamp) // 60)
@@ -758,10 +769,13 @@ class TriggerManager:
     def _record_fire(self, record: TriggerFireRecord) -> None:
         """Append a fire record to the fire log."""
         path = self._runtime_dir / _FIRE_LOG_FILENAME
+        entry = asdict(record)
+        if record.cooldown_scope is None:
+            entry.pop("cooldown_scope")
         with path.open("a") as f:
-            f.write(json.dumps(asdict(record)) + "\n")
+            f.write(json.dumps(entry) + "\n")
 
-    def _last_fire_time(self, trigger_name: str) -> float | None:
+    def _last_fire_time(self, trigger_name: str, *, scope: str | None = None) -> float | None:
         """Return the most recent PRODUCTIVE fire timestamp for a trigger, or None.
 
         The cooldown clock is driven from this, and a fire that produced nothing
@@ -783,13 +797,17 @@ class TriggerManager:
                 if not line:
                     continue
                 entry = json.loads(line)
-                if entry.get("trigger_name") == trigger_name and entry.get("produced", True):
+                if (
+                    entry.get("trigger_name") == trigger_name
+                    and entry.get("produced", True)
+                    and (scope is None or entry.get("cooldown_scope") == scope)
+                ):
                     last = entry.get("fired_at")
         except (json.JSONDecodeError, OSError):
             logger.warning("Error reading fire log")
         return last
 
-    def get_fire_history(self, limit: int = 50) -> list[dict[str, Any]]:
+    def get_fire_history(self, limit: int | None = 50) -> list[dict[str, Any]]:
         """Return the most recent fire log entries."""
         path = self._runtime_dir / _FIRE_LOG_FILENAME
         if not path.exists():
@@ -802,7 +820,7 @@ class TriggerManager:
                 entries.append(json.loads(line))
         except (json.JSONDecodeError, OSError):
             return []
-        return entries[-limit:]
+        return entries if limit is None else entries[-limit:]
 
     # -- Rate limiting ------------------------------------------------------
 
@@ -822,7 +840,8 @@ class TriggerManager:
         """Check trigger conditions. Returns suppression reason or None if all pass."""
         conditions = trigger.conditions
 
-        reason = self._check_cooldown(trigger.name, conditions)
+        scope = event.metadata.get("cooldown_scope") if event.source == "gitlab_webhook" else None
+        reason = self._check_cooldown(trigger.name, conditions, scope=scope)
         if reason:
             return reason
 
@@ -840,12 +859,12 @@ class TriggerManager:
 
         return None
 
-    def _check_cooldown(self, trigger_name: str, conditions: dict[str, Any]) -> str | None:
+    def _check_cooldown(self, trigger_name: str, conditions: dict[str, Any], *, scope: str | None = None) -> str | None:
         """Return suppression reason if cooldown has not elapsed."""
         cooldown_s = conditions.get("cooldown_s", 0)
         if cooldown_s <= 0:
             return None
-        last = self._last_fire_time(trigger_name)
+        last = self._last_fire_time(trigger_name, scope=scope)
         if last is not None and (time.time() - last) < cooldown_s:
             return f"cooldown (last fired {int(time.time() - last)}s ago, cooldown={cooldown_s}s)"
         return None
@@ -1002,6 +1021,7 @@ class TriggerManager:
         summary: str,
         *,
         produced: bool = True,
+        cooldown_scope: str | None = None,
     ) -> None:
         """Record a trigger fire after task creation succeeds.
 
@@ -1021,6 +1041,7 @@ class TriggerManager:
             dedup_key=dedup_key,
             event_summary=summary,
             produced=produced,
+            cooldown_scope=cooldown_scope,
         )
         self._record_fire(record)
 
@@ -1054,9 +1075,15 @@ class TriggerManager:
 
             # An enabled trigger for this source has matching filters -
             # governance now applies to this event.
-            reason = self._check_conditions(trigger, event)
             dedup_key = compute_dedup_key(trigger.name, event)
-            if reason is None and self._check_dedup(dedup_key):
+            reason = self._check_conditions(trigger, event)
+            if event.source == "gitlab_webhook":
+                # GitLab reconciles delivery outcomes before accepting cooldown.
+                with self._dedup_lock():
+                    self._load_dedup_cache()
+                    if self._check_dedup(dedup_key):
+                        reason = "deduplicated"
+            elif reason is None and self._check_dedup(dedup_key):
                 reason = "deduplicated"
             if reason is not None:
                 logger.info("Trigger %s suppressed a direct %s task: %s", trigger.name, event.source, reason)
