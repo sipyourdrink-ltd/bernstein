@@ -181,15 +181,21 @@ class AuditReport:
         return self._binding() | {"journal_entry_hash": self.journal_entry_hash}
 
     @classmethod
-    def from_dict(cls, row: dict[str, Any]) -> AuditReport:
+    def from_dict(cls, row: object) -> AuditReport:
         """Rebuild a report from a serialised row."""
+        if not isinstance(row, dict):
+            raise ValueError("audit report must be an object")
         raw_findings: object = row.get("findings") or []
         if not isinstance(raw_findings, list):
             raise ValueError("audit report findings must be a list")
         rows = cast("list[dict[str, Any]]", raw_findings)
+        try:
+            timestamp = int(row["timestamp"])
+        except OverflowError as exc:
+            raise ValueError("audit report timestamp is out of range") from exc
         return cls(
             findings=tuple(dict(f) for f in rows),
-            timestamp=int(row["timestamp"]),
+            timestamp=timestamp,
             inventory_hash=str(row.get("inventory_hash", "")),
             inventory_anchor=str(row.get("inventory_anchor", "")),
             journal_entry_hash=str(row.get("journal_entry_hash", "")),
