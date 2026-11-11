@@ -1,0 +1,1 @@
+Task journal replay keeps a task's last valid approval policy when a later record carries a malformed `approval_spec` (a string, a list or `false`), and logs a warning. Previously such a record cleared the policy, so the pre-spawn approval gate no longer applied to that task. An explicit `null` still clears the policy.

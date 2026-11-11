@@ -280,6 +280,38 @@ def test_governance_journal_sparse_updates_preserve_identity(tmp_path: Path, upd
     assert path.read_bytes() == journal
 
 
+@pytest.mark.parametrize("malformed", ["a string", [], False, 0])
+def test_governance_journal_malformed_approval_spec_keeps_valid_policy(
+    tmp_path: Path, malformed: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A later record with a malformed approval_spec keeps the last valid policy."""
+    spec = ApprovalSpec(prompt="First gate", timeout_seconds=137, default_action="fail")
+    record: dict[str, Any] = {
+        "id": "synthetic-malformed",
+        "title": "Synthetic",
+        "description": "Journal fixture",
+        "role": "backend",
+        "status": "open",
+        "approval_required": True,
+        "approval_spec": spec.to_dict(),
+    }
+    path = tmp_path / "tasks.jsonl"
+    path.write_text(
+        json.dumps(record)
+        + "\n"
+        + json.dumps({"id": record["id"], "status": "open", "approval_spec": malformed})
+        + "\n"
+    )
+    store = TaskStore(path)
+    with caplog.at_level("WARNING"):
+        store.replay_jsonl()
+    restored = store.get_task(record["id"])
+    assert restored is not None
+    assert restored.approval_spec == spec
+    assert restored.approval_required is True
+    assert "malformed approval_spec" in caplog.text
+
+
 @pytest.mark.anyio
 async def test_claim_by_id_rejects_stale_expected_version(tmp_path: Path) -> None:
     """claim_by_id enforces optimistic locking on task version."""

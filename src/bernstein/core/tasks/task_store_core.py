@@ -786,7 +786,19 @@ class TaskStore:
                     task.approval_required = record.get("approval_required", task.approval_required)
                     if "approval_spec" in record:
                         raw_spec = record["approval_spec"]
-                        task.approval_spec = ApprovalSpec.from_dict(raw_spec) if isinstance(raw_spec, dict) else None
+                        if raw_spec is None:
+                            task.approval_spec = None
+                        elif isinstance(raw_spec, dict):
+                            task.approval_spec = ApprovalSpec.from_dict(raw_spec)
+                        else:
+                            # A malformed value must not clear a valid policy: that
+                            # would let the task skip its pre-spawn approval gate.
+                            logger.warning(
+                                "Ignoring malformed approval_spec for task %s at %s:%d; keeping the last valid policy",
+                                task_id,
+                                self._jsonl_path,
+                                line_num,
+                            )
                     task.sensitivity = record.get("sensitivity", task.sensitivity)
                     task.claimed_by_session = record.get("claimed_by_session", task.claimed_by_session)
                     task.claimed_at = record.get("claimed_at", task.claimed_at)
