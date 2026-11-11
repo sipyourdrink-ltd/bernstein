@@ -937,3 +937,15 @@ register_adapter("my-agent", MyAdapter)
 ```
 
 Your adapter must subclass `CLIAdapter` and implement `spawn()` returning a `SpawnResult` with `pid` and `log_path`.
+
+### Starting from the template
+
+`templates/adapter_plugin/` is a cookiecutter template for a new adapter:
+
+```bash
+cookiecutter templates/adapter_plugin
+```
+
+It asks for `adapter_name` (the module and the CLI binary) and `adapter_class`, and writes two files: the adapter and its tests. The generated adapter has the current `spawn()` signature, launches the CLI without waiting for it, writes the log to `.sdd/runtime/<session_id>.log`, and returns `SpawnResult(pid, log_path, proc)`. Change `CLI_BINARY`, `SECRET_ENV` and `build_command()` to fit your CLI. The agent process gets a filtered environment, so list every variable your CLI needs in `SECRET_ENV`.
+
+`tests/unit/test_adapter_plugin_template.py` renders the template and runs the generated adapter and its tests, so the template follows `CLIAdapter` when the base class changes.

@@ -329,7 +329,7 @@ Miscellaneous plugins that don't fit the above categories.
 
 | Plugin | Description | Install |
 |--------|-------------|---------|
-| `AdapterPlugin` | Base class for building adapter-style plugins that wrap external CLI tools. | `examples.plugins.adapter_plugin` |
+| `ExampleAgentAdapter` | Example `CLIAdapter` subclass for a third-party CLI agent. Copy it, or start from the `templates/adapter_plugin` cookiecutter template. | `examples.plugins.adapter_plugin` |
 | `TriggerPlugin` | Emits lifecycle events to external trigger systems (webhooks, queues). | `examples.plugins.trigger_plugin` |
 | `ReporterPlugin` | Aggregates and formats lifecycle events into structured reports. | `examples.plugins.reporter_plugin` |
 
