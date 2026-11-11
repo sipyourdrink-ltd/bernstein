@@ -42,7 +42,7 @@ def _test_job() -> dict[str, Any]:
     return cast("dict[str, Any]", job)
 
 
-def _shard_count_for(os_name: str, event: str = "pull_request") -> int:
+def _shard_count_for(os_name: str) -> int:
     """The `--shard i/N` denominator this row resolves to.
 
     Read out of the expression rather than restated, so the test cannot pass against a workflow that
@@ -50,23 +50,16 @@ def _shard_count_for(os_name: str, event: str = "pull_request") -> int:
     """
     expression = str(_test_job()["env"]["TEST_SHARD_COUNT"])
     counts = re.findall(r"'(\d+)'", expression)
-    assert "github.event_name == 'merge_group'" in expression
-    assert len(counts) == 3, f"expected queue, Windows and Ubuntu shard counts, got {expression!r}"
-    queue_count, windows_count, other_count = (int(value) for value in counts)
+    assert "github.event_name" not in expression
+    assert len(counts) == 2, f"expected Windows and Ubuntu shard counts, got {expression!r}"
+    windows_count, other_count = (int(value) for value in counts)
     assert WINDOWS in expression, "the shard count no longer keys off the matrix row"
-    if event == "merge_group":
-        return queue_count
     return windows_count if os_name == WINDOWS else other_count
 
 
-def _declared_shards(event: str = "pull_request") -> list[int]:
-    expression = _test_job()["strategy"]["matrix"]["shard"]
-    match = re.fullmatch(
-        r"\$\{\{ github.event_name == 'merge_group' && fromJSON\('([^']+)'\) \|\| fromJSON\('([^']+)'\) \}\}",
-        expression,
-    )
-    assert match, f"expected a merge-group-only shard override, got {expression!r}"
-    shards = json.loads(match.group(1 if event == "merge_group" else 2))
+def _declared_shards() -> list[int]:
+    shards = _test_job()["strategy"]["matrix"]["shard"]
+    assert isinstance(shards, list), "all events must retain the same parallel shard list"
     return [int(value) for value in shards]
 
 
@@ -77,18 +70,17 @@ def _excluded_shards_for(os_name: str) -> set[int]:
     }
 
 
-def _shards_that_run_on(os_name: str, event: str = "pull_request") -> list[int]:
+def _shards_that_run_on(os_name: str) -> list[int]:
     excluded = _excluded_shards_for(os_name)
-    return [shard for shard in _declared_shards(event) if shard not in excluded]
+    return [shard for shard in _declared_shards() if shard not in excluded]
 
 
 @pytest.mark.parametrize("os_name", [UBUNTU, WINDOWS])
-@pytest.mark.parametrize("event", ["pull_request", "push", "workflow_dispatch", "schedule"])
-def test_every_row_runs_exactly_its_own_shard_count(os_name: str, event: str) -> None:
+def test_every_row_runs_exactly_its_own_shard_count(os_name: str) -> None:
     """`--shard i/N` for i beyond N is either a hard failure or a silent no-op."""
-    running = _shards_that_run_on(os_name, event)
-    assert running == list(range(1, _shard_count_for(os_name, event) + 1)), (
-        f"{os_name} runs shards {running} against a count of {_shard_count_for(os_name, event)}"
+    running = _shards_that_run_on(os_name)
+    assert running == list(range(1, _shard_count_for(os_name) + 1)), (
+        f"{os_name} runs shards {running} against a count of {_shard_count_for(os_name)}"
     )
 
 
@@ -120,8 +112,23 @@ def test_the_matrix_list_is_the_widest_row() -> None:
     assert _excluded_shards_for(UBUNTU) == set()
 
 
-def test_merge_group_runs_one_complete_ubuntu_shard() -> None:
-    matrix = _test_job()["strategy"]["matrix"]
+@pytest.mark.parametrize(
+    ("event", "expected_cells"),
+    [
+        ("merge_group", {(UBUNTU, "3.13"): 8}),
+        ("pull_request", {(UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
+        ("push", {(UBUNTU, "3.12"): 8, (UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
+        ("workflow_dispatch", {(UBUNTU, "3.12"): 8, (UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
+        ("schedule", {(UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
+    ],
+)
+def test_event_matrix_keeps_parallel_shards(event: str, expected_cells: dict[tuple[str, str], int]) -> None:
+    job = _test_job()
+    strategy = job["strategy"]
+    assert strategy["fail-fast"] is False
+    assert "max-parallel" not in strategy, "do not serialize the eight queue shards"
+    assert not job.get("continue-on-error", False)
+    matrix = strategy["matrix"]
     assert matrix["os"] == (
         "${{ github.event_name == 'merge_group' && fromJSON('[\"ubuntu-latest\"]') "
         '|| fromJSON(\'["ubuntu-latest", "windows-latest"]\') }}'
@@ -130,8 +137,29 @@ def test_merge_group_runs_one_complete_ubuntu_shard() -> None:
         "${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') "
         '&& fromJSON(\'["3.12", "3.13"]\') || fromJSON(\'["3.13"]\') }}'
     )
-    assert _shards_that_run_on(UBUNTU, "merge_group") == [1]
-    assert _shard_count_for(UBUNTU, "merge_group") == 1
+    # The exact conditions above pin which JSON branch applies to each event.
+    os_branches = re.findall(r"fromJSON\('([^']+)'\)", matrix["os"])
+    python_branches = re.findall(r"fromJSON\('([^']+)'\)", matrix["python-version"])
+    platforms = json.loads(os_branches[0 if event == "merge_group" else 1])
+    versions = json.loads(python_branches[0 if event in {"push", "workflow_dispatch"} else 1])
+    cells = {}
+    for platform in platforms:
+        for version in versions:
+            shards = [
+                shard
+                for shard in _declared_shards()
+                if not any(
+                    all(
+                        {"os": platform, "python-version": version, "shard": shard}[key] == value
+                        for key, value in row.items()
+                    )
+                    for row in matrix.get("exclude", [])
+                )
+            ]
+            if shards:
+                assert shards == list(range(1, _shard_count_for(platform) + 1))
+                cells[platform, version] = len(shards)
+    assert cells == expected_cells
 
 
 @pytest.mark.parametrize(
@@ -147,6 +175,7 @@ def test_merge_group_runs_one_complete_ubuntu_shard() -> None:
         ("pull_request", "success", "skipped", 1),
         ("push", "success", "skipped", 1),
         ("workflow_dispatch", "success", "skipped", 1),
+        ("schedule", "success", "skipped", 1),
     ],
 )
 def test_queue_platform_skip_keeps_ci_gate_honest(

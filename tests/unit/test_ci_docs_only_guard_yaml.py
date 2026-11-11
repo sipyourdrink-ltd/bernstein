@@ -42,7 +42,8 @@ when the diff cannot be resolved, so the failure mode of a broken
 detector is wasted runners, never a skipped check.
 
 The matrix assertions at the bottom pin the same economy one level
-down: pre-merge lanes (PR and queue) run one representative cell;
+down: pre-merge lanes use the primary Python version, and the queue
+keeps all eight parallel Ubuntu shards while skipping other platforms;
 the full os x interpreter x image fan-out belongs to push-to-main and
 manual dispatch, which cover the identical commits minutes after they
 land without holding a queue slot.
@@ -178,8 +179,15 @@ def test_every_guarded_job_is_tolerated_by_the_gate(ci_jobs: dict[str, Any]) -> 
 
 
 # ---------------------------------------------------------------------------
-# Matrix economy: pre-merge lanes run one representative cell.
+# Matrix economy: trim platforms and interpreters, not parallel shards.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("job_key", ["adapter-conformance-windows", "adapter-integration-macos", "test-macos"])
+def test_merge_group_skips_non_ubuntu_jobs(ci_jobs: dict[str, Any], job_key: str) -> None:
+    assert "github.event_name != 'merge_group'" in _condition(ci_jobs[job_key])
+    assert job_key in _needs(ci_jobs["ci-gate"]), "platform skips must remain subject to CI gate"
+
 
 # (job, matrix axis) pairs whose full fan-out is reserved for
 # push-to-main and workflow_dispatch. The queue used to take the full
