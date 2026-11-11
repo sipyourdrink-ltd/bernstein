@@ -1,17 +1,23 @@
 """Example plugin: custom quality gate.
 
-Demonstrates how to run an additional automated check after every task
-completes.  The check here is a simple security scan (`bandit -r .`) but
-you can replace the command with anything: custom linters, contract tests,
-licence checkers, etc.
+Demonstrates how to run an additional automated check on every task's change
+and block promotion when it fails.  The check here is a simple security scan
+(`bandit -r . -ll -q`) but you can replace the command with anything: custom
+linters, contract tests, licence checkers, etc.
 
-The gate result is written to `.sdd/metrics/custom_gates.jsonl` and also
-logged at WARNING level when the check fails.
+`SecurityScanGate` is a `GatePlugin`, the same extension point the built-in
+gates use.  A failed scan returns a ``fail`` result with ``blocked=True``, so
+the task is not promoted.  The result is also appended to
+`.sdd/metrics/custom_gates.jsonl`.
 
-Usage - add to bernstein.yaml:
+Usage - copy this file to `.bernstein/gates/security_scan_gate.py` (or register
+the class in the `bernstein.gates` entry-point group), then add the gate to the
+pipeline in bernstein.yaml:
 
-    plugins:
-      - examples.plugins.quality_gate_plugin:SecurityScanGate
+    quality_gates:
+      pipeline:
+        - { name: "lint",              required: true, condition: "always" }
+        - { name: "security_scan_cmd", required: true, condition: "python_changed" }
 
 Set the command via environment variable to override the default:
 
@@ -24,63 +30,72 @@ import json
 import logging
 import os
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from bernstein.plugins import hookimpl
+from bernstein.core.quality.gate_plugins import GatePlugin
+from bernstein.core.quality.gate_runner import GateResult
 
 log = logging.getLogger(__name__)
 
 DEFAULT_COMMAND = "bandit -r . -ll -q"
 
 
-class SecurityScanGate:
-    """Runs a security scan after every task completes.
+class SecurityScanGate(GatePlugin):
+    """Runs a security scan on every task and blocks when it fails.
 
     The scan command defaults to ``bandit -r . -ll -q`` (medium+ severity).
     Override via the ``BERNSTEIN_SECURITY_CMD`` environment variable.
 
-    Results are written to ``.sdd/metrics/custom_gates.jsonl``.
-    A failed scan is logged as a warning but does NOT block the orchestrator
-    - you can promote it to a hard block by raising an exception here, though
-    note that exceptions from plugins are caught and discarded.  For hard
-    blocking, wire your gate into the quality_gates config instead.
+    A non-zero exit, a timeout or a command that cannot start returns a
+    blocking result.  Results are appended to ``.sdd/metrics/custom_gates.jsonl``.
     """
 
-    def __init__(
-        self,
-        command: str | None = None,
-        workdir: Path | str | None = None,
-        timeout_s: int = 60,
-    ) -> None:
-        self._command = command or os.getenv("BERNSTEIN_SECURITY_CMD", DEFAULT_COMMAND)
-        self._workdir = Path(workdir) if workdir else Path.cwd()
+    def __init__(self, command: str | None = None, timeout_s: int = 60) -> None:
+        self._command: str = command or os.environ.get("BERNSTEIN_SECURITY_CMD", DEFAULT_COMMAND)
         self._timeout_s = timeout_s
 
-    @hookimpl
-    def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
-        """Run the security scan after every task completes."""
-        passed, output = self._run_scan()
-        self._record(task_id, passed, output)
+    @property
+    def name(self) -> str:
+        """Unique gate name; use it as the pipeline step name."""
+        return "security_scan_cmd"
+
+    def run(
+        self,
+        changed_files: list[str],
+        run_dir: Path,
+        task_title: str,
+        task_description: str,
+    ) -> GateResult:
+        """Run the scan in ``run_dir`` and return a blocking result on failure."""
+        started = time.monotonic()
+        passed, output = self._run_scan(run_dir)
+        self._record(run_dir, task_title, passed, output)
         if not passed:
-            log.warning(
-                "SecurityScanGate: scan failed after task %s (%s):\n%s",
-                task_id,
-                role,
-                output[:500],
-            )
+            log.warning("SecurityScanGate: scan failed for task %r:\n%s", task_title, output[:500])
+        return GateResult(
+            name=self.name,
+            status="pass" if passed else "fail",
+            required=self.required,
+            blocked=not passed,
+            cached=False,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            details=output,
+            metadata={"command": self._command},
+        )
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _run_scan(self) -> tuple[bool, str]:
+    def _run_scan(self, run_dir: Path) -> tuple[bool, str]:
         """Execute the scan command and return (passed, output)."""
         try:
             proc = subprocess.run(
                 self._command,
                 shell=True,
-                cwd=self._workdir,
+                cwd=run_dir,
                 capture_output=True,
                 text=True,
                 timeout=self._timeout_s,
@@ -94,13 +109,13 @@ class SecurityScanGate:
         except OSError as exc:
             return False, f"Command error: {exc}"
 
-    def _record(self, task_id: str, passed: bool, output: str) -> None:
+    def _record(self, run_dir: Path, task_title: str, passed: bool, output: str) -> None:
         """Append result to .sdd/metrics/custom_gates.jsonl."""
-        metrics_dir = self._workdir / ".sdd" / "metrics"
+        metrics_dir = run_dir / ".sdd" / "metrics"
         record = {
             "ts": datetime.now(UTC).isoformat(),
-            "gate": "security_scan",
-            "task_id": task_id,
+            "gate": self.name,
+            "task": task_title,
             "command": self._command,
             "passed": passed,
             "output": output[:500],

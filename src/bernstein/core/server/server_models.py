@@ -6,11 +6,14 @@ The parent ``server`` module re-exports every name for backward compatibility.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import hashlib
+import json
+from typing import Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.security.tenanting import is_valid_tenant_id
 from bernstein.core.tasks.models import CompletionSignalType, DispatchTier
 from bernstein.core.tasks.task_store import ProgressEntry
 
@@ -132,6 +135,80 @@ def _ensure_relative_owned_files(value: list[str]) -> list[str]:
         except PathContainmentError as exc:
             raise ValueError(str(exc)) from None
     return value
+
+
+class _AttachmentModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @classmethod
+    def from_json(cls, raw: str | bytes) -> Self:
+        """Decode without silently discarding duplicate object keys."""
+
+        def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON key: {key}")
+                result[key] = value
+            return result
+
+        return cls.model_validate(json.loads(raw, object_pairs_hook=unique))
+
+
+class TaskStoreIdentity(_AttachmentModel):
+    schema_version: Literal["task-store-identity/v1"]
+    store_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class AttachmentTask(_AttachmentModel):
+    task_id: str = Field(min_length=1)
+    version: int = Field(ge=1)
+
+
+class AttachmentResources(_AttachmentModel):
+    pool: str = Field(min_length=1)
+    max_slots: int = Field(ge=0)
+
+
+class AttachmentLimits(_AttachmentModel):
+    max_accepted_claims: int = Field(ge=1)
+    max_concurrency: int = Field(ge=1)
+    max_elapsed_seconds: int = Field(ge=1)
+    resources: AttachmentResources
+
+
+class AttachmentDerivedWork(_AttachmentModel):
+    max_retries_per_task: int = Field(ge=0)
+
+
+class AttachmentManifest(_AttachmentModel):
+    """Internal attachment contract; never a TaskCreate administrative run."""
+
+    schema_version: Literal["task-attach/v1"]
+    run_id: str = Field(pattern=r"^attach-[a-f0-9]{32}$")
+    store_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    tenant_id: str
+    tasks: list[AttachmentTask] = Field(min_length=1)
+    limits: AttachmentLimits
+    derived_work: AttachmentDerivedWork
+
+    @field_validator("tenant_id")
+    @classmethod
+    def valid_tenant(cls, value: str) -> str:
+        if not is_valid_tenant_id(value):
+            raise ValueError("invalid tenant_id")
+        return value
+
+    @field_validator("tasks")
+    @classmethod
+    def unique_tasks(cls, value: list[AttachmentTask]) -> list[AttachmentTask]:
+        if len({task.task_id for task in value}) != len(value):
+            raise ValueError("duplicate task IDs")
+        return value
+
+    def digest(self) -> str:
+        raw = json.dumps(self.model_dump(), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class TaskCreate(BaseModel):

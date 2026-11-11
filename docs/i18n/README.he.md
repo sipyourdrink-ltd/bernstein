@@ -123,7 +123,7 @@ flowchart LR
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -137,6 +137,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 pipx, pip, brew, dnf, npm ו-Docker מכוסים ב[מדריך ההתקנה](https://docs.bernstein.run/en/latest/getting-started/install/); לחבילה המבודדת יש [מדריך air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) ייעודי.
 
 `bernstein worktrees sweep` מציג תצוגה מקדימה של עצי עבודה וסשנים של סביבת בדיקה שנותרו אחרי משימות שהסתיימו, עם הגיל והשימוש בדיסק. אפשר למחוק רק עצי עבודה, באמצעות `--apply` ואישור מחיקה נפרד. סביבות הבדיקה מופיעות בדוח בלבד (מחיקה: #6571); `doctor` מזהיר על משאבים שנותרו זמן רב. ראו [תהליך הניקוי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+
+כשאתחול מיומנות נכשל, היא מועברת ל[הסגר](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) עם שמירה מתמשכת של הסיבה ושל אירוע ביקורת. `bernstein status` מציג את הכמות; `doctor` ו־`govern audit` מדווחים על ההצהרות שהושבתו. לאחר תיקון הסיבה, הסירו את הסימון במפורש באמצעות `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

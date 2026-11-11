@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import logging
+import sys
 from abc import ABC, abstractmethod
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
@@ -97,9 +98,14 @@ class GatePluginRegistry:
                 logger.warning("Skipping gate plugin %s: unable to create import spec", py_file)
                 continue
             module = importlib.util.module_from_spec(spec)
+            # Register before executing: ``@dataclass`` under
+            # ``from __future__ import annotations`` resolves the class's module
+            # through ``sys.modules`` and raises AttributeError if it is missing.
+            sys.modules[module_name] = module
             try:
                 spec.loader.exec_module(module)
             except Exception as exc:  # pragma: no cover - exercised through tests
+                sys.modules.pop(module_name, None)
                 logger.warning("Failed to load gate plugin %s: %s", py_file, exc)
                 continue
             self._register_module_plugins(module, source=str(py_file))

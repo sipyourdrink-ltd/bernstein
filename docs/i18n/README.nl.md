@@ -123,7 +123,7 @@ flowchart LR
 Elke node wordt geclaimd door een agent wiens rol de fase toestaat; rolhekken en goedkeuringsgates houden stand wat de agent binnen de taak ook doet. Een code-node eindigt achter merge gates in zijn eigen git worktree. De nodes hierboven eindigen anders: een [artefactcontract](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) benoemt het resultaat (rapport, dataset, scan, actielog) en de node sluit af met een ondertekend lineage-bewijs in plaats van een commit. Dezelfde scheduler, hetzelfde journal, dezelfde offline verificatie - of de graaf nu code, onderzoek, een ops-wijziging of een mix van alle drie levert. Kant-en-klare grafen voor software, onderzoek, docs, enterprise en contributor-workflows staan in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installeren in 30 seconden
-<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -137,6 +137,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 pipx, pip, brew, dnf, npm en Docker worden behandeld in de [installatiehandleiding](https://docs.bernstein.run/en/latest/getting-started/install/); de geïsoleerde wheelhouse heeft een eigen [air-gap-handleiding](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` toont een voorvertoning van werkbomen en sandboxsessies die voltooide taken hebben achtergelaten, met ouderdom en schijfgebruik. Alleen werkbomen kunnen worden verwijderd, met `--apply` en een afzonderlijke verwijderingsgoedkeuring. Sandboxen worden alleen in het rapport vermeld (verwijdering: #6571); `doctor` waarschuwt voor oudere achtergebleven resources. Zie de [opruimprocedure](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+
+Bij een mislukte initialisatie wordt de vaardigheid in [quarantaine](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) geplaatst, met een blijvend opgeslagen reden en auditgebeurtenis. `bernstein status` toont het aantal; `doctor` en `govern audit` melden de uitgeschakelde declaraties. Verhelp de oorzaak en verwijder de markering expliciet met `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

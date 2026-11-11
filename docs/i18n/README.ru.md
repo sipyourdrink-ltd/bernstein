@@ -123,7 +123,7 @@ flowchart LR
 Каждый узел забирает агент, чья роль разрешена фазой; ролевые ограничения и гейты одобрения держатся независимо от того, что агент делает внутри задачи. Кодовый узел завершается за merge-гейтами в собственном git worktree. Узлы выше завершаются иначе: [контракт артефакта](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) называет результат (отчёт, датасет, скан, лог действий), и узел закрывается подписанной lineage-квитанцией вместо коммита. Тот же планировщик, тот же журнал, та же офлайн-верификация — несёт ли граф код, исследование, ops-изменение или всё сразу. Готовые графы для софта, исследований, документации, энтерпрайза и контрибьюторских процессов лежат в [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### установка за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:25b0dc994022" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:0ab125f7e5af" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -137,6 +137,8 @@ bernstein -g "fix the failing test in tests/test_foo.py"
 pipx, pip, brew, dnf, npm и Docker описаны в [руководстве по установке](https://docs.bernstein.run/en/latest/getting-started/install/); у air-gap-wheelhouse своё [руководство](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
 `bernstein worktrees sweep` показывает предварительный список рабочих деревьев и sandbox-сессий, оставшихся после завершённых задач, с возрастом и объёмом на диске. Удалить можно только рабочие деревья, используя `--apply` и отдельное одобрение удаления. Sandbox-сессии только включаются в отчёт (удаление: #6571); `doctor` предупреждает о старых утечках. См. [порядок очистки](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
+
+При сбое инициализации навык помещается в [карантин](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) с сохранением причины и события аудита. `bernstein status` показывает количество; `doctor` и `govern audit` сообщают об отключённых объявлениях. После устранения причины явно снимите отметку командой `bernstein quarantine re-enable DECLARATION_ID`.
 
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 

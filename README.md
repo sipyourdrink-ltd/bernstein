@@ -141,6 +141,8 @@ by finished tasks, with age and disk usage. Only worktrees can be removed, using
 #6571); `doctor` warns about aged leaks. See the
 [lane cleanup workflow](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/worktrees.md#task-terminal-lane-sweep).
 
+Skill initialization failures are [quarantined](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/declaration-quarantine.md) with a persisted reason and audit event. `bernstein status` shows the count; `doctor` and `govern audit` report the disabled declarations. After fixing the cause, explicitly release the marker with `bernstein quarantine re-enable DECLARATION_ID`.
+
 [GHCR](https://ghcr.io/sipyourdrink-ltd/bernstein) &middot; [GitHub Codespaces](https://codespaces.new/sipyourdrink-ltd/bernstein?quickstart=1)
 
 <img alt="A real bernstein demo run: mock agents fix four seeded bugs, ending on the run's signed receipt verifying offline" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/demo-run/demo.gif" width="820">
