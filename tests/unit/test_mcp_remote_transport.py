@@ -10,6 +10,7 @@ import textwrap
 from importlib.metadata import version
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from bernstein.core.protocols.mcp.stateless_core import LEGACY_SESSION_HEADER, REMOVAL_DATE
@@ -540,6 +541,34 @@ class TestToolExecution:
         folded = _tool_result(text)
         assert folded["live"] is True
         assert folded["counts"]["total"] == 5
+
+    @pytest.mark.anyio
+    async def test_status_preserves_bridge_liveness_during_coordinator_outage(
+        self, transport: StreamableHTTPTransport
+    ) -> None:
+        with patch.object(transport, "_proxy_get", side_effect=httpx.ConnectError("coordinator offline")):
+            body = _jsonrpc_request("tools/call", {"name": "bernstein_status", "arguments": {}})
+            status, _, response = await transport.handle_request("POST", "/mcp", {}, body)
+
+        assert status == 200
+        result = json.loads(response)["result"]
+        assert not result.get("isError", False)
+        assert _tool_result(result["content"][0]["text"]) == {
+            "live": True,
+            "error": "coordinator offline",
+            "hint": "Task server may be restarting",
+        }
+
+    @pytest.mark.anyio
+    async def test_status_preserves_response_processing_errors(self, transport: StreamableHTTPTransport) -> None:
+        with patch.object(transport, "_proxy_get", side_effect=httpx.DecodingError("invalid content encoding")):
+            body = _jsonrpc_request("tools/call", {"name": "bernstein_status", "arguments": {}})
+            status, _, response = await transport.handle_request("POST", "/mcp", {}, body)
+
+        assert status == 200
+        result = json.loads(response)["result"]
+        assert result["isError"] is True
+        assert _tool_result(result["content"][0]["text"]) == {"error": "invalid content encoding"}
 
     @pytest.mark.anyio
     async def test_stop_tool_writes_signal(self, transport: StreamableHTTPTransport, tmp_path: object) -> None:
