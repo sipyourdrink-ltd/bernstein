@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bernstein.core.models import Complexity, Scope, Task
+
 from bernstein.core.quality.gate_pipeline import GatePipelineStep
 from bernstein.core.quality.gate_plugins import GatePlugin, GatePluginRegistry
 from bernstein.core.quality.gate_runner import GateResult, GateRunner
