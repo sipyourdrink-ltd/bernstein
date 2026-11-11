@@ -12,6 +12,7 @@ kept on a salvage or graveyard ref by worktree cleanup, never merged (#6539).
 from __future__ import annotations
 
 import contextlib
+import glob
 import json
 import logging
 import signal
@@ -2714,12 +2715,39 @@ def handle_orphaned_task(
 
     # Artifact-mode tasks run the pass even with no declared signals: the
     # signed receipt it records is their completion identity (issue #2608).
+    verification_evidence: dict[str, Any] = {}
     if task.completion_signals or is_artifact_mode(task):
-        passed, failed_signals = verify_task_completion(task, orch._workdir)
+        verification_workdir = orch._workdir
+        no_change_exit = False
+        if session.exit_code == 0 and task.completion_signals and not is_artifact_mode(task):
+            worktree = orch._spawner.get_worktree_path(session.id) or orch._workdir
+            completion_data = collect_completion_data(orch._workdir, session)
+            no_change_exit = (
+                not completion_data.get("files_modified")
+                and not _has_git_commits_on_branch(worktree, start_ts)
+                and _satisfied_on_base_is_safe(worktree, task)
+            )
+            if no_change_exit:
+                # The agent can legitimately find the deliverable already on
+                # base. Verify its worktree, not a potentially stale run checkout.
+                verification_workdir = worktree
+        passed, failed_signals = verify_task_completion(task, verification_workdir)
+        if no_change_exit:
+            verification_evidence = {
+                "completion_signals_checked": True,
+                "janitor_passed": passed,
+                "verification_workdir": str(verification_workdir),
+            }
         if passed:
             try:
+                summary = f"Auto-completed after agent {session.id} died; janitor passed"
+                if no_change_exit:
+                    summary = (
+                        f"Auto-completed (already satisfied on base): agent {session.id} "
+                        "exited cleanly with empty diff; janitor gates verified"
+                    )
                 result_payload: dict[str, Any] = {
-                    "result_summary": f"Auto-completed after agent {session.id} died; janitor passed",
+                    "result_summary": summary,
                 }
                 orch._client.post(
                     f"{base}/tasks/{task_id}/complete",
@@ -2778,7 +2806,7 @@ def handle_orphaned_task(
             _wal.write_entry(
                 decision_type=_wal_dtype,
                 inputs={"task_id": task_id, "agent_id": session.id, "orphaned": True},
-                output={"success": success, "error_type": error_type or ""},
+                output={"success": success, "error_type": error_type or "", **verification_evidence},
                 actor="agent_lifecycle",
             )
         except OSError:
@@ -3066,6 +3094,146 @@ _ADAPTER_GITIGNORE_PREFIX = ".aider"
 _ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/",)
 
 
+def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
+    """Require path-bearing gates to be satisfiable by committed content.
+
+    Unrelated orchestrator/adapter files do not affect delivery. Gate targets
+    must be tracked, and ``file_contains`` must see unchanged HEAD content in
+    a non-symlink file so an uncommitted edit or link target cannot establish
+    completion (#6606, #2760).
+
+    Each gate type mirrors the janitor it will be re-checked against:
+    ``path_exists`` is literal-first (a literal path wins even when it holds
+    glob metacharacters; only a literal miss expands a glob pattern) and a
+    tracked symlink target must itself resolve to tracked content, because
+    ``Path.exists`` follows the link and a worktree-only target dangles after a
+    merge. ``glob_exists`` is always expanded as a pattern -- a tracked match
+    satisfies it even when an ignored literal of the same name exists only in
+    the worktree. ``file_contains`` is literal and rejects a symlink.
+
+    Non-incidental uncommitted work or an unreadable status blocks every gate.
+    Ignored agent-created files used by ``test_passes`` or ``glob_exists``
+    cannot in general be distinguished from ordinary ignored build state
+    (.venv, __pycache__, caches): this is an accepted shortcut limitation.
+    ``glob_exists`` still needs a tracked candidate; all ``path_exists`` and
+    ``file_contains`` targets remain guarded, even when ignored.
+    """
+    try:
+        status_ok, paths = _filtered_worktree_status(worktree_path)
+        if not status_ok or paths:
+            return False
+        for completion_signal in task.completion_signals:
+            if completion_signal.type not in ("path_exists", "glob_exists", "file_contains"):
+                continue
+            target = completion_signal.value
+            if completion_signal.type == "file_contains":
+                parts = target.split(" :: ", maxsplit=1)
+                if len(parts) != 2:
+                    return False
+                target = parts[0].strip()
+                if (worktree_path / target).is_symlink():
+                    return False
+            git_command = ["git", "--literal-pathspecs"]
+            if completion_signal.type == "glob_exists":
+                # The janitor always expands glob_exists as a pattern (never
+                # literal-first), so a tracked file that matches satisfies it
+                # even when an ignored literal of the same name exists only in
+                # the worktree. Require a tracked match.
+                if not _has_tracked_glob_candidate(worktree_path, target, git_command):
+                    return False
+                continue
+            # path_exists / file_contains are literal-first, exactly like the
+            # janitor's _check_path_exists: a literal path that exists wins even
+            # when it holds glob metacharacters (a Next.js route
+            # ``app/[id]/page.tsx``, a fixture ``foo[1].json``); only on a
+            # literal miss is a path_exists pattern expanded. path_exists accepts
+            # a directory (janitor uses Path.exists); git ls-files then confirms
+            # the matched path is tracked, so a worktree-only file never
+            # establishes delivery.
+            if (worktree_path / target).exists():
+                if completion_signal.type == "path_exists" and (worktree_path / target).is_symlink():
+                    # path_exists follows the link (Path.exists), so a tracked
+                    # symlink to an ignored/worktree-only target passes here yet
+                    # dangles once the worktree is deleted. Require the resolved
+                    # target to be tracked so the gate survives a merge.
+                    try:
+                        resolved = (worktree_path / target).resolve(strict=True)
+                        relative_target = str(resolved.relative_to(worktree_path.resolve()))
+                    except (OSError, RuntimeError, ValueError):
+                        return False
+                    result = subprocess.run(
+                        [*git_command, "ls-files", "-z", "--", relative_target],
+                        cwd=str(worktree_path),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                    )
+                    if result.returncode != 0 or not result.stdout:
+                        return False
+                result = subprocess.run(
+                    [*git_command, "ls-files", "-z", "--", target],
+                    cwd=str(worktree_path),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                )
+                if result.returncode != 0 or not result.stdout:
+                    return False
+                if completion_signal.type == "file_contains":
+                    result = subprocess.run(
+                        [*git_command, "diff", "--quiet", "HEAD", "--", target],
+                        cwd=str(worktree_path),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                    )
+                    if result.returncode != 0:
+                        return False
+            elif completion_signal.type == "path_exists" and any(c in "*?[" for c in target):
+                # Literal miss + glob syntax: the janitor expands the pattern.
+                if not _has_tracked_glob_candidate(worktree_path, target, git_command):
+                    return False
+            else:
+                # Literal miss with no path_exists glob pattern (or a missing
+                # file_contains target): committed content cannot satisfy it.
+                return False
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+def _has_tracked_glob_candidate(worktree_path: Path, pattern: str, git_command: list[str]) -> bool:
+    """Whether a glob pattern matches at least one tracked path in the worktree.
+
+    Mirrors the janitor's Python glob semantics (``*`` does not span ``/``,
+    unlike a Git pathspec), then confirms a match is tracked so a worktree-only
+    file never establishes delivery (#6606, #2760). A failed ``git ls-files``
+    probe is treated as no match (fail closed).
+    """
+    for candidate in glob.glob(str(worktree_path / pattern), recursive=True):
+        relative_path = str(Path(candidate).relative_to(worktree_path))
+        result = subprocess.run(
+            [*git_command, "ls-files", "-z", "--", relative_path],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        if result.stdout:
+            return True
+    return False
+
+
 def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
     """Return worktree paths the agent wrote and never committed.
 
@@ -3091,6 +3259,12 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
     """
     if worktree_path is None:
         return []
+    status_ok, paths = _filtered_worktree_status(worktree_path)
+    return paths if status_ok else []
+
+
+def _filtered_worktree_status(worktree_path: Path) -> tuple[bool, list[str]]:
+    """Read status and drop incidental artifacts, preserving Git failure state."""
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -3102,9 +3276,9 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
             timeout=5,
         )
     except Exception:
-        return []
+        return False, []
     if result.returncode != 0:
-        return []
+        return False, []
     paths: list[str] = []
     records = iter(result.stdout.split("\0"))
     for record in records:
@@ -3123,7 +3297,7 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
         if path == ".gitignore" and _gitignore_change_is_adapter_noise(worktree_path):
             continue
         paths.append(path)
-    return paths
+    return True, paths
 
 
 def _gitignore_change_is_adapter_noise(worktree_path: Path) -> bool:
