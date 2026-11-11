@@ -93,14 +93,21 @@ executes the manifest as a topological DAG: every layer of nodes whose
 dependencies are satisfied runs concurrently via a thread pool.
 Agent-typed nodes dispatch through the existing `AgentSpawner`;
 command-typed nodes shell out with `subprocess.run`. Each node's
-terminal status is one of `success`, `failed`, or `skipped` (skipped
-means an upstream dependency failed). A node with `loop:` re-fires until
+terminal status is one of `success`, `failed`, or `skipped`. A node is
+skipped when its own `when` predicate is false, or when an upstream
+dependency failed. Once any node fails, the run aborts: every node in a
+later layer is skipped and nothing in it is dispatched, even on a branch
+that did not fail. A node with `loop:` re-fires until
 its `until` bash predicate exits `0` or `max_iterations` is reached, at
 which point the run raises rather than silently truncating.
 
 `bernstein workflow run` exits non-zero if any node ends up `failed`.
 
 ## Resuming workflows
+
+Agent dispatch currently does not wait for verified completion before releasing
+dependent nodes. The [completion boundary proposal](../architecture/workflow-agent-completion-proposal.md)
+records the unresolved execution and resume guarantees tracked in #6639.
 
 Workflow runs can be resumed after interruption (Ctrl+C, crash, kill) using:
 

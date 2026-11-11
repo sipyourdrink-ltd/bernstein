@@ -188,12 +188,14 @@ jobs:
           exit-code: "0"
           # The scanner adapters under test need real, deliberately
           # vulnerable inputs to scan: tests/fixtures/scanners/*/target
-          # holds a lockfile pinning a known-bad lodash and an env file
-          # with a planted secret. Our own supply-chain gate scanned them
-          # too and failed main on a finding that is the fixture's whole
-          # point. Only the target trees are skipped; the conformance
-          # fixtures beside them are still scanned.
-          skip-dirs: "tests/fixtures/scanners/trivy/target,tests/fixtures/scanners/gitleaks/target"
+          # holds lockfiles pinning known-bad packages (lodash, smallvec)
+          # and an env file with a planted secret. Our own supply-chain
+          # gate scanned them too and failed main on a finding that is the
+          # fixture's whole point. Every scanner's target tree is skipped
+          # (tests/unit/test_trivy_fs_skips_scanner_fixture_targets.py
+          # keeps this list complete); the conformance fixtures beside
+          # them are still scanned.
+          skip-dirs: "tests/fixtures/scanners/bandit/target,tests/fixtures/scanners/checkov/target,tests/fixtures/scanners/gitleaks/target,tests/fixtures/scanners/osv-scanner/target,tests/fixtures/scanners/semgrep/target,tests/fixtures/scanners/trivy/target"
       - name: Drop suppressed SARIF results
         if: always()
         run: |
@@ -225,12 +227,14 @@ jobs:
           exit-code: "1"
           # The scanner adapters under test need real, deliberately
           # vulnerable inputs to scan: tests/fixtures/scanners/*/target
-          # holds a lockfile pinning a known-bad lodash and an env file
-          # with a planted secret. Our own supply-chain gate scanned them
-          # too and failed main on a finding that is the fixture's whole
-          # point. Only the target trees are skipped; the conformance
-          # fixtures beside them are still scanned.
-          skip-dirs: "tests/fixtures/scanners/trivy/target,tests/fixtures/scanners/gitleaks/target"
+          # holds lockfiles pinning known-bad packages (lodash, smallvec)
+          # and an env file with a planted secret. Our own supply-chain
+          # gate scanned them too and failed main on a finding that is the
+          # fixture's whole point. Every scanner's target tree is skipped
+          # (tests/unit/test_trivy_fs_skips_scanner_fixture_targets.py
+          # keeps this list complete); the conformance fixtures beside
+          # them are still scanned.
+          skip-dirs: "tests/fixtures/scanners/bandit/target,tests/fixtures/scanners/checkov/target,tests/fixtures/scanners/gitleaks/target,tests/fixtures/scanners/osv-scanner/target,tests/fixtures/scanners/semgrep/target,tests/fixtures/scanners/trivy/target"
       - name: Upload SARIF as workflow artifact
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

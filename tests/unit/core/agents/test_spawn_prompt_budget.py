@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
+import pytest
+
+from bernstein.core.agents import spawn_prompt_budget
 from bernstein.core.agents.spawn_prompt_budget import (
     SpawnPromptBudgetResult,
     check_spawn_prompt_budget,
@@ -17,6 +21,64 @@ if TYPE_CHECKING:
 def _make_sections(*pairs: tuple[str, int]) -> list[tuple[str, str]]:
     """Build named_sections from (name, char_count) pairs."""
     return [(name, "x" * count) for name, count in pairs]
+
+
+class TestInjectedToolDefinitionCounting:
+    """Full definitions are measured locally, independently of prompt assembly."""
+
+    @staticmethod
+    def _counter():
+        counter = getattr(spawn_prompt_budget, "_count_injected_tool_definitions", None)
+        assert callable(counter), "full injected tool definition counter is missing"
+        return counter
+
+    @pytest.mark.parametrize("supplied_counter", [False, True])
+    def test_full_definitions_per_server(self, supplied_counter: bool) -> None:
+        from bernstein.core.tokens.token_counter import count_tokens_via_estimation
+
+        large = {
+            "name": "report",
+            "description": "Отчёт 🧪",
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"description": "結果" * 10_000, "type": "string"},
+            "annotations": {"readOnlyHint": True},
+            "_meta": {"vendor": "extra"},
+        }
+        definitions = {"alpha": [large, {"name": "ping"}], "beta": [{"name": "echo"}]}
+        serialized = [
+            json.dumps(t, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            for tools in definitions.values()
+            for t in tools
+        ]
+        calls = []
+
+        def counter(text: str) -> int:
+            calls.append(text)
+            return len(text.encode("utf-8")) + 7
+
+        count = counter if supplied_counter else lambda text: count_tokens_via_estimation(text, file_type="json")
+        result = self._counter()(definitions, counter=counter) if supplied_counter else self._counter()(definitions)
+        if supplied_counter:
+            assert calls == serialized
+        assert result.per_server_tokens == {
+            "alpha": sum(count(text) for text in serialized[:2]),
+            "beta": count(serialized[2]),
+        }
+        assert result.total_tokens == sum(result.per_server_tokens.values())
+        reordered = json.loads(json.dumps(definitions, sort_keys=True))
+        assert self._counter()(reordered).per_server_tokens == self._counter()(definitions).per_server_tokens
+        reduced = {**definitions, "alpha": [{k: v for k, v in large.items() if k != "outputSchema"}]}
+        assert self._counter()(reduced).total_tokens < self._counter()(definitions).total_tokens
+
+    @pytest.mark.parametrize("tools, expected", [([], 0), (None, None)])
+    def test_empty_and_missing_discovery(self, tools, expected) -> None:
+        def counter(text: str) -> int:
+            pytest.fail("empty or missing definitions must not invoke the counter")
+
+        result = self._counter()({"stub": tools, "empty": []}, counter=counter)
+        assert result.per_server_tokens == {"stub": expected, "empty": 0}
+        assert result.total_tokens == expected
+        assert self._counter()({}).total_tokens == 0
 
 
 class TestCheckSpawnPromptBudget:

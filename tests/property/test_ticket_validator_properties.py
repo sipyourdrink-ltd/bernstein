@@ -22,6 +22,7 @@ from hypothesis import strategies as st
 
 from bernstein.sdd.validator import (
     RECOMMENDED_KEYS,
+    load_schema,
     validate_ticket_metadata,
 )
 
@@ -40,6 +41,7 @@ _STATUSES = (
 )
 _PRIORITIES = ("P0", "P1", "P2")
 _EFFORTS = ("S", "M", "L")
+_TICKET_FIELDS = frozenset(load_schema()["properties"])
 
 
 def _base() -> dict[str, Any]:
@@ -139,7 +141,7 @@ def test_property_non_iso_dates_rejected(bad: str) -> None:
             alphabet=st.sampled_from(list(string.ascii_lowercase + "_")),
             min_size=1,
             max_size=10,
-        ).filter(lambda k: k not in RECOMMENDED_KEYS and k not in _base()),
+        ).filter(lambda k: k not in _TICKET_FIELDS),
         values=st.one_of(st.text(max_size=10), st.integers(), st.booleans(), st.none()),
         max_size=5,
     )

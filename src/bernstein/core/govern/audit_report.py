@@ -434,13 +434,10 @@ class AuditReportVerifyResult:
     errors: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _recompute_anchor(spine: LineageSpine, canonical: bytes) -> str | None:
-    """Return the spine entry hash whose content matches ``canonical`` bytes."""
+def _recompute_anchors(spine: LineageSpine, canonical: bytes) -> set[str]:
+    """Return all spine entry hashes whose content matches ``canonical`` bytes."""
     want = content_hash_of(canonical)
-    for entry in spine.iter_entries():
-        if entry.content_hash == want:
-            return entry.entry_hash
-    return None
+    return {entry.entry_hash for entry in spine.iter_entries() if entry.content_hash == want}
 
 
 def verify_audit_report(
@@ -454,10 +451,10 @@ def verify_audit_report(
     Recomputes, from the stored report and the spine alone:
 
     * the whole audit spine;
-    * the spine entry whose content hash is the report's canonical bytes -- a
+    * the spine entries whose content hash is the report's canonical bytes -- a
       byte-flipped report matches no entry and is unverifiable, not merely
       different;
-    * the recorded ``journal_entry_hash`` against that entry;
+    * the recorded ``journal_entry_hash`` against those entries;
     * the named ``inventory_anchor``, when present, as an entry on the same
       chain, so a report cannot claim an inventory the chain never saw.
     """
@@ -475,14 +472,14 @@ def verify_audit_report(
     except ValueError as exc:
         return AuditReportVerifyResult(ok=False, reason=f"report is malformed ({exc})", report=report)
 
-    recomputed = _recompute_anchor(spine, canonical)
-    if recomputed is None:
+    recomputed = _recompute_anchors(spine, canonical)
+    if not recomputed:
         return AuditReportVerifyResult(
             ok=False,
             reason="report is not anchored in the govern-audit spine",
             report=report,
         )
-    if recomputed != report.journal_entry_hash:
+    if report.journal_entry_hash not in recomputed:
         return AuditReportVerifyResult(
             ok=False,
             reason="recorded journal_entry_hash does not match the spine anchor over the report bytes",

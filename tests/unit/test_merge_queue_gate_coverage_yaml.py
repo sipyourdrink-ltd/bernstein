@@ -66,7 +66,8 @@ QUEUE_REPORTING_WEB_LANES = {
         "Answers whether a pull request has the review the charter asks for. It runs on "
         "every pull request whatever it touches, `web/**` included, and on merge_group, so "
         "the answer is re-checked against the queued state rather than only against the "
-        "branch. It is required through an organization ruleset, by the context name it "
+        "branch. It is required through the repository ruleset `main-merge-queue`, by the "
+        "context name it "
         "publishes, `quorum`, so the verdict can be answered again after the objection "
         "window closes without waiting for a new pull-request event."
     ),
@@ -99,6 +100,11 @@ ADVISORY_BY_DECISION = {
         "lane deliberately never blocks a pull request (#5157)."
     ),
     "trufflehog.yml": ("Secret scanning. Advisory as configured today; nothing about #4028 changed it."),
+    "codeql.yml": (
+        "Code scanning on every pull request into main. Findings land as code-scanning alerts and "
+        "the trunk push run analyses the merged commit again; branch protection does not require "
+        "the lane, so it reports rather than gates."
+    ),
     "pr-observability-summary.yml": (
         "Posts a summary on the pull request behind a `deep-review` label. It reports, it "
         "does not gate, so requiring it is not the missing piece."

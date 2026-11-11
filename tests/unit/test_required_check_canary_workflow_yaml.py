@@ -705,10 +705,10 @@ def test_ci_gate_rollup_fails_when_rpm_smoke_skips_on_an_rpm_relevant_diff(
 # ---------------------------------------------------------------------------
 
 # Mirrors the contexts the live branch rules require. Keep in sync with the
-# canary's BRANCH_PROTECTION_CONTEXTS_JSON. `quorum` comes from an
-# organization ruleset rather than the repository one, so it does not show up
-# in the repository's own protection payload, but the merge queue waits for
-# it exactly the same way.
+# canary's BRANCH_PROTECTION_CONTEXTS_JSON. `quorum` is required by the
+# repository ruleset `main-merge-queue` rather than classic branch protection,
+# so it does not show up in the branch protection payload, but the merge queue
+# waits for it exactly the same way.
 BRANCH_PROTECTION_CONTEXTS = (REQUIRED_CONTEXT, "quorum")
 
 

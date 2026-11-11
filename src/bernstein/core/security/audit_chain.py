@@ -1106,6 +1106,65 @@ EVENT_DECLARATION_QUARANTINED = "declaration.quarantined"
 EVENT_DECLARATION_REENABLED = "declaration.reenabled"
 
 
+EVENT_MCP_SIGNATURE_VERIFICATION = "mcp.signature_verification"
+EVENT_MCP_BUNDLE_SCAN = "mcp.bundle_scan"
+EVENT_MCP_LOAD_DECISION = "mcp.load_decision"
+
+
+def _validate_mcp_signing_event(
+    event_type: str, actor: str, resource_type: str, resource_id: str, details: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate new signing records only; historical records remain untouched."""
+    fields = {
+        EVENT_MCP_SIGNATURE_VERIFICATION: {"verdict"},
+        EVENT_MCP_BUNDLE_SCAN: {"verification_hmac", "status", "skip_reason", "findings"},
+        EVENT_MCP_LOAD_DECISION: {"verification_hmac", "scan_hmac", "strict", "critical_scan_blocks_load", "allowed"},
+    }
+    if event_type not in fields:
+        return details
+
+    def require(valid: bool) -> None:
+        if not valid:
+            raise ValueError("Invalid MCP signing audit record")
+
+    require(actor == "mcp_signing_policy" and resource_type == "mcp_server")
+    require(isinstance(resource_id, str) and bool(resource_id.strip()))
+    require(isinstance(details, dict) and set(details) == fields[event_type])
+    if event_type == EVENT_MCP_SIGNATURE_VERIFICATION:
+        require(
+            isinstance(details["verdict"], str)
+            and details["verdict"]
+            in ("ok", "unsigned", "bad_signature", "untrusted_publisher", "bad_manifest", "content_hash_mismatch")
+        )
+    else:
+        require(isinstance(details["verification_hmac"], str) and bool(details["verification_hmac"].strip()))
+    if event_type == EVENT_MCP_LOAD_DECISION:
+        require(isinstance(details["scan_hmac"], str) and bool(details["scan_hmac"].strip()))
+        require(all(type(details[k]) is bool for k in ("strict", "critical_scan_blocks_load", "allowed")))
+    if event_type == EVENT_MCP_BUNDLE_SCAN:
+        require(isinstance(details["findings"], list))
+        require(
+            (details["status"] == "completed" and details["skip_reason"] == "")
+            or (
+                details["status"] == "skipped"
+                and details["skip_reason"] in ("policy_disabled", "bundle_unavailable")
+                and details["findings"] == []
+            )
+        )
+        findings = []
+        for finding in details["findings"]:
+            require(isinstance(finding, dict) and {"rule", "severity"} <= set(finding) <= {"rule", "severity", "cwe"})
+            require(isinstance(finding["rule"], str) and bool(finding["rule"].strip()))
+            require(
+                isinstance(finding["severity"], str)
+                and finding["severity"] in ("info", "low", "medium", "high", "critical")
+            )
+            require(isinstance(finding.get("cwe", ""), str))
+            findings.append({**finding, "cwe": finding.get("cwe", "")})
+        details = {**details, "findings": findings}
+    return details
+
+
 # ---------------------------------------------------------------------------
 # AuditChainStore
 # ---------------------------------------------------------------------------
@@ -1214,6 +1273,7 @@ class AuditChainStore:
         an event asserting a chain position it does not occupy, in the one field
         a reader consults to check that very linkage.
         """
+        details = _validate_mcp_signing_event(event_type, actor, resource_type, resource_id, details)
         with self._append_lock, self._log.append_transaction():
             merged: dict[str, Any] = details.copy()
             merged["prev_chain_digest"] = self._log.resync_head()
@@ -1235,6 +1295,7 @@ class AuditChainStore:
         details: dict[str, Any] | None = None,
     ) -> AuditEvent:
         """Append a plain event (no automatic prev_chain_digest embedding)."""
+        details = _validate_mcp_signing_event(event_type, actor, resource_type, resource_id, details or {})
         return self._log.log(
             event_type=event_type,
             actor=actor,
@@ -10074,7 +10135,10 @@ __all__ = [
     "EVENT_LANE_UPDATED",
     "EVENT_MANDATE_CONSENT_RECEIPT",
     "EVENT_MANDATE_REVOCATION",
+    "EVENT_MCP_BUNDLE_SCAN",
     "EVENT_MCP_CAPABILITY_DRIFT",
+    "EVENT_MCP_LOAD_DECISION",
+    "EVENT_MCP_SIGNATURE_VERIFICATION",
     "EVENT_MCP_STATELESS_CALL",
     "EVENT_MCP_TASK_HANDLE",
     "EVENT_MEMORY_WRITE",
