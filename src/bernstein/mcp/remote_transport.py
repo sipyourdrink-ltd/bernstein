@@ -1416,6 +1416,10 @@ class StreamableHTTPTransport:
                 "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
             },
         }
+        from bernstein.mcp.server import _status_readiness  # pyright: ignore[reportPrivateUsage]
+
+        if (readiness := _status_readiness(data)) is not None:
+            body["readiness"] = readiness
         if detail:
             body["per_role"] = per_role_raw
         if tasks is not None:

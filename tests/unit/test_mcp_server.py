@@ -1377,3 +1377,41 @@ def test_server_module_has_a_main_guard_that_answers_initialize() -> None:
     response = json.loads(proc.stdout.splitlines()[0])
     assert response["id"] == 1
     assert response["result"]["serverInfo"]["name"] == "bernstein"
+
+
+@pytest.mark.anyio
+async def test_status_projects_coordinator_version_separately_from_bridge() -> None:
+    from bernstein.mcp.server import create_mcp_server
+
+    response = MagicMock()
+    response.json.return_value = {
+        **_make_status_payload(),
+        "execution_readiness": {
+            "schema_version": 1,
+            "coordinator": {
+                "state": "ready",
+                "version": "7.8.9",
+                "source": "task_server_status",
+                "observed_at": "2026-11-10T12:00:00Z",
+                "provenance": {"tenant_id": "test"},
+            },
+        },
+    }
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.get.return_value = response
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    with (
+        patch("bernstein.mcp.server.httpx.AsyncClient", return_value=client),
+        patch("bernstein.mcp.server._package_version", return_value="1.2.3"),
+    ):
+        result = json.loads(_result_text(await mcp.call_tool("bernstein_status", {})))
+
+    readiness = result.get("result", result)["readiness"]
+    assert readiness["state"] == "unknown"
+    assert readiness["transport"]["version"] == "1.2.3"
+    assert readiness["coordinator"]["version"] == "7.8.9"
+    assert "provenance" not in readiness["coordinator"]
+    assert readiness["scheduler"]["state"] == "unknown"
+    assert readiness["dispatch"]["state"] == "unknown"
+    client.get.assert_awaited_once()
