@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from importlib.abc import MetaPathFinder
+from importlib.abc import Loader, MetaPathFinder
 from importlib.machinery import ModuleSpec
 from types import ModuleType  # noqa: TC003 - used at runtime by MetaPathFinder
 
@@ -632,7 +632,7 @@ class _CoreTombstoneFinder(MetaPathFinder):
         return ModuleSpec(fullname, _CoreTombstoneLoader())
 
 
-class _CoreTombstoneLoader:
+class _CoreTombstoneLoader(Loader):
     """Refuse to execute a retired module, naming where its contents went."""
 
     def create_module(self, _spec: ModuleSpec) -> ModuleType | None:
@@ -683,7 +683,7 @@ class _CoreRedirectFinder(MetaPathFinder):
         return ModuleSpec(fullname, _CoreRedirectLoader())
 
 
-class _CoreRedirectLoader:
+class _CoreRedirectLoader(Loader):
     """Load a redirected module by importing the real target."""
 
     def create_module(self, _spec: ModuleSpec) -> ModuleType | None:
