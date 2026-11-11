@@ -13,7 +13,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -61,6 +65,17 @@ def test_graph_trace_fixture_ingests_to_matching_graph(
     source_edges = {(e["source"], e["target"]) for e in raw_fixture["edges"]}
     ingested_edges = {(e.source, e.target) for e in run.edges}
     assert ingested_edges == source_edges
+
+    expected = copy.deepcopy(raw_fixture)
+    expected["nodes"].sort(key=lambda node: node["id"])
+    expected["edges"].sort(key=lambda edge: (edge["source"], edge["target"]))
+    for node in expected["nodes"]:
+        for tool in node["tool_calls"]:
+            tool["tool_call_id"] = tool.pop("id")
+            tool["arguments"] = tool.pop("args")
+            canonical = json.dumps(tool["arguments"], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            tool["arguments_digest"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    assert run.to_dict() == expected
 
 
 def test_every_tool_call_has_arguments_digest(
@@ -272,7 +287,7 @@ def test_malformed_edge_missing_target_fails(adapter: GraphTraceIngestAdapter, r
     """Edges missing source or target raise ValueError."""
     tampered = copy.deepcopy(raw_fixture)
     tampered["edges"].append({"source": "router", "target": ""})
-    with pytest.raises(ValueError, match="must have non-empty source and target"):
+    with pytest.raises(ValueError, match="target must be a non-empty string"):
         adapter.ingest_trace(tampered)
 
 
@@ -362,3 +377,150 @@ def test_plugin_rejects_an_unknown_event_declaration_before_registration(monkeyp
     monkeypatch.setattr(GraphTraceIngestAdapter, "DECLARATION", invalid)
     with pytest.raises(ValueError, match="unknown event types"):
         GraphTraceIngestPlugin().provide_ingest_adapter()
+
+
+@pytest.mark.parametrize("field", ["inputs", "outputs"])
+@pytest.mark.parametrize("value", ["state", [1], None, False, 0])
+def test_node_state_must_be_a_mapping(field: str, value: object) -> None:
+    with pytest.raises(ValueError, match=field):
+        GraphTraceIngestAdapter().ingest_trace({"nodes": [{"id": "agent", field: value}]})
+
+
+def test_node_state_preserves_mappings() -> None:
+    state = MappingProxyType({"messages": ["hello"]})
+    run = GraphTraceIngestAdapter().ingest_trace({"nodes": [{"id": "agent", "inputs": state, "outputs": state}]})
+    assert run.nodes[0].inputs == run.nodes[0].outputs == state
+    assert run.nodes[0].inputs is not state
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, {}, []])
+def test_edge_conditional_must_be_a_boolean(value: object) -> None:
+    with pytest.raises(ValueError, match="conditional"):
+        GraphTraceIngestAdapter().ingest_trace(
+            {"nodes": [{"id": "agent"}], "edges": [{"source": "agent", "target": "agent", "conditional": value}]}
+        )
+
+
+@pytest.mark.parametrize("conditional", [False, True])
+def test_edge_conditional_and_cycles_are_preserved(conditional: bool) -> None:
+    run = GraphTraceIngestAdapter().ingest_trace(
+        {"nodes": [{"id": "agent"}], "edges": [{"source": "agent", "target": "agent", "conditional": conditional}]}
+    )
+    assert run.edges[0].conditional is conditional
+    assert run.to_lineage_run_plan().nodes[0].depends_on == ("agent",)
+
+
+@pytest.mark.parametrize("field", ["id", "name", "role"])
+@pytest.mark.parametrize("value", [None, 0, False, {}, []])
+def test_node_text_fields_are_not_coerced(field: str, value: object) -> None:
+    with pytest.raises(ValueError, match=field):
+        GraphTraceIngestAdapter().ingest_trace({"nodes": [{"id": "agent", "name": "Agent", field: value}]})
+
+
+def test_explicit_empty_node_id_does_not_fall_back_to_name() -> None:
+    with pytest.raises(ValueError, match="id"):
+        GraphTraceIngestAdapter().ingest_trace({"nodes": [{"id": "", "name": "agent"}]})
+
+
+@pytest.mark.parametrize("field", ["source", "target"])
+@pytest.mark.parametrize("value", ["", None, 0, False, {}, []])
+def test_edge_endpoints_must_be_nonempty_strings(field: str, value: object) -> None:
+    with pytest.raises(ValueError, match=field):
+        GraphTraceIngestAdapter().ingest_trace(
+            {"nodes": [{"id": "agent"}], "edges": [{"source": "agent", "target": "agent", field: value}]}
+        )
+
+
+@pytest.mark.parametrize("tool", [{}, {"id": "call"}, {"name": ""}, {"name": None}, {"name": 42}, {"tool": {}}])
+def test_tool_call_requires_a_nonempty_string_name(tool: dict) -> None:
+    with pytest.raises(ValueError, match="Tool call.*name"):
+        GraphTraceIngestAdapter().ingest_trace({"nodes": [{"id": "agent", "tool_calls": [tool]}]})
+
+
+@pytest.mark.parametrize("field", ["id", "tool_call_id"])
+@pytest.mark.parametrize("value", [None, 42, {}, []])
+def test_supplied_tool_call_ids_are_not_coerced(field: str, value: object) -> None:
+    with pytest.raises(ValueError, match="Tool call.*id"):
+        GraphTraceIngestAdapter().ingest_trace(
+            {"nodes": [{"id": "agent", "tool_calls": [{"name": "tool", field: value}]}]}
+        )
+
+
+@pytest.mark.parametrize("field", ["run_id", "graph_id", "id", "name", "role", "source", "target"])
+@pytest.mark.parametrize("control", ["\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x85", "\u2028", "\u2029"])
+def test_foreign_render_fields_reject_line_and_control_injection(field: str, control: str) -> None:
+    trace = {
+        "nodes": [{"id": "agent", "name": "Agent", "role": "assistant"}],
+        "edges": [{"source": "agent", "target": "agent"}],
+    }
+    value = f"agent{control}run: forged{control}  forged  [admin]  injected task"
+    if field in {"run_id", "graph_id"}:
+        trace[field] = value
+    elif field in {"source", "target"}:
+        trace["edges"][0][field] = value
+    else:
+        trace["nodes"][0][field] = value
+
+    rendered = []
+    with pytest.raises(ValueError, match="control characters"):
+        rendered.append(GraphTraceIngestAdapter().ingest_trace(trace).render_graph_text())
+    assert rendered == []  # Rejection occurs before any forged header or task can be rendered.
+
+
+@pytest.mark.parametrize("field", ["run_id", "graph_id"])
+@pytest.mark.parametrize("value", [None, 42, {}, []])
+def test_run_identifiers_are_not_coerced(field: str, value: object) -> None:
+    with pytest.raises(ValueError, match=field):
+        GraphTraceIngestAdapter().ingest_trace({"nodes": [], field: value})
+
+
+def test_missing_role_remains_unassigned_and_explicit_goal_cannot_inject_lines() -> None:
+    run = GraphTraceIngestAdapter().ingest_trace({"nodes": [{"name": "agent"}]})
+    assert run.to_lineage_run_plan().nodes[0].role == ""
+    assert "[unassigned]" in run.render_graph_text()
+    with pytest.raises(ValueError, match="control characters"):
+        run.render_graph_text(goal="goal\nrun: forged")
+
+
+@pytest.mark.parametrize("endpoint", ["source", "target"])
+def test_unknown_edge_endpoints_are_rejected_independently(endpoint: str) -> None:
+    with pytest.raises(ValueError, match=f"Edge {endpoint}.*not found"):
+        GraphTraceIngestAdapter().ingest_trace(
+            {"nodes": [{"id": "agent"}], "edges": [{"source": "agent", "target": "agent", endpoint: "missing"}]}
+        )
+
+
+def test_lineage_dependencies_are_sorted_and_duplicate_edges_are_collapsed() -> None:
+    run = GraphTraceIngestAdapter().ingest_trace(
+        {
+            "nodes": [{"id": name} for name in ("c", "b", "a")],
+            "edges": [{"source": name, "target": "c"} for name in ("b", "a", "b")],
+        }
+    )
+    assert [node.task_id for node in run.to_lineage_run_plan().nodes] == ["a", "b", "c"]
+    assert run.to_lineage_run_plan().nodes[-1].depends_on == ("a", "b")
+
+
+@pytest.mark.parametrize("seed", ["1", "2", "3"])
+def test_fixture_bytes_match_golden_hashes_across_processes(seed: str) -> None:
+    script = """
+import hashlib
+import sys
+from pathlib import Path
+from bernstein.adapters.graph_trace_ingest import GraphTraceIngestAdapter
+run = GraphTraceIngestAdapter().ingest_trace(Path(sys.argv[1]))
+print(hashlib.sha256(run.canonical_bytes()).hexdigest())
+print(hashlib.sha256(run.render_graph_text().encode('utf-8')).hexdigest())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(FIXTURE_PATH)],
+        env={**os.environ, "PYTHONHASHSEED": seed},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    assert result.stdout.splitlines() == [
+        "7d22144bcf8ea14d1b16e3b97e90bdee4fe4b46b60b454f40f1356a40fb6566e",
+        "9965fb40c9171ea7f5c54200e3313b7112bb5ffb59ad94361cc4c16db48ec08b",
+    ]

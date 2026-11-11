@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +55,23 @@ def _normalize_args(raw_args: Any) -> Any:
     return raw_args if isinstance(raw_args, (dict, list)) else {"raw": raw_args}
 
 
+def _validate_text(value: Any, field_name: str, *, allow_empty: bool = False) -> str:
+    """Validate foreign display text before it can reach the line-based renderer."""
+    if not isinstance(value, str) or (not allow_empty and not value.strip()):
+        kind = "a string" if allow_empty else "a non-empty string"
+        raise ValueError(f"{field_name} must be {kind}")
+    if any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in value):
+        raise ValueError(f"{field_name} must not contain control characters or line separators")
+    return value
+
+
+def _node_state(raw: Mapping[str, Any], field_name: str) -> dict[str, Any]:
+    value = raw.get(field_name, {})
+    if not isinstance(value, Mapping):
+        raise ValueError(f"Node '{field_name}' must be a mapping when present")
+    return dict(value)
+
+
 @dataclass(frozen=True, slots=True)
 class GraphTraceToolCall:
     """A tool call invoked during a graph node's execution."""
@@ -66,8 +84,8 @@ class GraphTraceToolCall:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> GraphTraceToolCall:
-        name = str(raw.get("name") or raw.get("tool") or "")
-        tool_call_id = str(raw.get("id") or raw.get("tool_call_id") or "")
+        name = _validate_text(raw.get("name", raw.get("tool", "")), "Tool call name")
+        tool_call_id = _validate_text(raw.get("id", raw.get("tool_call_id", "")), "Tool call id", allow_empty=True)
         args = _normalize_args(raw.get("args", raw.get("arguments", {})))
 
         computed_digest = _digest_args(args)
@@ -112,11 +130,13 @@ class GraphTraceNode:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> GraphTraceNode:
-        node_id = str(raw.get("id") or raw.get("name") or "")
-        name = str(raw.get("name") or node_id)
-        role = str(raw.get("role") or "")
-        inputs = dict(raw.get("inputs") or {}) if isinstance(raw.get("inputs"), dict) else {}
-        outputs = dict(raw.get("outputs") or {}) if isinstance(raw.get("outputs"), dict) else {}
+        if "id" not in raw and "name" not in raw:
+            raise ValueError("Node is missing an 'id' or 'name'")
+        node_id = _validate_text(raw.get("id", raw.get("name")), "Node id")
+        name = _validate_text(raw.get("name", node_id), "Node name")
+        role = _validate_text(raw.get("role", ""), "Node role", allow_empty=True)
+        inputs = _node_state(raw, "inputs")
+        outputs = _node_state(raw, "outputs")
         raw_tools = raw.get("tool_calls", [])
         if raw_tools is None:
             raw_tools = []
@@ -157,10 +177,13 @@ class GraphTraceEdge:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> GraphTraceEdge:
+        conditional = raw.get("conditional", False)
+        if not isinstance(conditional, bool):
+            raise ValueError("Edge 'conditional' must be a boolean when present")
         return cls(
-            source=str(raw.get("source") or ""),
-            target=str(raw.get("target") or ""),
-            conditional=bool(raw.get("conditional", False)),
+            source=_validate_text(raw.get("source", ""), "Edge source"),
+            target=_validate_text(raw.get("target", ""), "Edge target"),
+            conditional=conditional,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -195,9 +218,13 @@ class IngestedGraphRun:
         return _canonical_json(self.to_dict()).encode("utf-8")
 
     def to_lineage_run_plan(self, goal: str = "") -> RunPlan:
-        """Map the foreign graph to Bernstein's RunPlan vocabulary."""
+        """Project edges as dependencies, preserving cycles but flattening conditions.
+
+        This describes recorded structure, not a schedulable execution plan.
+        """
         from bernstein.core.lineage.plan_render import PlanNode, RunPlan
 
+        _validate_text(goal, "Graph goal", allow_empty=True)
         incoming_deps: dict[str, set[str]] = {node.id: set() for node in self.nodes}
         for edge in self.edges:
             if edge.target in incoming_deps:
@@ -206,7 +233,7 @@ class IngestedGraphRun:
         plan_nodes = tuple(
             PlanNode(
                 task_id=node.id,
-                role=node.role or "assistant",
+                role=node.role,
                 title=node.name,
                 depends_on=tuple(sorted(incoming_deps.get(node.id, ()))),
             )
@@ -269,8 +296,8 @@ class GraphTraceIngestAdapter:
         if raw_meta is not None and not isinstance(raw_meta, dict):
             raise ValueError("Graph trace 'metadata' must be a dictionary when present")
 
-        run_id = str(raw_dict.get("run_id") or "foreign-graph-trace-run")
-        graph_id = str(raw_dict.get("graph_id") or "graph-trace-graph")
+        run_id = _validate_text(raw_dict.get("run_id", "foreign-graph-trace-run"), "Graph run_id")
+        graph_id = _validate_text(raw_dict.get("graph_id", "graph-trace-graph"), "Graph graph_id")
 
         raw_nodes = raw_dict.get("nodes")
         if not isinstance(raw_nodes, list):
@@ -282,8 +309,6 @@ class GraphTraceIngestAdapter:
             if not isinstance(item, dict):
                 raise ValueError(f"Node at index {idx} must be a dictionary")
             node = GraphTraceNode.from_dict(item)
-            if not node.id:
-                raise ValueError(f"Node at index {idx} is missing an 'id' or 'name'")
             if node.id in seen_node_ids:
                 raise ValueError(f"Duplicate node id '{node.id}' in graph nodes")
             seen_node_ids.add(node.id)
@@ -300,8 +325,6 @@ class GraphTraceIngestAdapter:
             if not isinstance(e, dict):
                 raise ValueError(f"Edge at index {idx} must be a dictionary")
             edge = GraphTraceEdge.from_dict(e)
-            if not edge.source or not edge.target:
-                raise ValueError(f"Edge at index {idx} must have non-empty source and target")
             edges.append(edge)
 
         # Fail-closed validation: ensure all edges reference nodes present in the graph
