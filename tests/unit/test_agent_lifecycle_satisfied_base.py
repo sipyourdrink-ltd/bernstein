@@ -118,6 +118,20 @@ def test_clean_no_change_completes_when_all_worktree_gates_pass(no_change_attemp
     assert row["output"]["verification_workdir"] == str(worktree)
 
 
+def test_nonzero_orphan_exit_verifies_run_checkout_before_completion(no_change_attempt) -> None:
+    orch, task, session, worktree, retry, gate_command = no_change_attempt
+    session.exit_code = 1
+    (worktree / "test-result.txt").write_text("fail\n")
+
+    handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+
+    gate_command.assert_called_once()
+    assert gate_command.call_args.kwargs["cwd"] == orch._workdir
+    orch._client.post.assert_called_once()
+    assert orch._client.post.call_args.args == (f"http://server/tasks/{task.id}/complete",)
+    retry.assert_not_called()
+
+
 @pytest.mark.parametrize("failed_gate", ["path_exists", "file_contains", "test_passes"])
 def test_clean_no_change_retries_when_any_worktree_gate_fails(no_change_attempt, failed_gate: str) -> None:
     orch, task, session, worktree, retry, gate_command = no_change_attempt

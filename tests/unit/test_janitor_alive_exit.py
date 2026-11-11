@@ -293,23 +293,3 @@ def test_process_single_completed_task_logs_alive_exit_start(
         and "role=backend" in rec.message
         for rec in caplog.records
     ), caplog.text
-
-
-def test_dead_path_janitor_pass_unchanged() -> None:
-    """Sanity: the dead-exit verification call site stays synchronous.
-
-    Regresses the safe carve-out: item 30 must NOT make
-    ``handle_orphaned_task`` enqueue its pass instead of running it inline.
-
-    The callee name tracks the dispatch seam: #2990 swapped ``verify_task``
-    for ``verify_task_completion`` on both exit paths so an artifact-mode task
-    completes on its signed receipt. What this test guards is the *inline*
-    call, not which function is inlined.
-    """
-    import inspect
-
-    from bernstein.core.agents import agent_lifecycle
-
-    src = inspect.getsource(agent_lifecycle.handle_orphaned_task)
-    # The synchronous completion-verification call must still be present.
-    assert "passed, failed_signals = verify_task_completion(task, orch._workdir)" in src
