@@ -29,6 +29,7 @@ plus lineage exposes all of them.
     bernstein_approve       - approve a pending/blocked task
     bernstein_complete      - complete a task the caller is executing
     bernstein_create_task   - create a bare backlog task without orchestration
+    bernstein_subscribe     - wait for a role task creation over authenticated SSE
     load_skill              - return skill pack file contents; never execute
 
 Registered from sibling modules by the same ``create_mcp_server`` call:
@@ -56,6 +57,7 @@ Deprecated aliases (#3087), callable but never advertised, removed in
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import copy
@@ -564,6 +566,39 @@ async def _status_impl(server_url: str, *, status: str | None = None, detail: bo
         )
 
 
+async def _subscribe_impl(server_url: str, role: str, timeout_seconds: float = 30) -> str:
+    """Wait once on SSE; context managers close on return, deadline or cancellation."""
+    err = _validate_or_error("bernstein_subscribe", {"role": role, "timeout_seconds": timeout_seconds})
+    if err is not None:
+        return _validation_error_response(err)
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async with (
+                httpx.AsyncClient(timeout=None) as client,
+                client.stream(
+                    "GET",
+                    f"{server_url}/events/tasks",
+                    params={"role": role},
+                    headers=_auth_headers(),
+                ) as response,
+            ):
+                response.raise_for_status()
+                event = ""
+                async for line in response.aiter_lines():
+                    if not line:
+                        event = ""
+                    elif line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:") and event == "task.created":
+                        notification: dict[str, Any] = json.loads(line[5:])
+                        return json.dumps({"notifications": [notification], "timed_out": False})
+        return json.dumps({"error": "Task event stream ended before a notification"})
+    except TimeoutError:
+        return json.dumps({"notifications": [], "timed_out": True})
+    except (httpx.HTTPError, ValueError) as exc:
+        return _error_response(exc)
+
+
 async def _tasks_alias_impl(server_url: str, status: str | None = None) -> str:
     """Historical ``bernstein_tasks`` body: the raw task list."""
     try:
@@ -601,13 +636,14 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
 
     @mcp.tool()
     async def bernstein_run(  # pyright: ignore[reportUnusedFunction]
-        goal: str,
+        goal: str = "",
         role: str = "backend",
         priority: int = 2,
         scope: str = "medium",
         complexity: str = "medium",
         estimated_minutes: int = 30,
         parent_task_id: str | None = None,
+        template: str = "orchestration",
         ctx: Context | None = None,
     ) -> str:
         """Start an orchestration run by posting a task to the Bernstein server.
@@ -622,6 +658,9 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
 
         Args:
             goal: Description of what you want Bernstein to accomplish.
+            template: ``administrative`` creates an empty manual container,
+                without planning or agent processes; default ``orchestration``
+                queues normal work. Only administrative runs may omit goal.
             role: Specialist role to assign (backend, frontend, qa, security, …).
             priority: 1=critical, 2=normal, 3=nice-to-have.
             scope: Task scope - small, medium, or large.
@@ -638,6 +677,8 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             params), a Tasks-extension ``CreateTaskResult`` is returned
             instead so the client can poll the run.
         """
+        if template == "administrative" and not goal:
+            goal = "Administrative run"
         args: dict[str, Any] = {
             "goal": goal,
             "role": role,
@@ -646,11 +687,16 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             "complexity": complexity,
             "estimated_minutes": estimated_minutes,
         }
+        args["template"] = template
         if parent_task_id is not None:
             args["parent_task_id"] = parent_task_id
         err = _validate_or_error("bernstein_run", args)
         if err is not None:
             return _validation_error_response(err)
+        if template == "administrative":
+            if parent_task_id is not None:
+                return _error_response(ValueError("Administrative runs cannot have parent_task_id"))
+            return await _administrative_request(server_url, "POST", "/administrative-runs", {"goal": goal})
         return await _run_impl(  # type: ignore[return-value]
             server_url,
             goal=goal,
@@ -662,6 +708,20 @@ def _register_query_tools(mcp: FastMCP[None], server_url: str) -> None:
             parent_task_id=parent_task_id,
             ctx=ctx,
         )
+
+    @mcp.tool()
+    async def bernstein_subscribe(  # pyright: ignore[reportUnusedFunction]
+        role: str,
+        timeout_seconds: float = 30,
+    ) -> str:
+        """Wait for the first new task for a role using SSE, then unsubscribe.
+
+        This bounded call receives future task_id/title notifications only.
+        Timeout (1-60 seconds) returns an empty list. Cancellation or session
+        disconnect closes the stream. Call again to listen further; this does
+        not install a background listener or wake a dormant chat.
+        """
+        return await _subscribe_impl(server_url, role, timeout_seconds)
 
     @mcp.tool()
     async def bernstein_status(  # pyright: ignore[reportUnusedFunction]
@@ -839,7 +899,19 @@ async def _run_status_impl(run_id: str, workdir: str = ".", ctx: Context | None 
         return _error_response(exc, hint="Run journal not found")
 
 
-def _register_run_status_tool(mcp: FastMCP[None]) -> None:
+async def _administrative_request(
+    server_url: str, method: str, path: str, payload: dict[str, Any] | None = None
+) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            response = await client.request(method, f"{server_url}{path}", json=payload, headers=_auth_headers())
+            response.raise_for_status()
+            return json.dumps(response.json(), indent=2)
+    except Exception as exc:
+        return _error_response(exc)
+
+
+def _register_run_status_tool(mcp: FastMCP[None], server_url: str) -> None:
     """Register the ``bernstein_run_status`` Tasks-extension polling tool.
 
     The tool reprojects a verifiable run handle from the on-disk run journal
@@ -871,16 +943,20 @@ def _register_run_status_tool(mcp: FastMCP[None]) -> None:
                 the task id slugified into a journal run id, so the two forms
                 reach one journal and project an identical handle. Must be a
                 plain identifier - path separators and traversal are refused.
-            workdir: Project root directory (default: current directory).
+            workdir: Project root for orchestration journals. Administrative
+                ids are read from the authenticated task server instead.
 
         Returns:
-            JSON of the Tasks-extension task-handle body (``taskId``,
+            Administrative runs return an authenticated task aggregate.
+            Other runs return JSON of the Tasks-extension task-handle body (``taskId``,
             ``runId``, ``status``, ``journalHead``, ``chainHead``,
             ``receiptHash``, ``pollToken``, ...).
         """
         err = _validate_or_error("bernstein_run_status", {"run_id": run_id, "workdir": workdir})
         if err is not None:
             return _validation_error_response(err)
+        if run_id.startswith("admin-"):
+            return await _administrative_request(server_url, "GET", f"/administrative-runs/{run_id}")
         return await _run_status_impl(run_id, workdir, ctx)
 
 
@@ -1127,6 +1203,7 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
         scope: str = "medium",
         model: str | None = None,
         effort: str | None = None,
+        run_id: str | None = None,
     ) -> str:
         """Create a bare task without triggering orchestration or spawning agents.
 
@@ -1146,6 +1223,8 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             scope: Task scope: ``small``, ``medium``, ``large``.
             model: Optional model hint (``opus``, ``sonnet``, ``haiku``).
             effort: Optional effort hint (``max``, ``high``, ``medium``, ``low``).
+            run_id: Optional open administrative container to hold the task.
+                Members remain manually claimable and are excluded from automatic spawning.
 
         Returns:
             JSON of the created task (``id``, ``title``, ``status``, ...).
@@ -1157,12 +1236,17 @@ def _register_action_tools(mcp: FastMCP[None], server_url: str) -> None:
             "priority": priority,
             "scope": scope,
         }
+        if run_id is not None:
+            payload["run_id"] = run_id
         if depends_on:
             payload["depends_on"] = depends_on
         if model is not None:
             payload["model"] = model
         if effort is not None:
             payload["effort"] = effort
+        err = _validate_or_error("bernstein_create_task", payload)
+        if err is not None:
+            return _validation_error_response(err)
         try:
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.post(
@@ -1788,6 +1872,34 @@ def _status_outage_schema() -> dict[str, Any]:
     }
 
 
+def _subscribe_output_schema() -> dict[str, Any]:
+    """Notification, deadline and error payloads before the optional meter envelope."""
+    notification = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["task_id", "title"],
+        "properties": {"task_id": {"type": "string"}, "title": {"type": "string"}},
+    }
+
+    def result_schema(timed_out: bool) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["notifications", "timed_out"],
+            "properties": {
+                "timed_out": {"const": timed_out},
+                "notifications": {
+                    "type": "array",
+                    "items": notification,
+                    "minItems": 0 if timed_out else 1,
+                    "maxItems": 0 if timed_out else 1,
+                },
+            },
+        }
+
+    return {"anyOf": [result_schema(False), result_schema(True), _TOOL_ERROR_SCHEMA]}
+
+
 def _structured_payload_schemas() -> dict[str, dict[str, Any]]:
     """Payload (pre-envelope) output schemas for the structured tools (#3086).
 
@@ -1796,12 +1908,15 @@ def _structured_payload_schemas() -> dict[str, dict[str, Any]]:
     :meth:`RunHandle.wire_schema` rather than written by hand, so the
     advertised fields are the fields ``to_wire`` emits.
     """
+    from bernstein.core.administrative_runs import AdministrativeRunStatus
     from bernstein.core.protocols.mcp.tasks_extension import RunHandle
 
+    administrative = AdministrativeRunStatus.model_json_schema()
     return {
-        "bernstein_run": {"anyOf": [_run_success_schema(), _TOOL_ERROR_SCHEMA]},
+        "bernstein_run": {"anyOf": [_run_success_schema(), administrative, _TOOL_ERROR_SCHEMA]},
         "bernstein_status": {"anyOf": [_status_success_schema(), _status_outage_schema(), _TOOL_ERROR_SCHEMA]},
-        "bernstein_run_status": {"anyOf": [RunHandle.wire_schema(), _TOOL_ERROR_SCHEMA]},
+        "bernstein_run_status": {"anyOf": [RunHandle.wire_schema(), administrative, _TOOL_ERROR_SCHEMA]},
+        "bernstein_subscribe": _subscribe_output_schema(),
     }
 
 
@@ -2416,7 +2531,7 @@ def create_mcp_server(
     register_prompt_resources(mcp)
     _register_query_tools(mcp, server_url)
     _register_action_tools(mcp, server_url)
-    _register_run_status_tool(mcp)
+    _register_run_status_tool(mcp, server_url)
     _register_task_capsule_tool(mcp)
     _register_skill_tools(mcp)
     _register_tasks_extension(mcp, server_url)

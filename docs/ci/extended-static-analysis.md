@@ -110,7 +110,9 @@ uv tool run semgrep scan --config p/python --config p/security-audit \
 
 # Trivy filesystem
 trivy fs --severity HIGH,CRITICAL --ignore-unfixed \
-    --skip-dirs tests/fixtures/scanners/trivy/target,tests/fixtures/scanners/gitleaks/target .
+    --skip-dirs tests/fixtures/scanners/bandit/target,tests/fixtures/scanners/checkov/target \
+    --skip-dirs tests/fixtures/scanners/gitleaks/target,tests/fixtures/scanners/osv-scanner/target \
+    --skip-dirs tests/fixtures/scanners/semgrep/target,tests/fixtures/scanners/trivy/target .
 
 # Trivy IaC
 # .clusterfuzzlite/ is skipped: the fuzzing harness inherits the

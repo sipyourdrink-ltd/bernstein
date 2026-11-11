@@ -89,6 +89,44 @@ uv run python scripts/check_test_count_drop.py --base origin/main
 uv run python scripts/check_test_count_drop.py --base origin/main --pr-body "$(gh pr view --json body -q .body)"
 ```
 
+## The suite's memory guard
+
+`tests/conftest.py` caps each test process's address space (`RLIMIT_AS`)
+at **2 GB**. It does this because the full suite holds references across
+thousands of tests and can otherwise grow without bound. A run that crosses the
+cap fails fast instead of taking the machine down. `scripts/run_tests.py`
+already isolates each file in its own process, so CI never comes near it.
+
+Set `BERNSTEIN_MEM_GUARD_GB` to change the cap, as a whole number of GB
+(`0` or an unparsable value keeps the 2 GB default). The rendering lane
+sets it to `2048`, because headless Chromium reserves a ~1.5 TB virtual
+address space at launch.
+
+**Running with pytest-xdist (`-n`).** The cap applies in each xdist worker
+and in a plain run, never in the xdist controller. The controller runs no
+tests, but its address space grows with the session, and capping it made
+large `-n` runs die at teardown with `can't start new thread` (#5938). A
+worker on a big local run can still cross 2 GB. When a test then fails on
+`can't start new thread`, a refused fork (`BlockingIOError`) or a
+`MemoryError`, the report carries a `memory guard` section naming the
+limit and the process's `VmSize`. The reported xdist controller abort
+`assert not crashitem` also includes this context when a worker dies without
+a test report. The diagnostic identifies a possible cause, not proof that
+the guard caused every worker failure. Rerun with a higher cap to confirm:
+
+```bash
+BERNSTEIN_MEM_GUARD_GB=8 uv run pytest tests/unit -n 8 -q
+```
+
+pytest-xdist is not in the dev group; install it into your environment
+yourself (`uv pip install pytest-xdist`). macOS does not let a process
+lower `RLIMIT_AS`, so the cap is a no-op there and only the per-test RSS
+check applies.
+
+The scope regression's child sessions preserve the configured cap and
+inherited `PYTHONPATH`. Only the limit-readback cases load the POSIX
+`resource` probe; the diagnostic remains tested on Windows without it.
+
 ## Run any of the above locally
 
 ```bash
@@ -141,6 +179,10 @@ uv run mypy --config-file mypy.gate.ini
 # Carries a pre-existing backlog; the CI job only fails here if the run
 # aborts before checking the tree.
 uv run mypy src
+
+# Doctor's optional environment contract, with real mypy acceptance/rejection
+# and explicit PATH versus ambient lookup checks.
+uv run pytest tests/unit/cli/test_doctor_environment_type_contract.py -q
 
 # Vulture
 vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs,*/grpc_gen/*"
@@ -414,6 +456,13 @@ uv run python scripts/check_empty_test_modules.py
 
 ## Sharded unit suite
 
+For a failed subprocess, the runner reports its native exit code or signal.
+A signal takes precedence over any pytest-like summary printed by a nested
+process. Ordinary assertion failures retain their FAILURES and short-summary
+sections; when those sections are absent, the job log retains the complete
+captured stdout and stderr under separate labels. These diagnostics do not
+establish the cause of an unexplained process exit.
+
 `scripts/run_tests.py` runs each `tests/unit/test_*.py` file in its own
 subprocess (the OOM-avoidance model: a single `pytest --cov` over all
 files in one process exceeds the 7 GB runner ceiling). Each subprocess
@@ -456,14 +505,17 @@ Or merge live measurements while running:
 uv run python scripts/run_tests.py --shard 1/4 --record-durations
 ```
 
-In CI the `ubuntu`/`windows` `Test` cells fan out across a `shard`
-matrix dimension; the rolled-up `needs.test.result` the `CI gate`
+In CI the `Test` cells fan out across eight shards on Ubuntu with
+`--parallel 8` workers per runner, and four shards on Windows with
+`--parallel 4`. The existing matrix job count is unchanged; only Ubuntu's
+per-runner worker count increases. Memory-heavy files still run sequentially
+after the normal parallel batch. The rolled-up `needs.test.result` the `CI gate`
 aggregator reads is `failure` if *any* shard cell fails, so every shard
 is still required. Each ubuntu Python 3.13 shard uploads its own
 `.coverage.<shard>` artifact on pushes to main (and on manual dispatches
 on main). The `coverage-report` job, which runs on main only for a
 manual dispatch or a release commit (`chore(release)` / `release:`),
-combines the four shards and uploads to Codecov. No JUnit report is
+combines all eight Ubuntu shards and uploads to Codecov. No JUnit report is
 produced. The only shard-1 pin is the capability-matrix spawn-refusal
 integration test, so it runs once per cell. The `test-macos` job shards
 the file list across four cells (templated name; no test cell is a

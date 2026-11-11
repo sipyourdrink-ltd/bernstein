@@ -190,6 +190,66 @@ is by misreading the same library result.
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
 
+## `govern audit`: machine-readable output and CI gates
+
+```bash
+bernstein govern audit --format json
+bernstein govern audit --format sarif --strict
+bernstein govern audit --quiet --strict
+```
+
+`--format text` is the default. JSON is an array with one object per finding,
+including every `Finding` field and its `id` alias: `check_id`, `verdict`,
+`evidence` (locator and SHA-256 pairs), `what_would_make_it_measurable`, `reason`,
+`message`, `summary`, `remediation`, `area`, and `passed`.
+The existing `--json` and `--json-output` flags remain aliases for JSON output
+and may be combined with `--format json` or the default text format.
+Combining either alias with `--format sarif`, or using `--list --format sarif`,
+is a usage error. `doctor --json` uses the
+same complete finding objects in its `findings` array.
+
+SARIF 2.1.0 includes one rule per check ID and one result per finding, with
+`ruleId = finding.id`, a matching `ruleIndex`, and finding fields in
+`properties`. Evidence retains its SHA-256 hashes but omits source locators,
+and absolute local paths in diagnostic text are redacted. Each result has a
+physical location: a file reported by the check's evidence within the workspace,
+or the workspace's root `bernstein.yaml` / `bernstein.yml`
+configuration for workspace-level evidence. When configuration is missing,
+the location identifies the expected `bernstein.yaml`. Repository paths are
+relative, URI-encoded paths; reported files outside the workspace fall back to
+the root configuration. For code-scanning uploads, run the command from the
+repository root and keep `--workdir` at that root so relative paths resolve
+against the checkout correctly. SARIF never includes absolute local paths or
+file URIs.
+Passing results have `kind: pass` and `level: none`, so they are not code-scanning
+findings. Failures have `kind: fail` and `level: error`; unmeasurable results
+have `kind: review` and `level: none`, with the unmeasurable reason in the
+message; declarations are informational with
+`level: none`. `properties.kind` carries `measured`, `declared`, or
+`not_measurable`; legacy `pass`/`fail` verdicts map to `measured` there, while
+the original verdict and `passed` remain available. An offline JSON Schema
+profile tests the emitted SARIF 2.1.0 subset, including rules and locations;
+validation never fetches the `$schema` URL.
+
+All checks selected by `--only` and `--skip` are required for this gate.
+
+| Exit | Condition |
+|---|---|
+| `0` | At least one check ran, all selected measured checks passed, and none was unmeasurable; or a valid `--list` invocation completed. |
+| `1` | A selected check failed or crashed, a measured result had no explicit pass, no checks matched, or a check was unmeasurable without `--strict`. Unexpected tool exceptions also exit `1`. |
+| `2` | With `--strict`, a selected check is `not_measurable`, and no check failed or crashed. Click usage errors also exit `2`, such as an unknown format, nonexistent workdir, or incompatible output flags. |
+
+Declared findings never affect the exit code. Failures and crashes take
+precedence over strict incompleteness. As on `main`, unmeasurable checks fail
+the default gate; `--strict` distinguishes missing prerequisites with code `2`
+without reclassifying check crashes. The registry still reports a crashed
+check as `not_measurable` and continues the remaining checks.
+
+`--quiet` suppresses the report and registry crash warnings in every format,
+including empty selections and `--list`. It preserves sentinel journaling and
+notification dispatch. CLI usage diagnostics still go to stderr. `--list` does
+not execute checks and exits `0`.
+
 ## `govern audit --only duplication`: duplicate implementations in this install
 
 ```
@@ -217,6 +277,45 @@ A count over the expected one is `fail`, with the count and the first offending
 subject does not exist yet is `not_measurable`, with the issue that would make it
 measurable, and is never reported as a pass. The findings carry no score or
 grade. Two runs over one install produce byte-identical `--json` output.
+
+## Audit failure sentinel
+
+Use the single canonical sentinel to exercise a harmless, labelled failure:
+
+```bash
+BERNSTEIN_GOVERN_AUDIT_SENTINEL=1 bernstein govern audit --workdir . --json
+```
+
+Only the exact value `1` activates it. The named check `sentinel:failure`
+reports `verdict: measured`, `passed: false`, evidence of the environment
+switch, and the fixed reason `Injected governance audit failure (selftest sentinel).`
+Other checks still run normally. The command exits `1` for the injected failure.
+The check is listed by `--list`, but is omitted from default runs when inactive.
+`--only sentinel` can inspect its inactive, passing state explicitly.
+
+An active sentinel prints its name and check ID to stderr unless `--quiet` is
+set, including when `--only` or `--skip` excludes the check; JSON on stdout
+remains parseable. Quiet mode still records and notifies an executed sentinel.
+When the failure is raised, the run is persisted as one chain-anchored
+`AuditReport` under `.sdd/lineage/govern-audit/reports/` before one notification
+event is dispatched. The existing notification bridge handles delivery, retries
+and sink filtering: enable `notifications` in `bernstein.yaml` and subscribe a
+sink to `synthetic` events with severity `error` (or leave those filters unset).
+The event includes the sentinel name, fixed reason, check ID and journal anchor.
+Repeated active runs within one second may produce identical report bytes;
+each run has its own journal anchor, verifies against that anchor, and dispatches
+its own notification event.
+Without configured, enabled sinks, the run is still recorded but no delivery is
+claimed. Excluding the check produces neither its journal entry nor its event.
+Ordinary audits' recording and notification behaviour is unchanged.
+
+An environment variable is canonical because it can be scoped to one command
+and leaves no sentinel file behind. If exported in a shell or CI environment,
+clear it with `unset BERNSTEIN_GOVERN_AUDIT_SENTINEL`. The selftest in
+`tests/unit/cli/commands/test_govern_audit_sentinel.py` sets and clears it,
+verifies the real journal and a local recording notification sink for one or
+two active runs with identical report bytes, then runs again with the sentinel
+cleared to confirm there is no new injection, journal entry or notification.
 
 ## Declared discovery probes
 

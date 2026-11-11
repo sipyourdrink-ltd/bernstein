@@ -1,0 +1,66 @@
+{
+  "description": "Authenticated task aggregate returned by administrative run surfaces.",
+  "properties": {
+    "runId": {
+      "title": "Runid",
+      "type": "string"
+    },
+    "template": {
+      "const": "administrative",
+      "default": "administrative",
+      "title": "Template",
+      "type": "string"
+    },
+    "goal": {
+      "title": "Goal",
+      "type": "string"
+    },
+    "tenant_id": {
+      "title": "Tenant Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "working",
+        "completed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "tasks": {
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Tasks",
+      "type": "array"
+    },
+    "chainHead": {
+      "title": "Chainhead",
+      "type": "string"
+    },
+    "chainVerified": {
+      "const": true,
+      "title": "Chainverified",
+      "type": "boolean"
+    },
+    "receiptHash": {
+      "title": "Receipthash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runId",
+    "goal",
+    "tenant_id",
+    "status",
+    "tasks",
+    "chainHead",
+    "chainVerified",
+    "receiptHash"
+  ],
+  "title": "AdministrativeRunStatus",
+  "type": "object"
+}

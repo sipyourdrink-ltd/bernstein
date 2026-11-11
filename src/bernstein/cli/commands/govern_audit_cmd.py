@@ -8,8 +8,11 @@ three-state verdict vocabulary.
 from __future__ import annotations
 
 import json
+import re
+from inspect import signature
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, unquote, urlsplit
 
 import click
 from rich.table import Table
@@ -27,9 +30,250 @@ if TYPE_CHECKING:
     from bernstein.core.checks.registry import CheckRegistry
 
 
-def _has_failures(findings: list[Finding]) -> bool:
-    """Return True if any finding is not a passing finding."""
-    return any(f.verdict != Verdict.PASS and not f.passed for f in findings)
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_NOT_MEASURABLE = 2
+
+
+def _finding_kind(finding: Finding) -> str:
+    """Map legacy pass/fail verdicts into the three-state vocabulary."""
+    if finding.verdict in (Verdict.PASS, Verdict.FAIL):
+        return Verdict.MEASURED.value
+    return finding.verdict.value
+
+
+def _measured_failure(finding: Finding) -> bool:
+    return finding.verdict == Verdict.FAIL or (finding.verdict == Verdict.MEASURED and finding.passed is not True)
+
+
+def _exit_code(findings: list[Finding], *, strict: bool, execution_failed: bool = False) -> int:
+    """Preserve main's fail-closed gate; distinguish strict incompleteness."""
+    if not findings or execution_failed or any(_measured_failure(f) for f in findings):
+        return EXIT_FAILED
+    if any(f.verdict == Verdict.NOT_MEASURABLE for f in findings):
+        return EXIT_NOT_MEASURABLE if strict else EXIT_FAILED
+    return EXIT_OK
+
+
+def _finding_dict(finding: Finding) -> dict[str, Any]:
+    """Preserve every contract field, including the public id alias."""
+    return finding.to_dict()
+
+
+def _sarif_location(finding: Finding, root: Path) -> dict[str, Any]:
+    """Use reported files; workspace-only evidence points to its root config."""
+    for evidence in finding.evidence:
+        locator = evidence.locator
+        # These producers prefix the evaluated workspace path with a check name.
+        for prefix in ("doctor:compliance:", "compliance:encryption_at_rest:"):
+            if locator.startswith(prefix):
+                locator = locator.removeprefix(prefix)
+                break
+        parsed = urlsplit(locator)
+        if parsed.scheme == "file" and parsed.netloc in ("", "localhost"):
+            path = Path(unquote(parsed.path))
+        elif not parsed.scheme:
+            path = Path(locator)
+        else:
+            continue
+        path = (root / path).resolve()
+        if not path.is_relative_to(root):
+            continue
+        if path.is_dir() or not (path.is_file() or path.suffix):
+            continue
+        break
+    else:
+        # A missing configuration is itself a useful diagnostic at this path.
+        path = next(
+            (root / name for name in ("bernstein.yaml", "bernstein.yml") if (root / name).is_file()),
+            root / "bernstein.yaml",
+        )
+    uri = quote(path.relative_to(root).as_posix(), safe="/")
+    return {"physicalLocation": {"artifactLocation": {"uri": uri}}}
+
+
+_LOCAL_PATH = re.compile(
+    r"file://[^\s\"'<>]+|(?<![\w/])/(?!/)[^\s\"'<>]+|(?i:\b[a-z]:[\\/])[^\s\"'<>]+|\\\\[^\s\"'<>]+"
+)
+
+
+def _redact_local_paths(value: Any) -> Any:
+    """Keep local paths from check diagnostics out of uploadable SARIF."""
+    if isinstance(value, str):
+        return _LOCAL_PATH.sub("[local path]", value)
+    if isinstance(value, dict):
+        return {key: _redact_local_paths(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_local_paths(item) for item in value]
+    return value
+
+
+def _sarif(findings: list[Finding], root: Path) -> dict[str, Any]:
+    """Describe checks and locations without counting passing checks as issues."""
+    rules = [
+        {"id": check_id, "shortDescription": {"text": check_id}} for check_id in dict.fromkeys(f.id for f in findings)
+    ]
+    rule_indices = {rule["id"]: index for index, rule in enumerate(rules)}
+    results = []
+    for finding in findings:
+        if _measured_failure(finding):
+            kind, level = "fail", "error"
+        elif finding.verdict == Verdict.NOT_MEASURABLE:
+            kind, level = "review", "none"
+        elif finding.verdict == Verdict.DECLARED:
+            kind, level = "informational", "none"
+        else:
+            kind, level = "pass", "none"
+        message = finding.summary or finding.message or finding.reason or finding.id
+        if finding.verdict == Verdict.NOT_MEASURABLE and finding.reason and finding.reason not in message:
+            message = f"{message}: {finding.reason}"
+        properties = {**_finding_dict(finding), "kind": _finding_kind(finding)}
+        # Locators may embed absolute paths in producer-specific identifiers.
+        properties["evidence"] = [{"sha256": evidence.sha256} for evidence in finding.evidence]
+        results.append(
+            {
+                "ruleId": finding.id,
+                "ruleIndex": rule_indices[finding.id],
+                "kind": kind,
+                "level": level,
+                "message": {"text": message},
+                "locations": [_sarif_location(finding, root)],
+                "properties": properties,
+            }
+        )
+    return _redact_local_paths(
+        {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "bernstein govern audit",
+                            "informationUri": "https://github.com/sipyourdrink-ltd/bernstein",
+                            "rules": rules,
+                        }
+                    },
+                    "results": results,
+                }
+            ],
+        }
+    )
+
+
+# Stable installation IDs, in the legacy doctor's display order. Backend
+# helpers share storage's ID: postgres/redis are alternate implementations.
+INSTALLATION_CHECKS: tuple[tuple[str, str], ...] = (
+    ("INS-001", "python"),
+    ("INS-002", "adapters"),
+    ("INS-003", "last_green"),
+    ("INS-004", "version_posture"),
+    ("INS-005", "auth"),
+    ("INS-006", "port"),
+    ("INS-007", "workspace"),
+    ("INS-008", "stale_pids"),
+    ("INS-009", "guardrails"),
+    ("INS-010", "ci_tools"),
+    ("INS-011", "storage"),
+    ("INS-012", "secrets"),
+    ("INS-013", "readiness"),
+    ("INS-014", "context_and_plugins"),
+    ("INS-015", "commit_attribution"),
+    ("INS-016", "compliance"),
+    ("INS-017", "schedule_supervisor"),
+    ("INS-018", "eval_gate_power"),
+    ("INS-019", "otel_export"),
+    ("INS-020", "audit_anchoring"),
+)
+
+
+class DoctorInstallationAdapter:
+    """An opt-in install check, sharing the exact producer used by doctor."""
+
+    area = "INS"
+    opt_in = True
+
+    def __init__(self, check_id: str, name: str) -> None:
+        self.check_id = check_id
+        self._name = name
+        self.title = name.replace("_", " ").capitalize()
+        self.description = f"Doctor installation check: {self.title}"
+
+    def run(self, workdir: Path | None = None) -> Finding:
+        from bernstein.cli.commands import status_cmd
+
+        helper = getattr(status_cmd, f"_doctor_check_{self._name}")
+        rows: list[dict[str, Any]] = []
+        arguments: dict[str, Any] = {}
+        for name in signature(helper).parameters:
+            if name == "checks":
+                arguments[name] = rows
+            elif name == "workdir":
+                arguments[name] = workdir or Path.cwd()
+            elif name == "_check":
+                arguments[name] = lambda *args: status_cmd._add_check(rows, *args)
+        return helper(**arguments)
+
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
+
+
+def populate_installation_checks(registry: CheckRegistry) -> None:
+    """Compose the CLI-owned doctor checks explicitly into this audit runner."""
+    for check_id, name in INSTALLATION_CHECKS:
+        if registry.get_check(check_id) is None:
+            registry.register(DoctorInstallationAdapter(check_id, name))
+
+
+def _record_sentinel_run(root: Path, findings: list[Finding]) -> None:
+    """Anchor the injected run, then dispatch through the existing transport."""
+    from bernstein.core.checks.adapters import AuditSentinelCheck
+
+    sentinel = next((f for f in findings if f.check_id == AuditSentinelCheck.check_id and f.passed is False), None)
+    if sentinel is None:
+        return
+
+    import asyncio
+    import time
+    from dataclasses import asdict
+
+    from bernstein.cli.commands.notify_cmd import _load_notifications_config
+    from bernstein.core.govern.audit_report import GOVERN_AUDIT_RUN_ID, AuditReport, anchor_audit_report
+    from bernstein.core.lifecycle.notify_bridge import build_bridge_from_config
+    from bernstein.core.notifications.protocol import NotificationEvent, NotificationEventKind
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    rows: tuple[dict[str, Any], ...] = tuple(asdict(f) | {"id": f.check_id} for f in findings)
+    report = anchor_audit_report(
+        lineage_root=root / ".sdd" / "lineage",
+        hmac_key=load_or_create_audit_key(),
+        report=AuditReport(findings=rows, timestamp=int(time.time())),
+    )
+    config_path = root / "bernstein.yaml"
+    if not config_path.exists():
+        return
+    config = _load_notifications_config(config_path)
+    if not config.enabled:
+        return
+    bridge = build_bridge_from_config(config, runtime_dir=root / ".sdd" / "runtime", register_in_registry=False)
+    event = NotificationEvent(
+        event_id=f"govern-audit-sentinel-{report.journal_entry_hash}",
+        kind=NotificationEventKind.SYNTHETIC,
+        title="Governance audit selftest failure",
+        body=sentinel.summary,
+        severity="error",
+        run_id=GOVERN_AUDIT_RUN_ID,
+        timestamp=report.timestamp,
+        details={"check_id": sentinel.check_id, "journal_entry_hash": report.journal_entry_hash},
+    )
+
+    async def dispatch() -> None:
+        try:
+            await bridge.dispatch_event(event)
+        finally:
+            await bridge.aclose()
+
+    asyncio.run(dispatch())
 
 
 @click.command("audit")
@@ -60,6 +304,16 @@ def _has_failures(findings: list[Finding]) -> bool:
     help="Project root directory to audit.",
 )
 @click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json", "sarif"]),
+    default="text",
+    show_default=True,
+    help="Output format (SARIF 2.1.0 for code scanning).",
+)
+@click.option("--strict", is_flag=True, help="Exit 2 for unmeasurable checks unless a check fails or crashes (exit 1).")
+@click.option("--quiet", is_flag=True, help="Print nothing; report the result only through the exit code.")
+@click.option(
     "--json",
     "--json-output",
     "as_json",
@@ -72,6 +326,9 @@ def govern_audit_cmd(
     skip_ids: tuple[str, ...],
     workdir: str,
     as_json: bool,
+    output_format: str = "text",
+    strict: bool = False,
+    quiet: bool = False,
     registry: CheckRegistry | None = None,
 ) -> None:
     """Run registered governance audit checks across the workspace.
@@ -79,16 +336,33 @@ def govern_audit_cmd(
     Note: the verifier-key staleness check this command used to run now
     lives in ``bernstein govern audit-keys``.
 
+    BERNSTEIN_GOVERN_AUDIT_SENTINEL=1 enables the harmless sentinel:failure
+    selftest, journaling its run and dispatching a synthetic notification.
+
     Exit codes:
-      0: All executed checks passed (at least one check executed).
-      1: One or more checks failed, were not measurable, or no checks were selected.
+      0: Selected measured checks passed; declared findings never affect the code.
+      1: A check failed/crashed, no checks matched, or not_measurable without --strict.
+      2: A check is not measurable with --strict and no check failed or crashed,
+         or invalid command-line arguments (Click usage error).
+
+    All selected checks are required. Failures and crashes take precedence over
+    strict incompleteness. Unexpected tool errors also fail closed with code 1.
     """
     reg = DEFAULT_REGISTRY if registry is None else registry
     populate_default_checks(reg)
+    populate_installation_checks(reg)
+    if as_json and output_format == "sarif":
+        raise click.UsageError("--json/--json-output cannot be combined with --format sarif")
+    if list_checks and output_format == "sarif":
+        raise click.UsageError("--list does not support --format sarif")
+    if as_json:
+        output_format = "json"
 
     if list_checks:
+        if quiet:
+            raise SystemExit(EXIT_OK)
         checks = reg.list_checks(only_areas=only_areas, skip_ids=skip_ids)
-        if as_json:
+        if output_format == "json":
             payload = [
                 {
                     "check_id": c.check_id,
@@ -115,33 +389,35 @@ def govern_audit_cmd(
         raise SystemExit(0)
 
     root = Path(workdir).resolve()
-    findings = reg.run_all(workdir=root, only_areas=only_areas, skip_ids=skip_ids)
+    from bernstein.core.checks.adapters import AuditSentinelCheck
+
+    if AuditSentinelCheck().active and not quiet:
+        click.echo(
+            f"Sentinel active: {AuditSentinelCheck.env_var}=1 ({AuditSentinelCheck.check_id}); synthetic failure.",
+            err=True,
+        )
+    execution_errors: list[str] = []
+    findings = reg.run_all(
+        workdir=root,
+        only_areas=only_areas,
+        skip_ids=skip_ids,
+        on_error=execution_errors.append,
+        log_errors=not quiet,
+    )
+    _record_sentinel_run(root, findings)
+    exit_code = _exit_code(findings, strict=strict, execution_failed=bool(execution_errors))
+
+    if quiet:
+        raise SystemExit(exit_code)
+
+    if output_format in ("json", "sarif"):
+        report = _sarif(findings, root) if output_format == "sarif" else [_finding_dict(f) for f in findings]
+        click.echo(json.dumps(report, indent=2))
+        raise SystemExit(exit_code)
 
     if not findings:
-        if as_json:
-            click.echo(json.dumps([], indent=2))
-        else:
-            console.print("[bold red]No checks matched the specified selector(s).[/bold red]")
-        raise SystemExit(1)
-
-    has_failed = _has_failures(findings)
-
-    if as_json:
-        payload = [
-            {
-                "check_id": f.check_id,
-                "verdict": f.verdict.value,
-                "passed": f.passed,
-                "area": f.area,
-                "summary": f.summary or f.message,
-                "remediation": f.remediation,
-                "what_would_make_it_measurable": f.what_would_make_it_measurable,
-                "evidence": [{"locator": ev.locator, "sha256": ev.sha256} for ev in f.evidence],
-            }
-            for f in findings
-        ]
-        click.echo(json.dumps(payload, indent=2))
-        raise SystemExit(1 if has_failed else 0)
+        console.print("[bold red]No checks matched the specified selector(s).[/bold red]")
+        raise SystemExit(exit_code)
 
     table = Table(title=f"Governance Audit Findings ({root.name})", show_header=True, header_style="bold cyan")
     table.add_column("Status", justify="center", no_wrap=True)
@@ -150,10 +426,12 @@ def govern_audit_cmd(
     table.add_column("Summary / Diagnostic", style="white")
 
     for f in findings:
-        if f.verdict == Verdict.PASS or f.passed:
-            status_badge = "[bold green]PASS[/bold green]"
+        if f.verdict == Verdict.DECLARED:
+            status_badge = "[bold cyan]DECLARED[/bold cyan]"
         elif f.verdict == Verdict.NOT_MEASURABLE:
             status_badge = "[bold yellow]UNMEASURED[/bold yellow]"
+        elif f.verdict == Verdict.PASS or f.passed:
+            status_badge = "[bold green]PASS[/bold green]"
         else:
             status_badge = "[bold red]FAIL[/bold red]"
 
@@ -169,13 +447,18 @@ def govern_audit_cmd(
     console.print(table)
     console.print()
 
-    passed_count = sum(1 for f in findings if f.verdict == Verdict.PASS or f.passed)
+    passed_count = sum(
+        1 for f in findings if f.verdict == Verdict.PASS or (f.verdict == Verdict.MEASURED and f.passed is True)
+    )
+    failed_count = sum(_measured_failure(f) for f in findings)
+    declared_count = sum(f.verdict == Verdict.DECLARED for f in findings)
+    unmeasured_count = sum(f.verdict == Verdict.NOT_MEASURABLE for f in findings)
     console.print(
         f"Total: [bold]{len(findings)}[/bold] | "
         f"Passed: [bold green]{passed_count}[/bold green] | "
-        f"Failed/Unmeasurable: [bold red]{len(findings) - passed_count}[/bold red]"
+        f"Failed: [bold red]{failed_count}[/bold red] | "
+        f"Declared: [bold cyan]{declared_count}[/bold cyan] | "
+        f"Unmeasurable: [bold yellow]{unmeasured_count}[/bold yellow]"
     )
 
-    if has_failed:
-        raise SystemExit(1)
-    raise SystemExit(0)
+    raise SystemExit(exit_code)

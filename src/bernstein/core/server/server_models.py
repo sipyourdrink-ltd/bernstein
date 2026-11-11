@@ -6,18 +6,22 @@ The parent ``server`` module re-exports every name for backward compatibility.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import hashlib
+import json
+from typing import Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.security.tenanting import is_valid_tenant_id
+from bernstein.core.tasks.models import CompletionSignalType, DispatchTier
 from bernstein.core.tasks.task_store import ProgressEntry
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
 
-_SIGNAL_TYPE = Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
+_SIGNAL_TYPE = CompletionSignalType
 
 
 class CompletionSignalSchema(BaseModel):
@@ -133,8 +137,84 @@ def _ensure_relative_owned_files(value: list[str]) -> list[str]:
     return value
 
 
+class _AttachmentModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @classmethod
+    def from_json(cls, raw: str | bytes) -> Self:
+        """Decode without silently discarding duplicate object keys."""
+
+        def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON key: {key}")
+                result[key] = value
+            return result
+
+        return cls.model_validate(json.loads(raw, object_pairs_hook=unique))
+
+
+class TaskStoreIdentity(_AttachmentModel):
+    schema_version: Literal["task-store-identity/v1"]
+    store_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class AttachmentTask(_AttachmentModel):
+    task_id: str = Field(min_length=1)
+    version: int = Field(ge=1)
+
+
+class AttachmentResources(_AttachmentModel):
+    pool: str = Field(min_length=1)
+    max_slots: int = Field(ge=0)
+
+
+class AttachmentLimits(_AttachmentModel):
+    max_accepted_claims: int = Field(ge=1)
+    max_concurrency: int = Field(ge=1)
+    max_elapsed_seconds: int = Field(ge=1)
+    resources: AttachmentResources
+
+
+class AttachmentDerivedWork(_AttachmentModel):
+    max_retries_per_task: int = Field(ge=0)
+
+
+class AttachmentManifest(_AttachmentModel):
+    """Internal attachment contract; never a TaskCreate administrative run."""
+
+    schema_version: Literal["task-attach/v1"]
+    run_id: str = Field(pattern=r"^attach-[a-f0-9]{32}$")
+    store_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    tenant_id: str
+    tasks: list[AttachmentTask] = Field(min_length=1)
+    limits: AttachmentLimits
+    derived_work: AttachmentDerivedWork
+
+    @field_validator("tenant_id")
+    @classmethod
+    def valid_tenant(cls, value: str) -> str:
+        if not is_valid_tenant_id(value):
+            raise ValueError("invalid tenant_id")
+        return value
+
+    @field_validator("tasks")
+    @classmethod
+    def unique_tasks(cls, value: list[AttachmentTask]) -> list[AttachmentTask]:
+        if len({task.task_id for task in value}) != len(value):
+            raise ValueError("duplicate task IDs")
+        return value
+
+    def digest(self) -> str:
+        raw = json.dumps(self.model_dump(), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 class TaskCreate(BaseModel):
     """Body for POST /tasks."""
+
+    run_id: str | None = Field(default=None, pattern=r"^admin-[a-f0-9]{32}$")
 
     # bounded string lengths prevent trivial memory exhaustion.
     id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
@@ -143,6 +223,7 @@ class TaskCreate(BaseModel):
     role: str = Field(default="auto", max_length=_MAX_SHORT_STR_LEN)
     tenant_id: str = Field(default="default", max_length=_MAX_SHORT_STR_LEN)
     priority: int = 2
+    dispatch_tier: DispatchTier = DispatchTier.LOCAL
     scope: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
     complexity: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
     eu_ai_act_risk: str = Field(default="minimal", max_length=_MAX_SHORT_STR_LEN)
@@ -286,6 +367,7 @@ class TaskResponse(BaseModel):
     role: str
     tenant_id: str
     priority: int
+    dispatch_tier: DispatchTier = DispatchTier.LOCAL
     scope: str
     complexity: str
     eu_ai_act_risk: str
@@ -438,11 +520,37 @@ class TaskBlockRequest(BaseModel):
 
 
 class TaskPatchRequest(BaseModel):
-    """Body for PATCH /tasks/{task_id} - manager corrections."""
+    """Body for PATCH /tasks/{task_id} - manager corrections.
+
+    ``meta_messages``, ``cli``, ``escalation_ladder_step`` and
+    ``escalation_ladder_attempts`` carry an evidence-gated escalation hop
+    (issue #4855): the context line, the step's adapter, and the ladder
+    position. ``model`` is the step's model id, unmodified.
+
+    There is deliberately no free-form ``metadata`` here. The ladder's
+    evidence is resolved from the audit chain and its spend from the cost
+    ledger, so no PATCH body can fabricate either. The route restricts
+    ``cli`` and both ladder-position fields to operator credentials and
+    unscoped run-root identities.
+    """
 
     role: str | None = None
     priority: int | None = None
     model: str | None = None
+    cli: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    meta_messages: list[str] | None = Field(default=None, max_length=_MAX_LIST_LEN)
+    escalation_ladder_step: int | None = Field(default=None, ge=0, le=_MAX_LIST_LEN)
+    escalation_ladder_attempts: int | None = Field(default=None, ge=1, le=_MAX_LIST_LEN)
+
+    @field_validator("meta_messages")
+    @classmethod
+    def _cap_meta_messages(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        for msg in value:
+            if len(msg) > _MAX_META_MESSAGE_LEN:
+                raise ValueError(f"meta_messages entry exceeds {_MAX_META_MESSAGE_LEN} chars")
+        return value
 
 
 class TaskProgressRequest(BaseModel):
@@ -946,6 +1054,7 @@ class TaskCountsResponse(BaseModel):
     blocked_by_failed_dep: int = 0
     refused: int = 0
     suspended: int = 0
+    stop_req: int = 0
     total: int = 0
 
 

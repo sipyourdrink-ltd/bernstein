@@ -359,6 +359,7 @@ hand-assembled as a request with a bearer header.
 | `bernstein trace TASK_ID` | Step-by-step trace. | `cli/commands/advanced_cmd.py:666` |
 | `bernstein report incident` | Open an incident report. | `cli/commands/incident_cmd.py:53` |
 | `bernstein report postmortem` | Failed-task postmortem. | `cli/commands/postmortem_cmd.py:12` |
+| `bernstein insights` | Analytics and insights from task traces. Skeleton: no analysis is computed yet. | `cli/commands/insights_cmd.py:25` |
 
 #### `bernstein status`
 
@@ -502,6 +503,20 @@ set. (`cli/commands/advanced_cmd.py`, `core/observability/otel_projection.py`.)
 | `--watch` | off | Refresh every `--interval` seconds until interrupted. |
 | `--interval SEC` | 30 | Refresh interval in `--watch` mode. |
 | `--compact` | off | Compact output without sparkline. |
+
+#### `bernstein insights`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format {text\|json}` | `text` | Output format. |
+| `--since WINDOW` | `7d` | Time window for insights, e.g. `1d`, `7d`, `30d`. |
+
+Skeleton command: it accepts and echoes `--since`, but computes no analytics
+yet. Both formats print a placeholder ("Not yet implemented." in text mode, a
+`{"message": "Insights command skeleton", ...}` object in `--format json`)
+rather than raising. This placeholder payload is not a stable analytics
+schema; no analysis is computed in either format. Text mode echoes the
+requested window literally, including characters that resemble formatting.
 
 ---
 
@@ -971,7 +986,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein govern posture` | Score the install's governance posture from chain-evidenced facts only: per-control coverage over the lineage log, no configuration read. Names every contributing chain event, the weights version, and its own denominator (the weight that was measurable). Signed with the audit-chain key; `--json-output` prints the canonical document. | `cli/commands/governance_cmd.py` |
 | `bernstein govern inventory --render` | Emit the inventory topology graph from a store as mermaid or dot. Same store, same bytes. | `cli/commands/govern_cmd.py` |
 | `bernstein govern reconcile` | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it. | `cli/commands/govern_cmd.py` |
-| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--json`. Opt-in areas, such as `duplication` (duplicate implementations in the install), run only when `--only` names them. | `cli/commands/govern_audit_cmd.py` |
+| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--format text\|json\|sarif` (`--json` remains an alias). `--quiet` suppresses reports and check-crash warnings. The default gate fails on unmeasurable checks; `--strict` distinguishes missing prerequisites. See the [exit-code table](../operations/governance.md#govern-audit-machine-readable-output-and-ci-gates). Declared findings do not affect the exit code. Opt-in areas, such as `duplication` (duplicate implementations in the install), run only when `--only` names them. | `cli/commands/govern_audit_cmd.py` |
 | `bernstein govern audit-keys` | Check whether verifier keys are stale relative to the install identity. | `cli/commands/governance_cmd.py` |
 | `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |

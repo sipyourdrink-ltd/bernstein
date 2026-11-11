@@ -652,6 +652,20 @@ class PolicyHookRegistry:
         self._hooks.append(hook)
         logger.info("Registered external policy hook: %s", hook.name)
 
+    def with_audit_chain(self, audit_chain: AuditChainStore) -> PolicyHookRegistry:
+        """Copy registrations and settings, recording into the supplied chain.
+
+        The registration list is copied; hook instances retain their configured
+        policies. The caller's registry and its audit destination are unchanged.
+        """
+        registry = PolicyHookRegistry(
+            default_verdict=self._default_verdict,
+            fail_open=self._fail_open,
+            audit_chain=audit_chain,
+        )
+        registry._hooks = self.hooks
+        return registry
+
     def evaluate(self, request: HookRequest) -> list[HookResponse]:
         """Evaluate a request against all registered hooks.
 
@@ -729,6 +743,10 @@ class PolicyHookRegistry:
 
     def first_decisive(self, request: HookRequest) -> HookResponse:
         """Evaluate hooks and return the first decisive response.
+
+        Retained as a public compatibility helper. Spawn admission instead consumes
+        every response from :meth:`evaluate`: a later denial, unavailable engine or
+        obligation must not be hidden by an earlier allow.
 
         An UNAVAILABLE engine is decisive and denies, unless ``fail_open`` is set, in
         which case it is treated as having no opinion and evaluation continues. Either

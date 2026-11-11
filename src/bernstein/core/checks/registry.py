@@ -9,12 +9,13 @@ the rest of the check suite.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from bernstein.core.checks.contract import Finding, Verdict
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
     from bernstein.core.checks.contract import Check
@@ -41,7 +42,7 @@ class CheckRegistry:
 
         Raises:
             TypeError: If ``check`` does not conform to the :class:`Check` protocol or ``check_id`` is not a string.
-            ValueError: If ``check.check_id`` is invalid, not namespaced, or already registered.
+            ValueError: If ``check.check_id`` is invalid (neither namespaced nor INS-nnn), or already registered.
         """
         if isinstance(check, type):  # type: ignore[reportUnnecessaryIsInstance]
             raise TypeError(f"Expected Check instance, got class '{check.__name__}'")
@@ -54,10 +55,9 @@ class CheckRegistry:
         if not check_id or not check_id.strip():
             raise ValueError("check_id must be a non-empty string")
 
-        if ":" not in check_id or check_id.startswith(":") or check_id.endswith(":"):
-            raise ValueError(
-                f"check_id '{check_id}' must be namespaced with a colon delimiter (e.g. 'namespace:check_name')"
-            )
+        installation_id = re.fullmatch(r"INS-\d{3}", check_id) is not None
+        if not installation_id and (":" not in check_id or check_id.startswith(":") or check_id.endswith(":")):
+            raise ValueError(f"check_id '{check_id}' must be namespaced with a colon delimiter or use INS-nnn")
 
         if check_id in self._checks:
             raise ValueError(f"Check with id '{check_id}' is already registered")
@@ -120,12 +120,17 @@ class CheckRegistry:
         workdir: Path | None = None,
         only_areas: Sequence[str] | None = None,
         skip_ids: Sequence[str] | None = None,
+        *,
+        on_error: Callable[[str], None] | None = None,
+        log_errors: bool = True,
     ) -> list[Finding]:
         """Execute registered checks against *workdir* with optional filtering.
 
         Catches exceptions raised by individual checks, recording them as
         ``not_measurable`` findings with the exception class name as reason,
-        and proceeds to execute all remaining checks.
+        and proceeds to execute all remaining checks. ``on_error`` receives
+        each crashed check ID so callers can distinguish execution errors from
+        expected missing prerequisites. ``log_errors=False`` silences warnings.
         """
         findings: list[Finding] = []
         for check in self.iter_checks(only_areas=only_areas, skip_ids=skip_ids):
@@ -136,12 +141,15 @@ class CheckRegistry:
                         f"Check '{check.check_id}' run() returned {type(finding).__name__}, expected Finding"
                     )
             except Exception as exc:
-                logger.warning(
-                    "Check '%s' raised %s: %s; reporting as not_measurable",
-                    check.check_id,
-                    exc.__class__.__name__,
-                    exc,
-                )
+                if on_error is not None:
+                    on_error(check.check_id)
+                if log_errors:
+                    logger.warning(
+                        "Check '%s' raised %s: %s; reporting as not_measurable",
+                        check.check_id,
+                        exc.__class__.__name__,
+                        exc,
+                    )
                 finding = Finding(
                     check_id=check.check_id,
                     verdict=Verdict.NOT_MEASURABLE,
@@ -165,13 +173,20 @@ def populate_default_checks(registry: CheckRegistry | None = None) -> None:
     """Populate built-in check adapters into the given or default registry."""
     from bernstein.core.checks.adapters import (
         DUPLICATION_CHECK_NAMES,
+        AuditSentinelCheck,
         ComplianceEncryptionAtRestAdapter,
+        DeclarationQuarantineAdapter,
         DoctorComplianceAdapter,
         DuplicationAuditAdapter,
     )
 
     reg = DEFAULT_REGISTRY if registry is None else registry
-    adapters: list[Check] = [DoctorComplianceAdapter(), ComplianceEncryptionAtRestAdapter()]
+    adapters: list[Check] = [
+        DoctorComplianceAdapter(),
+        ComplianceEncryptionAtRestAdapter(),
+        DeclarationQuarantineAdapter(),
+        AuditSentinelCheck(),
+    ]
     adapters.extend(DuplicationAuditAdapter(name) for name in DUPLICATION_CHECK_NAMES)
     for adapter in adapters:
         if reg.get_check(adapter.check_id) is None:

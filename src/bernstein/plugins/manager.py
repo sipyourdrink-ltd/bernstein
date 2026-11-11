@@ -37,7 +37,7 @@ from bernstein.core.plugin_policy import (
     load_plugin_policy,
 )
 from bernstein.core.workspace import is_workspace_trusted
-from bernstein.plugins import hookimpl
+from bernstein.plugins import _QualityGate, hookimpl
 from bernstein.plugins.hookspecs import (
     BernsteinSpec,
     ElicitationResponse,
@@ -1298,6 +1298,14 @@ class PluginManager:
                     obj = mod
 
                 plugin = obj() if isinstance(obj, type) else obj
+                if isinstance(plugin, _QualityGate) and not any(
+                    self._pm.parse_hookimpl_opts(plugin, attr) is not None for attr in dir(plugin)
+                ):
+                    raise ValueError(
+                        "GatePlugin cannot run under plugins:; move its file to .bernstein/gates/ "
+                        "(or register it under bernstein.gates) and add "
+                        f"{plugin.name!r} to quality_gates.pipeline"
+                    )
                 name = spec
                 self._pm.register(plugin, name=name)
                 self._registered_names.append(name)

@@ -57,7 +57,7 @@ from bernstein.core.models import (
     SmtpConfig,
     TestAgentConfig,
 )
-from bernstein.core.quality_gates import BenchmarkConfig, QualityGatesConfig
+from bernstein.core.quality_gates import BenchmarkConfig, IntentVerificationConfig, QualityGatesConfig
 from bernstein.core.sandbox import parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
 from bernstein.core.tenanting import TenantConfig
@@ -1849,7 +1849,8 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
 
     def _qg_int(key: str, default: int) -> int:
         val = qg_dict.get(key, default)
-        if not isinstance(val, int):
+        # ``bool`` is a subclass of ``int``; ``timeout_s: true`` is a typo, not a timeout.
+        if isinstance(val, bool) or not isinstance(val, int):
             raise SeedError(f"quality_gates.{key} must be an integer, got: {type(val).__name__}")
         return val
 
@@ -1880,6 +1881,7 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
     if not isinstance(pii_scan_paths_raw, list):
         raise SeedError(f"quality_gates.pii_scan_paths must be a list, got: {type(pii_scan_paths_raw).__name__}")
     benchmark_cfg = _parse_quality_gate_benchmark(qg_dict.get("benchmark"))
+    intent_cfg = _parse_quality_gate_intent(qg_dict.get("intent_verification"))
 
     return QualityGatesConfig(
         enabled=_qg_bool("enabled", True),
@@ -1900,6 +1902,23 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         pii_allowlist_prefixes=_qg_str_list(
             "pii_allowlist_prefixes",
             ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST"],
+        ),
+        # DLP keys: documented beside pii_scan in docs/architecture/quality-pipeline.md
+        # and read nowhere until #6615 -- a ``dlp_scan: false`` was accepted by the
+        # schema (extra="allow") and then dropped, so the gate could not be
+        # configured or disabled from a seed. Defaults mirror QualityGatesConfig.
+        dlp_scan=_qg_bool("dlp_scan", True),
+        dlp_check_license_violations=_qg_bool("dlp_check_license_violations", True),
+        dlp_check_regulated_data=_qg_bool("dlp_check_regulated_data", True),
+        dlp_check_proprietary_data=_qg_bool("dlp_check_proprietary_data", True),
+        dlp_block_license_violations=_qg_bool("dlp_block_license_violations", True),
+        dlp_block_regulated_data=_qg_bool("dlp_block_regulated_data", True),
+        dlp_block_proprietary_data=_qg_bool("dlp_block_proprietary_data", False),
+        dlp_internal_url_patterns=_qg_str_list("dlp_internal_url_patterns", []),
+        dlp_ignore_paths=_qg_str_list("dlp_ignore_paths", []),
+        dlp_allowlist_prefixes=_qg_str_list(
+            "dlp_allowlist_prefixes",
+            ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "MOCK", "SAMPLE"],
         ),
         run_config=_qg_bool("run_config", True),
         security_scan=_qg_bool("security_scan", False),
@@ -1933,6 +1952,27 @@ def _parse_quality_gates(raw: object) -> QualityGatesConfig | None:
         behavior_probe_gate_timeout_s=_qg_int("behavior_probe_gate_timeout_s", 300),
         behavior_probe_max_callables=_qg_int("behavior_probe_max_callables", 12),
         behavior_probe_max_probes_per_callable=_qg_int("behavior_probe_max_probes_per_callable", 6),
+        # The seventeen fields below were the remainder of #6615: documented in
+        # docs/architecture/quality-pipeline.md, accepted by the schema, and never
+        # read, so ``mutation_testing: true`` or ``dep_audit: true`` in a seed
+        # left the gate off. Defaults mirror QualityGatesConfig.
+        mutation_testing=_qg_bool("mutation_testing", False),
+        mutation_command=_qg_str("mutation_command", "uv run mutmut run"),
+        mutation_threshold=_qg_float("mutation_threshold", 0.50),
+        mutation_timeout_s=_qg_int("mutation_timeout_s", 600),
+        intent_verification=intent_cfg,
+        dep_audit=_qg_bool("dep_audit", False),
+        dep_audit_command=_qg_str("dep_audit_command", "pip-audit"),
+        dep_audit_files=_qg_str_list("dep_audit_files", list(QualityGatesConfig().dep_audit_files)),
+        migration_reversibility_check=_qg_bool("migration_reversibility_check", False),
+        large_file_check=_qg_bool("large_file_check", False),
+        large_file_threshold=_qg_int("large_file_threshold", 500),
+        integration_test_gen=_qg_bool("integration_test_gen", False),
+        review_rubric=_qg_bool("review_rubric", False),
+        test_expansion=_qg_bool("test_expansion", False),
+        agent_test_mutation=_qg_bool("agent_test_mutation", False),
+        agent_test_mutation_threshold=_qg_float("agent_test_mutation_threshold", 0.70),
+        agent_test_mutation_timeout_s=_qg_int("agent_test_mutation_timeout_s", 300),
         benchmark=benchmark_cfg,
     )
 
@@ -1991,6 +2031,56 @@ def _parse_quality_gate_benchmark(raw: object) -> BenchmarkConfig:
     if not isinstance(bm_threshold, (int, float)):
         raise SeedError(f"quality_gates.benchmark.threshold must be a number, got: {type(bm_threshold).__name__}")
     return BenchmarkConfig(enabled=bm_enabled, command=bm_command, threshold=float(bm_threshold))
+
+
+def _parse_quality_gate_intent(raw: object) -> IntentVerificationConfig:
+    """Parse the quality_gates.intent_verification sub-config (#6615).
+
+    Same shape as ``_parse_quality_gate_benchmark``: a missing mapping is the
+    dataclass default, a present key is type-checked, an unknown key is left to
+    the schema. Defaults come from ``IntentVerificationConfig`` itself so the
+    two cannot drift.
+    """
+    if raw is None:
+        return IntentVerificationConfig()
+    if not isinstance(raw, dict):
+        raise SeedError(f"quality_gates.intent_verification must be a mapping, got: {type(raw).__name__}")
+    iv_dict: dict[str, object] = cast("_StrObjDict", raw)
+    defaults = IntentVerificationConfig()
+
+    def _iv_bool(key: str, default: bool) -> bool:
+        val = iv_dict.get(key, default)
+        if not isinstance(val, bool):
+            raise SeedError(f"quality_gates.intent_verification.{key} must be a bool, got: {type(val).__name__}")
+        return val
+
+    def _iv_str(key: str, default: str) -> str:
+        val = iv_dict.get(key, default)
+        if not isinstance(val, str):
+            raise SeedError(f"quality_gates.intent_verification.{key} must be a string, got: {type(val).__name__}")
+        return val
+
+    def _iv_int(key: str, default: int) -> int:
+        val = iv_dict.get(key, default)
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise SeedError(f"quality_gates.intent_verification.{key} must be an integer, got: {type(val).__name__}")
+        return val
+
+    fork_raw = iv_dict.get("fork_from_context")
+    if fork_raw is not None and not isinstance(fork_raw, str):
+        raise SeedError(
+            f"quality_gates.intent_verification.fork_from_context must be a string, got: {type(fork_raw).__name__}"
+        )
+    return IntentVerificationConfig(
+        enabled=_iv_bool("enabled", defaults.enabled),
+        model=_iv_str("model", defaults.model),
+        provider=_iv_str("provider", defaults.provider),
+        max_diff_chars=_iv_int("max_diff_chars", defaults.max_diff_chars),
+        max_tokens=_iv_int("max_tokens", defaults.max_tokens),
+        block_on_no=_iv_bool("block_on_no", defaults.block_on_no),
+        block_on_partial=_iv_bool("block_on_partial", defaults.block_on_partial),
+        fork_from_context=fork_raw,
+    )
 
 
 def _parse_single_formal_property(idx: int, entry: object) -> FormalProperty:
@@ -2437,6 +2527,11 @@ def parse_seed(path: Path) -> SeedConfig:
     Raises:
         SeedError: If the file is missing, unreadable, or has invalid content.
     """
+    return _parse_seed(path, apply_tuning=True)
+
+
+def _parse_seed(path: Path, *, apply_tuning: bool) -> SeedConfig:
+    """Share parsing with launch validation without rebinding parent tuning."""
     if not path.exists():
         raise SeedError(f"Seed file not found: {path}")
 
@@ -2592,7 +2687,8 @@ def parse_seed(path: Path) -> SeedConfig:
     metrics = _parse_metrics(data.get("metrics"))
     mcp_signing_mode = _parse_mcp_signing_mode(data)
     data_class = _parse_data_class(data.get("data_class"))
-    _parse_tuning(data)
+    if apply_tuning:
+        _parse_tuning(data)
 
     return SeedConfig(
         goal=goal,

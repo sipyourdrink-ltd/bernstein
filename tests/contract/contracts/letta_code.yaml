@@ -1,0 +1,25 @@
+# Contract for the Letta Code CLI (adapter: letta_code, binary: letta).
+#
+# Always-passed flags from src/bernstein/adapters/letta_code.py that
+# `letta --help` documents. `--permission-mode` is passed too but is not in
+# the help text (it is a hidden option in letta 0.26), so it cannot be a
+# help-text capability check.
+adapter: letta_code
+binary: letta
+install:
+  method: npm
+  spec: "@letta-ai/letta-code@latest"
+auth:
+  # ``letta --help`` works without authentication; headless runs need LETTA_API_KEY.
+  required_for_help: false
+  required_for_models: false
+  secret_env: "LETTA_API_KEY"
+  basis: api_key
+required_flags:
+  - "--output-format"
+  - "--new-agent"
+  - "--prompt"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []
