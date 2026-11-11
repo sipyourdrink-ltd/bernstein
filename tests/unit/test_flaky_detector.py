@@ -3,11 +3,107 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from bernstein.core.flaky_detector import FlakyDetector, parse_pytest_output
 from bernstein.core.flaky_detector import TestRun as FlakyRunRecord
+
+
+def _observe_pytest(tmp_path: Path, *args: str) -> dict[str, object]:
+    target = tmp_path / "observation.json"
+    src = Path(__file__).resolve().parents[2] / "src"
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in {"PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR"}
+    }
+    env.update(PYTHONPATH=str(src), PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from dataclasses import asdict; from pathlib import Path; import json, sys; "
+                "from bernstein.core.quality.flaky_detector import capture_pytest_observation; "
+                "observation = capture_pytest_observation(sys.argv[2:]); "
+                "Path(sys.argv[1]).write_text(json.dumps(asdict(observation)), encoding='utf-8')"
+            ),
+            str(target),
+            *args,
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    return json.loads(target.read_text(encoding="utf-8"))
+
+
+def test_structured_pytest_capture_distinguishes_call_errors_and_setup_assertions(tmp_path: Path) -> None:
+    (tmp_path / "test_sample.py").write_text(
+        """import pytest
+
+@pytest.fixture
+def broken_setup():
+    assert False
+
+def test_pass():
+    assert True
+
+def test_assert():
+    assert 1 == 2
+
+def test_call_error():
+    raise RuntimeError("test fixture error")
+
+def test_setup_error(broken_setup):
+    assert True
+
+@pytest.mark.xfail
+def test_xfail():
+    assert False
+
+@pytest.mark.xfail
+def test_xpass():
+    assert True
+
+@pytest.mark.xfail(strict=True)
+def test_strict_xpass():
+    assert True
+""",
+        encoding="utf-8",
+    )
+    result = _observe_pytest(tmp_path, "-q", "test_sample.py")
+    expected = [
+        ("test_pass", "call", "passed"),
+        ("test_assert", "call", "assertion_failed"),
+        ("test_call_error", "call", "error"),
+        ("test_setup_error", "setup", "error"),
+        ("test_xfail", "call", "xfailed"),
+        ("test_xpass", "call", "xpassed"),
+        ("test_strict_xpass", "call", "xpassed"),
+    ]
+    assert result["exit_code"] == 1
+    assert result["selected_node_ids"] == [f"test_sample.py::{name}" for name, _, _ in expected]
+    phases = result["phases"]
+    assert isinstance(phases, list)
+    for name, phase, outcome in expected:
+        assert {"node_id": f"test_sample.py::{name}", "phase": phase, "outcome": outcome} in phases
+
+
+def test_structured_pytest_capture_records_collection_failure(tmp_path: Path) -> None:
+    (tmp_path / "test_import_error.py").write_text(
+        "raise ImportError('test fixture cannot import')\n", encoding="utf-8"
+    )
+    result = _observe_pytest(tmp_path, "--collect-only", "-q", "test_import_error.py")
+    assert result["exit_code"] != 0
+    assert result["selected_node_ids"] == []
+    assert result["phases"] == [{"node_id": "test_import_error.py", "phase": "collect", "outcome": "error"}]
 
 
 def test_parse_pytest_output_captures_terminal_results() -> None:
