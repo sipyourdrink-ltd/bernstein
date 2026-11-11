@@ -11,27 +11,25 @@ on:
       - "uv.lock"
       - ".github/workflows/codeql.yml"
       - ".github/codeql/**"
-  # No `pull_request` trigger, deliberately (#5795). It ran 517 times in one
-  # week for 2 165 job-minutes and gated nothing: branch protection requires
-  # `CI gate` and `shipped bundle matches the lockfile`, not CodeQL. Every
-  # commit that reaches `main` is analysed again by the push run minutes
-  # later, so the pull-request run was a second analysis of the same code
-  # whose only output was an advisory annotation.
-  #
-  # Stated plainly, the cost: a newly introduced finding now surfaces after
-  # the merge rather than before it. Alerts are triaged against the trunk,
-  # which is where the push run and the weekly schedule raise them.
+  # Every pull request into `main` is analysed, with no path filter, so each
+  # merged change has a code-scanning result on its own head commit. This
+  # restores the trigger dropped in #5795. The analysis stays advisory: branch
+  # protection does not require CodeQL. What it adds is that a new finding is
+  # reported on the pull request that introduces it instead of on the trunk
+  # after the merge. Cost: one analysis per pushed head commit, about 4-6
+  # job-minutes; a newer push cancels the older pull-request run (below).
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "0 4 * * 1"  # Weekly Monday 4 AM UTC
 
 concurrency:
   group: codeql-${{ github.ref }}
-  # Never cancel in flight. Both remaining triggers analyse the trunk, and a
-  # cancelled CodeQL run leaves code scanning in a "CodeQL exited with errors"
-  # configuration-error state and drops that commit's coverage. This was
-  # `github.event_name == 'pull_request'` while pull requests ran; with that
-  # trigger gone the expression could only ever be false.
-  cancel-in-progress: false
+  # Trunk runs (push, schedule) are never cancelled: a cancelled CodeQL run
+  # leaves code scanning in a "CodeQL exited with errors" configuration-error
+  # state and drops that commit's coverage. A pull-request run is superseded by
+  # the run for the newer head commit, which is the one that gets merged.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Default-deny at workflow scope; the analyze job re-asserts the narrow
 # writes it actually needs (Scorecard token-permissions).

@@ -20798,6 +20798,18 @@
         "title": "DiffHunk",
         "description": "A single hunk in a file diff."
       },
+      "DispatchTier": {
+        "type": "string",
+        "enum": [
+          "local",
+          "edge",
+          "search",
+          "research",
+          "sandbox"
+        ],
+        "title": "DispatchTier",
+        "description": "Backend tier for multi-backend task dispatch (#6554).\n\nAssigned by the decomposer or explicitly by the plan.\nThe dispatcher selects the backend adapter matching the task's tier."
+      },
       "GraphQLRequest": {
         "properties": {
           "query": {
@@ -22462,6 +22474,10 @@
             "title": "Priority",
             "default": 2
           },
+          "dispatch_tier": {
+            "$ref": "#/components/schemas/DispatchTier",
+            "default": "local"
+          },
           "scope": {
             "type": "string",
             "maxLength": 1000,
@@ -23401,6 +23417,10 @@
             "type": "integer",
             "title": "Priority"
           },
+          "dispatch_tier": {
+            "$ref": "#/components/schemas/DispatchTier",
+            "default": "local"
+          },
           "scope": {
             "type": "string",
             "title": "Scope"
@@ -24324,6 +24344,10 @@
             "type": "integer",
             "title": "Priority",
             "default": 2
+          },
+          "dispatch_tier": {
+            "$ref": "#/components/schemas/DispatchTier",
+            "default": "local"
           },
           "scope": {
             "type": "string",
