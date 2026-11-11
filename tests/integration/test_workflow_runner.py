@@ -25,6 +25,7 @@ from bernstein.core.workflows import (
     WorkflowSpec,
     load_workflow_spec_from_text,
 )
+from bernstein.core.workflows.workflow_runner import load_node_state
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -127,6 +128,64 @@ nodes:
     assert by_id["bad"].exit_code == 7
     assert by_id["never"].status == NodeStatus.SKIPPED
     assert not (runner_workdir / "shouldnt-exist.txt").exists()
+
+
+def test_run_dispatches_nothing_in_layers_after_an_abort(runner_workdir: Path) -> None:
+    """After a failure, later layers are skipped once and never dispatched, even off a green branch.
+
+    ``after-cmd`` and ``after-agent`` depend only on the passing ``ok`` node, so only the run-wide
+    abort can stop them; ``deeper`` checks that the abort holds for every remaining layer.
+    """
+    spawned: list[str] = []
+
+    class CountingSpawner:
+        """Records every dispatch; none may happen after the abort."""
+
+        def spawn_for_tasks(self, tasks: list[Any]) -> Any:
+            spawned.append(tasks[0].id)
+            session = MagicMock()
+            session.id = f"sess-{len(spawned)}"
+            return session
+
+    spec = _spec_from(
+        """
+name: abort-later-layers
+description: "A failure in layer 1 must stop every later layer"
+version: "1.0.0"
+nodes:
+  - id: bad
+    command: "exit 1"
+  - id: ok
+    command: "true"
+  - id: after-cmd
+    depends_on: [ok]
+    command: "echo ran > after-cmd.txt"
+  - id: after-agent
+    depends_on: [ok]
+    agent: backend
+    prompt: "must never be dispatched"
+  - id: deeper
+    depends_on: [after-cmd]
+    command: "echo ran > deeper.txt"
+"""
+    )
+    runner = WorkflowRunner(spawner=CountingSpawner(), workdir=runner_workdir)  # type: ignore[arg-type]
+    execution = runner.run(spec, run_id="abort-later-layers")
+
+    reported = [n.node_id for n in execution.nodes]
+    assert sorted(reported) == ["after-agent", "after-cmd", "bad", "deeper", "ok"], reported
+    by_id = {n.node_id: n for n in execution.nodes}
+    assert execution.succeeded is False
+    assert by_id["bad"].status == NodeStatus.FAILED
+    assert by_id["ok"].status == NodeStatus.SUCCESS
+    for node_id in ("after-cmd", "after-agent", "deeper"):
+        assert by_id[node_id].status == NodeStatus.SKIPPED, node_id
+        assert by_id[node_id].condition_skipped is False, node_id
+        persisted = load_node_state(runner_workdir, "abort-later-layers", node_id)
+        assert persisted is None or persisted["status"] != NodeStatus.SUCCESS.value, node_id
+    assert not (runner_workdir / "after-cmd.txt").exists()
+    assert not (runner_workdir / "deeper.txt").exists()
+    assert spawned == []
 
 
 # ---------------------------------------------------------------------------
@@ -534,8 +593,13 @@ class _RecordingMockAdapter(CLIAdapter):
         return None
 
 
-def test_agent_node_dispatches_through_real_spawner(tmp_path: Path) -> None:
+def test_agent_node_dispatches_through_real_spawner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An agent-typed node reaches `AgentSpawner.spawn_for_tasks`."""
+    # The integration check exercises dispatch, not the host's available disk space.
+    monkeypatch.setattr(
+        "bernstein.core.agents.spawner_core.shutil.disk_usage",
+        lambda _path: MagicMock(free=2 * 1024**3),
+    )
     workdir = tmp_path / "proj"
     workdir.mkdir()
     templates_dir = workdir / "templates" / "roles" / "backend"

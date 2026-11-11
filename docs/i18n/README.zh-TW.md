@@ -1,10 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg">
-  <img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg" width="340">
-</picture>
+<img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-readme.svg" width="380">
 
 <br>
 
@@ -135,7 +131,7 @@ flowchart LR
 每個節點由角色獲該階段允許的代理認領;無論代理在任務內做什麼,角色圍欄與核准閘門始終有效。程式碼節點在自己的 git worktree 裡、合併閘門之後完成。上面這些節點的完成方式不同:[工件契約](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md)指明交付物(報告、資料集、掃描、操作日誌),節點以簽章的 lineage 收據而非提交收尾。同一個排程器、同一份日誌、同樣的離線驗證 - 無論圖裡裝的是程式碼、研究、維運變更,還是三者混合。面向軟體、研究、文件、企業與貢獻者工作流的現成圖都在 [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)。
 
 ### 30 秒安裝
-<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,6 +139,8 @@ bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+`bernstein doctor --json` 也會輸出稽核契約的 `findings`；對於相同的安裝觀測結果，它們與 `bernstein govern audit --only INS --json` 的結果完全相同。一般 doctor 報告的顯示方式維持不變。如需穩定的檢查 ID，請參閱 [doctor 維運指南](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)。
 
 pipx、pip、brew、dnf、npm 和 Docker 都涵蓋在[安裝指南](https://docs.bernstein.run/en/latest/getting-started/install/)中；離線 wheelhouse 有單獨的 [air-gap 指南](https://docs.bernstein.run/en/latest/installation/air-gap/)。
 

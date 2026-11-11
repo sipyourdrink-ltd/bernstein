@@ -1,10 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg">
-  <img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg" width="340">
-</picture>
+<img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-readme.svg" width="380">
 
 <br>
 
@@ -135,7 +131,7 @@ flowchart LR
 Кожен вузол забирає агент, чия роль дозволена фазою; рольові обмеження та гейти схвалення тримаються незалежно від того, що агент робить усередині задачі. Кодовий вузол завершується за merge-гейтами у власному git worktree. Вузли вище завершуються інакше: [контракт артефакту](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) називає результат (звіт, датасет, скан, лог дій), і вузол закривається підписаною lineage-квитанцією замість коміту. Той самий планувальник, той самий журнал, та сама офлайн-верифікація — чи несе граф код, дослідження, ops-зміну або все разом. Готові графи для софту, досліджень, документації, ентерпрайзу та контриб'юторських процесів лежать у [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### встановлення за 30 секунд
-<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,6 +139,8 @@ bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+`bernstein doctor --json` також виводить результати контракту аудиту `findings`, які збігаються з результатами `bernstein govern audit --only INS --json` за однакових спостережень за станом встановлення. Звичайний звіт doctor зберігає попередній вигляд. Стабільні ідентифікатори перевірок описано в [посібнику з експлуатації doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
 pipx, pip, brew, dnf, npm та Docker описані в [посібнику зі встановлення](https://docs.bernstein.run/en/latest/getting-started/install/); ізольований wheelhouse має власний [посібник з air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 

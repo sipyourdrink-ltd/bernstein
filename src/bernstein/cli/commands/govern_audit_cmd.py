@@ -8,6 +8,7 @@ three-state verdict vocabulary.
 from __future__ import annotations
 
 import json
+from inspect import signature
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,70 @@ from bernstein.core.checks.registry import (
 if TYPE_CHECKING:
     from bernstein.core.checks.contract import Finding
     from bernstein.core.checks.registry import CheckRegistry
+
+
+# Stable installation IDs, in the legacy doctor's display order. Backend
+# helpers share storage's ID: postgres/redis are alternate implementations.
+INSTALLATION_CHECKS: tuple[tuple[str, str], ...] = (
+    ("INS-001", "python"),
+    ("INS-002", "adapters"),
+    ("INS-003", "last_green"),
+    ("INS-004", "version_posture"),
+    ("INS-005", "auth"),
+    ("INS-006", "port"),
+    ("INS-007", "workspace"),
+    ("INS-008", "stale_pids"),
+    ("INS-009", "guardrails"),
+    ("INS-010", "ci_tools"),
+    ("INS-011", "storage"),
+    ("INS-012", "secrets"),
+    ("INS-013", "readiness"),
+    ("INS-014", "context_and_plugins"),
+    ("INS-015", "commit_attribution"),
+    ("INS-016", "compliance"),
+    ("INS-017", "schedule_supervisor"),
+    ("INS-018", "eval_gate_power"),
+    ("INS-019", "otel_export"),
+    ("INS-020", "audit_anchoring"),
+)
+
+
+class DoctorInstallationAdapter:
+    """An opt-in install check, sharing the exact producer used by doctor."""
+
+    area = "INS"
+    opt_in = True
+
+    def __init__(self, check_id: str, name: str) -> None:
+        self.check_id = check_id
+        self._name = name
+        self.title = name.replace("_", " ").capitalize()
+        self.description = f"Doctor installation check: {self.title}"
+
+    def run(self, workdir: Path | None = None) -> Finding:
+        from bernstein.cli.commands import status_cmd
+
+        helper = getattr(status_cmd, f"_doctor_check_{self._name}")
+        rows: list[dict[str, Any]] = []
+        arguments: dict[str, Any] = {}
+        for name in signature(helper).parameters:
+            if name == "checks":
+                arguments[name] = rows
+            elif name == "workdir":
+                arguments[name] = workdir or Path.cwd()
+            elif name == "_check":
+                arguments[name] = lambda *args: status_cmd._add_check(rows, *args)
+        return helper(**arguments)
+
+    def __call__(self, workdir: Path | None = None) -> Finding:
+        return self.run(workdir)
+
+
+def populate_installation_checks(registry: CheckRegistry) -> None:
+    """Compose the CLI-owned doctor checks explicitly into this audit runner."""
+    for check_id, name in INSTALLATION_CHECKS:
+        if registry.get_check(check_id) is None:
+            registry.register(DoctorInstallationAdapter(check_id, name))
 
 
 def _has_failures(findings: list[Finding]) -> bool:
@@ -139,6 +204,7 @@ def govern_audit_cmd(
     """
     reg = DEFAULT_REGISTRY if registry is None else registry
     populate_default_checks(reg)
+    populate_installation_checks(reg)
 
     if list_checks:
         checks = reg.list_checks(only_areas=only_areas, skip_ids=skip_ids)
@@ -189,20 +255,7 @@ def govern_audit_cmd(
     has_failed = _has_failures(findings)
 
     if as_json:
-        payload = [
-            {
-                "check_id": f.check_id,
-                "verdict": f.verdict.value,
-                "passed": f.passed,
-                "area": f.area,
-                "summary": f.summary or f.message,
-                "reason": f.reason,
-                "remediation": f.remediation,
-                "what_would_make_it_measurable": f.what_would_make_it_measurable,
-                "evidence": [{"locator": ev.locator, "sha256": ev.sha256} for ev in f.evidence],
-            }
-            for f in findings
-        ]
+        payload = [f.to_dict() for f in findings]
         click.echo(json.dumps(payload, indent=2))
         raise SystemExit(1 if has_failed else 0)
 

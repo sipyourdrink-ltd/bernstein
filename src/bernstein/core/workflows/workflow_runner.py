@@ -631,7 +631,8 @@ class WorkflowRunner:
                     skipped = NodeExecution(node_id=node.id, status=NodeStatus.SKIPPED)
                     results[node.id] = skipped
                     execution.nodes.append(skipped)
-                    continue
+                # Skip the whole layer: dispatching it would run nodes off a green branch after the abort.
+                continue
 
             ready_nodes: list[WorkflowNode] = []
             for node in layer:

@@ -1,10 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg">
-  <img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg" width="340">
-</picture>
+<img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-readme.svg" width="380">
 
 <br>
 
@@ -135,7 +131,7 @@ flowchart LR
 Ogni nodo viene preso da un agente il cui ruolo è ammesso dalla fase; i recinti di ruolo e i gate di approvazione reggono qualunque cosa l'agente faccia dentro il task. Un nodo di codice termina dietro merge gate nel proprio git worktree. I nodi qui sopra terminano diversamente: un [contratto di artefatto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) nomina il deliverable (report, dataset, scansione, log di azioni) e il nodo si chiude con una ricevuta di lineage firmata invece di un commit. Stesso scheduler, stesso journal, stessa verifica offline - che il grafo consegni codice, ricerca, un cambio ops o un mix dei tre. Grafi pronti per software, ricerca, documentazione, enterprise e workflow dei contributor vivono in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### installazione in 30 secondi
-<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,6 +139,8 @@ bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+`bernstein doctor --json` espone anche i risultati del contratto di audit `findings`, identici a quelli di `bernstein govern audit --only INS --json` per le stesse osservazioni sull’installazione. Il normale rapporto doctor mantiene la visualizzazione attuale. Consulta la [guida operativa di doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) per gli identificatori stabili dei controlli.
 
 pipx, pip, brew, dnf, npm e Docker sono trattati nella [guida all'installazione](https://docs.bernstein.run/en/latest/getting-started/install/); la wheelhouse per ambienti isolati dispone della propria [guida air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/).
 

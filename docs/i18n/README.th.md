@@ -1,10 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg">
-  <img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg" width="340">
-</picture>
+<img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-readme.svg" width="380">
 
 <br>
 
@@ -135,7 +131,7 @@ flowchart LR
 แต่ละโหนดถูกรับโดย agent ที่บทบาทได้รับอนุญาตจากเฟสนั้น รั้วบทบาทและเกตอนุมัติยังคงอยู่ไม่ว่า agent จะทำอะไรในงาน โหนดโค้ดจบหลัง merge gate ใน git worktree ของตัวเอง โหนดข้างบนจบต่างออกไป: [สัญญาอาร์ติแฟกต์](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) ระบุผลส่งมอบ (รายงาน ชุดข้อมูล การสแกน บันทึกการกระทำ) และโหนดปิดด้วยใบรับ lineage ที่ลงนามแทนคอมมิต ตัวจัดตารางเดียวกัน เจอร์นัลเดียวกัน การตรวจสอบออฟไลน์แบบเดียวกัน - ไม่ว่ากราฟจะส่งมอบโค้ด งานวิจัย การเปลี่ยนแปลง ops หรือทั้งสามผสมกัน กราฟสำเร็จรูปสำหรับซอฟต์แวร์ วิจัย เอกสาร องค์กร และเวิร์กโฟลว์ผู้ร่วมพัฒนาอยู่ที่ [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios)
 
 ### ติดตั้งใน 30 วินาที
-<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,6 +139,8 @@ bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+`bernstein doctor --json` แสดง `findings` ตามสัญญาการตรวจสอบด้วย ซึ่งเหมือนกับผลของ `bernstein govern audit --only INS --json` เมื่อใช้ข้อมูลสังเกตการติดตั้งชุดเดียวกัน รูปแบบการแสดงผลของรายงาน doctor ปกติยังคงเดิม ดูรหัสการตรวจสอบที่คงที่ได้ใน[คู่มือการใช้งาน doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md)
 
 pipx, pip, brew, dnf, npm และ Docker มีเนื้อหาอยู่ใน [คู่มือการติดตั้ง](https://docs.bernstein.run/en/latest/getting-started/install/) ส่วนแพ็กเกจสำหรับระบบแยกเครือข่ายมี [คู่มือ air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) โดยเฉพาะ
 

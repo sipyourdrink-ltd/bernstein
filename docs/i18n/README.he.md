@@ -1,10 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg">
-  <img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-light.svg" width="340">
-</picture>
+<img alt="Bernstein" src="https://raw.githubusercontent.com/sipyourdrink-ltd/bernstein/main/docs/assets/logo-readme.svg" width="380">
 
 <br>
 
@@ -135,7 +131,7 @@ flowchart LR
 כל צומת נלקח על ידי סוכן שתפקידו מותר בפאזה; גדרות תפקידים ושערי אישור מחזיקים לא משנה מה הסוכן עושה בתוך המשימה. צומת קוד מסתיים מאחורי שערי merge ב-git worktree משלו. הצמתים למעלה מסתיימים אחרת: [חוזה ארטיפקט](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) קורא בשם לתוצר (דוח, דאטהסט, סריקה, לוג פעולות), והצומת נסגר בקבלה חתומה של lineage במקום commit. אותו מתזמן, אותו יומן, אותו אימות אופליין - בין אם הגרף נושא קוד, מחקר, שינוי ops או שילוב של השלושה. גרפים מוכנים לתוכנה, מחקר, תיעוד, ארגונים ותהליכי תורמים נמצאים ב-[`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### התקנה ב-30 שניות
-<!-- l10n: en="install in 30 seconds" hash="sha256:e49482583e8d" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,6 +139,8 @@ bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+`bernstein doctor --json` מציג גם את ממצאי חוזה הביקורת, `findings`, הזהים לממצאי `bernstein govern audit --only INS --json` עבור אותן תצפיות התקנה. התצוגה הרגילה של דוח doctor נשארת ללא שינוי. למזהי הבדיקות היציבים, ראו את [מדריך התפעול של doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md).
 
 pipx, pip, brew, dnf, npm ו-Docker מכוסים ב[מדריך ההתקנה](https://docs.bernstein.run/en/latest/getting-started/install/); לחבילה המבודדת יש [מדריך air-gap](https://docs.bernstein.run/en/latest/installation/air-gap/) ייעודי.
 
