@@ -188,11 +188,18 @@ MODULES: tuple[Module, ...] = (
     Module(
         key="sandbox_eval",
         source="src/bernstein/core/security/sandbox_eval.py",
-        tests=("tests/unit/test_sandbox_eval.py",),
+        tests=(
+            "tests/unit/test_sandbox_eval.py",
+            "tests/unit/test_sandbox_eval_mutation_kill.py",
+        ),
         threshold=0.70,
         budget_seconds=900,
         max_candidates=60,
-        note="Sandbox session lifecycle and repo URL validation (25 tests).",
+        note=(
+            "Sandbox session lifecycle and repo URL validation. Scored 19/60 on the lifecycle tests"
+            " alone; the kill file pins the published limits, the solution-pack table, the elapsed"
+            " clock, both session caps at their boundary and every transition guard."
+        ),
     ),
     Module(
         key="policy_engine",
@@ -200,20 +207,33 @@ MODULES: tuple[Module, ...] = (
         tests=(
             "tests/unit/test_policy_engine.py",
             "tests/unit/test_decision_graph.py",
+            "tests/unit/security/test_policy_engine_mutation_kill.py",
         ),
         threshold=0.70,
         budget_seconds=900,
         max_candidates=60,
-        note="Rego/YAML policy evaluation and decision graph precedence (8 tests).",
+        note=(
+            "Rego/YAML policy evaluation and decision graph precedence. Scored 27/60 on the two"
+            " example-driven files; the kill file pins precedence in both insertion orders, the"
+            " bypass rule, the empty-directory and OPA-missing branches, the YAML loader and every"
+            " comparison operator at its boundary."
+        ),
     ),
     Module(
         key="compliance_policies",
         source="src/bernstein/core/security/compliance_policies.py",
-        tests=("tests/unit/test_compliance_policies.py",),
+        tests=(
+            "tests/unit/test_compliance_policies.py",
+            "tests/unit/security/test_compliance_policies_mutation_kill.py",
+        ),
         threshold=0.70,
         budget_seconds=1200,
         max_candidates=80,
-        note="Compliance policy library with 50+ Rego rules across frameworks (22 tests).",
+        note=(
+            "Compliance policy library with 50+ Rego rules across frameworks. Scored 3/80 on the"
+            " catalogue-shape tests alone (#6471); the kill file pins input defaults, every check's"
+            " conjunction and thresholds, the retention observer and the catalogue text."
+        ),
     ),
     Module(
         key="audit_pack",

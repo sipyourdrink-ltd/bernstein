@@ -111,6 +111,10 @@ class ContractSpec:
     security_advisory_id: str | None = None
     #: Authentication mechanism declared in the contract YAML.
     auth_basis: AuthBasis = AuthBasis.UNKNOWN
+    #: Explicit reasoning-effort values the adapter forwards to its CLI.
+    #: Empty means no declared effort capability; older contracts keep their
+    #: meaning. This is a CLI request, not evidence of provider enforcement.
+    supported_efforts: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, name: str, contracts_dir: Path | None = None) -> ContractSpec:
@@ -167,6 +171,7 @@ class ContractSpec:
             security_floor=security_floor,
             security_advisory_id=security_advisory_id,
             auth_basis=auth_basis,
+            supported_efforts=tuple(data.get("supported_efforts") or ()),
         )
 
     def resolved_help_command(self) -> list[str]:

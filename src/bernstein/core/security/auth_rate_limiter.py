@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from starlette.responses import Response as StarletteResponse
-    from starlette.types import ASGIApp
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -68,7 +68,12 @@ class RateLimitDecision:
 
 
 class AuthRateLimiter:
-    """Per-IP sliding-window rate limiter.
+    """Per-client sliding-window attempt limiter with exponential lockout.
+
+    Exhausted windows start a lockout of one window, doubling on subsequent
+    exhaustion up to 15 minutes (or one window when configured longer).
+    Failed credentials can also start a backoff of 1, 2, 4, ... seconds.
+    Backoff history expires 15 minutes after the lockout ends.
 
     Args:
         max_requests: Maximum requests allowed within the window.
@@ -87,39 +92,69 @@ class AuthRateLimiter:
         self.cleanup_every = cleanup_every
         self._hits: dict[tuple[str, str], list[float]] = defaultdict(list)
         self._call_count = 0
+        self._windows: dict[tuple[str, str], int] = {}
+        self._backoff: dict[tuple[str, str], tuple[int, float]] = {}
 
-    def check(self, ip: str, *, bucket: str = "auth") -> float | None:
+    def check(
+        self,
+        ip: str,
+        *,
+        bucket: str = "auth",
+        max_requests: int | None = None,
+        window_seconds: int | None = None,
+    ) -> float | None:
         """Check whether *ip* is within the rate limit for a bucket.
 
         Returns ``None`` if the request is allowed, or the number of
         seconds until the next request slot opens (for ``Retry-After``).
         """
         now = time.monotonic()
-        cutoff = now - self.window_seconds
-
-        # Trim timestamps outside the window
-        key = (bucket, ip)
-        timestamps = self._hits[key]
-        self._hits[key] = timestamps = [t for t in timestamps if t > cutoff]
-
         self._call_count += 1
         if self._call_count % self.cleanup_every == 0:
             self._cleanup(now)
 
-        if len(timestamps) >= self.max_requests:
-            # Earliest timestamp that counts - retry after it expires
-            retry_after = timestamps[0] - cutoff
-            return max(retry_after, 1.0)
+        key = (bucket, ip)
+        window = self.window_seconds if window_seconds is None else window_seconds
+        limit = self.max_requests if max_requests is None else max_requests
+        strikes, until = self._backoff.get(key, (0, 0.0))
+        if strikes and now < until:
+            return max(until - now, 1.0)
+
+        self._windows[key] = window
+        cutoff = now - window
+        timestamps = [t for t in self._hits[key] if t > cutoff]
+        self._hits[key] = timestamps
+        if len(timestamps) >= limit:
+            return self.record_failure(ip, bucket=bucket, base_delay=window)
 
         timestamps.append(now)
         return None
 
+    def record_failure(self, ip: str, *, bucket: str = "auth", base_delay: float = 1.0) -> float:
+        """Start a bounded exponential backoff for this client and bucket."""
+        now = time.monotonic()
+        key = (bucket, ip)
+        strikes, until = self._backoff.get(key, (0, 0.0))
+        if now >= until + 900:
+            strikes = 0
+        delay = min(base_delay * 2 ** min(strikes, 10), max(900.0, base_delay))
+        self._backoff[key] = (min(strikes + 1, 10), now + delay)
+        return delay
+
+    def record_success(self, ip: str, *, bucket: str = "auth") -> None:
+        """Clear only this client's backoff; retain its attempt counter."""
+        self._backoff.pop((bucket, ip), None)
+
     def _cleanup(self, now: float) -> None:
-        """Remove entries with no timestamps in the current window."""
-        cutoff = now - self.window_seconds
-        empty_keys = [k for k, v in self._hits.items() if not v or v[-1] <= cutoff]
-        for k in empty_keys:
-            del self._hits[k]
+        """Remove expired counters and idle backoff history."""
+        for key, (_, until) in list(self._backoff.items()):
+            if now >= until + 900:
+                del self._backoff[key]
+        for key, timestamps in list(self._hits.items()):
+            window = self._windows.get(key, self.window_seconds)
+            if not timestamps or timestamps[-1] <= now - window:
+                del self._hits[key]
+                self._windows.pop(key, None)
 
 
 class RequestRateLimiter:
@@ -161,6 +196,8 @@ _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 DEFAULT_WRITE_RPM = 30
 DEFAULT_READ_RPM = 300
 DEFAULT_SSE_MAX_CONCURRENT = 10
+#: SSE endpoints that share the concurrent-connection cap.
+_SSE_LIMITED_PATHS = frozenset({"/events", "/events/cost", "/events/thread"})
 DEFAULT_HEARTBEAT_RPM = 600
 
 _WRITE_RPM_ENV = "BERNSTEIN_RATE_LIMIT_WRITE_RPM"
@@ -253,18 +290,19 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
         """Current number of active SSE connections."""
         return self._sse_connections
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[StarletteResponse]],
-    ) -> StarletteResponse:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await super().__call__(scope, receive, send)
+            return
+        request = Request(scope)
         path = request.url.path
-        method = request.method.upper()
+        # Versioned aliases share the canonical route's limits.
+        if path.startswith("/api/v1/"):
+            path = path[len("/api/v1") :]
 
-        # SSE concurrency limit for /events endpoints
-        if path in ("/events", "/events/cost") and method == "GET":
+        if path in _SSE_LIMITED_PATHS and request.method.upper() == "GET":
             if self._sse_connections >= self._sse_max_concurrent:
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=429,
                     content={
                         "detail": "Too many concurrent SSE connections",
@@ -273,11 +311,27 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={"Retry-After": "5"},
                 )
+                await response(scope, receive, send)
+                return
             self._sse_connections += 1
             try:
-                return await call_next(request)
+                # call_next returns at headers; the ASGI app runs until the
+                # body closes, including disconnects, cancellation and errors.
+                await self.app(scope, receive, send)
             finally:
-                self._sse_connections = max(0, self._sse_connections - 1)
+                self._sse_connections -= 1
+            return
+        await super().__call__(scope, receive, send)
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[StarletteResponse]],
+    ) -> StarletteResponse:
+        path = request.url.path
+        if path.startswith("/api/v1/"):
+            path = path[len("/api/v1") :]
+        method = request.method.upper()
 
         # Exempt loopback clients (orchestrator, spawner, agents) from rate
         # limiting - they are internal components, not external callers.
@@ -337,7 +391,10 @@ class RequestRateLimitMiddleware(BaseHTTPMiddleware):
         rate_limit = getattr(seed_config, "rate_limit", None)
         if rate_limit is None or not hasattr(rate_limit, "match_request"):
             return None
+        # Canonical rules cover aliases; retain versioned-only configurations.
         bucket = rate_limit.match_request(path, method)
+        if bucket is None and path != request.url.path:
+            bucket = rate_limit.match_request(request.url.path, method)
         if bucket is None:
             return None
         client_id = _request_client_id(request)
@@ -384,22 +441,58 @@ def _request_client_id(request: Request) -> str:
     return direct_client_ip
 
 
-# Shared instance used by the auth router dependency.
-_auth_limiter = AuthRateLimiter()
+def _auth_limiter_for_request(request: Request) -> AuthRateLimiter:
+    """Keep authentication counters local to the application."""
+    limiter = getattr(request.app.state, "auth_rate_limiter", None)
+    if not isinstance(limiter, AuthRateLimiter):
+        limiter = AuthRateLimiter()
+        request.app.state.auth_rate_limiter = limiter
+    return limiter
 
 
-def check_auth_rate_limit(request: Request) -> None:
-    """FastAPI dependency that enforces the auth rate limit.
+def _auth_bucket(request: Request) -> tuple[str, int | None, int | None]:
+    """Resolve existing seed buckets, treating aliases like canonical routes."""
+    path = request.url.path
+    if path.startswith("/api/v1/"):
+        path = path[len("/api/v1") :]
+    seed_config = getattr(request.app.state, "seed_config", None)
+    rate_limit = getattr(seed_config, "rate_limit", None)
+    if rate_limit is not None:
+        bucket = rate_limit.match_request(path, request.method)
+        if bucket is None and path != request.url.path:
+            bucket = rate_limit.match_request(request.url.path, request.method)
+        if bucket is not None:
+            return f"seed:{bucket.name}", bucket.requests, bucket.window_seconds
+    return "auth", None, None
 
-    Keys the bucket on the same peer identity used by the request middleware:
-    the real TCP peer IP by default, or the right-most non-trusted hop from
-    ``X-Forwarded-For`` when the direct peer is a configured trusted proxy.
+
+async def check_auth_rate_limit(request: Request) -> None:
+    """FastAPI dependency enforcing per-client authentication attempt limits.
+
+    Uses the trusted-proxy-aware identity from the request middleware, including
+    for loopback clients. All protected auth routes share the default bucket.
+    Matching seed buckets override the default attempt count and window.
+    Runs on the event loop so checks and app-local initialization are atomic.
     """
-    ip = _request_client_id(request)
-    retry_after = _auth_limiter.check(ip)
+    limiter = _auth_limiter_for_request(request)
+    bucket, max_requests, window_seconds = _auth_bucket(request)
+    retry_after = limiter.check(
+        _request_client_id(request), bucket=bucket, max_requests=max_requests, window_seconds=window_seconds
+    )
     if retry_after is not None:
         raise HTTPException(
             status_code=429,
             detail="Too many requests. Please try again later.",
-            headers={"Retry-After": str(int(retry_after))},
+            headers={"Retry-After": str(math.ceil(retry_after))},
         )
+
+
+def record_auth_result(request: Request, *, success: bool) -> None:
+    """Apply a dashboard credential result to this client's auth backoff."""
+    limiter = _auth_limiter_for_request(request)
+    bucket, _, _ = _auth_bucket(request)
+    client_id = _request_client_id(request)
+    if success:
+        limiter.record_success(client_id, bucket=bucket)
+    else:
+        limiter.record_failure(client_id, bucket=bucket)

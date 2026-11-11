@@ -83,8 +83,10 @@ def test_spawn_uses_permission_mode_not_yolo(tmp_path: Path) -> None:
     assert inner[inner.index("--permission-mode") + 1] == "unrestricted"
 
 
-def test_spawn_passes_new_agent_and_conversation(tmp_path: Path) -> None:
-    """After tasks 3671-A/B: --new-agent and --conversation <derived_id> in command."""
+def test_spawn_passes_new_agent_without_a_conversation(tmp_path: Path) -> None:
+    """letta 0.26 refuses ``--conversation`` beside ``--new-agent`` and exits 1
+    before the prompt runs ("--conversation cannot be used with --new-agent"),
+    so passing both made every spawn fail."""
     adapter = LettaCodeAdapter()
     proc_mock = make_popen_mock(900)
 
@@ -96,40 +98,11 @@ def test_spawn_passes_new_agent_and_conversation(tmp_path: Path) -> None:
             session_id="letta-s1",
         )
 
-    cmd = popen.call_args.args[0]
-    inner = inner_cmd(cmd)
+    inner = inner_cmd(popen.call_args.args[0])
     assert "--new-agent" in inner
-    assert "--conversation" in inner
-
-
-def test_consecutive_runs_get_distinct_conversation_bindings(tmp_path: Path) -> None:
-    """After tasks 3671-A/B: two spawns with different session_ids produce different --conversation values."""
-    adapter = LettaCodeAdapter()
-
-    proc_mock1 = make_popen_mock(900)
-    proc_mock2 = make_popen_mock(901)
-
-    with patch("bernstein.adapters.letta_code.subprocess.Popen", side_effect=[proc_mock1, proc_mock2]) as popen_calls:
-        adapter.spawn(
-            prompt="fix the bug",
-            workdir=tmp_path,
-            model_config=ModelConfig(model="sonnet", effort="high"),
-            session_id="letta-s1",
-        )
-        adapter.spawn(
-            prompt="fix the bug",
-            workdir=tmp_path,
-            model_config=ModelConfig(model="sonnet", effort="high"),
-            session_id="letta-s2",
-        )
-
-    cmd1 = popen_calls.call_args_list[0][0][0]
-    cmd2 = popen_calls.call_args_list[1][0][0]
-    inner1 = inner_cmd(cmd1)
-    inner2 = inner_cmd(cmd2)
-    conv1 = inner1[inner1.index("--conversation") + 1]
-    conv2 = inner2[inner2.index("--conversation") + 1]
-    assert conv1 != conv2
+    assert "--conversation" not in inner
+    assert "--conv" not in inner
+    assert inner[inner.index("-p") + 1] == "fix the bug"
 
 
 ENVELOPE = {
@@ -238,6 +211,32 @@ def test_post_exit_records_memory_digest(tmp_path: Path) -> None:
     assert len(sidecars) == 1, f"expected one digest sidecar, found {sidecars}"
     assert sidecars[0].read_text() == "abc123digest"
     assert result.finish_reason == ""
+
+
+def test_fresh_sessions_keep_distinct_memory_exports_and_conversation_metadata(tmp_path: Path) -> None:
+    """Fresh sessions must keep their own export file and the CLI's conversation ID."""
+    adapter = LettaCodeAdapter()
+    sessions = (("letta-s1", "agent-77", "conv-77"), ("letta-s2", "agent-88", "conv-88"))
+
+    with patch("bernstein.adapters.letta_code.export_memory_digest", return_value="d" * 64) as export:
+        for session_id, agent_id, conversation_id in sessions:
+            log_path = tmp_path / f"{session_id}.log"
+            envelope = {**ENVELOPE, "agent_id": agent_id, "conversation_id": conversation_id}
+            log_path.write_text(json.dumps(envelope) + "\n")
+            result = SpawnResult(pid=900, log_path=log_path)
+
+            adapter._post_exit(make_popen_mock(900), tmp_path, session_id, log_path, result)
+
+            meta_path = tmp_path / ".sdd" / "runtime" / f"{session_id}.letta_meta.json"
+            metadata = json.loads(meta_path.read_text())
+            assert metadata["agent_id"] == agent_id
+            assert metadata["conversation_id"] == conversation_id
+            assert result.finish_reason == ""
+
+    export_paths = [call.args[2] for call in export.call_args_list]
+    assert len(export_paths) == len(set(export_paths)) == 2
+    assert {path.name for path in export_paths} == {"letta_memory_letta-s1.json", "letta_memory_letta-s2.json"}
+    assert all(path.with_suffix(".json.sha256").read_text() == "d" * 64 for path in export_paths)
 
 
 def test_post_exit_reports_memory_export_failure(tmp_path: Path, caplog) -> None:

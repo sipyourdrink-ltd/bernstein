@@ -1,0 +1,1 @@
+`dependabot-auto-merge.yml` no longer tries to arm auto-merge on a Draft update, which the API refused and which failed the lane; a Draft finishes without calling `gh`, the new `ready_for_review` trigger brings it back once it is marked ready, and a Draft state the event did not report as `true`/`false` fails closed (#6758).

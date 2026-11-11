@@ -744,6 +744,7 @@ def bootstrap_from_seed(
         cluster_enabled=cluster_enabled,
         auth_token=auth_token,
         evolve_mode=evolve_mode,
+        seed_path=_resolved_seed_path,
     )
     if not _wait_for_server(port, server_url=server_url):
         from bernstein.cli.errors import BernsteinError
@@ -1142,8 +1143,8 @@ def run_watchdog(
         adapter: Resolved CLI adapter override to preserve across
             watchdog-triggered spawner restarts (see ``_restart_spawner``).
         model: ``--model`` override to preserve across spawner restarts.
-        seed_path: Resolved bernstein.yaml path to preserve across spawner
-            restarts.
+        seed_path: Resolved bernstein.yaml path to preserve across server
+            and spawner restarts.
     """
     server_pid_path = workdir / ".sdd" / "runtime" / "server.pid"
     spawner_pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
@@ -1176,7 +1177,7 @@ def run_watchdog(
             max_restarts=max_restarts,
             reset_after_s=restart_reset_after_s,
             now=now,
-            restart_fn=lambda: _start_server(workdir, port),
+            restart_fn=lambda: _start_server(workdir, port, seed_path=seed_path),
             post_restart_fn=lambda: _wait_for_server(port),
             liveness=server_liveness,
         )
