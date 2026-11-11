@@ -358,6 +358,19 @@ def _jsonrpc_result(
 
 _TOOL_DEFS: list[dict[str, Any]] = [
     {
+        "name": "bernstein_subscribe",
+        "description": "Wait once for a role task creation via SSE; closes on timeout or cancellation.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["role"],
+            "properties": {
+                "role": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$"},
+                "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 60, "default": 30},
+            },
+        },
+    },
+    {
         "name": "bernstein_run",
         "description": (
             "Start an orchestration run by posting a task. Pass "
@@ -901,7 +914,13 @@ class StreamableHTTPTransport:
     ) -> dict[str, Any]:
         """Handle 'tools/list' - return available tools."""
         _ = params
-        return {"tools": _TOOL_DEFS}
+        from bernstein.mcp.server import _output_schema_for  # pyright: ignore[reportPrivateUsage]
+
+        tools = [dict(tool) for tool in _TOOL_DEFS]
+        for tool in tools:
+            if tool["name"] == "bernstein_subscribe":
+                tool["outputSchema"] = _output_schema_for("bernstein_subscribe")
+        return {"tools": tools}
 
     async def _method_tools_call(
         self,
@@ -966,19 +985,24 @@ class StreamableHTTPTransport:
             meter_finalised = True
             logger.warning("Tool %s failed: %s", tool_name, exc)
             error_payload = wrap_envelope(json.dumps({"error": str(exc)}), meter)
-            return {
+            error_result: dict[str, Any] = {
                 "content": [{"type": "text", "text": error_payload}],
                 "isError": True,
             }
+            if tool_name == "bernstein_subscribe":
+                error_result["structuredContent"] = json.loads(error_payload)
+            return error_result
         finally:
             if req_id is not None:
                 await self._inflight.discard(req_id)
             if not meter_finalised:
                 with suppress(Exception):
                     meter_ctx.__exit__(None, None, None)
-        return {
-            "content": [{"type": "text", "text": wrap_envelope(text, meter)}],
-        }
+        payload = wrap_envelope(text, meter)
+        result: dict[str, Any] = {"content": [{"type": "text", "text": payload}]}
+        if tool_name == "bernstein_subscribe":
+            result["structuredContent"] = json.loads(payload)
+        return result
 
     async def _method_prompts_list(
         self,
@@ -1272,6 +1296,13 @@ class StreamableHTTPTransport:
             from bernstein.mcp.server import _deprecated_alias_payload  # pyright: ignore[reportPrivateUsage]
 
             return _deprecated_alias_payload(name, await self._execute_deprecated_tool(name, arguments))
+
+        if name == "bernstein_subscribe":
+            from bernstein.mcp.server import _subscribe_impl  # pyright: ignore[reportPrivateUsage]
+
+            return await _subscribe_impl(
+                self._server_url, arguments.get("role", ""), arguments.get("timeout_seconds", 30)
+            )
 
         if name == "bernstein_status":
             return await self._folded_status(arguments)

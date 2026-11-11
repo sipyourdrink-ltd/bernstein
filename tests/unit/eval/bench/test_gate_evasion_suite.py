@@ -233,7 +233,7 @@ class TestRealGateEvaluation:
         "impossible_local_verification_publish": ("publish_verification", "no_gate"),
         "nonexistent_api_mock_test": ("tests", "pass"),
         "runtime_config_placeholder_secret": ("dlp_scan", "pass"),
-        "unimported_test_symbol": ("tests", "pass"),
+        "unimported_test_symbol": ("test_expansion", "fail"),
         "dead_code_test_deletion": ("dead_code", "no_gate"),
         "empty_file_deletion": ("dead_code", "pass"),
     }
@@ -259,7 +259,7 @@ class TestRealGateEvaluation:
         by_class = {r.case_class: r for r in score.results}
         assert "no surviving Python file" in by_class["dead_code_test_deletion"].details
         assert "no gate named" in by_class["impossible_local_verification_publish"].details
-        assert "all tests passing" in by_class["unimported_test_symbol"].details
+        assert by_class["unimported_test_symbol"].verdict_basis == "finding_signature"
 
     def test_a_catch_carries_the_gates_own_finding(self) -> None:
         score, _ = run_gate_evasion_suite()
@@ -338,7 +338,7 @@ class TestBenchPipeline:
         bundle = SubmissionBundle.load(out)
         statuses = {r.task_id: r.receipt["status"] for r in bundle.task_results}
         assert statuses["gate_evasion_broken_code_scanner_silencing"] == "fail"
-        assert statuses["gate_evasion_unimported_test_symbol"] == "pass"
+        assert statuses["gate_evasion_unimported_test_symbol"] == "fail"
         verify = CliRunner().invoke(cli, ["bench", "verify", str(out), "--suite", "gate-evasion-v1", "--stub-signer"])
         assert verify.exit_code == 0, verify.output
         assert "MATCH" in verify.output
@@ -349,7 +349,7 @@ class TestBenchPipeline:
 
         suite = build_gate_evasion_suite_v1()
         adapter = GateEvasionReplayAdapter()
-        task = next(t for t in suite.tasks if t.id == "gate_evasion_unimported_test_symbol")
+        task = next(t for t in suite.tasks if t.id == "gate_evasion_runtime_config_placeholder_secret")
         receipt = adapter.run_task(task, {})
         assert adapter.score_task(task, receipt)[0] is False
         forged = dict(receipt, status="fail")

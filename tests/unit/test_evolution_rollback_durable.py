@@ -14,6 +14,7 @@ that exists to undo a bad change.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,7 @@ from bernstein.core.models import RiskAssessment, RollbackPlan
 
 from bernstein.evolution.applicator import FileUpgradeExecutor
 from bernstein.evolution.detector import UpgradeCategory
-from bernstein.evolution.proposals import UpgradeProposal
+from bernstein.evolution.proposals import UpgradeProposal, UpgradeStatus
 from bernstein.evolution.types import RollbackError
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ def _applied_change(state_dir: Path, proposal: UpgradeProposal, filename: str = 
     """
     executor = FileUpgradeExecutor(state_dir)
     (executor.config_dir / filename).write_text(ORIGINAL, encoding="utf-8")
-    executor._backup_file(filename, proposal.id)
+    executor._backup_file(filename, proposal)
     (executor.config_dir / filename).write_text(CHANGED, encoding="utf-8")
     executor._record_history(proposal, "applied")
 
@@ -125,7 +126,7 @@ def test_a_backup_recorded_but_missing_from_disk_fails_loudly(tmp_path: Path) ->
     """A manifest naming a file that is gone is not something to shrug at."""
     proposal = _proposal()
     _applied_change(tmp_path, proposal)
-    (tmp_path / "upgrades" / "backups" / proposal.id / "policies.yaml").unlink()
+    (tmp_path / "upgrades" / "backups" / proposal.storage_key / "policies.yaml").unlink()
 
     with pytest.raises(RollbackError, match="recorded a backup"):
         FileUpgradeExecutor(tmp_path).rollback_upgrade(proposal)
@@ -212,14 +213,14 @@ def test_a_proposal_that_never_applied_is_not_a_rollback(tmp_path: Path) -> None
     proposal = _proposal()
     executor = FileUpgradeExecutor(tmp_path)
     assert executor.execute_upgrade(proposal) is False, "no category has a sink today"
-    assert executor.was_applied(proposal.id) is False
+    assert executor.was_applied(proposal) is False
 
 
 def test_a_proposal_that_applied_is_reported_as_applied(tmp_path: Path) -> None:
     proposal = _proposal()
     _applied_change(tmp_path, proposal)
     # A fresh executor, because the loop may not be the process that applied.
-    assert FileUpgradeExecutor(tmp_path).was_applied(proposal.id) is True
+    assert FileUpgradeExecutor(tmp_path).was_applied(proposal) is True
 
 
 def test_a_rolled_back_proposal_is_no_longer_reported_as_applied(tmp_path: Path) -> None:
@@ -228,4 +229,380 @@ def test_a_rolled_back_proposal_is_no_longer_reported_as_applied(tmp_path: Path)
     _applied_change(tmp_path, proposal)
     executor = FileUpgradeExecutor(tmp_path)
     executor.rollback_upgrade(proposal)
-    assert executor.was_applied(proposal.id) is False
+    assert executor.was_applied(proposal) is False
+
+
+# --- two runs' UPG-0001 are two proposals on disk (#6186) --------------------
+#
+# `ProposalGenerator` restarts its counter in every process, so the first
+# proposal of every run is `UPG-0001`. The id is a label; the backup directory,
+# the manifest and the history lookup are keyed on `storage_key`, which is
+# derived from the proposal itself.
+
+
+def _run_proposal(title: str, created_at: float) -> UpgradeProposal:
+    return dataclasses.replace(_proposal("UPG-0001"), title=title, created_at=created_at)
+
+
+def test_a_never_applied_upg_0001_does_not_restore_another_runs_backup(tmp_path: Path) -> None:
+    applied = _run_proposal("Disable the retry budget entirely", created_at=1_000.0)
+    _applied_change(tmp_path, applied)
+    unrelated = _run_proposal("Rewrite the admission policy", created_at=2_000.0)
+
+    restarted = FileUpgradeExecutor(tmp_path)
+    assert restarted.was_applied(unrelated) is False, "another run's `applied` row is not this proposal's"
+    assert restarted.rollback_upgrade(unrelated) is True
+
+    assert (restarted.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED, (
+        "rolling back a proposal that never applied must not revert a different proposal's change"
+    )
+    receipt = json.loads((tmp_path / "upgrades" / "rollbacks" / "UPG-0001.json").read_text(encoding="utf-8"))
+    assert receipt["storage_key"] == unrelated.storage_key
+    assert receipt["restored_files"] == []
+
+
+def test_two_runs_upg_0001_rolled_back_in_turn_leave_two_receipts(tmp_path: Path) -> None:
+    """The issue's first demonstration: a second run's receipt replaced the first run's.
+
+    Both runs mint ``UPG-0001``. Fresh executors apply and roll back each proposal; both receipts
+    survive, each naming its own proposal by title and storage key.
+    """
+    first = _run_proposal("Disable the retry budget entirely", created_at=1_000.0)
+    _applied_change(tmp_path, first)
+    assert FileUpgradeExecutor(tmp_path).rollback_upgrade(first) is True
+
+    second = _run_proposal("Rewrite the admission policy", created_at=2_000.0)
+    assert first.storage_key != second.storage_key
+    _applied_change(tmp_path, second)
+    assert FileUpgradeExecutor(tmp_path).rollback_upgrade(second) is True
+
+    receipts = sorted((tmp_path / "upgrades" / "rollbacks").glob("UPG-0001*.json"))
+    bodies = [json.loads(path.read_text(encoding="utf-8")) for path in receipts]
+    assert len(bodies) == 2
+    assert {b["title"] for b in bodies} == {first.title, second.title}
+    assert {b["storage_key"] for b in bodies} == {first.storage_key, second.storage_key}
+
+
+def test_the_applied_proposal_still_rolls_back_from_its_own_key(tmp_path: Path) -> None:
+    applied = _run_proposal("Disable the retry budget entirely", created_at=1_000.0)
+    _applied_change(tmp_path, applied)
+
+    restarted = FileUpgradeExecutor(tmp_path)
+    assert restarted.was_applied(applied) is True
+    assert restarted.rollback_upgrade(applied) is True
+    assert (restarted.config_dir / "policies.yaml").read_text(encoding="utf-8") == ORIGINAL
+
+
+def test_the_storage_key_is_stable_for_one_proposal_and_distinct_across_runs() -> None:
+    proposal = _run_proposal("Raise max_retries", created_at=1_000.0)
+    later_in_its_life = dataclasses.replace(proposal, status=UpgradeStatus.APPLIED, applied_at=5.0)
+    next_run = _run_proposal("Raise max_retries", created_at=2_000.0)
+
+    assert later_in_its_life.storage_key == proposal.storage_key
+    assert next_run.storage_key != proposal.storage_key
+    assert proposal.storage_key.startswith("UPG-0001-"), "the label stays readable in paths"
+
+
+# --- a backup an earlier version filed under the bare label -----------------
+#
+# Before #6186 the backup lived at `backups/<proposal.id>/`. An install upgraded
+# with such a backup un-reverted must not read "no manifest under the storage
+# key" as "nothing was applied": that reports a half-applied tree as clean. The
+# label cannot say which proposal wrote it, so restoring from it is not safe
+# either. Fail closed and name the directory.
+
+
+def _legacy_backup(state_dir: Path, label: str) -> Path:
+    upgrades = state_dir / "upgrades"
+    backup_dir = upgrades / "backups" / label
+    backup_dir.mkdir(parents=True)
+    (backup_dir / "policies.yaml").write_text(ORIGINAL, encoding="utf-8")
+    manifest = {"policies.yaml": f"backups/{label}/policies.yaml"}
+    (backup_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    config = state_dir / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "policies.yaml").write_text(CHANGED, encoding="utf-8")
+    return backup_dir
+
+
+def test_a_legacy_label_backup_counts_as_applied(tmp_path: Path) -> None:
+    _legacy_backup(tmp_path, "UPG-0001")
+    proposal = _run_proposal("Raise max_retries", created_at=1_000.0)
+
+    assert FileUpgradeExecutor(tmp_path).was_applied(proposal) is True
+
+
+def test_a_legacy_label_backup_is_refused_by_name_not_restored(tmp_path: Path) -> None:
+    legacy = _legacy_backup(tmp_path, "UPG-0001")
+    proposal = _run_proposal("Raise max_retries", created_at=1_000.0)
+    executor = FileUpgradeExecutor(tmp_path)
+
+    with pytest.raises(RollbackError, match="earlier version") as excinfo:
+        executor.rollback_upgrade(proposal)
+
+    assert str(legacy) in str(excinfo.value)
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert (legacy / "manifest.json").exists(), "left for the operator, not consumed"
+
+
+def test_a_retired_legacy_backup_no_longer_blocks(tmp_path: Path) -> None:
+    """Once the operator renames the directory aside, the id is free again."""
+    legacy = _legacy_backup(tmp_path, "UPG-0001")
+    legacy.rename(legacy.with_name("UPG-0001.rolled-back-by-hand"))
+    proposal = _run_proposal("Raise max_retries", created_at=1_000.0)
+    executor = FileUpgradeExecutor(tmp_path)
+
+    assert executor.was_applied(proposal) is False
+    assert executor.rollback_upgrade(proposal) is True
+
+
+_ROLLBACK_CHILD = r"""
+import json, os, sys, time
+from pathlib import Path
+from bernstein.evolution import applicator
+from tests.unit.test_evolution_rollback_durable import _run_proposal, _applied_change
+state, title, created_at, mode, coordination, index = sys.argv[1:]
+state = Path(state)
+os.environ['BERNSTEIN_CONFIDENCE_DB'] = str(state / 'confidence.db')
+proposal = _run_proposal(title, float(created_at))
+if mode == 'apply':
+    _applied_change(state, proposal)
+else:
+    executor = applicator.FileUpgradeExecutor(state)
+    if mode == 'race':
+        gate = Path(coordination)
+        (gate / ('ready-' + index)).touch()
+        deadline = time.monotonic() + 10
+        while len(list(gate.glob('ready-*'))) != 2:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('rollback peer did not start')
+            time.sleep(0.01)
+        atomic_write = applicator.write_atomic_text
+        def scheduled_write(path, data, **kwargs):
+            if path.parent.name == 'rollbacks':
+                (gate / ('writing-' + index)).touch()
+                deadline = time.monotonic() + 2
+                # Pause only after the production filename selection. Without
+                # serialization both writers select UPG-0001.json. With a
+                # lock the first writer proceeds alone after this bounded wait.
+                while len(list(gate.glob('writing-*'))) != 2 and time.monotonic() < deadline:
+                    time.sleep(0.01)
+            return atomic_write(path, data, **kwargs)
+        applicator.write_atomic_text = scheduled_write
+    assert executor.rollback_upgrade(proposal)
+print(json.dumps({'storage_key': proposal.storage_key}))
+"""
+
+
+def _rollback_child_args(state_dir: Path, title: str, created_at: float, mode: str) -> list[str]:
+    import sys
+
+    return [sys.executable, "-c", _ROLLBACK_CHILD, str(state_dir), title, str(created_at), mode]
+
+
+def test_proposal_keys_restore_their_own_bytes_after_real_process_restarts(tmp_path: Path) -> None:
+    import subprocess
+
+    def child(title: str, created_at: float, mode: str) -> str:
+        result = subprocess.run(
+            [*_rollback_child_args(tmp_path, title, created_at, mode), "", ""],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        return str(json.loads(result.stdout)["storage_key"])
+
+    original_key = child("First run", 1_000.0, "apply")
+    unrelated_key = child("Second run", 2_000.0, "rollback")
+    assert original_key != unrelated_key
+    assert (tmp_path / "config" / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert child("First run", 1_000.0, "rollback") == original_key
+    assert (tmp_path / "config" / "policies.yaml").read_text(encoding="utf-8") == ORIGINAL
+
+
+def test_concurrent_same_label_rollbacks_preserve_both_receipt_bodies(tmp_path: Path) -> None:
+    import hashlib
+    import subprocess
+
+    coordination = tmp_path / "coordination"
+    coordination.mkdir()
+    workers = [
+        subprocess.Popen(
+            [*_rollback_child_args(tmp_path / "state", title, created_at, "race"), str(coordination), str(index)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index, (title, created_at) in enumerate([("First run", 1_000.0), ("Second run", 2_000.0)])
+    ]
+    keys = set()
+    for worker in workers:
+        stdout, stderr = worker.communicate(timeout=20)
+        assert worker.returncode == 0, stderr
+        keys.add(json.loads(stdout)["storage_key"])
+
+    receipts = list((tmp_path / "state" / "upgrades" / "rollbacks").glob("UPG-0001*.json"))
+    bodies = [json.loads(path.read_text(encoding="utf-8")) for path in receipts]
+    assert len(bodies) == 2, "two successful independent rollbacks must not replace either receipt"
+    assert len(keys) == 2
+    assert {body["storage_key"] for body in bodies} == keys
+    assert {body["title"] for body in bodies} == {"First run", "Second run"}
+    for receipt in bodies:
+        body = {key: value for key, value in receipt.items() if key != "receipt_hash"}
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        assert receipt["receipt_hash"] == hashlib.sha256(canonical).hexdigest()
+
+
+def _assert_failure_receipt(state_dir: Path, proposal: UpgradeProposal, restored: list[str]) -> dict:
+    import hashlib
+
+    receipts = list((state_dir / "upgrades" / "rollbacks").glob(f"{proposal.id}*.json"))
+    assert len(receipts) == 1, "a failed rollback must leave its own receipt"
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["proposal_id"] == proposal.id
+    assert receipt["storage_key"] == proposal.storage_key
+    assert receipt["status"] == "failed"
+    assert receipt["restored_files"] == restored
+    assert receipt["error_type"] == "RollbackError"
+    assert receipt["error"]
+    body = {key: value for key, value in receipt.items() if key != "receipt_hash"}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    assert receipt["receipt_hash"] == hashlib.sha256(canonical).hexdigest()
+    return receipt
+
+
+def test_missing_manifest_records_rollback_failure_for_the_named_proposal(tmp_path: Path) -> None:
+    proposal = _proposal()
+    executor = FileUpgradeExecutor(tmp_path)
+    executor._record_history(proposal, "applied")
+
+    with pytest.raises(RollbackError, match="no backup manifest"):
+        FileUpgradeExecutor(tmp_path).rollback_upgrade(proposal)
+
+    receipt = _assert_failure_receipt(tmp_path, proposal, [])
+    assert "no backup manifest" in receipt["error"]
+
+
+def test_missing_backup_records_exactly_the_files_already_restored(tmp_path: Path) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal, "policies.yaml")
+    _applied_change(tmp_path, proposal, "routing.yaml")
+    executor = FileUpgradeExecutor(tmp_path)
+    backup_dir = executor._backup_dir(proposal.storage_key)
+    (backup_dir / "routing.yaml").unlink()
+
+    with pytest.raises(RollbackError, match="recorded a backup"):
+        executor.rollback_upgrade(proposal)
+
+    _assert_failure_receipt(tmp_path, proposal, ["policies.yaml"])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == ORIGINAL
+    assert (executor.config_dir / "routing.yaml").read_text(encoding="utf-8") == CHANGED
+    assert (backup_dir / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("manifest_text", ["invalid json", "[]"])
+def test_invalid_manifest_records_failure_without_changing_files(tmp_path: Path, manifest_text: str) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    executor = FileUpgradeExecutor(tmp_path)
+    manifest = executor._backup_manifest_path(proposal.storage_key)
+    manifest.write_text(manifest_text, encoding="utf-8")
+
+    with pytest.raises(RollbackError, match="backup manifest"):
+        executor.rollback_upgrade(proposal)
+
+    _assert_failure_receipt(tmp_path, proposal, [])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert manifest.read_text(encoding="utf-8") == manifest_text
+
+
+def test_restore_io_failure_is_recorded_and_keeps_its_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bernstein.evolution import applicator
+
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    error = OSError("synthetic restore I/O failure")
+
+    def fail_copy(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(applicator.shutil, "copy2", fail_copy)
+    executor = FileUpgradeExecutor(tmp_path)
+    with pytest.raises(RollbackError, match="synthetic restore I/O failure") as excinfo:
+        executor.rollback_upgrade(proposal)
+
+    assert excinfo.value.__cause__ is error
+    _assert_failure_receipt(tmp_path, proposal, [])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert executor._backup_manifest_path(proposal.storage_key).exists()
+
+
+def test_escaping_manifest_records_failure_without_restoring_outside_config(tmp_path: Path) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    executor = FileUpgradeExecutor(tmp_path)
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("unchanged", encoding="utf-8")
+    manifest = executor._backup_manifest_path(proposal.storage_key)
+    contents = json.dumps({"../outside.yaml": f"backups/{proposal.storage_key}/policies.yaml"})
+    manifest.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(RollbackError, match="resolves outside"):
+        executor.rollback_upgrade(proposal)
+
+    _assert_failure_receipt(tmp_path, proposal, [])
+    assert outside.read_text(encoding="utf-8") == "unchanged"
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == CHANGED
+    assert manifest.read_text(encoding="utf-8") == contents
+
+
+@pytest.mark.parametrize("stage", ["_record_history", "_write_rollback_receipt", "_retire_backup"])
+def test_bookkeeping_failure_records_restored_files_without_retiring_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    proposal = _proposal()
+    _applied_change(tmp_path, proposal)
+    executor = FileUpgradeExecutor(tmp_path)
+    original = getattr(executor, stage)
+    calls = 0
+
+    def fail_once(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(f"synthetic {stage} failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(executor, stage, fail_once)
+    with pytest.raises(RollbackError, match=f"synthetic {stage} failure"):
+        executor.rollback_upgrade(proposal)
+
+    receipts = list((tmp_path / "upgrades" / "rollbacks").glob(f"{proposal.id}*.json"))
+    if stage == "_retire_backup":
+        # The existing success receipt precedes retirement; failure appends its own record.
+        assert len(receipts) == 2
+        failed = [json.loads(path.read_text(encoding="utf-8")) for path in receipts]
+        assert [body["restored_files"] for body in failed if body.get("status") == "failed"] == [["policies.yaml"]]
+    else:
+        _assert_failure_receipt(tmp_path, proposal, ["policies.yaml"])
+    assert (executor.config_dir / "policies.yaml").read_text(encoding="utf-8") == ORIGINAL
+    assert executor._backup_manifest_path(proposal.storage_key).exists()
+
+
+def test_unwritable_failure_receipt_reports_both_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    proposal = _proposal()
+    executor = FileUpgradeExecutor(tmp_path)
+    executor._record_history(proposal, "applied")
+
+    def fail_receipt(*args: object, **kwargs: object) -> None:
+        raise OSError("synthetic receipt store unavailable")
+
+    monkeypatch.setattr(executor, "_write_rollback_receipt", fail_receipt)
+    with pytest.raises(RollbackError, match="failure receipt could not be recorded") as excinfo:
+        executor.rollback_upgrade(proposal)
+
+    assert "no backup manifest" in str(excinfo.value)
+    assert "synthetic receipt store unavailable" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, RollbackError)
+    assert not (executor.upgrades_dir / "rollbacks").exists()

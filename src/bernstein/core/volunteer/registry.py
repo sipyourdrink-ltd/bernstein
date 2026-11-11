@@ -18,9 +18,13 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
-from typing import Protocol
+from collections import deque
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Protocol
 
+from bernstein.core.protocols.volunteer.documents import canonical_bytes, verify_document
+from bernstein.core.security.audit_dsse import EnvelopeFormatError, parse_envelope
 from bernstein.core.security.url_allowlist import (
     StrictHTTPRedirectHandler,
     UrlSchemeError,
@@ -32,6 +36,11 @@ from bernstein.core.volunteer.manifest import (
     VolunteerManifestError,
     load_manifest,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +105,7 @@ class IndexEntry:
     topics: tuple[str, ...]
     license: str
     local_ok: bool
+    added_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +172,9 @@ def _parse_index(body: bytes, source_url: str) -> list[IndexEntry]:
         repo_url = str(entry.get("repo_url", ""))
         if not repo_url:
             continue
+        added_by = entry.get("added_by")
+        if not isinstance(added_by, str):
+            added_by = None
         entries.append(
             IndexEntry(
                 repo_url=repo_url,
@@ -169,6 +182,7 @@ def _parse_index(body: bytes, source_url: str) -> list[IndexEntry]:
                 topics=tuple(entry.get("topics", [])),
                 license=str(entry.get("license", "")),
                 local_ok=bool(entry.get("local_ok", False)),
+                added_by=added_by,
             )
         )
     return entries
@@ -181,6 +195,198 @@ def _merge_dedupe(entries: list[IndexEntry]) -> list[IndexEntry]:
         if entry.repo_url not in seen:
             seen[entry.repo_url] = entry
     return list(seen.values())
+
+
+@dataclass(frozen=True)
+class FederationPolicy:
+    """Donor-selected trust and budgets; unsigned indexes require explicit opt-in.
+
+    Pins and denials use exact URLs. A pin always requires a valid signature;
+    allowing unsigned documents never bypasses a pin or an invalid signature.
+    """
+
+    max_depth: int = 3
+    max_indexes: int = 100
+    pinned_keys: Mapping[str, Ed25519PublicKey] = field(default_factory=dict)
+    allow_unsigned: bool = False
+    denied_indexes: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        for name, minimum in (("max_depth", 0), ("max_indexes", 1)):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ValueError(f"{name} must be an integer >= {minimum}")
+        if not isinstance(self.allow_unsigned, bool):
+            raise ValueError("allow_unsigned must be a boolean")
+        object.__setattr__(self, "pinned_keys", MappingProxyType(dict(self.pinned_keys)))
+        object.__setattr__(self, "denied_indexes", frozenset(self.denied_indexes))
+
+
+@dataclass(frozen=True)
+class FederationResolution:
+    """Discovered pointers and diagnostics; entries never replace real manifests."""
+
+    entries: tuple[IndexEntry, ...]
+    visited_indexes: tuple[str, ...]
+    skipped: tuple[DroppedEntry, ...]
+    cycle_members: tuple[str, ...]
+    conflicting_projects: tuple[str, ...]
+
+    @property
+    def passed(self) -> bool:
+        """Whether traversal completed without refusals or budget truncation."""
+        return not self.skipped
+
+    def as_record(self) -> dict[str, object]:
+        return {
+            "passed": self.passed,
+            "projects": [entry.repo_url for entry in self.entries],
+            "visited_indexes": list(self.visited_indexes),
+            "skipped": [{"index_url": item.repo_url, "reason": item.reason} for item in self.skipped],
+            "cycle_members": list(self.cycle_members),
+            "conflicting_projects": list(self.conflicting_projects),
+        }
+
+
+def _federated_document(body: bytes, url: str, policy: FederationPolicy) -> dict[str, Any]:
+    raw = json.loads(body)
+    if not isinstance(raw, dict):
+        raise ValueError("index must be a JSON object")
+    # Presence matters: an explicit null signature is malformed, not unsigned.
+    has_signature = "signature" in raw
+    signature = raw.pop("signature", None)
+    pin = policy.pinned_keys.get(url)
+    if has_signature:
+        if pin is None:
+            raise ValueError("signature requires a donor-pinned key")
+        if not isinstance(signature, dict):
+            raise ValueError("signature must be a DSSE envelope")
+        try:
+            verified = verify_document(parse_envelope(signature), pin, expected_document_kind="registry-index")
+        except (EnvelopeFormatError, ValueError, TypeError) as exc:
+            raise ValueError(f"signature invalid: {exc}") from exc
+        if not verified.ok:
+            raise ValueError("signature invalid: " + "; ".join(verified.errors))
+        if canonical_bytes(verified.document) != canonical_bytes(raw):
+            raise ValueError("signature document does not match the index")
+    elif pin is not None:
+        raise ValueError("signature required for a pinned index")
+    elif not policy.allow_unsigned:
+        raise ValueError("unsigned index refused by donor policy")
+    version = raw.get("version", 1)
+    if isinstance(version, bool) or not isinstance(version, int) or version not in (1, 2):
+        raise ValueError("index version must be 1 or 2")
+    children = raw.get("indexes", [])
+    if not isinstance(children, list) or any(not isinstance(child, str) or not child for child in children):
+        raise ValueError("indexes must be a list of nonempty URL strings")
+    return raw
+
+
+def _cycle_for_edge(source: str, target: str, graph: dict[str, list[str]]) -> tuple[str, ...]:
+    """Name all members of cycles closed by this edge, excluding diamonds."""
+
+    def reachable(start: str, edges: dict[str, list[str]]) -> set[str]:
+        pending = deque([start])
+        seen: set[str] = set()
+        while pending:
+            node = pending.popleft()
+            if node in seen:
+                continue
+            seen.add(node)
+            pending.extend(child for child in edges.get(node, []) if child not in seen)
+        return seen
+
+    forward = reachable(target, graph)
+    if source not in forward:
+        return ()
+    reverse: dict[str, list[str]] = {}
+    for parent, children in graph.items():
+        for child in children:
+            reverse.setdefault(child, []).append(parent)
+    return tuple(sorted(forward & reachable(source, reverse)))
+
+
+def resolve_indexes(
+    index_urls: list[str],
+    *,
+    policy: FederationPolicy,
+    transport: HTTPTransport | None = None,
+) -> FederationResolution:
+    """Resolve index-of-indexes breadth-first, using exact URLs as identities.
+
+    Root depth is zero. At most max_indexes distinct URLs are scheduled/fetched;
+    mirrored content remains distinct and consumes the same budget. No project
+    manifests are fetched here: conflicts are reported for the browse/join caller.
+    """
+    transport = transport or _UrllibTransport()
+    pending: deque[tuple[str, int]] = deque()
+    seen: set[str] = set()
+    admitted = 0
+    skipped: list[DroppedEntry] = []
+    visited: list[str] = []
+    entries: list[IndexEntry] = []
+    graph: dict[str, list[str]] = {}
+    cycles: set[str] = set()
+    claims: dict[str, bytes] = {}
+    conflicts: set[str] = set()
+
+    def schedule(url: str, depth: int) -> None:
+        nonlocal admitted
+        if url in seen:
+            return
+        seen.add(url)
+        if url in policy.denied_indexes:
+            reason = "index denied by donor policy"
+        elif depth > policy.max_depth:
+            reason = "index exceeds depth limit"
+        elif admitted >= policy.max_indexes:
+            reason = "index count limit reached"
+        else:
+            ok, error = _validate_index_url(url)
+            if ok:
+                pending.append((url, depth))
+                admitted += 1
+                return
+            reason = f"index URL rejected: {error}"
+        skipped.append(DroppedEntry(url, reason))
+
+    for url in index_urls:
+        schedule(url, 0)
+    while pending:
+        url, depth = pending.popleft()
+        visited.append(url)
+        try:
+            response = transport.get(
+                url, headers={"User-Agent": "bernstein-volunteer/1.0", "Accept": "application/json"}
+            )
+            if response.status >= 400:
+                raise ValueError(f"index fetch returned HTTP {response.status}")
+            raw = _federated_document(response.body, url, policy)
+            parsed = _parse_index(canonical_bytes(raw), url)
+        except (ValueError, TypeError, OSError, UrlSchemeError) as exc:
+            skipped.append(DroppedEntry(url, str(exc)))
+            continue
+        entries.extend(parsed)
+        for project in raw.get("projects", []):
+            if not isinstance(project, dict) or not project.get("repo_url"):
+                continue
+            repo = str(project["repo_url"])
+            claim = canonical_bytes({key: value for key, value in project.items() if key != "added_by"})
+            if repo in claims and claims[repo] != claim:
+                conflicts.add(repo)
+            claims.setdefault(repo, claim)
+        # Keep only admitted nodes in the graph so the index budget also bounds
+        # graph traversal. Check each edge before adding it to detect real cycles.
+        graph[url] = []
+        for child in dict.fromkeys(raw.get("indexes", [])):
+            schedule(child, depth + 1)
+            if child not in {item[0] for item in pending} and child not in graph:
+                continue
+            cycles.update(_cycle_for_edge(url, child, graph))
+            graph[url].append(child)
+    return FederationResolution(
+        tuple(_merge_dedupe(entries)), tuple(visited), tuple(skipped), tuple(sorted(cycles)), tuple(sorted(conflicts))
+    )
 
 
 def _manifest_url_for(entry: IndexEntry) -> str:
@@ -247,6 +453,7 @@ def browse_indexes(
     language: str | None = None,
     local_ok_only: bool = False,
     budget_minutes: int | None = None,
+    federation: FederationPolicy | None = None,
 ) -> tuple[list[BrowseResult], list[DroppedEntry]]:
     """Fetch volunteer indexes, merge, dedupe, validate manifests, and filter.
 
@@ -264,30 +471,34 @@ def browse_indexes(
     all_entries: list[IndexEntry] = []
     dropped: list[DroppedEntry] = []
 
-    for index_url in index_urls:
-        ok, err = _validate_index_url(index_url)
-        if not ok:
-            dropped.append(DroppedEntry(repo_url=index_url, reason=f"URL scheme rejected: {err}"))
-            continue
+    if federation is not None:
+        resolution = resolve_indexes(index_urls, policy=federation, transport=transport)
+        all_entries.extend(resolution.entries)
+        dropped.extend(resolution.skipped)
+    else:
+        for index_url in index_urls:
+            ok, err = _validate_index_url(index_url)
+            if not ok:
+                dropped.append(DroppedEntry(repo_url=index_url, reason=f"URL scheme rejected: {err}"))
+                continue
 
-        try:
-            response = transport.get(index_url, headers=headers)
-        except (TimeoutError, OSError, UrlSchemeError) as exc:
-            dropped.append(DroppedEntry(repo_url=index_url, reason=f"index fetch failed: {exc}"))
-            continue
+            try:
+                response = transport.get(index_url, headers=headers)
+            except (TimeoutError, OSError, UrlSchemeError) as exc:
+                dropped.append(DroppedEntry(repo_url=index_url, reason=f"index fetch failed: {exc}"))
+                continue
 
-        if response.status >= 400:
-            dropped.append(DroppedEntry(repo_url=index_url, reason=f"index fetch returned HTTP {response.status}"))
-            continue
+            if response.status >= 400:
+                dropped.append(DroppedEntry(repo_url=index_url, reason=f"index fetch returned HTTP {response.status}"))
+                continue
 
-        try:
-            entries = _parse_index(response.body, index_url)
-        except ValueError as exc:
-            dropped.append(DroppedEntry(repo_url=index_url, reason=str(exc)))
-            continue
+            try:
+                entries = _parse_index(response.body, index_url)
+            except ValueError as exc:
+                dropped.append(DroppedEntry(repo_url=index_url, reason=str(exc)))
+                continue
 
-        all_entries.extend(entries)
-
+            all_entries.extend(entries)
     merged = _merge_dedupe(all_entries)
 
     joinable: list[BrowseResult] = []

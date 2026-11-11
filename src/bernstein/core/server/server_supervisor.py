@@ -31,6 +31,7 @@ from httpx import ConnectError, ReadTimeout
 from bernstein.core.platform_compat import kill_process
 from bernstein.core.process_utils import is_process_alive
 from bernstein.core.runtime_state import SupervisorStateSnapshot, rotate_log_file, write_supervisor_state
+from bernstein.core.server.seed_selection import _apply_selected_seed
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -53,12 +54,14 @@ def supervised_server(
     cluster_enabled: bool = False,
     auth_token: str | None = None,
     evolve_mode: bool = False,
+    seed_path: Path | None = None,
 ) -> int:
     """Launch the task server with automatic restart on crash.
 
     Returns the PID of the supervisor thread's current server process.
     The supervisor runs as a daemon thread - it dies when the main
-    process exits.
+    process exits. An explicit seed_path is resolved once and validated
+    before every launch, then passed only in that child's environment.
     """
     state = _SupervisorState(
         workdir=workdir,
@@ -67,6 +70,7 @@ def supervised_server(
         cluster_enabled=cluster_enabled,
         auth_token=auth_token,
         evolve_mode=evolve_mode,
+        seed_path=seed_path,
     )
 
     # Start initial server
@@ -106,6 +110,7 @@ class _SupervisorState:
         cluster_enabled: bool,
         auth_token: str | None,
         evolve_mode: bool,
+        seed_path: Path | None = None,
     ) -> None:
         self.workdir = workdir
         self.port = port
@@ -113,6 +118,7 @@ class _SupervisorState:
         self.cluster_enabled = cluster_enabled
         self.auth_token = auth_token
         self.evolve_mode = evolve_mode
+        self.seed_path = seed_path.resolve() if seed_path is not None else None
 
         self.current_pid: int = 0
         self.restart_count: int = 0
@@ -130,6 +136,7 @@ class _SupervisorState:
             restart_count=self.restart_count,
             current_pid=self.current_pid,
             last_restart_at=last_restart_at,
+            seed_path=str(self.seed_path) if self.seed_path is not None else None,
         )
 
 
@@ -142,6 +149,7 @@ def _launch_server(state: _SupervisorState) -> int:
     pid_path = workdir / ".sdd" / "runtime" / "server.pid"
 
     env = os.environ.copy()
+    _apply_selected_seed(env, state.seed_path)
     if state.cluster_enabled:
         env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
     env["BERNSTEIN_BIND_HOST"] = bind_host

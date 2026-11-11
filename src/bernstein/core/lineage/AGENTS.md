@@ -12,7 +12,7 @@ Per-artifact provenance in two layers: Lineage v1 (Sigstore-style transparency l
 | `signed_write.py` | `seal_write` / `SignedLineageLog` signed-write path |
 | `coverage.py` | Anchors a `ToolCoverageRecord` (issue #3769) as a `"coverage"`-kind entry keyed by `tool_call_id` (issue #3770). Anchors a `content_hash` commitment only, not the record's bytes - a reader that cannot independently recover the payload must treat the claim as unverified, never fabricate a passing record from the entry alone |
 | `activity.py` | Active-set closure and provenance graph resolution over the receipt ledger |
-| `gate.py` | Lineage CI gate (ADR-009 §6.2) |
+| `gate.py` | Lineage CI gate (ADR-009 section 6.2) |
 | `run_graph.py` | Pairs each fan-out worktree branch with the spine that recorded it: `build_run_graph` returns one `RunGraphNode` per branch (`session_id`, `head_sha`, `run_id`, `spine_head_hash`) plus a deterministic root hash. Pure - it adds no storage and resolves `session_id -> run_id` from a caller-supplied mapping |
 | `merge_provenance.py` | Records one row per path a CLI agent's work lands through a merge (issue #2789). Reads `before..after` so a fast-forward records like a true merge, hashes the git blob rather than the working tree, and names the merge commit in `step_id` - so a third party recomputes every `content_hash` from the repository alone. Recording must never undo a landed merge: `spawner_merge` logs a failure and keeps the merge, and neither reading the base nor writing the rows may gate it |
 | `prov_export.py` | Projects one artefact's ancestry (walk of `parent_hashes`) into W3C PROV-O JSON and Turtle (`bernstein lineage export-prov`). Pure: no clock, env or random source, so two exports of the same ancestry are byte-identical |
@@ -36,4 +36,4 @@ Per-artifact provenance in two layers: Lineage v1 (Sigstore-style transparency l
 
 Single files only, e.g. `uv run pytest tests/unit/test_lineage_record.py -x -q`; the `test_lineage_*.py` files cover entries, stores, signing, and gates. Merge recording is tested against real git repositories, not a stub - what it asserts is that a row's `content_hash` is the blob git stored (`tests/unit/lineage/test_merge_provenance.py`).
 
-<!-- Reviewed 2026-10-16 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->
