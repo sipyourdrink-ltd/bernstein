@@ -1,6 +1,6 @@
-## LangGraph ingest adapter for graph-shaped agent runtimes
+## Graph trace ingest adapter for graph-shaped agent runtimes
 
-Ingests foreign execution traces from graph-shaped agent runtimes (LangGraph) through the ingest adapter plugin boundary without modifying core scheduling logic (#4964).
+Ingests foreign execution traces from graph-shaped agent runtimes through the ingest adapter plugin boundary without modifying core scheduling logic (#4964).
 
 The adapter retains foreign nodes, edges, input/output state and tool calls in its ingested representation, and maps node identities and edges to Bernstein's lineage task graph vocabulary (`RunPlan` / `PlanNode`). Every tool call carries a deterministic digest of its recorded arguments. Graph text renderings remain byte-identical across repeated ingests.
 

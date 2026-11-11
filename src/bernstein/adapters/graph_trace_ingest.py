@@ -1,6 +1,6 @@
-"""Ingest adapter for graph-shaped agent runtimes (LangGraph) (#4964).
+"""Ingest adapter for graph-shaped agent runtimes (#4964).
 
-Accepts execution output from graph-shaped agent runtimes (LangGraph),
+Accepts execution output from graph-shaped agent runtimes,
 validates declared nodes and edge references, digests tool-call
 arguments, and maps the execution into Bernstein's lineage task graph
 vocabulary (:class:`~bernstein.core.lineage.plan_render.RunPlan`).
@@ -55,7 +55,7 @@ def _normalize_args(raw_args: Any) -> Any:
 
 
 @dataclass(frozen=True, slots=True)
-class LangGraphToolCall:
+class GraphTraceToolCall:
     """A tool call invoked during a graph node's execution."""
 
     name: str
@@ -65,7 +65,7 @@ class LangGraphToolCall:
     output: Any = None
 
     @classmethod
-    def from_dict(cls, raw: Mapping[str, Any]) -> LangGraphToolCall:
+    def from_dict(cls, raw: Mapping[str, Any]) -> GraphTraceToolCall:
         name = str(raw.get("name") or raw.get("tool") or "")
         tool_call_id = str(raw.get("id") or raw.get("tool_call_id") or "")
         args = _normalize_args(raw.get("args", raw.get("arguments", {})))
@@ -100,18 +100,18 @@ class LangGraphToolCall:
 
 
 @dataclass(frozen=True, slots=True)
-class LangGraphNode:
-    """One node in a LangGraph execution graph."""
+class GraphTraceNode:
+    """One node in a graph trace execution graph."""
 
     id: str
     name: str
     role: str = ""
     inputs: dict[str, Any] = field(default_factory=dict)
     outputs: dict[str, Any] = field(default_factory=dict)
-    tool_calls: tuple[LangGraphToolCall, ...] = ()
+    tool_calls: tuple[GraphTraceToolCall, ...] = ()
 
     @classmethod
-    def from_dict(cls, raw: Mapping[str, Any]) -> LangGraphNode:
+    def from_dict(cls, raw: Mapping[str, Any]) -> GraphTraceNode:
         node_id = str(raw.get("id") or raw.get("name") or "")
         name = str(raw.get("name") or node_id)
         role = str(raw.get("role") or "")
@@ -126,7 +126,7 @@ class LangGraphNode:
         for index, tool in enumerate(raw_tools):
             if not isinstance(tool, dict):
                 raise ValueError(f"Tool call at index {index} must be a dictionary")
-            tools.append(LangGraphToolCall.from_dict(tool))
+            tools.append(GraphTraceToolCall.from_dict(tool))
         return cls(
             id=node_id,
             name=name,
@@ -148,15 +148,15 @@ class LangGraphNode:
 
 
 @dataclass(frozen=True, slots=True)
-class LangGraphEdge:
-    """A directed edge between nodes in a LangGraph graph."""
+class GraphTraceEdge:
+    """A directed edge between nodes in a graph trace."""
 
     source: str
     target: str
     conditional: bool = False
 
     @classmethod
-    def from_dict(cls, raw: Mapping[str, Any]) -> LangGraphEdge:
+    def from_dict(cls, raw: Mapping[str, Any]) -> GraphTraceEdge:
         return cls(
             source=str(raw.get("source") or ""),
             target=str(raw.get("target") or ""),
@@ -173,12 +173,12 @@ class LangGraphEdge:
 
 @dataclass(frozen=True, slots=True)
 class IngestedGraphRun:
-    """Ingested representation of a foreign LangGraph run."""
+    """Ingested representation of a foreign graph trace run."""
 
     run_id: str
     graph_id: str
-    nodes: tuple[LangGraphNode, ...]
-    edges: tuple[LangGraphEdge, ...]
+    nodes: tuple[GraphTraceNode, ...]
+    edges: tuple[GraphTraceEdge, ...]
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -213,7 +213,7 @@ class IngestedGraphRun:
             for node in sorted(self.nodes, key=lambda n: n.id)
         )
         return RunPlan(
-            goal=goal or f"LangGraph foreign run: {self.graph_id}",
+            goal=goal or f"Graph trace foreign run: {self.graph_id}",
             nodes=plan_nodes,
             recorded=True,
         )
@@ -226,14 +226,14 @@ class IngestedGraphRun:
         return render_plan_text(plan, run_id=self.run_id)
 
 
-class LangGraphIngestAdapter:
-    """Adapter translating LangGraph run traces into governed ingest events."""
+class GraphTraceIngestAdapter:
+    """Adapter translating graph runtime traces into governed ingest events."""
 
     DECLARATION = IngestAdapterDeclaration(
-        name="langgraph",
+        name="graph_trace_ingest",
         version="1.0.0",
         declared_event_types=("gen_ai_activity", "untyped_activity"),
-        summary="Ingest adapter for graph-shaped LangGraph runtimes.",
+        summary="Ingest adapter for graph-shaped agent runtimes.",
     )
 
     def validate_declaration(self, declaration: IngestAdapterDeclaration) -> None:
@@ -260,28 +260,28 @@ class LangGraphIngestAdapter:
         elif isinstance(data, Mapping):
             raw_dict = dict(data)
         else:
-            raise TypeError(f"Unsupported data type for LangGraph trace: {type(data)}")
+            raise TypeError(f"Unsupported data type for Graph trace: {type(data)}")
 
         if not isinstance(raw_dict, dict):
-            raise ValueError("LangGraph trace must be a JSON object")
+            raise ValueError("Graph trace must be a JSON object")
 
         raw_meta = raw_dict.get("metadata")
         if raw_meta is not None and not isinstance(raw_meta, dict):
-            raise ValueError("LangGraph trace 'metadata' must be a dictionary when present")
+            raise ValueError("Graph trace 'metadata' must be a dictionary when present")
 
-        run_id = str(raw_dict.get("run_id") or "foreign-langgraph-run")
-        graph_id = str(raw_dict.get("graph_id") or "langgraph-graph")
+        run_id = str(raw_dict.get("run_id") or "foreign-graph-trace-run")
+        graph_id = str(raw_dict.get("graph_id") or "graph-trace-graph")
 
         raw_nodes = raw_dict.get("nodes")
         if not isinstance(raw_nodes, list):
-            raise ValueError("LangGraph trace must contain a 'nodes' list")
+            raise ValueError("Graph trace must contain a 'nodes' list")
 
-        nodes: list[LangGraphNode] = []
+        nodes: list[GraphTraceNode] = []
         seen_node_ids: set[str] = set()
         for idx, item in enumerate(raw_nodes):
             if not isinstance(item, dict):
                 raise ValueError(f"Node at index {idx} must be a dictionary")
-            node = LangGraphNode.from_dict(item)
+            node = GraphTraceNode.from_dict(item)
             if not node.id:
                 raise ValueError(f"Node at index {idx} is missing an 'id' or 'name'")
             if node.id in seen_node_ids:
@@ -293,13 +293,13 @@ class LangGraphIngestAdapter:
         if raw_edges is None:
             raw_edges = []
         if not isinstance(raw_edges, list):
-            raise ValueError("LangGraph trace 'edges' must be a list when present")
+            raise ValueError("Graph trace 'edges' must be a list when present")
 
-        edges: list[LangGraphEdge] = []
+        edges: list[GraphTraceEdge] = []
         for idx, e in enumerate(raw_edges):
             if not isinstance(e, dict):
                 raise ValueError(f"Edge at index {idx} must be a dictionary")
-            edge = LangGraphEdge.from_dict(e)
+            edge = GraphTraceEdge.from_dict(e)
             if not edge.source or not edge.target:
                 raise ValueError(f"Edge at index {idx} must have non-empty source and target")
             edges.append(edge)
@@ -325,17 +325,17 @@ class LangGraphIngestAdapter:
         )
 
 
-class LangGraphCallbackHandler:
+class GraphTraceCallbackHandler:
     """Hand-driven callback recorder producing an ingestable trace.
 
     Records the callback shapes tested here without third-party dependencies.
-    Conformance to a real LangChain/LangGraph runtime is a separate integration.
+    Conformance to a real graph-shaped agent runtime is a separate integration.
     Payloads must be JSON-compatible and nested chain events must be balanced;
     parent-run routing, error callbacks and runtime-object serialization are not
     provided by this recorder.
     """
 
-    def __init__(self, run_id: str, graph_id: str = "langgraph") -> None:
+    def __init__(self, run_id: str, graph_id: str = "graph_trace") -> None:
         self.run_id = run_id
         self.graph_id = graph_id
         self._nodes: list[dict[str, Any]] = []
@@ -411,7 +411,7 @@ class LangGraphCallbackHandler:
             self._last_node_id = current_node["id"]
 
     def export_trace(self) -> dict[str, Any]:
-        """Export accumulated run trace in LangGraph ingest format."""
+        """Export accumulated run trace in graph trace ingest format."""
         return {
             "run_id": self.run_id,
             "graph_id": self.graph_id,
@@ -420,22 +420,22 @@ class LangGraphCallbackHandler:
         }
 
 
-class LangGraphIngestPlugin:
-    """Plugin registering the LangGraph ingest adapter into Bernstein."""
+class GraphTraceIngestPlugin:
+    """Plugin registering the graph trace ingest adapter into Bernstein."""
 
     @hookimpl
     def provide_ingest_adapter(self) -> IngestAdapterDeclaration:
-        adapter = LangGraphIngestAdapter()
+        adapter = GraphTraceIngestAdapter()
         adapter.validate_declaration(adapter.DECLARATION)
         return adapter.DECLARATION
 
 
 __all__ = [
+    "GraphTraceCallbackHandler",
+    "GraphTraceEdge",
+    "GraphTraceIngestAdapter",
+    "GraphTraceIngestPlugin",
+    "GraphTraceNode",
+    "GraphTraceToolCall",
     "IngestedGraphRun",
-    "LangGraphCallbackHandler",
-    "LangGraphEdge",
-    "LangGraphIngestAdapter",
-    "LangGraphIngestPlugin",
-    "LangGraphNode",
-    "LangGraphToolCall",
 ]

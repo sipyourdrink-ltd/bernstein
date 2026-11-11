@@ -1,4 +1,4 @@
-"""Tests for LangGraph foreign runtime ingest adapter (issue #4964).
+"""Tests for graph trace ingest adapter (issue #4964).
 
 Proof assertions from #4964:
 - a synthetic fixture ingests to a graph whose nodes and edges match the source;
@@ -17,16 +17,16 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.adapters.langgraph_ingest import (
-    LangGraphCallbackHandler,
-    LangGraphIngestAdapter,
-    LangGraphIngestPlugin,
+from bernstein.adapters.graph_trace_ingest import (
+    GraphTraceCallbackHandler,
+    GraphTraceIngestAdapter,
+    GraphTraceIngestPlugin,
 )
 from bernstein.core.observability.ingest_contract import IngestAdapterDeclaration
 from bernstein.core.trackers import registry
 from bernstein.plugins.manager import PluginManager
 
-FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "govern" / "langgraph_run.json"
+FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "govern" / "graph_trace_run.json"
 
 
 @pytest.fixture(autouse=True)
@@ -35,8 +35,8 @@ def isolated_ingest_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def adapter() -> LangGraphIngestAdapter:
-    return LangGraphIngestAdapter()
+def adapter() -> GraphTraceIngestAdapter:
+    return GraphTraceIngestAdapter()
 
 
 @pytest.fixture
@@ -44,8 +44,8 @@ def raw_fixture() -> dict:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
-def test_langgraph_fixture_ingests_to_matching_graph(
-    adapter: LangGraphIngestAdapter,
+def test_graph_trace_fixture_ingests_to_matching_graph(
+    adapter: GraphTraceIngestAdapter,
     raw_fixture: dict,
 ) -> None:
     """Nodes and edges from the source fixture are faithfully preserved."""
@@ -64,7 +64,7 @@ def test_langgraph_fixture_ingests_to_matching_graph(
 
 
 def test_every_tool_call_has_arguments_digest(
-    adapter: LangGraphIngestAdapter,
+    adapter: GraphTraceIngestAdapter,
 ) -> None:
     """Every tool call in the fixture appears with a sha256 digest of its arguments."""
     run = adapter.ingest_trace(FIXTURE_PATH)
@@ -80,7 +80,7 @@ def test_every_tool_call_has_arguments_digest(
 
 
 def test_rendered_graph_is_byte_identical_across_two_ingests(
-    adapter: LangGraphIngestAdapter,
+    adapter: GraphTraceIngestAdapter,
 ) -> None:
     """Determinism property: two ingests of the same fixture produce identical bytes."""
     run_1 = adapter.ingest_trace(FIXTURE_PATH)
@@ -97,7 +97,7 @@ def test_rendered_graph_is_byte_identical_across_two_ingests(
 
 
 def test_node_missing_from_ingest_fails_rather_than_silently_shrinking(
-    adapter: LangGraphIngestAdapter,
+    adapter: GraphTraceIngestAdapter,
     raw_fixture: dict,
 ) -> None:
     """A node present in source but missing/dropped in ingest fails validation."""
@@ -116,12 +116,12 @@ def test_node_missing_from_ingest_fails_rather_than_silently_shrinking(
 
 
 def test_tool_call_with_list_arguments(
-    adapter: LangGraphIngestAdapter,
+    adapter: GraphTraceIngestAdapter,
 ) -> None:
     """Tool calls with list arguments (raw or JSON string) parse and digest without crash."""
-    from bernstein.adapters.langgraph_ingest import LangGraphToolCall
+    from bernstein.adapters.graph_trace_ingest import GraphTraceToolCall
 
-    tc_list = LangGraphToolCall.from_dict(
+    tc_list = GraphTraceToolCall.from_dict(
         {
             "name": "batch_search",
             "id": "call_1",
@@ -131,7 +131,7 @@ def test_tool_call_with_list_arguments(
     assert tc_list.arguments == [1, 2, 3]
     assert tc_list.arguments_digest.startswith("sha256:")
 
-    tc_json_list = LangGraphToolCall.from_dict(
+    tc_json_list = GraphTraceToolCall.from_dict(
         {
             "name": "batch_search",
             "id": "call_2",
@@ -144,7 +144,7 @@ def test_tool_call_with_list_arguments(
 
 def test_callback_handler_preserves_graph_cycles() -> None:
     """Nodes executing multiple times in loops/cycles are preserved without overwriting."""
-    handler = LangGraphCallbackHandler(run_id="run-cycle", graph_id="cycle-graph")
+    handler = GraphTraceCallbackHandler(run_id="run-cycle", graph_id="cycle-graph")
 
     # Step 1: agent runs
     handler.on_chain_start(serialized={"name": "agent"}, inputs={"msg": "start"}, name="agent")
@@ -169,7 +169,7 @@ def test_callback_handler_preserves_graph_cycles() -> None:
 
 
 def test_lineage_run_plan_mapping(
-    adapter: LangGraphIngestAdapter,
+    adapter: GraphTraceIngestAdapter,
 ) -> None:
     """Foreign graph maps directly to Bernstein's RunPlan and PlanNode vocabulary."""
     run = adapter.ingest_trace(FIXTURE_PATH)
@@ -184,11 +184,11 @@ def test_lineage_run_plan_mapping(
     assert node_by_id["synthesizer"].depends_on == ("retriever",)
 
 
-def test_langgraph_callback_handler_records_trace(
-    adapter: LangGraphIngestAdapter,
+def test_graph_trace_callback_handler_records_trace(
+    adapter: GraphTraceIngestAdapter,
 ) -> None:
-    """LangGraphCallbackHandler intercepts execution callbacks into an ingestable trace."""
-    handler = LangGraphCallbackHandler(run_id="run-cb-123", graph_id="agent-graph")
+    """GraphTraceCallbackHandler intercepts execution callbacks into an ingestable trace."""
+    handler = GraphTraceCallbackHandler(run_id="run-cb-123", graph_id="agent-graph")
 
     # Step 1: node 1
     handler.on_chain_start(
@@ -230,28 +230,28 @@ def test_langgraph_callback_handler_records_trace(
 
 def test_plugin_contract_integration(tmp_path: Path) -> None:
     """Plugin conforms to provide_ingest_adapter hook and registers cleanly."""
-    plugin = LangGraphIngestPlugin()
+    plugin = GraphTraceIngestPlugin()
     decl = plugin.provide_ingest_adapter()
 
     assert isinstance(decl, IngestAdapterDeclaration)
-    assert decl.name == "langgraph"
+    assert decl.name == "graph_trace_ingest"
     assert "gen_ai_activity" in decl.declared_event_types
     assert "untyped_activity" in decl.declared_event_types
 
     pm = PluginManager(workdir=tmp_path)
-    pm.register(plugin, name="langgraph-ingest-plugin")
+    pm.register(plugin, name="graph-trace-ingest-plugin")
     added = pm.collect_plugin_ingest_adapters()
     assert added == 1
-    assert registry._ingest_declarations["langgraph"] == decl
+    assert registry._ingest_declarations["graph_trace_ingest"] == decl
     assert pm.collect_plugin_ingest_adapters() == 0
 
 
-def test_tool_call_arguments_digest_mismatch_raises(adapter: LangGraphIngestAdapter) -> None:
+def test_tool_call_arguments_digest_mismatch_raises(adapter: GraphTraceIngestAdapter) -> None:
     """Declared arguments_digest that does not match computed digest raises ValueError."""
-    from bernstein.adapters.langgraph_ingest import LangGraphToolCall
+    from bernstein.adapters.graph_trace_ingest import GraphTraceToolCall
 
     with pytest.raises(ValueError, match="arguments_digest mismatch"):
-        LangGraphToolCall.from_dict(
+        GraphTraceToolCall.from_dict(
             {
                 "name": "search",
                 "args": {"q": "test"},
@@ -260,7 +260,7 @@ def test_tool_call_arguments_digest_mismatch_raises(adapter: LangGraphIngestAdap
         )
 
 
-def test_duplicate_node_id_fails(adapter: LangGraphIngestAdapter, raw_fixture: dict) -> None:
+def test_duplicate_node_id_fails(adapter: GraphTraceIngestAdapter, raw_fixture: dict) -> None:
     """Duplicate node ids in graph nodes raise ValueError."""
     tampered = copy.deepcopy(raw_fixture)
     tampered["nodes"].append(copy.deepcopy(tampered["nodes"][0]))
@@ -268,7 +268,7 @@ def test_duplicate_node_id_fails(adapter: LangGraphIngestAdapter, raw_fixture: d
         adapter.ingest_trace(tampered)
 
 
-def test_malformed_edge_missing_target_fails(adapter: LangGraphIngestAdapter, raw_fixture: dict) -> None:
+def test_malformed_edge_missing_target_fails(adapter: GraphTraceIngestAdapter, raw_fixture: dict) -> None:
     """Edges missing source or target raise ValueError."""
     tampered = copy.deepcopy(raw_fixture)
     tampered["edges"].append({"source": "router", "target": ""})
@@ -276,7 +276,7 @@ def test_malformed_edge_missing_target_fails(adapter: LangGraphIngestAdapter, ra
         adapter.ingest_trace(tampered)
 
 
-def test_ingest_trace_from_str_path(adapter: LangGraphIngestAdapter) -> None:
+def test_ingest_trace_from_str_path(adapter: GraphTraceIngestAdapter) -> None:
     """Only an explicit Path permits reading local files; strings are JSON."""
     with pytest.raises(json.JSONDecodeError):
         adapter.ingest_trace(str(FIXTURE_PATH))
@@ -287,23 +287,23 @@ def test_ingest_trace_from_str_path(adapter: LangGraphIngestAdapter) -> None:
     [{"query": "café"}, [1, 2], "plain text", '{"query":"café"}', "[1,2]", "42", 42, 0, False, ""],
 )
 def test_callback_arguments_round_trip_with_a_digest_of_the_recorded_value(arguments: object) -> None:
-    handler = LangGraphCallbackHandler(run_id="round-trip")
+    handler = GraphTraceCallbackHandler(run_id="round-trip")
     handler.on_chain_start({"name": "agent"}, {})
     handler.on_tool_start({"name": "search"}, args=arguments)
     handler.on_chain_end({"done": True})
 
-    run = LangGraphIngestAdapter().ingest_trace(handler.export_trace())
+    run = GraphTraceIngestAdapter().ingest_trace(handler.export_trace())
     tool = run.nodes[0].tool_calls[0]
     canonical = json.dumps(tool.arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert tool.arguments_digest == "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     assert (
-        LangGraphIngestAdapter().ingest_trace(json.loads(run.canonical_bytes())).canonical_bytes()
+        GraphTraceIngestAdapter().ingest_trace(json.loads(run.canonical_bytes())).canonical_bytes()
         == run.canonical_bytes()
     )
 
 
 def test_nested_callbacks_preserve_outer_outputs_and_tools_after_the_inner_chain() -> None:
-    handler = LangGraphCallbackHandler(run_id="nested")
+    handler = GraphTraceCallbackHandler(run_id="nested")
     handler.on_chain_start({"name": "outer"}, {}, run_id="outer")
     handler.on_tool_start({"name": "before"}, args={"step": 1})
     handler.on_tool_end({"result": "before"})
@@ -315,7 +315,7 @@ def test_nested_callbacks_preserve_outer_outputs_and_tools_after_the_inner_chain
     handler.on_tool_end({"result": "after"})
     handler.on_chain_end({"result": "outer"})
 
-    nodes = {node.id: node for node in LangGraphIngestAdapter().ingest_trace(handler.export_trace()).nodes}
+    nodes = {node.id: node for node in GraphTraceIngestAdapter().ingest_trace(handler.export_trace()).nodes}
     assert nodes["outer"].outputs == {"result": "outer"}
     assert [tool.name for tool in nodes["outer"].tool_calls] == ["before", "after"]
     assert nodes["outer"].tool_calls[-1].output == {"result": "after"}
@@ -326,7 +326,7 @@ def test_nested_callbacks_preserve_outer_outputs_and_tools_after_the_inner_chain
 @pytest.mark.parametrize("tool_calls", [["unparsed"], [None], [{"name": "valid"}, 42], "unparsed", {}])
 def test_malformed_tool_calls_fail_explicitly_instead_of_disappearing(tool_calls: object) -> None:
     with pytest.raises(ValueError, match="tool_calls|Tool call"):
-        LangGraphIngestAdapter().ingest_trace({"nodes": [{"id": "agent", "tool_calls": tool_calls}]})
+        GraphTraceIngestAdapter().ingest_trace({"nodes": [{"id": "agent", "tool_calls": tool_calls}]})
 
 
 def test_json_trace_strings_never_probe_the_local_filesystem(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,31 +334,31 @@ def test_json_trace_strings_never_probe_the_local_filesystem(monkeypatch: pytest
         pytest.fail("A JSON trace string must not be inspected as a local path")
 
     monkeypatch.setattr(Path, "is_file", prohibited)
-    assert LangGraphIngestAdapter().ingest_trace('{"nodes": []}').nodes == ()
+    assert GraphTraceIngestAdapter().ingest_trace('{"nodes": []}').nodes == ()
 
 
 @pytest.mark.parametrize("arguments", [0, False, "", None, []])
 def test_falsey_arguments_are_preserved_instead_of_replaced_by_an_empty_object(arguments: object) -> None:
-    from bernstein.adapters.langgraph_ingest import LangGraphToolCall
+    from bernstein.adapters.graph_trace_ingest import GraphTraceToolCall
 
-    tool = LangGraphToolCall.from_dict({"name": "tool", "args": arguments})
+    tool = GraphTraceToolCall.from_dict({"name": "tool", "args": arguments})
     assert tool.arguments == (arguments if isinstance(arguments, list) else {"raw": arguments})
 
 
 @pytest.mark.parametrize("edges", [{}, "", False])
 def test_malformed_edge_collections_do_not_disappear_when_falsey(edges: object) -> None:
     with pytest.raises(ValueError, match="edges.*list"):
-        LangGraphIngestAdapter().ingest_trace({"nodes": [], "edges": edges})
+        GraphTraceIngestAdapter().ingest_trace({"nodes": [], "edges": edges})
 
 
 @pytest.mark.parametrize("payload", ["[]", "null", "42"])
 def test_json_trace_requires_an_object_with_a_graph(payload: str) -> None:
     with pytest.raises(ValueError, match="object"):
-        LangGraphIngestAdapter().ingest_trace(payload)
+        GraphTraceIngestAdapter().ingest_trace(payload)
 
 
 def test_plugin_rejects_an_unknown_event_declaration_before_registration(monkeypatch: pytest.MonkeyPatch) -> None:
-    invalid = IngestAdapterDeclaration("langgraph", "1.0.0", ("unknown_activity",))
-    monkeypatch.setattr(LangGraphIngestAdapter, "DECLARATION", invalid)
+    invalid = IngestAdapterDeclaration("graph_trace_ingest", "1.0.0", ("unknown_activity",))
+    monkeypatch.setattr(GraphTraceIngestAdapter, "DECLARATION", invalid)
     with pytest.raises(ValueError, match="unknown event types"):
-        LangGraphIngestPlugin().provide_ingest_adapter()
+        GraphTraceIngestPlugin().provide_ingest_adapter()

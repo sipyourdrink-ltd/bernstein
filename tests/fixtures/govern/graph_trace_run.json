@@ -13,7 +13,7 @@
   ],
   "graph_id": "compliance-assistant-graph",
   "metadata": {
-    "framework": "langgraph",
+    "framework": "graph-shaped agent runtime",
     "runtime_version": "0.2.14",
     "thread_id": "thread-1092"
   },
@@ -88,5 +88,5 @@
       ]
     }
   ],
-  "run_id": "langgraph-run-7a8b9c"
+  "run_id": "graph-trace-run-7a8b9c"
 }
