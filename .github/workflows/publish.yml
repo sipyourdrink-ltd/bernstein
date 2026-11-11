@@ -602,10 +602,8 @@ jobs:
           #
           # 2.4 rather than 2.5: 2.5 imports `rich` at module scope but
           # declares only `copr, humanize, jinja2, setuptools`, so a clean
-          # install of it produces a CLI that cannot start. The pin and its
-          # hashed dependency set live in .github/requirements/.
-          python3 -m pip install --disable-pip-version-check --require-hashes \
-            -r .github/requirements/copr-cli-requirements.txt
+          # install of it produces a CLI that cannot start.
+          python3 -m pip install --disable-pip-version-check "copr-cli==2.4"
           command -v rpmbuild
           # Run the CLI once here: an install that cannot import fails in this
           # step rather than after the API token is written to disk.
@@ -843,7 +841,7 @@ jobs:
           attempt=0
           while :; do
             attempt=$((attempt + 1))
-            token=$(curl -fsSL "$token_url" | jq -r '.token // ""' 2>/dev/null || true)
+            token=$(curl -fsSL "$token_url" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
             status=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" "$manifest_url" || echo "000")
             if [ "$status" = "200" ]; then
               echo "image present after ${attempt} attempt(s): ${OCI_REF}"
