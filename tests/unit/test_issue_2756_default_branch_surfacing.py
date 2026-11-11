@@ -67,14 +67,19 @@ def _write_refusal(
     branch: str = "main",
     ts: float | None = None,
     session_id: str = "manager-1",
+    reason: str | None = "target-is-default-branch",
+    detail: str | None = None,
 ) -> None:
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    entry = {
+    entry: dict[str, object] = {
         "session_id": session_id,
         "branch": branch,
-        "reason": "target-is-default-branch",
         "ts": time.time() if ts is None else ts,
     }
+    if reason is not None:
+        entry["reason"] = reason
+    if detail is not None:
+        entry["detail"] = detail
     with (runtime_dir / "refused_merges.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry) + "\n")
 
@@ -292,6 +297,61 @@ class TestCliSummarySurfacesRefusals:
         assert OVERRIDE_ENV in out
         assert "checkout" in out
 
+    def test_gate_refusal_names_the_gate_and_withholds_the_branch_remedy(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write_refusal(
+            tmp_path / ".sdd" / "runtime",
+            branch="agent/backend-1a2b",
+            session_id="backend-1a2b",
+            reason="quality-gates-blocked",
+            detail="refused: quality gates blocked merge for task T-1: quality_gate:lint",
+        )
+        con = make_console(no_color=True)
+
+        _surface_merge_refusals(tmp_path, since_ts=0.0, console=con)
+
+        out = " ".join(capsys.readouterr().out.split())
+        assert "merge gates" in out
+        assert "agent/backend-1a2b: quality-gates-blocked" in out
+        assert "quality_gate:lint" in out
+        # A failed gate is not fixed by switching branches or by the override.
+        assert "default branch" not in out
+        assert "git checkout -b" not in out
+
+    def test_mixed_refusals_get_one_warning_each(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        runtime_dir = tmp_path / ".sdd" / "runtime"
+        _write_refusal(runtime_dir, branch="main", session_id="manager-1")
+        _write_refusal(
+            runtime_dir,
+            branch="agent/qa-9f",
+            session_id="qa-9f",
+            reason="allowed-files-scope",
+        )
+        con = make_console(no_color=True)
+
+        _surface_merge_refusals(tmp_path, since_ts=0.0, console=con)
+
+        out = " ".join(capsys.readouterr().out.split())
+        assert "1 session(s) was NOT merged onto default branch 'main'" in out
+        assert "git checkout -b" in out
+        assert "agent/qa-9f: allowed-files-scope" in out
+        # The gated agent branch is never presented as the default branch.
+        assert "'agent/qa-9f'" not in out
+
+    def test_journal_line_without_reason_reads_as_default_branch_refusal(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write_refusal(tmp_path / ".sdd" / "runtime", branch="master", reason=None)
+        con = make_console(no_color=True)
+
+        _surface_merge_refusals(tmp_path, since_ts=0.0, console=con)
+
+        out = " ".join(capsys.readouterr().out.split())
+        assert "onto default branch 'master'" in out
+        assert OVERRIDE_ENV in out
+        assert "merge gates" not in out
+
     def test_stale_refusals_from_prior_runs_stay_silent(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -364,6 +424,14 @@ class TestReadMergeRefusals:
         assert refusals[0].session_id == "fresh"
         assert refusals[0].branch == "main"
         assert refusals[0].reason == "target-is-default-branch"
+
+    def test_reads_detail_when_recorded(self, tmp_path: Path) -> None:
+        _write_refusal(tmp_path, branch="agent/x", reason="blast-radius-ceiling", detail="score 9 > 5")
+        _write_refusal(tmp_path, branch="main")
+
+        refusals = read_merge_refusals(tmp_path)
+
+        assert [r.detail for r in refusals] == ["score 9 > 5", ""]
 
     def test_missing_journal_returns_empty(self, tmp_path: Path) -> None:
         assert read_merge_refusals(tmp_path) == []

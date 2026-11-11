@@ -1,6 +1,6 @@
 # Stage 1: build
 # python:3.13-slim
-FROM python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285 AS build
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS build
 
 WORKDIR /app
 COPY . /app
@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir hatchling==1.29.0 && \
 
 # Stage 2: runtime
 # python:3.13-slim
-FROM python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
 
 LABEL org.opencontainers.image.title="bernstein" \
       org.opencontainers.image.description="The open-source governance layer for AI agents (runs Claude Code, Codex, Gemini CLI, and 40+ more). No model in the coordination loop, so replaying a plan reproduces its task graph byte-identically." \

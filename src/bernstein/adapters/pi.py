@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 
+#: Pi's switch that turns off extension discovery (``-ne``); explicit ``-e``
+#: paths would still load.
+_NO_EXTENSIONS = "--no-extensions"
+
 
 class PiAdapter(CLIAdapter):
     """Spawn and monitor Pi (``pi-coding-agent``) CLI sessions.
@@ -46,7 +50,8 @@ class PiAdapter(CLIAdapter):
             model_config: Model and effort configuration. The selected model
                 is passed through to Pi when it is not ``auto``.
             session_id: Unique session identifier used for the log file.
-            mcp_config: Unused. Pi manages its own integrations.
+            mcp_config: Unused. Pi has no MCP of its own, and extension
+                discovery is turned off so none reaches it by that route.
             timeout_seconds: Watchdog timeout in seconds.
             task_scope: Unused scope hint.
             budget_multiplier: Unused budget multiplier.
@@ -63,7 +68,13 @@ class PiAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = ["pi"]
+        # Pi has no MCP of its own; MCP servers reach it as extensions, and pi
+        # discovers those from the user's ~/.pi/agent/extensions/ and the
+        # repository's .pi/extensions/. Without this flag every spawned agent
+        # loaded the operator's personal extensions -- their MCP servers
+        # included -- into a run bernstein never configured them for (#5965).
+        # bernstein passes pi no extension of its own, so none is lost.
+        cmd = ["pi", _NO_EXTENSIONS]
         if model_config.model and model_config.model.lower() != "auto":
             cmd.extend(["--model", model_config.model])
         cmd.append(prompt)

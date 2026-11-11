@@ -125,7 +125,7 @@ receipt instead of proceeding.
 ### 1. Run with a reliability budget
 
 ```bash
-bernstein bench run golden-v1 --reliability 5 --out reliability.json
+bernstein bench run golden-v1 --reliability 5 --out reliability.json --stub-signer
 ```
 
 ```
@@ -133,6 +133,11 @@ pass^5 floor : 80.0%  (all 5 attempts must pass)
 pass@1       : 100.0%  (any attempt passed — the ceiling)
 coordination : held fixed
 ```
+
+`--reliability` has no production adapter for any suite yet: it scores through
+the synthetic `MockReplayAdapter` (every task passes), so the receipt carries
+`"adapter": "mock"` in its `scheduler_config`. Without `--stub-signer` the
+command refuses rather than sign that with the install identity.
 
 `bernstein eval --reliability k` (the spelling issue #2933 asked for) is a
 thin alias for the same command: it accepts `--suite`, `--out`,

@@ -1,8 +1,9 @@
 {
   "artefacts": {
-    "article12-evidence.zip": "937a4e62664de214fb2d2efbfc1e363cf17ab60e5eec6722e5797113a5020744",
-    "audit-receipt.json": "6345ad3680f6512ce7dcd2622946e89ef8f57ad38132c91687b80c6bb22d7350",
-    "run-receipt.json": "7f5228200ad24db85028acbeebcfbad73899bfed726117087a43e407900e9329"
+    "article12-evidence.zip": "683bb224242bb7c5f1ec6bebf43d4c9df9f0be951af30fffba83d6b8857b78b6",
+    "audit-receipt.json": "c6b6d9555493fa33eaa37c62266b59275e15e774968b8ebf2a177627a7c64818",
+    "run-receipt.cose": "d48184facc46482535769f6a2caf69d56fafcd94673b55c10041a6250f14ddd3",
+    "run-receipt.json": "6a0607b50022ace43e9b6a37247e41465f3e67a9b1b95d3a5ced1ab4458a7d85"
   },
   "run_id": "run-auditor-conformance",
   "scenario": [

@@ -167,7 +167,7 @@ def test_audit_no_verifier_files_exit_0(filename: str, tmp_path: Path, monkeypat
     monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(key_dir))
 
     runner = CliRunner()
-    result = runner.invoke(govern_group, ["audit"])
+    result = runner.invoke(govern_group, ["audit-keys"])
     assert result.exit_code == 0, result.output
     assert "up to date" in result.output
 
@@ -186,7 +186,7 @@ def test_audit_current_keyid_exit_0(filename: str, tmp_path: Path, monkeypatch: 
     verifier_dir.joinpath(filename).write_text(json.dumps({"keys": [{"kid": current_keyid}]}))
 
     runner = CliRunner()
-    result = runner.invoke(govern_group, ["audit"])
+    result = runner.invoke(govern_group, ["audit-keys"])
     assert result.exit_code == 0, result.output
     assert "up to date" in result.output
 
@@ -208,7 +208,7 @@ def test_audit_stale_keyid_exit_2(filename: str, tmp_path: Path, monkeypatch: py
     monkeypatch.setenv(http_signing.ENV_KEY_DIR, str(second_key_dir))
 
     runner = CliRunner()
-    result = runner.invoke(govern_group, ["audit"])
+    result = runner.invoke(govern_group, ["audit-keys"])
     assert result.exit_code == 2, result.output
     assert "stale" in result.output.lower() or "predates" in result.output.lower()
 
@@ -226,6 +226,6 @@ def test_audit_unreadable_verifier_exit_1(filename: str, tmp_path: Path, monkeyp
     verifier_dir.joinpath(filename).write_text("not valid json")
 
     runner = CliRunner()
-    result = runner.invoke(govern_group, ["audit"])
+    result = runner.invoke(govern_group, ["audit-keys"])
     assert result.exit_code == 1, result.output
     assert "unreadable" in result.output.lower()

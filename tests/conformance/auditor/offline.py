@@ -225,6 +225,7 @@ def verify_receipt(
     *,
     receipt: Path,
     trust_anchor: Path | None = None,
+    allow_unpinned_key: bool = False,
 ) -> SubprocessResult:
     """Verify *receipt* with ``verify_cli/`` inside the auditor environment.
 
@@ -235,6 +236,8 @@ def verify_receipt(
             When given, the receipt's embedded key must match it, so a
             bundle re-signed with an unrelated key fails instead of
             trusting itself.
+        allow_unpinned_key: Accept a receipt checked only against its own
+            embedded key. Without it an unpinned receipt fails.
 
     Returns:
         The subprocess result; ``returncode == 0`` is a pass.
@@ -242,6 +245,8 @@ def verify_receipt(
     argv = ["verify-receipt", "--receipt", str(receipt), "--format", "all", "--verbose"]
     if trust_anchor is not None:
         argv += ["--public-key", str(trust_anchor)]
+    if allow_unpinned_key:
+        argv.append("--allow-unpinned-key")
     return run(environment, argv)
 
 

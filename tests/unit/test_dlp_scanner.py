@@ -16,6 +16,9 @@ Covers:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import pytest
 from bernstein.core.dlp_scanner import (
     DLPConfig,
     DLPScanner,
@@ -23,6 +26,9 @@ from bernstein.core.dlp_scanner import (
     scan_diff_for_dlp,
     scan_text_for_dlp,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -316,6 +322,86 @@ class TestAllowlist:
         text = "# synthetic_data: mrn = 12345678"
         result = DLPScanner(config).scan_text(text)
         assert not _has_rule(result, "mrn")
+
+
+class TestAllowlistIsScopedToTheFlaggedValue:
+    """A benign marker exempts the value it is part of, never its neighbours.
+
+    The built-in allowlist used to be checked against the whole line before any
+    rule ran, so an email, ``localhost`` or the word "placeholder" anywhere on a
+    line hid every finding on it -- a real SSN or card number included, and
+    those are the findings that hard-block a merge.
+    """
+
+    REAL_SSN = 'ssn = "123-45-6789"'
+
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            "user@acme.io",
+            "test@acme.io",
+            "admin@acme.io",
+            "noreply@acme.io",
+            "example.com",
+            "localhost",
+            "127.0.0.1",
+            "0.0.0.0",
+            "placeholder",
+            "changeme",
+            "your_api_key",
+            "xxxx",
+        ],
+    )
+    def test_a_benign_marker_elsewhere_on_the_line_does_not_hide_an_ssn(self, marker: str) -> None:
+        result = _scanner().scan_text(f"{self.REAL_SSN}  # {marker}")
+        assert _has_rule(result, "us_ssn")
+        assert result.has_blocks
+
+    def test_a_record_carrying_an_email_and_an_ssn_blocks(self) -> None:
+        result = _scanner().scan_text('record = {"email": "user@acme.io", "ssn": "123-45-6789"}')
+        assert _has_rule(result, "us_ssn")
+        assert result.has_blocks
+
+    def test_a_card_number_beside_a_placeholder_comment_blocks(self) -> None:
+        result = _scanner().scan_text('card_number = "4111 1111 1111 1111"  # swap the placeholder later')
+        assert _has_rule(result, "credit_card_number")
+        assert result.has_blocks
+
+    def test_a_fake_prefixed_value_is_still_suppressed(self) -> None:
+        """The exemption still works where the marker is part of the value.
+
+        The unprefixed line is asserted too: without it this test would pass on
+        a scanner that flags nothing at all.
+        """
+        assert _has_rule(_scanner().scan_text('ssn = "123-45-6789"'), "us_ssn")
+        assert not _has_rule(_scanner().scan_text('ssn = "FAKE-123-45-6789"'), "us_ssn")
+
+    def test_a_benign_value_earlier_on_the_line_does_not_shadow_a_real_one(self) -> None:
+        result = _scanner().scan_text('fixture = "FAKE-111-22-3333"; real = "123-45-6789"')
+        assert _has_rule(result, "us_ssn")
+        (finding,) = [f for f in result.findings if f.rule == "us_ssn"]
+        assert "FAKE" not in finding.redacted_match
+
+    def test_the_projects_own_copyright_header_is_still_suppressed(self) -> None:
+        assert not _has_rule(_scanner().scan_text("Copyright (c) 2026 the Bernstein authors"), "copyright_header")
+        assert _has_rule(_scanner().scan_text("Copyright (c) 2026 the Acme authors"), "copyright_header")
+
+    def test_an_operator_allowlist_pattern_still_suppresses_the_whole_line(self) -> None:
+        """``allowlist_patterns`` is documented as line-wide, and stays so."""
+        config = DLPConfig(allowlist_patterns=[r"dlp:ignore"])
+        result = DLPScanner(config).scan_text(f"{self.REAL_SSN}  # dlp:ignore")
+        assert not result.findings
+
+    def test_the_dlp_scan_gate_blocks_the_mixed_line(self, tmp_path: Path) -> None:
+        """End to end through the gate, which is what a merge actually consults."""
+        from bernstein.core.quality.quality_gates import QualityGatesConfig, _run_dlp_gate
+
+        (tmp_path / "records.py").write_text(
+            'RECORD = {"email": "user@acme.io", "ssn": "123-45-6789"}\n', encoding="utf-8"
+        )
+        result = _run_dlp_gate(QualityGatesConfig(), tmp_path, changed_files=["records.py"])
+        assert result.blocked
+        assert not result.passed
 
 
 # ---------------------------------------------------------------------------

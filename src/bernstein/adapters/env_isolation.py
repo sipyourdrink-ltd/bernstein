@@ -142,6 +142,14 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
         # reporting never reaches the central server.  It is a URL, not a
         # credential, so passing it through is safe.
         "BERNSTEIN_SERVER_URL",
+        # ``CF_ACCESS_CLIENT_ID`` / ``CF_ACCESS_CLIENT_SECRET`` - when the
+        # central server is published behind Cloudflare Access, the agent's
+        # CLI calls back to it (``bernstein task complete``) must clear the
+        # edge too, or they get a 403 before the bearer is even checked.
+        # Same trust class as BERNSTEIN_AUTH_TOKEN: they only open the path to
+        # the server this agent already reports to.
+        "CF_ACCESS_CLIENT_ID",
+        "CF_ACCESS_CLIENT_SECRET",
         # ``BERNSTEIN_RUN_ID`` (wave 3, per-agent instrumentation) is set by
         # the orchestrator on ``os.environ`` at run start (see
         # ``Orchestrator.__init__`` right after ``self._run_id`` is

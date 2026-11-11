@@ -92,3 +92,86 @@ signed manifest `input_hashes`, the manifest self-anchors (`output_hash`), and
 the chained substrate re-verifies for the pack kind. Flipping a single byte in
 any member, including a rendered PDF, fails verification and names the member.
 Existing Article 12 packs (format v1 and v2) verify unchanged.
+
+## Central Control Registry
+
+Bernstein maintains a centralized taxonomy of compliance, security, and governance controls mapped across six major regulatory frameworks:
+- **EU AI Act**: Regulation (EU) 2024/1689 (Articles 10, 11, 12, 13, 14, 15, 73, Annex IV).
+- **OWASP ASI**: Top 10 for Agentic Applications (ASI01-ASI10).
+- **OWASP Skills**: Top 10 for Agentic Skills (AST01-AST10).
+- **NIST AI RMF**: AI Risk Management Framework 1.0.
+- **ISO/IEC 42001**: Artificial Intelligence Management System (Annex A).
+- **FINOS AIGF**: Open-source AI Governance Framework for Financial Services.
+
+The registry is the one place a control is defined. Anything that claims to
+measure a control -- an evaluation suite, an evidence pack, an assessment
+export -- names it by its registry id, and a name the registry does not
+know is refused rather than recorded.
+
+It is *not* the place an external framework's controls are defined. The
+`owasp_asi` and `owasp_skills` references are rendered from the ASI/AST
+maps in `src/bernstein/compliance/owasp_asi.py` and `owasp_skills.py` --
+the same maps that drive those evidence packs -- and the `finos_aigf`
+references from the published `mi-1`..`mi-23` mitigation list in
+`src/bernstein/compliance/finos_aigf.py`. The registry cites an external
+id; it never states what that id means, so the two cannot disagree. Citing
+an id the owning map does not define raises at import time.
+
+Where a bernstein control has no counterpart in a framework's published
+catalogue it carries no reference for that framework. The OWASP ASI list
+has no sensitive-data-exposure entry and the FINOS mitigation list has no
+pre-execution human-approval entry, so a reference to either would be a
+claim a reader could not resolve.
+
+### CLI Inspection
+
+```bash
+# List all registered controls in text format
+bernstein compliance controls
+
+# Filter by regulatory framework; --framework applies to every format
+bernstein compliance controls --framework eu_ai_act --format json
+bernstein compliance controls --framework owasp_asi --format markdown
+bernstein compliance controls --format markdown
+```
+
+### Registered Standard Controls
+
+<!-- controls-table:start -- generated from ControlRegistry.to_markdown_table(); do not edit by hand,
+     tests/unit/compliance/test_controls_registry.py fails when this drifts from the registry -->
+| Control ID | Title | Frameworks | Evidence Kinds |
+| --- | --- | --- | --- |
+| CTL-GOV-01 | Policy as Code & Governance Boundary | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, policy, lineage_log |
+| CTL-GOV-02 | Agent Identity & System Card Declaration | EU_AI_ACT, ISO_42001, NIST_AI_RMF | agent_card, lineage_log |
+| CTL-AUD-01 | Tamper-Evident HMAC Audit Logging | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain |
+| CTL-AUD-02 | Audit Chain Continuity & Retention Verification | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, retention_evidence |
+| CTL-LIN-01 | Artifact Lineage & Provenance Tracking | EU_AI_ACT, ISO_42001, NIST_AI_RMF, OWASP_ASI | lineage_log, signatures |
+| CTL-OVS-01 | Human Oversight & Approval Gating | EU_AI_ACT, ISO_42001, NIST_AI_RMF | approval_receipt, audit_chain |
+| CTL-OVS-02 | Displayed vs Executed Action Equivalence | EU_AI_ACT, ISO_42001, NIST_AI_RMF | approval_receipt, oversight_evidence |
+| CTL-SEC-01 | Prompt Injection & Goal Hijack Defense | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, audit_chain |
+| CTL-SEC-02 | Tool Execution Sandboxing & Authorization | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, bench_bundle |
+| CTL-SEC-03 | Canary Token & Secret Leakage Prevention | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, audit_chain |
+| CTL-SEC-04 | Gate Evasion & Adversarial Bypass Resistance | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle |
+| CTL-SEC-05 | Outbound Model Egress & Policy Boundary Checks | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, check_record |
+| CTL-ROB-01 | Deterministic Execution & Offline Replay Verification | EU_AI_ACT, ISO_42001, NIST_AI_RMF | bench_bundle, verifier_receipt |
+| CTL-ROB-02 | Model Drift & Degradation Detection | EU_AI_ACT, ISO_42001, NIST_AI_RMF | bench_bundle, drift_report |
+| CTL-ROB-03 | Error Handling & Graceful Degradation | EU_AI_ACT, ISO_42001, NIST_AI_RMF | audit_chain, bench_bundle |
+| CTL-DATA-01 | Data Governance & Lineage Integrity | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | lineage_log, dataset_manifest |
+| CTL-DATA-02 | Confidential Information & PII Redaction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, redaction_log |
+| CTL-INC-01 | Serious Incident Recording & Timeline Reconstruction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | incident_pack, audit_chain |
+| CTL-COST-01 | Token Budget & Cost Allocation Controls | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, cost_ledger |
+| CTL-EVAL-01 | Content-Addressed Benchmark Reproducibility | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, suite_hash |
+| CTL-EVAL-02 | Multi-Run Empirical Determinism Scoring | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, reliability_report |
+| CTL-EVAL-03 | Quality Gate & Verification Adjudication | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | adjudication_record, bench_bundle |
+| CTL-QUAL-01 | Producing Identity & Independence Class Tracking | EU_AI_ACT, ISO_42001, NIST_AI_RMF | adjudication_record, audit_chain |
+| CTL-QUAL-02 | Automated Test Coverage & Static Verification | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | ci_run, sarif_report |
+| CTL-SKILL-01 | Agentic Skill Discovery & Verification | ISO_42001, NIST_AI_RMF, OWASP_SKILLS | skill_manifest, audit_chain |
+| CTL-SKILL-02 | Skill Execution Boundaries & Permissions | FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_SKILLS | audit_chain, policy |
+| CTL-SKILL-03 | Untrusted Skill Quarantine & Code Review | ISO_42001, NIST_AI_RMF, OWASP_SKILLS | audit_chain, approval_receipt |
+| CTL-MON-01 | Operational Health & Status Dashboarding | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | status_dashboard, metrics |
+| CTL-MON-02 | Anomaly Detection & Behavioral Alerts | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, alert_record |
+| CTL-DOC-01 | Technical Documentation & Compliance Evidence Packs | EU_AI_ACT, ISO_42001, NIST_AI_RMF | evidence_pack, tech_doc |
+| CTL-DOC-02 | Agent Capability & Limitation Declaration | EU_AI_ACT, ISO_42001, NIST_AI_RMF | agent_card, system_descriptor |
+| CTL-DEP-01 | Air-Gapped & Offline Verification Support | EU_AI_ACT, ISO_42001, NIST_AI_RMF | verifier_receipt |
+<!-- controls-table:end -->
+

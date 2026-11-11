@@ -14,6 +14,11 @@ Tracking issue: [#1273](https://github.com/sipyourdrink-ltd/bernstein/issues/127
 Result: GitHub-hosted CodeQL scanning + Copilot Autofix suggestions on
 code-scanning alerts. Zero workflow YAML to maintain.
 
+Current state: the repo already runs CodeQL through the advanced workflow
+`.github/workflows/codeql.yml` (Python, on push to `main` and weekly).
+GitHub does not allow default setup alongside an advanced workflow, so this
+step applies only if that workflow is retired.
+
 Steps:
 - GitHub repo → **Settings** → **Code security** → **Code scanning** → **Set up** → **Default**.
 - Pick the languages GitHub detects (Python is auto-suggested).
@@ -70,30 +75,24 @@ minted per release run.
 
 Steps:
 - Visit <https://pypi.org/manage/account/publishing/>.
-- Add a publisher: PyPI project `bernstein` → workflow `auto-release.yml`
-  (or whichever workflow publishes) → environment `pypi`.
+- Add a publisher: PyPI project `bernstein` → workflow `publish.yml`
+  → environment `pypi`.
 - After the next successful release run confirms OIDC works, delete the
-  `PYPI_API_TOKEN` repo secret.
+  `PYPI_API_TOKEN` repo secret (no workflow under `.github/workflows/`
+  reads it any more).
 
 Risk: first-time setup requires an existing PyPI account that owns the
 `bernstein` project. Keep the API token around until one OIDC release succeeds.
 
 ---
 
-## 6. Enable GitHub merge queue
+## 6. GitHub merge queue - done
 
-Free for org-owned public repos in 2026.
-
-Steps: **Repo → Settings → Branches** → edit `main` branch protection rule →
-enable **Merge queue**.
-
-Caveats:
-- Pair with `required_status_checks.strict: false` - merge queue is
-  incompatible with "require branches to be up to date".
-- Required workflows must trigger on `merge_group`:
-  `on: merge_group: types: [checks_requested]`.
-- Verify after [#1277](https://github.com/sipyourdrink-ltd/bernstein/pull/1277)
-  lands - that PR adds the `merge_group` trigger to required workflows.
+The queue is active on `main` through the repository ruleset
+`main-merge-queue`, not branch protection. The required workflows trigger
+on `merge_group`. The queue's required contexts are `CI gate` and
+`shipped bundle matches the lockfile`. Configuration and tunables:
+[docs/operations/merge-queue.md](../operations/merge-queue.md).
 
 ---
 
@@ -105,8 +104,9 @@ Steps:
 - Sign in with GitHub → grant read access.
 - `bernstein` appears in the dashboard automatically.
 
-Result: egress baseline review and policy suggestions, visible once the
-`harden-runner` audit mode from PR HD-6 lands and runs collect data.
+Result: egress baseline review and policy suggestions, visible as runs
+collect data from the `harden-runner` audit-mode step the workflows already
+carry.
 
 Risk: external UI; the egress data stays publicly visible.
 
@@ -114,39 +114,35 @@ Risk: external UI; the egress data stays publicly visible.
 
 ## 8. (Optional) Renovate vs Dependabot evaluation
 
-Not yet. Dependabot stays the primary dependency-update bot today.
-
-Re-evaluate in ~1 quarter against Renovate's group/dashboard features if
-Dependabot PR noise becomes a problem. No action required now.
+Both are configured: `.github/dependabot.yml` (weekly, grouped; patch/minor
+groups are auto-enqueued by `dependabot-auto-merge.yml`) and `renovate.json`
+(custom managers and package rules). No action required now; if the two
+produce duplicate PRs, retire one.
 
 ---
 
 ## 9. Homebrew tap - wire up `HOMEBREW_TAP_TOKEN`
 
-**Status:** ⚠️ tap stuck at `1.4.1`. `publish-homebrew.yml` runs on every
-release but the "Push to homebrew-tap repo" step silently no-ops because the
-`HOMEBREW_TAP_TOKEN` secret is missing. The step is guarded by
-`continue-on-error: true`, so the workflow is green while the tap drifts.
+**Status:** the tap is only updated when `HOMEBREW_TAP_TOKEN` is defined on
+the `release-channels` environment. `publish-homebrew.yml` runs on every
+release; a preflight step fails the run early if the secret is missing there,
+and the "Push to homebrew-tap repo" step refuses to push anonymously. There is
+no `continue-on-error` and no `GITHUB_TOKEN` fallback.
 
-### Why it's silent
+### Why it must be an environment secret
 
-`.github/workflows/publish-homebrew.yml` (line 88):
-
-```yaml
-GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
-```
-
-`GITHUB_TOKEN` only scopes to the current repo, so `gh repo clone
-chernistry/homebrew-tap` and `git push` to that external repo cannot succeed
-without a PAT. The step prints a `::warning::` and exits 0.
+The job runs under `environment: release-channels`, and an environment secret
+does not follow a job across environments: a value defined on `pypi` (or as a
+plain repo secret) is not visible to it. `GITHUB_TOKEN` only scopes to the
+current repo, so cloning and pushing to `chernistry/homebrew-tap` needs a PAT.
 
 ### What the operator needs to do (one sitting)
 
 | # | Action | Where |
 |---|--------|-------|
-| 1 | Generate fine-grained PAT, **Contents: Read & write** scope on `chernistry/homebrew-tap` only. 90-day expiry. | <https://github.com/settings/personal-access-tokens/new> |
-| 2 | Add the PAT as repo secret `HOMEBREW_TAP_TOKEN`. | <https://github.com/sipyourdrink-ltd/bernstein/settings/secrets/actions/new> |
-| 3 | Re-dispatch `publish-homebrew.yml` for the current release (`v2.0.1`). | <https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/publish-homebrew.yml> |
+| 1 | Generate a PAT with write access to `chernistry/homebrew-tap` only (fine-grained: **Contents: Read & write**). 90-day expiry. | <https://github.com/settings/personal-access-tokens/new> |
+| 2 | Add the PAT as secret `HOMEBREW_TAP_TOKEN` on the `release-channels` environment. | <https://github.com/sipyourdrink-ltd/bernstein/settings/environments> |
+| 3 | Re-dispatch `publish-homebrew.yml` for the current release. | <https://github.com/sipyourdrink-ltd/bernstein/actions/workflows/publish-homebrew.yml> |
 | 4 | Verify the tap commit landed. | <https://github.com/chernistry/homebrew-tap/commits/main> |
 
 ### Commands
@@ -156,16 +152,16 @@ creation via API). After the PAT exists, the rest can run from a terminal
 authenticated with `gh auth login`:
 
 ```sh
-# 2. Add the PAT as repo secret (paste PAT at the prompt)
+# 2. Add the PAT as an environment secret (paste PAT at the prompt)
 gh secret set HOMEBREW_TAP_TOKEN \
-  --repo sipyourdrink-ltd/bernstein \
-  --app actions
+  --env release-channels \
+  --repo sipyourdrink-ltd/bernstein
 
-# 3. Re-dispatch the workflow against the current release tag
+# 3. Re-dispatch the workflow against the current release version
 gh workflow run publish-homebrew.yml \
   --repo sipyourdrink-ltd/bernstein \
   --ref main \
-  -f version=2.0.1
+  -f version=<current release version>
 
 # 4. Wait + check the run
 gh run watch --repo sipyourdrink-ltd/bernstein
@@ -179,11 +175,10 @@ gh api repos/chernistry/homebrew-tap/contents/Formula/bernstein.rb \
 
 - PAT scope is repo-narrow and Contents-only - minimum needed for `git push`
   to `homebrew-tap`. Don't broaden it.
-- 90-day rotation reminder: add to the operator's calendar; expired PAT
-  silently regresses to the same broken state.
-- After the first successful re-dispatch, follow-up in a separate PR:
-  flip `continue-on-error: true` to `false` on the "Push to homebrew-tap
-  repo" step so future regressions surface immediately.
+- 90-day rotation reminder: add to the operator's calendar; an expired PAT
+  still passes the preflight (which only checks that the secret is defined)
+  and makes the next release's homebrew run fail at the "Push to
+  homebrew-tap repo" step with "homebrew-tap repo not reachable".
 
 ---
 

@@ -26,13 +26,20 @@ from bernstein.core.log_safe import for_log
 from bernstein.core.persistence.anchored_write import anchored_append
 from bernstein.core.persistence.durable_write import fsynced_write
 from bernstein.core.persistence.runtime_state import rotate_log_file
+from bernstein.core.persistence.store import role_mismatch_error
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.tasks.artifacts import ArtifactSpec
 from bernstein.core.tasks.errors import TaskDomainError
-from bernstein.core.tasks.lifecycle import IllegalTransitionError, transition_agent, transition_task
+from bernstein.core.tasks.lifecycle import (
+    IllegalTransitionError,
+    _validate_task_transition,
+    transition_agent,
+    transition_task,
+)
 from bernstein.core.tasks.models import (
     AgentSession,
     CompletionSignal,
+    DispatchTier,
     ProgressSnapshot,
     RiskAssessment,
     RollbackPlan,
@@ -50,7 +57,7 @@ from bernstein.core.tasks.unreachable import (
 from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id, try_normalize_tenant_id
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
     from bernstein.core.security.audit_chain import AuditChainStore
     from bernstein.core.tasks.contracts import ContractViolation, WorkerCompletion, WorkerRefusal
@@ -74,6 +81,10 @@ CLAIM_HELD_STATUSES: frozenset[TaskStatus] = frozenset(
         TaskStatus.WAITING_FOR_SUBTASKS,
         TaskStatus.BLOCKED,
         TaskStatus.ORPHANED,
+        TaskStatus.STOP_REQ,
+        # Cooperative mailbox waits retain the worker, process, sandbox and
+        # claim; SUSPENDED is not a surrender in this path.
+        TaskStatus.SUSPENDED,
     }
 )
 
@@ -123,6 +134,7 @@ class TaskRecord(TypedDict):
     description: str
     role: str
     priority: int
+    dispatch_tier: NotRequired[str]
     scope: str
     complexity: str
     estimated_minutes: int | None
@@ -215,6 +227,7 @@ class TaskCreateRequest(Protocol):
     description: str
     role: str
     priority: int
+    dispatch_tier: DispatchTier
     scope: str
     complexity: str
     estimated_minutes: int | None
@@ -466,6 +479,7 @@ class TaskStore:
         metrics_jsonl_path: Path | None = None,
     ) -> None:
         self._task_listeners: list[Callable[[Task], None]] = []
+        self._task_created_listeners: list[Callable[[Task], None]] = []
         self._tasks: dict[str, Task] = {}
         self._agents: dict[str, AgentSession] = {}
         # Secondary indices for O(1) status/role lookups
@@ -506,6 +520,7 @@ class TaskStore:
         # wiring. ``None`` in bare store usage (CLI, tests), where the receipt
         # is skipped rather than the transition refused.
         self._audit_chain: AuditChainStore | None = None
+        self.administrative_runs: Any = None
 
     # -- claim ledger --------------------------------------------------------
 
@@ -522,6 +537,24 @@ class TaskStore:
                 ``None`` to detach.
         """
         self._audit_chain = chain
+
+    def add_task_created_listener(self, listener: Callable[[Task], None]) -> None:
+        """Register a best-effort callback for newly persisted tasks (not replay)."""
+        if listener not in self._task_created_listeners:
+            self._task_created_listeners.append(listener)
+
+    def remove_task_created_listener(self, listener: Callable[[Task], None]) -> None:
+        """Unregister a creation callback when its owning server stops."""
+        if listener in self._task_created_listeners:
+            self._task_created_listeners.remove(listener)
+
+    def _notify_task_created(self, task: Task) -> None:
+        """Creation notifications must never fail a committed store mutation."""
+        for listener in list(self._task_created_listeners):
+            try:
+                listener(task)
+            except Exception:
+                logger.exception("Error in task creation listener for task %s", task.id)
 
     def add_task_listener(self, listener: Callable[[Task], None]) -> None:
         """Register a callback invoked whenever a task's status or record is updated."""
@@ -745,6 +778,8 @@ class TaskStore:
                     task = self._tasks[task_id]
                     self._index_remove(task)
                     task.status = TaskStatus(record.get("status", task.status.value))
+                    if "dispatch_tier" in record:
+                        task.dispatch_tier = DispatchTier(record["dispatch_tier"])
                     task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                     task.result_summary = record.get("result_summary", task.result_summary)
                     task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
@@ -890,6 +925,7 @@ class TaskStore:
             # Tenant mirror is best-effort during recovery; the authoritative
             # JSONL log above is already durable.
             logger.warning("Failed to mirror recover_stale record to tenant backlog: %s", exc)
+        self._record_administrative_update(record)
 
     _BUFFER_MAX: int = 1
 
@@ -924,6 +960,13 @@ class TaskStore:
         await self._append_tenant_backlog_record(record, line)
         if len(self._write_buffer) >= self._BUFFER_MAX:
             await self._flush_buffer_unlocked()
+        self._record_administrative_update(record)
+
+    def _record_administrative_update(self, record: TaskRecord) -> None:
+        run_id = (record.get("metadata") or {}).get("administrative_run_id")
+        if run_id and self.administrative_runs is not None:
+            task = self._tasks[str(record["id"])]
+            self.administrative_runs.persist_task(str(run_id), task)
 
     async def flush_buffer(self) -> None:
         """Flush any buffered JSONL records to disk (acquires the store lock)."""
@@ -1151,6 +1194,7 @@ class TaskStore:
             "description": task.description,
             "role": task.role,
             "priority": task.priority,
+            "dispatch_tier": task.dispatch_tier.value,
             "scope": task.scope.value,
             "complexity": task.complexity.value,
             "estimated_minutes": task.estimated_minutes,
@@ -1533,6 +1577,7 @@ class TaskStore:
             repo=getattr(req, "repo", None),
             depends_on_repo=getattr(req, "depends_on_repo", None),
             task_type=TaskType(req.task_type),
+            dispatch_tier=DispatchTier(getattr(req, "dispatch_tier", DispatchTier.LOCAL)),
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
             effort=req.effort,
@@ -1558,6 +1603,9 @@ class TaskStore:
             max_turns=int(max_turns_raw) if max_turns_raw is not None else None,
         )
         async with self._lock:
+            admin_run_id = task.metadata.get("administrative_run_id")
+            if admin_run_id and self.administrative_runs is not None:
+                self.administrative_runs.require_open(str(admin_run_id), task.tenant_id)
             if task.depends_on:
                 missing = [dep for dep in task.depends_on if dep not in self._tasks]
                 if missing:
@@ -1591,6 +1639,8 @@ class TaskStore:
             self._index_add(task)
             self._parent_index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+
+        self._notify_task_created(task)
 
         # SOC 2 audit: log task creation (not a status transition, so lifecycle doesn't cover it)
         from bernstein.core.tasks.lifecycle import _content_hash, get_audit_log
@@ -1670,6 +1720,7 @@ class TaskStore:
             self._index_add(task)
             self._parent_index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+        self._notify_task_created(task)
         return task
 
     async def create_gate_with_edges(
@@ -1806,6 +1857,7 @@ class TaskStore:
                         clearance_task_id,
                     )
 
+        self._notify_task_created(gate)
         return gate, targets
 
     async def inject_dependency(self, task_id: str, depends_on_id: str) -> Task:
@@ -1968,6 +2020,7 @@ class TaskStore:
                     repo=getattr(req, "repo", None),
                     depends_on_repo=getattr(req, "depends_on_repo", None),
                     task_type=TaskType(req.task_type),
+                    dispatch_tier=DispatchTier(getattr(req, "dispatch_tier", DispatchTier.LOCAL)),
                     upgrade_details=_parse_upgrade_dict(req.upgrade_details),
                     model=req.model,
                     effort=req.effort,
@@ -2011,6 +2064,7 @@ class TaskStore:
                 self._index_add(task)
                 self._parent_index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
+                self._notify_task_created(task)
 
                 if dedup_by_title:
                     existing_titles.add(normalised)
@@ -2046,6 +2100,7 @@ class TaskStore:
         tenant_id: str | None = None,
         claimed_by_session: str | None = None,
         parent_session_id: str | None = None,
+        task_ids: Collection[str] | None = None,
     ) -> Task | None:
         """Claim the highest-priority open task for *role*.
 
@@ -2060,6 +2115,11 @@ class TaskStore:
                 matches this value. Workers from a coordinator should pass their
                 coordinator's session ID here so they never steal tasks belonging to
                 a different orchestrator namespace.
+            task_ids: If set, only tasks whose id is in this collection are
+                candidates; an empty collection makes nothing claimable.  The
+                claim-next route passes a task-scoped caller's scope here so
+                an out-of-scope task is never chosen.  Skipped candidates stay
+                queued for callers whose scope includes them.
 
         Returns:
             The claimed Task, or None if nothing is available.
@@ -2088,6 +2148,11 @@ class TaskStore:
                     blocked_entries.append((priority, task_id))
                     continue
                 if parent_session_id is not None and candidate.parent_session_id != parent_session_id:
+                    blocked_entries.append((priority, task_id))
+                    continue
+                # Checked before the stranding pass below so an out-of-scope
+                # candidate is left exactly as it was, not transitioned.
+                if task_ids is not None and task_id not in task_ids:
                     blocked_entries.append((priority, task_id))
                     continue
                 # A dependency that ended without delivering makes this
@@ -2164,9 +2229,7 @@ class TaskStore:
                     f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
             if agent_role is not None and task.role != agent_role:
-                raise ValueError(
-                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
-                )
+                raise role_mismatch_error(task_id, task.role, agent_role)
             if task.status != TaskStatus.OPEN:
                 # never silently re-return an already-claimed or
                 # terminal task - that enables double-claim. Raise so the
@@ -2299,6 +2362,7 @@ class TaskStore:
                     TaskStatus.CANCELLED,
                     TaskStatus.CLOSED,
                     TaskStatus.REFUSED,
+                    TaskStatus.STOP_REQ,
                 ):
                     raise EmptyCompletionError(task_id, task)
                 snapshot = self._claim_snapshot(task)
@@ -2332,6 +2396,9 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+
+            if task.status == TaskStatus.STOP_REQ:
+                raise IllegalTransitionError("task", task_id, task.status.value, TaskStatus.DONE.value)
 
             # Issue #4401: A planning/manager task that created zero child tasks has not
             # accomplished any work. It must fail rather than falsely reporting success.
@@ -2406,6 +2473,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            _validate_task_transition(task, TaskStatus.CLOSED)
             self._index_remove(task)
             transition_task(task, TaskStatus.CLOSED, actor="task_store", reason="verified and closed")
             task.closed_at = time.time()
@@ -2421,6 +2489,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            _validate_task_transition(task, TaskStatus.WAITING_FOR_SUBTASKS)
             self._index_remove(task)
             transition_task(
                 task,
@@ -2454,6 +2523,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            _validate_task_transition(task, TaskStatus.FAILED)
             snapshot = self._claim_snapshot(task)
             self._index_remove(task)
             transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
@@ -2497,6 +2567,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            _validate_task_transition(task, TaskStatus.FAILED)
             snapshot = self._claim_snapshot(task)
             self._index_remove(task)
             transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
@@ -2544,6 +2615,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            _validate_task_transition(task, TaskStatus.REFUSED)
             snapshot = self._claim_snapshot(task)
             self._index_remove(task)
             transition_task(task, TaskStatus.REFUSED, actor="task_store", reason=refusal.detail)
@@ -2610,6 +2682,7 @@ class TaskStore:
                 self._index_add(task)
                 self._parent_index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
+                self._notify_task_created(task)
                 created.append(task)
         if created:
             logger.info(
@@ -2671,6 +2744,7 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            _validate_task_transition(task, TaskStatus.OPEN)
             snapshot = self._claim_snapshot(task)
             self._index_remove(task)
             transition_task(task, TaskStatus.OPEN, actor="task_store", reason=reason)
@@ -2903,12 +2977,120 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            _validate_task_transition(task, TaskStatus.BLOCKED)
             self._index_remove(task)
             transition_task(task, TaskStatus.BLOCKED, actor="task_store", reason=reason)
             task.result_summary = reason
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def suspend_for_rendezvous(self, task_id: str, open_entry_hash: str) -> TaskStatus:
+        """Persist cooperative suspension and return the state to restore.
+
+        This is deliberately smaller than :func:`park_task`: the worker,
+        process and sandbox remain allocated.  The referenced mailbox open
+        entry is the durable reason for the state change.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            resume_status = task.status
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"task {task_id!r} cannot ask while {resume_status.value}")
+            self._index_remove(task)
+            transition_task(
+                task,
+                TaskStatus.SUSPENDED,
+                actor="mailbox_rendezvous",
+                reason=open_entry_hash,
+            )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return resume_status
+
+    async def resume_from_rendezvous(
+        self,
+        task_id: str,
+        *,
+        resume_status: TaskStatus,
+        close_entry_hash: str,
+    ) -> Task:
+        """Persist cooperative resumption after a mailbox close is observed."""
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status != TaskStatus.SUSPENDED:
+                raise ValueError(f"task {task_id!r} is not suspended")
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"invalid rendezvous resume status {resume_status.value!r}")
+            self._index_remove(task)
+            if resume_status == TaskStatus.CLAIMED:
+                transition_task(
+                    task,
+                    TaskStatus.CLAIMED,
+                    actor="mailbox_rendezvous",
+                    reason=close_entry_hash,
+                )
+            elif resume_status == TaskStatus.IN_PROGRESS:
+                transition_task(
+                    task,
+                    TaskStatus.IN_PROGRESS,
+                    actor="mailbox_rendezvous",
+                    reason=close_entry_hash,
+                )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
+            return task
+
+    async def recover_rendezvous_wait(
+        self,
+        task_id: str,
+        *,
+        resume_status: TaskStatus,
+        open_entry_hash: str,
+    ) -> Task:
+        """Restore a cooperative waiter after its live wait exits abnormally.
+
+        No mailbox close is invented here.  The referenced open remains
+        unresolved in the authoritative mailbox chain; this transition only
+        prevents a cancelled or locally failed request from retaining the
+        task's live claim in ``SUSPENDED`` forever.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status != TaskStatus.SUSPENDED:
+                raise ValueError(f"task {task_id!r} is not suspended")
+            if resume_status not in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                raise ValueError(f"invalid rendezvous recovery status {resume_status.value!r}")
+            self._index_remove(task)
+            if resume_status == TaskStatus.CLAIMED:
+                transition_task(
+                    task,
+                    TaskStatus.CLAIMED,
+                    actor="mailbox_rendezvous_recovery",
+                    reason=open_entry_hash,
+                )
+            elif resume_status == TaskStatus.IN_PROGRESS:
+                transition_task(
+                    task,
+                    TaskStatus.IN_PROGRESS,
+                    actor="mailbox_rendezvous_recovery",
+                    reason=open_entry_hash,
+                )
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            self._notify_task_updated(task)
             return task
 
     async def _complete_parent_if_ready(self, parent_task_id: str | None) -> None:
@@ -3065,6 +3247,7 @@ class TaskStore:
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.BLOCKED,
                 TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.SUSPENDED,
                 TaskStatus.PLANNED,
             }
             if task.status not in _cancellable:
@@ -3160,7 +3343,7 @@ class TaskStore:
 
     # -- TASK-005: Cascading cancellation for subtasks ----------------------
 
-    async def cancel_cascade(self, task_id: str, reason: str) -> list[Task]:
+    async def cancel_cascade(self, task_id: str, reason: str, *, cooperative: bool = False) -> list[Task]:
         """Cancel a task and all of its descendant subtasks.
 
         Walks the subtask tree (``parent_task_id`` references) and cancels
@@ -3169,14 +3352,16 @@ class TaskStore:
         Args:
             task_id: Root task identifier.
             reason: Why the tree is being cancelled.
+            cooperative: Keep active worker claims until stop confirmation.
 
         Returns:
-            List of all tasks that were cancelled (root + descendants).
+            List of tasks cancelled or awaiting cooperative stop confirmation.
 
         Raises:
             KeyError: If *task_id* does not exist.
         """
         cancelled: list[Task] = []
+        stopping: list[Task] = []
         async with self._lock:
             root = self._tasks.get(task_id)
             if root is None:
@@ -3199,6 +3384,7 @@ class TaskStore:
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.BLOCKED,
                 TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.SUSPENDED,
                 TaskStatus.PLANNED,
             }
             for tid in to_cancel:
@@ -3206,6 +3392,15 @@ class TaskStore:
                 if task is None or task.status not in cancellable:
                     continue
                 cascade_reason = reason if tid == task_id else f"parent {task_id} cancelled: {reason}"
+                if cooperative and task.status in {TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}:
+                    self._index_remove(task)
+                    transition_task(task, TaskStatus.STOP_REQ, actor="task_store", reason=cascade_reason)
+                    task.result_summary = f"stop requested: {reason}"
+                    task.version += 1
+                    self._index_add(task)
+                    await self._append_jsonl(self._task_to_record(task))
+                    stopping.append(task)
+                    continue
                 snapshot = self._claim_snapshot(task)
                 self._index_remove(task)
                 transition_task(
@@ -3240,7 +3435,29 @@ class TaskStore:
             if cancelled:
                 await self._cascade_failed_dependency(*(t.id for t in cancelled))
 
-        return cancelled
+        return cancelled + stopping
+
+    async def confirm_stop(self, task_id: str, reason: str) -> Task:
+        """Release a cooperative stop's held claim after worker acknowledgement."""
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status != TaskStatus.STOP_REQ:
+                raise ValueError(f"Task '{task_id}' is not awaiting stop confirmation (status '{task.status.value}')")
+            snapshot = self._claim_snapshot(task)
+            self._index_remove(task)
+            transition_task(task, TaskStatus.CANCELLED, actor="task_store", reason=reason)
+            task.result_summary = reason or "stop confirmed"
+            task.completed_at = time.time()
+            task.version += 1
+            self._index_add(task)
+            completed_at = task.completed_at
+            await self._append_jsonl(self._task_to_record(task))
+            await self._append_archive(task, completed_at)
+            self._record_release_receipt(task, snapshot, release_path="stop_confirmed", reason=reason)
+            await self._cascade_failed_dependency(task_id)
+            return task
 
     async def update(
         self,
@@ -3248,17 +3465,30 @@ class TaskStore:
         role: str | None,
         priority: int | None,
         model: str | None = None,
+        cli: str | None = None,
+        meta_messages: list[str] | None = None,
+        escalation_ladder_step: int | None = None,
+        escalation_ladder_attempts: int | None = None,
     ) -> Task:
         """Update mutable task fields (role, priority, model) - manager corrections.
 
         Only open or failed tasks can be reassigned; claimed/in-progress tasks
         are left to finish before the new assignment takes effect.
 
+        ``cli``, ``meta_messages`` and the two ladder-position fields persist
+        an escalation hop onto the retry task (issue #4855). The position is
+        written under its own metadata keys; no other metadata is touched.
+
         Args:
             task_id: Task identifier.
             role: New role if provided.
             priority: New priority if provided.
-            model: New model hint if provided (e.g. "haiku", "sonnet", "opus").
+            model: New model id if provided. Stored unmodified.
+            cli: Adapter name for the new model, when the ladder step names one.
+            meta_messages: Replacement operational nudges, including the
+                escalation-context line.
+            escalation_ladder_step: Ladder rung the retry task runs on.
+            escalation_ladder_attempts: Attempts already spent on that rung.
 
         Returns:
             The updated Task.
@@ -3286,6 +3516,19 @@ class TaskStore:
                 self._index_add(task)
             if model is not None:
                 task.model = model
+            if cli is not None:
+                task.cli = cli
+            if meta_messages is not None:
+                task.meta_messages = list(meta_messages)
+            from bernstein.core.routing.escalation_ladder import (
+                LADDER_ATTEMPTS_METADATA_KEY,
+                LADDER_STEP_METADATA_KEY,
+            )
+
+            if escalation_ladder_step is not None:
+                task.metadata[LADDER_STEP_METADATA_KEY] = escalation_ladder_step
+            if escalation_ladder_attempts is not None:
+                task.metadata[LADDER_ATTEMPTS_METADATA_KEY] = escalation_ladder_attempts
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             return task
@@ -3344,6 +3587,8 @@ class TaskStore:
                 raise ValueError(
                     f"Task '{task_id}' is in terminal state '{task.status.value}' and cannot be force-claimed"
                 )
+            if task.status != TaskStatus.OPEN:
+                _validate_task_transition(task, TaskStatus.OPEN)
             snapshot = self._claim_snapshot(task)
             # Set priority *before* re-indexing so the heap entry carries the
             # final priority - otherwise the pushed (old_priority, id) tuple

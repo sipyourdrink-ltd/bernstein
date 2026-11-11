@@ -100,6 +100,7 @@ def schema_disagreements(
 _SEEDS: dict[str, list[dict[str, Any]]] = {
     "bernstein_health": [{}],
     "bernstein_status": [{}],
+    "bernstein_subscribe": [{"role": "backend"}, {"role": "backend", "timeout_seconds": 1}],
     "bernstein_cost": [{}],
     "bernstein_scenarios": [{}],
     "bernstein_run": [
@@ -119,6 +120,7 @@ _SEEDS: dict[str, list[dict[str, Any]]] = {
     "bernstein_create_subtask": [
         {"parent_task_id": "t-1", "goal": "sub", "role": "backend", "scope": "small", "complexity": "low"},
     ],
+    "bernstein_create_task": [{"title": "test task", "description": "a task for testing"}],
     "bernstein_claim": [{"claimer_id": "worker-1", "completed_ids": []}],
     "bernstein_update": [{"task_id": "t-1", "body": "progress", "sender": "worker-1", "kind": "finding"}],
     "bernstein_post_message": [{"task_id": "t-1", "body": "progress", "sender": "worker-1", "kind": "finding"}],

@@ -39,19 +39,19 @@ Every declared event type must be a member of `INGEST_EVENT_TYPES` (defined in
 
 ## Rejection rule
 
-An adapter **cannot quietly widen what it claims to observe**. The
-`declared_event_types` field is the contract: every event the adapter emits
-must appear in that set. The ingest subsystem checks each incoming event
-against the registered declaration; an event whose type is not in the
-declaration is refused and the refusal is recorded in the audit chain, so a
-verifier checking the receipt can confirm that the adapter's observed surface
-matched its declaration.
+An adapter **cannot quietly misstate what it observes**. The
+`declared_event_types` field is the contract, and
+`OTLPIngestAdapter.validate_declaration` checks it in both directions: a
+declaration naming an event type outside `INGEST_EVENT_TYPES` is rejected with
+a `ValueError`, and so is a declaration that omits an event type the adapter
+can produce. A verifier checking the receipt can therefore confirm that the
+adapter's observed surface matched its declaration.
 
 ## Receipt naming
 
 Every ingested event records the source identity in its chain event attributes
-(`ingest.source_kind` carries the adapter name; `ingest.source_profile` carries
-the ingest profile name, e.g. `gen_ai_activity`). The `IngestReceipt` binding
+(`ingest.source_kind` carries the source kind, one of `collector`, `agent` or
+`other`; `ingest.source_profile` carries the ingest profile name). The `IngestReceipt` binding
 for the batch additionally carries both `adapter_name` and `adapter_version`,
 so an operator or verifier can attribute the receipt back to the specific
 adapter version that produced it — without consulting the plugin code itself.
@@ -99,13 +99,15 @@ The plugin manager collects declarations during discovery and stores them in
 `bernstein.core.trackers.registry._ingest_declarations`. Duplicate names are
 skipped with a warning; the first registration wins.
 
-## Built-in adapter
+## Built-in adapters
 
-Bernstein ships one built-in ingest adapter:
+Bernstein ships these built-in ingest adapters:
 
 | Adapter | Module | Event types |
 |---|---|---|
 | `OTLPIngestAdapter` | `bernstein.core.observability.otlp_ingest` | `gen_ai_activity`, `untyped_activity` |
+| `CrewIngestAdapter` | `bernstein.adapters.crew_ingest` | `gen_ai_activity`, `untyped_activity` |
 
 See [`OTLPIngestAdapter`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/core/observability/otlp_ingest.py)
-for its wire format and the full ingest pipeline.
+and [`CrewIngestAdapter`](https://github.com/sipyourdrink-ltd/bernstein/blob/main/src/bernstein/adapters/crew_ingest.py)
+for their wire formats and the full ingest pipeline.

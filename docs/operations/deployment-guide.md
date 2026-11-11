@@ -569,10 +569,8 @@ helm install bernstein ./deploy/helm/bernstein \
   --create-namespace \
   -f my-values.yaml
 
-# Or add the Helm repo (when published)
-helm repo add bernstein https://charts.bernstein.dev
-helm repo update
-helm install bernstein bernstein/bernstein \
+# The chart ships in the repository; there is no separate chart repository
+helm install bernstein ./deploy/helm/bernstein \
   --namespace bernstein \
   --create-namespace
 ```

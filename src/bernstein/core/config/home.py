@@ -12,7 +12,7 @@ Environment overrides (take priority over all file-based config layers):
   BERNSTEIN_CLI         Default CLI adapter (e.g. claude, codex, gemini, qwen).
   BERNSTEIN_BUDGET      Spending cap in USD (0 = unlimited).
   BERNSTEIN_MAX_AGENTS  Maximum concurrent agents (default 6).
-  BERNSTEIN_EFFORT      Default effort level (max | medium | low).
+  BERNSTEIN_EFFORT      Default effort level (max | high | medium | normal | low).
   BERNSTEIN_MODEL       Default model override (empty = adapter default).
   BERNSTEIN_HOST_ISOLATION_TIER      Isolation the host already provides
                                      (none | process | container | vm).
@@ -64,7 +64,7 @@ budget: null
 # Default max concurrent agents
 max_agents: 6
 
-# Default effort level: max | medium | low
+# Default effort level: max | high | medium | normal | low
 effort: max
 
 # Default model override (null = adapter default)

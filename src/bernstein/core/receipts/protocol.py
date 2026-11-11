@@ -2,7 +2,7 @@
 
 A receipt is a self-describing envelope: it names its ``kind``, the
 ``canonicalization`` rule its bytes were produced under, the ``payload`` itself,
-the payload digest, and a detached Ed25519 signature over kind and payload
+the payload digest, and a detached Ed25519 or P-256 signature over kind and payload
 together. Because the envelope names its kind, a holder does not have to know
 which subsystem produced a receipt before checking it: :func:`verify_receipt`
 reads any registered kind and reports pass, fail, or unrecognised kind.
@@ -15,9 +15,10 @@ so two modules cannot quietly claim the same kind string.
 
 Substrate coupling: the signature covers ``{canonicalization, kind, payload}``,
 not the payload alone, so a payload signed as one kind cannot be relabelled as
-another and still verify. The verification result is a function of the receipt
-bytes only - no clock, no network, no local state - so two operators holding
-the same receipt reach the same verdict.
+another and still verify. The verification result is a function of receipt
+bytes and, for externally attested kinds, explicit immutable policy context.
+No clock, network or hidden mutable state is consulted. Two operators with
+the same receipt and policy reach the same verdict.
 
 The canonicalisation here is receipts-wide, not repo-wide: the wider
 canonical-JSON consolidation is tracked separately, and this module is the
@@ -67,6 +68,7 @@ KNOWN_CANONICALIZATION_RULES = frozenset({CANONICALIZATION_V1})
 #: A kind's semantic check: takes the payload, returns human-readable errors
 #: (empty when the payload is well-formed for that kind).
 type PayloadCheck = Callable[[Mapping[str, Any]], Sequence[str]]
+type ContextCheck = Callable[[ReceiptEnvelope, Any], tuple[Sequence[str], Sequence[str]]]
 
 
 class ReceiptProtocolError(RuntimeError):
@@ -82,13 +84,14 @@ class UnknownReceiptKindError(ReceiptProtocolError):
 
 
 _REGISTRY: dict[str, PayloadCheck] = {}
+_CONTEXT_CHECKS: dict[str, ContextCheck] = {}
 
 #: Kind modules already imported by :func:`_load_kinds`. Recorded before the
 #: import so a kind module importing this one back cannot re-enter the loader.
 _LOADED_KIND_MODULES: set[str] = set()
 
 
-def register_receipt_kind(kind: str, *, payload_check: PayloadCheck) -> None:
+def register_receipt_kind(kind: str, *, payload_check: PayloadCheck, context_check: ContextCheck | None = None) -> None:
     """Register one receipt kind and the check that validates its payload.
 
     Called at module import by the module that produces the kind, so a
@@ -98,6 +101,8 @@ def register_receipt_kind(kind: str, *, payload_check: PayloadCheck) -> None:
     Args:
         kind: Dotted kind string, e.g. ``security.change``.
         payload_check: Callable returning the payload's semantic errors.
+        context_check: Optional envelope/policy check returning errors and warnings.
+            Used when checks must bind the actual signer or external trust policy.
 
     Raises:
         DuplicateReceiptKindError: The kind is already registered.
@@ -110,6 +115,8 @@ def register_receipt_kind(kind: str, *, payload_check: PayloadCheck) -> None:
         msg = f"receipt kind {kind!r} is already registered"
         raise DuplicateReceiptKindError(msg)
     _REGISTRY[kind] = payload_check
+    if context_check is not None:
+        _CONTEXT_CHECKS[kind] = context_check
 
 
 def _load_kinds() -> None:
@@ -121,8 +128,15 @@ def _load_kinds() -> None:
     for module_name in RECEIPT_KIND_MODULES:
         if module_name in _LOADED_KIND_MODULES:
             continue
+        # Mark before import: kind registration can re-enter this loader.
         _LOADED_KIND_MODULES.add(module_name)
-        importlib.import_module(module_name)
+        if module_name == "bernstein.core.identity.hardware_attestation":
+            from bernstein.core.identity import hardware_attestation
+
+            loaded_module = hardware_attestation
+        else:
+            loaded_module = importlib.import_module(module_name)
+        _LOADED_KIND_MODULES.add(loaded_module.__name__)
 
 
 def registered_kinds() -> tuple[str, ...]:
@@ -234,12 +248,14 @@ class ReceiptVerification:
         kind: The kind read off the envelope, empty when unreadable.
         payload_digest: The recomputed payload digest, empty on format errors.
         errors: Human-readable failures, empty when ``ok``.
+        warnings: Advisory findings that do not invalidate cryptographic evidence.
     """
 
     ok: bool
     kind: str = ""
     payload_digest: str = ""
     errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 def _envelope_from_document(raw: Any) -> ReceiptEnvelope | str:
@@ -305,6 +321,7 @@ def sign_receipt(
     signature = sign_payload(
         _signing_bytes(kind=kind, canonicalization=CANONICALIZATION_V1, payload=content),
         private_key_pem,
+        allow_p256=True,
     )
     return ReceiptEnvelope(
         kind=kind,
@@ -316,7 +333,11 @@ def sign_receipt(
     )
 
 
-def verify_receipt(receipt: ReceiptEnvelope | Mapping[str, Any]) -> ReceiptVerification:
+def verify_receipt(
+    receipt: ReceiptEnvelope | Mapping[str, Any],
+    *,
+    context: Any = None,
+) -> ReceiptVerification:
     """Verify any registered receipt kind, offline, from the receipt alone.
 
     Order: envelope shape, canonicalisation rule, kind registration, payload
@@ -327,6 +348,8 @@ def verify_receipt(receipt: ReceiptEnvelope | Mapping[str, Any]) -> ReceiptVerif
     Args:
         receipt: A :class:`ReceiptEnvelope` or its document form. Anything
             else is reported as a format error rather than raising.
+        context: External immutable policy for registered contextual kinds.
+            Receipt fields must never be promoted to trust policy automatically.
 
     Returns:
         A :class:`ReceiptVerification`.
@@ -368,6 +391,7 @@ def verify_receipt(receipt: ReceiptEnvelope | Mapping[str, Any]) -> ReceiptVerif
         envelope.signature or None,
         envelope.public_key_pem or None,
         allow_unverified=True,
+        allow_p256=True,
         missing_signature_reason="receipt is unsigned",
         missing_key_reason="receipt carries no public key",
     )
@@ -375,10 +399,15 @@ def verify_receipt(receipt: ReceiptEnvelope | Mapping[str, Any]) -> ReceiptVerif
         errors.append(f"signature: {outcome.reason}")
 
     errors.extend(payload_check(envelope.payload))
+    warnings: Sequence[str] = ()
+    if envelope.kind in _CONTEXT_CHECKS:
+        context_errors, warnings = _CONTEXT_CHECKS[envelope.kind](envelope, context)
+        errors.extend(context_errors)
 
     return ReceiptVerification(
         ok=not errors,
         kind=envelope.kind,
         payload_digest=recomputed,
         errors=tuple(errors),
+        warnings=tuple(warnings),
     )

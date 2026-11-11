@@ -557,41 +557,17 @@ def check_extension(
     leaves = cast("list[dict[str, Any]]", checkpoint.get("leaves", []))
     for leaf in leaves:
         file_name = str(leaf.get("file", ""))
-        byte_len = int(leaf.get("byte_len", 0) or 0)
-        pinned_hash = str(leaf.get("hash", ""))
         current = by_name.get(file_name)
         if current is None:
             current = _segment_bytes(audit_dir, file_name)
-        if current is None:
-            conflicts.append(
-                CheckpointConflict(
-                    kind="segment_missing",
-                    segment=file_name,
-                    offset=0,
-                    detail="segment pinned by the checkpoint is gone (not live, not archived)",
-                )
-            )
-            continue
-        if len(current) < byte_len:
-            conflicts.append(
-                CheckpointConflict(
-                    kind="segment_shrunk",
-                    segment=file_name,
-                    offset=len(current),
-                    detail=f"segment is {len(current)} bytes; checkpoint pinned the first {byte_len}",
-                )
-            )
-            continue
-        prefix_hash = _leaf_prefix_hash(current[:byte_len])
-        if prefix_hash != pinned_hash:
-            conflicts.append(
-                CheckpointConflict(
-                    kind="segment_prefix_mismatch",
-                    segment=file_name,
-                    offset=byte_len,
-                    detail=f"first {byte_len} bytes no longer reproduce the checkpointed leaf hash",
-                )
-            )
+        conflict = leaf_conflict(
+            file_name,
+            int(leaf.get("byte_len", 0) or 0),
+            str(leaf.get("hash", "")),
+            current,
+        )
+        if conflict is not None:
+            conflicts.append(conflict)
 
     # Self-integrity: the pinned root must be rebuildable from the pinned
     # leaves. This cannot fail for a checkpoint this module wrote (the
@@ -616,6 +592,40 @@ def check_extension(
             )
 
     return conflicts
+
+
+def leaf_conflict(file_name: str, byte_len: int, pinned_hash: str, current: bytes | None) -> CheckpointConflict | None:
+    """Return how *current* fails to hold the prefix a checkpoint pinned for *file_name*.
+
+    The per-segment half of :func:`check_extension`: ``segment_missing`` when
+    *current* is ``None`` (neither live nor archived), ``segment_shrunk`` when
+    it is shorter than the pin, ``segment_prefix_mismatch`` when its first
+    *byte_len* bytes no longer hash to *pinned_hash*, and ``None`` when the
+    pinned prefix is intact. Shared with the incremental verifier, which
+    already holds each segment's bytes and must not read them twice.
+    """
+    if current is None:
+        return CheckpointConflict(
+            kind="segment_missing",
+            segment=file_name,
+            offset=0,
+            detail="segment pinned by the checkpoint is gone (not live, not archived)",
+        )
+    if len(current) < byte_len:
+        return CheckpointConflict(
+            kind="segment_shrunk",
+            segment=file_name,
+            offset=len(current),
+            detail=f"segment is {len(current)} bytes; checkpoint pinned the first {byte_len}",
+        )
+    if _leaf_prefix_hash(current[:byte_len]) != pinned_hash:
+        return CheckpointConflict(
+            kind="segment_prefix_mismatch",
+            segment=file_name,
+            offset=byte_len,
+            detail=f"first {byte_len} bytes no longer reproduce the checkpointed leaf hash",
+        )
+    return None
 
 
 def _leaf_prefix_hash(prefix: bytes) -> str:
@@ -828,6 +838,7 @@ __all__ = [
     "count_entries",
     "find_divergence_acks",
     "latest_pointer_path",
+    "leaf_conflict",
     "load_checkpoints",
     "load_latest_checkpoint",
     "record_checkpoint",

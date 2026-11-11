@@ -192,6 +192,28 @@ def test_quarantine_list_renders_store_rows() -> None:
     assert "timeout" in result.output
 
 
+def test_quarantine_list_renders_bracket_bearing_reasons() -> None:
+    """A reason is the task's own result_summary; markup brackets must not crash the listing."""
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp:
+        _write_quarantine(
+            Path(tmp),
+            [
+                {
+                    "task_title": "teardown [tmp] task",
+                    "fail_count": 3,
+                    "last_failure": date.today().isoformat(),
+                    "reason": "pytest failed under [/tmp/pytest-of-ci] - fixture teardown error",
+                    "action": "skip",
+                }
+            ],
+        )
+        result = runner.invoke(quarantine_group, ["list"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "pytest failed under [/tmp/pytest-of-ci] - fixture teardown error" in result.output
+    assert "teardown [tmp] task" in result.output
+
+
 def test_quarantine_list_hides_expired_entries_unless_all() -> None:
     runner = CliRunner()
     stale = (date.today() - timedelta(days=QUARANTINE_EXPIRY_DAYS + 1)).isoformat()

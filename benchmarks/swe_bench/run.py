@@ -158,6 +158,7 @@ def eval(
         click.echo(
             f"  Done. Resolve rate: {summary.resolve_rate * 100:.1f}% "
             f"({summary.resolved}/{summary.total_instances - summary.skipped})  "
+            f"EV: {summary.expected_value:+.3f}  "
             f"Mean cost: ${summary.mean_cost_per_instance_usd:.4f}/issue  "
             f"Total: ${summary.total_cost_usd:.2f}"
         )
@@ -353,8 +354,8 @@ def compare(output: Path | None) -> None:
 
 
 def _print_summary_table(summaries: list[ScenarioSummary]) -> None:
-    col_w = [20, 14, 12, 18, 12]
-    headers = ["Scenario", "Resolve rate", "Mean time", "Cost/issue", "Total cost"]
+    col_w = [20, 14, 12, 18, 12, 8, 8]
+    headers = ["Scenario", "Resolve rate", "Mean time", "Cost/issue", "Total cost", "EV", "Brier"]
     header_line = "  ".join(h.ljust(w) for h, w in zip(headers, col_w, strict=True))
     click.echo(header_line)
     click.echo("─" * len(header_line))
@@ -366,6 +367,8 @@ def _print_summary_table(summaries: list[ScenarioSummary]) -> None:
             f"{s.mean_wall_time_s:.0f}s",
             f"${s.mean_cost_per_instance_usd:.4f}",
             f"${s.total_cost_usd:.2f}",
+            f"{s.expected_value:+.3f}",
+            f"{s.brier_score:.3f}",
         ]
         click.echo("  ".join(c.ljust(w) for c, w in zip(cols, col_w, strict=True)))
 

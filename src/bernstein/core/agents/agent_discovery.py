@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol, cast
 
+from bernstein.core.agents.detector_runtime import run_registered_detector
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -474,7 +476,7 @@ def _detect_cursor() -> tuple[AgentCapabilities | None, list[str]]:
 
 
 def _detect_kilo() -> tuple[AgentCapabilities | None, list[str]]:
-    """Detect Kilo CLI (Stackblitz)."""
+    """Detect Kilo CLI (Kilo Code)."""
     warnings: list[str] = []
     binary = shutil.which("kilo")
     if binary is None:
@@ -927,7 +929,7 @@ def discover_agents() -> DiscoveryResult:
             continue
         try:
             if registration is not None:
-                agent, agent_warnings = registration.adapter(name)
+                agent, agent_warnings = run_registered_detector(registration.adapter, name, source=registration.source)
             else:
                 agent, agent_warnings = _detect_registry_cli(name)
             if agent is not None:

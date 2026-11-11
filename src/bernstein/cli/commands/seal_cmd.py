@@ -207,6 +207,29 @@ def seal_publish(
     )
 
 
+def _validate_log_public_keys(
+    ctx: click.Context,
+    param: click.Parameter,
+    value: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Reject a malformed ``--log-public-key`` before any anchor is read."""
+    normalized: list[str] = []
+    for raw in value:
+        key = raw.strip().lower()
+        try:
+            key_bytes = bytes.fromhex(key)
+        except ValueError:
+            key_bytes = b""
+        if len(key_bytes) != 32:
+            raise click.BadParameter(
+                f"{raw!r}: expected 64 hex characters (raw 32-byte Ed25519 key)",
+                ctx=ctx,
+                param=param,
+            )
+        normalized.append(key)
+    return tuple(normalized)
+
+
 @seal_group.command("verify")
 @click.argument("run_id")
 @click.option("--sdd-dir", "sdd_dir", default=".sdd", show_default=True, help="Path to the .sdd directory.")
@@ -217,13 +240,31 @@ def seal_publish(
     type=click.Path(dir_okay=False),
     help="PEM/DER bundle of TSA roots you accept. Without it nothing is checked.",
 )
+@click.option(
+    "--log-public-key",
+    "log_public_keys",
+    multiple=True,
+    default=(),
+    callback=_validate_log_public_keys,
+    help=(
+        "Ed25519 log public key you accept, lowercase hex of the raw 32-byte "
+        "key. Repeatable. The key inside the anchor is only a hint to pick "
+        "among these; without a pin a transparency-log anchor is unverifiable."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit the verdict as JSON.")
-def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bool) -> None:
+def seal_verify(
+    run_id: str,
+    sdd_dir: str,
+    trust_bundle: str | None,
+    log_public_keys: tuple[str, ...],
+    as_json: bool,
+) -> None:
     """Check RUN_ID's stored anchor against the artifacts on disk, offline.
 
     Exits zero only on a verified anchor. A head that moved since the anchor
-    was issued reports ``mismatched``; a missing trust bundle reports
-    ``unverifiable`` rather than a pass.
+    was issued reports ``mismatched``; a missing TSA bundle or missing log
+    public key pin reports ``unverifiable`` rather than a pass.
     """
     from bernstein.core.security.rfc3161_verifier import load_trusted_tsa_certs
 
@@ -250,7 +291,12 @@ def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bo
             console.print(f"[red]{exc}[/red]")
             raise SystemExit(_FAILURE_EXIT) from exc
 
-    result = verify_anchor(anchor, sealed_head=head, trusted_tsa_certs=trusted)
+    result = verify_anchor(
+        anchor,
+        sealed_head=head,
+        trusted_tsa_certs=trusted,
+        trusted_log_keys=log_public_keys,
+    )
 
     if as_json:
         console.print_json(
@@ -263,6 +309,7 @@ def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bo
                     "gen_time": result.gen_time.isoformat() if result.gen_time else None,
                     "tsa_subject": result.tsa_subject,
                     "tsa_url": anchor.tsa_url,
+                    "tree_size": result.tree_size,
                     "errors": result.errors,
                 }
             )
@@ -272,6 +319,8 @@ def seal_verify(run_id: str, sdd_dir: str, trust_bundle: str | None, as_json: bo
         console.print(f"[{colour}]{result.status.value.upper()}[/{colour}] anchor for [bold]{run_id}[/bold]")
         if result.gen_time is not None:
             console.print(f"witnessed at {result.gen_time.isoformat()} by {result.tsa_subject}")
+        if result.tree_size is not None:
+            console.print(f"included at tree size {result.tree_size}")
         for error in result.errors:
             console.print(f"  {error}")
 

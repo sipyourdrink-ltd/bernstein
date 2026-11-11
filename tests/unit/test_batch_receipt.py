@@ -116,6 +116,35 @@ class TestItemOutcome:
         with pytest.raises(ValueError, match="outcome"):
             BatchItemOutcome.from_output("acct-9", "meh")
 
+    def test_a_failure_with_no_tail_carries_a_synthetic_reason(self) -> None:
+        with_code = BatchItemOutcome.from_output("a", "failed", exit_code=1)
+        blank_tail = BatchItemOutcome.from_output("b", "failed", output_tail="  \n\n")
+        assert with_code.failure_reason == "exit 1"
+        assert blank_tail.failure_reason == "no output"
+
+    def test_failure_reason_redacts_credentials_before_truncating(self) -> None:
+        secret = "sk-" + "a1B2c3D4e5F6g7H8i9J0"
+        item = BatchItemOutcome.from_output(
+            "acct-2", "failed", exit_code=1, output_tail=f"boom\nauth failed with key {secret}\n"
+        )
+        assert secret not in item.failure_reason
+        assert "[REDACTED]" in item.failure_reason
+
+    def test_a_secret_straddling_the_length_limit_is_not_left_half_visible(self) -> None:
+        secret = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2"
+        line = "x" * 190 + " " + secret
+        reason = failure_reason_from_tail(line)
+        assert "ghp_" not in reason
+        assert len(reason) <= 200
+
+    def test_redacted_secret_does_not_reach_the_signed_receipt(self, keys: tuple[str, str]) -> None:
+        secret = "sk-" + "a1B2c3D4e5F6g7H8i9J0"
+        item = BatchItemOutcome.from_output("acct-2", "failed", exit_code=1, output_tail=f"token={secret}")
+        payload = _payload(items=[item])
+        private_pem, public_pem = keys
+        envelope = sign_receipt(RECEIPT_KIND, payload, private_key_pem=private_pem, public_key_pem=public_pem)
+        assert secret not in json.dumps(envelope.to_dict())
+
 
 class TestBuild:
     def test_buckets_follow_processing_order(self) -> None:
@@ -174,6 +203,35 @@ class TestDeterminism:
 # ---------------------------------------------------------------------------
 # Verifiability: the one protocol, offline
 # ---------------------------------------------------------------------------
+
+
+class TestBuilderRoundTrip:
+    """Whatever the builder returns, the registered verifier accepts."""
+
+    def test_failed_items_without_a_tail_round_trip(self, keys: tuple[str, str]) -> None:
+        items = [
+            BatchItemOutcome.from_output("x", "failed", exit_code=1),
+            BatchItemOutcome.from_output("y", "failed", output_tail="   \n"),
+            BatchItemOutcome.from_output("z", "success", exit_code=0),
+            BatchItemOutcome.from_output("w", "skipped"),
+        ]
+        payload = _payload(items=items)
+        assert batch_pass_payload_errors(payload) == ()
+        private_pem, public_pem = keys
+        envelope = sign_receipt(RECEIPT_KIND, payload, private_key_pem=private_pem, public_key_pem=public_pem)
+        result = verify_receipt(json.loads(json.dumps(envelope.to_dict())))
+        assert result.ok, result.errors
+
+    @pytest.mark.parametrize("outcome", ["success", "failed"])
+    def test_zero_attempts_fails_at_build_time(self, outcome: str) -> None:
+        item = BatchItemOutcome.from_output("y", outcome, attempts=0, exit_code=1, output_tail="boom")
+        with pytest.raises(ValueError, match="attempts"):
+            _payload(items=[item])
+
+    def test_a_hand_built_invalid_item_fails_at_build_time(self) -> None:
+        item = BatchItemOutcome(entity_id="y", outcome="failed", attempts=1, failure_reason="")
+        with pytest.raises(ValueError, match="failure_reason"):
+            _payload(items=[item])
 
 
 class TestProtocol:

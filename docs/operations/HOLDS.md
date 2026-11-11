@@ -1,7 +1,8 @@
 # Orchestrator holds
 
-The orchestrator self-stops on quiescence: when `open_tasks == 0` and
-`active_agents == 0` for a settle window, it exits. The hold/release API lets
+The orchestrator self-stops on quiescence: when `open_tasks == 0`,
+`active_agents == 0` and no task is `claimed` or `in_progress` (a claim held
+by a remote cluster worker counts) for a settle window, it exits. The hold/release API lets
 an external caller (a dashboard, a human-in-the-loop workflow, a scheduler
 like `run.py`) prevent that self-stop while it still has work planned, even
 though the orchestrator looks idle right now.

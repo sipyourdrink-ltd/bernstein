@@ -1,1 +1,0 @@
-Add abstract `invoke` method to `CLIAdapter` base class for direct model invocation without spawning a full agent process.

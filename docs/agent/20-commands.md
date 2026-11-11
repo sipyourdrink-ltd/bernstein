@@ -8,6 +8,6 @@
 | bernstein-bench | `bernstein-bench` | declared | console entry point | `pyproject.toml:344` |
 | bernstein-worker | `bernstein-worker` | declared | console entry point | `pyproject.toml:343` |
 | verify-audit-receipt | `verify-audit-receipt` | declared | console entry point | `pyproject.toml:345` |
-| lint | `ruff check .` | inferred | ruff configured | `pyproject.toml:552` |
-| test | `pytest` | inferred | pytest configured | `pyproject.toml:796` |
-| typecheck | `mypy .` | inferred | mypy configured | `pyproject.toml:672` |
+| lint | `ruff check .` | inferred | ruff configured | `pyproject.toml:554` |
+| test | `pytest` | inferred | pytest configured | `pyproject.toml:798` |
+| typecheck | `mypy .` | inferred | mypy configured | `pyproject.toml:674` |

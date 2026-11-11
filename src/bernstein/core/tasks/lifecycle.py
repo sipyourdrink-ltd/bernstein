@@ -165,6 +165,7 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.CLAIMED, TaskStatus.CANCELLED): _always,
     (TaskStatus.CLAIMED, TaskStatus.WAITING_FOR_SUBTASKS): _always,  # agent splits work
     (TaskStatus.CLAIMED, TaskStatus.BLOCKED): _always,
+    (TaskStatus.CLAIMED, TaskStatus.SUSPENDED): _always,
     # Work progression from IN_PROGRESS
     (TaskStatus.IN_PROGRESS, TaskStatus.DONE): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.FAILED): _always,
@@ -173,6 +174,18 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.IN_PROGRESS, TaskStatus.OPEN): _always,  # force-claim / requeue
     (TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.ORPHANED): _always,
+    # Cooperative cancellation stays in flight until the worker has stopped.
+    (TaskStatus.CLAIMED, TaskStatus.STOP_REQ): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.STOP_REQ): _always,
+    (TaskStatus.STOP_REQ, TaskStatus.CANCELLED): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.SUSPENDED): _always,
+    # Cooperative mailbox rendezvous restores the exact state that entered
+    # suspension; the live worker/session remains allocated throughout.
+    (TaskStatus.SUSPENDED, TaskStatus.CLAIMED): _always,
+    (TaskStatus.SUSPENDED, TaskStatus.IN_PROGRESS): _always,
+    # Operator escape hatch when a cooperative waiter cannot be recovered by
+    # its live request (for example process loss during cleanup).
+    (TaskStatus.SUSPENDED, TaskStatus.CANCELLED): _always,
     # Recovery from orphaned
     (TaskStatus.ORPHANED, TaskStatus.DONE): _always,
     (TaskStatus.ORPHANED, TaskStatus.FAILED): _always,
@@ -249,6 +262,15 @@ TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
     s for s in TaskStatus if s not in {frm for (frm, _to), _guard in TASK_TRANSITIONS.items()}
 )
 
+# Resource hygiene (#5112): has the task finished, so that a lane provisioned
+# for it (a worktree, a sandbox session) is no longer needed? Every status with
+# no outbound transition, plus DONE and FAILED. Those two keep a recovery edge
+# back to OPEN, but they are finished until an operator reopens them, and a
+# reopen is recorded and read back, which makes the task live again.
+# ABANDONED and REFUSED can never run again, so they count; ORPHANED (pending
+# crash recovery), SUSPENDED (resumable) and the blocked states do not.
+LANE_FINISHED_STATUSES: frozenset[TaskStatus] = TERMINAL_TASK_STATUSES | {TaskStatus.DONE, TaskStatus.FAILED}
+
 
 # ---------------------------------------------------------------------------
 # Dependency-satisfaction classification (#3452)
@@ -301,6 +323,7 @@ IN_FLIGHT_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
         TaskStatus.OPEN,
         TaskStatus.CLAIMED,
         TaskStatus.IN_PROGRESS,
+        TaskStatus.STOP_REQ,
         TaskStatus.BLOCKED,
         TaskStatus.WAITING_FOR_SUBTASKS,
         TaskStatus.SUSPENDED,
@@ -420,6 +443,13 @@ def _emit(event: LifecycleEvent) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_task_transition(task: Task, new_status: TaskStatus) -> None:
+    """Check the existing edge and guard without mutating state or emitting events."""
+    guard = TASK_TRANSITIONS.get((task.status, new_status))
+    if guard is None or not guard(task):
+        raise IllegalTransitionError("task", task.id, task.status.value, new_status.value)
+
+
 def transition_task(
     task: Task,
     new_status: TaskStatus,
@@ -457,14 +487,7 @@ def transition_task(
         _seen_transition_ids.add(transition_id)
 
     old_status = task.status
-    key = (old_status, new_status)
-
-    if key not in TASK_TRANSITIONS:
-        raise IllegalTransitionError("task", task.id, old_status.value, new_status.value)
-
-    guard = TASK_TRANSITIONS[key]
-    if not guard(task):
-        raise IllegalTransitionError("task", task.id, old_status.value, new_status.value)
+    _validate_task_transition(task, new_status)
 
     task.status = new_status
 

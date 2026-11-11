@@ -12,6 +12,10 @@ filesystem so artifacts can stream to S3, Google Cloud Storage,
 Azure Blob, Cloudflare R2, or a custom plugin while the orchestrator
 logic is unchanged.
 
+Status: the package is a standalone library (`src/bernstein/core/storage/`).
+No orchestrator or WAL code path writes through it yet, so the WAL flow
+shown below is the intended wiring rather than current behaviour.
+
 ## Protocol
 
 Every sink implements the async [`ArtifactSink`][sink] protocol:
@@ -86,8 +90,9 @@ WAL.append() ──▶ LocalFsSink.write(durable=True)   ← synchronous fsync
    bounded so a slow remote applies back-pressure rather than growing
    unbounded.
 3. **Graceful shutdown.** `close()` blocks until every pending mirror
-   has ACKed or failed. The orchestrator calls this on normal exit so
-   nothing is lost.
+   write drains (ACKed or failed); callers that construct a buffered
+   sink must call it on exit (the orchestrator does not use the storage
+   sinks today).
 
 Reads prefer the remote sink - that's the crash-recovery path where
 the ephemeral local disk may be empty. They fall back to local when
@@ -97,13 +102,13 @@ still pending).
 ## Sandbox integration
 
 `WorkspaceManifest` carries a tuple of `ArtifactMount` entries
-(`S3Mount`, `GCSMount`, `AzureBlobMount`, `R2Mount`). Cloud sandbox
-backends (docker, e2b, modal) translate these into provider-native
-filesystem bindings
+(`S3Mount`, `GCSMount`, `AzureBlobMount`, `R2Mount`), defined in
+`src/bernstein/core/sandbox/manifest.py`. The intended design is that cloud
+sandbox backends translate these into provider-native filesystem bindings
 (`rclone mount` for S3/R2, `gcsfuse` for GCS, `blobfuse2` for Azure)
 so agent writes to the mount path stream straight into the
-orchestrator's artifact sink. The `worktree` backend ignores the
-field - everything already lives on the host filesystem.
+orchestrator's artifact sink, and that the `worktree` backend ignores the
+field. No first-party backend consumes the field yet.
 
 ## Credential handling
 
@@ -149,15 +154,8 @@ lifetime.
 
 ## Observability
 
-Each sink operation emits Prometheus metrics through the existing
-`bernstein.core.observability` stack:
-
-- `storage_write_total{sink, durable}`
-- `storage_write_duration_seconds{sink}`
-- `storage_read_bytes_total{sink}`
-- `storage_buffer_pending_writes{sink}` (BufferedSink)
-- `storage_buffer_lag_seconds{sink}` (BufferedSink)
-
-`BufferedSink.stats()` exposes the raw counters as a
+No Prometheus metrics are registered for sinks today.
+`BufferedSink.stats()` exposes the raw counters (`pending_writes`,
+`completed_mirrors`, `failed_mirrors`, `oldest_pending_age_seconds`) as a
 `BufferedSinkStats` dataclass for test assertions and ad-hoc
 debugging.

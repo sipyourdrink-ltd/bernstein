@@ -212,3 +212,28 @@ def test_the_guard_vetoes_the_clean_exit_auto_completion(
     assert completed == []
     assert failed and failed[0][0] == "T-1"
     assert "never committed" in failed[0][1]
+
+
+def test_aider_gitignore_entry_alone_is_not_work(tmp_path: Path) -> None:
+    """aider appends ``.aider*`` to .gitignore on start-up; a clean exit after that is not a deliverable."""
+    repo = _repo(tmp_path)
+    (repo / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+    _run(["git", "add", "-A"], repo)
+    _run(["git", "commit", "-m", "gitignore"], repo)
+    (repo / ".gitignore").write_text("*.pyc\n.aider*\n", encoding="utf-8")
+    (repo / ".aider.conf.yml").write_text("gitignore: false\n", encoding="utf-8")
+    (repo / ".aider.tags.cache.v4").mkdir()
+    (repo / ".aider.tags.cache.v4" / "cache.db").write_bytes(b"\0")
+    assert _uncommitted_work_paths(repo) == []
+
+
+def test_untracked_gitignore_holding_only_aider_entries_is_not_work(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".gitignore").write_text(".aider*\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == []
+
+
+def test_gitignore_with_a_real_added_line_is_still_work(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".gitignore").write_text(".aider*\nbuild/\n", encoding="utf-8")
+    assert _uncommitted_work_paths(repo) == [".gitignore"]

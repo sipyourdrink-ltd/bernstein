@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bernstein_create_task",
+  "description": "Create a bare task without triggering orchestration or spawning agents. The task enters the backlog and is immediately claimable via bernstein_claim by any session matching its role. Host effects: writes files; makes network requests.",
+  "timeoutSeconds": 30.0,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "description"],
+  "properties": {
+    "title": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "description": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "run_id": {"type": ["string", "null"], "pattern": "^admin-[a-f0-9]{32}$", "description": "Optional open administrative container identifier returned by bernstein_run."},
+    "role": {"type": "string", "minLength": 1, "maxLength": 64},
+    "priority": {"type": "integer", "minimum": 1, "maximum": 3},
+    "depends_on": {
+      "anyOf": [
+        {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+        {"type": "null"}
+      ]
+    },
+    "scope": {"type": "string", "enum": ["small", "medium", "large"]},
+    "model": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 64}, {"type": "null"}]},
+    "effort": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 64}, {"type": "null"}]}
+  }
+}

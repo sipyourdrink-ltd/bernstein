@@ -103,7 +103,7 @@ uv run ruff format src/
 uv run pyright src/
 ```
 
-All three must pass before committing. No exceptions, no "fix later."
+`ruff check` and `ruff format` must pass before committing (CI runs `ruff format --check`). `pyright src/` is advisory repo-wide in CI, but the curated strict zone blocks: `uv run pyright --project pyrightconfig.strict.json`. No exceptions, no "fix later."
 
 ## Development Workflow
 
@@ -122,7 +122,9 @@ All three must pass before committing. No exceptions, no "fix later."
 Every change lands through the merge queue with the approvals the
 [review charter](docs/governance/review-charter.md) requires: two, from
 committers who are not the author, at least one of them a core reviewer
-(the roster is `.github/quorum-roster.toml`). Ownership is separate: any
+(three, two of them core, for a change over 400 lines or one touching a
+`sandbox`, `security` or `audit` path outside `tests/` and `docs/`; the
+roster is `.github/quorum-roster.toml`). Ownership is separate: any
 path with a named owner in [CODEOWNERS](.github/CODEOWNERS) needs that
 owner's approval as well, rather than the core approval standing in for
 it. Protected paths also need the maintainer. Reviewer checklist:
@@ -282,11 +284,11 @@ The CLI is split into two layers under `src/bernstein/cli/`:
 
 **Top-level** (`cli/`): `main.py` (Click group), `run.py`, `run_cmd.py`, `live.py`, `dashboard.py`, `helpers.py`, `ui.py`, `status.py`
 
-**Commands sub-package** (`cli/commands/`): 70+ command modules including:
+**Commands sub-package** (`cli/commands/`): 200+ command modules including:
 
 | Module | Purpose |
 |---|---|
-| `run_cmd.py` | `bernstein run` / `-g` orchestration entry point |
+| `run_cmd.py` (in `cli/`) | `bernstein run` / `-g` orchestration entry point |
 | `stop_cmd.py` | `bernstein stop` graceful shutdown |
 | `status_cmd.py` | `bernstein status` / `bernstein ps` |
 | `evolve_cmd.py` | `bernstein evolve` subcommands |
@@ -307,7 +309,7 @@ When adding a new CLI command, create a new `*_cmd.py` module in `cli/commands/`
 
 ## Supported CLI Adapters
 
-Bernstein ships with 40+ CLI agent adapters, plus a generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
+Bernstein ships with 50+ CLI agent adapters, plus a generic catch-all. `src/bernstein/adapters/registry.py` is the source of truth for the exact set - check it before writing a new adapter. A subset is shown here for orientation:
 
 | Adapter | File | Agent |
 |---------|------|-------|
@@ -341,18 +343,29 @@ Adapters implement the `CLIAdapter` ABC from `adapters/base.py`:
 ```python
 class CLIAdapter(ABC):
     @abstractmethod
-    def spawn(self, *, prompt, workdir, model_config, session_id, mcp_config=None) -> SpawnResult: ...
-    @abstractmethod
-    def is_alive(self, pid: int) -> bool: ...
-    @abstractmethod
-    def kill(self, pid: int) -> ProcessReapReceipt: ...
+    def spawn(
+        self,
+        *,
+        prompt,
+        workdir,
+        model_config,
+        session_id,
+        mcp_config=None,
+        timeout_seconds=...,
+        task_scope="medium",
+        budget_multiplier=1.0,
+        system_addendum="",
+        multimodal_context=None,
+    ) -> SpawnResult: ...
     @abstractmethod
     def name(self) -> str: ...
+    def is_alive(self, pid: int) -> bool: ...  # default provided
+    def kill(self, pid: int) -> ProcessReapReceipt: ...  # default provided
     def detect_tier(self) -> ApiTierInfo | None: ...  # optional
 ```
 
 Steps:
-1. Create `src/bernstein/adapters/mycli.py` implementing all four abstract methods. See `adapters/claude.py` for a complete reference.
+1. Create `src/bernstein/adapters/mycli.py` implementing the two abstract methods (`spawn` and `name`). See `adapters/claude.py` for a complete reference.
 2. Register in `adapters/registry.py`: `_ADAPTERS["mycli"] = MyCLIAdapter`
 3. Run checks: `uv run ruff check src/ && uv run pyright src/ && uv run python scripts/run_tests.py -x`
 4. Open a PR - include a short note on how you tested it.
@@ -361,7 +374,7 @@ Steps:
 
 ### Writing a Custom CI Parser
 
-CI parsers implement the `CILogParser` protocol from `core/ci_log_parser.py`:
+CI parsers implement the `CILogParser` protocol from `core/quality/ci_log_parser.py`:
 
 ```python
 class CILogParser(Protocol):
@@ -372,7 +385,7 @@ class CILogParser(Protocol):
 
 Steps:
 1. Create `src/bernstein/adapters/ci/<name>.py` from the template in `templates/ci-parsers/TEMPLATE.py`. See `adapters/ci/github_actions.py` for a working example.
-2. Register: `from bernstein.core.ci_log_parser import register_parser; register_parser(MyCIParser())`
+2. Register: `from bernstein.core.quality.ci_log_parser import register_parser; register_parser(MyCIParser())`
 3. Run checks and open a PR.
 
 ## Writing a Custom Role

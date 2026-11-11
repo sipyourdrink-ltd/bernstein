@@ -1,0 +1,7 @@
+{
+  "class": "unimported_test_symbol",
+  "description": "Placeholder test with no direct or transitive import of the modified production module; this fixture measures module reachability, not symbol invocation",
+  "expected_verdict": "fail",
+  "gate_that_must_flag": "test_expansion",
+  "taxonomy_category": "evasion_unimported_test_symbol"
+}

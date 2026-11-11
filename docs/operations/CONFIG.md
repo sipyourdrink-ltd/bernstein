@@ -111,6 +111,11 @@ When `cli: auto` is set at the top level, the orchestrator picks the best availa
 
 A per-role `cli:` accepts any adapter registry name that `bernstein adapters list` reports - `ollama`, `aider`, `opencode` and the rest, not only the handful that also answer to a provider alias. The value is resolved by name; a `cli:` that names no registered adapter refuses the spawn and lists the adapters that would have worked, instead of quietly running the role on the run-level adapter.
 
+Within a role, file-affinity batching respects conflicting per-task `cli`,
+`model`, and preferred-agent hints. A task with no routing hint that touches
+files from two groups cannot combine those groups when their explicit hints
+conflict. Compatible groups can still share a batch up to `max_tasks_per_agent`.
+
 ### Escalation ladder (opt-in)
 
 `role_model_policy.<role>.ladder` declares an ordered, evidence-gated
@@ -261,6 +266,7 @@ Environment variables are useful in CI and automation. Common variables:
 | `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
 | `BERNSTEIN_STALL_THRESHOLD_S` | Override the manager-stall deadline (see §4.2 below). Takes precedence over the `tuning.orchestrator.stalled_manager_threshold_s` yaml key. |
 | `BERNSTEIN_MAX_TURNS` | Override the SDK turn ceiling for the openai_agents runner (see §4.1). Takes precedence over `tuning.agent.max_turns`. |
+| `BERNSTEIN_SIGNAL_TIMEOUT_S` | Timeout in seconds for each janitor `test_passes` completion signal. **Default `120`.** Read at each check; integer values below `1` are clamped to `1`, and invalid values fall back to `120`. For example, set `BERNSTEIN_SIGNAL_TIMEOUT_S=300` in the orchestrator environment for a slower check. Timeout logs include the effective limit. Prefer fast signals scoped to the package or files changed by the task over project-wide gates. |
 | `BERNSTEIN_JANITOR_FUZZY_PATHS` | Opt-in fuzzy matching for `path_exists` completion signals. **Default `0` (off)**: exact-path matching is unchanged - the check means exactly the path written in the plan. Set to `1` to enable a fuzzy fallback on a literal miss: a pattern derived from the basename (`**/<stem>*<suffix>`) so a manager-guessed path (e.g. `packages/db/test/foo.test.ts`) can match a worker's repo-idiomatic path (e.g. `packages/db/src/__tests__/foo.test.ts`). A fuzzy match logs a WARNING naming the matched path. Explicit glob syntax written in the criterion itself (`*`, `?`, `[`) is always honored, regardless of this flag. See [TROUBLESHOOTING.md #21](TROUBLESHOOTING.md#21-janitor-path_exists-fails-on-a-correctly-placed-file-acceptance-path-mismatch). |
 | `BERNSTEIN_JANITOR_REOPEN_MAX` | Max janitor-reopen cycles per task before a janitor-FAILed task is permanently failed instead of reopened under the same id. **Default `2`.** A non-numeric value logs a warning and falls back to the default; negative values are clamped to `0` (fail immediately, never reopen). |
 | `BERNSTEIN_QUIESCENCE_SETTLE_S` | Settle delay (seconds) the orchestrator waits after a tick reaches quiescence (all tasks terminal) before the re-check that decides whether to self-stop. **Default `2.0`.** Set `0` to skip the settle sleep entirely (used by tests to avoid a real per-tick delay). |
@@ -550,11 +556,46 @@ result at merge time. Modes that never merge back (`--dry-run`,
 printed in the end-of-run summary and the run health verdict is downgraded to
 UNHEALTHY.
 
+The same journal also records merges refused by the merge gates (quality
+gates, file scope, blast radius), each under its own code with the gate's
+explanation in a `detail` field. The end-of-run summary prints those
+separately, one line per agent branch with its code and detail, because the
+override below does not lift them: fix what the gate reports and re-run the
+task.
+
 Check out a non-default branch before merging, or opt in explicitly:
 
 ```bash
 BERNSTEIN_ALLOW_MERGE_TO_DEFAULT_BRANCH=1
 ```
+
+### Local-only merge-backs
+
+By default a successful merge-back is followed by a push of the merged branch
+to `origin`, and a push that fails is queued in
+`.sdd/runtime/pending_pushes.jsonl` for a later retry. To keep merged work on
+the machine, set:
+
+```bash
+BERNSTEIN_LOCAL_ONLY=1
+```
+
+Accepted values are `1`, `true`, `yes`, `on`, `enable` and `enabled`
+(case-insensitive); anything else, or unset, keeps pushing. When it is set:
+
+- the merge into the checked-out branch still happens;
+- the push after it is skipped outright, so there is no fetch, rebase or push
+  to the remote for that merge;
+- the pending-push retry queue is not drained, and is left intact on disk, so
+  unsetting the flag resumes those retries.
+
+Clearing the flag publishes the backlog. The first merge-back after it is
+unset runs `git push <remote> <branch>`, and that push sends every merge made
+on the branch while the flag was set, not just the new one.
+
+It does not cover the salvage push of a `salvage/<id>` branch when a dirty
+worktree is captured, or evolve mode's push to `main`; both still reach the
+remote.
 
 ---
 

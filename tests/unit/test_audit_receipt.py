@@ -172,7 +172,7 @@ def test_byte_identical_replay(tmp_path: Path) -> None:
 
 
 def test_verifier_passes_all_formats(receipt_env: dict[str, Any]) -> None:
-    rc, out = _verify(receipt_env["receipt"].receipt_path)
+    rc, out = _verify(receipt_env["receipt"].receipt_path, "--allow-unpinned-key")
     assert rc == 0, out
     assert "OVERALL: PASS" in out
     assert "[PASS] cose" in out
@@ -196,7 +196,7 @@ def test_each_format_verifies_alone(tmp_path: Path, fmt: str) -> None:
         write=True,
     )
     assert receipt.formats == (fmt,)
-    rc, out = _verify(receipt.receipt_path, "--format", fmt)
+    rc, out = _verify(receipt.receipt_path, "--format", fmt, "--allow-unpinned-key")
     assert rc == 0, out
     assert f"[PASS] {fmt}" in out
 
@@ -217,6 +217,33 @@ def test_pinned_jwk_matches(receipt_env: dict[str, Any]) -> None:
     jwk_path = receipt_env["tmp"] / "trusted.jwk.json"
     jwk_path.write_text(json.dumps(receipt.receipt["signing"]["public_key_jwk"]))
     rc, out = _verify(receipt.receipt_path, "--jwk", str(jwk_path), "--verbose")
+    assert rc == 0, out
+    assert "[PASS] public_key - pinned-jwk" in out
+
+
+def test_unpinned_key_is_not_a_pass_by_default(receipt_env: dict[str, Any]) -> None:
+    """Verifying only against the embedded key reports FAIL, and says why."""
+    rc, out = _verify(receipt_env["receipt"].receipt_path)
+    assert rc == 1, out
+    assert "[FAIL] public_key - " in out
+    assert "trust-on-first-use" in out
+    assert "--allow-unpinned-key" in out
+    assert "[PASS] subject_binding" in out
+    assert "OVERALL: FAIL" in out
+
+
+def test_unpinned_key_passes_with_explicit_opt_in(receipt_env: dict[str, Any]) -> None:
+    rc, out = _verify(receipt_env["receipt"].receipt_path, "--allow-unpinned-key")
+    assert rc == 0, out
+    assert "[PASS] public_key - trust-on-first-use" in out
+    assert "OVERALL: PASS (unpinned key: integrity only)" in out
+
+
+def test_pinned_key_status_printed_without_verbose(receipt_env: dict[str, Any]) -> None:
+    receipt = receipt_env["receipt"]
+    jwk_path = receipt_env["tmp"] / "trusted.jwk.json"
+    jwk_path.write_text(json.dumps(receipt.receipt["signing"]["public_key_jwk"]))
+    rc, out = _verify(receipt.receipt_path, "--jwk", str(jwk_path))
     assert rc == 0, out
     assert "[PASS] public_key - pinned-jwk" in out
 
@@ -304,7 +331,7 @@ def test_empty_range_receipt(tmp_path: Path) -> None:
         write=True,
     )
     assert receipt.event_count == 0
-    rc, out = _verify(receipt.receipt_path)
+    rc, out = _verify(receipt.receipt_path, "--allow-unpinned-key")
     assert rc == 0, out
     assert "OVERALL: PASS" in out
 

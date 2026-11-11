@@ -80,13 +80,23 @@ class StubSigner:
         raw = hmac.new(cls._TEST_KEY, bundle.bundle_hash().encode(), hashlib.sha256).digest()
         return base64.b64encode(raw).decode()
 
-    def sign(self, bundle: SubmissionBundle) -> SubmissionBundle:
+    @classmethod
+    def verify(cls, bundle: SubmissionBundle) -> bool:
+        """True when *bundle* carries the stub's fingerprint and a matching signature.
+
+        The stub key is public, so this proves only that the signature was
+        produced over *this* hash -- a bundle re-hashed after signing fails
+        it -- not that anyone in particular signed it.
+        """
         import hmac
 
-        bundle_hash = bundle.bundle_hash()
-        raw_sig = hmac.new(self._TEST_KEY, bundle_hash.encode(), hashlib.sha256).digest()
-        signature = base64.b64encode(raw_sig).decode()
-        fingerprint = hashlib.sha256(self._TEST_KEY).hexdigest()[:16] + "-stub"
+        return bundle.signer_fingerprint == cls.fingerprint() and hmac.compare_digest(
+            bundle.signature, cls.expected_signature(bundle)
+        )
+
+    def sign(self, bundle: SubmissionBundle) -> SubmissionBundle:
+        signature = self.expected_signature(bundle)
+        fingerprint = self.fingerprint()
 
         import dataclasses
 

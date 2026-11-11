@@ -75,7 +75,11 @@ receipt_path.write_text(json.dumps(envelope.to_dict(), indent=2))
 ```
 
 `from_output` derives the tail digest and, for a failure, the reason from the
-tail, so a caller cannot state a reason the tail does not end on. Items the
+tail, so a caller cannot state a reason the tail does not end on. The reason is
+the tail's last non-empty line with credentials and PII redacted; a failure
+with no usable tail carries `exit <code>` or `no output`.
+`build_batch_pass_payload` raises `ValueError` if the payload would not pass
+verification (for example a success item with 0 attempts). Items the
 pass never attempted go in as `skipped` with no attempts and no output.
 
 ## Verifying one

@@ -65,6 +65,11 @@ _SOURCE_OPTIONAL_BY_KIND: dict[str, frozenset[str]] = {
 _VALID_SOURCE_KINDS: frozenset[str] = frozenset(_SOURCE_REQUIRED_BY_KIND)
 
 _ID_PATTERN: re.Pattern[str] = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+# An entry's ``name`` becomes the install directory under the skills root, so
+# it follows the same slug rule as a ``SKILL.md`` name: no separators, no dots,
+# nothing that can climb out of or alias the root. Checked with ``fullmatch``
+# so a trailing newline cannot slip past ``$``.
+_NAME_PATTERN: re.Pattern[str] = re.compile(r"[a-z][a-z0-9-]*")
 
 _SUPPORTED_SCHEMA_VERSION = 1
 
@@ -435,9 +440,16 @@ def _validate_entry(raw: Any, index: int) -> SkillCatalogEntry:
         )
 
     entry_id = _ensure_str(raw["id"], f"entries[{index}].id")
-    if not _ID_PATTERN.match(entry_id):
+    if not _ID_PATTERN.fullmatch(entry_id):
         raise SkillCatalogValidationError(
             f"entries[{index}].id {entry_id!r} does not match pattern {_ID_PATTERN.pattern!r}",
+        )
+
+    entry_name = _ensure_str(raw["name"], f"entries[{index}].name")
+    if not _NAME_PATTERN.fullmatch(entry_name):
+        raise SkillCatalogValidationError(
+            f"entries[{index}].name {entry_name!r} must be a skill slug matching {_NAME_PATTERN.pattern!r} "
+            "(lowercase letters, digits, hyphens; must start with a letter)",
         )
 
     content_digest = _ensure_str(raw["content_digest"], f"entries[{index}].content_digest")
@@ -463,7 +475,7 @@ def _validate_entry(raw: Any, index: int) -> SkillCatalogEntry:
 
     return SkillCatalogEntry(
         id=entry_id,
-        name=_ensure_str(raw["name"], f"entries[{index}].name"),
+        name=entry_name,
         version=_ensure_str(raw["version"], f"entries[{index}].version"),
         description=_ensure_str(raw["description"], f"entries[{index}].description"),
         source=_validate_source(raw["source"], f"entries[{index}].source"),

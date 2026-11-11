@@ -22,6 +22,12 @@ updates:
       actions-minor-and-patch:
         applies-to: version-updates
         update-types: ["minor", "patch"]
+    ignore:
+      # Renovate bumps this action together with the scanner image it runs
+      # (the `trufflehog` group in renovate.json). A Dependabot bump moves
+      # only the wrapper, so tests/unit/test_trufflehog_workflow_yaml.py
+      # fails on every grouped Actions pull request that carries it.
+      - dependency-name: "trufflesecurity/trufflehog"
     labels:
       - "dependencies"
       - "ci"

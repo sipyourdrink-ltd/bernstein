@@ -384,16 +384,29 @@ _COMMON_ALLOWLIST: list[re.Pattern[str]] = [
 
 
 def _is_allowlisted_line(line: str, config: DLPConfig) -> bool:
-    """Return True when the line matches a known benign / test pattern."""
-    # Common patterns
-    if any(p.search(line) for p in _COMMON_ALLOWLIST):
-        return True
-    # User-configured allowlist patterns
+    """Return True when an operator-configured pattern suppresses the whole line.
+
+    ``allowlist_patterns`` is documented as suppressing a line, and is how an
+    operator marks one (an ignore comment, a synthetic-data marker). The
+    built-in allowlist is not line-wide: see :func:`_benign_spans`.
+    """
     for pattern_str in config.allowlist_patterns:
         with suppress(re.error):
             if re.search(pattern_str, line, re.IGNORECASE):
                 return True
-    # Allowlist prefix check
+    return False
+
+
+def _benign_spans(line: str, config: DLPConfig) -> list[tuple[int, int]]:
+    """Return the spans of *line* that the built-in allowlist marks benign.
+
+    A finding is suppressed only when its match overlaps one of these spans --
+    when the benign marker is part of the flagged value (``"FAKE-123-45-6789"``,
+    a copyright template that spans the header). Applied to the whole line, a
+    ``user@`` or ``localhost`` anywhere on it would hide a real SSN or card
+    number sitting beside it.
+    """
+    spans = [match.span() for pattern in _COMMON_ALLOWLIST for match in pattern.finditer(line)]
     if config.allowlist_prefixes:
         prefix_re = re.compile(
             r"""(?ix)
@@ -403,9 +416,14 @@ def _is_allowlisted_line(line: str, config: DLPConfig) -> bool:
             (?:["']|$)
             """.format(prefixes="|".join(re.escape(p) for p in config.allowlist_prefixes))
         )
-        if prefix_re.search(line):
-            return True
-    return False
+        spans.extend(match.span() for match in prefix_re.finditer(line))
+    return spans
+
+
+def _overlaps(span: tuple[int, int], others: list[tuple[int, int]]) -> bool:
+    """True when *span* shares at least one character with any of *others*."""
+    start, end = span
+    return any(start < other_end and other_start < end for other_start, other_end in others)
 
 
 # ---------------------------------------------------------------------------
@@ -474,10 +492,13 @@ class DLPScanner:
             line = self._extract_line_for_scan(raw_line, diff_mode)
             if line is None or _is_allowlisted_line(line, self._config):
                 continue
+            benign = _benign_spans(line, self._config)
 
             for category, rule_label, pattern, severity, description, block_default in self._rules:
-                m = pattern.search(line)
-                if not m:
+                # The first match that is not itself a benign value, so an
+                # allowlisted value earlier on the line cannot shadow a real one.
+                m = next((match for match in pattern.finditer(line) if not _overlaps(match.span(), benign)), None)
+                if m is None:
                     continue
 
                 findings.append(

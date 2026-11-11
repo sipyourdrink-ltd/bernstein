@@ -429,18 +429,16 @@ class TestGoldenReplay:
         if hasattr(adapter_module, "build_filtered_env"):
             monkeypatch.setattr(adapter_module, "build_filtered_env", _spy)
 
-        # Gemini adapter consults `shutil.which` to pick between the
-        # `antigravity` and `gemini` binaries (#1740 cascade). On hosts
-        # where only one happens to be installed, the recorded golden
-        # would drift from the actual argv. Pin the resolver to "neither
-        # installed" so non-strict discovery returns the first cascade
-        # entry deterministically across local + CI runs. Scoped to the
+        # Gemini adapter consults `shutil.which` (and the
+        # BERNSTEIN_GEMINI_BINARY override) to resolve its binary (#1740
+        # cascade). Pin the resolver so the recorded golden argv does not
+        # drift with the host's PATH or environment. Scoped to the
         # gemini adapter to avoid leaking into other tests' subprocess
         # lookups (shutil is a shared module).
         if adapter_cls.__module__ == "bernstein.adapters.gemini":
             monkeypatch.setattr(
                 "bernstein.adapters.gemini.resolve_google_cli_binary",
-                lambda **_kw: "antigravity",
+                lambda **_kw: "gemini",
             )
 
         default_role = str(transcript.get("session_role") or "replay")

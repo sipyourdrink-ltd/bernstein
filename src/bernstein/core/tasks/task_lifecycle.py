@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 
+from bernstein.adapters.base import AdapterCooldownError
 from bernstein.core import defaults as _defaults
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
@@ -55,12 +56,15 @@ from bernstein.core.replay.review_board import (
 )
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
+from bernstein.core.security.quarantine import is_transient_host_failure
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
 from bernstein.core.tasks.artifact_completion import is_artifact_mode, verify_task_completion
 from bernstein.core.tasks.auto_spawn_guard import AutoSpawnGuard, meta_task_kind
 from bernstein.core.tasks.lifecycle import transition_agent
 from bernstein.core.tasks.models import (
     AgentSession,
+    Complexity,
+    ModelConfig,
     Task,
     TaskStatus,
 )
@@ -71,10 +75,11 @@ from bernstein.core.tick_pipeline import (
     close_task,
     complete_task,
     fail_task,
+    release_task,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from bernstein.core.git_ops import MergeResult
@@ -655,6 +660,25 @@ def _extract_failure_context(
     return failure_context
 
 
+def note_queued_retries(tasks: Iterable[Task], retried_task_ids: set[str]) -> None:
+    """Mark every task that already has a retry on the board as handled.
+
+    ``retried_task_ids`` lives in one orchestrator process, but the retries it
+    guards against duplicating live on the task server. A restarted
+    orchestrator starts with an empty set and, without this, queues a second
+    retry for every failure an earlier process already retried. A retry's
+    ``metadata["retry_of"]`` names its source, so the board itself answers.
+
+    Args:
+        tasks: Every task on the board, in any status.
+        retried_task_ids: Set of handled task IDs (mutated in-place).
+    """
+    for task in tasks:
+        source = task.metadata.get("retry_of")
+        if source:
+            retried_task_ids.add(str(source))
+
+
 def maybe_retry_task(
     task: Task,
     *,
@@ -727,12 +751,14 @@ def maybe_retry_task(
         # with an empty set, so the store is asked whether this title is
         # already at the quarantine threshold before it is incremented again.
         if not quarantine.is_quarantined(task.title):
-            quarantine.record_failure(task.title, "Max retries exhausted")
-            logger.warning(
-                "Task %r exhausted %d retries -- recorded cross-run failure in quarantine",
-                task.title,
-                effective_max,
-            )
+            failure_reason = task.result_summary or "Max retries exhausted"
+            recorded = quarantine.record_failure(task.title, failure_reason, task_id=task.id)
+            if recorded:
+                logger.warning(
+                    "Task %r exhausted %d retries -- recorded cross-run failure in quarantine",
+                    task.title,
+                    effective_max,
+                )
         return False
 
     next_retry = retry_count + 1
@@ -2001,6 +2027,10 @@ def _pre_spawn_checks_pass(orch: Any, alive_count: int) -> bool:
         logger.debug("Skipping claim/spawn: orchestrator is shutting down")
         return False
 
+    if getattr(orch, "_stop_spawning", False):
+        logger.warning("Cost anomaly detector halted spawning; skipping all spawns this tick")
+        return False
+
     _adapter = getattr(getattr(orch, "_spawner", None), "_adapter", None)
     if _adapter is not None and _adapter.is_rate_limited():
         logger.warning("Provider rate-limited - skipping all spawns this tick")
@@ -2374,6 +2404,26 @@ def _spawn_respawn_budget(orch: Any) -> Any:
         max_respawns=max(int(orch._MAX_SPAWN_FAILURES) - 1, 0),
         window_seconds=float(orch._SPAWN_BACKOFF_MAX_S),
     )
+
+
+def _cost_anomaly_complexity(task: Task) -> str:
+    """Translate the task's three ordered levels into the detector's size tiers."""
+    return {Complexity.LOW: "small", Complexity.MEDIUM: "medium", Complexity.HIGH: "large"}.get(
+        task.complexity, "medium"
+    )
+
+
+def _check_spawn_cost_anomalies(orch: Any, batch: list[Task], model_config: ModelConfig) -> None:
+    """Dispatch current log-only checks using the spawner's resolved model."""
+    detector = getattr(orch, "_anomaly_detector", None)
+    if detector is None or len(batch) != 1:
+        return
+    task = batch[0]
+    try:
+        for signal in detector.check_spawn(task.id, _cost_anomaly_complexity(task), model_config.model):
+            orch._handle_anomaly_signal(signal)
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Cost anomaly spawn check failed for task %s (%s)", task.id, type(exc).__name__)
 
 
 def claim_and_spawn_batches(
@@ -2951,6 +3001,12 @@ def claim_and_spawn_batches(
                 [task.id for task in batch],
             )
 
+        # The spawner observes its authoritative model after role/default and
+        # provider resolution, including later failover and resume attempts.
+        orch._spawner._cost_anomaly_spawn_observer = lambda tasks, config: _check_spawn_cost_anomalies(
+            orch, tasks, config
+        )
+
         try:
             # Check if any task in this batch has a preserved worktree for resume
             resume_worktree = next(
@@ -3155,6 +3211,18 @@ def claim_and_spawn_batches(
                 session.id,
                 session.agent_source,
             )
+        except AdapterCooldownError as exc:
+            # The adapter is backing off, the tasks did not fail. Failing them
+            # here spent their retry budget on every tick of the backoff until
+            # the lineage failed for good and its dependents were blocked.
+            # Hand the claims back untouched instead; the next tick after the
+            # backoff claims them again.
+            logger.info("Spawn deferred for batch %s: %s", [t.id for t in batch], exc)
+            for task in batch:
+                try:
+                    release_task(orch._client, base, task.id, f"spawn deferred: {exc}")
+                except Exception as rel_exc:
+                    logger.warning("Could not release task %s after adapter cooldown: %s", task.id, rel_exc)
         except (OSError, RuntimeError, ValueError, RouterError) as exc:
             logger.error("Spawn failed for batch %s: %s", [t.id for t in batch], exc)
             result.errors.append(f"spawn: {exc}")
@@ -3204,6 +3272,13 @@ def claim_and_spawn_batches(
                 )
             should_retry, _ = spawn_analyzer.should_retry(batch_history, max_retries=orch._MAX_SPAWN_FAILURES)
             if new_count >= orch._MAX_SPAWN_FAILURES or not should_retry:
+                # Classify the caught exception, not agent-writable task.result_summary.
+                if is_transient_host_failure(str(exc)):
+                    try:
+                        for task in batch:
+                            orch._quarantine.excuse_failure(task.id, f"host resource exhaustion during spawn: {exc}")
+                    except Exception:
+                        logger.warning("Could not excuse tasks after host resource exhaustion", exc_info=True)
                 # The analyzer can call it quits before the budget is
                 # spent. Park explicitly so the two ways of giving up
                 # leave the same operator-visible state.
@@ -4878,6 +4953,45 @@ class _JanitorFutureLike(Protocol):
     def done(self) -> bool: ...
 
 
+def _ingest_remote_completion(orch: Any, task: Task) -> str | None:
+    """Return the branch holding a remote completion's posted artifact, or None.
+
+    A ``code_diff`` task yields its posted ``diff`` applied onto HEAD; an
+    artifact-mode task yields its posted ``artifact`` written at the declared
+    output path. No verified artifact, or an artifact that does not apply,
+    yields None with an explicit log line, and verification proceeds on the run
+    checkout so the verdict stays an honest FAIL rather than a silent skip.
+    """
+    from bernstein.core.git.remote_diff_ingest import (
+        RemoteDiffApplyError,
+        ingest_remote_artifact,
+        ingest_remote_diff,
+    )
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    workdir = Path(getattr(orch, "_workdir", "") or "")
+    if not str(workdir):
+        return None
+    sdd_dir = workdir / ".sdd"
+    try:
+        hmac_key = load_or_create_audit_key()
+        if is_artifact_mode(task):
+            branch = ingest_remote_artifact(workdir, sdd_dir, task, hmac_key=hmac_key)
+        else:
+            branch = ingest_remote_diff(workdir, sdd_dir, task.id, hmac_key=hmac_key)
+    except RemoteDiffApplyError as exc:
+        logger.warning("janitor: remote artifact did not apply task=%s detail=%s", task.id, exc.detail[-300:])
+        return None
+    except Exception as exc:  # pragma: no cover - defensive: never lose a task on ingest
+        logger.warning("janitor: remote artifact ingest raised task=%s exc=%s", task.id, exc)
+        return None
+    if branch is None:
+        logger.info("janitor: remote completion without a posted artifact task=%s", task.id)
+        return None
+    logger.info("janitor: remote artifact ingested task=%s branch=%s", task.id, branch)
+    return branch
+
+
 def _enqueue_alive_exit_janitor_pass(
     orch: Any,
     task: Task,
@@ -4954,6 +5068,14 @@ def _enqueue_alive_exit_janitor_pass(
     judge_provider: str | None = getattr(_orch_config, "judge_provider", None)
     executor = getattr(orch, "_executor", None)
     preview_branch = _agent_preview_branch(orch, session_id)
+    if session_id is None and preview_branch is None:
+        # Issue #6611: a worker outside the host completed over HTTP and handed
+        # its output back as a posted artifact. Nothing in the run checkout
+        # carries it, so grading that tree fails every remote completion.
+        # Materialise the receipted bytes as a branch and grade the merged tree.
+        preview_branch = _ingest_remote_completion(orch, task)
+        if preview_branch is not None:
+            session_id = f"remote-{task.id}"
     preview_setup = _preview_setup(orch) if preview_branch is not None else None
     if executor is None:
         # Defensive: if the orchestrator has no executor we still want a
@@ -5051,6 +5173,12 @@ def process_completed_tasks(
         if task.id in orch._processed_done_tasks:
             continue
         orch._processed_done_tasks[task.id] = None
+        # A failed task (the quiescence pass hands those in too) is registered for
+        # the drain tracker only: it has no completion to verify or merge, and the
+        # retry machinery already decided it. Running the chain on it let a janitor
+        # FAIL reopen retried and permanently failed tasks.
+        if task.status != TaskStatus.DONE:
+            continue
         new_tasks.append(task)
 
     if not new_tasks:
@@ -5211,6 +5339,30 @@ def _process_single_completed_task(
             logger.warning("append_decision failed for task %s: %s", task.id, exc)
 
     _record_evolution_completion(orch, task, session, task_m, cost_usd, janitor_passed)
+
+    # Per-task anomaly checks: ceiling, token-ratio, retry-spiral, baseline update.
+    _anomaly_det = getattr(orch, "_anomaly_detector", None)
+    if _anomaly_det is not None:
+        _task_m = task_m
+        _cost = cost_usd
+        _tokens_in = _task_m.tokens_prompt if _task_m else 0
+        _tokens_out = _task_m.tokens_completion if _task_m else 0
+        _complexity = _cost_anomaly_complexity(task)
+        _orig_id = _lineage_id(task)
+        _is_retry = _orig_id != task.id or task.retry_count > 0 or task.title.startswith("[RETRY")
+        try:
+            for _sig in _anomaly_det.check_task_completion(
+                task.id,
+                _complexity,
+                _cost,
+                _tokens_in,
+                _tokens_out,
+                is_retry=_is_retry,
+                original_task_id=_orig_id if _is_retry else None,
+            ):
+                orch._handle_anomaly_signal(_sig)
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            logger.warning("Cost anomaly completion check failed for task %s (%s)", task.id, type(exc).__name__)
 
     # issue #4463: a scheduled gate repair already reopened this unit of work
     # under a new task id on the preserved branch -- fail this task with a

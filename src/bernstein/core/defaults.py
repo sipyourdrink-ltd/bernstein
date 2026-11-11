@@ -176,6 +176,26 @@ class OrchestratorDefaults:
     priority_boost_step: int = 1  # priority step boosted per threshold period
     max_priority_age_boost: int = 2  # maximum cumulative boost allowed from aging
 
+    # Artefact-progress primitives (#5439); lifecycle wiring is not active yet.
+    # Stall declared when a task makes no artefact progress for this duration.
+    artefact_stall_threshold_s: float = 600.0  # 10 minutes
+    # Repeated failing command count that triggers a stall.
+    repeated_command_threshold: int = 3  # >= 3 identical command + exit code
+    # Maximum concurrent tasks driven by a coordinator.
+    fan_out_ceiling: int = 8
+    # When >= K tasks are in no-progress state, the fan-out ceiling halves.
+    fan_out_degrade_threshold: int = 2
+
+    def __post_init__(self) -> None:
+        if self.artefact_stall_threshold_s <= 0:
+            raise ValueError("artefact_stall_threshold_s must be positive")
+        if self.repeated_command_threshold < 2:
+            raise ValueError("repeated_command_threshold must be at least 2")
+        if self.fan_out_ceiling <= 0:
+            raise ValueError("fan_out_ceiling must be positive")
+        if self.fan_out_degrade_threshold <= 0:
+            raise ValueError("fan_out_degrade_threshold must be positive")
+
 
 # ---------------------------------------------------------------------------
 # Spawn / Agent defaults

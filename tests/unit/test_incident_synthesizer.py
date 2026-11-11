@@ -8,6 +8,7 @@ from bernstein.core.tasks.dead_letter_queue import DeadLetterQueue
 from bernstein.eval.incident_synthesizer import (
     IncidentEvalCase,
     IncidentSynthesizer,
+    incident_cases_dir,
     run_incident_eval_gate,
 )
 
@@ -86,7 +87,7 @@ class TestIdempotency:
         assert len(second.created) == 0
         assert second.skipped_duplicates >= 1
 
-        cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        cases_dir = incident_cases_dir(tmp_path)
         assert len(list(cases_dir.glob("inc-*.yaml"))) == 1
 
     def test_distinct_incidents_produce_distinct_ids(self, tmp_path: Path) -> None:
@@ -114,7 +115,7 @@ class TestRedaction:
         result = synth.sync()
         assert len(result.created) == 1
 
-        cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        cases_dir = incident_cases_dir(tmp_path)
         body = next(cases_dir.glob("inc-*.yaml")).read_text(encoding="utf-8")
         assert "alice@bigcorp.io" not in body
         assert "***" in body
@@ -135,7 +136,7 @@ class TestRedaction:
         result = synth.sync(dry_run=True)
         assert result.dry_run is True
         assert len(result.created) == 1
-        cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        cases_dir = incident_cases_dir(tmp_path)
         assert not cases_dir.exists() or not list(cases_dir.glob("*.yaml"))
 
 
@@ -150,7 +151,7 @@ class TestYamlEmission:
         synth = IncidentSynthesizer(tmp_path)
         synth.sync()
 
-        cases_dir = tmp_path / "src" / "bernstein" / "eval" / "cases" / "incidents"
+        cases_dir = incident_cases_dir(tmp_path)
         body = next(cases_dir.glob("inc-*.yaml")).read_text(encoding="utf-8")
         for field_name in ("id:", "severity:", "prompt:", "expected_outcome:", "source_incident:"):
             assert field_name in body

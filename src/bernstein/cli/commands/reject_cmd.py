@@ -1,8 +1,8 @@
 """``bernstein reject`` - refuse a pending approval gate.
 
-Mirror of :mod:`bernstein.cli.commands.approve_cmd`: writes
-``<workdir>/.sdd/runtime/approvals/<task_id>.rejected`` so the
-post-completion review gate or the pre-spawn ``ApprovalSpec`` gate
+Mirror of :mod:`bernstein.cli.commands.approve_cmd`: writes a signed
+decision record to ``<workdir>/.sdd/runtime/approvals/<task_id>.rejected``
+so the post-completion review gate or the pre-spawn ``ApprovalSpec`` gate
 (#1110) unblocks with a refusal. Idempotent under concurrent
 invocations: the first writer wins via ``os.replace`` and subsequent
 callers see the existing decision and report ``already resolved``.
@@ -14,8 +14,7 @@ from pathlib import Path
 
 import click
 
-from bernstein.cli.commands.approve_cmd import _atomic_write_text, _foreground_confirm
-from bernstein.cli.helpers import console
+from bernstein.cli.commands.approve_cmd import _resolve_task_decision
 
 
 @click.command("reject")
@@ -70,39 +69,7 @@ def reject(task_id: str | None, workdir: str, prompt: bool, tool_id: str | None)
             "Missing argument 'TASK_ID'; pass a task id, or --tool <id> to resolve a pending tool-call approval."
         )
 
-    from bernstein.core.orchestration.approval_gate import UnsafeApprovalIdError, approval_path
-
-    # Same rule as the approve and read sides; validated before mkdir.
-    try:
-        decision_file = approval_path(Path(workdir), task_id, ".rejected")
-        approved_file = approval_path(Path(workdir), task_id, ".approved")
-    except UnsafeApprovalIdError as exc:
-        console.print(f"[red]Refusing to reject:[/red] {exc}")
-        raise SystemExit(1) from exc
-
-    approvals_dir = decision_file.parent
-    approvals_dir.mkdir(parents=True, exist_ok=True)
-
-    if approved_file.exists():
-        console.print(
-            f"[yellow]Already resolved:[/yellow] task [bold]{task_id}[/bold] was approved; "
-            "leaving the approval in place."
-        )
-        return
-
-    if decision_file.exists():
-        console.print(f"[dim]Already rejected:[/dim] task [bold]{task_id}[/bold] (no-op)")
-        return
-
-    if prompt and not _foreground_confirm(f"Reject task {task_id}?"):
-        console.print(f"[dim]Skipped[/dim] rejection for [bold]{task_id}[/bold]")
-        return
-
-    created = _atomic_write_text(decision_file, "rejected")
-    if created:
-        console.print(f"[red]Rejected:[/red] task [bold]{task_id}[/bold]: work will be discarded.")
-    else:
-        console.print(f"[dim]Already rejected:[/dim] task [bold]{task_id}[/bold] (no-op)")
+    _resolve_task_decision(task_id, Path(workdir), prompt=prompt, outcome="rejected")
 
 
 __all__ = ["reject"]

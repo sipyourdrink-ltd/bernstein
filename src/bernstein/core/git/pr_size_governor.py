@@ -537,7 +537,7 @@ def _execute_chunk(
         f"Part {chunk.part_number} of {total} - {chunk.line_count} lines changed\n\n"
         f"Files:\n"
         + "\n".join(f"  {f}" for f in chunk.files)
-        + "\n\nCo-Authored-By: bernstein[bot] <noreply@bernstein.dev>"
+        + "\n\nCo-Authored-By: bernstein[bot] <noreply@bernstein.run>"
     )
     commit_r = run_git(["commit", "-m", commit_msg], cwd)
     if not commit_r.ok:

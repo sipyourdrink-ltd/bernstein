@@ -85,9 +85,12 @@ specific model.
   absolute path, a `..` component, or a symlinked component leaving the
   tree - is skipped with a warning rather than edited. The rest of the
   entries still run.
-- Classification is purely text-pattern-based (task title + description);
-  there is no dry-run or confidence threshold exposed to the operator beyond
-  the fixed `confidence` field recorded internally.
+- Classification is purely text-pattern-based. L0 rules match the task
+  title only, because an L0 match replaces the agent with a deterministic
+  tool; a description that mentions lint or formatting as context does not
+  route the task to ruff. L1 rules match title + description. There is no
+  dry-run or confidence threshold exposed to the operator beyond the fixed
+  `confidence` field recorded internally.
 - L0/L1 classification only ever narrows toward the deterministic/cheap path
   when the task text matches; it never widens L2 tasks down. A high-value
   rewrite that happens to be titled "format the module" would match L0

@@ -11,16 +11,37 @@ import glob as _glob
 import hashlib
 import json
 import zipfile
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import bernstein
 from bernstein.cli.run_names import render_name
 
+if TYPE_CHECKING:
+    from bernstein.core.security.audit import AuditLog
+
 #: Read size for hashing. Large enough that a multi-megabyte trace store does
 #: not become a million small reads, small enough not to hold one in memory.
 _HASH_CHUNK_BYTES = 1024 * 1024
+
+#: Audit event that anchors an archive's manifest outside the archive (#6258).
+#: ``resource_id`` is the sha256 of the ``manifest.json`` bytes as written.
+ARCHIVE_ANCHOR_EVENT = "run_archive.created"
+_ARCHIVE_ANCHOR_ACTOR = "run-archive"
+
+#: Whether an archive's manifest is anchored outside it, reported apart from
+#: the hash check: an archive can be intact and still unattested.
+#:
+#: * ``anchored``: an audit log whose HMAC chain verifies holds a record of
+#:   exactly this ``manifest.json``.
+#: * ``unattested``: the audit log was consulted and does not vouch for it,
+#:   either because no record names this manifest or because the chain itself
+#:   does not verify.
+#: * ``unchecked``: no audit log was given, so nothing outside the archive was
+#:   consulted.
+Attestation = Literal["anchored", "unattested", "unchecked"]
 
 
 class ArchiveManifestError(RuntimeError):
@@ -69,6 +90,11 @@ class ArchiveVerification:
     unexpected: list[str] = field(default_factory=lambda: list[str]())
     #: Set when the archive cannot be checked at all, rather than failing a check.
     unverifiable: str | None = None
+    #: Whether something outside the archive vouches for its manifest. Separate
+    #: from ``ok``: the hashes detect modification, this is about authorship.
+    attestation: Attestation = "unchecked"
+    #: Why the attestation is what it is, for the report.
+    attestation_detail: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +153,8 @@ def create_archive(
     base_dir: Path,
     output_path: Path,
     sections: list[str] | None = None,
+    *,
+    audit_log: AuditLog | None = None,
 ) -> ArchiveManifest:
     """Create a ZIP archive of the requested run sections.
 
@@ -137,6 +165,13 @@ def create_archive(
         base_dir: Project root directory.
         output_path: Destination path for the ``.zip`` file.
         sections: Optional list of section names.  *None* means all.
+        audit_log: When given, the sha256 of the ``manifest.json`` bytes is
+            recorded there as an :data:`ARCHIVE_ANCHOR_EVENT` once the archive
+            is written, so `verify_archive` can tell this manifest from one
+            rewritten afterwards (#6258). It has to be a log that outlives the
+            workspace: the project's own ``.sdd/audit`` is deleted along with
+            the workspace this archive exists to replace, so it is not used by
+            default.
 
     Returns:
         The :class:`ArchiveManifest` written into the archive.
@@ -172,13 +207,44 @@ def create_archive(
         files=digests,
     )
 
+    # Serialised once: the bytes written are the bytes the anchor hashes.
+    manifest_bytes = (json.dumps(asdict(manifest), indent=2) + "\n").encode("utf-8")
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for file_path, name in members:
             zf.write(file_path, name)
 
-        zf.writestr("manifest.json", json.dumps(asdict(manifest), indent=2) + "\n")
+        zf.writestr("manifest.json", manifest_bytes)
+
+    if audit_log is not None:
+        digest = hashlib.sha256(manifest_bytes).hexdigest()
+        audit_log.log(
+            event_type=ARCHIVE_ANCHOR_EVENT,
+            actor=_ARCHIVE_ANCHOR_ACTOR,
+            resource_type="run_archive",
+            resource_id=digest,
+            details={
+                "manifest_sha256": digest,
+                "archive_name": output_path.name,
+                "run_id": run_id,
+                "file_count": manifest.file_count,
+                "created_at": manifest.created_at,
+            },
+        )
 
     return manifest
+
+
+def manifest_digest(archive_path: Path) -> str:
+    """sha256 hex of an archive's ``manifest.json`` bytes, the value an anchor records.
+
+    Raises:
+        ArchiveManifestError: The archive cannot be read or has no manifest.
+    """
+    try:
+        with zipfile.ZipFile(archive_path) as zf:
+            return hashlib.sha256(_manifest_bytes(zf, archive_path)).hexdigest()
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ArchiveManifestError(f"{archive_path} is not a readable archive: {exc}") from exc
 
 
 def _sha256_file(path: Path) -> str:
@@ -207,12 +273,20 @@ def read_archive_manifest(archive_path: Path) -> ArchiveManifest:
         raise ArchiveManifestError(f"{archive_path} is not a readable archive: {exc}") from exc
 
 
+def _manifest_bytes(zf: zipfile.ZipFile, archive_path: Path) -> bytes:
+    """The raw ``manifest.json`` member of an already open archive."""
+    try:
+        return zf.read("manifest.json")
+    except KeyError as exc:
+        raise ArchiveManifestError(f"{archive_path} has no manifest.json") from exc
+
+
 def _manifest_from_zip(zf: zipfile.ZipFile, archive_path: Path) -> ArchiveManifest:
     """Parse ``manifest.json`` out of an already open archive."""
     try:
-        raw = zf.read("manifest.json").decode("utf-8")
-    except KeyError as exc:
-        raise ArchiveManifestError(f"{archive_path} has no manifest.json") from exc
+        raw = _manifest_bytes(zf, archive_path).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ArchiveManifestError(f"{archive_path} has an unreadable manifest.json: {exc}") from exc
     try:
         payload = json.loads(raw)
     except ValueError as exc:
@@ -229,7 +303,7 @@ def _manifest_from_zip(zf: zipfile.ZipFile, archive_path: Path) -> ArchiveManife
         raise ArchiveManifestError(f"{archive_path} has an incomplete manifest.json: {exc}") from exc
 
 
-def verify_archive(archive_path: Path) -> ArchiveVerification:
+def verify_archive(archive_path: Path, *, audit_log: AuditLog | None = None) -> ArchiveVerification:
     """Check every archived member against the hash the manifest recorded.
 
     Offline and self-contained: the manifest travels inside the archive, so a
@@ -241,8 +315,16 @@ def verify_archive(archive_path: Path) -> ArchiveVerification:
     is evidence that changed after the fact, a MISSING one is evidence that did
     not survive, and an UNEXPECTED one is a member nothing vouches for.
 
+    The hashes detect modification; they do not say who wrote the manifest,
+    because anyone who can edit a member can rewrite the manifest to match.
+    Given the *audit_log* the archive was anchored in, the result also says
+    whether that log vouches for this exact manifest. That is reported as
+    ``attestation``, never folded into ``ok``.
+
     Args:
         archive_path: The ``.zip`` produced by :func:`create_archive`.
+        audit_log: The log `create_archive` anchored the manifest in. Without
+            it, ``attestation`` is ``"unchecked"``.
 
     Returns:
         An :class:`ArchiveVerification`. ``ok`` is ``True`` only when every
@@ -254,9 +336,38 @@ def verify_archive(archive_path: Path) -> ArchiveVerification:
     """
     try:
         with zipfile.ZipFile(archive_path) as zf:
-            return _verify_open_archive(zf, archive_path)
+            result = _verify_open_archive(zf, archive_path)
+            digest = hashlib.sha256(_manifest_bytes(zf, archive_path)).hexdigest()
     except (OSError, zipfile.BadZipFile) as exc:
         raise ArchiveManifestError(f"{archive_path} is not a readable archive: {exc}") from exc
+    if audit_log is None:
+        return result
+    attestation, detail = _attestation(digest, audit_log)
+    return replace(result, attestation=attestation, attestation_detail=detail)
+
+
+def _attestation(digest: str, audit_log: AuditLog) -> tuple[Attestation, str]:
+    """Whether *audit_log* vouches for the manifest whose bytes hash to *digest*.
+
+    The record only counts if the chain it sits in verifies: a log that can be
+    edited without breaking its HMACs could be given any record at all.
+
+    One authenticated read, not a verify followed by a query. ``query`` parses
+    raw lines and checks no HMAC, so a record appended between the two calls
+    (a forged digest with a dummy HMAC) was counted as an anchor although
+    ``verify`` never saw it. ``scan_verified`` returns exactly the rows it
+    authenticated, and refuses the whole read when any of them fails.
+    """
+    result = audit_log.scan_verified(event_type=ARCHIVE_ANCHOR_EVENT)
+    if not result.ok:
+        first = result.errors[0] if result.errors else "no detail"
+        return "unattested", f"the audit chain does not verify ({first}), so its records vouch for nothing"
+    anchors = [
+        event for event in result.events if event.event_type == ARCHIVE_ANCHOR_EVENT and event.resource_id == digest
+    ]
+    if not anchors:
+        return "unattested", f"no {ARCHIVE_ANCHOR_EVENT} record names manifest sha256 {digest}"
+    return "anchored", f"manifest sha256 {digest} recorded at {anchors[0].timestamp}"
 
 
 def _verify_open_archive(zf: zipfile.ZipFile, archive_path: Path) -> ArchiveVerification:
@@ -316,17 +427,20 @@ def _verify_open_archive(zf: zipfile.ZipFile, archive_path: Path) -> ArchiveVeri
 def format_verification(archive_path: Path, result: ArchiveVerification) -> str:
     """A verification result as an operator-facing report."""
     if result.unverifiable is not None:
-        return f"UNVERIFIABLE  {archive_path}\n  {result.unverifiable}"
-    if result.ok:
-        return f"OK  {archive_path}"
-    lines = [f"FAILED  {archive_path}"]
-    for label, names in (
-        ("modified since the archive was written", result.modified),
-        ("listed in the manifest and absent", result.missing),
-        ("present and not listed in the manifest", result.unexpected),
-    ):
-        for name in names:
-            lines.append(f"  {label}: {name}")
+        lines = [f"UNVERIFIABLE  {archive_path}", f"  {result.unverifiable}"]
+    elif result.ok:
+        lines = [f"OK  {archive_path}"]
+    else:
+        lines = [f"FAILED  {archive_path}"]
+        for label, names in (
+            ("modified since the archive was written", result.modified),
+            ("listed in the manifest and absent", result.missing),
+            ("present and not listed in the manifest", result.unexpected),
+        ):
+            for name in names:
+                lines.append(f"  {label}: {name}")
+    if result.attestation_detail is not None:
+        lines.append(f"  attestation: {result.attestation.upper()} - {result.attestation_detail}")
     return "\n".join(lines)
 
 

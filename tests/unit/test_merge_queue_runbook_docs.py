@@ -128,8 +128,8 @@ def test_batch_size_is_pinned_to_one(enable_payload: dict[str, Any]) -> None:
     so a version bump anywhere but last is skipped with no error.
 
     The diff planner is no longer part of this: `determine-changes` classifies
-    a merge group against `github.event.merge_group.base_sha`, so it already
-    sees every entry in a multi-entry group.
+    a merge group against the batch root (the merge-base with the target
+    branch), so it already sees every entry in a multi-entry group.
     """
     params = _rule(enable_payload, "merge_queue")
     assert params["max_entries_to_merge"] == 1, (

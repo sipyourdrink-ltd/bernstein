@@ -18,6 +18,10 @@ from bernstein.cli.ui import make_console
 from bernstein.core.defaults import SDD_SERVER_PORT
 from bernstein.core.platform_compat import kill_process, kill_process_group
 from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
+from bernstein.core.run_auth_token import ACCESS_CLIENT_ID_ENV as ACCESS_CLIENT_ID_ENV
+from bernstein.core.run_auth_token import ACCESS_CLIENT_SECRET_ENV as ACCESS_CLIENT_SECRET_ENV
+from bernstein.core.run_auth_token import access_proxy_headers as access_proxy_headers
+from bernstein.core.run_auth_token import auth_headers
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -119,34 +123,6 @@ def print_startup_banner() -> None:
         except Exception:
             pass
     print_banner()
-
-
-def auth_headers(workdir: Path | None = None) -> dict[str, str]:
-    """Return the Authorization header dict for talking to the local server.
-
-    Resolution order (issue #2794):
-
-    1. The ``BERNSTEIN_AUTH_TOKEN`` env var, when the caller inherited it.
-    2. The persisted run token file under ``.sdd/runtime`` (written by the
-       launcher when it auto-generates a token), so a monitor invoked from a
-       shell that never inherited the launcher env still authenticates.
-
-    Args:
-        workdir: Workspace to resolve the token file against. Defaults to the
-            current working directory - the workspace the monitor runs in.
-
-    Returns:
-        ``{"Authorization": "Bearer <token>"}`` when a token is found, else an
-        empty dict.
-    """
-    token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
-    if not token:
-        from bernstein.core.run_auth_token import read_run_auth_token
-
-        token = read_run_auth_token(workdir or Path.cwd())
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
 
 
 def resolve_server_url(workdir: Path | None = None) -> str:

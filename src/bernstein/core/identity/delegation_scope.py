@@ -71,6 +71,7 @@ from bernstein.core.security.agent_card_signer import canonicalize_jcs
 from bernstein.core.security.capability_tokens import (
     allowlist_narrows,
     bound_narrows,
+    glob_narrows,
     prefixes_narrow,
     uses_narrows,
 )
@@ -182,15 +183,13 @@ class DelegationScope:
     ``permissions`` and ``duties`` are plain sets: an empty set is the
     narrowest possible grant, never the widest.
 
-    ``allowed_files`` is recorded and deliberately not graded.  It is a glob
-    field, and a glob is not a path prefix: ``path_prefixes`` narrows by
-    ancestry, where ``src`` covers ``src/core``, while ``src`` as a pattern
-    admits the path ``src`` and nothing under it.  Comparing one with the
-    other primitive would report "narrowing checked and held" for an axis
-    where only the patterns that happened to have a prefix form were checked,
-    so the axis is carried verbatim and grades
-    :data:`REASON_COMPARISON_AXIS_UNSUPPORTED` until a glob-subsumption
-    primitive exists to decide it (#5351, follow-up #5418).
+    ``allowed_files`` is a glob field, and a glob is not a path prefix:
+    ``path_prefixes`` narrows by ancestry, where ``src`` covers ``src/core``,
+    while ``src`` as a pattern admits the path ``src`` and nothing under it.
+    It is graded by :func:`~bernstein.core.security.capability_tokens.glob_narrows`,
+    which reasons over the pattern grammar in
+    :mod:`bernstein.core.path_scope` directly rather than by the ancestry
+    primitive the other path axis uses (#5351, resolved by #5418).
     """
 
     permissions: frozenset[str] = frozenset()
@@ -263,10 +262,10 @@ def narrowing_violations(child: DelegationScope, parent: DelegationScope) -> tup
     Axis names are stable identifiers so a verifier can report *which* axis was
     widened instead of a bare pass/fail.
 
-    ``allowed_files`` is deliberately absent: no primitive here decides whether
-    one glob is contained in another, and a comparison this function cannot
-    make is not one it reports as held.  A hop recording that axis is graded
-    unproven on it instead, by the unsupported-axis rule below.
+    ``allowed_files`` is graded by
+    :func:`~bernstein.core.security.capability_tokens.glob_narrows`, the glob
+    subsumption primitive (#5418) -- not by :func:`prefixes_narrow`, which
+    narrows by path ancestry and would misread a glob as a prefix.
     """
     axes: list[str] = []
     if not child.permissions <= parent.permissions:
@@ -277,6 +276,8 @@ def narrowing_violations(child: DelegationScope, parent: DelegationScope) -> tup
         axes.append("task_ids")
     if not prefixes_narrow(child.path_prefixes, parent.path_prefixes):
         axes.append("path_prefixes")
+    if not glob_narrows(child.allowed_files, parent.allowed_files):
+        axes.append("allowed_files")
     if not bound_narrows(child.not_after, parent.not_after):
         axes.append("not_after")
     if not uses_narrows(child.max_uses, parent.max_uses):
@@ -838,12 +839,14 @@ VERDICT_DIAGNOSTICS: frozenset[str] = frozenset({DIAGNOSTIC_SCOPE_REF_ONLY_RESOL
 #: compared, and a widening found on one of them fails the hop, fail dominating
 #: unproven.
 #:
-#: ``allowed_files`` is a first-party axis deliberately outside this set:
-#: :meth:`DelegationScope.from_body` reads it, but nothing here can decide glob
-#: containment, so it is recorded and graded unproven by the same rule that
-#: covers a key from a future version (#5351, follow-up #5418).
+#: ``allowed_files`` joined this set in #5418: :func:`glob_narrows` (via
+#: :mod:`bernstein.core.path_scope`) now decides glob containment, so a hop
+#: recording that axis grades on it like every other axis instead of
+#: unproven. A key from a future version still lands outside this set and
+#: still grades unproven, unchanged.
 SCOPE_BODY_KEYS: frozenset[str] = frozenset(
     {
+        "allowed_files",
         "duties",
         "max_depth",
         "max_uses",

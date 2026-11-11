@@ -20,6 +20,7 @@ import httpx
 from rich.console import Console
 from rich.table import Table
 
+from bernstein.cli.helpers import auth_headers
 from bernstein.core.fleet import (
     DirectoryRegistry,
     FleetAggregator,
@@ -90,7 +91,7 @@ def _run_tui(config: FleetConfig) -> None:
         sys.exit(2)
 
     async def _main() -> None:
-        aggregator = FleetAggregator(config.projects)
+        aggregator = FleetAggregator(config.projects, headers=auth_headers())
         await aggregator.start()
         try:
             try:
@@ -196,7 +197,7 @@ def _run_web(config: FleetConfig, bind: str) -> None:
     from bernstein.core.fleet.web import build_fleet_app
 
     async def _bootstrap() -> tuple[FleetAggregator, Any]:
-        aggregator = FleetAggregator(config.projects)
+        aggregator = FleetAggregator(config.projects, headers=auth_headers())
         await aggregator.start()
         return aggregator, build_fleet_app(aggregator, config)
 

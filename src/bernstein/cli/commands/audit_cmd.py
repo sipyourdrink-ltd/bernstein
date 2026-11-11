@@ -361,6 +361,13 @@ def verify_cmd(
     if not _verify_checkpoints():
         failed_pillars.append("Checkpoints")
 
+    # The hash tiles `audit seal` publishes beside the segments are part of the
+    # read layout an offline verifier is handed, so a damaged one must fail
+    # verify naming the file (#3160). Runs regardless of --hmac-only /
+    # --merkle-only for the same reason the checkpoint pillar does.
+    if not _verify_hash_tiles():
+        failed_pillars.append("Hash Tiles")
+
     # External anchors are the pillar the operator cannot satisfy from inside:
     # a checkpoint proves the history did not shrink relative to material we
     # hold, and an actor who holds all of it can roll all of it back together.
@@ -647,9 +654,10 @@ def _verify_lineage_active_set() -> bool:
     are active (not invalidated by seeds) versus inactive (seeded or dependent
     on a seeded entry). Prints a summary of active/inactive counts.
 
-    Returns True when the lineage store exists and the computation completes
-    successfully (even if there are inactive entries). Returns False only if
-    the lineage store cannot be read.
+    Returns True only when every entry is active.  Returns False when any
+    entry is inactive (revoked, dependent on a revoked entry, or naming a
+    parent absent from the ledger), when the lineage store cannot be read,
+    or when the audit chain exists but its revocation events cannot be read.
     """
     from pathlib import Path
 
@@ -697,43 +705,18 @@ def _verify_lineage_active_set() -> bool:
         console.print(table)
         return True
 
-    # Collect all invalidation seeds from revocation events in the audit chain
-    # Seeds are lineage entry hashes that have been revoked
-    from bernstein.core.security.audit_chain import AuditChainStore
-
-    audit_path = Path(".sdd/audit")
-    seeds: frozenset[str] = frozenset()
-
-    if audit_path.is_dir():
-        # Import the key loader locally to handle missing key gracefully
-        try:
-            from bernstein.core.security.audit import load_audit_key
-
-            key = load_audit_key()
-            chain = AuditChainStore(audit_path, key=key)
-
-            # Scan for revocation events that may contain lineage entry hashes as seeds
-            # We need to check if revocation events record lineage entry references
-            from bernstein.core.security.audit_chain import EVENT_EVAL_GATE_REVOCATION, EVENT_MANDATE_REVOCATION
-
-            for event in chain.query(event_type=EVENT_MANDATE_REVOCATION):
-                # Revocation events may reference lineage entries in their details
-                details = event.details.get("details", {})
-                if isinstance(details, dict):
-                    lineage_ref = details.get("lineage_entry_hash") or details.get("lineage_ref")
-                    if lineage_ref and isinstance(lineage_ref, str):
-                        seeds = seeds | {lineage_ref}
-
-            for event in chain.query(event_type=EVENT_EVAL_GATE_REVOCATION):
-                details = event.details.get("details", {})
-                if isinstance(details, dict):
-                    lineage_ref = details.get("lineage_entry_hash") or details.get("lineage_ref")
-                    if lineage_ref and isinstance(lineage_ref, str):
-                        seeds = seeds | {lineage_ref}
-
-        except Exception:
-            # If we can't load the audit key or read the chain, continue with empty seeds
-            pass
+    seeds = _collect_lineage_revocation_seeds(Path(".sdd/audit"))
+    if seeds is None:
+        console.print(
+            Panel(
+                "[bold red]Lineage Revocations Unreadable[/bold red]\n\n"
+                "The audit chain exists but could not be read, so revoked lineage "
+                "entries cannot be ruled out.",
+                border_style="red",
+                expand=False,
+            )
+        )
+        return False
 
     # Compute the active set
     active_hashes = active_set(entries, seeds)
@@ -799,8 +782,55 @@ def _verify_lineage_active_set() -> bool:
             console.print(f"  [yellow]-[/yellow] {h} ({reason})")
         if len(inactive_entries) > 10:
             console.print(f"  [dim]... and {len(inactive_entries) - 10} more[/dim]")
+        console.print()
+        console.print(
+            f"[bold red]Lineage activity check failed:[/bold red] {inactive_count} inactive "
+            "(revoked or unprovable) entr" + ("y" if inactive_count == 1 else "ies") + "."
+        )
+        return False
 
     return True
+
+
+def _collect_lineage_revocation_seeds(audit_path: Path) -> frozenset[str] | None:
+    """Return the lineage entry hashes named by revocation events in the audit chain.
+
+    A revocation names the entry as ``lineage_entry_hash`` (or ``lineage_ref``)
+    either at the top of the event details, as :meth:`AuditChainStore.log_with_prev_digest`
+    records it, or nested under a ``details`` key.
+
+    Returns:
+        The seed set; empty when no audit chain exists.  ``None`` when the
+        chain exists but cannot be read (missing key, unreadable log), so the
+        caller can fail closed instead of reporting revoked entries as active.
+    """
+    if not audit_path.is_dir():
+        return frozenset()
+    try:
+        from bernstein.core.security.audit import load_audit_key
+        from bernstein.core.security.audit_chain import (
+            EVENT_EVAL_GATE_REVOCATION,
+            EVENT_MANDATE_REVOCATION,
+            AuditChainStore,
+        )
+
+        chain = AuditChainStore(audit_path, key=load_audit_key())
+        events = [
+            *chain.query(event_type=EVENT_MANDATE_REVOCATION),
+            *chain.query(event_type=EVENT_EVAL_GATE_REVOCATION),
+        ]
+    except Exception:
+        return None
+
+    seeds: set[str] = set()
+    for event in events:
+        details = event.details if isinstance(event.details, dict) else {}
+        nested = details.get("details")
+        for source in (details, nested if isinstance(nested, dict) else {}):
+            ref = source.get("lineage_entry_hash") or source.get("lineage_ref")
+            if isinstance(ref, str) and ref:
+                seeds.add(ref)
+    return frozenset(seeds)
 
 
 def _verify_trajectory_receipts() -> bool:
@@ -1251,6 +1281,68 @@ def _verify_checkpoints() -> bool:
 
     _print_checkpoint_conflict(CheckpointConsistencyError(last, conflicts))
     return False
+
+
+def _verify_hash_tiles() -> bool:
+    """Check every published hash tile against the segment bytes it describes.
+
+    A tile is never trusted, only checked: once a segment's bytes are
+    authenticated (through the signed checkpoint and the HMAC chain), its tile
+    must be byte-for-byte the tile the seal would publish for them. A tile
+    beside a segment that fails is not judged, since the segment is already
+    the finding; those failures belong to the HMAC Chain and Checkpoints
+    pillars, and this one reports only tile faults.
+
+    A layout with no tiles passes: the orchestrator's shutdown seal publishes
+    none, and nothing trusts a tile, so a missing one weakens nothing.
+    Read-only, like every pillar: the tile-read counter is not recorded.
+    """
+    from bernstein.core.persistence.tiles import TILES_SUBDIR
+    from bernstein.core.security.audit import AuditKeyMissingError, AuditLog, load_audit_key
+
+    console.print()
+    published = sum(1 for _ in (AUDIT_DIR / TILES_SUBDIR).glob("*.tile"))
+    if not published:
+        console.print("[dim]No hash tiles published. Run 'bernstein audit seal' to publish them.[/dim]")
+        return True
+    try:
+        key = load_audit_key()
+    except AuditKeyMissingError:
+        # Judging a tile needs authenticated segment bytes, and the chain is
+        # authenticated with the audit key - the same named degradation the
+        # checkpoint pillar takes.
+        console.print(
+            "[yellow]Hash tile verification skipped: no audit HMAC key available "
+            "(tiles are checked against authenticated segment bytes).[/yellow]"
+        )
+        return True
+
+    report = AuditLog(AUDIT_DIR, key=key).verify_incremental(record_tile_reads=False)
+    if report.tile_faults:
+        console.print(Panel("[bold red]Hash Tile Verification FAILED[/bold red]", border_style="red", expand=False))
+        for fault in report.tile_faults:
+            console.print(f"  [red]![/red] {fault}")
+        return False
+    # Say exactly what was checked from the verifier's single snapshot: a tile
+    # beside a failing segment, or one that names no segment in the walk, was
+    # not judged and is not counted as checked.
+    beside_failing = report.tiles_read - report.tiles_judged
+    unmatched = report.tiles_unmatched
+    if report.tiles_judged:
+        console.print(
+            Panel("[bold green]Hash Tile Verification Passed[/bold green]", border_style="green", expand=False)
+        )
+        console.print(f"  [dim]{report.tiles_judged} tile(s) checked against authenticated segment bytes.[/dim]")
+    else:
+        console.print(Panel("[bold yellow]Hash Tiles Not Judged[/bold yellow]", border_style="yellow", expand=False))
+    if beside_failing:
+        console.print(
+            f"  [dim]{beside_failing} tile(s) beside a segment that failed verification were not judged "
+            "(the segment is the finding).[/dim]"
+        )
+    if unmatched:
+        console.print(f"  [dim]{unmatched} tile(s) name no segment in the audit log and were not judged.[/dim]")
+    return True
 
 
 def _known_checkpoint_roots() -> set[str] | None:
@@ -3994,22 +4086,25 @@ def _find_receipt_verifier() -> Path | None:
 
     The verify wrapper deliberately shells out to the standalone tool to prove
     it is self-contained. Resolution order: ``$BERNSTEIN_AUDIT_RECEIPT_VERIFIER``
-    override, then a ``tools/verify_audit_receipt.py`` walking up from the CWD
-    and from this module's location.
+    override, then a ``tools/verify_audit_receipt.py`` walking up from the CWD,
+    then the copy the installed package runs (the source checkout's tools/
+    script, or the one bundled into the wheel).
     """
     import os
+
+    from bernstein.core.verifier.audit_receipt_verifier import VERIFIER_SCRIPT
 
     override = os.environ.get("BERNSTEIN_AUDIT_RECEIPT_VERIFIER")
     if override:
         candidate = Path(override).expanduser()
         return candidate if candidate.is_file() else None
 
-    for base in (Path.cwd(), Path(__file__).resolve()):
-        for parent in (base, *base.parents):
-            candidate = parent / "tools" / "verify_audit_receipt.py"
-            if candidate.is_file():
-                return candidate
-    return None
+    cwd = Path.cwd()
+    for parent in (cwd, *cwd.parents):
+        candidate = parent / "tools" / "verify_audit_receipt.py"
+        if candidate.is_file():
+            return candidate
+    return VERIFIER_SCRIPT if VERIFIER_SCRIPT.is_file() else None
 
 
 @receipt_group.command("export")
@@ -4206,11 +4301,21 @@ def receipt_export_cmd(
     show_default=True,
     help="Which format(s) to verify.",
 )
+@click.option(
+    "--allow-unpinned-key",
+    is_flag=True,
+    default=False,
+    help=(
+        "Accept a receipt checked only against its embedded key (trust-on-first-use). "
+        "Without --jwk/--public-key this proves integrity, not who signed it."
+    ),
+)
 def receipt_verify_cmd(
     receipt_path: str,
     jwk_path: str | None,
     public_key_path: str | None,
     fmt: str,
+    allow_unpinned_key: bool,
 ) -> None:
     """Verify an audit receipt by shelling to the standalone verifier.
 
@@ -4218,7 +4323,8 @@ def receipt_verify_cmd(
     Runs tools/verify_audit_receipt.py in a subprocess - the same stdlib +
     cryptography + cbor2 tool an external auditor runs - to prove the receipt
     is self-contained and needs no bernstein code to validate. Exits non-zero
-    on any verification failure.
+    on any verification failure, including an unpinned signing key unless
+    --allow-unpinned-key is given.
     """
     import subprocess
     import sys
@@ -4237,6 +4343,8 @@ def receipt_verify_cmd(
         cmd.extend(["--jwk", jwk_path])
     if public_key_path:
         cmd.extend(["--public-key", public_key_path])
+    if allow_unpinned_key:
+        cmd.append("--allow-unpinned-key")
 
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.stdout:

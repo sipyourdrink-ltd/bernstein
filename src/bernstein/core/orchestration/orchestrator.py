@@ -49,6 +49,7 @@ from bernstein.core.agent_recycling import (
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.agents.context_attachments import CONTEXT_FILES_ATTACHED_EVENT
 from bernstein.core.agents.injected_skills_event import SKILLS_INJECTED_EVENT
+from bernstein.core.agents.stop_reaper import reap_stop_requests
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.batch_api import ProviderBatchManager
@@ -110,6 +111,11 @@ from bernstein.core.orchestration.controller_state import (
     save as _save_controller_state,
 )
 from bernstein.core.orchestration.evolution import EvolutionCoordinator
+
+# The no-adapter message lives in ``preflight`` so the CLI can print it without
+# importing this module; it is re-exported here because this is where the
+# orchestrator subprocess raises it and where callers have always imported it.
+from bernstein.core.orchestration.preflight import NO_ADAPTER_CONFIGURED as NO_ADAPTER_CONFIGURED
 from bernstein.core.orchestration.run_stall import (
     ACTIVE_UNFINISHED_STATUSES,
     STUCK_TASK_FAIL_REASON,
@@ -173,6 +179,7 @@ from bernstein.core.task_lifecycle import (
     collect_completion_data,
     evict_degraded_sessions,
     maybe_retry_task,
+    note_queued_retries,
     prepare_speculative_warm_pool,
     process_completed_tasks,
     retry_or_fail_task,
@@ -186,21 +193,6 @@ from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor
 from bernstein.evolution.risk import RiskScorer
 
-_BERNSTEIN_YAML = "bernstein.yaml"
-
-#: What an operator is told when no adapter resolves. Every flag it names has to
-#: be a flag of the ``bernstein`` command, because that is what the reader typed
-#: and what they will check against ``bernstein --help``. This module's own
-#: ``--adapter`` argparse flag belongs to the orchestrator subprocess and is not
-#: reachable from there; naming it sent readers looking for an option that does
-#: not exist (#3526). ``tests/unit/test_adapter_fatal_message.py`` resolves each
-#: flag here against the registered CLI, so the text cannot drift back.
-NO_ADAPTER_CONFIGURED = (
-    "FATAL: no adapter configured. Bernstein does not default to Claude - "
-    f"pass --cli (e.g. --cli codex), set BERNSTEIN_ADAPTER, or set 'cli' in {_BERNSTEIN_YAML}. "
-    "Run 'bernstein integrations list --installed' to see which adapters resolve here."
-)
-
 # Preserve underscore-prefixed aliases so existing test imports keep working
 _compute_total_spent = compute_total_spent
 _total_spent_cache = total_spent_cache
@@ -213,6 +205,8 @@ if TYPE_CHECKING:
     from bernstein.core.container import ContainerConfig
     from bernstein.core.permission_mode import PermissionMode
     from bernstein.core.protocols.cluster.mesh_coordinator import MeshCoordinator
+    from bernstein.core.protocols.mcp.mcp_manager import MCPManager as _MCPManager
+    from bernstein.core.protocols.mcp.mcp_manager import MCPServerConfig
     from bernstein.core.quality.quality_gates import QualityGatesConfig
     from bernstein.core.security.sandbox import SandboxRuntime
     from bernstein.core.spawner import AgentSpawner
@@ -368,6 +362,26 @@ def has_terminal_task(tasks_by_status: Mapping[str, list[Task]]) -> bool:
     KeyError.
     """
     return bool(tasks_by_status.get("done") or tasks_by_status.get("failed") or tasks_by_status.get("closed"))
+
+
+def has_inflight_task(tasks_by_status: Mapping[str, list[Task]]) -> bool:
+    """Is any task still held by a worker, local or remote?
+
+    Step-8b quiescence read only ``open`` and this orchestrator's own agents.
+    In cluster mode a remote ``bernstein worker`` claims tasks from the same
+    task server, and those claims belong to no local agent: the run read
+    ``open=0 agents=0`` while a remote worker was still running a retry, the
+    orchestrator self-stopped, and when the retry finished the dependents it
+    unblocked had no spawner left. A step for a role the remote worker does
+    not poll then stayed ``open`` for good.
+
+    Read on the settle-window refetch, not the top-of-tick snapshot: a task a
+    dead local agent held is auto-completed by ``reap_dead_agents`` within the
+    tick, so the snapshot still shows it ``claimed`` when it no longer is. A
+    claim held by a dead local agent does not keep the run alive forever
+    either: ``_release_stale_claims`` retries or fails it on a normal tick.
+    """
+    return bool(tasks_by_status.get("claimed") or tasks_by_status.get("in_progress"))
 
 
 def _model_identity(
@@ -764,6 +778,7 @@ class Orchestrator:
         from bernstein.core.cost_anomaly import CostAnomalyDetector
 
         self._anomaly_detector = CostAnomalyDetector(config.cost_anomaly, workdir)
+        self._stop_spawning: bool = False
 
         # Context degradation detector: flags agents whose cross-model review
         # verdicts decline (N consecutive rejects).  Degraded sessions are
@@ -1823,6 +1838,7 @@ class Orchestrator:
             if all(dep in done_ids or (t.id, dep) in broken_deps for dep in t.depends_on)
             # Skip tasks with future created_at (retry backoff)
             and t.created_at <= now
+            and not t.metadata.get("administrative_run_id")
         ]
         result.open_tasks = len(open_tasks)
 
@@ -2205,6 +2221,10 @@ class Orchestrator:
 
         # 4b. Use cached failed tasks and maybe retry with escalation
         failed_tasks = tasks_by_status["failed"]
+        note_queued_retries(
+            (task for tasks in tasks_by_status.values() for task in tasks),
+            self._retried_task_ids,
+        )
         for task in failed_tasks:
             if self._maybe_retry_task(task):
                 result.retried.append(task.id)
@@ -2356,6 +2376,12 @@ class Orchestrator:
         # 5. Reap dead/stale agents and fail their tasks
         reap_dead_agents(self, result, tasks_by_status)
 
+        # 5a. Cooperative cancel: drive STOP_REQ tasks through the stop ladder.
+        try:
+            reap_stop_requests(self, result, tasks_by_status)
+        except Exception:
+            logger.warning("Stop reaper pass failed; STOP_REQ tasks stay pending", exc_info=True)
+
         # 5b. Retry any pushes that failed in previous ticks (normal cadence)
         if _run_normal:
             try:
@@ -2466,10 +2492,10 @@ class Orchestrator:
                 try:
                     _chain_result = TickResult()
                     # Pass both done and failed - process_completed_tasks
-                    # filters to ``_processed_done_tasks`` itself so a
-                    # failed task gets registered the same way as a done
-                    # task. A pure done-only filter here would strand
-                    # failed tasks in the drain tracker.
+                    # registers every task in ``_processed_done_tasks`` and
+                    # runs the post-/complete chain for the done ones only.
+                    # A pure done-only filter here would strand failed tasks
+                    # in the drain tracker.
                     process_completed_tasks(
                         self,
                         _newly_terminal_for_chain.copy(),
@@ -2605,7 +2631,8 @@ class Orchestrator:
                 if settled is not None:
                     settled_open = len(settled["open"])
                     settled_agents = sum(1 for a in self._agents.values() if a.status != "dead")
-                    if settled_open == settled_agents == 0:
+                    settled_inflight = has_inflight_task(settled)
+                    if settled_open == settled_agents == 0 and not settled_inflight:
                         # Hold/release API (supplements the settle-timer
                         # self-stop above): external callers can call
                         # POST /orchestrator/holds to keep this orchestrator
@@ -2659,11 +2686,12 @@ class Orchestrator:
                     else:
                         logger.info(
                             "Quiescence NOT confirmed after %.1fs settle window (tick #%d): "
-                            "open=%d agents=%d - run continues",
+                            "open=%d agents=%d in_flight=%s - run continues",
                             _settle_s,
                             self._tick_count,
                             settled_open,
                             settled_agents,
+                            settled_inflight,
                         )
 
         # 9. Log summary
@@ -3258,6 +3286,20 @@ class Orchestrator:
         # before the first tick.
         self._reconcile_claimed_tasks()
         self._record_run_started()
+        # The owner record names the ``run_started`` row itself: recovery
+        # verifies it against the journal's first event, so it is published
+        # before any other row is appended.
+        try:
+            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
+
+            write_spawner_run_owner(
+                sdd_dir=self._workdir / ".sdd",
+                run_id=self._run_id,
+                journal_head=self._recorder.fingerprint(),
+                journal_event_count=self._recorder.event_count(),
+            )
+        except OSError as exc:
+            logger.warning("Run owner record not written for %s: %s", self._run_id, sanitize_log(str(exc)))
         # Record the skill and plugin set this install actually resolved,
         # once per run and before the first agent spawns. `bernstein skills`
         # and `bernstein plugins` report the declaration; a path override, a
@@ -3279,17 +3321,6 @@ class Orchestrator:
         except Exception:
             logger.exception("Loaded extension set not recorded (non-fatal) - continuing startup")
 
-        try:
-            from bernstein.core.orchestration.run_closure_owner import write_spawner_run_owner
-
-            write_spawner_run_owner(
-                sdd_dir=self._workdir / ".sdd",
-                run_id=self._run_id,
-                journal_head=self._recorder.fingerprint(),
-                journal_event_count=self._recorder.event_count(),
-            )
-        except OSError as exc:
-            logger.warning("Run owner record not written for %s: %s", self._run_id, sanitize_log(str(exc)))
         # WAL recovery: detect uncommitted entries from crashed previous runs.
         # Must run after WAL writer is initialized (in __init__) so that
         # acknowledgement entries are written to the current run's WAL.
@@ -4393,6 +4424,16 @@ class Orchestrator:
         else:
             logger.info("Anomaly [%s]: %s", signal.rule, signal.message)
 
+    def resume_spawning(self) -> None:
+        """Clear the anomaly-detector stop-spawning flag to allow new agent spawns.
+
+        The cost-anomaly detector sets this flag when burn rate crosses the
+        stop threshold.  Call this once the operator has acknowledged the
+        anomaly and wishes to resume the run.
+        """
+        self._stop_spawning = False
+        logger.info("Spawning resumed by operator call")
+
     def _run_liveness_watchdog(self) -> None:
         """Run one liveness-watchdog pass over current adapter sessions.
 
@@ -5018,10 +5059,21 @@ class Orchestrator:
             if agent_dead:
                 # Agent confirmed gone — reclaim immediately, no timeout wait.
                 try:
-                    self._retry_or_fail_task(
-                        task.id,
-                        reason=("Dead agent: claimed task held by agent no longer tracked (or confirmed dead)"),
-                    )
+                    if task.id in self._retried_task_ids:
+                        # Claimed again after its retry was queued: retry_or_fail_task
+                        # skips a task it has already retried, which left this claim,
+                        # and the files it owns, held by no one.
+                        fail_task(
+                            self._client,
+                            self._config.server_url,
+                            task.id,
+                            reason="Dead agent: claim released; this task's retry is already queued",
+                        )
+                    else:
+                        self._retry_or_fail_task(
+                            task.id,
+                            reason=("Dead agent: claimed task held by agent no longer tracked (or confirmed dead)"),
+                        )
                     released += 1
                     logger.warning(
                         "Immediately reclaimed task %s (%s) from dead/gone agent",
@@ -6732,6 +6784,50 @@ def _resolve_spawner_adapter_name(
     return seed_value or None
 
 
+def _stand_down_watchdog(workdir: Path, reason: str) -> None:
+    """Tell the recovery watchdog this process is exiting for good and must not be respawned.
+
+    The watchdog restarts the orchestrator whenever its pidfile is not alive,
+    because for a crash that is the right default. A startup configuration
+    failure is the opposite case: the next launch reads the same flags, the same
+    environment and the same seed, so it fails the same way. Without this marker
+    the watchdog relaunches it every poll and the run sits there looking live
+    (#6126). The marker is the same one a quiescence self-stop writes, so
+    ``bootstrap._watchdog_check_process`` already honours it, and it is cleared
+    again when the next run starts.
+
+    Best-effort: a marker that cannot be written leaves the watchdog's ordinary
+    restart budget as the backstop, which is the behaviour before this existed.
+
+    Args:
+        workdir: Project root that holds ``.sdd/runtime``.
+        reason: Short tag, surfaced in the watchdog log when it declines to restart.
+    """
+    marker = workdir / ".sdd" / "runtime" / "spawner-deliberate-stop"
+    with contextlib.suppress(OSError):
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(reason)
+
+
+def _start_mcp_manager(
+    configs: list[MCPServerConfig], *, signing_mode: Any, audit_enabled: bool, workdir: Path
+) -> _MCPManager:
+    """Start MCP only after enabled auditing has been successfully initialized."""
+    from bernstein.core.mcp_manager import MCPManager, _resolve_signing_mode
+
+    chain = None
+    if audit_enabled and _resolve_signing_mode(mode=signing_mode) != "off":
+        try:
+            from bernstein.core.security.audit_chain import AuditChainStore
+
+            chain = AuditChainStore(workdir / ".sdd" / "audit")
+        except Exception:
+            raise RuntimeError("MCP audit initialization failed") from None
+    manager = MCPManager(configs, signing_mode=signing_mode, audit_chain=chain)
+    manager.start_all()
+    return manager
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -6948,6 +7044,7 @@ if __name__ == "__main__":
             # not list sends the reader looking for something that is not there
             # (#3526).
             logger.error("%s", NO_ADAPTER_CONFIGURED)
+            _stand_down_watchdog(workdir, "no-adapter-configured")
             sys.exit(1)
 
         # Run-level model: ``--model`` flag (threaded from ``bernstein run
@@ -6979,6 +7076,7 @@ if __name__ == "__main__":
             adapter_inst = get_adapter(adapter_name)
         if not adapter_inst:
             logger.error("No adapter found (tried: %s)", adapter_name)
+            _stand_down_watchdog(workdir, "adapter-not-found")
             sys.exit(1)
 
         # Create TierAwareRouter from providers.yaml if available
@@ -7041,6 +7139,20 @@ if __name__ == "__main__":
             if mcp_config:
                 logger.info("Loaded MCP config with %d server(s)", len(mcp_config.get("mcpServers", {})))
 
+        # Resolve compliance config: env var > run_config > seed config
+        compliance_config = None
+        compliance_preset_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+        if compliance_preset_env:
+            from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+
+            compliance_config = ComplianceConfig.from_preset(CompliancePreset(compliance_preset_env.lower()))
+        elif seed and seed.compliance:
+            compliance_config = seed.compliance
+        else:
+            from bernstein.core.compliance import load_compliance_config
+
+            compliance_config = load_compliance_config(workdir / ".sdd")
+
         # Initialize MCPManager from seed mcp_servers config
         from bernstein.core.mcp_manager import MCPManager, parse_server_configs
 
@@ -7053,11 +7165,13 @@ if __name__ == "__main__":
                 # BERNSTEIN_MCP_SIGNING_MODE env-var still wins inside
                 # MCPManager - see _resolve_signing_mode.
                 signing_mode = getattr(seed, "mcp_signing_mode", "warn")
-                mcp_manager = MCPManager(
+                mcp_manager = _start_mcp_manager(
                     mcp_server_configs,
                     signing_mode=signing_mode,
+                    workdir=workdir,
+                    audit_enabled=os.environ.get("BERNSTEIN_AUDIT") == "1"
+                    or bool(compliance_config and compliance_config.audit_logging),
                 )
-                mcp_manager.start_all()
                 logger.info(
                     "MCPManager started %d server(s) with signing_mode=%s: %s",
                     len(mcp_server_configs),
@@ -7357,6 +7471,9 @@ if __name__ == "__main__":
             # Context policy configuration (loads from bernstein.yaml context: section)
             context_policy_config=getattr(seed, "context", None) if seed else None,
         )
+        _tier_adapters = getattr(seed, "tier_adapters", None) if seed else None
+        if _tier_adapters:
+            spawner.set_tier_adapters(_tier_adapters)
         run_config_budget_usd: float | None = None
         dry_run = False
         approval_mode = "auto"
@@ -7387,20 +7504,6 @@ if __name__ == "__main__":
         )
         # Env var override for workflow mode
         workflow_mode = os.environ.get("BERNSTEIN_WORKFLOW", workflow_mode or "") or None
-
-        # Resolve compliance config: env var > run_config > seed config
-        compliance_config = None
-        compliance_preset_env = os.environ.get("BERNSTEIN_COMPLIANCE")
-        if compliance_preset_env:
-            from bernstein.core.compliance import ComplianceConfig, CompliancePreset
-
-            compliance_config = ComplianceConfig.from_preset(CompliancePreset(compliance_preset_env.lower()))
-        elif seed and seed.compliance:
-            compliance_config = seed.compliance
-        else:
-            from bernstein.core.compliance import load_compliance_config
-
-            compliance_config = load_compliance_config(workdir / ".sdd")
 
         # Compliance can force governed workflow mode
         if compliance_config and compliance_config.governed_workflow and not workflow_mode:

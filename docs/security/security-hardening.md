@@ -302,6 +302,7 @@ sandbox:
     - ".env"
     - ".env.*"
     - ".sdd/config/"
+    - ".sdd/auth/"
     - "credentials/"
     - "*.pem"
     - "*.key"

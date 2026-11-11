@@ -15,6 +15,8 @@
  * undefined (SSR / non-browser test environments) instead of throwing.
  */
 
+import { setAuthToken } from './api.ts';
+
 export interface BeforeInstallPromptEvent extends Event {
   readonly platforms: ReadonlyArray<string>;
   readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
@@ -119,27 +121,27 @@ export function onlineSignal(listener: (online: boolean) => void): () => void {
 }
 
 /**
- * Extract the auth token from the URL fragment (``#t=<token>``) and stash
- * it in ``localStorage``.  The fragment is then scrubbed from the URL so
- * the token never appears in shared screenshots or browser history.
+ * Extract the auth token from the URL fragment (``#t=<token>``) and store it
+ * with ``setAuthToken`` from ``lib/api.ts``.  The fragment is then scrubbed
+ * from the URL so the token never appears in shared screenshots or browser
+ * history.
  *
- * The default ``storageKey`` MUST match ``TOKEN_KEY`` in ``lib/api.ts``
- * (`'bernstein_token'`): the onboarding fragment is dead weight if the
- * capture writes to a key the API layer never reads. This bit the local
- * ``bernstein gui serve`` seed and the ``--tunnel`` onboarding flow - the
- * token was captured into a key nothing consumed, so every ``/api/v1`` call
- * still 401'd.
+ * The capture goes through the API layer's own setter instead of naming a
+ * storage key here: the onboarding fragment is dead weight if it writes to a
+ * key the API layer never reads. That once bit the local ``bernstein gui
+ * serve`` seed and the ``--tunnel`` onboarding flow - the token was captured
+ * into a key nothing consumed, so every ``/api/v1`` call still 401'd.
  *
  * Returns the token that was captured, or ``null`` if no token was found.
  */
-export function captureAuthTokenFromFragment(storageKey: string = 'bernstein_token'): string | null {
+export function captureAuthTokenFromFragment(): string | null {
   if (typeof window === 'undefined') return null;
   const hash = window.location.hash;
   if (!hash || !hash.startsWith('#t=')) return null;
   const token = hash.slice(3);
   if (!token) return null;
   try {
-    window.localStorage.setItem(storageKey, token);
+    setAuthToken(token);
   } catch {
     // localStorage may be unavailable in private-browsing modes; swallow
     // the error and still scrub the fragment so the token does not linger

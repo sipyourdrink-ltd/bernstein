@@ -210,3 +210,56 @@ def test_observe_mode_still_records_so_the_gate_can_open(query) -> None:
     decision = enforcing.evaluate(proposal)
     assert decision.confidence.samples == 5
     assert decision.admitted is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #5407 – fast-track bypass removed; routing thresholds defined once
+# ---------------------------------------------------------------------------
+
+
+def test_classify_risk_route_high_risk_returns_sandbox_verify() -> None:
+    """composite_risk > 0.6 must always route to sandbox_verify."""
+    from bernstein.evolution.loop import EvolutionLoop
+
+    assert EvolutionLoop._classify_risk_route(0.7) == "sandbox_verify"
+    assert EvolutionLoop._classify_risk_route(1.0) == "sandbox_verify"
+
+
+def test_classify_risk_route_low_risk_returns_standard_not_fast_track() -> None:
+    """After #5407 there is no fast_track route; low risk still goes to standard."""
+    from bernstein.evolution.loop import EvolutionLoop
+
+    assert EvolutionLoop._classify_risk_route(0.0) == "standard"
+    assert EvolutionLoop._classify_risk_route(0.29) == "standard"
+
+
+def test_classify_risk_route_mid_risk_returns_standard() -> None:
+    from bernstein.evolution.loop import EvolutionLoop
+
+    assert EvolutionLoop._classify_risk_route(0.5) == "standard"
+
+
+def test_proposal_scorer_classify_delegates_to_loop() -> None:
+    """ProposalScorer.classify_risk_route must return the same value as EvolutionLoop._classify_risk_route."""
+    from bernstein.evolution.loop import EvolutionLoop
+    from bernstein.evolution.proposal_scorer import ProposalScorer
+
+    scorer = ProposalScorer()
+    for risk in (0.0, 0.29, 0.31, 0.5, 0.61, 1.0):
+        assert scorer.classify_risk_route(risk) == EvolutionLoop._classify_risk_route(risk)
+
+
+def test_make_fast_track_sandbox_result_is_gone() -> None:
+    """make_fast_track_sandbox_result must no longer exist in _shared or loop."""
+    import importlib
+
+    shared = importlib.import_module("bernstein.evolution._shared")
+    assert not hasattr(shared, "make_fast_track_sandbox_result"), (
+        "make_fast_track_sandbox_result was removed by #5407 but is still present in _shared"
+    )
+
+    loop_mod = importlib.import_module("bernstein.evolution.loop")
+    # The private method was removed too.
+    assert not hasattr(loop_mod.EvolutionLoop, "_make_fast_track_sandbox_result"), (
+        "_make_fast_track_sandbox_result was removed by #5407 but is still on EvolutionLoop"
+    )

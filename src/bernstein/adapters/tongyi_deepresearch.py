@@ -32,7 +32,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
-from bernstein.adapters.deep_research import DeepResearchAdapter, env_prefix, read_gateway, require_env
+from bernstein.adapters.deep_research import (
+    DeepResearchAdapter,
+    env_prefix,
+    read_gateway,
+    require_env,
+    url_endpoint,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -55,6 +61,18 @@ class TongyiDeepResearchAdapter(DeepResearchAdapter):
         "VISIT_SERVER_MAX_RETRIES",
         "WEBCONTENT_MAXLENGTH",
     )
+
+    def tool_endpoints(self, environ: Mapping[str, str]) -> list[tuple[str, int]]:
+        """Serper, the Jina reader and the code sandbox: the configured bases, else the defaults."""
+        endpoints: list[tuple[str, int]] = []
+        for tool, default in (("SERPER", ("google.serper.dev", 443)), ("JINA", ("r.jina.ai", 443))):
+            name = env_prefix(self.slug) + tool + "_BASE_URL"
+            base = (environ.get(name) or "").strip()
+            endpoints.append(url_endpoint(base, source=name) if base else default)
+        for sandbox in (environ.get("SANDBOX_FUSION_ENDPOINT") or "").split(","):
+            if sandbox.strip():
+                endpoints.append(url_endpoint(sandbox, source="SANDBOX_FUSION_ENDPOINT"))
+        return endpoints
 
     def build_env(self, environ: Mapping[str, str]) -> dict[str, str]:
         gw = read_gateway(self.slug, environ)

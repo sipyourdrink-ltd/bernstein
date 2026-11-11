@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 
 
@@ -114,12 +115,11 @@ def test_approval_gate_no_refusal_when_approved(tmp_path: Path) -> None:
     mock_ledger.record_refusal.assert_not_called()
 
 
-def test_approval_gate_records_refusal_on_timeout_with_approve_on_timeout(tmp_path: Path) -> None:
-    """Review mode with approve_on_timeout still records a refusal even when resolving to approved."""
+def test_approval_gate_records_policy_approval_on_timeout_with_approve_on_timeout(tmp_path: Path) -> None:
+    """approve_on_timeout resolves to approved and the ledger records an approval, not a refusal."""
     from bernstein.core.approval import ApprovalGate, ApprovalMode
     from bernstein.core.identity.grants import GrantLedger
 
-    # Mock the poll decision to return "timed_out"
     gate = ApprovalGate(
         mode=ApprovalMode.REVIEW,
         workdir=tmp_path,
@@ -127,26 +127,67 @@ def test_approval_gate_records_refusal_on_timeout_with_approve_on_timeout(tmp_pa
     )
     task = _make_task(id="T-timeout-approve")
 
-    # Mock the grant ledger to capture the refusal recording
     mock_ledger = MagicMock(spec=GrantLedger)
-    mock_ledger.record_refusal.return_value = MagicMock()
 
     with patch("bernstein.core.security.approval.GrantLedger", return_value=mock_ledger):
         result = gate.evaluate(
             task,
             session_id="agent-timeout-approve",
             timeout_s=0.1,
-            approve_on_timeout=True,  # This should still record a refusal
+            approve_on_timeout=True,
         )
 
-    # Should resolve to approved despite timeout
     assert result.approved is True
     assert result.rejected is False
     assert result.resolution == "timed_out"
 
-    # Should still have recorded a refusal (for audit trail)
-    mock_ledger.record_refusal.assert_called_once()
-    call_args = mock_ledger.record_refusal.call_args[1]
+    # The ledger must not claim a refusal for a task that proceeds.
+    mock_ledger.record_refusal.assert_not_called()
+    mock_ledger.issue_grant.assert_called_once()
+    call_args = mock_ledger.issue_grant.call_args[1]
     assert call_args["task_id"] == "T-timeout-approve"
     assert call_args["secret_name"] == "approval:agent-timeout-approve"
-    assert call_args["reason"] == "approval_timeout: Approval gate timed out after 0s with no decision"
+    assert call_args["reason"] == "approved_by_timeout_policy: Approval gate timed out after 0s with no decision"
+
+
+def _ledger_records(tmp_path: Path, task_id: str) -> list:
+    from bernstein.core.identity.grants import GrantLedger, install_grant_signer, verify_grant_chain
+    from bernstein.core.security.audit import load_or_create_audit_key
+
+    ledger = GrantLedger(
+        root=tmp_path / ".sdd" / "audit",
+        key=load_or_create_audit_key(),
+        signer=install_grant_signer(issuer="approval-gate"),
+    )
+    result = verify_grant_chain(root=tmp_path / ".sdd" / "audit", run_id=f"approval-{task_id}", key=ledger.hmac_key)
+    assert result.valid, result.errors
+    return result.records
+
+
+def test_timeout_policy_ledger_matches_outcome_for_both_policies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real signed ledger: approve_on_timeout=True -> approval record; False -> refusal record."""
+    from bernstein.core.approval import ApprovalGate, ApprovalMode
+
+    monkeypatch.setenv("BERNSTEIN_AUDIT_KEY_PATH", str(tmp_path / "keys" / "audit.key"))
+    monkeypatch.setenv("BERNSTEIN_AGENT_CARD_KEY_DIR", str(tmp_path / "keys" / "card"))
+
+    gate = ApprovalGate(
+        mode=ApprovalMode.REVIEW,
+        workdir=tmp_path,
+        _poll_decision=lambda task_id, approvals_dir, **kwargs: "timed_out",
+    )
+
+    approved = gate.evaluate(_make_task(id="T-pol-yes"), session_id="s1", timeout_s=0.1, approve_on_timeout=True)
+    assert approved.approved is True
+    recs = _ledger_records(tmp_path, "T-pol-yes")
+    assert [r.kind for r in recs] == ["grant_issued"]
+    assert recs[0].reason.startswith("approved_by_timeout_policy:")
+
+    refused = gate.evaluate(_make_task(id="T-pol-no"), session_id="s2", timeout_s=0.1, approve_on_timeout=False)
+    assert refused.approved is False
+    assert refused.rejected is True
+    recs = _ledger_records(tmp_path, "T-pol-no")
+    assert [r.kind for r in recs] == ["grant_refused"]
+    assert recs[0].reason.startswith("approval_timeout:")

@@ -1,7 +1,15 @@
 # Workers AI Provider
 
-**Module:** `bernstein.core.routing.cloudflare_ai`
-**Class:** `WorkersAIProvider`
+!!! warning "Not implemented in the current source tree"
+    There is no `bernstein.core.routing.cloudflare_ai` module, no
+    `WorkersAIProvider` class, and `cloudflare_ai` is not a recognised
+    `internal_llm_provider` value (recognised providers are listed in
+    `core/routing/llm.py`, e.g. `openrouter_free`; set `none` to disable
+    internal LLM calls). The sections below describe the intended design and
+    cannot be run as written.
+
+**Planned module:** `bernstein.core.routing.cloudflare_ai`
+**Planned class:** `WorkersAIProvider`
 
 Cloudflare Workers AI provides free-tier LLM models that Bernstein can use for task decomposition, planning, manager decisions, and structured output generation. This lets you run the orchestrator's internal LLM calls at zero cost.
 

@@ -34,11 +34,19 @@ from bernstein.core.protocols.mcp.claim_receipt import (
     filter_digest,
     sign_claim_receipt,
 )
-from bernstein.core.routes.task_crud import _get_sse_bus
+from bernstein.core.routes.task_crud import (
+    _caller_agent_role,  # pyright: ignore[reportPrivateUsage]
+    _checked_claim_session,  # pyright: ignore[reportPrivateUsage]
+    _get_sse_bus,  # pyright: ignore[reportPrivateUsage]
+    _get_store,  # pyright: ignore[reportPrivateUsage]
+    _resolve_request_tenant_scope,  # pyright: ignore[reportPrivateUsage]
+)
 from bernstein.core.security.audit_chain import AuditChainStore, record_task_claim_receipt
+from bernstein.core.security.auth_middleware import agent_task_scope
 from bernstein.core.security.sanitize import sanitize_log
 from bernstein.core.server import ClaimReceiptRequest  # noqa: TC001  (FastAPI resolves the body model at runtime)
 from bernstein.core.tasks.claim import Backlog, ClaimFilter, claim_next_entry
+from bernstein.core.tasks.store_claim import claim_store_entry, task_claim_snapshot
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -105,25 +113,56 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
     ``record_task_claim_receipt`` (no new event type), and the returned
     receipt embeds that event's chain head so the claim verifies offline. A
     filter matching no eligible row returns a signed refusal receipt.
+
+    Legacy backlog rows retain precedence in the default tenant. Otherwise
+    this route acquires the original tenant-scoped TaskStore row atomically.
+    TaskStore receipts include backlogSource="task_store" and a hash-bound,
+    caller-scoped backlogSnapshot for independent offline verification.
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
         raise HTTPException(status_code=503, detail="Server is draining -- no new claims accepted")
 
+    tenant_id = _resolve_request_tenant_scope(request)
+    claimer_id = _checked_claim_session(body.claimer_id)
+    assert claimer_id is not None
+    agent_role = _caller_agent_role(request)
+    if agent_role is not None and body.role is not None and body.role != agent_role:
+        raise HTTPException(status_code=403, detail="role mismatch: claim role differs from token role")
     backlog_path = _get_claim_backlog_path(request)
+    # The server picks the row, so there is no id for the path gate to check:
+    # a task-scoped agent token is limited to its own ids in the claim filter
+    # instead, and a row outside its scope is never chosen.  The scope is part
+    # of the filter digest, so the receipt records what it was granted under.
     claim_filter = ClaimFilter(
         project=body.project,
-        role=body.role,
+        role=agent_role if agent_role is not None else body.role,
         capability=body.capability,
         completed_ids=frozenset(body.completed_ids),
         max_attempts=body.max_attempts,
+        task_ids=agent_task_scope(request),
     )
     fingerprint = body.claimer_card_fingerprint or "unregistered"
 
-    entry = claim_next_entry(backlog_path, claimer_id=body.claimer_id, filter=claim_filter)
+    entry = (
+        claim_next_entry(backlog_path, claimer_id=claimer_id, filter=claim_filter) if tenant_id == "default" else None
+    )
+    source = "task-backlog.json"
+    if entry is None:
+        entry = await claim_store_entry(_get_store(request), tenant_id, claim_filter, claimer_id)
+        if (
+            entry is not None
+            or tenant_id != "default"
+            or task_claim_snapshot(_get_store(request), tenant_id, agent_task_scope(request))
+        ):
+            source = "task_store"
 
     # Reproject the post-claim backlog head from disk: wall-clock is stripped
     # inside backlog_head, so the head matches on a later offline reprojection.
-    rows = [e.to_dict() for e in Backlog.load(backlog_path).entries]
+    rows = (
+        task_claim_snapshot(_get_store(request), tenant_id, agent_task_scope(request))
+        if source == "task_store"
+        else [e.to_dict() for e in Backlog.load(backlog_path).entries]
+    )
     fd = filter_digest(claim_filter)
     bh = backlog_head(rows)
 
@@ -144,6 +183,11 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
     else:
         chain_head = ""
         if chain is not None:
+            task_version = entry.attempts
+            if source == "task_store":
+                task = _get_store(request).get_task(entry.id)
+                assert task is not None
+                task_version = task.version
             try:
                 event = record_task_claim_receipt(
                     chain=chain,
@@ -151,8 +195,8 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
                     role=entry.role or "",
                     claimed_by=body.claimer_id,
                     depends_on=list(entry.depends_on),
-                    task_version=entry.attempts,
-                    claim_path=_MCP_CLAIM_PATH,
+                    task_version=task_version,
+                    claim_path="by_id" if source == "task_store" else _MCP_CLAIM_PATH,
                 )
                 chain_head = str(event.details.get("prev_chain_digest", ""))
             except Exception as exc:  # intentional-broad-except: audit mirror is best-effort, never blocks the claim
@@ -182,4 +226,8 @@ async def claim_receipt(body: ClaimReceiptRequest, request: Request) -> dict[str
         public_name=_CLAIM_IDENTITY_PUBLIC,
     )
     signed = sign_claim_receipt(receipt, private_key_pem=private_pem, public_key_pem=public_pem)
-    return signed.to_wire()
+    wire = signed.to_wire()
+    if source == "task_store":
+        wire["backlogSource"] = source
+        wire["backlogSnapshot"] = rows
+    return wire

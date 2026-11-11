@@ -40,7 +40,7 @@ keeps a chronological history of cross-model verdicts per session:
   handled.
 
 `evict_degraded_sessions(orch)` (`src/bernstein/core/tasks/task_lifecycle.py`)
-runs each orchestrator tick, right after deadlock/loop detection. For every
+runs each orchestrator tick, right after deadlock/loop detection and idle-agent recycling. For every
 session the detector has flagged: it checkpoints the session, stashes the
 recovery-context markdown on `orch._context_recovery` keyed by every task ID
 the session owned, writes a `SHUTDOWN` signal via the signal manager so the

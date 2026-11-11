@@ -2512,11 +2512,20 @@ class TestBug13CostMetering:
         _append_tokens_sidecar(sidecar, 0, 0)
         assert not sidecar.exists()
 
-    def test_append_tokens_sidecar_survives_unwritable_path(self, caplog: pytest.LogCaptureFixture) -> None:
-        # A path under a location that cannot be created (root-owned or
-        # already a file) must log a warning, never raise - a sidecar
-        # failure must not fail the run.
-        unwritable = Path("/this/path/should/not/be/creatable/by/tests") / "s4.tokens"
+    def test_append_tokens_sidecar_survives_unwritable_path(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A sidecar whose parent cannot become a directory (a regular file
+        # occupies it) must log a warning, never raise - a sidecar failure
+        # must not fail the run. A file-blocker, not an "uncreatable" path:
+        # the old hardcoded POSIX path resolved against the current drive on
+        # Windows and admin processes (every CI runner) could create it, so
+        # no warning fired, the assertion failed, and C:\this\... was left
+        # on the drive root. A blocker file fails on every OS at any
+        # privilege level, which is the test comment's own "already a file"
+        # case. Path shape mirrors production: .sdd/runtime/<session>.tokens.
+        (tmp_path / ".sdd").write_text("occupied")
+        unwritable = tmp_path / ".sdd" / "runtime" / "s4.tokens"
         with caplog.at_level("WARNING"):
             _append_tokens_sidecar(unwritable, 10, 10)
         assert any("failed to write tokens sidecar" in rec.message for rec in caplog.records)

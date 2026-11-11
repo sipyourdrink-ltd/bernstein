@@ -43,12 +43,23 @@ siem (splunk, datadog, elastic, ...) can ingest them. implements the
 broker can never stall the orchestrator's tick loop). dormant by
 default - set `BERNSTEIN_AUDIT_MQTT_ENABLED=1` to turn it on.
 
+### custom-vault-token-store
+
+backs `ExternalSecretStore` with a real HashiCorp Vault token role, so
+a secret reference like `vault:bernstein-agent` mints a fresh,
+Vault-issued, short-lived token on every call instead of a static
+value. implements the `provide_secret_store` hookspec. unlike the
+other packages above, secret-store discovery is not wired at
+orchestrator startup yet: something in your own startup path needs to
+call `discover_plugin_secret_stores()` (see its own README).
+
 ## install + run
 
 ```bash
 pip install -e examples/plugins/custom-guardrail
 pip install -e examples/plugins/custom-adapter
 pip install -e examples/plugins/custom-audit-sink
+pip install -e examples/plugins/custom-vault-token-store
 
 # every plugin's hooks fire automatically once the package is
 # discoverable on the python path; bernstein scans the

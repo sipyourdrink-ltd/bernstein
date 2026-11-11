@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.canonicalization import canonical_bytes as canonical_bytes
 from bernstein.core.evidence.output_diff import OutputDiff
 from bernstein.core.lineage.identity import generate_keypair
 from bernstein.core.lineage.spine import (
@@ -134,9 +135,7 @@ _STATUS_FAIL = "fail"
 # ---------------------------------------------------------------------------
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+_canonical_bytes = canonical_bytes  # deprecated: back-compat alias; use canonical_bytes
 
 
 def _sha256_bytes(data: bytes) -> str:

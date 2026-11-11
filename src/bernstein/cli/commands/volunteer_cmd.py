@@ -24,7 +24,6 @@ one that prints "not implemented yet" is a promise the code has not made.
 from __future__ import annotations
 
 import json
-import sys
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,90 +49,40 @@ def volunteer_group(ctx: click.Context) -> None:
 
 
 def _run_onboarding() -> None:
-    """Onboarding flow: explain, get consent, hand off to autopilot.
+    """Explain the volunteer flow, then stop before consent is asked for.
 
-    This is the entry point for `bernstein volunteer` with no subcommand.
-    Per #3889, it must:
-    1. Explain in three sentences what will happen
-    2. Record explicit consent as a signed receipt (cannot be skipped)
-    3. Hand off to autopilot (after #3885 lands)
+    The entry point for ``bernstein volunteer`` with no subcommand (#3889).
 
-    The consent step is real via consent.py (#3866 merged). Backend detection
-    and autopilot handoff depend on #3887 and #3885 respectively, so those
-    steps print honest "not yet available" messages naming the prerequisite.
+    A consent receipt is not a general "I agree to volunteer" record. It binds
+    the donor's key to the digest of one project's manifest and the digest of
+    the sandbox profile derived from it (:mod:`bernstein.core.volunteer.consent`),
+    so it can only be written once a project has been chosen. Nothing chooses one
+    yet: the autopilot loop has no task source, which is also why
+    ``bernstein volunteer autopilot`` refuses to run. Until it does, onboarding
+    explains what will happen and says what is missing, and records nothing --
+    a signed receipt over placeholder digests would read, to anything that
+    verifies only the signature, as consent to a policy the donor never saw.
+
+    Exits non-zero, so a script that runs onboarding cannot carry on as if a
+    donor had been onboarded.
     """
-    # Step 1: Explain what will happen
     click.echo("Bernstein volunteer onboarding")
     click.echo()
     click.echo(
         "You are about to donate compute capacity to open-source projects. "
-        "This tool will select a beginner-safe task from a curated project index, "
-        "run it in a hardened sandbox, and submit the result for review."
+        "A task is picked from a project that opted in, runs in a hardened sandbox "
+        "under that project's declared policy, and its result is submitted for review."
+    )
+    click.echo(
+        "Before any task runs you are asked for explicit consent, recorded as a receipt "
+        "signed by your key and bound to that project's manifest and sandbox profile."
     )
     click.echo()
-
-    # Step 2: Get explicit consent
-    click.echo("Explicit consent is required before proceeding.")
-    click.echo()
-    proceed = click.confirm("Do you consent to volunteer under these terms?", default=False)
-    if not proceed:
-        click.echo("Consent declined. Exiting.")
-        sys.exit(0)
-
-    # Record consent as a signed receipt
-    from datetime import UTC, datetime
-
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    from bernstein.core.security.audit_dsse import export_public_key_pem, keyid_from_public_key
-    from bernstein.core.volunteer.consent import (
-        GENESIS_ANCHOR,
-        ChainLink,
-        ConsentReceipt,
-        build_consent_receipt,
-        write_consent,
+    click.echo("Usable today: `bernstein volunteer browse` to list projects, `budget` to set your limits.")
+    raise click.ClickException(
+        "onboarding cannot continue: no task source is implemented yet, so no project can be "
+        "chosen and there is nothing for a consent receipt to bind. No consent was recorded."
     )
-
-    # Generate a worker key (in production this would be persistent)
-    worker_key = Ed25519PrivateKey.generate()
-
-    consent_text = (
-        "I consent to donate compute capacity to open-source projects via Bernstein volunteer. "
-        "Tasks will run in a hardened sandbox with the project's declared policy enforced."
-    )
-
-    receipt = ConsentReceipt(
-        consent_text=consent_text,
-        manifest_digest="placeholder-no-project-selected-yet",
-        sandbox_profile_digest="hardened-sandbox-profile",
-        donor_keyid=keyid_from_public_key(worker_key.public_key()),
-        donor_public_key_pem=export_public_key_pem(worker_key.public_key()).decode("ascii"),
-        created_at=datetime.now(UTC).isoformat(),
-        chain=ChainLink(anchor=GENESIS_ANCHOR, length=1),
-        donor_signature="",  # populated at envelope build time
-    )
-
-    envelope = build_consent_receipt(receipt, signing_key=worker_key)
-    consent_path = Path(".sdd/runtime/volunteer/consent.json")
-    consent_path.parent.mkdir(parents=True, exist_ok=True)
-    write_consent(envelope, consent_path)
-
-    click.echo()
-    click.echo(f"✓ Consent recorded: {consent_path}")
-    click.echo(f"  Receipt digest: {receipt.digest}")
-    click.echo()
-
-    # Step 3: Backend detection (depends on #3887)
-    click.echo("Next step: detect usable execution backend")
-    click.echo("  [Provider observability and threat model (#3887) not yet merged]")
-    click.echo()
-
-    # Step 4: Autopilot handoff (depends on #3885)
-    click.echo("Next step: hand off to autopilot")
-    click.echo("  [Autopilot profile loop (#3885) not yet merged]")
-    click.echo()
-
-    click.echo("Onboarding flow complete. The full volunteer path will be available once #3887 and #3885 land.")
 
 
 @volunteer_group.command("verify")

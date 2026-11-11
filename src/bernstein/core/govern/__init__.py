@@ -1,4 +1,4 @@
-"""Govern plan models for posture diff artifacts."""
+"""Governance planning and declared probe execution (``probe_runtime.py``)."""
 
 from __future__ import annotations
 

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bernstein.core.lineage.entry import ModelRef
-from bernstein.core.routing import cascade_router, escalation_ladder, model_fallback, route_decision
+from bernstein.core.routing import route_decision
 from bernstein.core.routing.model_registry import (
     ANY_TASK_CLASS,
     EVENT_MODEL_ADMITTED,
@@ -299,14 +299,6 @@ def test_pinned_admission_covers_only_its_own_snapshot(tmp_path: Path) -> None:
     assert not is_admitted(state, _ref("opus"), task_class="code")
 
 
-ROUTING_ENFORCEMENT_PATHS = (
-    ("route_decision", route_decision.enforce_model_registry),
-    ("model_fallback", model_fallback.enforce_model_registry),
-    ("escalation_ladder", escalation_ladder.enforce_model_registry),
-    ("cascade_router", cascade_router.enforce_model_registry),
-)
-
-
 def test_model_with_no_live_admission_is_refused_and_the_refusal_is_chained(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -330,23 +322,3 @@ def test_model_with_no_live_admission_is_refused_and_the_refusal_is_chained(
     assert refusals[0].details["routing_path"] == "route_decision"
     ok, errors = chain.verify()
     assert ok, errors
-
-
-@pytest.mark.parametrize(("path_name", "enforce"), ROUTING_ENFORCEMENT_PATHS)
-def test_every_routing_path_consults_the_registry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path_name: str, enforce: object
-) -> None:
-    monkeypatch.setenv("BERNSTEIN_MODEL_REGISTRY_ENFORCEMENT", "1")
-    chain = _chain(tmp_path)
-    _admit(chain, "opus")
-    at = _at(0)
-
-    enforce(chain=chain, ref=_ref("opus"), task_class="code", at=at)
-    assert chain.query(event_type=EVENT_MODEL_REFUSED) == []
-
-    with pytest.raises(route_decision.ModelNotAdmittedError):
-        enforce(chain=chain, ref=_ref("sonnet"), task_class="code", at=at)
-
-    refusals = [e for e in chain.query(event_type=EVENT_MODEL_REFUSED)]
-    assert len(refusals) == 1
-    assert refusals[0].details["routing_path"] == path_name

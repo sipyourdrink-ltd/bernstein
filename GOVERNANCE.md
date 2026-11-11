@@ -38,6 +38,23 @@ evaluated against; a core reviewer is additionally listed in
 paths they own, and GitHub only honors code owners who hold write. Adding
 someone means both files. The project stays single-maintainer, as above.
 
+**Roles below the maintainer.** Triager and area reviewer sit beside committer
+and core reviewer, each with a term and a stated limit; what each may do, how it
+is granted and how it lapses is in
+[Roles and terms](docs/governance/review-charter.md#11-roles-and-terms). The
+roster stays maintainer-only: nobody else edits it, and org ownership,
+rulesets, secrets and the publisher identities stay with the maintainer.
+
+**Election.** *Proposed, to be confirmed by the maintainer:* roles are filled
+in an election, held around October. Anyone with a merged pull request in the
+last 90 days is eligible. The maintainer opens a nomination window of at least
+seven days in an issue; anyone may
+nominate an eligible person, themselves included, and people may speak for or
+against in the thread. When the window closes the maintainer confirms names by
+roster pull request. The maintainer has a veto and can decline any nomination,
+with the reason in the thread; the election informs the decision, it does not
+bind it.
+
 **Licensing.** Apache-2.0 ([LICENSE](LICENSE)); by contributing you agree
 your contributions are licensed under it. There is no CLA and no sign-off
 requirement — opening the pull request is the whole ceremony. The project

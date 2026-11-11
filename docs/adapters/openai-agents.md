@@ -22,7 +22,7 @@ or with uv:
 uv add 'bernstein[openai]'
 ```
 
-The adapter module itself loads without the SDK - `bernstein agents` will
+The adapter module itself loads without the SDK - `bernstein integrations list` will
 list the adapter either way, but `spawn()` will fail with a clear error
 until the extra is installed.
 
@@ -85,11 +85,11 @@ stages:
         cli: openai_agents
         model: gpt-5-mini
         effort: medium
-        sandbox_provider: unix_local   # unix_local | docker | e2b | modal
 ```
 
-Sandbox provider selection is currently adapter-internal - set it on
-the step that uses the `openai_agents` CLI.
+The sandbox provider (`unix_local` | `docker` | `e2b` | `modal`, default
+`unix_local`) is not a plan-step field. It is read from the per-spawn
+`mcp_config["sandbox_provider"]` value.
 
 ---
 
@@ -161,7 +161,7 @@ code onto Bernstein's existing back-off (`COST.rate_limit_cooldown_s`).
 
 ## Out of scope
 
-* Sandbox provider selection is configured per-step on the adapter,
-  not as a top-level Bernstein setting.
+* Sandbox provider selection is carried in the per-spawn `mcp_config`,
+  not as a top-level Bernstein setting or a plan-step field.
 * The runner records total tool-call count rather than per-tool
   latency.

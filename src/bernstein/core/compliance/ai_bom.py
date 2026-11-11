@@ -468,84 +468,132 @@ def verify_bom(payload: object) -> BOMVerificationReport:
     return BOMVerificationReport(ok=ok, errors=tuple(errors), checked_count=checked)
 
 
+_COMPONENT_KEYS: tuple[str, ...] = ("models", "prompts", "adapters", "tools", "data_sources")
+
+#: Top-level scalar fields that are a pure function of the spine. ``bernstein_version``
+#: is deliberately absent: it records the emitting install, not anything the
+#: chain carries, so there is nothing to re-derive it from.
+_SPINE_DERIVED_SCALARS: tuple[str, ...] = (
+    "schema",
+    "schema_version",
+    "run_id",
+    "started_at",
+    "finished_at",
+    "lineage_root_hash",
+)
+
+
 def verify_bom_against_spine(
     payload: object,
     *,
     spine: LineageSpine,
     hmac_key: bytes,
 ) -> BOMVerificationReport:
-    """Re-derive the BOM projection offline and fail closed on any mismatch.
+    """Re-derive the BOM projection from the spine and compare it field by field.
 
     ``verify_bom`` only checks a document's shape. This is the offline
-    counterpart the auditor runs with no access to the live install: it walks
-    the run's lineage spine and confirms that the document is a faithful
-    projection of what actually ran, not a hand-edited claim.
+    counterpart the auditor runs with no access to the live install: it
+    recomputes the document from the run's lineage spine
+    (:func:`snapshot_from_spine` then :func:`generate_bom`) and fails closed on
+    any difference, so a document that is not exactly what the chain projects
+    to cannot pass as a faithful one.
 
     Checks performed, after the structural :func:`verify_bom` gate:
 
     1. The document's ``run_id`` matches the spine's run directory.
-    2. Every component ``sha256`` resolves to a spine entry whose chain hash
-       and HMAC tag recompute
-       (:func:`bernstein.core.lineage.spine.verify_entry`). A hash that
-       resolves to no verifying entry is named by line item.
-    3. The document's ``lineage_root_hash`` equals the spine's chain head.
+    2. The whole chain verifies (:meth:`LineageSpine.verify`): every entry's
+       hash and HMAC tag recompute and every ``prev_hash`` links to its
+       predecessor. A tampered, empty or seal-only chain fails.
+    3. The document equals the re-derived projection: the same top-level
+       ``run_id``/window/``lineage_root_hash``, the same component set in every
+       category, and for each component the same ``sha256``, ``invocation_count``
+       and every other field. A component that is missing, extra, renamed, or
+       differs in any field is named by line item.
+    4. Components the spine cannot derive (anything outside ``models``) are
+       rejected: they have no lineage record to be compared with.
 
     Args:
         payload: Serialised BOM document (bytes, str, or a decoded mapping).
         spine: The run's lineage spine, opened read-only.
-        hmac_key: The audit key the chain was written under. Used only to
-            recompute each entry's hash and HMAC tag; never minted here.
+        hmac_key: The audit key the chain was written under. The spine was
+            opened with it; kept so callers state which key they verify under.
 
     Returns:
         A :class:`BOMVerificationReport` whose ``ok`` is true only when the
-        document is well-formed, every line item resolves to a verifying
-        spine entry, and the head anchor matches the spine's chain head.
+        document is well-formed and identical to the projection of an intact
+        chain.
     """
     structural = verify_bom(payload)
     if not structural.ok:
         return structural
 
     doc = _coerce_payload(payload)
+    errors: list[str] = []
+
     run_id = cast("str", doc["run_id"])
-
-    errors: list[str] = list(structural.errors)
-    checked = structural.checked_count
-
     if run_id != spine.run_dir.name:
         errors.append(
             f"run_id mismatch: document says {run_id!r}, spine is {spine.run_dir.name!r}",
         )
 
-    from bernstein.core.lineage.spine import verify_entry
+    chain = spine.verify()
+    if not chain.ok:
+        detail = "; ".join(chain.errors[:3]) if chain.errors else chain.status.value
+        errors.append(f"lineage chain does not verify ({chain.status.value}): {detail}")
+        return BOMVerificationReport(ok=False, errors=tuple(errors), checked_count=structural.checked_count)
 
-    entries = list(spine.iter_entries())
-    verifying_hashes = {entry.entry_hash for entry in entries if verify_entry(entry, hmac_key)}
+    try:
+        expected = asdict(generate_bom(snapshot_from_spine(spine)))
+    except BOMError as exc:
+        errors.append(f"cannot re-derive the projection from the lineage spine: {exc}")
+        return BOMVerificationReport(ok=False, errors=tuple(errors), checked_count=structural.checked_count)
 
-    for key in ("models", "prompts", "adapters", "tools", "data_sources"):
-        items_raw = doc.get(key, [])
-        if not isinstance(items_raw, list):
+    allowed = {*_SPINE_DERIVED_SCALARS, *_COMPONENT_KEYS, "bernstein_version"}
+    for key in sorted(set(doc) - allowed):
+        errors.append(f"unexpected top-level field {key!r}: not part of the BOM projection")
+
+    for key in _SPINE_DERIVED_SCALARS:
+        if doc.get(key) != expected[key]:
+            errors.append(f"{key} mismatch: document says {doc.get(key)!r}, spine derives {expected[key]!r}")
+
+    for key in _COMPONENT_KEYS:
+        errors.extend(_diff_components(key, doc.get(key, []), expected[key]))
+
+    return BOMVerificationReport(ok=not errors, errors=tuple(errors), checked_count=structural.checked_count)
+
+
+def _diff_components(key: str, actual_raw: object, expected_raw: object) -> list[str]:
+    """Field-by-field differences between a document's list and the re-derived one."""
+    actual: list[dict[str, Any]] = cast("list[dict[str, Any]]", actual_raw)
+    expected: list[dict[str, Any]] = cast("list[dict[str, Any]]", expected_raw)
+    errors: list[str] = []
+
+    expected_by_label: dict[str, dict[str, Any]] = {}
+    for item in expected:
+        expected_by_label[_component_label(key, item)] = item
+
+    seen: set[str] = set()
+    for index, item in enumerate(actual):
+        label = _component_label(key, item)
+        if label in seen:
+            errors.append(f"{key}[{index}] ({label}) is listed more than once")
             continue
-        items: list[Any] = cast("list[Any]", items_raw)
-        for index, item in enumerate(items):
-            if not isinstance(item, dict):
-                continue
-            item_d: dict[str, Any] = cast("dict[str, Any]", item)
-            sha = item_d.get("sha256")
-            if not isinstance(sha, str) or not _SHA256_RE.match(sha):
-                continue
-            name = _component_label(key, item_d)
-            if sha not in verifying_hashes:
+        seen.add(label)
+        want = expected_by_label.get(label)
+        if want is None:
+            errors.append(f"{key}[{index}] ({label}) is not derived from the lineage spine")
+            continue
+        for field_name in sorted(set(item) | set(want)):
+            if item.get(field_name) != want.get(field_name):
                 errors.append(
-                    f"{key}[{index}] ({name}) does not resolve to a verifying lineage record: {sha}",
+                    f"{key}[{index}] ({label}) {field_name} mismatch: "
+                    f"document says {item.get(field_name)!r}, spine derives {want.get(field_name)!r}",
                 )
 
-    head = spine.head_hash()
-    if doc["lineage_root_hash"] != head:
-        errors.append(
-            f"lineage_root_hash mismatch: document says {doc['lineage_root_hash']!r}, spine head is {head!r}",
-        )
-
-    return BOMVerificationReport(ok=not errors, errors=tuple(errors), checked_count=checked)
+    for label in expected_by_label:
+        if label not in seen:
+            errors.append(f"{key} is missing {label}, which the lineage spine records")
+    return errors
 
 
 def _component_label(key: str, item: Mapping[str, Any]) -> str:

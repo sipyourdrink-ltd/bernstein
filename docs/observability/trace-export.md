@@ -74,14 +74,14 @@ see its docstring for the canonical shape.
 | `iat` | Execution completion time, Unix epoch seconds, sourced from the journal. |
 | `subject` | SPIFFE URI scoped to the execution: `spiffe://bernstein.run/run/<run>/exec/<exec>`. |
 | `model` | `{"provider": ..., "model_id": ..., "version"?}`. |
-| `runtime` | `{"platform": "software-only", "measurement": "sha256:0000…"}` — software evidence only; never a real hardware measurement. The all-zero digest is the honest way to say "no hardware measurement exists". |
+| `runtime` | `{"platform": "software-only", "measurement": "sha256:0000…"}` — software evidence only; never a real hardware measurement. Bernstein records carry an all-zero `measurement` today. The [TRACE trust-levels page](https://trace.agentrust-io.com/docs/trust-levels/) reserves the all-zero value for a producer that has no commitment to offer at all and says it is not the default for software-only records, which it describes as carrying a software commitment defined by the producing profile, with a documented preimage a verifier can recompute. Carrying such a commitment in this field is not implemented. |
 | `policy` | `{"bundle_hash": <sha256>, "enforcement_mode": "enforce"}`. |
 | `data_class` | Operator-declared data sensitivity; defaults to `confidential` when undeclared. |
 | `data_class` | Operator-declared data sensitivity. Allowed values: `restricted`, `internal`, `confidential`, `public`. Defaults to `confidential` when undeclared. Set in `bernstein.yaml` via `data_class: <value>`. |
 | `tool_transcript` | `{"hash": <sha256>, "call_count": <int>}` — hash over tool-call entries in the journal. |
 | `build_provenance` | `{"slsa_level": 0, "digest": <sha256>, "provenance_uri": <release page URL>}`. |
 | `appraisal` | `{"status": "none", "verifier": "https://bernstein.run/trace/verifier", "timestamp": <int>}`. |
-| `cnf` | `{"jwk": {"kty": "OKP", "crv": "Ed25519", "x": <base64url>, "kid": <key-id>}}` — the public Ed25519 key for the install identity that produced `signature`. `kid` names that key. |
+| `cnf` | `{"jwk": {"kty": "OKP", "crv": "Ed25519", "x": <base64url>, "kid": <key-id>}}` — the public Ed25519 key for the install identity that produced `signature`. `kid` is the RFC 7638 JWK thumbprint computed from `crv`, `kty`, and `x`. |
 | `delegation` | Present only on delegated child hops: `{"parent_record_hash": <sha256>, "credential_id": <str>}`. Absent (not null) on root/solo executions. |
 | `references` | Produced-artifact pointers (`rel: "produced-artifact"`) when the execution produced any; absent (not an empty list) otherwise. |
 | `signature` | Base64url (no padding) Ed25519 signature over the JCS canonicalisation of every other field. |

@@ -23,6 +23,7 @@ from bernstein.core.compliance.ai_bom import (
     SUPPORTED_FORMATS,
     AdapterEntry,
     BOMError,
+    BOMVerificationReport,
     DataSourceEntry,
     ModelEntry,
     PromptEntry,
@@ -769,6 +770,137 @@ class TestVerifyBOM:
         report = verify_bom_against_spine(payload, spine=spine, hmac_key=b"k" * 32)
         assert report.ok is True
         assert report.errors == ()
+
+    @staticmethod
+    def _two_model_spine(tmp_path: Path) -> LineageSpine:
+        spine = LineageSpine(tmp_path / ".sdd" / "lineage", run_id="20260101-run-b", hmac_key=b"k" * 32)
+        for step, model, ts in (
+            ("s1", "model-a", 1767225600),
+            ("s2", "model-b", 1767225660),
+            ("s3", "model-a", 1767225720),
+            ("s4", "", 1767225780),
+        ):
+            spine.record(
+                artifact_path=f"src/{step}.py",
+                content=step.encode(),
+                actor="agent:worker",
+                step_id=step,
+                model=model,
+                timestamp=ts,
+            )
+        return spine
+
+    @staticmethod
+    def _verify_doc(spine: LineageSpine, doc: dict[str, Any]) -> BOMVerificationReport:
+        return verify_bom_against_spine(json.dumps(doc).encode("utf-8"), spine=spine, hmac_key=b"k" * 32)
+
+    def _faithful_doc(self, spine: LineageSpine) -> dict[str, Any]:
+        return json.loads(encode_bom(generate_bom(snapshot_from_spine(spine)), fmt="json"))
+
+    def test_verify_against_spine_passes_for_multi_model_projection(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        report = self._verify_doc(spine, self._faithful_doc(spine))
+        assert report.ok is True, report.errors
+
+    def test_verify_against_spine_rejects_swapped_sha256(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        # model-a now claims model-b's (genuine, verifying) entry hash.
+        doc["models"][0]["sha256"] = doc["models"][1]["sha256"]
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any("model-a" in e and "sha256 mismatch" in e for e in report.errors)
+
+    def test_verify_against_spine_rejects_inflated_invocation_count(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        doc["models"][0]["invocation_count"] = 999
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any("model-a" in e and "invocation_count mismatch" in e for e in report.errors)
+
+    def test_verify_against_spine_rejects_dropped_component(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        doc["models"] = doc["models"][:1]
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any("missing model-b" in e for e in report.errors)
+
+    def test_verify_against_spine_rejects_empty_model_list(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        doc["models"] = []
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert len(report.errors) == 2
+
+    def test_verify_against_spine_rejects_renamed_component(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        doc["models"][1]["name"] = "model-z"
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any("model-z" in e and "not derived from the lineage spine" in e for e in report.errors)
+        assert any("missing model-b" in e for e in report.errors)
+
+    def test_verify_against_spine_rejects_fabricated_component(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        # Backed by a real, verifying entry hash (the non-model row's) - only
+        # a comparison against the projection can tell it was never a model.
+        non_model_hash = list(spine.iter_entries())[-1].entry_hash
+        doc["models"].append(
+            {"name": "zzz-fake", "provider": "", "version": "", "sha256": non_model_hash, "invocation_count": 1},
+        )
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any("zzz-fake" in e for e in report.errors)
+
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [("provider", "acme"), ("version", "9.9"), ("started_at", "2001-01-01T00:00:00Z")],
+    )
+    def test_verify_against_spine_rejects_edited_descriptive_fields(
+        self, tmp_path: Path, field_name: str, value: str
+    ) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        if field_name == "started_at":
+            doc[field_name] = value
+        else:
+            # Last model: raising a field on it keeps the structural sort order.
+            doc["models"][-1][field_name] = value
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any(f"{field_name} mismatch" in e for e in report.errors)
+
+    def test_verify_against_spine_rejects_components_the_spine_cannot_derive(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        doc["tools"] = [{"name": "git", "kind": "shell", "sha256": _sha("tool-git")}]
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any("tools[0] (git) is not derived from the lineage spine" in e for e in report.errors)
+
+    def test_verify_against_spine_rejects_deleted_middle_entry(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        lines = spine.spine_path.read_bytes().rstrip(b"\n").split(b"\n")
+        # Drop an entry whose model (model-a, appears twice) keeps the BOM's
+        # component set intact; only chain linkage can catch it.
+        del lines[2]
+        spine.spine_path.write_bytes(b"\n".join(lines) + b"\n")
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
+        assert any("lineage chain does not verify" in e for e in report.errors)
+
+    def test_verify_against_spine_rejects_empty_spine(self, tmp_path: Path) -> None:
+        spine = self._two_model_spine(tmp_path)
+        doc = self._faithful_doc(spine)
+        spine.spine_path.write_bytes(b"")
+        report = self._verify_doc(spine, doc)
+        assert report.ok is False
 
     def test_bom_verify_against_spine_flags_head_anchor_mismatch(self, tmp_path: Path) -> None:
         spine = self._seeded_spine(tmp_path)

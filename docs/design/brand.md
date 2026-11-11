@@ -28,7 +28,7 @@ Two files, chosen by colour scheme:
 | dark | `docs/assets/logo-dark.svg` | `#F2EFE6` (token `text`, dark) |
 | light | `docs/assets/logo-light.svg` | `#181614` (token `text`, light) |
 
-The README picks one with `<picture>` + `prefers-color-scheme`. **Those two paths are hotlinked** from the PyPI project page, the website repository and third-party listings via `raw.githubusercontent.com/.../main/docs/assets/logo-{dark,light}.svg`. Change their content; never their name or location.
+The README does not choose between them: GitHub's `prefers-color-scheme` follows the reader's OS or browser, not the GitHub theme, so a light/dark `<picture>` can put dark ink on a dark page. It uses `docs/assets/logo-readme.svg` instead, the dark wordmark on its own opaque `#13130F` panel (rounded, hairline stroke), which reads the same on any page. **The two wordmark paths are hotlinked** from the PyPI project page, the website repository and third-party listings via `raw.githubusercontent.com/.../main/docs/assets/logo-{dark,light}.svg`. Change their content; never their name or location.
 
 ## Colours
 
@@ -65,12 +65,13 @@ All identity files live in `docs/assets/brand/` (plus the two hotlink-stable wor
 | `bernstein-social-1280x640.{svg,png}` | GitHub repository social preview |
 | `bernstein-og-1200x630.{svg,png}` | `og:image` for the docs site |
 | `../logo-dark.svg`, `../logo-light.svg` | wordmark, hotlinked - keep the paths |
+| `../logo-readme.svg` | wordmark on its own dark panel, the README header image |
 
 Where the identity is wired in:
 
 | Surface | File |
 |---|---|
-| README header | `README.md` (`<picture>` of the two wordmarks); `banner-readme.webp` stays as the hero |
+| README header | `README.md` and `docs/i18n/README.*.md` (one `<img>` of `logo-readme.svg`); `docs/assets/banner-readme.webp` stays as the hero |
 | Docs site logo + favicon | `mkdocs.yml` (`theme.logo`, `theme.favicon` → `assets/brand/bernstein-mark.svg`) |
 | Docs `og:image` | `docs/overrides/main.html`, `docs/benchmarks/leaderboard.html` |
 | Operator GUI favicon | `web/index.html` (inline SVG data URI of the mark) |

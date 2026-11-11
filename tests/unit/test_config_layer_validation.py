@@ -193,3 +193,43 @@ def test_invalid_project_layer_reported_with_project_layer_name(project: Path) -
     assert exc_info.value.layer_name == "project"
     assert ".sdd" in err
     assert "greater than or equal to 1" in err
+
+
+# -- adapter and effort values accepted by the seed/runtime must load from every layer --
+
+
+@pytest.mark.parametrize("adapter", ["aider", "cursor", "amp", "auto", "claude"])
+def test_validate_layer_partial_accepts_every_selectable_adapter(adapter: str) -> None:
+    """cli is checked against the live adapter registry, not a hardcoded subset."""
+    validate_layer_partial({"cli": adapter}, layer_name="run-overlay")
+
+
+@pytest.mark.parametrize("effort", ["max", "high", "medium", "normal", "low"])
+def test_validate_layer_partial_accepts_runtime_effort_levels(effort: str) -> None:
+    validate_layer_partial({"effort": effort}, layer_name="run-overlay")
+
+
+def test_validate_layer_partial_rejects_unknown_effort() -> None:
+    with pytest.raises(LayerValidationError):
+        validate_layer_partial({"effort": "extreme"}, layer_name="run-overlay")
+
+
+def test_env_layer_accepts_non_core_adapter_and_high_effort(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """BERNSTEIN_CLI=aider / BERNSTEIN_EFFORT=high resolve instead of hard-failing."""
+    monkeypatch.setenv("BERNSTEIN_CLI", "aider")
+    monkeypatch.setenv("BERNSTEIN_EFFORT", "high")
+
+    cli = resolve_config("cli", home=BernsteinHome.default(), project_dir=project)
+    effort = resolve_config("effort", home=BernsteinHome.default(), project_dir=project)
+    assert (cli["value"], cli["source"]) == ("aider", "session")
+    assert (effort["value"], effort["source"]) == ("high", "session")
+
+
+def test_run_overlay_accepts_non_core_adapter(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text("cli: cursor\neffort: high\n", encoding="utf-8")
+    monkeypatch.setenv("BERNSTEIN_CONFIG_OVERLAY", str(overlay))
+
+    merged = resolve_effective_mapping({"goal": "x"}, config_path=project / "bernstein.yaml")
+    assert merged["cli"] == "cursor"
+    assert merged["effort"] == "high"

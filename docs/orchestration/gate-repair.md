@@ -17,6 +17,7 @@ being thrown away.
 | Step | Outcome |
 |---|---|
 | Gate fails, no prior repair attempt on this task | One repair task is created. Its description is the tail (~40 lines) of the real gate output plus "make the existing tests and lint pass; do not rewrite the feature; keep the diff as small as possible". The failing worktree is preserved so the repair task resumes the same branch instead of starting a fresh one from main. |
+| Repair agent starts | It takes the preserved worktree over under its own session name: the worktree moves to `.sdd/worktrees/<session>` and its branch is renamed to `agent/<session>`, uncommitted files included. Those are the names the merge, the merge gates and cleanup look up, so the repair is gated on its own work and merged from its own branch. Crash-recovery resumes take a preserved worktree over the same way. If the agent fails to start, the worktree goes back to its old name, so the next attempt still finds it. |
 | Repair task's own gate check passes | The branch proceeds through the normal gate/merge path -- no special-casing, it is just a task that passed. |
 | Repair task's own gate check also fails | No second repair is scheduled (the repair task's metadata already carries `gate_repair_attempted`); it goes through the existing reopen/permanent-fail budget unchanged. |
 | Original (pre-repair) task | Failed with a reason pointing at the repair task id, so the same failure never runs through the generic reopen budget *and* the repair task concurrently. |

@@ -135,10 +135,16 @@ def _surface_merge_refusals(workdir: Path, *, since_ts: float, console: Console)
     """Print a loud warning for agent merges the merge guard refused this run.
 
     The spawner merge guard refuses to land agent work on the repository's
-    protected default branch and records each refusal to
-    ``.sdd/runtime/refused_merges.jsonl``. Without this warning the refusal
-    is only visible in the spawner log, so the run ends looking clean while
-    the work was discarded (gh-2756).
+    protected default branch, and the merge gates (quality gates, file
+    scope, blast radius) refuse work that fails them; each refusal is
+    recorded to ``.sdd/runtime/refused_merges.jsonl``. Without this warning
+    the refusal is only visible in the spawner log, so the run ends looking
+    clean while the work was discarded (gh-2756).
+
+    The two kinds get separate warnings because they have different fixes:
+    only a default-branch refusal is lifted by checking out a working branch
+    or by the override env var, so that remedy must not be offered for a
+    failed gate.
 
     Args:
         workdir: Repository root of the run.
@@ -146,22 +152,44 @@ def _surface_merge_refusals(workdir: Path, *, since_ts: float, console: Console)
             shown, filtering out journal entries from previous runs.
         console: Console to print the warning to.
     """
-    from bernstein.core.agents.spawner_merge import ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH
+    from bernstein.core.agents.spawner_merge import (
+        ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH,
+        REFUSAL_TARGET_IS_DEFAULT_BRANCH,
+    )
     from bernstein.core.quality.retrospective import read_merge_refusals
 
     refusals = read_merge_refusals(workdir / ".sdd" / "runtime", since_ts=since_ts)
     if not refusals:
         return
-    branches = sorted({r.branch for r in refusals if r.branch})
-    branch_note = f" onto default branch {', '.join(repr(b) for b in branches)}" if branches else ""
-    console.print(
-        f"[bold red]Merge refused:[/bold red] agent work from {len(refusals)} session(s) was NOT "
-        f"merged{branch_note} and was discarded (details: .sdd/runtime/refused_merges.jsonl)."
-    )
-    console.print(
-        "Check out a working branch first (git checkout -b <branch>), or set "
-        f"{ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 and re-run."
-    )
+    # Journal lines without a reason predate the gate codes; the guard only
+    # ever wrote default-branch refusals then.
+    trunk = [r for r in refusals if r.reason in ("", REFUSAL_TARGET_IS_DEFAULT_BRANCH)]
+    gated = [r for r in refusals if r.reason not in ("", REFUSAL_TARGET_IS_DEFAULT_BRANCH)]
+    if trunk:
+        branches = sorted({r.branch for r in trunk if r.branch})
+        branch_note = f" onto default branch {', '.join(repr(b) for b in branches)}" if branches else ""
+        console.print(
+            f"[bold red]Merge refused:[/bold red] agent work from {len(trunk)} session(s) was NOT "
+            f"merged{branch_note} and was discarded (details: .sdd/runtime/refused_merges.jsonl)."
+        )
+        console.print(
+            "Check out a working branch first (git checkout -b <branch>), or set "
+            f"{ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH}=1 and re-run."
+        )
+    if gated:
+        console.print(
+            f"[bold red]Merge refused:[/bold red] merge gates kept agent work from {len(gated)} "
+            "session(s) off the target branch (details: .sdd/runtime/refused_merges.jsonl):"
+        )
+        for refusal in gated:
+            line = f"  {refusal.branch or refusal.session_id}: {refusal.reason}"
+            if refusal.detail:
+                line += f" - {refusal.detail}"
+            console.print(line, markup=False, highlight=False)
+        console.print(
+            "Fix what the gate reports and re-run the task; "
+            f"{ENV_ALLOW_MERGE_TO_DEFAULT_BRANCH} does not lift a gate refusal."
+        )
 
 
 def _show_run_summary() -> None:
@@ -696,11 +724,24 @@ class TaskStateProgressTracker:
     Emits one line per state transition:
     task <id> <state> adapter=<name> model=<route> title="<first 60 chars>"
     plus a 'planned' line when the task is first observed.
+
+    Task rows carry an adapter or model only when one was routed to that task
+    specifically; every other task runs on the run's own adapter and model,
+    which ``default_adapter`` / ``default_model`` name. ``unknown`` is left for
+    a run whose adapter is auto-detected inside the orchestrator.
     """
 
-    def __init__(self, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        *,
+        default_adapter: str | None = None,
+        default_model: str | None = None,
+    ) -> None:
         self.console = console or make_console()
         self.seen_states: dict[str, str] = {}
+        self.default_adapter = default_adapter or "unknown"
+        self.default_model = default_model or "unknown"
 
     @staticmethod
     def format_line(task_id: str, state: str, adapter: str, model: str, title: str) -> str:
@@ -714,8 +755,8 @@ class TaskStateProgressTracker:
             if not task_id:
                 continue
             current_state = str(task.get("status") or "open")
-            adapter = str(task.get("adapter") or task.get("cli") or "unknown")
-            model = str(task.get("model") or "unknown")
+            adapter = str(task.get("adapter") or task.get("cli") or self.default_adapter)
+            model = str(task.get("model") or self.default_model)
             title = str(task.get("title") or "")
 
             if task_id not in self.seen_states:
@@ -753,7 +794,12 @@ class TaskStateProgressTracker:
             return []
 
 
-def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
+def _finalize_run_output(
+    *,
+    quiet: bool,
+    wait: float | None = None,
+    seed: SeedConfig | None = None,
+) -> None:
     """Render either the interactive dashboard or the final summary.
 
     Uses terminal capability detection (TUI-003) to choose between the
@@ -800,6 +846,8 @@ def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
         quiet: When True, wait for quiescence and print only the terminal summary.
         wait: Seconds to wait for quiescence, keeping the progress output;
             None detaches as before.
+        seed: The run's resolved seed. Its adapter and model label the
+            non-interactive progress lines of tasks routed to neither.
     """
     from bernstein.cli.run_bootstrap import (
         _RUN_WAIT_DEFAULT_S,
@@ -859,7 +907,12 @@ def _finalize_run_output(*, quiet: bool, wait: float | None = None) -> None:
             # outcome and surface a refusal as a non-zero exit.
             from bernstein.cli.run_bootstrap import _await_first_spawn_outcome
 
-            tracker = TaskStateProgressTracker(console=console)
+            run_adapter = seed.cli if seed is not None and seed.cli != "auto" else None
+            tracker = TaskStateProgressTracker(
+                console=console,
+                default_adapter=run_adapter,
+                default_model=seed.model if seed is not None else None,
+            )
             tracker.poll()
             outcome, reason = _await_first_spawn_outcome(on_poll=tracker.poll)
             tracker.poll()

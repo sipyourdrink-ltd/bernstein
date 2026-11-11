@@ -19,7 +19,7 @@ their advertisement and sent a second contributor into a collision.
 | If an issue shows | It means |
 |---|---|
 | `help wanted` / `up-for-grabs` | Nobody holds it. Comment and it is yours. |
-| `good first issue` / `beginner-friendly` | Also small, and the body names a place to start. |
+| `good first issue` / `beginner-friendly` | Also `size/xs` or `size/s`, and the body has a `Where to start` section. |
 | None of the above, and it is open | Somebody holds it, or it is not ready to hand out yet. |
 
 An advertisement disappearing is not a rejection. It means the issue became held —
@@ -37,8 +37,10 @@ before it checks anything else:
 | `reserved`, `blocked`, `needs-better-brief`, `fleet-blocked`, `fleet-running` | A hold was set deliberately. |
 | `roadmap` | A tracking issue, not a unit of work. |
 
-`no-bait` is the maintainer override: an issue carrying it is never advertised and never
-un-advertised by the script, whatever the other signals say.
+`no-bait` is the human veto: an issue carrying it is never advertised by the script. The
+veto only blocks adding labels: the signals above still remove them. The script does not
+detect a bait label removed by hand, so add `no-bait` yourself to keep an issue off the
+shelf.
 
 ## When an issue goes onto the shelf
 
@@ -50,6 +52,9 @@ somebody who has never seen the codebase:
 - a milestone;
 - acceptance criteria in the body;
 - a named file, path or symbol to start from.
+
+`good first issue` / `beginner-friendly` are added on top only when the size is `size/xs`
+or `size/s` and the body has a `Where to start` heading.
 
 An issue failing any of these is reported with the specific reason and left alone. The
 script never writes a bait label onto an issue whose brief would waste a contributor's
@@ -80,7 +85,8 @@ uv run python scripts/issue_shelf.py --apply
 CI runs the report-only form every six hours and on issue events, and writes the result
 to the workflow summary. Applying is a manual dispatch with `apply: true`.
 
-Both forms refuse to start if the repo does not define every label that holds an issue
-back. A label the repo has never created cannot be on an issue, so the branch that reads
-it never runs — the guard is present in the source and inert in the run, and the shelf
-would advertise exactly the work those labels protect.
+If the repo does not define every label that holds an issue back, the report-only form
+prints a warning and still reports, and `--apply` refuses to write (exit 2). A label the
+repo has never created cannot be on an issue, so the branch that reads it never runs —
+the guard is present in the source and inert in the run, and the shelf would advertise
+exactly the work those labels protect.

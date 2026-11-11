@@ -56,6 +56,7 @@ The surface Bernstein reads for an adapter's lifecycle signals.
 | `stream-json` | Newline-delimited JSON events from the upstream CLI. |
 | `text-signals` | Plain stdout carrying the canonical `BERNSTEIN:<KIND>` grammar (see [stream_signals.md](stream_signals.md)). |
 | `hooks` | The upstream SDK fires hooks/callbacks Bernstein registers against. |
+| `acp` | Typed JSON-RPC lifecycle events over the Agent Client Protocol (see [ADAPTER_GUIDE.md](ADAPTER_GUIDE.md#declaring-acp-as-the-event-channel)). |
 | `poll-pty` | No structured channel; Bernstein polls a PTY or log for liveness. |
 | `none` | No event channel; process-exit detection only. |
 
@@ -69,8 +70,11 @@ that decides which completion check owns the verdict.
 | `git-diff` | The run's product is a commit on the worktree branch. Completion is workspace HEAD movement (`commit_completion`). |
 | `artifact` | The run's product is a canonical artifact recorded as a signed lineage entry. Completion is the entry hash (`artifact_completion`); HEAD is not consulted. |
 
-Every shipped adapter declares `git-diff` (the default), so the coding path is
-unchanged. See [../operations/artifacts.md](../operations/artifacts.md) for the
+Coding adapters declare `git-diff` (the default), so the coding path is
+unchanged; the research and browser adapters (`computer_use`, `garak`,
+`holmesgpt`, `skyvern`) declare `artifact`. The deep-research adapters
+(`gpt_researcher`, `tongyi_deepresearch`) do not: their report stays in the
+run directory and nothing publishes it to a task's artifact path. See [../operations/artifacts.md](../operations/artifacts.md) for the
 artifact-mode completion path.
 
 ### Session state (`SessionState`)
@@ -86,7 +90,7 @@ replaying the same inputs can be expected to reproduce the same outputs.
 | `persistent-agent` | The agent keeps its own state across spawns - a server-side session, a memory store, a persistent thread. A replay is **not** reproducible: inputs Bernstein never saw can influence the run. |
 
 `stateless` is the default, so every adapter that has not declared otherwise
-keeps its existing meaning.
+keeps its existing meaning. Only `letta_code` declares `persistent-agent`.
 
 ## Declaring a strategy
 
@@ -117,17 +121,73 @@ git-diff output mode, stateless session state).
 Every shipped adapter must declare its strategy on each axis. The
 conformance harness calls `assert_strategies_declared()`, which raises
 `StrategyDeclarationError` listing any registry adapter missing a row in
-`STRATEGY_MATRIX`. `bernstein adapters check` surfaces the per-adapter
-strategy table (`strategy_conformance_table`) so operators can compare
-adapters at a glance.
+`STRATEGY_MATRIX`. `bernstein adapters check --format json` carries each
+adapter's declared strategy in its `strategy` field; `strategy_conformance_table()`
+in `conformance.py` builds the per-adapter strategy table for the live registry.
+
+## Reasoning effort
+
+The existing CLI YAML contracts also declare `supported_efforts`, loaded as
+`ContractSpec.supported_efforts`. This optional tuple is empty for older
+contracts, meaning no declared effort capability. The five strategy axes do
+not encode effort values; this small contract extension avoids a separate
+capability registry or policy engine. It does not infer support in sibling
+adapters.
+
+Codex declares `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`, and its
+required flags include `-c`. Bernstein's internal routing vocabulary also
+includes `max` and `normal`: `_select_batch_config` defaults to `normal` for a
+model-specified task and `max` for manager/architect/security roles, large scope,
+or priority 1. Routing and retry ladders additionally use `high`, `medium`, and
+`low`. `Task.effort=None` means no override; the selector resolves it before
+constructing `ModelConfig`. `ModelConfig.effort` is a string, not an enum.
+
+The adapter owns this explicit equivalence mapping at the CLI boundary:
+
+| Internal effort | Codex CLI `model_reasoning_effort` |
+| --- | --- |
+| `max` | `xhigh` |
+| `high` | `high` |
+| `normal` | `medium` |
+| `medium` | `medium` |
+| `low` | `low` |
+| `minimal` | `minimal` |
+| `none` | `none` |
+| `xhigh` | `xhigh` |
+| `""` | No override; CLI/account default |
+
+Nonempty mapped values are passed as `-c model_reasoning_effort=<value>`
+alongside the existing model argument. `max` maps up to `xhigh`, never down to
+`high`. Unknown strings raise `ValueError` before spawning the worker. The
+internal `ModelConfig` stays unchanged. These are CLI values; a particular
+model or gateway may reject them.
+
+Every spawn writes a `bernstein.codex.effort` JSON entry in the existing
+session log: `requested_effort` is the internal value, `effective_cli_effort`
+is the mapped CLI override (both are `null` for the CLI default), while
+`effective_effort` remains `null`. The CLI override records argv delivery,
+not provider enforcement. Neither a successful spawn nor CLI exit establishes
+the effective provider effort. Retry, provider routing,
+and crash resume reuse the existing `ModelConfig` and policy machinery; the
+adapter validates and maps each attempt's resolved effort anew.
+
+`TestCodexEffort` in `tests/unit/test_adapter_codex.py` checks every declared
+internal value against captured spawn argv, rejection before `Popen`,
+retry/fallback, the spawner's resume boundary, and the real `_select_batch_config`
+default branches through adapter spawn without setting task effort. A local
+executable stub through the actual worker also checks native values, both
+aliases, and the CLI default. The stub proves setting delivery, not live
+provider enforcement.
 
 ## Shipped adapter declarations
 
 | Adapter | Resume | Dangerous mode | Event channel |
 | --- | --- | --- | --- |
+| `agy` | unsupported | cli-flag | text-signals |
 | `aichat` | unsupported | unsupported | text-signals |
 | `aider` | unsupported | unsupported | text-signals |
 | `amp` | unsupported | unsupported | text-signals |
+| `antigravity` | unsupported | cli-flag | text-signals |
 | `auggie` | unsupported | unsupported | text-signals |
 | `autohand` | unsupported | unsupported | text-signals |
 | `charm` | unsupported | cli-flag | text-signals |
@@ -138,20 +198,25 @@ adapters at a glance.
 | `codex` | unsupported | cli-flag | text-signals |
 | `cody` | unsupported | unsupported | text-signals |
 | `composio` | unsupported | unsupported | hooks |
+| `computer_use` | unsupported | unsupported | poll-pty |
 | `continue` | unsupported | unsupported | text-signals |
 | `copilot` | unsupported | cli-flag | text-signals |
 | `cursor` | unsupported | cli-flag | stream-json |
 | `devin_terminal` | unsupported | unsupported | poll-pty |
 | `droid` | unsupported | unsupported | text-signals |
 | `forge` | unsupported | unsupported | text-signals |
+| `garak` | unsupported | unsupported | text-signals |
 | `gemini` | unsupported | cli-flag | stream-json |
 | `generic` | unsupported | unsupported | text-signals |
 | `goose` | unsupported | env-var | stream-json |
+| `gpt_researcher` | unsupported | unsupported | text-signals |
 | `gptme` | unsupported | unsupported | text-signals |
 | `hermes` | unsupported | always-on | text-signals |
+| `holmesgpt` | unsupported | unsupported | text-signals |
 | `iac` | unsupported | unsupported | text-signals |
 | `junie` | unsupported | unsupported | text-signals |
 | `kilo` | unsupported | unsupported | acp |
+| `kimchi` | flag | cli-flag | acp |
 | `kimi` | unsupported | cli-flag | text-signals |
 | `kiro` | unsupported | unsupported | text-signals |
 | `letta_code` | unsupported | cli-flag | stream-json |
@@ -165,10 +230,14 @@ adapters at a glance.
 | `openhands` | unsupported | unsupported | text-signals |
 | `pi` | unsupported | unsupported | text-signals |
 | `plandex` | unsupported | unsupported | text-signals |
+| `pydantic_ai` | unsupported | unsupported | text-signals |
+| `python_runtime` | unsupported | always-on | stream-json |
 | `q_dev` | unsupported | unsupported | text-signals |
 | `qwen` | unsupported | unsupported | text-signals |
 | `ralphex` | unsupported | unsupported | text-signals |
 | `rovo` | unsupported | cli-flag | text-signals |
+| `skyvern` | unsupported | unsupported | poll-pty |
+| `tongyi_deepresearch` | unsupported | unsupported | text-signals |
 
 The matrix is the source of truth; this table is regenerated from
 `strategy_conformance_table()`. Out of scope for this contract: runtime

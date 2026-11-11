@@ -121,7 +121,15 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
 
 @router.post(
     "/cluster/nodes/{node_id}/heartbeat",
-    responses=_AUTH_RESPONSES | {404: {"description": "Node not registered"}},
+    responses=_AUTH_RESPONSES
+    | {
+        410: {
+            "description": (
+                "Node id unknown to this server (e.g. registry lost across a restart); "
+                "the node must re-register via POST /cluster/nodes"
+            )
+        }
+    },
 )
 def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
     """Record a heartbeat from a cluster node."""
@@ -140,7 +148,14 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -
         )
     node = node_registry.heartbeat(node_id, capacity)
     if node is None:
-        raise HTTPException(status_code=404, detail=f"Node '{node_id}' not registered")
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "error": "node_unknown",
+                "node_id": node_id,
+                "hint": "re-register via POST /cluster/nodes",
+            },
+        )
     return node_to_response(node)
 
 

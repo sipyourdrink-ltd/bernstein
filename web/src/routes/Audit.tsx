@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
-import { apiGet } from '@/lib/api';
+import { apiGet, getAuthToken } from '@/lib/api';
 import { formatCount, formatRelative, truncateHash } from '@/lib/format';
 import {
   EmptyState,
@@ -179,8 +179,7 @@ export default function Audit() {
         if (v) exportParams.set(k, v);
       }
       exportParams.set('format', format);
-      const token =
-        typeof window !== 'undefined' ? window.localStorage.getItem('bernstein_token') : null;
+      const token = getAuthToken();
       const res = await fetch(`/api/v1/audit/export?${exportParams.toString()}`, {
         method: 'POST',
         headers: {

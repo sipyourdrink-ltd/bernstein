@@ -37,9 +37,10 @@ router = APIRouter()
 def _aggregator(request: Request) -> FleetAggregator | None:
     """Return the live fleet aggregator if the host process has one attached.
 
-    The single-project task server does not normally own a
-    :class:`FleetAggregator`; embedding deployments that do are free to
-    attach one via ``app.state.fleet_aggregator``.
+    The single-project task server owns one only when it was started with
+    ``BERNSTEIN_FLEET_CONFIG`` set (see ``server_app._start_fleet_aggregator``);
+    embedding deployments are free to attach one via
+    ``app.state.fleet_aggregator``.
     """
     return getattr(request.app.state, "fleet_aggregator", None)  # type: ignore[no-any-return]
 
@@ -71,8 +72,9 @@ def fleet_projects(request: Request) -> dict[str, Any]:
             "stub": True,
             "hint": (
                 "No fleet aggregator is attached to this task server. "
-                "Run `bernstein fleet --web` to start the multi-project "
-                "supervisor view."
+                "Start it with BERNSTEIN_FLEET_CONFIG pointing at a "
+                "projects.toml, or run `bernstein fleet --web` for the "
+                "standalone multi-project supervisor view."
             ),
             "ts": time.time(),
         }

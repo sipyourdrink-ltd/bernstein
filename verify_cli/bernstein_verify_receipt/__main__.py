@@ -5,7 +5,12 @@ Usage::
     bernstein-verify-receipt verify <receipt_path> \\
         [--jwk JWK_PATH] [--public-key PEM_PATH] \\
         [--format cose|intoto|transparency|all]
-        [--verbose]
+        [--allow-unpinned-key] [--verbose]
+
+Without ``--public-key`` or ``--jwk`` the receipt can only be checked
+against the key it carries itself (trust-on-first-use).  That proves
+integrity, not who signed it, so it is reported as FAIL unless
+``--allow-unpinned-key`` is given.
 
 Output convention (per ADR-009 §9.3):
   - Human summary on stdout (one-line PASS/FAIL + brief reasons).
@@ -75,12 +80,22 @@ def cli() -> None:
     show_default=True,
     help="Which format(s) to verify.",
 )
+@click.option(
+    "--allow-unpinned-key",
+    is_flag=True,
+    default=False,
+    help=(
+        "Accept a receipt checked only against its embedded key (trust-on-first-use). "
+        "Without a pinned --public-key/--jwk this proves integrity, not who signed it."
+    ),
+)
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Print PASS-line details.")
 def verify_cmd(
     receipt_path: Path,
     jwk_path: Path | None,
     public_key_path: Path | None,
     fmt: str,
+    allow_unpinned_key: bool,
     verbose: bool,
 ) -> None:
     """Verify an audit receipt using the standalone verifier."""
@@ -110,6 +125,7 @@ def verify_cmd(
         pinned_pem=pinned_pem,
         verbose=verbose,
         stream=sys.stdout,
+        allow_unpinned_key=allow_unpinned_key,
     )
     sys.exit(_emit(result, kind="verify"))
 
