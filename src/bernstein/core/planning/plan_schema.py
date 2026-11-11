@@ -10,6 +10,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.planning.signal_contract import (
+    COMPLETION_SIGNAL_TYPES as _NATIVE_SIGNAL_TYPES,
+)
+from bernstein.core.planning.signal_contract import (
+    parse_completion_signal,
+)
 from bernstein.core.tasks.artifacts import ArtifactKind
 
 if TYPE_CHECKING:
@@ -49,15 +55,7 @@ EFFORT_VALUES: list[str] = ["low", "normal", "high", "max"]
 
 PHASE_VALUES: list[str] = ["research", "plan", "implement", "verify"]
 
-COMPLETION_SIGNAL_TYPES: list[str] = [
-    "path_exists",
-    "glob_exists",
-    "test_passes",
-    "file_contains",
-    "llm_review",
-    "llm_judge",
-    "absence_verified",
-]
+COMPLETION_SIGNAL_TYPES: list[str] = list(_NATIVE_SIGNAL_TYPES)
 
 # Issue #3110: the declared artifact contract. The strict parser in
 # ``bernstein.core.tasks.artifacts`` is the behavioural source of truth and is
@@ -84,13 +82,20 @@ _COMPLETION_SIGNAL_SCHEMA: dict[str, Any] = {
             "enum": COMPLETION_SIGNAL_TYPES,
             "description": "Kind of completion check.",
         },
-        "value": {"type": "string", "description": "Generic signal value."},
-        "path": {"type": "string", "description": "File path for path_exists / file_contains."},
-        "command": {"type": "string", "description": "Shell command for test_passes."},
-        "contains": {"type": "string", "description": "Substring for file_contains."},
+        "value": {"type": "string", "pattern": r"\S", "description": "Generic signal value."},
+        "path": {"type": "string", "pattern": r"\S", "description": "File path for path_exists / file_contains."},
+        "command": {"type": "string", "pattern": r"\S", "description": "Shell command for test_passes."},
+        "contains": {"type": "string", "pattern": r"\S", "description": "Substring for file_contains."},
     },
     "required": ["type"],
     "additionalProperties": False,
+    "if": {"properties": {"type": {"const": "file_contains"}}, "required": ["type"]},
+    "then": {
+        "if": {"required": ["value"]},
+        "then": {"properties": {"value": {"pattern": " :: "}}},
+        "else": {"required": ["path", "contains"]},
+    },
+    "else": {"anyOf": [{"required": [field]} for field in ("value", "path", "command")]},
 }
 
 _ARTIFACT_CRITERION_SCHEMA: dict[str, Any] = {
@@ -173,6 +178,7 @@ _STEP_SCHEMA: dict[str, Any] = {
             "default": "medium",
             "description": "Reasoning difficulty: low, medium, high.",
         },
+        "cli": {"type": "string", "minLength": 1, "description": "CLI agent override for this step."},
         "model": {
             "type": "string",
             "minLength": 1,
@@ -430,14 +436,8 @@ def _validate_step_estimated_minutes(step: dict[str, Any], path: str, errors: li
         )
 
 
-# String-typed optional fields of a completion signal, mirroring
-# _COMPLETION_SIGNAL_SCHEMA. A non-string here must be a reported type
-# error, not a silent skip (#3516).
-_COMPLETION_SIGNAL_STRING_FIELDS: tuple[str, ...] = ("value", "path", "command", "contains")
-
-
 def _validate_completion_signals(step: dict[str, Any], path: str, errors: list[str]) -> None:
-    """Validate the completion_signals array on a step."""
+    """Validate the same native gate grammar used by the direct loader."""
     if "completion_signals" not in step:
         return
     signals = step["completion_signals"]
@@ -445,17 +445,10 @@ def _validate_completion_signals(step: dict[str, Any], path: str, errors: list[s
         errors.append(f"{path}.completion_signals: expected type array")
         return
     for k, sig in enumerate(signals):
-        sig_path = f"{path}.completion_signals[{k}]"
-        if not isinstance(sig, dict):
-            errors.append(f"{sig_path}: expected a mapping")
-            continue
-        if "type" not in sig:
-            errors.append(f"{sig_path}: missing required field 'type'")
-        elif _check_type(sig["type"], "string", f"{sig_path}.type", errors):
-            _validate_enum(sig["type"], COMPLETION_SIGNAL_TYPES, f"{sig_path}.type", errors)
-        for field_name in _COMPLETION_SIGNAL_STRING_FIELDS:
-            if field_name in sig:
-                _check_type(sig[field_name], "string", f"{sig_path}.{field_name}", errors)
+        try:
+            parse_completion_signal(sig)
+        except ValueError as exc:
+            errors.append(f"{path}.completion_signals[{k}].{exc}")
 
 
 def _validate_step_phases(step: dict[str, Any], path: str, errors: list[str]) -> None:

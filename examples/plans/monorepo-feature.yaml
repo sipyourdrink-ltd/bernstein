@@ -124,8 +124,8 @@ stages:
         completion_signals:
           - type: path_exists
             path: "services/api/src/__tests__/feature.test.ts"
-          - type: command
-            run: "cd services/api && npm test -- --testPathPattern=feature"
+          - type: test_passes
+            command: "cd services/api && npm test -- --testPathPattern=feature"
 
   # ── Stage 3: Frontend ──
   - name: "Frontend"

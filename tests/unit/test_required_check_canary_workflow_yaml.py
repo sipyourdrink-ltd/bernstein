@@ -705,10 +705,10 @@ def test_ci_gate_rollup_fails_when_rpm_smoke_skips_on_an_rpm_relevant_diff(
 # ---------------------------------------------------------------------------
 
 # Mirrors the contexts the live branch rules require. Keep in sync with the
-# canary's BRANCH_PROTECTION_CONTEXTS_JSON. `quorum` comes from an
-# organization ruleset rather than the repository one, so it does not show up
-# in the repository's own protection payload, but the merge queue waits for
-# it exactly the same way.
+# canary's BRANCH_PROTECTION_CONTEXTS_JSON. `quorum` is required by the
+# repository ruleset `main-merge-queue` rather than classic branch protection,
+# so it does not show up in the branch protection payload, but the merge queue
+# waits for it exactly the same way.
 BRANCH_PROTECTION_CONTEXTS = (REQUIRED_CONTEXT, "quorum")
 
 
@@ -1108,10 +1108,35 @@ def test_planner_fails_safe_when_the_group_base_is_missing(
         "gha_workflows_changed",
         "macos_sensitive",
         "rpm_relevant_changed",
+        "gate_evasion_relevant",
     ):
         assert outputs[key] == "true", (
             f"fail-safe classification must set {key}=true so no job skips; outputs={outputs!r}"
         )
+
+
+@requires_shell_tools
+def test_planner_fails_safe_when_the_trunk_shares_no_history(ci_doc: dict[str, object], tmp_path: Path) -> None:
+    """The fetch succeeds and merge-base finds nothing: still fail closed.
+
+    The case the two params above do not reach. A trunk with unrelated history (or a clone too
+    shallow to reach the common ancestor) fetches cleanly, so only the empty merge-base can say the
+    root is unknown. It must widen the classification like any other unresolved root.
+    """
+    repo, _, entry_1 = _synthetic_merge_group(tmp_path)
+    origin = tmp_path / "origin"
+    _git(origin, "checkout", "--quiet", "--orphan", "unrelated")
+    _git(origin, "rm", "-rf", "--quiet", ".")
+    _commit_file(origin, "OTHER.md", "other\n", "unrelated root")
+    outputs = _run_classify(
+        repo,
+        _classify_script(ci_doc),
+        event="merge_group",
+        extra_env={"MERGE_GROUP_BASE_SHA": entry_1, "MERGE_GROUP_BASE_REF": "refs/heads/unrelated"},
+    )
+    assert outputs["docs_only"] == "false", f"an empty merge-base must not narrow; outputs={outputs!r}"
+    for key in ("python_changed", "tests_changed", "gate_evasion_relevant"):
+        assert outputs[key] == "true", f"fail-safe must set {key}=true; outputs={outputs!r}"
 
 
 # ---------------------------------------------------------------------------

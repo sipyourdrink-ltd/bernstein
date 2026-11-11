@@ -74,7 +74,7 @@ see its docstring for the canonical shape.
 | `iat` | Execution completion time, Unix epoch seconds, sourced from the journal. |
 | `subject` | SPIFFE URI scoped to the execution: `spiffe://bernstein.run/run/<run>/exec/<exec>`. |
 | `model` | `{"provider": ..., "model_id": ..., "version"?}`. |
-| `runtime` | `{"platform": "software-only", "measurement": "sha256:0000…"}` — software evidence only; never a real hardware measurement. The all-zero digest is the honest way to say "no hardware measurement exists". |
+| `runtime` | `{"platform": "software-only", "measurement": "sha256:0000…"}` — software evidence only; never a real hardware measurement. Bernstein records carry an all-zero `measurement` today. The [TRACE trust-levels page](https://trace.agentrust-io.com/docs/trust-levels/) reserves the all-zero value for a producer that has no commitment to offer at all and says it is not the default for software-only records, which it describes as carrying a software commitment defined by the producing profile, with a documented preimage a verifier can recompute. Carrying such a commitment in this field is not implemented. |
 | `policy` | `{"bundle_hash": <sha256>, "enforcement_mode": "enforce"}`. |
 | `data_class` | Operator-declared data sensitivity; defaults to `confidential` when undeclared. |
 | `data_class` | Operator-declared data sensitivity. Allowed values: `restricted`, `internal`, `confidential`, `public`. Defaults to `confidential` when undeclared. Set in `bernstein.yaml` via `data_class: <value>`. |

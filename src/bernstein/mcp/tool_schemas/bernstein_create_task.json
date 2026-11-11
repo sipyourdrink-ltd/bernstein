@@ -9,6 +9,7 @@
   "properties": {
     "title": {"type": "string", "minLength": 1, "maxLength": 1024},
     "description": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "run_id": {"type": ["string", "null"], "pattern": "^admin-[a-f0-9]{32}$", "description": "Optional open administrative container identifier returned by bernstein_run."},
     "role": {"type": "string", "minLength": 1, "maxLength": 64},
     "priority": {"type": "integer", "minimum": 1, "maximum": 3},
     "depends_on": {

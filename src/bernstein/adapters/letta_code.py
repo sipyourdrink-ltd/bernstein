@@ -64,12 +64,17 @@ class LettaCodeAdapter(CLIAdapter):
     """Spawn and monitor Letta Code CLI sessions.
 
     The CLI is invoked as ``letta --output-format stream-json``
-    ``-p <prompt> [--permission-mode unrestricted]``
-    ``--new-agent --conversation <derived_id>`` where ``-p`` runs
-    a one-off prompt in headless mode and
+    ``[--permission-mode unrestricted] -p <prompt> --new-agent`` where
+    ``-p`` runs a one-off prompt in headless mode and
     ``--permission-mode unrestricted`` is used when the strategy's
     dangerous_mode is CLI_FLAG. The binary ships as ``letta`` from the
     npm package ``@letta-ai/letta-code``.
+
+    No ``--conversation``: Letta refuses it beside ``--new-agent``
+    ("--conversation cannot be used with --new-agent") and exits 1 before
+    the prompt runs, and it names an EXISTING Letta conversation, not a
+    label. A new agent starts its own conversation, whose id the run
+    reads back from the stream's envelope.
 
     Letta Code's defining feature is *cross-task memory* persisted via
     Letta Cloud (``LETTA_API_KEY``) -- the agent maintains long-lived
@@ -132,15 +137,14 @@ class LettaCodeAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Derive conversation ID from session_id
-        conversation_id = slug_identifier(session_id)
-
-        # Build the letta command
+        # Build the letta command. Never --conversation here: letta 0.26
+        # rejects it beside --new-agent and exits before running the prompt,
+        # so every spawn failed. The conversation id comes back in the envelope.
         cmd = ["letta", "--output-format", "stream-json"]
         strategy = self.strategy()
         if strategy.dangerous_mode == DangerousModeStrategy.CLI_FLAG:
             cmd.extend(["--permission-mode", "unrestricted"])
-        cmd.extend(["-p", prompt, "--new-agent", "--conversation", conversation_id])
+        cmd.extend(["-p", prompt, "--new-agent"])
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
@@ -234,7 +238,7 @@ class LettaCodeAdapter(CLIAdapter):
             if agent_id is None:
                 raise RuntimeError("Envelope not found in Letta Code log")
 
-            # Derive the conversation ID for file naming (from session_id, same as used in --conversation)
+            # A per-session label for the export's file name; Letta's own conversation id is conv_id_from_log.
             conversation_id = slug_identifier(session_id)
 
             # Define paths for memory export and its sidecar

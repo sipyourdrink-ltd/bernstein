@@ -2323,9 +2323,13 @@ async def test_node_heartbeat(cluster_client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_node_heartbeat_unknown(cluster_client: AsyncClient) -> None:
-    """POST heartbeat for unknown node returns 404."""
+    """POST heartbeat for unknown node returns 410 with a re-register hint."""
     resp = await cluster_client.post("/cluster/nodes/no-such-node/heartbeat", json={})
-    assert resp.status_code == 404
+    assert resp.status_code == 410
+    detail = resp.json()["detail"]
+    assert detail["error"] == "node_unknown"
+    assert detail["node_id"] == "no-such-node"
+    assert "POST /cluster/nodes" in detail["hint"]
 
 
 @pytest.mark.anyio

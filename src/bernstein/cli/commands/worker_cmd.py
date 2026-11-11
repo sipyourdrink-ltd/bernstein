@@ -524,7 +524,7 @@ class WorkerLoop:
             )
             if resp.status_code == 200:
                 return True
-            if resp.status_code == 404:
+            if resp.status_code in (404, 410):
                 logger.warning("Node %s evicted; will re-register", node_id)
                 return False
         except httpx.HTTPError as exc:

@@ -5,6 +5,8 @@ Subcommands:
 * ``sandbox web-test`` - drive a Playwright self-test against a dev
   server URL using scenarios declared in a YAML file. Artefacts land
   under ``.sdd/sandbox/<task-id>/``.
+* ``sandbox leaks`` - list sandbox sessions that were never destroyed and
+  whose owning task is recorded terminal. Read-only.
 
 The CLI is intentionally thin: it loads scenarios, invokes
 :class:`bernstein.core.sandbox.playwright_runner.PlaywrightRunner`, and
@@ -15,6 +17,7 @@ intended to be fed back into the agent's next prompt.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import tempfile
@@ -643,9 +646,97 @@ def receipt_verify_cmd(receipt_path: Path, cas_dir: Path, expected_keyid: str | 
         raise click.exceptions.Exit(code=result.exit_code)
 
 
+# ---------------------------------------------------------------------------
+# leaked sandbox sessions (#5112)
+# ---------------------------------------------------------------------------
+
+
+@sandbox_group.command("leaks")
+@click.option(
+    "--workdir",
+    "workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Project root holding .sdd/.",
+)
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    default=False,
+    help="Also list sessions left out, with the reason (task still running, no task record, ...).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON.")
+def leaks_cmd(workdir: Path, show_all: bool, as_json: bool) -> None:
+    """List sandbox sessions whose task finished but which were never destroyed.
+
+    Pairs the ``sandbox.session_create`` / ``sandbox.session_destroy`` records
+    in the audit log, then reads each open session's owning task from the task
+    log. A session is listed as leaked only when every task it was provisioned
+    for is recorded done, failed, closed, cancelled, abandoned, or refused; a
+    session whose task is still running, or has no record, is never listed as
+    leaked. A task log with a torn line, or an unreadable audit segment, stops
+    the command with an error rather than listing from a partial record.
+
+    Read-only: nothing is destroyed or written. Remove a leaked session with
+    the backend's own tooling (for example ``docker rm``) once you have checked
+    it holds nothing you need.
+    """
+    from bernstein.cli.commands.worktrees_cmd import format_age
+    from bernstein.core.sandbox.leak_sweep import SandboxSweepUnavailableError, sweep_leaked_sandboxes
+
+    try:
+        candidates = sweep_leaked_sandboxes(workdir)
+    except SandboxSweepUnavailableError as exc:
+        raise click.ClickException(f"cannot list leaked sandbox sessions: {exc}") from exc
+
+    leaked = [c for c in candidates if c.is_leaked]
+    shown = candidates if show_all else leaked
+
+    if as_json:
+        rows = [
+            {
+                "sandbox_session_id": c.session.sandbox_session_id,
+                "backend": c.session.backend,
+                "agent_session_id": c.session.agent_session_id,
+                "task_ids": list(c.session.task_ids),
+                "task_statuses": dict(c.task_statuses),
+                "created_at": c.session.created_at,
+                "age_seconds": c.age_seconds,
+                "verdict": c.verdict.value,
+                "reason": c.reason,
+            }
+            for c in shown
+        ]
+        click.echo(json.dumps(rows, indent=2))
+        return
+
+    if shown:
+        from rich.table import Table
+
+        table = Table(title="Open sandbox sessions", header_style="bold cyan")
+        table.add_column("Sandbox", overflow="fold")
+        table.add_column("Backend")
+        table.add_column("Age", justify="right")
+        table.add_column("Verdict")
+        table.add_column("Tasks", overflow="fold")
+        for c in shown:
+            age = "?" if c.age_seconds is None else format_age(c.age_seconds)
+            verdict = "[red]leaked[/red]" if c.is_leaked else "[dim]excluded[/dim]"
+            table.add_row(c.session.sandbox_session_id, c.session.backend, age, verdict, c.reason)
+        console.print(table)
+
+    excluded = len(candidates) - len(leaked)
+    console.print(f"{len(leaked)} leaked, {excluded} excluded (nothing was destroyed).")
+    if excluded and not show_all:
+        console.print("[dim]Re-run with --all to see why sessions were excluded.[/dim]")
+
+
 __all__ = [
     "attest_cmd",
     "fork_race_cmd",
+    "leaks_cmd",
     "microvm_launcher_cmd",
     "receipt_group",
     "receipt_verify_cmd",

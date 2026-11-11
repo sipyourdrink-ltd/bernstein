@@ -1,0 +1,20 @@
+# Contract for the Continue.dev CLI (adapter: continue, binary: cn).
+#
+# Always-passed surface from src/bernstein/adapters/continue_dev.py:
+# ``cn -p <prompt>``.
+adapter: continue
+binary: cn
+install:
+  method: npm
+  spec: "@continuedev/cli@latest"
+auth:
+  required_for_help: false
+  required_for_models: false
+  secret_env: "CONTINUE_API_KEY"
+  basis: api_key
+required_flags:
+  - "-p"
+required_subcommands: []
+expected_models:
+  command: []
+  required_present: []

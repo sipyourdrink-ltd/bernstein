@@ -141,6 +141,23 @@ an explicit `quality_gates.pipeline` fails with
 A failing **required** gate hard-blocks merge. A failing **optional** gate
 is reported but does not block.
 
+The optional `test_expansion` gate checks whether each changed Python source
+module has a static import path from a test file changed in the same task.
+It does not prove that the test calls or executes any changed symbol, and
+cannot observe dynamic imports. A placeholder that imports an unrelated symbol
+from a module reaching the changed module can still pass; the gate-evasion
+fixture measures the narrower no-module-import case.
+
+A bounded process-local import index is keyed by the complete source/test scope
+and file contents, including unchanged intermediate imports and newly added or
+deleted modules. Warm calls reuse the parsed graph, not the gate result. A fresh
+process still pays the cold build cost; there is no persisted index format or
+write to the test selector's CLI cache. Flat-layout scans prune hidden,
+virtualenv, dependency and build directories before parsing. A local macOS /
+Python 3.14 check of the real repository measured 26.30 s cold and 0.75 s
+warm across two runner instances, with one graph build. These timings are
+observations, not a timeout guarantee; the cold build has no hard deadline.
+
 `behavior_probe` is the only gate that executes the changed code against
 inputs the worker did not choose (`behavior_probe.py`). It walks the diff with
 `ast`, turns each parameter annotation into a fixed list of boundary values
@@ -328,7 +345,7 @@ quality_gates:
   timeout_s: 120
   base_ref: "main"               # base for incremental diff; if it names no commit in the
                                  # repo, the branch checked out in the workdir is used
-  cache_enabled: true            # reuse gate results when diff is unchanged
+  cache_enabled: true            # DLP cache also keys on dlp_* policy settings
   allow_bypass: false            # whether the CLI can skip gates
 
   pii_scan: true
@@ -341,7 +358,18 @@ quality_gates:
   import_cycle_check: false
   merge_conflict_check: false
   mutation_testing: false
+  mutation_command: "uv run mutmut run"
+  mutation_threshold: 0.50
   dep_audit: false
+  dep_audit_command: "pip-audit"
+  large_file_check: false
+  large_file_threshold: 500
+  migration_reversibility_check: false
+  test_expansion: false
+  agent_test_mutation: false
+  agent_test_mutation_threshold: 0.70
+  integration_test_gen: false
+  review_rubric: false
   benchmark:
     enabled: false
 
@@ -350,6 +378,11 @@ quality_gates:
     model: "google/gemini-flash-1.5"
     block_on_no: true
 ```
+
+Every field of `QualityGatesConfig` is read from this section; a key the
+parser does not know is accepted by the schema and ignored, so
+`tests/unit/test_quality_gates.py` pins the parser's keyword list against the
+dataclass and fails when a field is added without its parser line.
 
 When `pipeline:` is omitted, Bernstein synthesises one from the booleans
 above. To override the order (or insert custom gates), declare an
