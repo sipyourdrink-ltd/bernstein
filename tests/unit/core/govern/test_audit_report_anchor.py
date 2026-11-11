@@ -272,6 +272,82 @@ def test_report_references_the_anchor_of_the_inventory_it_audited(tmp_path: Path
     assert anchored.inventory_anchor in entries
     assert anchored.journal_entry_hash in entries
 
+    # An authentic earlier entry for a different inventory is insufficient.
+    mismatched = anchor_audit_report(
+        lineage_root=root,
+        hmac_key=_KEY,
+        report=_report(
+            [_finding("MDL-001")],
+            inventory_hash="sha256:" + "c" * 64,
+            inventory_anchor=inventory_anchor,
+        ),
+    )
+    result = verify_audit_report(lineage_root=root, hmac_key=_KEY, report=mismatched)
+    assert not result.ok
+    assert "does not bind" in result.reason
+
+
+def test_report_cannot_use_another_report_as_inventory_anchor(tmp_path: Path) -> None:
+    root = _lineage_root(tmp_path)
+    original = anchor_audit_report(lineage_root=root, hmac_key=_KEY, report=_report([_finding("MDL-001")]))
+    linked = anchor_audit_report(
+        lineage_root=root,
+        hmac_key=_KEY,
+        report=_report(
+            [_finding("MDL-002")],
+            inventory_hash=original.report_hash(),
+            inventory_anchor=original.journal_entry_hash,
+        ),
+    )
+    result = verify_audit_report(lineage_root=root, hmac_key=_KEY, report=linked)
+    assert not result.ok
+    assert "does not bind" in result.reason
+
+
+def test_report_cannot_use_a_suppression_as_inventory_anchor(tmp_path: Path) -> None:
+    from bernstein.core.govern.suppress import anchor_suppress_decision
+
+    root = _lineage_root(tmp_path)
+    decision = anchor_suppress_decision(
+        lineage_root=root,
+        hmac_key=_KEY,
+        finding_id="MDL-001",
+        reason="fixture scope",
+        expiry="2030-01-01",
+        timestamp=1_700_000_000,
+        actor="bernstein.govern",
+    )
+    linked = anchor_audit_report(
+        lineage_root=root,
+        hmac_key=_KEY,
+        report=_report(
+            [_finding("MDL-001")],
+            inventory_hash=decision.inputs_hash,
+            inventory_anchor=decision.journal_entry_hash,
+        ),
+    )
+    result = verify_audit_report(lineage_root=root, hmac_key=_KEY, report=linked)
+    assert not result.ok
+    assert "does not bind" in result.reason
+
+
+@pytest.mark.parametrize(
+    ("inventory_hash", "inventory_anchor"),
+    [("sha256:" + "c" * 64, ""), ("", "sha256:" + "d" * 64)],
+)
+def test_inventory_hash_and_anchor_are_required_together(
+    tmp_path: Path, inventory_hash: str, inventory_anchor: str
+) -> None:
+    root = _lineage_root(tmp_path)
+    linked = anchor_audit_report(
+        lineage_root=root,
+        hmac_key=_KEY,
+        report=_report([_finding("MDL-001")], inventory_hash=inventory_hash, inventory_anchor=inventory_anchor),
+    )
+    result = verify_audit_report(lineage_root=root, hmac_key=_KEY, report=linked)
+    assert not result.ok
+    assert "supplied together" in result.reason
+
 
 def test_report_naming_an_inventory_anchor_absent_from_the_spine_fails_verification(tmp_path: Path) -> None:
     root = _lineage_root(tmp_path)
