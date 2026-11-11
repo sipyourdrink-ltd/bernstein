@@ -6,8 +6,10 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
-from bernstein.core.fleet.config import DEFAULT_TASK_SERVER_PORT
+import bernstein.core.fleet as fleet
+from bernstein.core.fleet.config import DEFAULT_TASK_SERVER_PORT, FleetConfigError
 from bernstein.core.fleet.directory_registry import (
     DISABLED_FLAG_FILENAME,
     MANIFEST_FILENAME,
@@ -16,6 +18,7 @@ from bernstein.core.fleet.directory_registry import (
     default_fleet_root,
     load_directory_registry,
 )
+from bernstein.core.tasks.models import DispatchTier, Task, TaskType
 
 
 def _write_instance(
@@ -220,3 +223,107 @@ def test_unreadable_manifest_reports_error(tmp_path: Path, monkeypatch: pytest.M
         assert any("cannot read" in err.message for err in result.errors)
     finally:
         manifest_path.chmod(0o644)
+
+
+def _worker(**overrides: object) -> dict[str, object]:
+    return {"worker_id": "w", "task_types": ["standard"], "dispatch_tiers": ["local"], **overrides}
+
+
+@pytest.mark.parametrize(
+    "workers,requires,task_type,tier,disabled,match",
+    [
+        ([_worker(capabilities=["python", "test"])], ["python", "test"], "standard", "local", False, True),
+        ([_worker()], [], "standard", "local", False, True),
+        ([_worker(capabilities=["extra"])], [], "standard", "local", False, True),
+        (
+            [_worker(task_types=["fix", "research"], dispatch_tiers=["edge", "research"])],
+            [],
+            "research",
+            "edge",
+            False,
+            True,
+        ),
+        ([_worker()], [], "fix", "local", False, False),
+        ([_worker()], [], "standard", "edge", False, False),
+        ([_worker(capabilities=["python"])], ["python", "test"], "standard", "local", False, False),
+        ([_worker(capabilities=["Python"])], ["python"], "standard", "local", False, False),
+        ([_worker()], ["python"], "standard", "local", False, False),
+        (
+            [_worker(capabilities=["python"]), _worker(worker_id="w2", capabilities=["test"])],
+            ["python", "test"],
+            "standard",
+            "local",
+            False,
+            False,
+        ),
+        ([_worker()], [], "standard", "local", True, False),
+    ],
+)
+def test_select_fleet_by_worker_matrix(tmp_path, workers, requires, task_type, tier, disabled, match):
+    for directory, name in [("01-first", "zulu"), ("02-last", "alpha")]:
+        _write_instance(
+            tmp_path, directory, manifest=yaml.safe_dump({"name": name, "workers": workers}), disabled=disabled
+        )
+    scan = DirectoryRegistry(tmp_path).scan()
+    assert scan.errors == []
+    selector = getattr(fleet, "select_fleet_instance", None)
+    assert callable(selector), "fleet must expose its worker-matrix selector"
+    task = Task(
+        "t", "test", "", "backend", task_type=TaskType(task_type), dispatch_tier=DispatchTier(tier), requires=requires
+    )
+    selected = selector(task, [*scan.instances, *scan.disabled])
+    assert (selected.name if selected else None) == ("alpha" if match else None)
+    specs = scan.instances or scan.disabled
+    assert specs[0].workers[0].capabilities == workers[0].get("capabilities", [])
+    assert specs[0].workers[0].task_types == [TaskType(value) for value in workers[0]["task_types"]]
+    assert specs[0].workers[0].dispatch_tiers == [DispatchTier(value) for value in workers[0]["dispatch_tiers"]]
+
+
+@pytest.mark.parametrize("manifest", [{}, {"workers": []}])
+def test_workers_dashboard_only(tmp_path, manifest):
+    _write_instance(tmp_path, "dashboard", manifest=yaml.safe_dump(manifest))
+    registry = DirectoryRegistry(tmp_path)
+    scan = registry.scan()
+    assert [spec.name for spec in scan.instances] == ["dashboard"]
+    assert scan.errors == []
+    assert getattr(scan.instances[0], "workers", None) == []
+    assert [project.name for project in registry.as_fleet_config().projects] == ["dashboard"]
+    assert fleet.select_fleet_instance(Task("t", "test", "", "backend"), scan.instances) is None
+
+
+@pytest.mark.parametrize(
+    "workers",
+    [None, {}, "worker", 1, True]
+    + [[_worker(), row] for row in [None, [], "worker", 1, True]]
+    + [
+        [_worker(), {key: value for key, value in _worker(worker_id="other").items() if key != missing}]
+        for missing in ["worker_id", "task_types", "dispatch_tiers"]
+    ]
+    + [
+        [_worker(), _worker(**{"worker_id": "other", key: value})]
+        for key, values in {
+            "worker_id": ["", "  ", None, 1, True, []],
+            "task_types": [[], None, "standard", {}, 1, [1], [True], [None], ["unknown"]],
+            "dispatch_tiers": [[], None, "local", {}, 1, [1], [True], [None], ["unknown"]],
+            "capabilities": [None, "python", {}, 1, [1], [True], [None], [""], ["  "]],
+            "unexpected": ["field"],
+        }.items()
+        for value in values
+    ]
+    + [[_worker(), _worker()]],
+)
+@pytest.mark.parametrize("disabled", [False, True])
+def test_invalid_worker_matrix_retains_dashboard(tmp_path, workers, disabled):
+    _write_instance(tmp_path, "broken-matrix", manifest=yaml.safe_dump({"workers": workers}), disabled=disabled)
+    registry = DirectoryRegistry(tmp_path)
+    scan = registry.scan()
+    specs = scan.disabled if disabled else scan.instances
+    assert [spec.name for spec in specs] == ["broken-matrix"]
+    assert len(scan.errors) == 1
+    assert isinstance(scan.errors[0], FleetConfigError)
+    assert scan.errors[0].index == 0 and "workers" in scan.errors[0].message
+    assert specs[0].workers == []
+    assert fleet.select_fleet_instance(Task("t", "test", "", "backend"), specs) is None
+    config = registry.as_fleet_config()
+    assert [project.name for project in config.projects] == ([] if disabled else ["broken-matrix"])
+    assert scan.errors[0] in config.errors

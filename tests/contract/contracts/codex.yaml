@@ -2,6 +2,7 @@
 #
 # Always-passed surface from src/bernstein/adapters/codex.py:
 # ``codex exec <sandbox-argv> -m <model> --json -o <path> <prompt>``.
+# Explicit effort additionally passes ``-c model_reasoning_effort=<value>``.
 #
 # The sandbox argv is one of two forms, chosen by the adapter's declared
 # dangerous-mode strategy, so each flag is required of the *binary* rather
@@ -23,6 +24,7 @@ auth:
   secret_env: "OPENAI_API_KEY"
   basis: api_key
 required_flags:
+  - "-c"
   - "--sandbox"
   - "--dangerously-bypass-approvals-and-sandbox"
   - "-m"
@@ -30,6 +32,11 @@ required_flags:
   - "-o"
 required_subcommands:
   - "exec"
+# Native CLI vocabulary only. The adapter maps Bernstein's "max" to "xhigh"
+# and "normal" to "medium" before constructing argv; native values pass through.
+# The internal request and mapped CLI override are recorded separately.
+# Empty effort leaves the account/config default unspecified.
+supported_efforts: ["none", "minimal", "low", "medium", "high", "xhigh"]
 # Codex sub-flags live under ``codex exec --help``, not ``codex --help``.
 help_command: ["codex", "exec", "--help"]
 # No deterministic session-id binding: ``codex exec`` exposes no flag that
