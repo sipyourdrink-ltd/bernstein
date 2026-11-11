@@ -28,6 +28,7 @@ from bernstein.core.sandbox.leak_sweep import (
     sweep_leaked_sandboxes,
 )
 from bernstein.core.security.audit import (
+    EVENT_CHAIN_TEAR_ACKNOWLEDGED,
     SANDBOX_SESSION_CREATE,
     SANDBOX_SESSION_DESTROY,
     AuditLog,
@@ -37,6 +38,8 @@ from bernstein.core.tasks.models import TaskStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bernstein.core.security.audit import ChainVerifyReport
 
 
 @pytest.fixture
@@ -102,6 +105,151 @@ def _tree(root: Path) -> dict[str, bytes]:
 
 def _by_id(candidates: list) -> dict[str, object]:
     return {c.session.sandbox_session_id: c for c in candidates}
+
+
+@pytest.mark.parametrize(
+    ("case", "reason"),
+    [
+        ("valid", None),
+        ("valid-reused", None),
+        ("invalid-hmac", "audit verification failed"),
+        ("acknowledged-invalid-hmac", "audit contains tear evidence"),
+        ("unreadable-archive", "2026-01-01.jsonl.gz"),
+        ("torn-task-log", "tasks.jsonl:3: task record does not parse"),
+        ("reopened", "T-1 is open"),
+        ("excluded", "create record names no owning task"),
+        ("superseded", "superseded"),
+        ("ambiguous", "ambiguous"),
+        ("destroyed", "no open lifetime"),
+        ("unknown-hmac", "no open lifetime"),
+    ],
+)
+def test_removal_proposal_requires_verified_leaked_lifetime(
+    tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch, case: str, reason: str | None
+) -> None:
+    from bernstein.core.sandbox import leak_sweep
+
+    prepare = getattr(leak_sweep, "prepare_sandbox_removal_proposal", None)
+    assert callable(prepare), "a verified removal proposal API is required"
+    _record_task(tmp_path, "T-1", "done")
+    _record_task(tmp_path, "T-2", "refused")
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=None if case == "excluded" else ["T-1", "T-2"])
+    create = _audit(tmp_path, audit_key).query(event_type=SANDBOX_SESSION_CREATE)[0]
+    selected_hmac = create.hmac
+    if case in {"invalid-hmac", "acknowledged-invalid-hmac"}:
+        segment = next((tmp_path / ".sdd" / "audit").glob("*.jsonl"))
+        record = json.loads(segment.read_text())
+        record["hmac"] = "f" * 64
+        if case == "invalid-hmac":
+            segment.write_text(json.dumps(record) + "\n")
+        else:
+            record["prev_hmac"] = create.hmac
+            with segment.open("a") as stream:
+                stream.write(json.dumps(record) + "\n")
+            selected_hmac = record["hmac"]
+            log = _audit(tmp_path, audit_key)
+            log.log("test.event", "tester", "task", "after-tear")
+            (tear,) = log.verify_detailed().tears
+            log.log(
+                EVENT_CHAIN_TEAR_ACKNOWLEDGED,
+                "operator",
+                "audit_segment",
+                tear.segment,
+                {"segment": tear.segment, "byte_offset": tear.byte_offset, "reason": "investigated"},
+            )
+            assert log.verify_detailed().ok
+    elif case == "unreadable-archive":
+        archive = tmp_path / ".sdd" / "audit" / "archive"
+        archive.mkdir()
+        (archive / "2026-01-01.jsonl.gz").write_bytes(b"\x1f\x8b not a gzip stream")
+    elif case in {"torn-task-log", "reopened"}:
+        _record_task(tmp_path, "T-1", "open")
+        if case == "torn-task-log":
+            _tear_task_log(tmp_path, at=3)
+    elif case in {"superseded", "ambiguous", "valid-reused"}:
+        if case == "valid-reused":
+            _record_destroy(tmp_path, audit_key, "sbx-1")
+        _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-2"], backend="e2b", agent_session_id="agent-2")
+        if case == "ambiguous":
+            selected_hmac = None
+        elif case == "valid-reused":
+            create = _audit(tmp_path, audit_key).query(event_type=SANDBOX_SESSION_CREATE)[-1]
+            selected_hmac = create.hmac
+    elif case == "destroyed":
+        _record_destroy(tmp_path, audit_key, "sbx-1")
+    elif case == "unknown-hmac":
+        selected_hmac = "0" * 64
+
+    verified: list[bool] = []
+    original_verify = AuditLog.verify_detailed
+
+    def verify(log: AuditLog, *, include_events: bool = False) -> ChainVerifyReport:
+        report = original_verify(log, include_events=include_events)
+        verified.append(report.ok)
+        return report
+
+    monkeypatch.setattr(AuditLog, "verify_detailed", verify)
+    before = _tree(tmp_path)
+    if reason is not None:
+        with pytest.raises((SandboxSweepUnavailableError, ValueError), match=reason):
+            prepare(tmp_path, "sbx-1", create_hmac=selected_hmac)
+    else:
+        proposal = prepare(tmp_path, "sbx-1", create_hmac=selected_hmac)
+        assert proposal.create_hmac == create.hmac
+        assert proposal.backend == create.details["backend"]
+        assert proposal.sandbox_session_id == create.resource_id
+        assert proposal.agent_session_id == create.details["agent_session_id"]
+        assert proposal.task_ids == tuple(create.details["task_ids"])
+        (candidate,) = sweep_leaked_sandboxes(tmp_path)
+        assert candidate.is_leaked
+        assert candidate.session.create_hmac == proposal.create_hmac
+    assert verified == [case not in {"invalid-hmac", "unreadable-archive"}]
+    assert _tree(tmp_path) == before, "proposal preparation must not write anything"
+
+
+@pytest.mark.parametrize("archived", [False, True], ids=["live", "archived"])
+def test_removal_proposal_uses_verified_snapshot(
+    tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch, archived: bool
+) -> None:
+    import gzip
+
+    from bernstein.core.sandbox.leak_sweep import prepare_sandbox_removal_proposal
+
+    _record_task(tmp_path, "T-1", "done")
+    _record_task(tmp_path, "T-2", "done")
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    create = _audit(tmp_path, audit_key).query()[0]
+    segment = next((tmp_path / ".sdd" / "audit").glob("*.jsonl"))
+    if archived:
+        archive = segment.parent / "archive" / f"{segment.name}.gz"
+        archive.parent.mkdir()
+        archive.write_bytes(gzip.compress(segment.read_bytes()))
+        segment.unlink()
+        segment = archive
+
+    original_verify = AuditLog.verify_detailed
+    verified: list[bool] = []
+
+    def verify_then_change(log: AuditLog, **kwargs: bool) -> ChainVerifyReport:
+        report = original_verify(log, **kwargs)
+        verified.append(report.ok)
+        raw = gzip.decompress(segment.read_bytes()) if archived else segment.read_bytes()
+        record = json.loads(raw)
+        record["details"].update(backend="e2b", agent_session_id="unverified-agent", task_ids=["T-2"])
+        changed = (json.dumps(record) + "\n").encode()
+        segment.write_bytes(gzip.compress(changed) if archived else changed)
+        return report
+
+    monkeypatch.setattr(AuditLog, "verify_detailed", verify_then_change)
+    proposal = prepare_sandbox_removal_proposal(tmp_path, "sbx-1", create_hmac=create.hmac)
+
+    assert verified == [True]
+    assert proposal.create_hmac == create.hmac
+    assert proposal.sandbox_session_id == create.resource_id
+    assert proposal.backend == create.details["backend"]
+    assert proposal.agent_session_id == create.details["agent_session_id"]
+    assert proposal.task_ids == tuple(create.details["task_ids"])
+    assert not original_verify(_audit(tmp_path, audit_key)).ok, "the changed record must fail authentication"
 
 
 # ---------------------------------------------------------------------------
@@ -916,3 +1064,69 @@ def test_sandbox_teardown_failure_stays_open_and_is_journaled(
     assert events[-1].details["phase"] == "failed"
     assert events[-1].details["removed"] is False
     assert events[-1].details["task_id"] == "T-1"
+
+
+def test_removal_operation_binds_verified_sandbox_create(tmp_path: Path, audit_key: bytes) -> None:
+    from dataclasses import replace
+
+    _record_task(tmp_path, "T-1", "done")
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    (lane,) = _lane_api("sweep_leaked_lanes")(tmp_path)
+    create = _audit(tmp_path, audit_key).query()[0]
+    assert lane.create_hmac == create.hmac
+    changed = replace(lane, create_hmac="different-lifetime")
+    operation = _lane_api("lane_removal_operation")
+    assert operation([lane]) != operation([changed])
+
+
+def test_removal_reuses_verified_sandbox_proposal(
+    tmp_path: Path, audit_key: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    from bernstein.core.sandbox import leak_sweep, registry
+
+    _record_task(tmp_path, "T-1", "done")
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    backend = MagicMock()
+    monkeypatch.setattr(registry, "get_backend", lambda name: backend)
+
+    def refuse_proposal(workdir, sandbox_session_id, *, create_hmac):
+        assert workdir == tmp_path
+        assert sandbox_session_id == "sbx-1"
+        assert create_hmac == _audit(tmp_path, audit_key).query()[0].hmac
+        raise SandboxSweepUnavailableError("verified proposal refused")
+
+    monkeypatch.setattr(leak_sweep, "prepare_sandbox_removal_proposal", refuse_proposal)
+    with pytest.raises(SandboxSweepUnavailableError, match="verified proposal refused"):
+        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    backend.destroy_leaked_session.assert_not_called()
+    assert not any(e.event_type == "lane.remove" for e in _audit(tmp_path, audit_key).query())
+
+
+def test_acknowledged_audit_tear_prevents_any_lane_removal(
+    tmp_path: Path, audit_key: bytes, live_worktree: Path
+) -> None:
+    _record_create(tmp_path, audit_key, "sbx-1", task_ids=["T-1"])
+    segment = next((tmp_path / ".sdd/audit").glob("*.jsonl"))
+    record = json.loads(segment.read_text())
+    record["prev_hmac"] = record["hmac"]
+    record["hmac"] = "f" * 64
+    with segment.open("a") as stream:
+        stream.write(json.dumps(record) + "\n")
+    log = _audit(tmp_path, audit_key)
+    log.log("test.event", "tester", "task", "after-tear")
+    (tear,) = log.verify_detailed().tears
+    log.log(
+        EVENT_CHAIN_TEAR_ACKNOWLEDGED,
+        "operator",
+        "audit_segment",
+        tear.segment,
+        {"segment": tear.segment, "byte_offset": tear.byte_offset, "reason": "investigated"},
+    )
+    assert log.verify()[0]
+    lanes = _lane_api("sweep_leaked_lanes")(tmp_path)
+    with pytest.raises(SandboxSweepUnavailableError, match="unverified audit chain"):
+        _lane_api("remove_leaked_lanes")(tmp_path, lanes, removal_approval=_removal_approval(lanes))
+    assert live_worktree.exists()

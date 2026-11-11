@@ -34,8 +34,8 @@ audit chain, never mints an audit key, and never creates a directory.
 It reads the sandbox records without re-verifying the HMAC chain. The listing
 is advisory - it gates and removes nothing - so an unverified record can only
 mislead it (a destroy appended without the audit key would hide a leak), and
-``bernstein audit verify``, which rejects such a record, is the step to run
-before a listing drives a removal.
+the separate :func:`prepare_sandbox_removal_proposal` path verifies the chain
+before binding a proposal to one leaked lifetime. A proposal removes nothing.
 """
 
 from __future__ import annotations
@@ -67,10 +67,12 @@ __all__ = [
     "OpenSandboxSession",
     "SandboxLeakCandidate",
     "SandboxLeakVerdict",
+    "SandboxRemovalProposal",
     "SandboxSweepUnavailableError",
     "classify_open_session",
     "lane_removal_operation",
     "open_sandbox_sessions",
+    "prepare_sandbox_removal_proposal",
     "sweep_leaked_lanes",
     "sweep_leaked_sandboxes",
 ]
@@ -105,6 +107,7 @@ class OpenSandboxSession:
         superseded: True when a later create reused this id before any
             destroy. The id now names the newer session, so this lifetime can
             no longer be addressed by it.
+        create_hmac: HMAC identifying this lifetime's create record.
     """
 
     sandbox_session_id: str
@@ -113,6 +116,18 @@ class OpenSandboxSession:
     task_ids: tuple[str, ...]
     created_at: str
     superseded: bool = False
+    create_hmac: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxRemovalProposal:
+    """Verified identity of one leaked lifetime; conveys no removal approval."""
+
+    create_hmac: str
+    backend: str
+    sandbox_session_id: str
+    agent_session_id: str
+    task_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +203,7 @@ def open_sandbox_sessions(events: Iterable[AuditEvent]) -> list[OpenSandboxSessi
             agent_session_id=str(details.get("agent_session_id") or ""),
             task_ids=_task_ids_from_details(details.get("task_ids")),
             created_at=event.timestamp,
+            create_hmac=event.hmac,
         )
     return [*open_by_id.values(), *superseded]
 
@@ -255,7 +271,7 @@ def classify_open_session(
     )
 
 
-def _read_sandbox_events(audit_dir: Path) -> list[AuditEvent]:
+def _read_sandbox_events(audit_dir: Path, *, require_verified: bool = False) -> list[AuditEvent]:
     from bernstein.core.security.audit import (
         SANDBOX_SESSION_CREATE,
         SANDBOX_SESSION_DESTROY,
@@ -271,7 +287,19 @@ def _read_sandbox_events(audit_dir: Path) -> list[AuditEvent]:
         raise SandboxSweepUnavailableError(f"cannot open the audit log: {exc}") from exc
     unreadable: list[str] = []
     try:
-        events = AuditLog(audit_dir, key=key).query(include_archived=True, unreadable=unreadable)
+        audit = AuditLog(audit_dir, key=key)
+        if require_verified:
+            report = audit.verify_detailed(include_events=True)
+            if not report.ok:
+                reasons = [*report.hard_errors, *(tear.describe() for tear in report.unacknowledged_tears)]
+                raise SandboxSweepUnavailableError(f"audit verification failed: {'; '.join(reasons)}")
+            if report.tears:
+                # Acknowledgement does not authenticate records from damaged spans.
+                reasons = [tear.describe() for tear in report.tears]
+                raise SandboxSweepUnavailableError(f"audit contains tear evidence: {'; '.join(reasons)}")
+            events = report.events
+        else:
+            events = audit.query(include_archived=True, unreadable=unreadable)
     except OSError as exc:
         raise SandboxSweepUnavailableError(f"cannot read the audit log at {audit_dir}: {exc}") from exc
     if unreadable:
@@ -393,6 +421,7 @@ class LeakedLane:
     backend: str = "worktree"
     created_at: str = ""
     has_unsaved_work: bool = False
+    create_hmac: str = ""
 
     def to_dict(self) -> dict[str, object]:
         from dataclasses import asdict
@@ -468,6 +497,7 @@ def sweep_leaked_lanes(
                 size_bytes=size_bytes,
                 backend=session.backend,
                 created_at=session.created_at,
+                create_hmac=session.create_hmac,
             )
         )
     return sorted(lanes, key=lambda lane: (-(lane.age_seconds or 0), lane.kind, lane.resource_id))
@@ -479,7 +509,53 @@ def lane_removal_operation(lanes: Iterable[LeakedLane]) -> str:
     import json
 
     identities = sorted(
-        (lane.kind, lane.backend, lane.resource_id, lane.task_ids, str(lane.path), lane.created_at) for lane in lanes
+        (lane.kind, lane.backend, lane.resource_id, lane.task_ids, str(lane.path), lane.created_at, lane.create_hmac)
+        for lane in lanes
     )
     digest = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
     return f"lane.remove:{digest}"
+
+
+def prepare_sandbox_removal_proposal(
+    workdir: Path, sandbox_session_id: str, *, create_hmac: str | None = None
+) -> SandboxRemovalProposal:
+    """Verify the audit chain and propose exactly one currently leaked lifetime.
+
+    Uses the listing's pairing, strict task replay and classification. Supply
+    ``create_hmac`` to distinguish lifetimes when a session id was reused.
+    The result is read-only evidence, not authority to call a backend or write
+    a journal; task state and backend identity still need checking at removal.
+
+    Raises:
+        SandboxSweepUnavailableError: Audit verification or source reading failed.
+        ValueError: Selection is missing, ambiguous, superseded or excluded.
+    """
+    sdd_dir = workdir / ".sdd"
+    audit_dir = sdd_dir / "audit"
+    if not audit_dir.is_dir():
+        raise SandboxSweepUnavailableError(f"cannot read the audit log at {audit_dir}: directory missing")
+    sessions = open_sandbox_sessions(_read_sandbox_events(audit_dir, require_verified=True))
+    selected = [
+        session
+        for session in sessions
+        if session.sandbox_session_id == sandbox_session_id
+        and (create_hmac is None or session.create_hmac == create_hmac)
+    ]
+    if not selected:
+        raise ValueError(f"no open lifetime matches sandbox {sandbox_session_id!r} and create HMAC {create_hmac!r}")
+    if len(selected) != 1:
+        raise ValueError(
+            f"ambiguous sandbox {sandbox_session_id!r}: {len(selected)} open lifetimes; select a create HMAC"
+        )
+    (session,) = selected
+    candidate = classify_open_session(session, _load_task_statuses(sdd_dir), now=time.time())
+    if not candidate.is_leaked:
+        state = "superseded" if session.superseded else candidate.verdict.value
+        raise ValueError(f"cannot propose removal of {state} lifetime: {candidate.reason}")
+    return SandboxRemovalProposal(
+        create_hmac=session.create_hmac,
+        backend=session.backend,
+        sandbox_session_id=session.sandbox_session_id,
+        agent_session_id=session.agent_session_id,
+        task_ids=session.task_ids,
+    )

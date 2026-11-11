@@ -109,6 +109,36 @@ def _make_error_response(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
+async def test_discovery_preserves_full_tool_definitions(basic_config: RemoteServerConfig) -> None:
+    session = MCPClientSession(basic_config)
+    assert hasattr(session, "tool_definitions"), "full discovery definitions are not retained"
+    assert session.tool_definitions is None
+    definition = {
+        "name": "report",
+        "description": "Отчёт 🧪",
+        "inputSchema": {"type": "object"},
+        "outputSchema": {"type": "string", "description": "結果" * 10_000},
+        "annotations": {"readOnlyHint": True},
+        "_meta": {"vendor": "extra"},
+        "futureField": [1, {"nested": True}],
+    }
+    with patch.object(session, "_send_jsonrpc", AsyncMock(return_value={"tools": [definition]})):
+        tools = await session.list_tools()
+    assert tools == [RemoteTool("report", "Отчёт 🧪", "test-server", {"type": "object"})]
+    assert session.tool_definitions == [definition]
+    snapshot = session.tool_definitions
+    snapshot[0]["outputSchema"]["type"] = "integer"
+    definition["futureField"].clear()
+    assert session.tool_definitions[0]["outputSchema"]["type"] == "string"
+    assert session.tool_definitions[0]["futureField"] == [1, {"nested": True}]
+    with patch.object(session, "_send_jsonrpc", AsyncMock(return_value={"tools": []})):
+        assert await session.list_tools() == []
+    assert session.tool_definitions == []
+    await session.close()
+    assert session.tool_definitions is None
+
+
 class TestRemoteServerConfig:
     """Tests for RemoteServerConfig dataclass."""
 

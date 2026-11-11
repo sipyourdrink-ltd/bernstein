@@ -298,7 +298,8 @@ Measurement never creates or resumes a session. Other backends report unknown.
 Removal uses the existing destructive-operation approval model in a separate
 `removal` class. The preview prints `lane.remove:<digest>` as the exact request
 `operation`; JSON rows carry it as `removal_operation`. The digest binds the
-resources, paths, task owners and recorded lifetimes. `removal.json` contains
+resources, paths, task owners and recorded lifetimes, including the sandbox
+create event HMAC. `removal.json` contains
 `request` (the serialized `ApprovalRequest`) and `responses` (serialized
 `ApprovalResponse` objects) from the approval workflow. At least two distinct
 approvers must approve that request before its expiry; any denial vetoes it.
@@ -325,7 +326,9 @@ preview does not authorize this plan. For example, its shape is:
 ```
 
 Under the shared GC lock, removal verifies the source audit chain and rereads
-task status and ownership before each deletion. Unsaved work is preserved
+task status and ownership before each deletion. Sandbox removal also reuses
+the verified proposal API, which rejects every audit tear (even acknowledged
+ones) and binds the exact create event before attaching to a backend. Unsaved work is preserved
 unless `--force-unsaved` explicitly overrides the veto. Every intent, skip
 and result is recorded as `lane.remove`, naming `task_ids`, `approval_class`
 and `removal_approval_id`. An audit append failure before deletion prevents it.

@@ -232,7 +232,6 @@ bernstein.core.sandbox.backends.modal: #4526 audit in flight
 bernstein.core.sandbox.conformance: #4526 audit in flight
 bernstein.core.sandbox.pool_warm: #4526 audit in flight
 bernstein.core.sandbox.resource_lease: #4526 audit in flight
-bernstein.core.security.authzen: #4526 audit in flight
 bernstein.core.security.capability_delta: #4526 audit in flight
 bernstein.core.security.claude_permission_profiles: #4526 audit in flight
 bernstein.core.security.command_allowlist: #4526 audit in flight
@@ -247,7 +246,6 @@ bernstein.core.security.dp_telemetry: #4526 audit in flight
 bernstein.core.security.engagement.mandate: #4526 audit in flight
 bernstein.core.security.engagement_mandate: #4526 audit in flight
 bernstein.core.security.environment_digest: #4526 audit in flight
-bernstein.core.security.external_policy_hook: #4526 audit in flight
 bernstein.core.security.hipaa: #4526 audit in flight
 bernstein.core.security.identity_spawn_anchor: #4526 audit in flight
 bernstein.core.security.ip_allowlist: #4526 audit in flight
@@ -312,7 +310,6 @@ bernstein.core.tokens.image_optimizer: #4526 audit in flight
 bernstein.core.tokens.prompt_injection: #4526 audit in flight
 bernstein.core.tokens.token_binding: #4526 audit in flight
 bernstein.core.tokens.token_breakdown: #4526 audit in flight
-bernstein.core.tokens.token_counter: #4526 audit in flight
 bernstein.core.tournament.runner: #4526 audit in flight
 bernstein.core.trackers.odata_writeback: #4526 audit in flight
 bernstein.core.trigger_sources.artifact: #4526 audit in flight

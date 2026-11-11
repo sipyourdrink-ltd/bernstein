@@ -1,5 +1,61 @@
 # bernstein doctor
 
+The default doctor's checks also produce installation audit findings:
+
+```sh
+bernstein doctor --json
+bernstein govern audit --only INS --json
+bernstein govern audit --list --only INS
+```
+
+The doctor's JSON retains `checks` and `runtime` and adds `findings`. That array
+uses exactly the same schema and producers as the installation audit's JSON
+array. The text report, display order, readiness calculation, exit behavior and
+`--fix` workflow remain unchanged. Installation checks are opt-in in the audit
+registry: use `--only INS` to measure the host rather than just the workspace.
+The audit CLI explicitly composes the installation catalog into its runner;
+the core default registry remains independent of CLI doctor implementations.
+See [installation check composition](../sdd/installation-check-composition.md)
+for the ownership boundary and its regression checks.
+
+Each producer has a stable ID, even when it emits several display rows or has
+no configured subject:
+
+| ID | Installation check |
+| --- | --- |
+| INS-001 | Python version |
+| INS-002 | Adapter binaries |
+| INS-003 | Adapter last-green advisories |
+| INS-004 | Adapter version posture |
+| INS-005 | Adapter authentication |
+| INS-006 | Server port |
+| INS-007 | Workspace structure |
+| INS-008 | Stale PID files |
+| INS-009 | Guardrail statistics |
+| INS-010 | CI tools |
+| INS-011 | Storage backend (including PostgreSQL and Redis variants) |
+| INS-012 | Secrets manager |
+| INS-013 | Readiness |
+| INS-014 | Context files, MCP, permissions, installations and plugins |
+| INS-015 | Commit attribution |
+| INS-016 | Compliance prerequisites |
+| INS-017 | Schedule supervisor |
+| INS-018 | Eval gate power advisory |
+| INS-019 | OTLP export advisory |
+| INS-020 | Audit anchoring |
+
+Audit findings use `pass`, `fail`, or `not_measurable`. A tool probe that cannot
+run is `not_measurable` with the tool and prerequisite named; it never becomes
+a passing finding. Checks without observations are also `not_measurable`.
+For INS-005, a configured Codex model cannot make a missing `codex` login
+probe measurable; an observed API-key setting does not require that CLI probe.
+For INS-004, any `unknown_version` entry is `not_measurable` and names the
+adapter's unavailable `<adapter> --version` probe. Measured versions still
+pass at or above the floor and fail below it.
+These audit verdicts preserve the legacy doctor's advisory display and exit
+behavior. Version-posture evidence hashes the observed versions and anchoring
+state, excluding the receipt timestamp so repeated observations compare equal.
+
 `bernstein doctor` is the single-command checklist for diagnosing a
 broken Bernstein installation before opening an issue. The legacy
 `bernstein doctor` runs the same checks it always did; the new
@@ -212,3 +268,82 @@ health. The check never deletes anything or contacts sandbox providers.
 Preview remediation with `bernstein worktrees sweep` or `bernstein sandbox
 sweep`; applying that plan requires a separate removal approval. See
 [worktree operations](worktrees.md#task-terminal-lane-sweep).
+
+## Proposed structured aged-leak finding (#6572)
+
+**Design proposal: the structured finding below remains unimplemented.**
+The basic advisory above does not implement this full result contract.
+[Issue #6572](https://github.com/sipyourdrink-ltd/bernstein/issues/6572)
+requires both worktree and sandbox listing prerequisites before a structured doctor
+finding. [#6733](https://github.com/sipyourdrink-ltd/bernstein/pull/6733)
+continues the sandbox half of #6549; it explicitly leaves doctor separate.
+The worktree contribution
+[#5751](https://github.com/sipyourdrink-ltd/bernstein/pull/5751) remains a
+draft with unresolved persistence/evidence and public listing boundaries.
+The combined sweep above now supplies a basic advisory, while this proposal
+preserves the remaining structured-finding and evidence-contract questions.
+It does not modify that contributor's PR or claim the complete doctor feature.
+
+The accepted goal is a read-only finding for a **confirmed leaked** worktree
+or sandbox older than an agreed configurable age, naming the lane, owning
+task IDs, recorded statuses and age. Only the prerequisite sweeps' leaked
+verdicts count: old active/resumable lanes, missing ownership/task records,
+mixed active owners and superseded sandbox lifetimes remain excluded.
+Unreadable task/audit evidence must be a doctor error, never a clean result.
+The check must not remove a lane, change a task, append audit events or mint
+a key. Advisory records do not authorize removal.
+
+### Unresolved boundaries
+
+1. **Public threshold configuration.** Decide the configuration source,
+   units, documented default, override precedence and invalid-value behavior.
+   The issue explicitly leaves the default undecided; no new flag, env name
+   or seed schema is selected by this proposal. The basic advisory uses the
+   environment variable and default documented above.
+2. **Age evidence and comparison.** Decide the age source, threshold
+   comparison and unknown/unusable timestamp behavior. Existing sandbox ages
+   use create-event time; worktree ages use filesystem ctime. Neither proves
+   time since task completion or leak onset. Trace-staleness thresholds are
+   separate and do not supply an age default for this finding.
+3. **Diagnostic surface and result contract.** Decide the normal/extended
+   doctor integration, per-lane or aggregate text/JSON output, finding
+   severity/exit behavior and distinct evidence-unavailable errors. No
+   severity, unknown-age result or public output schema is selected here.
+4. **Dependency readiness.** Land the corrected worktree sweep/evidence
+   boundary from #5751 alongside the sandbox half before integration. Do not
+   invent a second status reader, ship sandbox-only coverage or infer a
+   removal policy from the existing advisory listing.
+
+### Future acceptance matrix
+
+These are proposed properties, not implemented or executed tests. The
+threshold and reporting decisions above remain open.
+
+1. `test_doctor_reports_both_confirmed_leak_kinds_older_than_configured_age`:
+   real task/archive/audit/worktree fixtures produce both finding kinds with
+   exact lane IDs, owning task IDs/statuses and honest age provenance.
+2. `test_doctor_age_threshold_preserves_younger_and_boundary_candidates`:
+   an injected clock covers below/at/above the agreed threshold without a
+   hardcoded default or trace-staleness shortcut.
+3. `test_old_active_or_excluded_lanes_never_become_leak_findings`: old active,
+   resumable, orphaned, missing-owner/task, mixed-owner and superseded cases
+   remain excluded regardless of PID liveness or filesystem age.
+4. `test_doctor_refuses_incomplete_task_or_audit_evidence_without_clean_report`:
+   unreadable, invalid, torn or replay-skipped evidence returns the agreed
+   error with its source path instead of replaying an older terminal result.
+5. `test_doctor_leak_status_matches_native_archive_and_live_reopen`: actual
+   TaskStore archive IDs and reopen precedence, every agreed finished status
+   and live controls agree across both sweeps and doctor.
+6. `test_doctor_age_reports_unknown_and_future_time_honestly`: missing or
+   invalid timestamps and clock skew follow the agreed contract without
+   inventing age from unrelated metadata or completion prose.
+7. `test_doctor_leak_age_configuration_is_explicit_and_validated`: cover the
+   approved source/default/units/precedence, invalid values and project
+   isolation without widening unrelated configuration.
+8. `test_doctor_leak_check_never_mutates_project_or_removes_lanes`: complete
+   byte snapshots and forbidden-write controls prove no removal, task
+   mutation, key creation or audit append, including under `--fix`.
+9. `test_doctor_leak_findings_reach_agreed_text_json_and_exit_surface`:
+   exercise the approved CLI collector/renderer with distinct agreed results
+   for confirmed old leaks and evidence errors; general readiness must not
+   misrepresent this finding.

@@ -850,6 +850,7 @@ def remove_leaked_lanes(
     from bernstein.core.sandbox.leak_sweep import (
         SandboxSweepUnavailableError,
         lane_removal_operation,
+        prepare_sandbox_removal_proposal,
         sweep_leaked_lanes,
     )
     from bernstein.core.security.audit import AuditLog, load_audit_key
@@ -868,8 +869,9 @@ def remove_leaked_lanes(
     removed = 0
     with lock_gc(workdir):
         log = AuditLog(workdir / ".sdd/audit", key=load_audit_key())
-        valid, errors = log.verify()
-        if not valid:
+        report = log.verify_detailed()
+        if not report.ok or report.tears:
+            errors = [*report.hard_errors, *(tear.describe() for tear in report.tears)]
             raise SandboxSweepUnavailableError(f"cannot remove from an unverified audit chain: {errors}")
         for lane in lanes:
             if not evaluate_approval(approved.request, approved.responses).is_approved:
@@ -903,7 +905,10 @@ def remove_leaked_lanes(
             if match.kind == "sandbox":
                 from bernstein.core.sandbox.registry import get_backend
 
-                destroy = getattr(get_backend(match.backend), "destroy_leaked_session", None)
+                proposal = prepare_sandbox_removal_proposal(workdir, match.resource_id, create_hmac=match.create_hmac)
+                if proposal.backend != match.backend or proposal.task_ids != match.task_ids:
+                    raise RuntimeError(f"sandbox identity changed since listing: {match.resource_id}")
+                destroy = getattr(get_backend(proposal.backend), "destroy_leaked_session", None)
                 if not callable(destroy):
                     raise SandboxSweepUnavailableError(
                         f"backend {match.backend!r} cannot safely attach a leaked session for removal"

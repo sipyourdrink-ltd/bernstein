@@ -120,7 +120,7 @@ def _spawner_shim(workdir: Path) -> SimpleNamespace:
     binds the real unbound method to itself. Any refusal therefore comes from
     the production gate, not from the shim running out of attributes.
     """
-    shim = SimpleNamespace(_workdir=workdir)
+    shim = SimpleNamespace(_workdir=workdir, _policy_hook_registry=None)
     shim._preflight_posture_drift = lambda: AgentSpawner._preflight_posture_drift(shim)  # type: ignore[arg-type]
     return shim
 
