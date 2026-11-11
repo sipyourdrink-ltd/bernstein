@@ -18,6 +18,19 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("no_watchdog_threads")
 
 
+@pytest.fixture(autouse=True)
+def _pi_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spawn tests mock Popen; the binary preflight must see a ``pi``."""
+    monkeypatch.setattr("bernstein.adapters.pi.shutil.which", lambda name, path=None: f"/usr/bin/{name}")
+
+
+def pi_cmd(full_cmd: list[str]) -> list[str]:
+    """The pi argv inside ``python -m bernstein.adapters.pi_json_launcher -- ...``."""
+    inner = inner_cmd(full_cmd)
+    assert inner[1:4] == ["-m", "bernstein.adapters.pi_json_launcher", "--"], inner
+    return inner[4:]
+
+
 class TestPiAdapterSpawn:
     """PiAdapter.spawn() builds correct command."""
 
@@ -31,7 +44,7 @@ class TestPiAdapterSpawn:
                 model_config=ModelConfig(model="provider/model-name", effort="high"),
                 session_id="pi-s1",
             )
-        inner = inner_cmd(popen.call_args.args[0])
+        inner = pi_cmd(popen.call_args.args[0])
         assert inner == [
             "pi",
             "--no-extensions",
@@ -53,7 +66,7 @@ class TestPiAdapterSpawn:
                 model_config=ModelConfig(model="auto", effort="high"),
                 session_id="pi-s2",
             )
-        inner = inner_cmd(popen.call_args.args[0])
+        inner = pi_cmd(popen.call_args.args[0])
         assert inner == ["pi", "--no-extensions", "--mode", "json", "--", "fix the bug"]
 
     def test_pi_spawn_includes_mcp_isolation_flags(self, tmp_path: Path) -> None:
@@ -70,7 +83,7 @@ class TestPiAdapterSpawn:
                 session_id="pi-s3",
                 mcp_config={"mcpServers": {"bernstein": {"command": "bernstein-mcp"}}},
             )
-        inner = inner_cmd(popen.call_args.args[0])
+        inner = pi_cmd(popen.call_args.args[0])
         assert "--no-extensions" in inner
         assert inner[-1] == "fix the bug"
 
@@ -87,7 +100,7 @@ class TestPiAdapterSpawn:
                 model_config=ModelConfig(model="auto", effort="high"),
                 session_id="pi-s4",
             )
-        inner = inner_cmd(popen.call_args.args[0])
+        inner = pi_cmd(popen.call_args.args[0])
         mode = inner.index("--mode")
         assert inner[mode + 1] == "json"
         assert "-p" not in inner
@@ -105,8 +118,44 @@ class TestPiAdapterSpawn:
                 model_config=ModelConfig(model="provider/m", effort="high"),
                 session_id="pi-s5",
             )
-        inner = inner_cmd(popen.call_args.args[0])
+        inner = pi_cmd(popen.call_args.args[0])
         assert inner[-2:] == ["--", "--model is not a flag here, fix the failing test"]
+
+    def test_spawn_runs_pi_under_the_exit_code_launcher(self, tmp_path: Path) -> None:
+        """JSON mode exits 0 after a failed turn; the launcher restores text mode's exit code."""
+        import sys
+
+        adapter = PiAdapter()
+        proc_mock = make_popen_mock(pid=805)
+        with patch("bernstein.adapters.pi.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="fix the bug",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="auto", effort="high"),
+                session_id="pi-s6",
+            )
+        inner = inner_cmd(popen.call_args.args[0])
+        assert inner[:4] == [sys.executable, "-m", "bernstein.adapters.pi_json_launcher", "--"]
+        assert inner[4] == "pi"
+
+    def test_spawn_refuses_before_launch_when_pi_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The launched process is Python, so a missing pi is caught by the preflight."""
+        monkeypatch.setattr("bernstein.adapters.pi.shutil.which", lambda name, path=None: None)
+        adapter = PiAdapter()
+        with (
+            patch("bernstein.adapters.pi.subprocess.Popen") as popen,
+            pytest.raises(RuntimeError, match="pi not found") as excinfo,
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="pi-missing-preflight",
+            )
+        assert "npm install -g @mariozechner/pi-coding-agent" in str(excinfo.value)
+        popen.assert_not_called()
 
     def test_spawn_translates_missing_cli(self, tmp_path: Path) -> None:
         adapter = PiAdapter()

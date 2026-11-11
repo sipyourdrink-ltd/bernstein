@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -16,6 +18,11 @@ from bernstein.adapters.env_isolation import build_filtered_env
 #: Pi's switch that turns off extension discovery (``-ne``); explicit ``-e``
 #: paths would still load.
 _NO_EXTENSIONS = "--no-extensions"
+
+_PI_NOT_FOUND = (
+    "pi not found in PATH. Install: npm install -g @mariozechner/pi-coding-agent "
+    "or see https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent"
+)
 
 
 class PiAdapter(CLIAdapter):
@@ -81,12 +88,17 @@ class PiAdapter(CLIAdapter):
         # only liveness signal for an adapter that takes no heartbeat dir, and
         # heartbeat escalation killed agents that were mid-turn (#6943).
         # ``--mode json`` writes JSONL events as the agent works, then exits.
-        cmd = ["pi", _NO_EXTENSIONS, "--mode", "json"]
+        # JSON mode exits 0 even when the final turn failed (pi decides the
+        # exit code only in text mode), so pi runs under ``pi_json_launcher``,
+        # which streams each line through and applies text mode's rule to the
+        # last assistant message.
+        pi_cmd = ["pi", _NO_EXTENSIONS, "--mode", "json"]
         if model_config.model and model_config.model.lower() != "auto":
-            cmd.extend(["--model", model_config.model])
+            pi_cmd.extend(["--model", model_config.model])
         # ``--`` ends option parsing, so a task prompt that starts with ``-``
         # is still the prompt and not an unknown flag.
-        cmd.extend(["--", prompt])
+        pi_cmd.extend(["--", prompt])
+        cmd = [sys.executable, "-m", "bernstein.adapters.pi_json_launcher", "--", *pi_cmd]
 
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         wrapped_cmd = build_worker_cmd(
@@ -102,6 +114,10 @@ class PiAdapter(CLIAdapter):
         env = build_filtered_env(
             ["PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
         )
+        # The process launched below is the Python launcher, so a missing
+        # ``pi`` would otherwise only surface inside it, after spawn.
+        if shutil.which("pi", path=env.get("PATH")) is None:
+            raise RuntimeError(_PI_NOT_FOUND)
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
@@ -113,11 +129,7 @@ class PiAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                msg = (
-                    "pi not found in PATH. Install: npm install -g @mariozechner/pi-coding-agent "
-                    "or see https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent"
-                )
-                raise RuntimeError(msg) from exc
+                raise RuntimeError(_PI_NOT_FOUND) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing pi: {exc}") from exc
 

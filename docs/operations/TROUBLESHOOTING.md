@@ -372,7 +372,7 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 **Cause:** Pi takes no heartbeat directory, so liveness falls back to the log's modification time. Before #6943, `pi` was spawned without `--mode json`; with stdout redirected it fell back to print mode, which writes only the final answer when the run ends, so the log never grew during a long first turn.
 
-**Resolution:** Upgrade to a release with #6943; spawned `pi` agents now run with `--mode json`, which writes JSONL events to the log as the agent works. A `pi` too old to accept `--mode` fails the adapter capability contract.
+**Resolution:** Upgrade to a release with #6943; spawned `pi` agents now run with `--mode json`, which writes JSONL events to the log as the agent works. pi only turns a failed final turn into a nonzero exit in text mode, so the adapter runs it under `python -m bernstein.adapters.pi_json_launcher`, which keeps that rule: a final assistant message that stopped on `error`, `aborted` or `length` exits 1, and the reason is printed to the log. A `pi` too old to accept `--mode` fails the adapter capability contract.
 
 ---
 
