@@ -117,6 +117,8 @@
     "@istanbuljs/load-nyc-config": {
       "js-yaml": ">=3.15.1 <6"
     },
-    "@azure/msal-node": "^7.1.2"
+    "@azure/msal-node": "^7.1.2",
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.1"
   }
 }
