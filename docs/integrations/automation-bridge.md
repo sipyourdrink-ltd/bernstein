@@ -103,6 +103,17 @@ one, never a silent drop.
 | `timestamp_outside_replay_window` | The timestamp header was missing, malformed, or stale |
 | `replayed_trigger_id` | The trigger id had already been admitted |
 | `malformed_trigger_payload` | The body could not be read as a trigger |
+| `trigger_policy_suppressed` | A configured generic webhook rule declined the request (HTTP 409) |
+| `trigger_policy_unavailable` | The configured generic webhook policy could not be evaluated (HTTP 503) |
+| `trigger_delivery_unconfirmed` | A matching delivery was reserved but task creation has no recorded outcome (HTTP 503) |
+
+Generic webhook rules can match the route path and method. Header-filtered
+rules targeting this endpoint return a policy refusal because the signature
+covers the timestamp and body only. An explicit nonce that already has an
+admission receipt continues to return the signed replay refusal, even if the
+subsequent task write failed. Admission receipts confirm the admission
+decision. Check the task result separately before treating the work as created.
+
 
 ### Refusal budget
 

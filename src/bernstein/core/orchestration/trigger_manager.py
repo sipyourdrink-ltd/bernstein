@@ -14,6 +14,7 @@ import fnmatch
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -328,12 +329,14 @@ def _matches_webhook(event: TriggerEvent, trigger: TriggerConfig) -> bool:
     """Filter logic for webhook triggers."""
     filters = trigger.filters
     path_filter = filters.get("path")
-    if path_filter and event.metadata.get("request_path") != path_filter:
+    if path_filter and not _glob_match_any([path_filter], [event.metadata.get("request_path", "")]):
         return False
     method_filter = filters.get("method")
     if method_filter and event.metadata.get("request_method") != method_filter:
         return False
     header_filters: dict[str, str] = filters.get("headers", {})
+    if event.metadata.get("webhook_headers_unverified"):
+        return True
     request_headers: dict[str, str] = event.metadata.get("request_headers", {})
     return all(request_headers.get(key, "") == expected for key, expected in header_filters.items())
 
@@ -775,7 +778,7 @@ class TriggerManager:
         with path.open("a") as f:
             f.write(json.dumps(entry) + "\n")
 
-    def _last_fire_time(self, trigger_name: str, *, scope: str | None = None) -> float | None:
+    def _last_fire_time(self, trigger_name: str, *, scope: str | None = None, strict: bool = False) -> float | None:
         """Return the most recent PRODUCTIVE fire timestamp for a trigger, or None.
 
         The cooldown clock is driven from this, and a fire that produced nothing
@@ -789,21 +792,31 @@ class TriggerManager:
         existed were all real fires that created a task.
         """
         path = self._runtime_dir / _FIRE_LOG_FILENAME
-        if not path.exists():
-            return None
         last: float | None = None
         try:
             for line in path.read_text().strip().split("\n"):
                 if not line:
                     continue
                 entry = json.loads(line)
+                if not isinstance(entry, dict):
+                    if strict:
+                        raise ValueError("Invalid trigger history row")
+                    continue
                 if (
                     entry.get("trigger_name") == trigger_name
                     and entry.get("produced", True)
                     and (scope is None or entry.get("cooldown_scope") == scope)
                 ):
                     last = entry.get("fired_at")
+                    if strict and (
+                        not isinstance(last, (int, float)) or isinstance(last, bool) or not math.isfinite(last)
+                    ):
+                        raise ValueError("Invalid trigger history timestamp")
+        except FileNotFoundError:
+            return None
         except (json.JSONDecodeError, OSError):
+            if strict:
+                raise
             logger.warning("Error reading fire log")
         return last
 
@@ -839,9 +852,17 @@ class TriggerManager:
     def _check_conditions(self, trigger: TriggerConfig, event: TriggerEvent) -> str | None:
         """Check trigger conditions. Returns suppression reason or None if all pass."""
         conditions = trigger.conditions
+        if (
+            event.source == "webhook"
+            and event.metadata.get("webhook_headers_unverified")
+            and trigger.filters.get("headers")
+        ):
+            return "header filters require authenticated headers"
 
-        scope = event.metadata.get("cooldown_scope") if event.source == "gitlab_webhook" else None
-        reason = self._check_cooldown(trigger.name, conditions, scope=scope)
+        scope = event.metadata.get("cooldown_scope") if event.source in {"gitlab_webhook", "webhook"} else None
+        reason = self._check_cooldown(
+            trigger.name, conditions, scope=scope, strict=bool(event.metadata.get("webhook_headers_unverified"))
+        )
         if reason:
             return reason
 
@@ -859,12 +880,16 @@ class TriggerManager:
 
         return None
 
-    def _check_cooldown(self, trigger_name: str, conditions: dict[str, Any], *, scope: str | None = None) -> str | None:
+    def _check_cooldown(
+        self, trigger_name: str, conditions: dict[str, Any], *, scope: str | None = None, strict: bool = False
+    ) -> str | None:
         """Return suppression reason if cooldown has not elapsed."""
         cooldown_s = conditions.get("cooldown_s", 0)
+        if strict and (type(cooldown_s) not in (int, float) or not math.isfinite(cooldown_s)):
+            raise ValueError("Invalid webhook cooldown")
         if cooldown_s <= 0:
             return None
-        last = self._last_fire_time(trigger_name, scope=scope)
+        last = self._last_fire_time(trigger_name, scope=scope, strict=strict)
         if last is not None and (time.time() - last) < cooldown_s:
             return f"cooldown (last fired {int(time.time() - last)}s ago, cooldown={cooldown_s}s)"
         return None
@@ -1076,15 +1101,16 @@ class TriggerManager:
             # An enabled trigger for this source has matching filters -
             # governance now applies to this event.
             dedup_key = compute_dedup_key(trigger.name, event)
-            reason = self._check_conditions(trigger, event)
-            if event.source == "gitlab_webhook":
-                # GitLab reconciles delivery outcomes before accepting cooldown.
+            if event.source in {"gitlab_webhook", "webhook"}:
+                # A reserved delivery is reconciled even when cooldown history is unavailable.
                 with self._dedup_lock():
                     self._load_dedup_cache()
-                    if self._check_dedup(dedup_key):
-                        reason = "deduplicated"
-            elif reason is None and self._check_dedup(dedup_key):
-                reason = "deduplicated"
+                    reserved = self._check_dedup(dedup_key)
+                reason = "deduplicated" if reserved else self._check_conditions(trigger, event)
+            else:
+                reason = self._check_conditions(trigger, event)
+                if reason is None and self._check_dedup(dedup_key):
+                    reason = "deduplicated"
             if reason is not None:
                 logger.info("Trigger %s suppressed a direct %s task: %s", trigger.name, event.source, reason)
                 return TriggerGateResult(trigger.name, True, reason, None)
