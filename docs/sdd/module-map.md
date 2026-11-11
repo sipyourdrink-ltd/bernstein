@@ -9,6 +9,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | File                        | Purpose |
 |-----------------------------|---------|
 | `administrative_runs.py`    | Administrative containers projected from the existing authenticated audit chain |
+| `canonicalization.py`       | Shared legacy JSON bytes for evidence, governance and review signatures |
 | `compat_redirect_ledger.py` | Compatibility ledger for legacy ``bernstein.core`` redirects |
 | `credential_scoping.py`     | Agent credential scope minimization for least-privilege API keys |
 | `dataclass_helpers.py`      | Helpers for preserving dataclass instance types through updates |
@@ -43,7 +44,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `errors/`                   | Structured first-run error categorization for Bernstein |
 | `events/`                   | Eventing v2 - the chain-projected unified event feed (#2548) |
 | `evidence/`                 | Verification evidence bundles (issue #2362) |
-| `fleet/`                    | Fleet dashboard - supervise multiple Bernstein projects in one view |
+| `fleet/`                    | Fleet dashboard and worker capability selection (``selection.py``) |
 | `git/`                      | git sub-package |
 | `govern/`                   | Governance planning and declared probe execution (``probe_runtime.py``) |
 | `grpc_gen/`                 | Generated gRPC stubs - run ``scripts/generate_proto.sh`` to populate |
@@ -179,6 +180,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `openai_agents_runner.py`       | Python entrypoint that runs an OpenAI Agents SDK session |
 | `opencode.py`                   | OpenCode CLI adapter |
 | `openhands.py`                  | OpenHands CLI adapter |
+| `osv_scanner.py`                | Feed-pinned OSV-Scanner adapter and SARIF normalization |
 | `pi.py`                         | Pi (pi-coding-agent) CLI adapter |
 | `plandex.py`                    | Plandex CLI adapter |
 | `plugin_sdk.py`                 | Adapter plugin SDK for third-party agent integration |

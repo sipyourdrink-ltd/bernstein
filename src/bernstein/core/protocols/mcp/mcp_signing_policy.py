@@ -63,6 +63,12 @@ from bernstein.core.protocols.mcp.mcp_verifier import (
     VerificationVerdict,
     verify_mcp_server,
 )
+from bernstein.core.security.audit_chain import (
+    EVENT_MCP_BUNDLE_SCAN,
+    EVENT_MCP_LOAD_DECISION,
+    EVENT_MCP_SIGNATURE_VERIFICATION,
+    AuditChainStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +217,7 @@ def enforce_mcp_server_load(
     policy: MCPSigningPolicy,
     package_name: str = "",
     bundle_bytes: bytes | None = None,
+    audit_chain: AuditChainStore | None = None,
 ) -> MCPLoadDecision:
     """Verify + scan one MCP server, applying the operator's strict/warn policy.
 
@@ -233,6 +240,7 @@ def enforce_mcp_server_load(
             check.
         bundle_bytes: Optional canonical bundle bytes for content-hash
             verification.
+        audit_chain: Supplied chain, or None for intentionally unaudited operation.
 
     Returns:
         :class:`MCPLoadDecision`. In strict mode the function raises
@@ -257,7 +265,7 @@ def enforce_mcp_server_load(
     )
 
     findings: list[ScannerFinding] = []
-    if policy.scan_bundle and bundle_files:
+    if policy.scan_bundle and bundle_files is not None:
         findings = scan_mcp_bundle(
             bundle_files=bundle_files,
             package_name=package_name,
@@ -269,6 +277,42 @@ def enforce_mcp_server_load(
         findings=findings,
         policy=policy,
     )
+
+    if audit_chain is not None:
+        identity = dict(actor="mcp_signing_policy", resource_type="mcp_server", resource_id=server_name)
+        skip_reason = (
+            "policy_disabled" if not policy.scan_bundle else "bundle_unavailable" if bundle_files is None else ""
+        )
+        try:
+            verification_event = audit_chain.log_with_prev_digest(
+                event_type=EVENT_MCP_SIGNATURE_VERIFICATION,
+                **identity,
+                details={"verdict": verification.verdict},
+            )
+            scan_event = audit_chain.log_with_prev_digest(
+                event_type=EVENT_MCP_BUNDLE_SCAN,
+                **identity,
+                details=dict(
+                    verification_hmac=verification_event.hmac,
+                    status="skipped" if skip_reason else "completed",
+                    skip_reason=skip_reason,
+                    findings=[dict(rule=f.rule, severity=f.severity, cwe=f.cwe) for f in findings],
+                ),
+            )
+            audit_chain.log_with_prev_digest(
+                event_type=EVENT_MCP_LOAD_DECISION,
+                **identity,
+                details=dict(
+                    verification_hmac=verification_event.hmac,
+                    scan_hmac=scan_event.hmac,
+                    strict=policy.strict,
+                    critical_scan_blocks_load=policy.critical_scan_blocks_load,
+                    allowed=decision.allowed,
+                ),
+            )
+        except Exception as exc:
+            error = ValueError if isinstance(exc, ValueError) else RuntimeError
+            raise error("MCP signing audit append failed") from None
 
     # Strict mode raises so the manager cannot proceed with a half-loaded
     # server - the verifier is the choke point.

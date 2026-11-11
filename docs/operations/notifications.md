@@ -31,7 +31,7 @@ Code anchors:
 - Schema: `core/notifications/config.py:118-156`
 - Bridge wiring: `core/lifecycle/notify_bridge.py:75-202`
 - Retry/dedup/dead-letter: `core/notifications/bridge.py:46-67, 232-396`
-- Driver registry: `core/notifications/registry.py:42-282`
+- Driver registry: `core/notifications/registry.py:42-293`
 - CLI: `cli/commands/notify_cmd.py:63-160`
 
 State directory layout:
@@ -321,6 +321,16 @@ via `build_bridge_from_config`
 
 ---
 
+## Registration diagnostics
+
+The notification registry has separate namespaces for driver kinds and live
+sink IDs. Duplicate registrations raise `ValueError` without replacing the
+first value. This slice brings its duplicate diagnostics onto the shared
+`DuplicateGuard`, naming the modules responsible for both registrations.
+Unregistering a live sink permits a later registration of the same ID.
+Built-in and entry-point loading keep their existing first-registration
+precedence.
+
 ## Code pointers
 
 - `src/bernstein/core/notifications/protocol.py:1-22` - design rationale
@@ -329,7 +339,7 @@ via `build_bridge_from_config`
 - `src/bernstein/core/notifications/config.py:46-156` - pydantic schema, validators
 - `src/bernstein/core/notifications/bridge.py:94-229` - `DedupCache`, `DeadLetter`
 - `src/bernstein/core/notifications/bridge.py:232-396` - `NotificationDispatcher`
-- `src/bernstein/core/notifications/registry.py:42-282` - first-party kinds + entry-point loader
+- `src/bernstein/core/notifications/registry.py:42-293` - first-party kinds + entry-point loader
 - `src/bernstein/core/notifications/sinks/slack.py` - Slack
 - `src/bernstein/core/notifications/sinks/telegram.py` - Telegram
 - `src/bernstein/core/notifications/sinks/discord.py` - Discord

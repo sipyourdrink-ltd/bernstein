@@ -127,6 +127,19 @@ def test_anchored_report_verifies_offline_against_the_spine(tmp_path: Path) -> N
 # --------------------------------------------------------------------------- 5
 
 
+def test_repeated_identical_reports_verify_against_their_own_anchors(tmp_path: Path) -> None:
+    root = _lineage_root(tmp_path)
+    report = _report([_finding("MDL-001")])
+    first = anchor_audit_report(lineage_root=root, hmac_key=_KEY, report=report)
+    second = anchor_audit_report(lineage_root=root, hmac_key=_KEY, report=report)
+
+    assert first.to_canonical_bytes() == second.to_canonical_bytes()
+    assert first.journal_entry_hash != second.journal_entry_hash
+    for anchored in (first, second):
+        result = verify_audit_report(lineage_root=root, hmac_key=_KEY, report=anchored)
+        assert result.ok, result.reason
+
+
 def test_byte_flipped_stored_report_is_unverifiable_not_merely_different(tmp_path: Path) -> None:
     root = _lineage_root(tmp_path)
     anchored = anchor_audit_report(

@@ -12,7 +12,10 @@ OpenClaw CVE pattern matches in the static scanner:
 from __future__ import annotations
 
 import base64
+import inspect
 import logging
+from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -37,6 +40,7 @@ from bernstein.core.protocols.mcp.mcp_verifier import (
     parse_manifest,
     verify_mcp_server,
 )
+from bernstein.core.security import audit_chain as audit
 from bernstein.core.security.agent_card_signer import generate_ed25519_keypair
 
 # ---------------------------------------------------------------------------
@@ -342,6 +346,101 @@ class TestMCPScanner:
 class TestEnforceMCPServerLoad:
     def setup_method(self) -> None:
         reset_metrics_for_test()
+
+    @pytest.mark.parametrize("critical", [False, True])
+    def test_records_signed_and_scan_rejected_servers(self, tmp_path: Path, critical: bool) -> None:
+        assert "audit_chain" in inspect.signature(enforce_mcp_server_load).parameters
+        chain = audit.AuditChainStore(tmp_path, key=b"k" * 32)
+        manifest, sig, fp, pem = _make_signed_manifest()
+        source = "subprocess.run(cmd, shell=True)\n" if critical else "x = 1\n"
+        kwargs = dict(
+            server_name="example",
+            manifest_yaml=manifest,
+            signature_b64=sig,
+            bundle_files={"tools/exec.py": source},
+            audit_chain=chain,
+            policy=MCPSigningPolicy(trusted_publishers=frozenset({fp}), publisher_keys={fp: pem}),
+        )
+        with pytest.raises(MCPVerificationError) if critical else nullcontext():
+            assert enforce_mcp_server_load(**kwargs).allowed
+        events = audit.AuditChainStore(tmp_path, key=b"k" * 32).query()
+        assert [e.event_type for e in events] == ["mcp.signature_verification", "mcp.bundle_scan", "mcp.load_decision"]
+        assert all(
+            (e.actor, e.resource_type, e.resource_id) == ("mcp_signing_policy", "mcp_server", "example") for e in events
+        )
+        verification, scan, decision = events
+        assert verification.details["verdict"] == "ok"
+        assert scan.details["verification_hmac"] == verification.hmac
+        assert (scan.details["status"], scan.details["skip_reason"]) == ("completed", "")
+        expected_findings = [dict(rule="shell_injection", severity="critical", cwe="CWE-78")] if critical else []
+        assert scan.details["findings"] == expected_findings
+        expected_decision = dict(strict=True, critical_scan_blocks_load=True, allowed=not critical)
+        expected_decision.update(verification_hmac=verification.hmac, scan_hmac=scan.hmac, prev_chain_digest=scan.hmac)
+        assert decision.details == expected_decision
+        assert chain.verify() == (True, [])
+        persisted = repr([e.details for e in events])
+        assert all(secret not in persisted for secret in (manifest, sig, pem.decode(), source))
+
+    @pytest.mark.parametrize(
+        "event,change,valid",
+        [
+            ("signature_verification", dict(verdict=v), True)
+            for v in ("ok", "unsigned", "bad_signature", "untrusted_publisher", "bad_manifest", "content_hash_mismatch")
+        ]
+        + [
+            ("bundle_scan", dict(findings=[dict(rule="test", severity=s)]), True)
+            for s in ("info", "low", "medium", "high", "critical")
+        ]
+        + [
+            ("identity", {field: value}, False)
+            for field, value in [("resource_id", ""), ("resource_id", None), ("actor", ""), ("resource_type", "")]
+        ]
+        + [
+            ("signature_verification", {"verdict": "unknown"}, False),
+            ("signature_verification", {"verdict": []}, False),
+            ("bundle_scan", {"status": "unknown"}, False),
+            ("bundle_scan", {"skip_reason": "unknown"}, False),
+            ("bundle_scan", {"status": "skipped"}, False),
+            ("bundle_scan", {"skip_reason": "bundle_unavailable"}, False),
+            ("bundle_scan", {"status": "skipped", "skip_reason": "policy_disabled"}, False),
+            ("bundle_scan", {"findings": {}}, False),
+            ("bundle_scan", {"verification_hmac": ""}, False),
+            ("bundle_scan", {"findings": [dict(rule="", severity="info")]}, False),
+            ("bundle_scan", {"findings": [dict(rule="x", severity="unknown")]}, False),
+            ("bundle_scan", {"findings": [dict(rule="x", severity="info", cwe=None)]}, False),
+            ("bundle_scan", {"findings": [dict(rule="x", severity="info", source="secret")]}, False),
+            ("load_decision", {"strict": 1}, False),
+            ("load_decision", {"allowed": "true"}, False),
+            ("load_decision", {"critical_scan_blocks_load": None}, False),
+            ("load_decision", {"scan_hmac": ""}, False),
+            ("load_decision", {"verification_hmac": None}, False),
+            ("signature_verification", {"extra": "secret"}, False),
+        ],
+    )
+    def test_audit_values(self, tmp_path: Path, event: str, change: dict, valid: bool) -> None:
+        assert hasattr(audit, "EVENT_MCP_SIGNATURE_VERIFICATION")
+        chain = audit.AuditChainStore(tmp_path, key=b"k" * 32)
+        details = {
+            "bundle_scan": dict(
+                verification_hmac="h", status="completed", skip_reason="", findings=[dict(rule="x", severity="info")]
+            ),
+            "load_decision": dict(
+                verification_hmac="h", scan_hmac="s", strict=True, critical_scan_blocks_load=True, allowed=True
+            ),
+        }.get(event, dict(verdict="ok"))
+        identity = dict(actor="mcp_signing_policy", resource_type="mcp_server", resource_id="example")
+        if event == "identity":
+            identity.update(change)
+            event = "signature_verification"
+        else:
+            details.update(change)
+        with nullcontext() if valid else pytest.raises(ValueError):
+            entry = chain.log_with_prev_digest(event_type="mcp." + event, details=details, **identity)
+        assert len(chain.query()) == int(valid)
+        if valid and event == "bundle_scan":
+            assert entry.details["findings"] == [{**change["findings"][0], "cwe": ""}]
+        if valid and event == "signature_verification":
+            assert entry.details["verdict"] == change["verdict"]
 
     def test_signed_trusted_passes_strict(self) -> None:
         manifest, sig, fp, pem = _make_signed_manifest()

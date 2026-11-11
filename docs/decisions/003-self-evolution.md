@@ -216,6 +216,16 @@ graph LR
    checksum is keyless: it catches accidental corruption, not deliberate edits,
    since anyone who changes the body can recompute it.
 
+   Failed attempts use the same receipt directory, proposal identity, and
+   checksum, adding `status: failed`, `error_type`, and `error`. Their
+   `restored_files` lists only copies completed before the failure; the backup
+   manifest remains available for recovery. This includes missing or invalid
+   manifests, missing backups, restore I/O failures, and failures recording or
+   retiring a completed restore. If retirement fails after a success receipt
+   was written, a separate failure receipt follows it. Existing success receipt
+   fields are unchanged. If the failure receipt itself cannot be persisted,
+   `RollbackError` names both failures; no receipt is claimed to exist.
+
    No category has a sink that writes backups today, so in a shipped build the
    manifest branch is not reached and every rollback is the "nothing was
    applied" row above.

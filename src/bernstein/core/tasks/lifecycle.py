@@ -174,6 +174,10 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.IN_PROGRESS, TaskStatus.OPEN): _always,  # force-claim / requeue
     (TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.ORPHANED): _always,
+    # Cooperative cancellation stays in flight until the worker has stopped.
+    (TaskStatus.CLAIMED, TaskStatus.STOP_REQ): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.STOP_REQ): _always,
+    (TaskStatus.STOP_REQ, TaskStatus.CANCELLED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.SUSPENDED): _always,
     # Cooperative mailbox rendezvous restores the exact state that entered
     # suspension; the live worker/session remains allocated throughout.
@@ -319,6 +323,7 @@ IN_FLIGHT_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
         TaskStatus.OPEN,
         TaskStatus.CLAIMED,
         TaskStatus.IN_PROGRESS,
+        TaskStatus.STOP_REQ,
         TaskStatus.BLOCKED,
         TaskStatus.WAITING_FOR_SUBTASKS,
         TaskStatus.SUSPENDED,
@@ -438,6 +443,13 @@ def _emit(event: LifecycleEvent) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_task_transition(task: Task, new_status: TaskStatus) -> None:
+    """Check the existing edge and guard without mutating state or emitting events."""
+    guard = TASK_TRANSITIONS.get((task.status, new_status))
+    if guard is None or not guard(task):
+        raise IllegalTransitionError("task", task.id, task.status.value, new_status.value)
+
+
 def transition_task(
     task: Task,
     new_status: TaskStatus,
@@ -475,14 +487,7 @@ def transition_task(
         _seen_transition_ids.add(transition_id)
 
     old_status = task.status
-    key = (old_status, new_status)
-
-    if key not in TASK_TRANSITIONS:
-        raise IllegalTransitionError("task", task.id, old_status.value, new_status.value)
-
-    guard = TASK_TRANSITIONS[key]
-    if not guard(task):
-        raise IllegalTransitionError("task", task.id, old_status.value, new_status.value)
+    _validate_task_transition(task, new_status)
 
     task.status = new_status
 

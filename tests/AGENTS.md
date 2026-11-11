@@ -1,8 +1,8 @@
 # Test suite
 
-Layered pytest suite. `unit/` is the big one (2800+ files, external network blocked by default), more and more of it in subdirectories that mirror `src/bernstein/`; `integration/` includes in-process fixtures and service-backed tests; `contract/` holds the adapter capability contracts; `conformance/auditor/` scores what an exported bundle alone can answer; `protocol/` is the MCP/A2A/ACP version matrix; plus `property/`, `snapshot/`, `golden/`, `perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`. Shared fakes (vault, ssh) live in `support/`.
+Layered pytest suite. `unit/` is the big one (2800+ files, external network blocked by default), more and more of it in subdirectories that mirror `src/bernstein/`; `integration/` includes in-process fixtures and service-backed tests; `contract/` holds the adapter capability contracts; `integration/conformance/auditor/` and `conformance/auditor/` score what an exported bundle alone can answer; `protocol/` is the MCP/A2A/ACP version matrix; plus `property/`, `snapshot/`, `golden/`, `perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`. Shared fakes (vault, ssh) live in `support/`.
 
-Focused regressions in `unit/routing/`, `unit/security/`, and `unit/tasks/` cover task-scoped ladder changes, PII placeholder boundaries, and concurrent or rolled-back task claims.
+Focused regressions in `unit/routing/`, `unit/security/`, and `unit/tasks/` cover ladder changes, PII boundaries, concurrent claims, and cooperative STOP_REQ cancellation. `unit/adapters/test_bandit_scanner.py` uses recorded SARIF under `fixtures/scanners/bandit/`; `unit/test_thread_stream_route.py` covers the journal SSE route.
 
 ## How to run
 
@@ -32,4 +32,4 @@ uv run python scripts/run_tests.py --affected origin/main  # only tests the chan
 - A change under `src/`, `scripts/`, `tests/` or `.github/workflows/` with an empty affected set fails closed, except changes confined to `contract/`, `property/` or `snapshot/` (covered by full jobs), or deleted test files.
 - Live adapter conformance tests are opt-in via the `--live` flag registered in `conftest.py`.
 
-<!-- Reviewed 2026-10-24 against main 6085c58aeb87, including the merged authority and claim regressions. -->
+<!-- Reviewed against main 943bf279c3a8, including STOP_REQ, Bandit, journal SSE and mutation-runner regressions. -->
