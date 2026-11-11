@@ -12,6 +12,7 @@ kept on a salvage or graveyard ref by worktree cleanup, never merged (#6539).
 from __future__ import annotations
 
 import contextlib
+import glob
 import json
 import logging
 import signal
@@ -46,6 +47,8 @@ from bernstein.evolution.types import MetricsRecord
 _ORPHAN_COMPLETE_ERROR = "Failed to complete orphaned task %s: %s"
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bernstein.core.abort_chain import AbortChain, AbortPolicy
 
 logger = logging.getLogger(__name__)
@@ -986,6 +989,7 @@ def _try_compact_and_retry(
     # Patch the newly created retry task with compacted description and meta-message.
     # The retry task is the latest open task with the same title prefix.
     # We inject the compaction meta-message via the task server PATCH endpoint.
+    _policy = _retry_escalation_context(orch).get("role_model_policy")
     _patch_retry_with_compaction(
         client=orch._client,
         server_url=orch._config.server_url,
@@ -993,6 +997,10 @@ def _try_compact_and_retry(
         compacted_description=result.compacted_text,
         fallback_model=fallback_model,
         effective_remaining=effective_remaining,
+        role_model_policy=_policy if isinstance(_policy, dict) else None,
+        workdir=getattr(orch, "_workdir", None),
+        run_id=str(getattr(orch, "_run_id", "") or ""),
+        spend_usd=_lineage_spend_usd(orch, task, tasks_snapshot),
     )
 
     # WAL entry for audit trail
@@ -1187,6 +1195,44 @@ def _record_reactive_compaction_receipt(
         logger.debug("Reactive compaction metric write failed for %s: %s", task_id, exc)
 
 
+def _lineage_spend_usd(orch: Any, task: Task, tasks_snapshot: dict[str, list[Task]]) -> float | None:
+    """Ledger spend across *task*'s retry lineage, or ``None`` without a ledger.
+
+    Read from the orchestrator's cost tracker, never from task metadata,
+    which API clients can write.
+    """
+    tracker = getattr(orch, "_cost_tracker", None)
+    spent_for_task: Callable[[str], float] | None = getattr(tracker, "spent_for_task", None)
+    if not callable(spent_for_task):
+        return None
+    lineage_id = str(task.metadata.get("original_task_id", task.id))
+    task_ids: set[str] = {task.id, lineage_id}
+    for tasks in tasks_snapshot.values():
+        for other in tasks:
+            if other.metadata.get("original_task_id") == lineage_id:
+                task_ids.add(other.id)
+    try:
+        return sum(float(spent_for_task(task_id)) for task_id in task_ids)
+    except Exception as exc:
+        logger.debug("Ladder spend lookup failed for %s: %s", task.id, exc)
+        return None
+
+
+def _estimate_model_usd(task: Task, model: str, workdir: Path | None) -> float | None:
+    """Consult the spawn cost surface for one ladder step; ``None`` when it cannot quote."""
+    try:
+        from dataclasses import replace
+
+        from bernstein.core.cost.cost_estimation import estimate_spawn_cost
+
+        metrics = workdir / ".sdd" / "metrics" if workdir is not None else None
+        estimate = estimate_spawn_cost(replace(task, model=model), metrics_dir=metrics)
+        return float(estimate.estimated_cost_usd)
+    except Exception as exc:
+        logger.debug("Ladder step cost estimate failed for model %s: %s", model, exc)
+        return None
+
+
 def _patch_retry_with_compaction(
     *,
     client: httpx.Client,
@@ -1195,6 +1241,10 @@ def _patch_retry_with_compaction(
     compacted_description: str,
     fallback_model: str | None,
     effective_remaining: int | None = None,
+    role_model_policy: dict[str, Any] | None = None,
+    workdir: Path | None = None,
+    run_id: str = "",
+    spend_usd: float | None = None,
 ) -> None:
     """Patch the retry task created by ``retry_or_fail_task`` with compacted context.
 
@@ -1212,9 +1262,25 @@ def _patch_retry_with_compaction(
         server_url: Task server base URL.
         original_task: The original (failed) task.
         compacted_description: The compacted description text.
-        fallback_model: Optional model to set on the retry task.
+        fallback_model: Cascade fallback applied only when the role has no
+            escalation ladder. A configured ladder ignores this one-hop and
+            reads :func:`plan_retry_model_patch` instead.
         effective_remaining: Effective remaining token budget after accounting
             for pre-compaction spend.  ``None`` means unknown / skip injection.
+        role_model_policy: Spawner role-policy snapshot. A non-dict (a test
+            double, for example) is treated as unset.
+        workdir: Run directory. Failure evidence is resolved from, and the
+            ladder decision recorded on, the audit chain under ``.sdd/audit``.
+            Without it no evidence resolves and a configured ladder refuses.
+        run_id: Run id stamped on the ladder chain event.
+        spend_usd: Ledger spend for the task's retry lineage (see
+            :func:`_lineage_spend_usd`); ``None`` when unknown.
+
+    The ladder decision is appended to the chain only after the PATCH
+    succeeds, so a refused PATCH never leaves a hop attested for a model
+    change that did not happen. The cost of that ordering: if the append
+    fails, the hop is applied without its attestation and only a warning
+    is logged.
     """
     try:
         resp = client.get(f"{server_url}/tasks", params={"status": "open"})
@@ -1266,11 +1332,67 @@ def _patch_retry_with_compaction(
         "description": compacted_description,
         "meta_messages": new_meta,
     }
-    if fallback_model:
-        patch_body["model"] = fallback_model
+    from bernstein.core.routing.escalation_ladder import (
+        FailureEvidence,
+        RetryModelPatch,
+        apply_retry_ladder_to_patch,
+        evidence_from_chain,
+        plan_retry_model_patch,
+        record_ladder_decision,
+    )
+
+    def _resolve_evidence() -> FailureEvidence | None:
+        if workdir is None:
+            return None
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        try:
+            return evidence_from_chain(AuditChainStore(Path(workdir) / ".sdd" / "audit"), original_task.id)
+        except Exception as exc:
+            logger.warning("Escalation evidence lookup failed for %s: %s", original_task.id, exc)
+            return None
+
+    try:
+        plan = plan_retry_model_patch(
+            role=original_task.role,
+            role_model_policy=role_model_policy,
+            task_model=original_task.model,
+            task_metadata=original_task.metadata,
+            legacy_fallback_model=fallback_model,
+            resolve_evidence=_resolve_evidence,
+            spend_usd=spend_usd,
+            estimate_model_usd=lambda model: _estimate_model_usd(original_task, model, workdir),
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Escalation ladder refused for task %s (%s); compaction patch will not stamp a model",
+            original_task.id,
+            exc,
+        )
+        plan = RetryModelPatch(
+            model=None,
+            cli=None,
+            escalation_context=None,
+            ladder_step=None,
+            ladder_attempts=None,
+            decision=None,
+        )
+    patch_body = apply_retry_ladder_to_patch(patch_body=patch_body, plan=plan)
 
     try:
         client.patch(f"{server_url}/tasks/{retry_task_id}", json=patch_body).raise_for_status()
+        if plan.decision is not None and workdir is not None:
+            try:
+                from bernstein.core.security.audit_chain import AuditChainStore
+
+                record_ladder_decision(
+                    chain=AuditChainStore(Path(workdir) / ".sdd" / "audit"),
+                    run_id=run_id,
+                    task_id=original_task.id,
+                    decision=plan.decision,
+                )
+            except Exception as exc:
+                logger.warning("Escalation ladder record failed for %s: %s", original_task.id, exc)
         logger.info(
             "Patched retry task %s with compacted description (%d chars) and %s meta-message",
             retry_task_id,
@@ -2593,12 +2715,39 @@ def handle_orphaned_task(
 
     # Artifact-mode tasks run the pass even with no declared signals: the
     # signed receipt it records is their completion identity (issue #2608).
+    verification_evidence: dict[str, Any] = {}
     if task.completion_signals or is_artifact_mode(task):
-        passed, failed_signals = verify_task_completion(task, orch._workdir)
+        verification_workdir = orch._workdir
+        no_change_exit = False
+        if session.exit_code == 0 and task.completion_signals and not is_artifact_mode(task):
+            worktree = orch._spawner.get_worktree_path(session.id) or orch._workdir
+            completion_data = collect_completion_data(orch._workdir, session)
+            no_change_exit = (
+                not completion_data.get("files_modified")
+                and not _has_git_commits_on_branch(worktree, start_ts)
+                and _satisfied_on_base_is_safe(worktree, task)
+            )
+            if no_change_exit:
+                # The agent can legitimately find the deliverable already on
+                # base. Verify its worktree, not a potentially stale run checkout.
+                verification_workdir = worktree
+        passed, failed_signals = verify_task_completion(task, verification_workdir)
+        if no_change_exit:
+            verification_evidence = {
+                "completion_signals_checked": True,
+                "janitor_passed": passed,
+                "verification_workdir": str(verification_workdir),
+            }
         if passed:
             try:
+                summary = f"Auto-completed after agent {session.id} died; janitor passed"
+                if no_change_exit:
+                    summary = (
+                        f"Auto-completed (already satisfied on base): agent {session.id} "
+                        "exited cleanly with empty diff; janitor gates verified"
+                    )
                 result_payload: dict[str, Any] = {
-                    "result_summary": f"Auto-completed after agent {session.id} died; janitor passed",
+                    "result_summary": summary,
                 }
                 orch._client.post(
                     f"{base}/tasks/{task_id}/complete",
@@ -2657,7 +2806,7 @@ def handle_orphaned_task(
             _wal.write_entry(
                 decision_type=_wal_dtype,
                 inputs={"task_id": task_id, "agent_id": session.id, "orphaned": True},
-                output={"success": success, "error_type": error_type or ""},
+                output={"success": success, "error_type": error_type or "", **verification_evidence},
                 actor="agent_lifecycle",
             )
         except OSError:
@@ -2927,13 +3076,162 @@ _ORCHESTRATOR_WORKTREE_FILES: frozenset[str] = frozenset(
         ".env",
         "bernstein.yaml",
         "bernstein.yml",
+        # aider writes these into every worktree it runs in; none of them is a
+        # deliverable (measured 2026-10-17: nine clean exits in a row read dirty).
+        ".aider.conf.yml",
+        ".aider.chat.history.md",
+        ".aider.input.history",
+        ".aider.llm.history",
     }
 )
+# aider's own caches, never part of the target repo's work.
+_ADAPTER_WORKTREE_DIRS: tuple[str, ...] = (".aider.tags.cache.v4/", ".aider/")
+_ADAPTER_GITIGNORE_PREFIX = ".aider"
 # Keep this scoped to ``.sdd/``: identities land in ``.sdd/auth`` and
 # attestations in ``.sdd/attestations``, both covered here.  Bare ``auth/``
 # or ``attestations/`` prefixes hide legitimate target-repo work and can cause
 # a false "no changes" completion; see :mod:`bernstein.core.git.git_basic`.
 _ORCHESTRATOR_WORKTREE_DIRS: tuple[str, ...] = (".sdd/",)
+
+
+def _satisfied_on_base_is_safe(worktree_path: Path, task: Task) -> bool:
+    """Require path-bearing gates to be satisfiable by committed content.
+
+    Unrelated orchestrator/adapter files do not affect delivery. Gate targets
+    must be tracked, and ``file_contains`` must see unchanged HEAD content in
+    a non-symlink file so an uncommitted edit or link target cannot establish
+    completion (#6606, #2760).
+
+    Each gate type mirrors the janitor it will be re-checked against:
+    ``path_exists`` is literal-first (a literal path wins even when it holds
+    glob metacharacters; only a literal miss expands a glob pattern) and a
+    tracked symlink target must itself resolve to tracked content, because
+    ``Path.exists`` follows the link and a worktree-only target dangles after a
+    merge. ``glob_exists`` is always expanded as a pattern -- a tracked match
+    satisfies it even when an ignored literal of the same name exists only in
+    the worktree. ``file_contains`` is literal and rejects a symlink.
+
+    Non-incidental uncommitted work or an unreadable status blocks every gate.
+    Ignored agent-created files used by ``test_passes`` or ``glob_exists``
+    cannot in general be distinguished from ordinary ignored build state
+    (.venv, __pycache__, caches): this is an accepted shortcut limitation.
+    ``glob_exists`` still needs a tracked candidate; all ``path_exists`` and
+    ``file_contains`` targets remain guarded, even when ignored.
+    """
+    try:
+        status_ok, paths = _filtered_worktree_status(worktree_path)
+        if not status_ok or paths:
+            return False
+        for completion_signal in task.completion_signals:
+            if completion_signal.type not in ("path_exists", "glob_exists", "file_contains"):
+                continue
+            target = completion_signal.value
+            if completion_signal.type == "file_contains":
+                parts = target.split(" :: ", maxsplit=1)
+                if len(parts) != 2:
+                    return False
+                target = parts[0].strip()
+                if (worktree_path / target).is_symlink():
+                    return False
+            git_command = ["git", "--literal-pathspecs"]
+            if completion_signal.type == "glob_exists":
+                # The janitor always expands glob_exists as a pattern (never
+                # literal-first), so a tracked file that matches satisfies it
+                # even when an ignored literal of the same name exists only in
+                # the worktree. Require a tracked match.
+                if not _has_tracked_glob_candidate(worktree_path, target, git_command):
+                    return False
+                continue
+            # path_exists / file_contains are literal-first, exactly like the
+            # janitor's _check_path_exists: a literal path that exists wins even
+            # when it holds glob metacharacters (a Next.js route
+            # ``app/[id]/page.tsx``, a fixture ``foo[1].json``); only on a
+            # literal miss is a path_exists pattern expanded. path_exists accepts
+            # a directory (janitor uses Path.exists); git ls-files then confirms
+            # the matched path is tracked, so a worktree-only file never
+            # establishes delivery.
+            if (worktree_path / target).exists():
+                if completion_signal.type == "path_exists" and (worktree_path / target).is_symlink():
+                    # path_exists follows the link (Path.exists), so a tracked
+                    # symlink to an ignored/worktree-only target passes here yet
+                    # dangles once the worktree is deleted. Require the resolved
+                    # target to be tracked so the gate survives a merge.
+                    try:
+                        resolved = (worktree_path / target).resolve(strict=True)
+                        relative_target = str(resolved.relative_to(worktree_path.resolve()))
+                    except (OSError, RuntimeError, ValueError):
+                        return False
+                    result = subprocess.run(
+                        [*git_command, "ls-files", "-z", "--", relative_target],
+                        cwd=str(worktree_path),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                    )
+                    if result.returncode != 0 or not result.stdout:
+                        return False
+                result = subprocess.run(
+                    [*git_command, "ls-files", "-z", "--", target],
+                    cwd=str(worktree_path),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                )
+                if result.returncode != 0 or not result.stdout:
+                    return False
+                if completion_signal.type == "file_contains":
+                    result = subprocess.run(
+                        [*git_command, "diff", "--quiet", "HEAD", "--", target],
+                        cwd=str(worktree_path),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                    )
+                    if result.returncode != 0:
+                        return False
+            elif completion_signal.type == "path_exists" and any(c in "*?[" for c in target):
+                # Literal miss + glob syntax: the janitor expands the pattern.
+                if not _has_tracked_glob_candidate(worktree_path, target, git_command):
+                    return False
+            else:
+                # Literal miss with no path_exists glob pattern (or a missing
+                # file_contains target): committed content cannot satisfy it.
+                return False
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+def _has_tracked_glob_candidate(worktree_path: Path, pattern: str, git_command: list[str]) -> bool:
+    """Whether a glob pattern matches at least one tracked path in the worktree.
+
+    Mirrors the janitor's Python glob semantics (``*`` does not span ``/``,
+    unlike a Git pathspec), then confirms a match is tracked so a worktree-only
+    file never establishes delivery (#6606, #2760). A failed ``git ls-files``
+    probe is treated as no match (fail closed).
+    """
+    for candidate in glob.glob(str(worktree_path / pattern), recursive=True):
+        relative_path = str(Path(candidate).relative_to(worktree_path))
+        result = subprocess.run(
+            [*git_command, "ls-files", "-z", "--", relative_path],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        if result.stdout:
+            return True
+    return False
 
 
 def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
@@ -2961,6 +3259,12 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
     """
     if worktree_path is None:
         return []
+    status_ok, paths = _filtered_worktree_status(worktree_path)
+    return paths if status_ok else []
+
+
+def _filtered_worktree_status(worktree_path: Path) -> tuple[bool, list[str]]:
+    """Read status and drop incidental artifacts, preserving Git failure state."""
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -2972,9 +3276,9 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
             timeout=5,
         )
     except Exception:
-        return []
+        return False, []
     if result.returncode != 0:
-        return []
+        return False, []
     paths: list[str] = []
     records = iter(result.stdout.split("\0"))
     for record in records:
@@ -2988,8 +3292,49 @@ def _uncommitted_work_paths(worktree_path: Path | None) -> list[str]:
             continue
         if path in _ORCHESTRATOR_WORKTREE_FILES or path.startswith(_ORCHESTRATOR_WORKTREE_DIRS):
             continue
+        if path.startswith(_ADAPTER_WORKTREE_DIRS):
+            continue
+        if path == ".gitignore" and _gitignore_change_is_adapter_noise(worktree_path):
+            continue
         paths.append(path)
-    return paths
+    return True, paths
+
+
+def _gitignore_change_is_adapter_noise(worktree_path: Path) -> bool:
+    """True when the only lines added to ``.gitignore`` are aider's ``.aider*`` entries.
+
+    aider appends ``.aider*`` to the target repo's ``.gitignore`` on start-up
+    (``--gitignore``, default on). An agent that then exited cleanly with no
+    other change was failed as "deliverable written but never committed" on
+    that single path - nine times in a row on one central, 2026-10-17. A
+    ``.gitignore`` edit with any other added line is still the agent's work.
+    Unreadable diffs are not noise: the caller then counts the path.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD", "--unified=0", "--", ".gitignore"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    added = [
+        line[1:].strip() for line in result.stdout.splitlines() if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added and not result.stdout:
+        # Untracked .gitignore: the whole file is the addition.
+        try:
+            added = [ln.strip() for ln in (worktree_path / ".gitignore").read_text(encoding="utf-8").splitlines()]
+        except OSError:
+            return False
+    added = [ln for ln in added if ln]
+    return bool(added) and all(ln.startswith(_ADAPTER_GITIGNORE_PREFIX) for ln in added)
 
 
 def _has_git_commits_on_branch(worktree_path: Path, since_ts: float) -> bool:
@@ -3082,7 +3427,11 @@ def _refresh_heartbeat_from_signals(orch: Any, session: AgentSession, now: float
     """
     _hb_freshness_s = _IDLE_HEARTBEAT_THRESHOLD_S * 0.8
 
-    if session.pid and _is_process_alive(session.pid):
+    from bernstein.core.agents.spawner_core import _in_process_observer
+
+    observe_thread = _in_process_observer(getattr(orch, "_spawner", None), session)
+    alive = observe_thread() if observe_thread is not None else bool(session.pid and _is_process_alive(session.pid))
+    if alive:
         session.heartbeat_ts = now
         session.log_only_heartbeat_ticks = 0
         return

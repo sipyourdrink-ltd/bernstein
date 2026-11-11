@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
-from bernstein.adapters.plugin_sdk import AdapterCapability, AdapterPluginInfo
+from bernstein.adapters.plugin_sdk import AdapterPluginInfo
 
 logger = logging.getLogger(__name__)
 
@@ -29,21 +29,24 @@ class MistralAdapter(CLIAdapter):
     model_vendor = "mistral"
 
     def plugin_info(self) -> AdapterPluginInfo:
-        """Declare the sampling surface MistralAdapter genuinely wires.
+        """Declare the sampling surface MistralAdapter genuinely wires: none.
 
-        ``vibe`` accepts a ``--temperature`` flag. It has no documented
-        ``--top-p``/``--top-k``/``--max-tokens`` flag, so only the narrow
-        temperature capability is declared -
+        ``vibe`` has no sampling flag. This used to declare temperature on the
+        belief that it accepts ``--temperature``; vibe 2.26 answers that with
+        ``vibe: error: unrecognized arguments: --temperature`` and exits 1, so
+        a requested temperature passed the gate and then killed the spawn.
+        Its ``--max-tokens`` is a session-wide token budget, not the
+        per-response limit ``max_tokens`` means, so it is not declared either.
         :func:`bernstein.adapters.plugin_sdk.ensure_sampling_params_supported`
-        refuses a spawn requesting the others rather than silently
-        dropping them.
+        now refuses any sampling request for this adapter up front, with the
+        reason, instead of the CLI failing after launch.
         """
         return AdapterPluginInfo(
             name="mistral",
             version="0.1.0",
             author="bernstein",
             description="Mistral Vibe CLI adapter",
-            capabilities=(AdapterCapability.SUPPORTS_TEMPERATURE,),
+            capabilities=(),
         )
 
     def spawn(
@@ -91,11 +94,7 @@ class MistralAdapter(CLIAdapter):
         ]
 
         if mcp_config:
-            temperature = mcp_config.get("temperature")
-            if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
-                logger.debug("mistral adapter: wiring --temperature=%s onto argv", temperature)
-                cmd.extend(["--temperature", str(float(temperature))])
-            for dropped_key in ("top_p", "top_k", "max_tokens"):
+            for dropped_key in ("temperature", "top_p", "top_k", "max_tokens"):
                 if mcp_config.get(dropped_key) is not None:
                     logger.warning(
                         "mistral adapter: %s=%r requested but not wired (vibe CLI has no "

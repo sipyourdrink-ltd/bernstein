@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -10,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 
-from bernstein.adapters._contract import STRATEGY_MATRIX, AdapterStrategy, DangerousModeStrategy
+from bernstein.adapters._contract import STRATEGY_MATRIX, AdapterStrategy, ContractSpec, DangerousModeStrategy
 from bernstein.adapters.capability_profile import SandboxTier
 from bernstein.adapters.codex import (
     _BYPASS_SANDBOX_FLAG,
@@ -42,15 +44,21 @@ def _inner_cmd(full_cmd: list[str]) -> list[str]:
     return full_cmd[sep + 1 :]
 
 
-def _spawn_inner_cmd(adapter: CodexAdapter, tmp_path: Path, pid: int) -> list[str]:
+def _spawn_inner_cmd(
+    adapter: CodexAdapter,
+    tmp_path: Path,
+    pid: int,
+    model_config: ModelConfig | None = None,
+) -> list[str]:
     """Spawn with Popen mocked and return the codex argv the adapter built."""
     proc_mock = _make_popen_mock(pid=pid)
     with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
         adapter.spawn(
             prompt="hello",
             workdir=tmp_path,
-            model_config=ModelConfig(model="gpt-5.5", effort="high"),
+            model_config=model_config or ModelConfig(model="gpt-5.5", effort="high"),
             session_id=f"codex-sbx{pid}",
+            timeout_seconds=0,
         )
     return _inner_cmd(popen.call_args.args[0])
 
@@ -249,6 +257,297 @@ class TestCodexAdapterSpawn:
 
 
 # ---------------------------------------------------------------------------
+# Explicit reasoning effort (#6641)
+# ---------------------------------------------------------------------------
+
+
+class TestCodexEffort:
+    @pytest.mark.parametrize(
+        ("effort", "cli_effort"),
+        [
+            ("none", "none"),
+            ("minimal", "minimal"),
+            ("low", "low"),
+            ("medium", "medium"),
+            ("normal", "medium"),
+            ("high", "high"),
+            ("max", "xhigh"),
+            ("xhigh", "xhigh"),
+        ],
+    )
+    def test_supported_effort_preserves_exact_model(self, tmp_path: Path, effort: str, cli_effort: str) -> None:
+        model = "gateway/Exact-Model-v7"
+        inner = _spawn_inner_cmd(CodexAdapter(), tmp_path, 800, ModelConfig(model=model, effort=effort))
+        assert inner[inner.index("-m") + 1] == model
+        assert inner[inner.index("-c") + 1] == f"model_reasoning_effort={cli_effort}"
+        assert cli_effort in ContractSpec.load("codex").supported_efforts
+        assert inner.count("-c") == 1
+        assert inner[-1] == "hello"
+        record = json.loads((tmp_path / ".sdd/runtime/codex-sbx800.log").read_text().splitlines()[0])
+        assert record["requested_effort"] == effort
+        assert record["effective_cli_effort"] == cli_effort
+        assert record["effective_effort"] is None
+
+    @pytest.mark.parametrize(
+        ("role", "model", "scope", "priority", "complexity", "requested", "cli_effort"),
+        [
+            pytest.param("backend", "gpt-5.5", "medium", 2, "medium", "normal", "medium", id="backend-model"),
+            pytest.param("architect", None, "medium", 2, "medium", "max", "xhigh", id="architect"),
+            pytest.param("manager", None, "medium", 2, "medium", "max", "xhigh", id="manager"),
+            pytest.param("security", None, "medium", 2, "medium", "max", "xhigh", id="security"),
+            pytest.param("backend", None, "large", 2, "medium", "max", "xhigh", id="large-scope"),
+            pytest.param("backend", None, "medium", 1, "medium", "max", "xhigh", id="priority-one"),
+            pytest.param("backend", None, "medium", 2, "high", "high", "high", id="high-complexity"),
+        ],
+    )
+    def test_batch_default_effort_reaches_codex_spawn(
+        self,
+        tmp_path: Path,
+        role: str,
+        model: str | None,
+        scope: str,
+        priority: int,
+        complexity: str,
+        requested: str,
+        cli_effort: str,
+    ) -> None:
+        """Exercise real selector defaults through spawn; never supply Task.effort."""
+        from bernstein.core.models import Complexity, Scope, Task
+
+        from bernstein.core.agents.spawner_warm_pool import _select_batch_config
+
+        task = Task(
+            id="effort-batch-default",
+            title="Fix",
+            description="Fix",
+            role=role,
+            model=model,
+            scope=Scope(scope),
+            priority=priority,
+            complexity=Complexity(complexity),
+        )
+        assert task.effort is None
+        config = _select_batch_config([task], default_model="gpt-5.5")
+        assert config.effort == requested
+        inner = _spawn_inner_cmd(CodexAdapter(), tmp_path, 806, config)
+        assert inner[inner.index("-m") + 1] == "gpt-5.5"
+        assert inner[inner.index("-c") + 1] == f"model_reasoning_effort={cli_effort}"
+        assert inner.count("-c") == 1
+        assert config.effort == requested
+        record = json.loads((tmp_path / ".sdd/runtime/codex-sbx806.log").read_text().splitlines()[0])
+        assert record["requested_effort"] == requested
+        assert record["effective_cli_effort"] == cli_effort
+        assert record["effective_effort"] is None
+
+    def test_unset_effort_leaves_cli_default(self, tmp_path: Path) -> None:
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=_make_popen_mock(801)) as popen:
+            result = CodexAdapter().spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="o3", effort=""),
+                session_id="effort-default",
+                timeout_seconds=0,
+            )
+        assert "-c" not in _inner_cmd(popen.call_args.args[0])
+        record = json.loads(result.log_path.read_text().splitlines()[0])
+        assert record["requested_effort"] is None
+        assert record["effective_cli_effort"] is None
+        assert record["effective_effort"] is None
+
+    @pytest.mark.parametrize("effort", ["ultra", "HIGH", " high ", "high\nmodel=other"])
+    def test_unsupported_effort_rejected_before_worker_spawn(self, tmp_path: Path, effort: str) -> None:
+        with patch("bernstein.adapters.codex.subprocess.Popen") as popen:
+            with pytest.raises(ValueError, match="Unsupported Codex reasoning effort") as exc_info:
+                CodexAdapter().spawn(
+                    prompt="hello",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="o3", effort=effort),
+                    session_id="effort-invalid",
+                    timeout_seconds=0,
+                )
+        popen.assert_not_called()
+        assert repr(effort) in str(exc_info.value)
+        assert not (tmp_path / ".sdd" / "runtime" / "effort-invalid.log").exists()
+
+    def test_requested_effort_does_not_claim_effective_effort(self, tmp_path: Path) -> None:
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=_make_popen_mock(802)):
+            result = CodexAdapter().spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="o3", effort="high"),
+                session_id="effort-record",
+                timeout_seconds=0,
+            )
+        record = json.loads(result.log_path.read_text().splitlines()[0])
+        assert record == {
+            "type": "bernstein.codex.effort",
+            "requested_effort": "high",
+            "effective_cli_effort": "high",
+            "effective_effort": None,
+        }
+
+    def test_declared_effort_capability_conforms_to_spawn(self, tmp_path: Path) -> None:
+        from bernstein.adapters._contract import _capability_failures
+
+        spec = ContractSpec.load("codex")
+        assert spec.supported_efforts == ("none", "minimal", "low", "medium", "high", "xhigh")
+        assert "-c" in spec.required_flags
+        for effort in spec.supported_efforts:
+            inner = _spawn_inner_cmd(CodexAdapter(), tmp_path, 805, ModelConfig(model="o3", effort=effort))
+            assert inner[inner.index("-c") + 1] == f"model_reasoning_effort={effort}"
+        # Older contracts make no effort claim; no sibling CLI flags are inferred.
+        assert ContractSpec.load("gemini").supported_efforts == ()
+        help_text = " ".join((*spec.required_flags, *spec.required_subcommands))
+        assert _capability_failures(spec, help_text) == []
+        assert _capability_failures(spec, help_text.replace("-c ", "")) == [
+            "missing required flag '-c' in `codex --help`",
+        ]
+
+    def test_retry_and_provider_fallback_preserve_effort(self, tmp_path: Path) -> None:
+        from bernstein.core.models import Complexity, Scope, Task
+        from bernstein.core.router import ProviderConfig, Tier, TierAwareRouter
+
+        from bernstein.adapters.base import RateLimitError
+
+        router = TierAwareRouter()
+        for name in ("primary", "fallback"):
+            router.register_provider(
+                ProviderConfig(
+                    name=name,
+                    models={"gpt-5.5": ModelConfig(model="gpt-5.5", effort="low")},
+                    tier=Tier.STANDARD,
+                    cost_per_1k_tokens=0.003,
+                )
+            )
+        task = Task(
+            id="effort-retry",
+            title="Fix",
+            description="Fix",
+            role="backend",
+            scope=Scope.SMALL,
+            complexity=Complexity.LOW,
+            model="gpt-5.5",
+            effort="xhigh",
+        )
+        config = ModelConfig(model="gpt-5.5", effort="xhigh")
+        adapter = CodexAdapter()
+
+        with (
+            patch("bernstein.adapters.codex.subprocess.Popen", return_value=_make_popen_mock(803)) as popen,
+            patch.object(adapter, "_probe_fast_exit", side_effect=[RateLimitError("quota"), None, None]),
+        ):
+            decision = router.select_provider_for_task(task, base_config=config)
+            with pytest.raises(RateLimitError):
+                adapter.spawn(
+                    prompt="hello",
+                    workdir=tmp_path,
+                    model_config=decision.model_config,
+                    session_id="effort-first",
+                    timeout_seconds=0,
+                )
+            router.state.providers[decision.provider].available = False
+            fallback = router.select_provider_for_task(task, base_config=decision.model_config)
+            assert fallback.provider != decision.provider
+            for session_id in ("effort-retry", "effort-retry-again"):
+                adapter.spawn(
+                    prompt="hello",
+                    workdir=tmp_path,
+                    model_config=fallback.model_config,
+                    session_id=session_id,
+                    timeout_seconds=0,
+                )
+        assert popen.call_count == 3
+        for call in popen.call_args_list:
+            inner = _inner_cmd(call.args[0])
+            assert inner[inner.index("-c") + 1] == "model_reasoning_effort=xhigh"
+            assert inner[inner.index("-m") + 1] == "gpt-5.5"
+
+    def test_spawner_resume_preserves_effort(self, tmp_path: Path) -> None:
+        from bernstein.core.models import Complexity, Scope, Task
+        from bernstein.core.spawner import AgentSpawner
+
+        spawner = AgentSpawner(
+            adapter=CodexAdapter(),
+            templates_dir=tmp_path / "templates",
+            workdir=tmp_path,
+            default_model="gpt-5.5",
+            use_worktrees=False,
+        )
+        task = Task(
+            id="effort-resume",
+            title="Fix",
+            description="Fix",
+            role="backend",
+            scope=Scope.SMALL,
+            complexity=Complexity.LOW,
+            model="gpt-5.5",
+            effort="xhigh",
+        )
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=_make_popen_mock(804)) as popen:
+            session = spawner.spawn_for_resume([task], worktree_path=tmp_path, changed_files=[])
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert session.model_config.effort == "xhigh"
+        assert inner[inner.index("-c") + 1] == "model_reasoning_effort=xhigh"
+        assert inner[inner.index("-m") + 1] == "gpt-5.5"
+
+    @pytest.mark.parametrize(
+        ("effort", "cli_effort"),
+        [("high", "high"), ("xhigh", "xhigh"), ("max", "xhigh"), ("normal", "medium"), ("", "low")],
+    )
+    def test_executable_stub_observes_requested_setting(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        effort: str,
+        cli_effort: str,
+    ) -> None:
+        """Run the actual worker and a local CLI stub; never contact a provider."""
+        stub = tmp_path / "codex"
+        stub.write_text(
+            f"#!{sys.executable}\n"
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "args = sys.argv[1:]\n"
+            "setting = 'low'  # simulated account default\n"
+            "for i, arg in enumerate(args):\n"
+            "    if arg == '-c':\n"
+            "        key, setting = args[i + 1].split('=', 1)\n"
+            "        assert key == 'model_reasoning_effort'\n"
+            "        assert setting in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')\n"
+            "Path(args[args.index('-o') + 1]).write_text(json.dumps({\n"
+            "    'setting': setting, 'model': args[args.index('-m') + 1], 'argv': args}))\n"
+        )
+        stub.chmod(0o755)
+        # Isolate credentials and ensure only the local stub can resolve as codex.
+        with patch.dict(
+            os.environ, {"PATH": str(tmp_path) + os.pathsep + os.defpath, "HOME": str(tmp_path)}, clear=True
+        ):
+            monkeypatch.setattr("bernstein.adapters.codex._CODEX_AUTH_FILE", tmp_path / "missing-auth")
+            result = CodexAdapter().spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="Exact-Model-v7", effort=effort),
+                session_id="effort-executable",
+                timeout_seconds=0,
+            )
+        try:
+            assert result.proc.wait(timeout=15) == 0, result.log_path.read_text()
+            result.post_exit_thread.join(timeout=5)
+            assert not result.post_exit_thread.is_alive()
+            observed = json.loads((tmp_path / ".sdd/runtime/effort-executable.last-message.txt").read_text())
+            assert observed["setting"] == cli_effort
+            assert observed["model"] == "Exact-Model-v7"
+            record = json.loads(result.log_path.read_text().splitlines()[0])
+            assert record["requested_effort"] == (effort or None)
+            assert record["effective_cli_effort"] == (cli_effort if effort else None)
+            assert record["effective_effort"] is None
+        finally:
+            if result.proc.poll() is None:
+                result.proc.kill()
+                result.proc.wait(timeout=5)
+
+
+# ---------------------------------------------------------------------------
 # spawn() - env isolation
 # ---------------------------------------------------------------------------
 
@@ -416,7 +715,7 @@ class TestCodexWarningsAndFastExit:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="opus", effort="max"),
+                model_config=ModelConfig(model="opus", effort="high"),
                 session_id="codex-opus",
             )
         inner = _inner_cmd(popen.call_args.args[0])

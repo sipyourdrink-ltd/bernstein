@@ -184,8 +184,8 @@ stages:
           through the gateway). Remove shared database JOINs - replace with
           enrichment via service API. Ensure all monolith tests still pass.
         completion_signals:
-          - type: command
-            run: "python -m pytest tests/ -x -q --ignore=tests/gateway"
+          - type: test_passes
+            command: "python -m pytest tests/ -x -q --ignore=tests/gateway"
 
       - title: "Migrate and clean up shared DB tables"
         role: backend

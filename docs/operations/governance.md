@@ -190,6 +190,72 @@ is by misreading the same library result.
 Inventory topology is `bernstein govern inventory --render`.
 See [govern inventory --render](govern-inventory.md).
 
+## `govern audit --only duplication`: duplicate implementations in this install
+
+```
+bernstein govern audit --only duplication [--json]
+```
+
+These checks count how many implementations of one capability the installed
+`bernstein` package carries, and compare each count with the number there should
+be (#5105). They read the package's own source, not `--workdir`, because no
+project tree can change the answer. For the same reason they are **opt-in**: a
+default `govern audit` does not run them, so a clean workspace stays green.
+`--list` shows them with the others.
+
+| Check | Expected | Today |
+|---|---|---|
+| `duplication:inline-canonical-bytes-sites` | 1 | measured: places that build canonical signing bytes inline instead of through one helper (#5094) |
+| `duplication:private-hmac-key-loaders` | 0 | measured: private `_load_hmac_key` wrappers |
+| `duplication:receipt-verify-kinds` | 1 | `not_measurable` until #5096 |
+| `duplication:verification-result-shapes` | 1 | `not_measurable` until #5099 |
+| `duplication:registry-duplicate-ids` | 0 | `not_measurable` until #5104 |
+| `duplication:orphan-modules` | 0 | `not_measurable` until #5100 |
+
+A count over the expected one is `fail`, with the count and the first offending
+`path:line` locations in the finding. A count within it is `pass`. A check whose
+subject does not exist yet is `not_measurable`, with the issue that would make it
+measurable, and is never reported as a pass. The findings carry no score or
+grade. Two runs over one install produce byte-identical `--json` output.
+
+## Audit failure sentinel
+
+Use the single canonical sentinel to exercise a harmless, labelled failure:
+
+```bash
+BERNSTEIN_GOVERN_AUDIT_SENTINEL=1 bernstein govern audit --workdir . --json
+```
+
+Only the exact value `1` activates it. The named check `sentinel:failure`
+reports `verdict: measured`, `passed: false`, evidence of the environment
+switch, and the fixed reason `Injected governance audit failure (selftest sentinel).`
+Other checks still run normally. The command exits `1` for the injected failure.
+The check is listed by `--list`, but is omitted from default runs when inactive.
+`--only sentinel` can inspect its inactive, passing state explicitly.
+
+An active sentinel always prints its name and check ID to stderr, including
+when `--only` or `--skip` excludes the check; JSON on stdout remains parseable.
+When the failure is raised, the run is persisted as one chain-anchored
+`AuditReport` under `.sdd/lineage/govern-audit/reports/` before one notification
+event is dispatched. The existing notification bridge handles delivery, retries
+and sink filtering: enable `notifications` in `bernstein.yaml` and subscribe a
+sink to `synthetic` events with severity `error` (or leave those filters unset).
+The event includes the sentinel name, fixed reason, check ID and journal anchor.
+Repeated active runs within one second may produce identical report bytes;
+each run has its own journal anchor, verifies against that anchor, and dispatches
+its own notification event.
+Without configured, enabled sinks, the run is still recorded but no delivery is
+claimed. Excluding the check produces neither its journal entry nor its event.
+Ordinary audits' recording and notification behaviour is unchanged.
+
+An environment variable is canonical because it can be scoped to one command
+and leaves no sentinel file behind. If exported in a shell or CI environment,
+clear it with `unset BERNSTEIN_GOVERN_AUDIT_SENTINEL`. The selftest in
+`tests/unit/cli/commands/test_govern_audit_sentinel.py` sets and clears it,
+verifies the real journal and a local recording notification sink for one or
+two active runs with identical report bytes, then runs again with the sentinel
+cleared to confirm there is no new injection, journal entry or notification.
+
 ## Declared discovery probes
 
 Governance collectors can load probe declarations from a directory through

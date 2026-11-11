@@ -9,6 +9,7 @@ the rest of the check suite.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from bernstein.core.checks.contract import Finding, Verdict
@@ -41,7 +42,7 @@ class CheckRegistry:
 
         Raises:
             TypeError: If ``check`` does not conform to the :class:`Check` protocol or ``check_id`` is not a string.
-            ValueError: If ``check.check_id`` is invalid, not namespaced, or already registered.
+            ValueError: If ``check.check_id`` is invalid (neither namespaced nor INS-nnn), or already registered.
         """
         if isinstance(check, type):  # type: ignore[reportUnnecessaryIsInstance]
             raise TypeError(f"Expected Check instance, got class '{check.__name__}'")
@@ -54,10 +55,9 @@ class CheckRegistry:
         if not check_id or not check_id.strip():
             raise ValueError("check_id must be a non-empty string")
 
-        if ":" not in check_id or check_id.startswith(":") or check_id.endswith(":"):
-            raise ValueError(
-                f"check_id '{check_id}' must be namespaced with a colon delimiter (e.g. 'namespace:check_name')"
-            )
+        installation_id = re.fullmatch(r"INS-\d{3}", check_id) is not None
+        if not installation_id and (":" not in check_id or check_id.startswith(":") or check_id.endswith(":")):
+            raise ValueError(f"check_id '{check_id}' must be namespaced with a colon delimiter or use INS-nnn")
 
         if check_id in self._checks:
             raise ValueError(f"Check with id '{check_id}' is already registered")
@@ -80,8 +80,16 @@ class CheckRegistry:
         self,
         only_areas: Sequence[str] | None = None,
         skip_ids: Sequence[str] | None = None,
+        *,
+        include_opt_in: bool = False,
     ) -> Iterator[Check]:
-        """Iterate over registered checks in registration order with optional filtering."""
+        """Iterate over registered checks in registration order with optional filtering.
+
+        A check with a truthy ``opt_in`` attribute runs only when *only_areas*
+        is given (and names its area), or when *include_opt_in* asks for every
+        check, as ``--list`` does. Such a check answers a question the audited
+        workspace cannot change, so it must not turn a clean workspace's audit red.
+        """
         only_set = {a.lower() for a in only_areas} if only_areas else None
         skip_set = {s.lower() for s in skip_ids} if skip_ids else None
 
@@ -94,6 +102,9 @@ class CheckRegistry:
             if only_set and area.lower() not in only_set:
                 continue
 
+            if only_set is None and not include_opt_in and bool(getattr(check, "opt_in", False)):
+                continue
+
             yield check
 
     def list_checks(
@@ -101,8 +112,8 @@ class CheckRegistry:
         only_areas: Sequence[str] | None = None,
         skip_ids: Sequence[str] | None = None,
     ) -> list[Check]:
-        """Return a list of registered checks matching optional filters."""
-        return list(self.iter_checks(only_areas=only_areas, skip_ids=skip_ids))
+        """Return a list of registered checks matching optional filters, opt-in checks included."""
+        return list(self.iter_checks(only_areas=only_areas, skip_ids=skip_ids, include_opt_in=True))
 
     def run_all(
         self,
@@ -153,13 +164,17 @@ _DEFAULT_REGISTRY = DEFAULT_REGISTRY
 def populate_default_checks(registry: CheckRegistry | None = None) -> None:
     """Populate built-in check adapters into the given or default registry."""
     from bernstein.core.checks.adapters import (
+        DUPLICATION_CHECK_NAMES,
+        AuditSentinelCheck,
         ComplianceEncryptionAtRestAdapter,
         DoctorComplianceAdapter,
+        DuplicationAuditAdapter,
     )
 
     reg = DEFAULT_REGISTRY if registry is None else registry
-    for adapter_cls in (DoctorComplianceAdapter, ComplianceEncryptionAtRestAdapter):
-        adapter = adapter_cls()
+    adapters: list[Check] = [DoctorComplianceAdapter(), ComplianceEncryptionAtRestAdapter(), AuditSentinelCheck()]
+    adapters.extend(DuplicationAuditAdapter(name) for name in DUPLICATION_CHECK_NAMES)
+    for adapter in adapters:
         if reg.get_check(adapter.check_id) is None:
             reg.register(adapter)
 

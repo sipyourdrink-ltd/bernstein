@@ -11,13 +11,14 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
+from bernstein.core.tasks.models import CompletionSignalType, DispatchTier
 from bernstein.core.tasks.task_store import ProgressEntry
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
 
-_SIGNAL_TYPE = Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
+_SIGNAL_TYPE = CompletionSignalType
 
 
 class CompletionSignalSchema(BaseModel):
@@ -136,6 +137,8 @@ def _ensure_relative_owned_files(value: list[str]) -> list[str]:
 class TaskCreate(BaseModel):
     """Body for POST /tasks."""
 
+    run_id: str | None = Field(default=None, pattern=r"^admin-[a-f0-9]{32}$")
+
     # bounded string lengths prevent trivial memory exhaustion.
     id: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
     title: str = Field(max_length=_MAX_TITLE_LEN)
@@ -143,6 +146,7 @@ class TaskCreate(BaseModel):
     role: str = Field(default="auto", max_length=_MAX_SHORT_STR_LEN)
     tenant_id: str = Field(default="default", max_length=_MAX_SHORT_STR_LEN)
     priority: int = 2
+    dispatch_tier: DispatchTier = DispatchTier.LOCAL
     scope: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
     complexity: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
     eu_ai_act_risk: str = Field(default="minimal", max_length=_MAX_SHORT_STR_LEN)
@@ -286,6 +290,7 @@ class TaskResponse(BaseModel):
     role: str
     tenant_id: str
     priority: int
+    dispatch_tier: DispatchTier = DispatchTier.LOCAL
     scope: str
     complexity: str
     eu_ai_act_risk: str
@@ -438,11 +443,37 @@ class TaskBlockRequest(BaseModel):
 
 
 class TaskPatchRequest(BaseModel):
-    """Body for PATCH /tasks/{task_id} - manager corrections."""
+    """Body for PATCH /tasks/{task_id} - manager corrections.
+
+    ``meta_messages``, ``cli``, ``escalation_ladder_step`` and
+    ``escalation_ladder_attempts`` carry an evidence-gated escalation hop
+    (issue #4855): the context line, the step's adapter, and the ladder
+    position. ``model`` is the step's model id, unmodified.
+
+    There is deliberately no free-form ``metadata`` here. The ladder's
+    evidence is resolved from the audit chain and its spend from the cost
+    ledger, so no PATCH body can fabricate either. The route restricts
+    ``cli`` and both ladder-position fields to operator credentials and
+    unscoped run-root identities.
+    """
 
     role: str | None = None
     priority: int | None = None
     model: str | None = None
+    cli: str | None = Field(default=None, max_length=_MAX_SHORT_STR_LEN)
+    meta_messages: list[str] | None = Field(default=None, max_length=_MAX_LIST_LEN)
+    escalation_ladder_step: int | None = Field(default=None, ge=0, le=_MAX_LIST_LEN)
+    escalation_ladder_attempts: int | None = Field(default=None, ge=1, le=_MAX_LIST_LEN)
+
+    @field_validator("meta_messages")
+    @classmethod
+    def _cap_meta_messages(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        for msg in value:
+            if len(msg) > _MAX_META_MESSAGE_LEN:
+                raise ValueError(f"meta_messages entry exceeds {_MAX_META_MESSAGE_LEN} chars")
+        return value
 
 
 class TaskProgressRequest(BaseModel):
@@ -946,6 +977,7 @@ class TaskCountsResponse(BaseModel):
     blocked_by_failed_dep: int = 0
     refused: int = 0
     suspended: int = 0
+    stop_req: int = 0
     total: int = 0
 
 

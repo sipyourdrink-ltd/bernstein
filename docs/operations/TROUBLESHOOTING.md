@@ -362,6 +362,12 @@ grep mcp_servers bernstein.yaml           # project-level overrides
 
 **Resolution:** Declare the server in `bernstein.yaml` `mcp_servers`, or in `~/.claude/mcp.json`. Both are read by bernstein and passed to every spawned `claude` agent.
 
+**Symptom:** A spawned `pi` agent no longer has a tool that a pi extension gives you interactively, such as an MCP server added through an extension.
+
+**Cause:** Spawned `pi` agents run with `--no-extensions`. Pi has no MCP of its own; MCP servers and other tools reach it as extensions, which it discovers in `~/.pi/agent/extensions/` and in the repository's `.pi/extensions/`. Without the flag every spawned agent loaded the operator's personal extensions (#5965).
+
+**Resolution:** None needed for a run bernstein governs: bernstein passes pi no extension of its own. Use an adapter that takes `mcp_config` (for example `claude`) when a task needs an MCP server.
+
 ---
 
 ## 12. Agent Timeout (Watchdog Kill)
