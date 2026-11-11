@@ -66,7 +66,8 @@ QUEUE_REPORTING_WEB_LANES = {
         "Answers whether a pull request has the review the charter asks for. It runs on "
         "every pull request whatever it touches, `web/**` included, and on merge_group, so "
         "the answer is re-checked against the queued state rather than only against the "
-        "branch. It is required through an organization ruleset, by the context name it "
+        "branch. It is required through the repository ruleset `main-merge-queue`, by the "
+        "context name it "
         "publishes, `quorum`, so the verdict can be answered again after the objection "
         "window closes without waiting for a new pull-request event."
     ),

@@ -131,6 +131,25 @@ class FileUpgradeExecutor:
             RollbackError: The files this proposal changed could not be put
                 back, or the record needed to put them back is gone.
         """
+        restored: list[str] = []
+        try:
+            return self._rollback_upgrade(proposal, restored)
+        except (RollbackError, OSError) as exc:
+            failure = (
+                exc
+                if isinstance(exc, RollbackError)
+                else RollbackError(f"proposal {proposal.id} rollback failed after restoring {restored}: {exc}")
+            )
+            try:
+                self._write_rollback_receipt(proposal, restored=restored, note="rollback failed", failure=failure)
+            except (RollbackError, OSError) as record_error:
+                raise RollbackError(f"{failure}; failure receipt could not be recorded: {record_error}") from exc
+            if failure is exc:
+                raise
+            raise failure from exc
+
+    def _rollback_upgrade(self, proposal: UpgradeProposal, restored: list[str]) -> bool:
+        """Perform the restore while retaining completed files for failure reporting."""
         manifest = self._backup_manifest_path(proposal.storage_key)
         if not manifest.exists():
             self._refuse_legacy_backup(proposal)
@@ -148,7 +167,6 @@ class FileUpgradeExecutor:
 
         recorded = self._read_backup_manifest(manifest)
         wanted = self._files_to_restore(proposal, recorded)
-        restored: list[str] = []
         try:
             for filename in wanted:
                 backup_path = self._contained(self.upgrades_dir, recorded[filename], proposal.id)
@@ -356,7 +374,14 @@ class FileUpgradeExecutor:
         legacy = self._legacy_manifest_path(proposal)
         return legacy is not None and legacy.exists()
 
-    def _write_rollback_receipt(self, proposal: UpgradeProposal, *, restored: list[str], note: str) -> Path:
+    def _write_rollback_receipt(
+        self,
+        proposal: UpgradeProposal,
+        *,
+        restored: list[str],
+        note: str,
+        failure: RollbackError | None = None,
+    ) -> Path:
         """Persist a record of what this rollback did, with a checksum over it.
 
         The same shape the verdict receipt uses (``change_contract_replay``):
@@ -379,6 +404,8 @@ class FileUpgradeExecutor:
             "note": note,
             "rolled_back_at": time.time(),
         }
+        if failure is not None:
+            body.update(status="failed", error_type=type(failure).__name__, error=str(failure))
         canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
         receipt = body | {"receipt_hash": hashlib.sha256(canonical).hexdigest()}
         segment = self._path_segment(proposal.id)

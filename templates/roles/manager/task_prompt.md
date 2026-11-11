@@ -41,7 +41,7 @@ any non-2xx response as a failure to fix and retry, not as a reason to give up.
 
 For each task, call `run_command` with this string (adapt title/role/description):
 
-    TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST http://127.0.0.1:8052/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"title": "...", "role": "backend", "description": "...", "priority": 2, "scope": "medium", "complexity": "medium", "owned_files": [...], "completion_signals": [...]}'
+    TOKEN=$(cat <absolute-token-path-from-auth-section>) && curl -sS -w '\n%{http_code}' -X POST {{SERVER_URL}}/tasks -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"title": "...", "role": "backend", "description": "...", "priority": 2, "scope": "medium", "complexity": "medium", "owned_files": [...], "completion_signals": [...]}'
 
 {{INCLUDE completion_contract}}
 

@@ -7,9 +7,10 @@ import time
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.security.auth_rate_limiter import check_auth_rate_limit, record_auth_result
 from bernstein.core.server.dashboard_auth import (
     ANONYMOUS_PRINCIPAL,
     PASSWORD_PRINCIPAL,
@@ -91,7 +92,7 @@ async def dashboard_auth_status(request: Request) -> JSONResponse:
     )
 
 
-@router.post("/dashboard/auth/login")
+@router.post("/dashboard/auth/login", dependencies=[Depends(check_auth_rate_limit)])
 async def dashboard_auth_login(request: Request) -> JSONResponse:
     """Open a dashboard session from a password or a scoped token.
 
@@ -128,6 +129,7 @@ async def dashboard_auth_login(request: Request) -> JSONResponse:
         scope=scope,
         action=ACTION_LOGIN,
     )
+    record_auth_result(request, success=verdict == "allow")
     if verdict != "allow":
         return JSONResponse(status_code=401, content={"detail": "Invalid dashboard credentials"})
 
