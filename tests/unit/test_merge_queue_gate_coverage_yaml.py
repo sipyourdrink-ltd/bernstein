@@ -100,6 +100,11 @@ ADVISORY_BY_DECISION = {
         "lane deliberately never blocks a pull request (#5157)."
     ),
     "trufflehog.yml": ("Secret scanning. Advisory as configured today; nothing about #4028 changed it."),
+    "codeql.yml": (
+        "Code scanning on every pull request into main. Findings land as code-scanning alerts and "
+        "the trunk push run analyses the merged commit again; branch protection does not require "
+        "the lane, so it reports rather than gates."
+    ),
     "pr-observability-summary.yml": (
         "Posts a summary on the pull request behind a `deep-review` label. It reports, it "
         "does not gate, so requiring it is not the missing piece."

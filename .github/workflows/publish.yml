@@ -276,6 +276,10 @@ jobs:
       # below (a release created with GITHUB_TOKEN does not emit
       # `release: published`, so none of them start on their own).
       actions: write
+      # id-token and attestations: the release assets get their own Sigstore
+      # bundle, attached to the release next to the files it covers.
+      id-token: write
+      attestations: write
     steps:
       - name: Harden runner (audit mode)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -289,6 +293,22 @@ jobs:
         with:
           name: dist
           path: dist/
+      - name: Attest release assets (Sigstore)
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/*"
+      # The bundle is staged outside dist/ so no `dist/*` glob (the attestation
+      # above, any later upload) ever treats it as a distribution file. It is
+      # passed to the release explicitly, in the step below.
+      - name: Stage Sigstore bundle for the release
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-signatures
+          cp "$BUNDLE" "release-signatures/bernstein-${RELEASE_TAG#v}.sigstore.json"
+          ls -l release-signatures
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -316,9 +336,9 @@ jobs:
             -f tag_name="$TAG" --jq .body >> "$BODY"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
+            gh release upload "$TAG" dist/* release-signatures/* --clobber
           else
-            gh release create "$TAG" dist/* \
+            gh release create "$TAG" dist/* release-signatures/* \
               --title "$TAG" \
               --notes-file "$BODY"
           fi
