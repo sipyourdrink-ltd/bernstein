@@ -606,11 +606,13 @@ in `.sdd/metrics/quality_gates.jsonl`. Both survive removal of the agent worktre
 the example no longer writes a separate `custom_gates.jsonl` there. Calling
 `run()` directly only returns a result; use the runner to persist it.
 
-Old configurations using
-`plugins: [examples.plugins.quality_gate_plugin:SecurityScanGate]` now emit a
-migration warning and do not register the object as a hook plugin. Move the
-file to `.bernstein/gates/` (or use `bernstein.gates`) and configure the pipeline
-step as shown below. The former `workdir=` constructor argument is unnecessary:
+If the example module is importable, an old
+`plugins: [examples.plugins.quality_gate_plugin:SecurityScanGate]` entry emits
+a migration warning. The example is distributed in the repository. In a
+wheel-only installation, remove the old entry and copy the example from the
+repository. Put the file in `.bernstein/gates/` (or use `bernstein.gates`) and
+configure the pipeline step as shown below. Plugins that implement Bernstein
+hooks can still register those hooks through `plugins:`. The former `workdir=` constructor argument is unnecessary:
 scan commands use the runner-provided task directory, and the runner owns storage.
 
 ```python

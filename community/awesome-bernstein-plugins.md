@@ -178,7 +178,7 @@ export BERNSTEIN_SECURITY_CMD="semgrep --config=auto . --quiet"
 export BERNSTEIN_SECURITY_CMD="trivy fs . --exit-code 1 --severity HIGH,CRITICAL"
 ```
 
-**Note**: `SecurityScanGate` returns `blocked=False` so the pipeline controls blocking. Set `required: false` on the `security_scan_cmd` step in `quality_gates.pipeline` for an advisory scan. The runner keeps its reports and metrics outside the temporary agent worktree. Registering this gate under `plugins:` emits a migration warning; use `.bernstein/gates/` or `bernstein.gates` and the pipeline instead.
+**Note**: `SecurityScanGate` returns `blocked=False` so the pipeline controls blocking. Set `required: false` on the `security_scan_cmd` step in `quality_gates.pipeline` for an advisory scan. The runner keeps its reports and metrics outside the temporary agent worktree. When this example is importable, registering it under `plugins:` emits a migration warning; use `.bernstein/gates/` or `bernstein.gates` and the pipeline instead.
 
 ### Community
 

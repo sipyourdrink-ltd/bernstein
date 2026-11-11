@@ -811,3 +811,25 @@ def test_old_quality_gate_config_warns_and_does_not_register(
     resolution = next(item for item in pm.resolutions if item.declared == spec)
     assert resolution.loaded is False
     assert "security_scan_cmd" in resolution.failure
+
+
+def test_config_gate_with_hook_implementation_keeps_its_hook(
+    pm: PluginManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    from examples.plugins import quality_gate_plugin
+
+    calls: list[str] = []
+
+    class HybridGate(quality_gate_plugin.SecurityScanGate):
+        @hookimpl
+        def on_task_completed(self, task_id: str) -> None:
+            calls.append(task_id)
+
+    monkeypatch.setattr(quality_gate_plugin, "HybridGate", HybridGate, raising=False)
+    spec = "examples.plugins.quality_gate_plugin:HybridGate"
+    pm.discover_config_plugins([spec])
+    pm.fire_task_completed(task_id="t-1", role="qa", result_summary="passed")
+
+    assert spec in pm.registered_names
+    assert calls == ["t-1"]

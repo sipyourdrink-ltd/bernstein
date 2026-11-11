@@ -3,7 +3,7 @@
 Copy `{{ cookiecutter.gate_name }}.py` into the project's `.bernstein/gates/`
 directory, or register `{{ cookiecutter.gate_class }}` under the
 `bernstein.gates` entry-point group. Do not list it under `plugins:`; that
-configuration is for hook plugins and warns if given a `GatePlugin`.
+configuration is for hook plugins and warns when given a gate without hook implementations.
 
 Use a Bernstein build containing the quality-gate template fix in PR #6964.
 Bernstein 3.24.1 and earlier cannot load this template's dataclass with deferred

@@ -1300,7 +1300,9 @@ class PluginManager:
                     obj = mod
 
                 plugin = obj() if isinstance(obj, type) else obj
-                if isinstance(plugin, GatePlugin):
+                if isinstance(plugin, GatePlugin) and not any(
+                    self._pm.parse_hookimpl_opts(plugin, attr) is not None for attr in dir(plugin)
+                ):
                     raise ValueError(
                         "GatePlugin cannot run under plugins:; move its file to .bernstein/gates/ "
                         "(or register it under bernstein.gates) and add "
