@@ -119,6 +119,9 @@ uv run pyright src/
 4. Commit with a clear message
 5. Open a PR against `main`
 
+New functionality comes with tests in the same pull request. CI runs them,
+together with the rest of the suite, through `scripts/run_tests.py`.
+
 Every change lands through the merge queue with the approvals the
 [review charter](docs/governance/review-charter.md) requires: two, from
 committers who are not the author, at least one of them a core reviewer
