@@ -76,6 +76,45 @@ promotion log.
 - `.sdd/graduation/<session_id>.json` — current stage and per-stage metrics for one session.
 - `.sdd/metrics/graduation.jsonl` — append-only event log (`task_event` and `promotion` entries).
 
+## Read-only sealed-journal observations
+
+`derive_graduation_observations` in `core.quality.graduation` accepts a
+`JournalLoadResult`, a `GraduationEvidenceWindow` and a declared stage. The
+window names one journal, an **independently obtained, trusted `JournalSeal`**,
+and inclusive first/last event indices. The caller chooses the window and
+stage; neither stage attribution nor seal provenance is inferred. The
+`derive_graduation_observations_from_path` wrapper reads the journal once and
+passes that same snapshot to verification and projection.
+
+Before selecting the window, the projection verifies the complete journal
+chain and matches its head and event count to the supplied seal. Tampering,
+discarded rows, complete-row truncation, missing/mismatched seals and invalid
+ranges refuse with the requested window in the error. A surviving valid
+prefix cannot hide a damaged tail. Build the seal from an independent finished
+journal commitment, never from the candidate rows being verified.
+
+The result reports **observed event rows**, rather than distinct tasks:
+`task_completed`, `task_failed`, and the trailing streak of explicit
+`task_failed` rows since the last `task_completed`. Each count cites absolute
+event indices; zero counts carry an empty range. Nonterminal and unknown
+events remain listed as `unsupported_event_types`. In particular,
+`task_verification_failed` is an attempt rejection and is never relabeled as
+a terminal failure. Existing orchestration records verification rejections;
+this projection does not add terminal-failure producers or claim complete
+outcome coverage.
+
+`canonical_bytes()` includes the rule version, declared stage and sealed
+window, and is independent of the current directory and clock.
+`compare_stored(StageMetrics)` reports numeric matches/differences against
+the mutable completion, failure and streak counters. Those comparisons are
+diagnostic: every result states `stage_metrics_parity: not_established` and
+lists unsupported metrics. Equal numbers do not establish stage attribution
+or complete outcome coverage. Journal envelope timestamps are unauthenticated;
+elapsed hours are therefore unsupported. Costs and durations are unsupported
+too; summing the existing completion `cost_usd` field would sum cumulative
+run spend. This partial implementation of #5475 does not produce promotion
+receipts or change the evaluator, HTTP routes or stage-change authority.
+
 ## Limitations
 
 - No CLI wraps these endpoints; an operator (or an external dashboard)

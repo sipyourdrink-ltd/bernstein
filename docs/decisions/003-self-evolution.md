@@ -187,9 +187,12 @@ graph LR
    **Rollback semantics.** A rollback is driven by the proposal it is given and
    by a record written to disk at apply time, never by state held in the
    applying process. `FileUpgradeExecutor` copies each file aside under
-   `upgrades/backups/<proposal id>/` and writes a `manifest.json` beside it, so
-   `rollback_upgrade(proposal)` works in a process that did not perform the
-   apply — after a restart, or from a different command.
+   `upgrades/backups/<storage key>/`, where the storage key is the proposal id
+   plus a digest of its identity fields (so two runs' `UPG-0001` never share a
+   directory), and writes a `manifest.json` beside it. `rollback_upgrade(proposal)`
+   therefore works in a process that did not perform the apply — after a
+   restart, or from a different command — given the same proposal object, since
+   the key is derived from it rather than from the id alone.
 
    It has exactly three outcomes, and the distinction between the first two
    matters:
@@ -212,6 +215,16 @@ graph LR
    canonical JSON — the same shape the change-contract verdict receipt uses. The
    checksum is keyless: it catches accidental corruption, not deliberate edits,
    since anyone who changes the body can recompute it.
+
+   Failed attempts use the same receipt directory, proposal identity, and
+   checksum, adding `status: failed`, `error_type`, and `error`. Their
+   `restored_files` lists only copies completed before the failure; the backup
+   manifest remains available for recovery. This includes missing or invalid
+   manifests, missing backups, restore I/O failures, and failures recording or
+   retiring a completed restore. If retirement fails after a success receipt
+   was written, a separate failure receipt follows it. Existing success receipt
+   fields are unchanged. If the failure receipt itself cannot be persisted,
+   `RollbackError` names both failures; no receipt is claimed to exist.
 
    No category has a sink that writes backups today, so in a shipped build the
    manifest branch is not reached and every rollback is the "nothing was

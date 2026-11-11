@@ -23,7 +23,7 @@ two differ, this page says so.
 | Target | Shipped | Wired | Open | Not planned |
 |---|---|---|---|---|
 | SCIM (RFC 7643/7644) | `adapters/directory/scim.py` · `tests/unit/adapters/test_directory_scim.py` — turns standard provisioning resources into `PrincipalLedger` calls | **no** — `adapters/directory/__init__.py` imports it, and nothing imports that package | — | — |
-| Generic OIDC | `core/security/sso_oidc.py` · `tests/unit/test_sso_oidc.py` — Authorization Code flow, `.well-known` discovery, PKCE, refresh, group→role mapping | **no** — named in `rbac.py` prose only, imported nowhere | — | — |
+| Generic OIDC | `core/security/sso_oidc.py` · `tests/unit/test_sso_oidc.py` — Authorization Code flow, `.well-known` discovery, PKCE, refresh, group→role mapping. The live login flow is `core/routes/auth.py` (`/auth`, registered in `core/server/server_app.py`) over `AuthService` in `core/security/auth.py` | **no** for `sso_oidc.py` — named in `rbac.py` prose only, imported nowhere. The live flow is wired when OIDC is enabled in the `BERNSTEIN_AUTH_*` settings | — | — |
 | Any directory, as a protocol | `core/security/directory_bridge.py` · `tests/unit/test_directory_bridge.py` — resolve a principal, list group memberships, report a revocation | **no** — one `TYPE_CHECKING` import from `core/security/directory_registry.py`, which is itself unreachable | — | — |
 | Okta | via the OIDC and directory-bridge surfaces above | — | [#5018](https://github.com/sipyourdrink-ltd/bernstein/issues/5018) — bridge agent principals to Okta | — |
 | Microsoft Entra ID | via the OIDC and directory-bridge surfaces above | — | [#5018](https://github.com/sipyourdrink-ltd/bernstein/issues/5018) | — |
@@ -39,7 +39,7 @@ two differ, this page says so.
 | Broker in front of a store | `core/security/secrets_broker.py` · `tests/unit/security/test_secrets_broker.py` | yes — imported by `core/security/secrets.py` | [#5021](https://github.com/sipyourdrink-ltd/bernstein/issues/5021) | — |
 | Azure Key Vault | — | — | — | No module and no issue. `vault_injector.py`'s three injectors are the shape a fourth would take. |
 
-> **The directory, SSO, policy-engine and secret-injection modules are not
+> **The directory, `sso_oidc`, policy-engine and secret-injection modules are not
 > wired.** `vault_injector`, `sso_oidc`, `external_policy_hook`,
 > `directory_bridge` and the SCIM adapter all ship with tests and none of them
 > is reached from a running system. The only reference to `vault_injector`

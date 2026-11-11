@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from bernstein.core.auth_rate_limiter import (
@@ -13,7 +15,9 @@ from bernstein.core.auth_rate_limiter import (
 )
 from bernstein.core.seed import RateLimitBucketConfig, RateLimitConfig, SeedConfig
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from httpx import ASGITransport, AsyncClient
+from starlette.types import Message, Receive, Scope, Send
 
 from bernstein.core.server import create_app
 
@@ -57,10 +61,10 @@ class TestAuthRateLimiter:
         limiter = AuthRateLimiter(max_requests=5, window_seconds=60, cleanup_every=1)
         limiter.check("old-ip")
         # Manually expire the timestamps
-        limiter._hits["old-ip"] = [0.0]
+        limiter._hits[("auth", "old-ip")] = [0.0]
         # Next check triggers cleanup
         limiter.check("new-ip")
-        assert "old-ip" not in limiter._hits
+        assert ("auth", "old-ip") not in limiter._hits
 
     def test_retry_after_is_positive(self) -> None:
         limiter = AuthRateLimiter(max_requests=1, window_seconds=60)
@@ -68,6 +72,59 @@ class TestAuthRateLimiter:
         retry = limiter.check("5.5.5.5")
         assert retry is not None
         assert retry > 0
+
+    def test_failure_backoff_is_capped_and_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        limiter = AuthRateLimiter(cleanup_every=1)
+        for index in range(15):
+            delay = limiter.record_failure("client")
+            assert delay == min(2**index, 900)
+            assert limiter.check("client") == delay
+            now[0] += delay
+        now[0] += 900
+        assert limiter.check("client") is None
+        assert limiter.record_failure("client") == 1
+
+    def test_success_retains_attempt_count(self) -> None:
+        limiter = AuthRateLimiter(max_requests=1)
+        assert limiter.check("client") is None
+        limiter.record_success("client")
+        assert limiter.check("client") is not None
+
+    def test_cleanup_preserves_configured_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        limiter = AuthRateLimiter(cleanup_every=1)
+        assert limiter.check("client", window_seconds=120, max_requests=1) is None
+        now[0] += 61
+        assert limiter.check("other") is None
+        assert limiter.check("client", window_seconds=120, max_requests=1) == 120
+
+    def test_cleanup_drops_idle_client_metadata(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        limiter = AuthRateLimiter(max_requests=1, cleanup_every=1)
+        assert limiter.check("client") is None
+        assert limiter.check("client") == 60
+        now[0] += 60
+        assert limiter.check("client") is None
+        assert limiter.check("client") == 120
+        now[0] += 61
+        assert limiter.check("other") is None
+        assert limiter.check("client") == 59
+        now[0] += 960
+        assert limiter.check("other") is None
+        key = ("auth", "client")
+        assert key not in limiter._hits
+        assert key not in limiter._backoff
+        assert key not in limiter._windows
 
 
 class TestAuthRateLimiterHTTP:
@@ -78,35 +135,28 @@ class TestAuthRateLimiterHTTP:
         from fastapi import APIRouter, Depends, FastAPI
         from starlette.testclient import TestClient
 
-        # Patch the module-level limiter with a low-limit one for testing
-        import bernstein.core.security.auth_rate_limiter as mod
+        app = FastAPI()
+        app.state.auth_rate_limiter = AuthRateLimiter(max_requests=3, window_seconds=60)
+        rt = APIRouter(
+            prefix="/auth",
+            dependencies=[Depends(check_auth_rate_limit)],
+        )
 
-        original = mod._auth_limiter
-        mod._auth_limiter = AuthRateLimiter(max_requests=3, window_seconds=60)
-        try:
-            app = FastAPI()
-            rt = APIRouter(
-                prefix="/auth",
-                dependencies=[Depends(check_auth_rate_limit)],
-            )
+        @rt.get("/test")
+        async def test_endpoint() -> dict[str, str]:
+            return {"status": "ok"}
 
-            @rt.get("/test")
-            async def test_endpoint() -> dict[str, str]:
-                return {"status": "ok"}
+        app.include_router(rt)
+        client = TestClient(app)
 
-            app.include_router(rt)
-            client = TestClient(app)
-
-            for _ in range(3):
-                resp = client.get("/auth/test")
-                assert resp.status_code == 200
-
+        for _ in range(3):
             resp = client.get("/auth/test")
-            assert resp.status_code == 429
-            assert "Retry-After" in resp.headers
-            assert int(resp.headers["Retry-After"]) >= 1
-        finally:
-            mod._auth_limiter = original
+            assert resp.status_code == 200
+
+        resp = client.get("/auth/test")
+        assert resp.status_code == 429
+        assert "Retry-After" in resp.headers
+        assert int(resp.headers["Retry-After"]) >= 1
 
 
 class TestRequestRateLimitMiddleware:
@@ -238,16 +288,248 @@ class TestRequestRateLimitMiddleware:
         async def cost_events() -> dict[str, str]:
             return {"status": "ok"}
 
+        @app.get("/events/thread")
+        async def thread_events() -> dict[str, str]:
+            return {"status": "ok"}
+
         transport = ASGITransport(app=app, client=("198.51.100.8", 123))
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp_events = await client.get("/events")
             resp_cost = await client.get("/events/cost")
+            resp_thread = await client.get("/events/thread")
 
         assert resp_events.status_code == 429
         assert resp_events.json()["bucket"] == "sse"
         assert "Retry-After" in resp_events.headers
         assert resp_cost.status_code == 429
         assert resp_cost.json()["bucket"] == "sse"
+        assert resp_thread.status_code == 429
+        assert resp_thread.json()["bucket"] == "sse"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["/events", "/events/cost", "/events/thread"])
+    @pytest.mark.parametrize("termination", ["finish", "disconnect", "cancel", "error"])
+    async def test_sse_cap_holds_until_stream_closes(self, path: str, termination: str) -> None:
+        """Two open bodies reject a third stream; closing one admits a replacement."""
+        app = FastAPI()
+        finishes: list[asyncio.Event] = []
+
+        async def body() -> AsyncIterator[bytes]:
+            finish = asyncio.Event()
+            finishes.append(finish)
+            yield b"data: ready\n\n"
+            await finish.wait()
+            if termination == "error":
+                raise RuntimeError("stream failed")
+
+        async def events() -> StreamingResponse:
+            return StreamingResponse(body(), media_type="text/event-stream")
+
+        for route in ("/events", "/events/cost", "/events/thread"):
+            app.add_api_route(route, events, methods=["GET"])
+        middleware = RequestRateLimitMiddleware(app, sse_max_concurrent=2)
+        exchanges: list[_OpenSSE] = []
+
+        async def open_stream(route: str) -> _OpenSSE:
+            exchange = _OpenSSE(middleware, route)
+            exchanges.append(exchange)
+            await asyncio.wait_for(exchange.ready.wait(), timeout=5)
+            return exchange
+
+        try:
+            first = await open_stream(path)
+            second = await open_stream("/events/thread")
+            assert first.status == second.status == 200
+            assert not first.task.done() and not second.task.done()
+
+            excess = await open_stream(path)
+            assert excess.status == 429
+            assert excess.headers[b"retry-after"] == b"5"
+            assert middleware.sse_connections == 2
+            await asyncio.wait_for(excess.task, timeout=5)
+
+            if termination == "disconnect":
+                first.disconnect.set()
+                await asyncio.wait_for(first.task, timeout=5)
+            elif termination == "cancel":
+                first.task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await first.task
+            else:
+                finishes[0].set()
+                if termination == "error":
+                    with pytest.raises(RuntimeError, match="stream failed"):
+                        await asyncio.wait_for(first.task, timeout=5)
+                else:
+                    await asyncio.wait_for(first.task, timeout=5)
+
+            assert middleware.sse_connections == 1
+            replacement = await open_stream(path)
+            assert replacement.status == 200
+        finally:
+            for exchange in exchanges:
+                exchange.task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(*(exchange.task for exchange in exchanges), return_exceptions=True), timeout=5
+            )
+        assert middleware.sse_connections == 0
+
+
+class _OpenSSE:
+    """Drive a real streaming response without buffering it like ASGITransport."""
+
+    def __init__(self, app: RequestRateLimitMiddleware, path: str) -> None:
+        self.ready = asyncio.Event()
+        self.disconnect = asyncio.Event()
+        self.status = 0
+        self.headers: dict[bytes, bytes] = {}
+        self._sent_request = False
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "query_string": b"",
+            "root_path": "",
+            "headers": [],
+            "client": ("198.51.100.8", 123),
+            "server": ("test", 80),
+        }
+        self.task = asyncio.create_task(app(scope, self.receive, self.send))
+
+    async def receive(self) -> Message:
+        if not self._sent_request:
+            self._sent_request = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await self.disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(self, message: Message) -> None:
+        if message["type"] == "http.response.start":
+            self.status = message["status"]
+            self.headers = dict(message.get("headers", []))
+        elif message["type"] == "http.response.body":
+            self.ready.set()
+
+
+class TestVersionedRateLimitAliases:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["/events", "/events/cost", "/events/thread"])
+    @pytest.mark.parametrize(
+        "first_prefix,second_prefix", [("", ""), ("", "/api/v1"), ("/api/v1", ""), ("/api/v1", "/api/v1")]
+    )
+    async def test_sse_aliases_share_connection_cap(self, path: str, first_prefix: str, second_prefix: str) -> None:
+        app = FastAPI()
+        finishes: list[asyncio.Event] = []
+
+        async def body() -> AsyncIterator[bytes]:
+            finish = asyncio.Event()
+            finishes.append(finish)
+            yield b"data: ready\n\n"
+            await finish.wait()
+
+        async def events() -> StreamingResponse:
+            return StreamingResponse(body(), media_type="text/event-stream")
+
+        for route in (path, "/api/v1" + path):
+            app.add_api_route(route, events, methods=["GET"])
+        middleware = RequestRateLimitMiddleware(app, sse_max_concurrent=1)
+        exchanges: list[_OpenSSE] = []
+
+        async def with_app(scope: Scope, receive: Receive, send: Send) -> None:
+            # FastAPI normally sets app before invoking its middleware stack.
+            scope["app"] = app
+            await middleware(scope, receive, send)
+
+        async def open_stream(route: str) -> _OpenSSE:
+            exchange = _OpenSSE(with_app, route)  # type: ignore[arg-type]
+            exchanges.append(exchange)
+            await asyncio.wait_for(exchange.ready.wait(), timeout=5)
+            return exchange
+
+        try:
+            first = await open_stream(first_prefix + path)
+            assert first.status == 200
+            assert not first.task.done()
+            assert middleware.sse_connections == 1
+
+            excess = await open_stream(second_prefix + path)
+            assert excess.status == 429
+            assert excess.headers[b"retry-after"] == b"5"
+            assert not first.task.done()
+            assert middleware.sse_connections == 1
+            await asyncio.wait_for(excess.task, timeout=5)
+
+            finishes[0].set()
+            await asyncio.wait_for(first.task, timeout=5)
+            assert middleware.sse_connections == 0
+            replacement = await open_stream(second_prefix + path)
+            assert replacement.status == 200
+            assert not replacement.task.done()
+            assert middleware.sse_connections == 1
+        finally:
+            for exchange in exchanges:
+                exchange.task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(*(exchange.task for exchange in exchanges), return_exceptions=True), timeout=5
+            )
+        assert middleware.sse_connections == 0
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("path,method", [("/tasks", "GET"), ("/auth/cli/device", "POST")])
+    @pytest.mark.parametrize("first_prefix,second_prefix", [("", "/api/v1"), ("/api/v1", "")])
+    @pytest.mark.parametrize("fallback_prefix", [None, "/", "/api/v1"])
+    async def test_seed_bucket_is_shared_by_versioned_alias(
+        self, path: str, method: str, first_prefix: str, second_prefix: str, fallback_prefix: str | None
+    ) -> None:
+        app = FastAPI()
+        app.add_middleware(RequestRateLimitMiddleware)
+        buckets = (RateLimitBucketConfig(name="shared", requests=1, path_prefixes=(path,), methods=(method,)),)
+        if fallback_prefix is not None:
+            buckets += (RateLimitBucketConfig(name="fallback", requests=10, path_prefixes=(fallback_prefix,)),)
+        app.state.seed_config = SeedConfig(
+            goal="Test",
+            rate_limit=RateLimitConfig(buckets=buckets),
+        )
+
+        async def endpoint() -> dict[str, str]:
+            return {"status": "ok"}
+
+        app.add_api_route(path, endpoint, methods=[method])
+        app.add_api_route("/api/v1" + path, endpoint, methods=[method])
+        transport = ASGITransport(app=app, client=("198.51.100.9", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.request(method, first_prefix + path)).status_code == 200
+            response = await client.request(method, second_prefix + path)
+
+        assert response.status_code == 429
+        assert response.json()["bucket"] == "shared"
+        assert int(response.headers["Retry-After"]) >= 1
+
+    @pytest.mark.anyio
+    async def test_explicit_versioned_seed_bucket_is_preserved(self) -> None:
+        app = FastAPI()
+        app.add_middleware(RequestRateLimitMiddleware)
+        app.state.seed_config = SeedConfig(
+            goal="Test",
+            rate_limit=RateLimitConfig(
+                buckets=(RateLimitBucketConfig(name="versioned", requests=1, path_prefixes=("/api/v1/tasks",)),)
+            ),
+        )
+
+        @app.get("/api/v1/tasks")
+        async def tasks() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("198.51.100.10", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get("/api/v1/tasks")).status_code == 200
+            response = await client.get("/api/v1/tasks")
+
+        assert response.status_code == 429
+        assert response.json()["bucket"] == "versioned"
 
 
 class _FakeClient:
@@ -317,21 +599,17 @@ class TestRateLimitKeyingAgainstHeaderSpoofing:
         request = _FakeRequest("10.0.0.1", {"X-Forwarded-For": "10.0.0.2, 10.0.0.3"})
         assert _request_client_id(request) == "10.0.0.1"  # type: ignore[arg-type]
 
-    def test_bucket_resets_after_window(self) -> None:
-        """A bucket that is full releases again once all timestamps age out."""
+    def test_bucket_resets_after_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A full bucket reopens when both the window and lockout expire."""
+        import bernstein.core.security.auth_rate_limiter as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: now[0]))
         limiter = AuthRateLimiter(max_requests=2, window_seconds=60)
-
-        # Fill the bucket
         assert limiter.check("203.0.113.10") is None
         assert limiter.check("203.0.113.10") is None
-        assert limiter.check("203.0.113.10") is not None  # blocked
-
-        # Fast-forward the recorded timestamps past the window. This
-        # simulates the window expiring without an actual wall-clock sleep.
-        now = time.monotonic()
-        limiter._hits[("auth", "203.0.113.10")] = [now - 120.0, now - 120.0]
-
-        # Next request must be accepted again - bucket has reset.
+        assert limiter.check("203.0.113.10") is not None
+        now[0] += 60
         assert limiter.check("203.0.113.10") is None
 
     @pytest.mark.anyio
