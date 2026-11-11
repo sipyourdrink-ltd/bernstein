@@ -29,9 +29,10 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
-from bernstein.core.models import CompletionSignal, Task, TaskType
+from bernstein.core.models import AgentSession, CompletionSignal, ModelConfig, Task, TaskType
 
 from bernstein.core.tasks import task_lifecycle
 from bernstein.core.tasks.task_lifecycle import (
@@ -293,3 +294,45 @@ def test_process_single_completed_task_logs_alive_exit_start(
         and "role=backend" in rec.message
         for rec in caplog.records
     ), caplog.text
+
+
+def test_dead_path_janitor_pass_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orphan handler verifies the run checkout before posting completion."""
+    from bernstein.core.agents import agent_lifecycle
+
+    task = _make_task(signals=[CompletionSignal(type="path_exists", value="deliverable.txt")])
+    task.status = task_lifecycle.TaskStatus.CLAIMED
+    (tmp_path / "deliverable.txt").write_text("present\n", encoding="utf-8")
+    client = MagicMock()
+    client.get.return_value.json.return_value = task.to_dict()
+    orch = SimpleNamespace(
+        _config=SimpleNamespace(server_url="http://server", recovery="restart"),
+        _client=client,
+        _workdir=tmp_path,
+        _spawner=MagicMock(),
+        _record_provider_health=MagicMock(),
+        _evolution=None,
+    )
+    orch._spawner.get_worktree_path.return_value = tmp_path / "agent-worktree"
+    session = AgentSession(
+        id="orphan",
+        role=task.role,
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=1,
+    )
+
+    verify = MagicMock(wraps=agent_lifecycle.verify_task_completion)
+    monkeypatch.setattr(agent_lifecycle, "verify_task_completion", verify)
+    monkeypatch.setattr(agent_lifecycle, "_handle_failure_detection", lambda *args: False)
+    monkeypatch.setattr(agent_lifecycle, "emit_orphan_metrics", MagicMock())
+
+    def complete(*args: Any, **kwargs: Any) -> None:
+        verify.assert_called_once()
+        assert verify.call_args.args[1] == tmp_path
+
+    client.post.side_effect = complete
+    agent_lifecycle.handle_orphaned_task(orch, task.id, session, {"claimed": [task]})
+    client.post.assert_called_once()
+    assert client.post.call_args.args == (f"http://server/tasks/{task.id}/complete",)
