@@ -29,9 +29,13 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from bernstein.core.persistence.atomic_write import write_atomic_text
-from bernstein.core.persistence.file_locks import _cross_process_lock  # pyright: ignore[reportPrivateUsage]
+from bernstein.core.persistence.file_locks import cross_process_lock
 from bernstein.core.protocols.mcp_catalog.audit import (
     AUDIT_ACTOR,
     AUDIT_RESOURCE_TYPE,
@@ -198,7 +202,7 @@ class ServerCapabilitiesStore:
 
     def save(self) -> None:
         """Persist the latest snapshot without overwriting newer observations."""
-        with _cross_process_lock(self._lock_path):
+        with cross_process_lock(self._lock_path):
             entries = self._read_capabilities()
             self._write_capabilities(entries)
             self._capabilities = entries
@@ -209,7 +213,12 @@ class ServerCapabilitiesStore:
         return caps.capability_digest if caps else None
 
     def set_capabilities(
-        self, server_name: str, tool_names: frozenset[str], capability_digest: str
+        self,
+        server_name: str,
+        tool_names: frozenset[str],
+        capability_digest: str,
+        *,
+        before_change: Callable[[MCPServerCapabilities | None], None] | None = None,
     ) -> MCPServerCapabilities | None:
         """Update server capabilities and detect drift.
 
@@ -217,13 +226,24 @@ class ServerCapabilitiesStore:
             server_name: Name of the MCP server.
             tool_names: Current set of tool names.
             capability_digest: Digest of current tool names.
+            before_change: Optional observer for first contact and changed digests.
+                Called under the snapshot lock before saving; an exception leaves
+                the previous baseline in place. Must not re-enter the store.
+                A crash after the observer commits but before the snapshot is
+                written can cause the observation to be recorded again.
 
         Returns:
             Previous capabilities if drift detected, None otherwise.
         """
-        with _cross_process_lock(self._lock_path):
+        # Observation is optional; avoid holding up gateway shutdown for
+        # snapshot-lock contention after the probe is otherwise complete.
+        with cross_process_lock(self._lock_path, timeout=5.0 if before_change is not None else None):
             entries = self._read_capabilities()
             old = entries.get(server_name)
+            if before_change is not None:
+                if old is not None and old.capability_digest == capability_digest:
+                    return None
+                before_change(old)
             entries[server_name] = MCPServerCapabilities(
                 server_name=server_name,
                 tool_names=tool_names,
