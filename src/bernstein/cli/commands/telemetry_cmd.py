@@ -496,7 +496,8 @@ def _read_span_source(source: str) -> str:
     anything else is treated as a file path.
     """
     if source in {"-", "@-"}:
-        return click.get_text_stream("stdin").read()
+        with click.open_file("-") as stream:
+            return stream.read()
     from bernstein.core.security.sanitize import sanitize_log
 
     path = source[1:] if source.startswith("@") else source

@@ -17,6 +17,9 @@ when they appear; if one goes dead, open an issue or a PR.
 - [nibzard/awesome-agentic-patterns](https://github.com/nibzard/awesome-agentic-patterns/blob/main/patterns/deterministic-zero-llm-orchestration.md): Bernstein cited as the production implementation of the "deterministic zero-LLM orchestration" pattern.
 - [Python Weekly](https://www.pythonweekly.com/p/python-weekly-issue-742-april-23-2026): newsletter mention.
 - [Future Digest](https://futuredigestnews.substack.com/p/your-claude-bill-just-hit-874-heres): cost-cutting playbook write-up.
+- [explainx.ai - Bernstein: An Open-Source Governance Layer for AI Coding Agents](https://explainx.ai/blog/bernstein-open-source-governance-layer-ai-coding-agents-policy-as-code-53-adapters-2026): Yash Thakker, 29 October 2026; explainer of the scheduler, the janitor gates and the offline-verifiable record, with a clear note on what the governance claim does not cover.
+- [RuntimeWire - Bernstein v3.23.0 makes artifact checks gate signed success receipts](https://runtimewire.com/article/bernstein-agent-governance-alex-chernysh): Ryan Merket, 29 October 2026; release write-up of v3.23.0.
+- [TRACE specification - Bernstein platform annex](https://trace.agentrust-io.com/docs/platforms/bernstein/): informative annex written by Bernstein's author and reviewed by a TRACE maintainer; maps Bernstein records to TRACE Level 0 (software-signed). TRACE is a specification project hosted at the Linux Foundation.
 
 ## Awesome lists
 
@@ -94,6 +97,8 @@ Places where somebody else did the packaging work:
 - [zwl4488-new/aiagent-club](https://github.com/zwl4488-new/aiagent-club)
 - [patrickclery/awesomer](https://github.com/patrickclery/awesomer)
 - [jaimevalero/managing-awesome-lists-frontend](https://github.com/jaimevalero/managing-awesome-lists-frontend)
+- [Enterprise DNA - Bernstein MCP Profile](https://enterprisedna.co/directories/mcp/sipyourdrink-ltd-bernstein/): educational directory entry for Bernstein Model Context Protocol integration.
+- [SkillsLLM - Deterministic Multi-Agent Coding Workflows with Bernstein](https://skillsllm.com/skill/sipyourdrink-ltd-bernstein): skill catalog entry.
 - [PyDigger](https://github.com/szabgab/pydigger-data/blob/main/data/pypi/be/bernstein.json): automated PyPI metadata index.
 
 Most of the entries in this section are auto-generated crawls rather than

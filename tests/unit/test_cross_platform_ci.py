@@ -210,7 +210,7 @@ class TestCIWorkflowExists:
         assert ".sdd/affected-test-plan/selected.txt" in run_script
         assert "--affected" not in run_script
         assert "uv run python scripts/run_tests.py" in run_script
-        assert "--parallel 6" in run_script
+        assert run_script.count("--parallel 8") == 2
 
     def test_merge_queue_runs_the_whole_list(self) -> None:
         """A merge group never plans, so every shard runs the full list.

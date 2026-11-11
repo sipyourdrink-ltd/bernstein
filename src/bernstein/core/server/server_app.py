@@ -295,6 +295,7 @@ def task_to_response(task: Task) -> TaskResponse:
         role=task.role,
         tenant_id=task.tenant_id,
         priority=task.priority,
+        dispatch_tier=task.dispatch_tier,
         scope=task.scope.value,
         complexity=task.complexity.value,
         eu_ai_act_risk=task.eu_ai_act_risk,
@@ -606,7 +607,7 @@ class SSEBus:
 
 
 class SSEReconnectLimiterMiddleware:
-    """Front-door limiter for /events and /events/cost SSE endpoints.
+    """Front-door limiter for the /events, /events/cost and /events/thread SSE endpoints.
 
     Rejects requests from IPs that have reconnected more than
     ``RECONNECT_MAX_PER_WINDOW`` times inside ``RECONNECT_WINDOW_S`` for
@@ -617,7 +618,7 @@ class SSEReconnectLimiterMiddleware:
     expected churn rate given a 60 s read-timeout on the /events stream.
     """
 
-    _SSE_PATHS = frozenset({"/events", "/events/cost"})
+    _SSE_PATHS = frozenset({"/events", "/events/cost", "/events/thread"})
 
     def __init__(self, app: Any) -> None:
         self.app = app

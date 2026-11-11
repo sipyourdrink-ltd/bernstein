@@ -123,3 +123,29 @@ def test_root_map_lists_every_nested_file() -> None:
         if f"`{p.relative_to(REPO_ROOT).as_posix()}`" not in root_text
     ]
     assert not unmapped, f"nested AGENTS.md missing from the root map (run `bernstein agents-md sync`): {unmapped}"
+
+
+def test_adapter_context_lists_every_builtin_scanner() -> None:
+    """A newly registered scanner must not leave the adapter map incomplete."""
+    import ast
+
+    from bernstein.adapters import scanner_registry
+
+    registry_path = REPO_ROOT / "src/bernstein/adapters/scanner_registry.py"
+    registry = ast.parse(registry_path.read_text(encoding="utf-8"))
+    builtin_names = {
+        getattr(scanner_registry, call.args[1].id).registry_name
+        for call in ast.walk(registry)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "register_scanner"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Name)
+    }
+    assert builtin_names, "scanner registry no longer exposes its built-in registrations"
+    context = (REPO_ROOT / "src/bernstein/adapters/AGENTS.md").read_text(encoding="utf-8")
+    scanner_row = next(line for line in context.splitlines() if "`scanner_registry.py`" in line)
+    documented_names = set(re.findall(r"[a-z][a-z0-9_-]*", scanner_row))
+    assert builtin_names <= documented_names, (
+        f"adapter context omits built-in scanners: {builtin_names - documented_names}"
+    )

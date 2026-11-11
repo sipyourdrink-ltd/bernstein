@@ -81,6 +81,14 @@ overlapping ground (event logging, retention, incident recording), so the
 two documents describe the same evidence rather than disagreeing about what
 is covered.
 
+## Role of ISO/IEC 42006:2025
+
+[ISO/IEC 42006:2025](https://www.iso.org/standard/42006) sets requirements for
+bodies auditing and certifying ISO/IEC 42001 management systems and affects
+the evidence they require; it does not certify Bernstein. For impact assessment
+guidance and evidence limits, see the [ISO/IEC 42005:2025 mapping](iso42005-mapping.md).
+This explanation does not reproduce licensed standard text.
+
 ## Building a pack
 
 ```

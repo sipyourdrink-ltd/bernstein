@@ -16,6 +16,7 @@
   "depends_on": [],
   "depends_on_repo": null,
   "description": "Add POST /auth/login with JWT",
+  "dispatch_tier": "local",
   "effort": null,
   "estimated_minutes": 30,
   "eu_ai_act_risk": "minimal",

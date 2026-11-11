@@ -53,7 +53,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -77,10 +77,16 @@ jobs:
         # a self-contained script off the INSTALLED wheel (not the repo pytest
         # tree) so it needs no test-only plugins. Hard-required.
         run: |
+          # Dependencies come from uv.lock with hashes; the wheel is installed
+          # without resolution, and `pip check` proves its declared
+          # requirements are met by the locked set.
+          uv export --frozen --no-dev --no-emit-project --format requirements.txt \
+            -o "$RUNNER_TEMP/requirements-noextra.txt"
           python -m venv .venv-noextra
           . .venv-noextra/bin/activate
-          pip install --upgrade pip
-          pip install dist/*.whl
+          pip install --require-hashes -r "$RUNNER_TEMP/requirements-noextra.txt"
+          pip install --no-deps dist/*.whl
+          pip check
           python tests/scripts/spiffe_extra_e2e_check.py --mode no-extra
 
       - name: Extra-present path (built wheel installed with [spiffe])
@@ -93,12 +99,14 @@ jobs:
         # continue-on-error: a real failure of the packaged extra path must
         # redden the job, not vanish.
         run: |
-          WHEEL=$(ls dist/*.whl | head -1)
+          uv export --frozen --no-dev --no-emit-project --extra spiffe --format requirements.txt \
+            -o "$RUNNER_TEMP/requirements-spiffe.txt"
           python -m venv .venv-extra
           . .venv-extra/bin/activate
-          pip install --upgrade pip
-          if ! pip install "${WHEEL}[spiffe]"; then
+          if ! pip install --require-hashes -r "$RUNNER_TEMP/requirements-spiffe.txt"; then
             echo "::warning::py-spiffe SDK not installable on this runner; skipping extra-present path"
             exit 0
           fi
+          pip install --no-deps dist/*.whl
+          pip check
           python tests/scripts/spiffe_extra_e2e_check.py --mode extra
