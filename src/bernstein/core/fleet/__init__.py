@@ -1,4 +1,4 @@
-"""Fleet dashboard - supervise multiple Bernstein projects in one view.
+"""Fleet dashboard and worker capability selection (``selection.py``).
 
 The fleet module aggregates per-project state (status, bulletin, cost,
 audit, Prometheus metrics, SSE events) from a list of locally-running
@@ -56,10 +56,12 @@ from bernstein.core.fleet.directory_registry import (
     DirectoryRegistry,
     InstanceSpec,
     RegistryScanResult,
+    WorkerCapabilitySpec,
     default_fleet_root,
     load_directory_registry,
 )
 from bernstein.core.fleet.prometheus_proxy import merge_prometheus_metrics
+from bernstein.core.fleet.selection import select_fleet_instance
 
 __all__ = [
     "AggregatorEvent",
@@ -77,6 +79,7 @@ __all__ = [
     "ProjectSnapshot",
     "ProjectState",
     "RegistryScanResult",
+    "WorkerCapabilitySpec",
     "bulk_cost_report",
     "bulk_pause",
     "bulk_resume",
@@ -89,5 +92,6 @@ __all__ = [
     "load_projects_config",
     "merge_prometheus_metrics",
     "rollup_costs",
+    "select_fleet_instance",
     "select_projects",
 ]

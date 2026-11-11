@@ -1967,7 +1967,7 @@ jobs:
             -x -q --timeout=180
 
   test:
-    # Sharded across 4 parallel runners per (os, python) cell. The unit
+    # Sharded across 8 ubuntu or 4 windows runners per (os, python) cell. The unit
     # suite runs each of ~1.4k test files in its own subprocess (the
     # OOM-avoidance model documented in the coverage step below); per-file
     # Python startup + full-package import is a fixed ~2.7s/file, so at
@@ -1975,7 +1975,7 @@ jobs:
     # startup churn (the file count crossed a threshold when discovery
     # widened to rglob). Fanning the file list out over TEST_SHARD_COUNT
     # runners (each runs `run_tests.py --shard i/N`, a deterministic
-    # disjoint slice) cuts each runner to ~1/4 of the files. The matrix
+    # disjoint slice) cuts each ubuntu runner to ~1/8 of the files. The matrix
     # `.result` ci-gate reads is `failure` if ANY shard cell fails, so all
     # shards are still required - no shard can silently skip.
     # Ordinary pushes to main leave this expensive suite to the 45-minute
@@ -1990,7 +1990,7 @@ jobs:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }}, shard ${{ matrix.shard }})
     needs: [determine-changes, lint, plan-affected-tests]  # fast-fail: don't waste 45min if lint fails
     runs-on: ${{ matrix.os }}
-    # Per-shard the unit suite is ~1/4 of the old wall time. Push-time
+    # Per-shard the ubuntu unit suite is ~1/8 of the old wall time. Push-time
     # coverage is collected during the existing ubuntu/3.13 shard runs and
     # combined by coverage-report below, so no shard performs a serial
     # full-suite coverage rerun.
@@ -2174,11 +2174,11 @@ jobs:
             while IFS= read -r test_file; do
               test_files+=("${test_file}")
             done < .sdd/affected-test-plan/selected.txt
-            uv run python scripts/run_tests.py --parallel 6 \
+            uv run python scripts/run_tests.py --parallel 8 \
               "${coverage_args[@]}" \
               "${test_files[@]}"
           else
-            uv run python scripts/run_tests.py --parallel 6 \
+            uv run python scripts/run_tests.py --parallel 8 \
               "${coverage_args[@]}" \
               --shard "${SHARD}/${SHARD_COUNT}"
           fi

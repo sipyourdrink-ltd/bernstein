@@ -439,7 +439,7 @@ class CrewIngestAdapter:
 
             recorded: list[DelegationReceipt] = []
             for idx, handoff in enumerate(run.handoffs):
-                body: dict[str, Any] = {
+                recorded_body: dict[str, Any] = {
                     "run_id": run.run_id,
                     "hop_index": idx,
                     "issuer": f"role:{handoff.from_role}",
@@ -450,8 +450,8 @@ class CrewIngestAdapter:
                     "prev_hmac": parent_hmacs[idx] if parent_hmacs[idx] is not None else GENESIS_HMAC,
                 }
                 if parent_hmacs[idx] is not None:
-                    body["parent_ref"] = parent_hmacs[idx]
-                entry = body.copy()
+                    recorded_body["parent_ref"] = parent_hmacs[idx]
+                entry = recorded_body.copy()
                 entry["hmac"] = hmacs[idx]
                 with path.open("a", encoding="utf-8", newline="") as fh:
                     fh.write(json.dumps(entry, sort_keys=True) + "\n")

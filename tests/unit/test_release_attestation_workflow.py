@@ -228,6 +228,36 @@ def test_github_release_uploads_and_asserts_dist_assets() -> None:
     assert "asset_count" in run
 
 
+def test_github_release_attaches_sigstore_bundle_outside_dist() -> None:
+    """The release carries a Sigstore bundle for its assets, never inside dist/.
+
+    A verifier that only sees the release page needs the signature next to the
+    files. Keeping the bundle out of dist/ means no `dist/*` glob treats it as
+    a distribution file; the release step names its directory explicitly.
+    """
+    data = _load_yaml(PUBLISH_WF)
+    jobs = _as_map(data["jobs"], "jobs")
+    job = _as_map(jobs["github-release"], "github-release")
+    perms = _as_map(job.get("permissions", {}), "permissions")
+    assert perms.get("id-token") == "write"
+    assert perms.get("attestations") == "write"
+
+    steps = [cast("YamlMap", s) for s in cast("list[object]", job["steps"]) if isinstance(s, dict)]
+    names = [s.get("name") for s in steps]
+    attest = next(s for s in steps if str(s.get("uses", "")).startswith(ATTEST_ACTION_PREFIX))
+    assert attest.get("id") == "attest"
+    assert names.index(attest.get("name")) < names.index("Stage Sigstore bundle for the release")
+    assert names.index("Stage Sigstore bundle for the release") < names.index("Create release")
+
+    stage = _step_run(data, "github-release", "Stage Sigstore bundle for the release")
+    assert "release-signatures/bernstein-${RELEASE_TAG#v}.sigstore.json" in stage
+    assert "dist/" not in stage
+
+    run = _step_run(data, "github-release", "Create release")
+    assert 'gh release create "$TAG" dist/* release-signatures/*' in run
+    assert 'gh release upload "$TAG" dist/* release-signatures/* --clobber' in run
+
+
 def test_auto_release_does_not_create_github_releases() -> None:
     """auto-release must only tag; publish.yml owns GitHub Release creation."""
     text = AUTO_RELEASE_WF.read_text(encoding="utf-8")

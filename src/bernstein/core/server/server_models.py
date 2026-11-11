@@ -14,7 +14,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo,
 
 from bernstein.core.communication.bulletin import MessageType  # noqa: TC001 - Pydantic needs at runtime
 from bernstein.core.security.tenanting import is_valid_tenant_id
-from bernstein.core.tasks.models import CompletionSignalType
+from bernstein.core.tasks.models import CompletionSignalType, DispatchTier
 from bernstein.core.tasks.task_store import ProgressEntry
 
 # ---------------------------------------------------------------------------
@@ -223,6 +223,7 @@ class TaskCreate(BaseModel):
     role: str = Field(default="auto", max_length=_MAX_SHORT_STR_LEN)
     tenant_id: str = Field(default="default", max_length=_MAX_SHORT_STR_LEN)
     priority: int = 2
+    dispatch_tier: DispatchTier = DispatchTier.LOCAL
     scope: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
     complexity: str = Field(default="medium", max_length=_MAX_SHORT_STR_LEN)
     eu_ai_act_risk: str = Field(default="minimal", max_length=_MAX_SHORT_STR_LEN)
@@ -366,6 +367,7 @@ class TaskResponse(BaseModel):
     role: str
     tenant_id: str
     priority: int
+    dispatch_tier: DispatchTier = DispatchTier.LOCAL
     scope: str
     complexity: str
     eu_ai_act_risk: str
