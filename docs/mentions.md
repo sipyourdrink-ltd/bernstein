@@ -20,7 +20,6 @@ when they appear; if one goes dead, open an issue or a PR.
 - [explainx.ai - Bernstein: An Open-Source Governance Layer for AI Coding Agents](https://explainx.ai/blog/bernstein-open-source-governance-layer-ai-coding-agents-policy-as-code-53-adapters-2026): Yash Thakker, 29 October 2026; explainer of the scheduler, the janitor gates and the offline-verifiable record, with a clear note on what the governance claim does not cover.
 - [RuntimeWire - Bernstein v3.23.0 makes artifact checks gate signed success receipts](https://runtimewire.com/article/bernstein-agent-governance-alex-chernysh): Ryan Merket, 29 October 2026; release write-up of v3.23.0.
 - [TRACE specification - Bernstein platform annex](https://trace.agentrust-io.com/docs/platforms/bernstein/): informative annex written by Bernstein's author and reviewed by a TRACE maintainer; maps Bernstein records to TRACE Level 0 (software-signed). TRACE is a specification project hosted at the Linux Foundation.
-- [Computerra - Разработчик в одиночку создал систему для управления флотом ИИ-агентов](https://www.computerra.ru/357006/razrabotchik-v-odinochku-sozdal-sistemu-dlya-upravleniya-flotom-ii-agentov/): 17 August 2026; editorial profile covering deterministic scheduling, git worktree isolation, and multi-agent execution.
 
 ## Awesome lists
 
