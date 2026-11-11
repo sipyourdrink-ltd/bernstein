@@ -391,11 +391,15 @@ def inject_skills(
 
         pre_render_digest: str = hashlib.blake2b(sanitized.encode("utf-8")).hexdigest()
         rendered: str = render_skill_template(sanitized, session_id=session_id, tasks=tasks)
-        rendered_digest: str = hashlib.blake2b(rendered.encode("utf-8")).hexdigest()
+        rendered_bytes = rendered.encode("utf-8")
+        rendered_digest: str = hashlib.blake2b(rendered_bytes).hexdigest()
 
         dest_path = skills_dest_dir / template_name
         try:
-            dest_path.write_text(rendered, encoding="utf-8")
+            # Write exactly the bytes ``rendered_digest`` covers. A text-mode
+            # write translates each newline to CRLF on Windows, so the audit
+            # record would name a digest that no file on disk has (#5787).
+            dest_path.write_bytes(rendered_bytes)
             _logger.debug("Injected skill: %s -> %s", template_name, dest_path)
             written_relpaths.append(str(dest_path.relative_to(workdir)))
         except OSError as exc:

@@ -61,6 +61,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.canonicalization import canonical_bytes as _canonical_bytes
 from bernstein.core.cost.spend_ledger import SpendLedger
 from bernstein.core.lineage.spine import LineageSpine, content_hash_of
 
@@ -96,11 +97,6 @@ _BUDGET_ACTION = "budget"
 # ---------------------------------------------------------------------------
 # Canonical hashing / signing helpers
 # ---------------------------------------------------------------------------
-
-
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes (sorted keys, minimal separators, UTF-8)."""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 def _sha256(payload: dict[str, Any]) -> str:

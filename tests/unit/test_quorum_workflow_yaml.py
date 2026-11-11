@@ -189,7 +189,9 @@ def test_the_file_records_why_the_rules_come_from_the_default_branch() -> None:
     """
     text = QUORUM.read_text(encoding="utf-8")
     assert "default branch" in text
-    assert "organization ruleset" in text, "the file must keep naming what makes it non-forgeable"
+    assert "repository ruleset `main-merge-queue`" in text, (
+        "the file must keep naming the ruleset that requires its context"
+    )
     assert "BASE commit" not in text, "the comment must not still describe the recorded base commit"
     assert SCRIPT.exists(), "the script the gate runs must be on the default branch"
 

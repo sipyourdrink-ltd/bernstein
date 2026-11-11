@@ -85,6 +85,92 @@ def test_standard_is_registered() -> None:
     assert mapping["controls"]
 
 
+def test_iso42005_documentation_contract() -> None:
+    docs = Path(__file__).resolve().parents[3] / "docs" / "compliance"
+    page = docs / "iso42005-mapping.md"
+    assert page.is_file(), "ISO/IEC 42005 mapping page is missing"
+    text = page.read_text(encoding="utf-8")
+    first_paragraph = " ".join(text.split("\n\n")[1].split())
+    for phrase in (
+        "ISO/IEC 42005:2025 provides guidance for performing an impact assessment",
+        "evidence for the operator's own assessment",
+        "no compliance or certification claim",
+    ):
+        assert phrase in first_paragraph
+
+    coverage = text.split("## Coverage\n", 1)[1].split("\n## ", 1)[0]
+    rows = [
+        [cell.strip().strip("`") for cell in line.strip("|").split("|")]
+        for line in coverage.splitlines()
+        if line.startswith("|")
+    ][2:]
+    expected = {
+        "impact.intended-use": ("Intended use", "compliance preset", "purpose"),
+        "impact.affected-parties": ("Affected parties", "lineage receipts", "stakeholder"),
+        "impact.foreseeable-misuse": ("Foreseeable misuse", "incident pack", "scenarios"),
+        "impact.mitigations": ("Mitigations", "guardrail inventory", "effectiveness"),
+        "impact.review-cadence": ("Review cadence", "incident pack", "schedule"),
+    }
+    assert len(rows) == len(expected)
+    assert {row[1] for row in rows} == set(expected)  # Exact IDs, each once.
+    for element, control_id, mechanism, verdict, gaps in rows:
+        label, mechanism_hint, gap_hint = expected[control_id]
+        assert element == label
+        assert mechanism_hint in mechanism
+        assert verdict in {"Covered", "Partial", "Not-covered"}
+        assert gap_hint in gaps
+
+    contract = " ".join(text.split())
+    for phrase in (
+        "Bernstein identifiers, not ISO clause numbers",
+        "Covered → `mapped`",
+        "Partial → `partial`",
+        "Not-covered → `organisational` for explicitly operator-owned content/processes, otherwise `todo`",
+        'both `artefact` and `selector` are `"n/a"`',
+        "State gaps in `requirement`",
+        "unclassified known element defaults to Not-covered/`todo`",
+        "no element defaults to Covered",
+        "Missing, duplicate or unknown IDs",
+        "invalid verdicts/statuses raise `ValueError`",
+        "do not preapprove any individual Covered verdict",
+        "contract for the subsequent exporter implementation",
+        "not behaviour delivered by this documentation change",
+        "For `iso-42005` only",
+        "`evidence_refs: list[str]`, default `[]`",
+        "sorted, deduplicated `<member>:<positive-1-based-line>` strings",
+        "final serialized `audit-chain/events.jsonl` or `lineage/log.jsonl` members",
+        "Catalogue verdicts describe capability ceilings",
+        "copied controls",
+        "private, element-specific predicates over the existing filtered records",
+        "`mapped` or `partial` status only when its predicate matches and references resolve",
+        "otherwise emit `todo`",
+        "Retain `organisational`",
+        "recompute summary counters from exported statuses",
+        "Unknown matching rules",
+        "invalid, dangling or nonmatching references raise `ValueError` before writing",
+        "Unrelated records, generic policy files, inventories and provenance hashes alone",
+        "cannot establish assessment content, including intended use or affected parties",
+        "empty window remains valid",
+        "empty references and zero mapped/partial controls",
+        "Resolving references establishes evidence presence",
+        "chain authentication remains a separate verification procedure",
+        "Existing standards, API signatures, filters, source collection, shared evidence-member bytes",
+        "schema version `1.0.0` remain unchanged",
+        "No migration or additional authority",
+    ):
+        assert phrase in contract, phrase
+
+    iso42001 = " ".join((docs / "iso42001-mapping.md").read_text(encoding="utf-8").split())
+    assert "## Role of ISO/IEC 42006:2025" in iso42001
+    for phrase in (
+        "requirements for bodies auditing and certifying ISO/IEC 42001 management systems",
+        "affects the evidence they require",
+        "does not certify Bernstein",
+        "ISO/IEC 42005:2025",
+    ):
+        assert phrase in iso42001
+
+
 def test_every_control_has_required_keys_and_valid_status() -> None:
     mapping = get_standard_map("iso-42001")
     for control in mapping["controls"]:

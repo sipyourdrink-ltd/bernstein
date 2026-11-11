@@ -57,8 +57,6 @@ src/bernstein/core/security/article12_bundle.py::validate_retention             
 src/bernstein/core/security/article12_bundle.py::verify_bundle                                 # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit.py::AuditLog.force_full_verify                               # exercised by tests only; no production caller
 src/bernstein/core/security/audit.py::AuditLog.last_tile_read_count                            # no production caller and no test reference; baseline entry from the first scan
-src/bernstein/core/security/audit.py::AuditLog.verify_incremental                              # exercised by tests only; no production caller
-src/bernstein/core/security/audit.py::IncrementalVerifyReport                                  # exercised by tests only; no production caller
 src/bernstein/core/security/audit_chain.py::CapabilityAuthorizationDetails                     # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::CapabilityDeltaDetails                             # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::MemoryWriteDetails                                 # exported in the module's __all__ as public surface; no in-tree caller
@@ -73,10 +71,7 @@ src/bernstein/core/security/audit_chain.py::record_cache_miss                   
 src/bernstein/core/security/audit_chain.py::record_capability_authorization                    # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_capability_delta                            # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/audit_chain.py::record_delegation_minted                           # exported in the module's __all__ as public surface; no in-tree caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_budget_stop               # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_exhaustion                # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_hop                       # exported in the module's __all__ and exercised by tests; no production caller
-src/bernstein/core/security/audit_chain.py::record_escalation_ladder_refusal                   # exported in the module's __all__ and exercised by tests; no production caller
+src/bernstein/core/security/audit_chain.py::record_escalation_ladder_failure_evidence          # #4855 producer API; failure paths (gate, loop detector, degraded terminal) wire it in a follow-up
 src/bernstein/core/security/audit_chain.py::record_expectation_expired                         # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_capsule                              # exported in the module's __all__ as public surface; no in-tree caller
 src/bernstein/core/security/audit_chain.py::record_intent_drift                                # exported in the module's __all__ and exercised by tests; no production caller
@@ -118,7 +113,6 @@ src/bernstein/core/security/auth.py::AuthStore.revoke_user_sessions             
 src/bernstein/core/security/auth.py::GroupRoleMappingEntry                                     # no production caller and no test reference; baseline entry from the first scan
 src/bernstein/core/security/auth_rate_limiter.py::RateLimitDecision                            # no production caller and no test reference; baseline entry from the first scan
 src/bernstein/core/security/auth_rate_limiter.py::RequestRateLimitMiddleware.sse_connections   # exercised by tests only; no production caller
-src/bernstein/core/security/auth_rate_limiter.py::check_auth_rate_limit                        # exercised by tests only; no production caller
 src/bernstein/core/security/authzen.py::AuthZenResponse.permits_unconditionally                # exercised by tests only; no production caller
 src/bernstein/core/security/authzen.py::UnknownContextFieldError                               # exercised by tests only; no production caller
 src/bernstein/core/security/auto_approve.py::reload_extra_allow_patterns_from_env              # exercised by tests only; no production caller
@@ -213,7 +207,7 @@ src/bernstein/core/security/evidence_envelope.py::envelope_jws_header           
 src/bernstein/core/security/evidence_envelope.py::envelope_signing_input                       # exercised by tests only; no production caller
 src/bernstein/core/security/external_policy_hook.py::CedarHook                                 # exercised by tests only; no production caller
 src/bernstein/core/security/external_policy_hook.py::OPAHook                                   # exercised by tests only; no production caller
-src/bernstein/core/security/external_policy_hook.py::PolicyHookRegistry                        # exercised by tests only; no production caller
+src/bernstein/core/security/external_policy_hook.py::PolicyHookRegistry.first_decisive         # public compatibility helper; spawn admission evaluates every response so later denials and obligations cannot be hidden by an earlier allow
 src/bernstein/core/security/governance.py::BudgetRefused                                       # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/governance.py::check_budget_decision                               # exported in the module's __all__ and exercised by tests; no production caller
 src/bernstein/core/security/grant_precondition.py::DispatchGrantGate                           # exercised by tests only; no production caller
