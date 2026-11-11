@@ -144,6 +144,7 @@ from bernstein.core.security.executor_admission import (
     AdmissionSubject,
 )
 from bernstein.core.security.external_policy_hook import HookRequest, HookVerdict, PolicyHookRegistry
+from bernstein.core.security.role_adapter_policy import RoleAdapterDenied
 from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
@@ -3133,6 +3134,51 @@ class AgentSpawner:
         )
         return fallback
 
+    def _enforce_role_adapter_policy(self, adapter_name: str, role: str) -> None:
+        """Reload policy from the project root, never from a task worktree.
+
+        Keep this gate independent of adapter lookup: resume and transport
+        backends can dispatch an already constructed adapter. A refusal is a
+        hard stop, including when the audit sink cannot record it.
+        """
+        from bernstein.core.security.audit import AuditLog
+        from bernstein.core.security.role_adapter_policy import (
+            DEFAULT_POLICY_PATH,
+            PolicyFileCorrupt,
+            deny,
+            enforce,
+            load_policy_file,
+        )
+
+        audit_log = None
+        try:
+            audit_log = AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
+        except Exception as exc:
+            logger.warning("role_adapter_policy: audit unavailable; policy still enforced: %s", exc)
+        try:
+            policy = load_policy_file(self._workdir / DEFAULT_POLICY_PATH)
+        except PolicyFileCorrupt as exc:
+            deny(role, adapter_name, reason=str(exc), audit_log=audit_log)
+        else:
+            enforce(role, adapter_name, audit_log=audit_log, policy=policy)
+
+    def _enforce_adapter_dispatch(self, adapter: CLIAdapter, role: str) -> None:
+        """Gate the actual adapter, preserving registry identity through caching."""
+        from bernstein.adapters.caching_adapter import CachingAdapter
+
+        name = self._adapter_registry_name if adapter is self._adapter else None
+        # CachingAdapter inherits the empty registry_name attribute, so its
+        # __getattr__ cannot forward that field to a newly selected adapter.
+        while isinstance(adapter, CachingAdapter):
+            adapter = adapter._inner
+        name = name or registry_name_for(adapter)
+        self._enforce_role_adapter_policy(name or adapter.name(), role)
+
+    def _spawn_adapter(self, adapter: CLIAdapter, role: str, **kwargs: Any) -> SpawnResult:
+        """Last policy check shared by direct, resume and transport fallbacks."""
+        self._enforce_adapter_dispatch(adapter, role)
+        return adapter.spawn(**kwargs)
+
     def _get_adapter_by_name(self, adapter_name: str, *, role: str | None = None) -> CLIAdapter:
         """Return cached adapter instance, creating one when needed.
 
@@ -3151,50 +3197,7 @@ class AgentSpawner:
                 call sites that have no role still work.
         """
         if role is not None:
-            from bernstein.core.security.audit import AuditLog as _AuditLog
-            from bernstein.core.security.role_adapter_policy import (
-                DEFAULT_POLICY_PATH,
-            )
-            from bernstein.core.security.role_adapter_policy import (
-                PolicyFileCorrupt as _PolicyFileCorrupt,
-            )
-            from bernstein.core.security.role_adapter_policy import (
-                RoleAdapterDenied as _RoleAdapterDenied,
-            )
-            from bernstein.core.security.role_adapter_policy import (
-                enforce as _enforce_role_adapter,
-            )
-            from bernstein.core.security.role_adapter_policy import (
-                load_policy_file as _load_policy_file,
-            )
-
-            audit_log: _AuditLog | None = None
-            try:
-                audit_log = _AuditLog(audit_dir=self._workdir / ".sdd" / "audit")
-            except Exception as exc:
-                logger.debug("role_adapter_policy: audit ctor failed (%s); deny will not be logged", exc)
-            # Load the policy for this specific workdir so that a persisted
-            # allow-list is honoured at runtime — not just by the CLI.  Pass it
-            # explicitly rather than relying on the process-global default, which
-            # starts empty (unrestricted) and is never seeded from disk (#6648).
-            _workdir_policy_path = self._workdir / DEFAULT_POLICY_PATH
-            try:
-                _workdir_policy = _load_policy_file(_workdir_policy_path)
-            except _PolicyFileCorrupt as _exc:
-                # A policy file that exists but cannot be read means restrictions
-                # were configured and we cannot enforce them — fail closed rather
-                # than silently lifting all restrictions (#6648).
-                raise _RoleAdapterDenied(
-                    role or "<unknown>",
-                    adapter_name,
-                    allowed=(),
-                ) from _exc
-            logger.debug(
-                "role_adapter_policy: loaded from %s (roles configured: %s)",
-                _workdir_policy_path,
-                sorted(_workdir_policy.per_role_allowlists),
-            )
-            _enforce_role_adapter(role, adapter_name, audit_log=audit_log, policy=_workdir_policy)
+            self._enforce_role_adapter_policy(adapter_name, role)
 
         cached = self._adapter_cache.get(adapter_name)
         if cached is not None:
@@ -3648,6 +3651,7 @@ class AgentSpawner:
         """
         if self._runtime_bridge is None:
             return False
+        self._enforce_role_adapter_policy(self._runtime_bridge.name(), session.role)
         bridge_status: AgentStatus = self._run_bridge_call(
             self._runtime_bridge.spawn(
                 SpawnRequest(
@@ -3781,6 +3785,10 @@ class AgentSpawner:
 
         from bernstein.core.routing.provider_availability import binary_path_probe, resolve_route
 
+        # A health probe may contact a provider. Reject a forbidden chain
+        # candidate before probing any candidate, including cached outcomes.
+        for element in policy.chain:
+            self._enforce_role_adapter_policy(element.adapter, role_name)
         decision = resolve_route(
             policy,
             cache=self._availability_probe_cache,
@@ -4706,6 +4714,16 @@ class AgentSpawner:
             base_config.model,
         )
 
+        # Resolve only the name before any adapter probe, worktree or provider
+        # effect. The same gate is re-run for the final dispatch and failover.
+        self._enforce_role_adapter_policy(
+            self._infer_adapter_name_for_provider(provider_name, model_config.model), tasks[0].role
+        )
+        if self._runtime_bridge is not None:
+            self._enforce_role_adapter_policy(self._runtime_bridge.name(), tasks[0].role)
+        if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+            self._enforce_adapter_dispatch(self._adapter, tasks[0].role)
+
         self._notify_cost_anomaly_spawn(tasks, model_config)
         provider_for_rate_limit = provider_name or self._adapter.name()
         try:
@@ -5372,6 +5390,8 @@ class AgentSpawner:
 
                     try:
                         target_adapter = self._get_adapter_by_name(adapter_name, role=session.role)
+                    except RoleAdapterDenied:
+                        raise
                     except Exception as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         break
@@ -5510,6 +5530,10 @@ class AgentSpawner:
                             self._release_warm_pool_slot(session_id)
                             raise
 
+                    self._enforce_adapter_dispatch(target_adapter, session.role)
+                    if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+                        self._enforce_adapter_dispatch(self._adapter, session.role)
+
                     # Policy refusal is outside every adapter retry handler:
                     # failure to authorize or audit B cannot select C instead.
                     try:
@@ -5629,7 +5653,9 @@ class AgentSpawner:
                                 _extra_spawn_kwargs["multimodal_context"] = _attachments.context
                             # Cacheable prefix extraction is deferred to adapters
                             # that support provider-specific caching.
-                            result = target_adapter.spawn(
+                            result = self._spawn_adapter(
+                                target_adapter,
+                                session.role,
                                 prompt=prompt,
                                 workdir=spawn_cwd,
                                 model_config=model_config,
@@ -5653,6 +5679,8 @@ class AgentSpawner:
                         session.model_vendor = getattr(target_adapter, "model_vendor", "") or ""
                         session.model_config = model_config
                         break
+                    except RoleAdapterDenied:
+                        raise
                     except RateLimitError as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         self._adapter_health.record_failure(adapter_name)
@@ -6040,6 +6068,7 @@ class AgentSpawner:
         # drifted. A hard stop (``PostureDriftRefusal``), same as the main path.
         self._preflight_posture_drift()
         resume_adapter = self._adapter
+        self._enforce_adapter_dispatch(resume_adapter, tasks[0].role)
 
         # Build resume context prefix
         files_list = "\n".join(f"  - {f}" for f in changed_files) if changed_files else "  (none)"
@@ -6235,6 +6264,7 @@ class AgentSpawner:
         # name (the attachment pin is that path), so the hand-over happens
         # only now, and is undone if the agent does not start so the next
         # resume still finds the worktree where it was preserved.
+        self._enforce_adapter_dispatch(resume_adapter, role)
         preserved_path = worktree_path
         owner = next((m for m in self._worktree_managers.values() if m.owns(preserved_path)), None)
         if owner is not None:
@@ -6245,7 +6275,9 @@ class AgentSpawner:
                     f"Cannot hand preserved worktree {preserved_path} to resume session {session_id}: {exc}"
                 ) from exc
         try:
-            result = resume_adapter.spawn(
+            result = self._spawn_adapter(
+                resume_adapter,
+                role,
                 prompt=prompt,
                 workdir=worktree_path,
                 model_config=model_config,
@@ -6338,6 +6370,7 @@ class AgentSpawner:
             SpawnResult with PID and log path.
         """
         assert self._container_mgr is not None
+        self._enforce_adapter_dispatch(adapter, session.role)
 
         from bernstein.core.agents.spawner_env import build_spawner_env
 
@@ -6418,7 +6451,9 @@ class AgentSpawner:
                 actual=IsolationMode.NONE.value,
                 reason=str(exc),
             )
-            return adapter.spawn(
+            return self._spawn_adapter(
+                adapter,
+                session.role,
                 prompt=prompt,
                 workdir=spawn_cwd,
                 model_config=model_config,
@@ -6468,6 +6503,7 @@ class AgentSpawner:
                 the graceful, surfaced-and-audited downgrade instead.
         """
         assert self._sandbox is not None
+        self._enforce_adapter_dispatch(adapter, session.role)
 
         from bernstein.core.agents.spawner_env import build_spawner_env
 
@@ -6532,7 +6568,9 @@ class AgentSpawner:
                 actual=actual,
                 reason=str(exc),
             )
-            return adapter.spawn(
+            return self._spawn_adapter(
+                adapter,
+                session.role,
                 prompt=prompt,
                 workdir=spawn_cwd,
                 model_config=model_config,
@@ -6599,6 +6637,7 @@ class AgentSpawner:
             the :class:`SandboxExecHandle` stored in
             ``_sandbox_exec_handles``.
         """
+        self._enforce_adapter_dispatch(adapter, session.role)
         sbx_session: SandboxSession
         owned = False
         if self._sandbox_session is not None:
@@ -6657,7 +6696,9 @@ class AgentSpawner:
                     actual=actual,
                     reason=str(exc),
                 )
-                return adapter.spawn(
+                return self._spawn_adapter(
+                    adapter,
+                    session.role,
                     prompt=prompt,
                     workdir=spawn_cwd,
                     model_config=model_config,
