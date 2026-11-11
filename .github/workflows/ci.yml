@@ -2001,7 +2001,7 @@ jobs:
       #
       # Eight on ubuntu (including merge_group), four on windows. The queue
       # trims OS/Python legs, not parallelism: each build sits on the critical
-      # path of every entry behind it, with a target wall time <= 12 minutes. The same
+      # path of every entry behind it. The same
       # argument turned out to hold for push: measured 2026-09-03..09-10, a
       # single ubuntu shard was the critical path of every trunk run at a
       # 28.7 min median against a 30.8 min median to `CI gate` -- under three

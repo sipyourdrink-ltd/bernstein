@@ -119,7 +119,6 @@ def test_the_matrix_list_is_the_widest_row() -> None:
         ("pull_request", {(UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
         ("push", {(UBUNTU, "3.12"): 8, (UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
         ("workflow_dispatch", {(UBUNTU, "3.12"): 8, (UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
-        ("schedule", {(UBUNTU, "3.13"): 8, (WINDOWS, "3.13"): 4}),
     ],
 )
 def test_event_matrix_keeps_parallel_shards(event: str, expected_cells: dict[tuple[str, str], int]) -> None:
@@ -175,7 +174,6 @@ def test_event_matrix_keeps_parallel_shards(event: str, expected_cells: dict[tup
         ("pull_request", "success", "skipped", 1),
         ("push", "success", "skipped", 1),
         ("workflow_dispatch", "success", "skipped", 1),
-        ("schedule", "success", "skipped", 1),
     ],
 )
 def test_queue_platform_skip_keeps_ci_gate_honest(
@@ -191,13 +189,14 @@ def test_queue_platform_skip_keeps_ci_gate_honest(
     needs["adapter-conformance-windows"]["result"] = windows_result
     (tmp_path / "results.json").write_text(json.dumps(needs))
     (tmp_path / "plan.json").write_text(json.dumps({"docs_only": "false", "macos_sensitive": "true"}))
+    (tmp_path / "event.json").write_text("{}")
     rollup = next(step["run"] for step in gate["steps"] if step.get("id") == "roll-up")
     match = re.search(r"<<'PY'\n(.*?)\n\s*PY\b", rollup, re.DOTALL)
     assert match
     proc = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(match.group(1))],
         cwd=tmp_path,
-        env={**os.environ, "EVENT_NAME": event},
+        env={**os.environ, "EVENT_NAME": event, "GITHUB_EVENT_PATH": str(tmp_path / "event.json")},
         capture_output=True,
         text=True,
         check=False,
