@@ -156,7 +156,7 @@ Käynnissä olevaa ajoa voidaan seurata kummasta tahansa käyttöliittymästä. 
 | `bernstein live` — terminaalinäkymä | `bernstein gui serve` — selainnäkymä |
 
 ### ajon todistaminen
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:a10a1e0022ba" -->
 
 Deterministiikka on täällä ominaisuus, jonka voit tarkistaa, ei asia jota pitäisi uskoa sokeasti. Aja kerran auditointi päällä ja vahvista tallennetut tiedot:
 
@@ -177,6 +177,8 @@ Loki kirjoitetaan jokaisella ajolla; alkuperärunko on aina aktiivinen ja saa me
 Ajokuitti sitoo lokin kärjen, alkuperärungon kärjen (jos merkintöjä tallennettiin) ja valinnaisesti audit-ketjun aikavälin yhden Ed25519-allekirjoitetun kohteen alle sisäänrakennetulla julkisella avaimella. Tarkastaja, jolla on tämä tiedosto ja ylläpitäjän julkinen avain, voi varmistaa, että tallennettuja toimintoja ja ketjuja ei ole muutettu: ei HMAC-avainta, ei aktiivista `.sdd/`-hakemistoa, ja poistumiskoodi `2` nimeää ensimmäisen poikkeavan vaiheen peukaloinnin yhteydessä. Tämä kuitti yksilöi sisältämänsä lokitilan; sen todistaminen, että tämä tila on täydellinen valmis loki, vaatii lisäksi riippumattoman kärki/lukumääräsinetin. Pelkällä tiedostolla ilman `--public-key`-avainta tarkistus vahvistaa vain sisäisen eheyden. Yksityiskohdat osiossa [deterministinen toisto](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 Sama todennettavuus koskee arviointituloksia. `bernstein bench run <suite> --reliability k` (myös muodossa `bernstein eval --reliability k`) ajaa jokaisen tehtävän `k` kertaa kiinteällä koordinoinnilla ja raportoi alarajan `pass^k` (kaikkien `k` yrityksen on onnistuttava) ylärajan `pass@1` rinnalla. Tulos sinetöidään allekirjoitettuun kuittiin, jonka `bernstein bench reliability-verify` laskee uudelleen offline-tilassa, jolloin väärennetty alaraja hylätään tarkistuksessa. Lisätietoja: [pass^k-luotettavuuden alaraja](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+Valinnainen tasojen välinen varmennusrajapinta tarkistaa sovelletut koodikorjaukset, hakusisällön tiivisteet ja arvioidut tutkimukset sekä säilyttää jokaisen yrityksen todisteet alkuperä- ja auditointiketjussa. Janitor voi vaatia varmennuksen ennen valittujen tehtävien tulosten hyväksymistä. [API](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cross-tier-verification.md).
 
 ### miten se toimii
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

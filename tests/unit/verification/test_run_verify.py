@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
+import pytest
+
+from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.security.audit_chain import AuditChainStore
 from bernstein.core.verification import (
     Verdict,
     VerifyContract,
@@ -55,39 +58,24 @@ class TestRunVerify:
         )
         assert not record.ok
 
-    def test_lineage_recording_called(self) -> None:
-        """When a spine is provided, it should be called with record."""
-        # We pass a mock that will not be a LineageSpine instance,
-        # so _record_in_lineage will skip silently. This tests the
-        # code path doesn't crash.
-        spine = MagicMock()
-        record = run_verify(
-            _StubVerifier(Verdict.PASS),
-            {},
-            run_id="task-123",
-            spine=spine,
-            sleep_fn=lambda _: None,
-        )
-        assert record.ok
+    def test_lineage_recording_called(self, tmp_path) -> None:
+        spine = LineageSpine(tmp_path / "lineage", run_id="task-123", hmac_key=b"key")
+        chain = AuditChainStore(tmp_path / "audit", key=b"key")
+        record = run_verify(_StubVerifier(), {}, run_id="task-123", spine=spine, audit_chain=chain)
+        assert record.recorded
+        assert len(list(spine.iter_entries())) == 1
+        assert spine.verify().ok
 
-    def test_audit_chain_recording(self) -> None:
-        """When an audit chain is provided, its record method is called."""
-        chain = MagicMock()
-        chain.record = MagicMock()
-        record = run_verify(
-            _StubVerifier(Verdict.PASS),
-            {},
-            run_id="task-456",
-            audit_chain=chain,
-            sleep_fn=lambda _: None,
-        )
-        assert record.ok
-        chain.record.assert_called_once()
-        call_kwargs = chain.record.call_args[1]
-        assert call_kwargs["event_type"] == "verify_outcome"
-        assert call_kwargs["payload"]["run_id"] == "task-456"
-        assert call_kwargs["payload"]["tier"] == "test"
-        assert call_kwargs["payload"]["verdict"] == "pass"
+    def test_audit_chain_recording(self, tmp_path) -> None:
+        spine = LineageSpine(tmp_path / "lineage", run_id="task-456", hmac_key=b"key")
+        chain = AuditChainStore(tmp_path / "audit", key=b"key")
+        record = run_verify(_StubVerifier(), {}, run_id="task-456", spine=spine, audit_chain=chain)
+        assert record.recorded
+        events = chain.query(event_type="verify_outcome", resource_id="task-456")
+        assert len(events) == 1
+        assert events[0].details["tier"] == "test"
+        assert events[0].details["verdict"] == "pass"
+        assert chain.verify() == (True, [])
 
     def test_no_spine_no_crash(self) -> None:
         record = run_verify(
@@ -98,14 +86,9 @@ class TestRunVerify:
         )
         assert record.ok
 
-    def test_no_run_id_skips_recording(self) -> None:
-        chain = MagicMock()
-        chain.record = MagicMock()
-        run_verify(
-            _StubVerifier(Verdict.PASS),
-            {},
-            audit_chain=chain,
-            sleep_fn=lambda _: None,
-        )
-        # record should not be called without a run_id.
-        chain.record.assert_not_called()
+    def test_no_run_id_rejects_recording(self, tmp_path) -> None:
+        spine = LineageSpine(tmp_path / "lineage", run_id="task-123", hmac_key=b"key")
+        chain = AuditChainStore(tmp_path / "audit", key=b"key")
+        with pytest.raises(ValueError, match="run_id"):
+            run_verify(_StubVerifier(), {}, spine=spine, audit_chain=chain)
+        assert not chain.query()

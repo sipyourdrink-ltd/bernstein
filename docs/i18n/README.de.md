@@ -156,7 +156,7 @@ Ein laufender Durchlauf kann über beide Bedienoberflächen beobachtet werden. B
 | `bernstein live` — das Terminal-Dashboard | `bernstein gui serve` — das Browser-Dashboard |
 
 ### einen Durchlauf nachweisen
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:a10a1e0022ba" -->
 
 Determinismus ist hier etwas, das Sie überprüfen, statt darauf zu vertrauen. Einmal mit aktiviertem Audit ausführen und die Aufzeichnungen verifizieren:
 
@@ -177,6 +177,8 @@ Das Journal wird bei jedem Lauf geschrieben; das Lineage-Rückgrat ist immer akt
 Ein Run-Receipt bindet den Journal-Head, den Lineage-Head (sofern Einträge geschrieben wurden) und optional einen Audit-Kettenbereich unter einem einzigen Ed25519-signierten Subjekt mit eingebettetem öffentlichem Schlüssel. Ein Prüfer mit dieser Datei und dem öffentlichen Schlüssel des Betreibers kann bestätigen, dass Aktionen und Ketten unverändert sind: kein HMAC-Schlüssel, kein aktives `.sdd/`, und Exit-Code `2` mit Nennung des ersten abweichenden Schritts bei Manipulation. Dieser Receipt identifiziert den eingebetteten Journal-Zustand; um zu belegen, dass dieser Zustand dem vollständigen Journal entspricht, ist zusätzlich ein unabhängiges Head/Count-Siegel erforderlich. Mit der Datei allein ohne `--public-key`-Bindung dient die Prüfung nur der Integrität – sie belegt interne Konsistenz, nicht den Aussteller. Details unter [deterministisches Replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 Dieselbe Prüfbarkeit gilt für Evaluierungsmetriken. `bernstein bench run <suite> --reliability k` (auch `bernstein eval --reliability k`) führt jede Aufgabe `k`-mal unter fester Koordination aus und berichtet die Untergrenze `pass^k` (alle `k` Versuche müssen bestehen) neben der Obergrenze `pass@1`. Dieses Ergebnis wird in einem signierten Beleg versiegelt, den `bernstein bench reliability-verify` offline nachrechnet, sodass fingierte Werte die Verifikation nicht bestehen. Details: [pass^k Zuverlässigkeits-Untergrenze](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+Die optionale tierübergreifende Verifikations-API prüft angewendete Code-Patches, Hashes von Suchinhalten und bewertete Forschungsberichte und bewahrt die Nachweise jedes Versuchs in der Herkunfts- und Audit-Kette auf. Der Janitor kann diese Prüfung vor der Annahme ausgewählter Aufgabenergebnisse verlangen. [API](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cross-tier-verification.md).
 
 ### wie es funktioniert
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

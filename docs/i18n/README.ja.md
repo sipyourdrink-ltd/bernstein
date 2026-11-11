@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — ターミナルダッシュボード | `bernstein gui serve` — ブラウザダッシュボード |
 
 ### 実行を証明する
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:a10a1e0022ba" -->
 
 ここでの決定性は、信じるものではなく確かめるものである。監査を有効にして一度走らせ、記録された内容を検証する:
 
@@ -177,6 +177,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 1 つの実行レシートは、ジャーナルヘッド、実行がスパインエントリを書いた場合はリネージ・スパインヘッド、そしてオプトインで監査チェーンの範囲を、単一の Ed25519 署名対象のもとに束ね、公開鍵を埋め込む。そのファイルとオペレーターの公開鍵を持つレビュアーは、埋め込まれた動作とチェーンが改変されていないことを確認できる。HMAC 鍵も、生きた `.sdd/` も要らない。改竄されていれば終了コード `2` で最初に食い違ったステップを名指しする。このレシートが同定するのは、埋め込まれたジャーナル状態そのものである。その状態が完結したジャーナルの全体だと示すには、独立したヘッド／件数のシールが別に要る。ファイルだけで `--public-key` による固定がない場合、検査は整合性のみになる。レシートが内部的に一貫していることは証明するが、誰が署名したかは証明しない。判定にもそう書かれる。詳細は[決定論的リプレイ](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification)にある。
 
 同じ検証可能性は評価の数値にも当てはまる。`bernstein bench run <suite> --reliability k`（`bernstein eval --reliability k` とも書ける）は各タスクを固定された協調のもとで `k` 回実行し、`pass^k` の下限（`k` 回すべてが通ること）を `pass@1` の上限と並べて報告する。その結果は署名済みレシートに封じられ、`bernstein bench reliability-verify` がオフラインで再計算するので、捏造された下限は検証に落ちる。詳細: [pass^k 信頼性下限](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md)。
+
+任意で有効にする層横断の検証 API は、適用済みコードパッチ、検索内容のダイジェスト、評価済みの調査を検査し、各試行の証拠を来歴と監査チェーンに保存します。Janitor は指定タスクの結果を受理する前に、この検証を必須にできます。 [API](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cross-tier-verification.md).
 
 ### 仕組み
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

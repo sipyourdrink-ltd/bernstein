@@ -156,7 +156,7 @@ Tiến trình thực thi đang diễn ra có thể được theo dõi từ một
 | `bernstein live` — bảng điều khiển terminal | `bernstein gui serve` — bảng điều khiển trình duyệt |
 
 ### chứng minh một phiên chạy
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:a10a1e0022ba" -->
 
 Tính tất định ở đây là điều bạn có thể tự kiểm chứng, không phải điều bạn chấp nhận dựa trên niềm tin. Chạy một lần với tính năng kiểm toán được bật, sau đó xác minh những gì đã ghi lại:
 
@@ -177,6 +177,8 @@ Nhật ký được ghi lại ở mọi phiên chạy; trục nguồn gốc luô
 Biên lai phiên chạy liên kết phần đầu nhật ký, phần đầu trục nguồn gốc (khi có mục được ghi) và tùy chọn một khoảng chuỗi kiểm toán, dưới một đối tượng duy nhất ký bằng Ed25519 có nhúng khóa công khai. Người đánh giá có tệp này và khóa công khai của người điều hành có thể xác nhận các hành động và chuỗi nhúng không bị thay đổi: không cần khóa HMAC, không cần thư mục `.sdd/` đang hoạt động, và mã thoát `2` sẽ chỉ ra bước sai lệch đầu tiên nếu có can thiệp. Biên lai này xác thực trạng thái nhật ký được nhúng; để chứng minh trạng thái đó là nhật ký hoàn chỉnh đã kết thúc cần thêm một dấu niêm phong đầu/số lượng độc lập. Chỉ với tệp đơn lẻ mà không chỉ định `--public-key`, việc kiểm tra chỉ xác nhận tính toàn vẹn nội bộ. Chi tiết trong [phát lại tất định](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 Khả năng kiểm chứng tương tự cũng áp dụng cho các chỉ số đánh giá. `bernstein bench run <suite> --reliability k` (còn viết là `bernstein eval --reliability k`) chạy mỗi nhiệm vụ `k` lần dưới sự điều phối cố định, sau đó báo cáo mức sàn `pass^k` (tất cả `k` lần thử phải thành công) bên cạnh mức trần `pass@1`. Kết quả đó được niêm phong trong biên lai có chữ ký mà `bernstein bench reliability-verify` tính toán lại ngoại tuyến, khiến mọi mức sàn giả mạo đều không vượt qua kiểm định. Chi tiết: [mức sàn độ tin cậy pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+API xác minh liên tầng tùy chọn kiểm tra bản vá mã đã áp dụng, mã băm nội dung tìm kiếm và nghiên cứu được giám khảo đánh giá, đồng thời lưu bằng chứng của từng lần thử trong chuỗi nguồn gốc và kiểm toán. Janitor có thể yêu cầu xác minh này trước khi chấp nhận kết quả của các tác vụ được chọn. [API](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cross-tier-verification.md).
 
 ### cơ chế hoạt động
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

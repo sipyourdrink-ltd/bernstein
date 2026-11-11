@@ -156,7 +156,7 @@ Eksekusi yang sedang berjalan dapat dipantau dari salah satu antarmuka operator.
 | `bernstein live` — dasbor terminal | `bernstein gui serve` — dasbor peramban |
 
 ### buktikan eksekusi
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:a10a1e0022ba" -->
 
 Determinisme di sini adalah sesuatu yang Anda buktikan sendiri, bukan diterima atas dasar keyakinan semata. Jalankan sekali dengan audit aktif, lalu verifikasi apa yang tercatat:
 
@@ -177,6 +177,8 @@ Jurnal dicatat pada setiap eksekusi; tulang punggung silsilah selalu aktif dan m
 Tanda terima eksekusi mengikat kepala jurnal, kepala tulang punggung silsilah (jika ada entri tercatat), dan rentang rantai audit opsional di bawah satu subjek bertanda tangan Ed25519 dengan kunci publik tersemat. Peninjau yang memegang berkas tersebut beserta kunci publik operator dapat memastikan tindakan dan rantai tidak diubah: tanpa kunci HMAC, tanpa direktori `.sdd/` aktif, dan kode keluar `2` yang menyebutkan langkah penyimpangan pertama jika terjadi manipulasi. Tanda terima tersebut mengidentifikasi status jurnal di dalamnya; membuktikan status tersebut adalah jurnal lengkap yang selesai membutuhkan segel kepala/jumlah independen. Tanpa menyematkan `--public-key`, pemeriksaan hanya untuk integritas internal. Detail di [pemutaran ulang deterministik](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 Verifikasi yang sama berlaku untuk angka evaluasi. `bernstein bench run <suite> --reliability k` (juga ditulis `bernstein eval --reliability k`) menjalankan setiap tugas `k` kali di bawah koordinasi tetap, lalu melaporkan batas bawah `pass^k` (semua `k` percobaan harus berhasil) di samping batas atas `pass@1`. Hasil tersebut disegel dalam tanda terima bertanda tangan yang dihitung ulang secara offline oleh `bernstein bench reliability-verify`, sehingga batas bawah palsu akan gagal diverifikasi. Detail: [batas keandalan pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+API verifikasi lintas tingkat opsional memeriksa patch kode yang diterapkan, hash konten pencarian, dan riset yang dinilai oleh penilai, serta menyimpan bukti setiap percobaan dalam silsilah dan rantai audit. Janitor dapat mewajibkannya sebelum menerima hasil tugas tertentu. [API](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cross-tier-verification.md).
 
 ### cara kerja
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

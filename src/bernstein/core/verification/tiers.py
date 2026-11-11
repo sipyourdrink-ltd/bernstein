@@ -1,298 +1,260 @@
-"""Tier-specific verifier implementations (#6559).
+"""Tier-specific checks over an identified candidate, never the caller's dirty tree.
 
-Each class implements :class:`~bernstein.core.verification.contract.VerifyContract`
-for one :class:`~bernstein.core.tasks.models.DispatchTier`:
-
-:class:`EdgeVerifier`
-    Runs ruff + pytest on the applied diff. The diff must be present in
-    ``task_result["diff"]``; the verifier writes it to a temp file, applies
-    it, then runs ``ruff check`` and ``pytest`` on the changed files.
-
-:class:`SearchVerifier`
-    Validates schema conformance, content checksum, and parse success on
-    search-tier results. Expects ``task_result["results"]`` to be a list
-    of dicts with at least ``"url"`` and ``"content"`` keys.
-
-:class:`ResearchVerifier`
-    Delegates to a judge model that scores the report against a rubric.
-    The score threshold is configurable (default 0.7). Does not call a
-    model at construction time -- the actual judge invocation is deferred
-    to :meth:`verify`, so a verifier can be built cheaply and only pays
-    for inference when called.
-
-:class:`SandboxVerifier`
-    Runs a verify command in a worktree on the returned diff. This is the
-    existing sandbox verification behavior, now behind the uniform contract.
+See ``docs/operations/cross-tier-verification.md`` for the input and trust
+contracts. Checks execute local code; the temporary directory is isolation
+from working-tree mutations, not a security sandbox for hostile programs.
 """
 
 from __future__ import annotations
 
 import hashlib
-import logging
+import io
+import math
 import subprocess
+import sys
+import tarfile
+import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from bernstein.core.verification.contract import (
-    Verdict,
-    VerifyContract,
-    VerifyVerdict,
-    verify_evidence_hash,
-)
+from bernstein.core.verification.contract import Verdict, VerifyContract, VerifyVerdict, verify_evidence_hash
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
-__all__ = [
-    "EdgeVerifier",
-    "ResearchVerifier",
-    "SandboxVerifier",
-    "SearchVerifier",
-]
+__all__ = ["EdgeVerifier", "ResearchVerifier", "SandboxVerifier", "SearchVerifier"]
 
 
-# ---------------------------------------------------------------------------
-# Edge tier: ruff + pytest on the diff
-# ---------------------------------------------------------------------------
+def _verdict(
+    tier: str,
+    result: dict[str, Any],
+    evidence: dict[str, Any],
+    verdict: Verdict,
+    reason: str,
+    started: float,
+    attempt: int,
+) -> VerifyVerdict:
+    return VerifyVerdict(
+        verdict=verdict,
+        tier=tier,
+        backend=result.get("backend", "unknown"),
+        evidence=evidence,
+        evidence_hash=verify_evidence_hash(evidence),
+        reason=reason,
+        elapsed_s=time.monotonic() - started,
+        attempt=attempt,
+    )
+
+
+def _git(workdir: str | Path, *args: str, input: bytes | None = None) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(workdir), *args],
+        input=input,
+        capture_output=True,
+        check=True,
+        timeout=60,
+    ).stdout
+
+
+@contextmanager
+def _candidate(result: dict[str, Any], evidence: dict[str, Any]) -> Iterator[tuple[Path, list[str]]]:
+    """Export an exact commit, derive paths from the patch and apply it once."""
+    diff = result.get("diff")
+    base = result.get("base_commit")
+    workdir = result.get("workdir")
+    if not isinstance(diff, str) or not diff.strip():
+        raise ValueError("no diff in task result")
+    if not isinstance(base, str) or len(base) not in (40, 64) or any(c not in "0123456789abcdef" for c in base):
+        raise ValueError("base_commit must be a full Git commit hash")
+    if not workdir:
+        raise ValueError("no workdir in task result")
+    if result.get("pre_applied"):
+        raise ValueError("pre-applied changes are not accepted; provide a base commit and diff")
+    resolved = _git(workdir, "rev-parse", "--verify", base + "^{commit}").decode().strip()
+    if resolved != base:
+        raise ValueError("base_commit does not identify the exported commit")
+    evidence.update(base_commit=base, diff_hash="sha256:" + hashlib.sha256(diff.encode()).hexdigest())
+    archive = _git(workdir, "archive", "--format=tar", base)
+    with tempfile.TemporaryDirectory(prefix="bernstein-verify-") as directory:
+        root = Path(directory)
+        with tarfile.open(fileobj=io.BytesIO(archive)) as contents:
+            contents.extractall(root, filter="data")
+        # git apply works outside a repository, so no shared index or refs change.
+        stat = _git(root, "apply", "--numstat", "-z", "-", input=diff.encode())
+        paths = [row.split(b"\t", 2)[2].decode() for row in stat.split(b"\0") if row]
+        if not paths:
+            raise ValueError("diff contains no changed paths")
+        for path in paths:
+            if Path(path).is_absolute() or ".." in Path(path).parts:
+                raise ValueError("diff contains an unsafe path")
+        _git(root, "apply", "--check", "-", input=diff.encode())
+        _git(root, "apply", "-", input=diff.encode())
+        evidence["changed_files"] = paths
+        yield root, [p for p in paths if (root / p).is_file()]
 
 
 @dataclass
 class EdgeVerifier(VerifyContract):
-    """Verify edge-tier results by running ruff and pytest on changed files.
+    """Apply a patch to ``base_commit`` then lint and test its candidate tree.
 
-    Expects ``task_result`` to contain:
-        - ``diff``: unified diff string
-        - ``changed_files``: list of file paths touched by the diff
-        - ``workdir``: path to the working directory (optional; cwd if absent)
+    ``changed_files`` from the backend is ignored. ``test_paths`` is supplied
+    by the coordinator; otherwise only changed test modules are selected.
     """
 
     ruff_args: list[str] = field(default_factory=lambda: ["check"])
-    pytest_args: list[str] = field(default_factory=lambda: ["-x", "-q"])
+    pytest_args: list[str] = field(default_factory=lambda: ["-x", "-q", "-p", "no:cacheprovider"])
     timeout_s: int = 120
+    test_paths: list[str] | None = None
 
     @property
     def tier(self) -> str:
         return "edge"
 
-    def verify(
-        self,
-        task_result: dict[str, Any],
-        *,
-        attempt: int = 1,
-    ) -> VerifyVerdict:
-        t0 = time.monotonic()
-        evidence: dict[str, Any] = {"tier": "edge", "attempt": attempt}
-        changed_files = task_result.get("changed_files", [])
-        workdir = task_result.get("workdir")
+    def verify(self, task_result: dict[str, Any], *, attempt: int = 1) -> VerifyVerdict:
+        started = time.monotonic()
+        evidence: dict[str, Any] = {"tier": self.tier, "attempt": attempt}
 
-        if not task_result.get("diff") and not changed_files:
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=task_result.get("backend", "unknown"),
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason="no diff or changed files in task result",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
+        def finish(verdict: Verdict, reason: str = "") -> VerifyVerdict:
+            return _verdict(self.tier, task_result, evidence, verdict, reason, started, attempt)
 
-        # Run ruff on changed files
-        ruff_ok, ruff_output = self._run_ruff(changed_files, workdir)
-        evidence["ruff_ok"] = ruff_ok
-        evidence["ruff_output"] = ruff_output[:2000]  # cap evidence size
+        try:
+            with _candidate(task_result, evidence) as (root, paths):
+                evidence["ruff_files"] = [p for p in paths if p.endswith(".py")]
+                evidence["ruff_args"] = self.ruff_args
+                ok, output = self._run_ruff(paths, str(root))
+                evidence.update(ruff_ok=ok, ruff_output=output[:2000])
+                if not ok:
+                    return finish(Verdict.FAIL, f"ruff check failed: {output[:200]}")
+                tests = (
+                    self.test_paths
+                    if self.test_paths is not None
+                    else [
+                        p
+                        for p in paths
+                        if (Path(p).name.startswith("test_") and p.endswith(".py")) or Path(p).name.endswith("_test.py")
+                    ]
+                )
+                evidence["pytest_files"] = tests
+                evidence["pytest_args"] = self.pytest_args
+                for path in tests:
+                    if Path(path).is_absolute() or ".." in Path(path).parts or not (root / path).is_file():
+                        return finish(Verdict.FAIL, "test_paths must name files inside the candidate")
+                if not tests:
+                    evidence["pytest_status"] = "not_selected"
+                    return finish(Verdict.PASS, "lint passed; no tests selected")
+                result = subprocess.run(
+                    [sys.executable, "-m", "pytest", *self.pytest_args, *tests],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_s,
+                    cwd=root,
+                )
+                evidence.update(
+                    pytest_exit_code=result.returncode, pytest_output=(result.stdout + result.stderr)[:2000]
+                )
+                if result.returncode == 5:
+                    evidence["pytest_status"] = "no_tests_collected"
+                    return finish(Verdict.FAIL, "pytest collected no tests")
+                if result.returncode:
+                    return finish(Verdict.RETRY, "pytest failed")
+                evidence["pytest_status"] = "passed"
+                return finish(Verdict.PASS)
+        except subprocess.TimeoutExpired:
+            return finish(Verdict.RETRY, "verification timed out")
+        except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as exc:
+            evidence["error"] = str(exc)[:2000]
+            return finish(Verdict.FAIL, f"candidate preparation or check failed: {exc}")
 
-        if not ruff_ok:
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=task_result.get("backend", "unknown"),
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"ruff check failed: {ruff_output[:200]}",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        # Run pytest on changed files
-        pytest_ok, pytest_output = self._run_pytest(changed_files, workdir)
-        evidence["pytest_ok"] = pytest_ok
-        evidence["pytest_output"] = pytest_output[:2000]
-
-        if not pytest_ok:
-            verdict = Verdict.RETRY if attempt <= self.max_retries() else Verdict.FAIL
-            return VerifyVerdict(
-                verdict=verdict,
-                tier=self.tier,
-                backend=task_result.get("backend", "unknown"),
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"pytest failed: {pytest_output[:200]}",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        return VerifyVerdict(
-            verdict=Verdict.PASS,
-            tier=self.tier,
-            backend=task_result.get("backend", "unknown"),
-            evidence=evidence,
-            evidence_hash=verify_evidence_hash(evidence),
-            elapsed_s=time.monotonic() - t0,
-            attempt=attempt,
+    def _run_ruff(self, paths: list[str], workdir: str) -> tuple[bool, str]:
+        files = [p for p in paths if p.endswith(".py")]
+        if not files:
+            return True, "no python files to check"
+        result = subprocess.run(
+            [sys.executable, "-m", "ruff", *self.ruff_args, "--", *files],
+            capture_output=True,
+            text=True,
+            timeout=self.timeout_s,
+            cwd=workdir,
         )
+        return result.returncode == 0, result.stdout + result.stderr
 
     def max_retries(self) -> int:
         return 2
 
     def retry_delay_s(self, attempt: int) -> float:
-        # Edge checks are fast -- no backoff needed.
         return 0.0
-
-    def _run_ruff(self, changed_files: list[str], workdir: str | None) -> tuple[bool, str]:
-        if not changed_files:
-            return True, ""
-        py_files = [f for f in changed_files if f.endswith(".py")]
-        if not py_files:
-            return True, "no python files to check"
-        try:
-            result = subprocess.run(
-                ["ruff", *self.ruff_args, *py_files],
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_s,
-                cwd=workdir,
-            )
-            return result.returncode == 0, result.stdout + result.stderr
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return False, str(exc)
-
-    def _run_pytest(self, changed_files: list[str], workdir: str | None) -> tuple[bool, str]:
-        test_files = [f for f in changed_files if "test" in f and f.endswith(".py")]
-        if not test_files:
-            # No test files changed -- pass (nothing to verify).
-            return True, "no test files in changed set"
-        try:
-            result = subprocess.run(
-                ["pytest", *self.pytest_args, *test_files],
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_s,
-                cwd=workdir,
-            )
-            return result.returncode == 0, result.stdout + result.stderr
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return False, str(exc)
-
-
-# ---------------------------------------------------------------------------
-# Search tier: schema + checksum + parse
-# ---------------------------------------------------------------------------
-
-#: Required keys in each search result entry.
-_SEARCH_REQUIRED_KEYS = frozenset({"url", "content"})
 
 
 @dataclass
 class SearchVerifier(VerifyContract):
-    """Verify search-tier results by schema validation, checksum, and parse.
+    """Compare UTF-8 content to a coordinator-supplied trusted manifest.
 
-    Expects ``task_result`` to contain:
-        - ``results``: list of dicts, each with at least ``url`` and ``content``
-        - ``query``: the original search query (for evidence)
+    Expected digests are lowercase SHA-256 hex keyed by exact URL. They must
+    come from an independently retained capture, never from ``task_result``.
     """
 
-    required_keys: frozenset[str] = _SEARCH_REQUIRED_KEYS
+    required_keys: frozenset[str] = frozenset({"url", "content"})
+    expected_digests: dict[str, str] = field(default_factory=dict)
+    manifest_id: str = ""
 
     @property
     def tier(self) -> str:
         return "search"
 
-    def verify(
-        self,
-        task_result: dict[str, Any],
-        *,
-        attempt: int = 1,
-    ) -> VerifyVerdict:
-        t0 = time.monotonic()
-        evidence: dict[str, Any] = {"tier": "search", "attempt": attempt}
+    def verify(self, task_result: dict[str, Any], *, attempt: int = 1) -> VerifyVerdict:
+        started = time.monotonic()
+        evidence: dict[str, Any] = {
+            "tier": self.tier,
+            "attempt": attempt,
+            "manifest_id": self.manifest_id,
+            "manifest_hash": verify_evidence_hash(self.expected_digests),
+        }
+
+        def finish(verdict: Verdict, reason: str = "") -> VerifyVerdict:
+            return _verdict(self.tier, task_result, evidence, verdict, reason, started, attempt)
+
         results = task_result.get("results")
-        backend = task_result.get("backend", "unknown")
-
-        # Schema validation: results must be a non-empty list.
         if not isinstance(results, list) or not results:
-            evidence["schema_error"] = "results missing or not a list"
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason="results missing or not a list",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        # Validate each entry has required keys.
-        schema_errors: list[str] = []
-        for i, entry in enumerate(results):
-            if not isinstance(entry, dict):
-                schema_errors.append(f"entry {i}: not a dict")
-                continue
-            missing = self.required_keys - set(entry.keys())
-            if missing:
-                schema_errors.append(f"entry {i}: missing keys {sorted(missing)}")
-
-        if schema_errors:
-            evidence["schema_errors"] = schema_errors[:10]
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"schema validation failed: {len(schema_errors)} error(s)",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        # Content checksum: hash each entry's content for tamper detection.
-        checksums: list[str] = []
-        parse_errors: list[str] = []
-        for i, entry in enumerate(results):
-            content = entry.get("content", "")
-            if not isinstance(content, str) or not content.strip():
-                parse_errors.append(f"entry {i}: empty or non-string content")
-                continue
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            return finish(Verdict.FAIL, "results missing, empty, or not a list")
+        errors = [
+            i
+            for i, entry in enumerate(results)
+            if not isinstance(entry, dict)
+            or self.required_keys - entry.keys()
+            or not isinstance(entry.get("url"), str)
+            or not entry["url"].strip()
+        ]
+        if errors:
+            evidence["schema_errors"] = errors[:10]
+            return finish(Verdict.FAIL, "schema validation failed")
+        if any(not isinstance(e.get("content"), str) or not e["content"].strip() for e in results):
+            return finish(Verdict.RETRY, "empty or non-string content")
+        if not self.manifest_id or not self.expected_digests:
+            return finish(Verdict.FAIL, "trusted expected digest manifest missing")
+        checksums = []
+        matched = []
+        for entry in results:
+            expected = self.expected_digests.get(entry["url"], "")
+            if len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
+                return finish(Verdict.FAIL, "expected digest missing or invalid for result URL")
+            digest = hashlib.sha256(entry["content"].encode("utf-8")).hexdigest()
             checksums.append(digest)
-
-        evidence["result_count"] = len(results)
-        evidence["checksum_count"] = len(checksums)
-
-        if parse_errors:
-            evidence["parse_errors"] = parse_errors[:10]
-            return VerifyVerdict(
-                verdict=Verdict.RETRY if attempt <= self.max_retries() else Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"parse errors in {len(parse_errors)} result(s)",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        evidence["content_checksums"] = checksums
-        return VerifyVerdict(
-            verdict=Verdict.PASS,
-            tier=self.tier,
-            backend=backend,
-            evidence=evidence,
-            evidence_hash=verify_evidence_hash(evidence),
-            elapsed_s=time.monotonic() - t0,
-            attempt=attempt,
+            matched.append({"url": entry["url"], "digest": digest})
+            if digest != expected:
+                evidence["mismatch_url"] = entry["url"]
+                evidence["actual_digest"] = digest
+                evidence["expected_digest"] = expected
+                return finish(Verdict.FAIL, "content checksum mismatch")
+        evidence.update(
+            result_count=len(results),
+            checksum_count=len(checksums),
+            content_checksums=checksums,
+            matched_results=matched,
         )
+        return finish(Verdict.PASS)
 
     def max_retries(self) -> int:
         return 1
@@ -301,146 +263,63 @@ class SearchVerifier(VerifyContract):
         return 2.0
 
 
-# ---------------------------------------------------------------------------
-# Research tier: judge model scoring
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ResearchVerifier(VerifyContract):
-    """Verify research-tier results by scoring the report with a judge model.
+    """Require an identified judge returning a finite score in [0, 1]."""
 
-    The judge is a callable that takes the report text and returns a float
-    score in [0, 1]. This design decouples the verifier from any specific
-    model client -- the coordinator provides the judge at construction time.
-
-    Expects ``task_result`` to contain:
-        - ``report``: the research report text
-        - ``rubric``: (optional) scoring rubric for the judge
-    """
-
-    #: Score threshold: reports scoring below this fail.
     threshold: float = 0.7
-
-    #: Callable that scores a report. Signature: (report, rubric) -> float.
-    #: None means no judge is configured; verification degrades to a
-    #: structural check (non-empty report).
-    judge_fn: Any = None  # Callable[[str, str], float] | None
+    judge_fn: Any = None
+    judge_id: str = ""
 
     @property
     def tier(self) -> str:
         return "research"
 
-    def verify(
-        self,
-        task_result: dict[str, Any],
-        *,
-        attempt: int = 1,
-    ) -> VerifyVerdict:
-        t0 = time.monotonic()
-        evidence: dict[str, Any] = {"tier": "research", "attempt": attempt}
+    def verify(self, task_result: dict[str, Any], *, attempt: int = 1) -> VerifyVerdict:
+        started = time.monotonic()
+        evidence: dict[str, Any] = {"tier": self.tier, "attempt": attempt, "judge": self.judge_id}
+
+        def finish(verdict: Verdict, reason: str = "") -> VerifyVerdict:
+            return _verdict(self.tier, task_result, evidence, verdict, reason, started, attempt)
+
         report = task_result.get("report")
-        backend = task_result.get("backend", "unknown")
-        rubric = task_result.get("rubric", "")
-
         if not isinstance(report, str) or not report.strip():
-            evidence["error"] = "report missing or empty"
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason="report missing or empty",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        evidence["report_length"] = len(report)
-
-        if self.judge_fn is None:
-            # No judge configured -- structural pass only.
-            evidence["judge"] = "none"
-            evidence["note"] = "no judge configured; structural check only"
-            return VerifyVerdict(
-                verdict=Verdict.PASS,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason="no judge configured; structural check passed",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
+            return finish(Verdict.FAIL, "report missing or empty")
+        if not callable(self.judge_fn) or not self.judge_id:
+            return finish(Verdict.FAIL, "identified judge required")
+        if not math.isfinite(self.threshold) or not 0 <= self.threshold <= 1:
+            return finish(Verdict.FAIL, "threshold must be finite and in [0, 1]")
+        rubric = task_result.get("rubric", "")
+        if not isinstance(rubric, str):
+            return finish(Verdict.FAIL, "rubric must be a string")
+        evidence.update(
+            report_hash="sha256:" + hashlib.sha256(report.encode()).hexdigest(),
+            rubric_hash="sha256:" + hashlib.sha256(rubric.encode()).hexdigest(),
+            threshold=self.threshold,
+        )
         try:
             score = float(self.judge_fn(report, rubric))
         except Exception as exc:
-            logger.warning("research judge failed: %s", exc)
             evidence["judge_error"] = str(exc)[:500]
-            return VerifyVerdict(
-                verdict=Verdict.RETRY if attempt <= self.max_retries() else Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"judge invocation failed: {exc}",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
+            return finish(Verdict.RETRY, "judge invocation failed")
+        if not math.isfinite(score) or not 0 <= score <= 1:
+            evidence["invalid_score"] = repr(score)
+            return finish(Verdict.FAIL, "judge score must be finite and in [0, 1]")
         evidence["judge_score"] = score
-        evidence["threshold"] = self.threshold
-
         if score < self.threshold:
-            verdict = Verdict.RETRY if attempt <= self.max_retries() else Verdict.FAIL
-            return VerifyVerdict(
-                verdict=verdict,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"judge score {score:.2f} below threshold {self.threshold:.2f}",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        return VerifyVerdict(
-            verdict=Verdict.PASS,
-            tier=self.tier,
-            backend=backend,
-            evidence=evidence,
-            evidence_hash=verify_evidence_hash(evidence),
-            elapsed_s=time.monotonic() - t0,
-            attempt=attempt,
-        )
+            return finish(Verdict.FAIL, "judge score below threshold")
+        return finish(Verdict.PASS)
 
     def max_retries(self) -> int:
         return 3
 
     def retry_delay_s(self, attempt: int) -> float:
-        # Exponential backoff for judge model calls.
         return min(2.0**attempt, 30.0)
-
-
-# ---------------------------------------------------------------------------
-# Sandbox tier: verify command in worktree
-# ---------------------------------------------------------------------------
 
 
 @dataclass
 class SandboxVerifier(VerifyContract):
-    """Verify sandbox-tier results by running a command in the worktree.
-
-    This is the existing sandbox verification behavior, now behind the
-    uniform contract. The verify command is expected to run in the worktree
-    containing the applied diff and exit 0 on success.
-
-    Expects ``task_result`` to contain:
-        - ``diff``: unified diff string
-        - ``workdir``: path to the worktree
-        - ``verify_command``: the command to run (list of strings)
-    """
+    """Apply a patch to its base and execute a coordinator-approved command."""
 
     default_timeout_s: int = 300
 
@@ -448,118 +327,45 @@ class SandboxVerifier(VerifyContract):
     def tier(self) -> str:
         return "sandbox"
 
-    def verify(
-        self,
-        task_result: dict[str, Any],
-        *,
-        attempt: int = 1,
-    ) -> VerifyVerdict:
-        t0 = time.monotonic()
-        evidence: dict[str, Any] = {"tier": "sandbox", "attempt": attempt}
-        backend = task_result.get("backend", "unknown")
-        workdir = task_result.get("workdir")
-        verify_command = task_result.get("verify_command")
+    def verify(self, task_result: dict[str, Any], *, attempt: int = 1) -> VerifyVerdict:
+        started = time.monotonic()
+        evidence: dict[str, Any] = {"tier": self.tier, "attempt": attempt}
 
-        if not verify_command:
-            evidence["error"] = "no verify_command in task result"
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason="no verify_command in task result",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
+        def finish(verdict: Verdict, reason: str = "") -> VerifyVerdict:
+            return _verdict(self.tier, task_result, evidence, verdict, reason, started, attempt)
 
-        if not workdir:
-            evidence["error"] = "no workdir in task result"
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason="no workdir in task result",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
-        cmd = verify_command if isinstance(verify_command, list) else [verify_command]
+        command = task_result.get("verify_command")
+        if not command:
+            return finish(Verdict.FAIL, "no verify_command in task result")
+        if not task_result.get("workdir"):
+            return finish(Verdict.FAIL, "no workdir in task result")
+        if isinstance(command, str):
+            command = [command]  # Literal executable name, never shell syntax.
+        if not isinstance(command, list) or any(not isinstance(arg, str) or not arg for arg in command):
+            return finish(Verdict.FAIL, "verify_command must be an argv list")
+        evidence["command_hash"] = verify_evidence_hash({"argv": command})
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.default_timeout_s,
-                cwd=workdir,
-            )
-            evidence["exit_code"] = result.returncode
-            evidence["stdout"] = result.stdout[:2000]
-            evidence["stderr"] = result.stderr[:2000]
-
-            if result.returncode == 0:
-                return VerifyVerdict(
-                    verdict=Verdict.PASS,
-                    tier=self.tier,
-                    backend=backend,
-                    evidence=evidence,
-                    evidence_hash=verify_evidence_hash(evidence),
-                    elapsed_s=time.monotonic() - t0,
-                    attempt=attempt,
+            with _candidate(task_result, evidence) as (root, _):
+                result = subprocess.run(
+                    command, capture_output=True, text=True, timeout=self.default_timeout_s, cwd=root
                 )
-
-            verdict = Verdict.RETRY if attempt <= self.max_retries() else Verdict.FAIL
-            return VerifyVerdict(
-                verdict=verdict,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"verify command exited {result.returncode}",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-
+                evidence.update(exit_code=result.returncode, stdout=result.stdout[:2000], stderr=result.stderr[:2000])
+                if result.returncode == 0:
+                    return finish(Verdict.PASS)
+                return finish(Verdict.RETRY, f"verify command exited {result.returncode}")
         except subprocess.TimeoutExpired:
-            evidence["error"] = f"timeout after {self.default_timeout_s}s"
-            return VerifyVerdict(
-                verdict=Verdict.RETRY if attempt <= self.max_retries() else Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"verify command timed out after {self.default_timeout_s}s",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
-        except FileNotFoundError as exc:
-            evidence["error"] = str(exc)
-            return VerifyVerdict(
-                verdict=Verdict.FAIL,
-                tier=self.tier,
-                backend=backend,
-                evidence=evidence,
-                evidence_hash=verify_evidence_hash(evidence),
-                reason=f"verify command not found: {exc}",
-                elapsed_s=time.monotonic() - t0,
-                attempt=attempt,
-            )
+            return finish(Verdict.RETRY, "verify command timed out")
+        except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as exc:
+            evidence["error"] = str(exc)[:2000]
+            return finish(Verdict.FAIL, f"candidate preparation or verify command failed: {exc}")
 
     def max_retries(self) -> int:
         return 2
 
     def retry_delay_s(self, attempt: int) -> float:
-        # Moderate backoff for sandbox retries.
         return float(attempt) * 2.0
 
 
-# ---------------------------------------------------------------------------
-# Registry: tier name -> verifier class
-# ---------------------------------------------------------------------------
-
-#: Default verifier class for each dispatch tier.
 TIER_VERIFIERS: dict[str, type[VerifyContract]] = {
     "edge": EdgeVerifier,
     "search": SearchVerifier,
@@ -569,10 +375,5 @@ TIER_VERIFIERS: dict[str, type[VerifyContract]] = {
 
 
 def get_verifier(tier: str, **kwargs: Any) -> VerifyContract:
-    """Return a verifier instance for *tier*.
-
-    Raises :class:`KeyError` if no verifier is registered for the tier.
-    Extra keyword arguments are forwarded to the verifier's constructor.
-    """
-    cls = TIER_VERIFIERS[tier]
-    return cls(**kwargs)
+    """Construct the requested tier; configuration is trusted coordinator input."""
+    return TIER_VERIFIERS[tier](**kwargs)

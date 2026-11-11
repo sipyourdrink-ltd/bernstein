@@ -154,6 +154,8 @@ class TestRunWithRetries:
         assert "exhausted" in record.final_verdict.reason
         # 1 initial + 2 retries = 3 attempts.
         assert record.attempt_count == 3
+        assert all(v.verdict is Verdict.RETRY for v in record.attempts)
+        assert [v.attempt for v in record.attempts] == [1, 2, 3]
 
     def test_sleep_called_between_retries(self) -> None:
         delays: list[float] = []

@@ -156,7 +156,7 @@ Trwający przebieg można obserwować w dowolnym interfejsie operatora. Oba korz
 | `bernstein live` — panel w terminalu | `bernstein gui serve` — panel w przeglądarce |
 
 ### udowodnij poprawność przebiegu
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:a10a1e0022ba" -->
 
 Determinizm w tym projekcie można sprawdzić, zamiast przyjmować go na wiarę. Uruchom zadanie z włączonym audytem, a następnie zweryfikuj zarejestrowane dane:
 
@@ -177,6 +177,8 @@ Dziennik jest zapisywany przy każdym uruchomieniu; kręgosłup pochodzenia jest
 Pokwitowanie przebiegu łączy nagłówek dziennika, nagłówek pochodzenia (jeśli zapisano wpisy) oraz opcjonalnie zakres łańcucha audytu w ramach jednego rekordu podpisanego kluczem Ed25519 z osadzonym kluczem publicznym. Weryfikator dysponujący tym plikiem oraz kluczem publicznym operatora może potwierdzić brak modyfikacji: bez konieczności posiadania klucza HMAC, bez aktywnego katalogu `.sdd/`, z kodem wyjścia `2` wskazującym pierwszy niezgodny krok w razie manipulacji. Pokwitowanie to identyfikuje stan dziennika; udowodnienie, że stan ten stanowi pełny, ukończony dziennik, wymaga dodatkowo niezależnej pieczęci nagłówka/liczby kroków. Bez wskazania klucza `--public-key` następuje jedynie weryfikacja spójności wewnętrznej. Szczegóły w [deterministycznym odtwarzaniu](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 Taka sama weryfikowalność dotyczy wyników benchmarków. Polecenie `bernstein bench run <suite> --reliability k` (dostępne także jako `bernstein eval --reliability k`) uruchamia każde zadanie `k` razy przy stałej koordynacji, raportując dolny próg `pass^k` (wszystkie `k` prób musi zakończyć się sukcesem) obok górnego `pass@1`. Wynik zostaje przypieczętowany w podpisanym pokwitowaniu przeliczanym offline przez `bernstein bench reliability-verify`, co uniemożliwia sfałszowanie wskaźników. Szczegóły: [próg niezawodności pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+Opcjonalne API weryfikacji między poziomami sprawdza zastosowane poprawki kodu, skróty treści wyszukiwania i badania ocenione przez sędziego, zachowując dowody każdej próby w rejestrze pochodzenia i łańcuchu audytu. Janitor może wymagać tej weryfikacji przed przyjęciem wyników wybranych zadań. [API](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/cross-tier-verification.md).
 
 ### jak to działa
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

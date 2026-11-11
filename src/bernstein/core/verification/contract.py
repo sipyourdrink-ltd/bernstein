@@ -7,7 +7,7 @@ produce a structured verdict (pass / fail / retry) with evidence, and
 record the outcome in lineage.
 
 :class:`VerifyContract` is the abstract base. Each tier implements
-:meth:`verify` and :meth:`retry_policy`; the coordinator calls
+:meth:`verify` and :meth:`max_retries`; the coordinator calls
 :func:`run_verify` which handles the retry loop, evidence hashing, and
 lineage recording uniformly.
 
@@ -27,7 +27,6 @@ Design decisions:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from abc import ABC, abstractmethod
@@ -100,13 +99,11 @@ def verify_evidence_hash(evidence: dict[str, Any]) -> str:
     as :func:`bernstein.core.quality.verifier_ladder.canonical_hash` and the
     lineage spine, so hashes from different modules are interoperable.
     """
-    payload = json.dumps(
-        evidence,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
+    from bernstein.core.quality.verifier_ladder import canonical_hash
+
+    # Restrict to finite JSON before using the established py-json-v1 profile.
+    json.dumps(evidence, allow_nan=False)
+    return canonical_hash(evidence)
 
 
 class VerifyContract(ABC):

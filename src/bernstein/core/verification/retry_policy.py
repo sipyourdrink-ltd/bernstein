@@ -7,7 +7,7 @@ Each dispatch tier has different failure modes:
   (OOM, segfault in a native dep). Max 2, no backoff.
 * **search**: search results can vary by timing and backend load. One retry
   with a short delay catches transient empty results. Max 1, 2s delay.
-* **research**: judge model calls can time out or return inconsistent scores.
+* **research**: judge model calls can fail transiently or time out.
   Exponential backoff gives the provider time to recover. Max 3, 2^n backoff
   capped at 30s.
 * **sandbox**: verify commands can fail from transient workspace state (stale
@@ -21,15 +21,17 @@ The loop respects the verifier's own :meth:`~VerifyContract.max_retries` and
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from bernstein.core.verification.contract import (
     Verdict,
     VerifyContract,
     VerifyVerdict,
+    verify_evidence_hash,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,11 +50,19 @@ class RetryRecord:
         final_verdict: The verdict that terminates the retry loop.
         attempts: All verdicts produced during the run, in order.
         total_elapsed_s: Wall-clock seconds for the entire retry sequence.
+        recorded: True only after the envelope, lineage and audit writes succeed.
+        artifact_path: Durable envelope location, also exposed on partial failure.
+        spine_entry_hash: Lineage anchor, if appended.
+        audit_event_hash: HMAC identity of the audit event, if appended.
     """
 
     final_verdict: VerifyVerdict
     attempts: tuple[VerifyVerdict, ...] = ()
     total_elapsed_s: float = 0.0
+    recorded: bool = False
+    artifact_path: str = ""
+    spine_entry_hash: str = ""
+    audit_event_hash: str = ""
 
     @property
     def ok(self) -> bool:
@@ -84,10 +94,15 @@ def run_with_retries(
 
     t0 = time.monotonic()
     attempts: list[VerifyVerdict] = []
+    if verifier.max_retries() < 0:
+        raise ValueError("max_retries must be non-negative")
     max_attempts = verifier.max_retries() + 1  # first attempt + retries
 
     for attempt_num in range(1, max_attempts + 1):
         verdict = verifier.verify(task_result, attempt=attempt_num)
+        # Snapshot evidence even for custom verifiers; never trust a supplied hash.
+        evidence = json.loads(json.dumps(verdict.evidence, allow_nan=False))
+        verdict = replace(verdict, evidence=evidence, evidence_hash=verify_evidence_hash(evidence), attempt=attempt_num)
         attempts.append(verdict)
 
         if verdict.verdict is Verdict.PASS:
@@ -119,7 +134,6 @@ def run_with_retries(
                 attempt=attempt_num,
                 timestamp=verdict.timestamp,
             )
-            attempts[-1] = final
             return RetryRecord(
                 final_verdict=final,
                 attempts=tuple(attempts),

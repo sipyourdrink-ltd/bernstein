@@ -1,32 +1,23 @@
-"""Cross-tier verification protocol (#6559).
+"""Cross-tier verification with explicit, durable recording (#6559).
 
-Public API for tier-aware verification of task results. The coordinator
-(or fleet coordinator, #6562) calls :func:`run_verify` to verify a task
-result against its dispatch tier's contract, get a structured verdict,
-and record the outcome in lineage.
-
-Usage::
-
-    from bernstein.core.verification import run_verify, get_verifier
-
-    verifier = get_verifier("edge")
-    record = run_verify(verifier, task_result, run_id="task-123")
-    if not record.ok:
-        handle_failure(record.final_verdict)
+``run_verify`` without stores is a local check (``recorded=False``). With
+stores it requires both real stores, binds the run, persists the complete
+attempt envelope and raises ``VerificationRecordingError`` on any failure.
+Partial writes remain evidence and must be reconciled, not silently retried.
 """
 
 from __future__ import annotations
 
-from bernstein.core.verification.contract import (
-    Verdict,
-    VerifyContract,
-    VerifyVerdict,
-    verify_evidence_hash,
-)
-from bernstein.core.verification.retry_policy import (
-    RetryRecord,
-    run_with_retries,
-)
+import json
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from bernstein.core.lineage.spine import LineageSpine
+from bernstein.core.persistence.atomic_write import write_atomic_bytes
+from bernstein.core.security.audit_chain import AuditChainStore
+from bernstein.core.verification.contract import Verdict, VerifyContract, VerifyVerdict, verify_evidence_hash
+from bernstein.core.verification.retry_policy import RetryRecord, run_with_retries
 from bernstein.core.verification.tiers import (
     EdgeVerifier,
     ResearchVerifier,
@@ -35,6 +26,9 @@ from bernstein.core.verification.tiers import (
     get_verifier,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 __all__ = [
     "EdgeVerifier",
     "ResearchVerifier",
@@ -42,6 +36,8 @@ __all__ = [
     "SandboxVerifier",
     "SearchVerifier",
     "Verdict",
+    "VerificationRecordingError",
+    "VerificationRequest",
     "VerifyContract",
     "VerifyVerdict",
     "get_verifier",
@@ -51,115 +47,99 @@ __all__ = [
 ]
 
 
+class VerificationRecordingError(RuntimeError):
+    """Recording did not complete; ``record`` is unrecorded, even after a partial write."""
+
+    def __init__(self, message: str, record: RetryRecord) -> None:
+        super().__init__(message)
+        self.record = record
+
+
+@dataclass(frozen=True)
+class VerificationRequest:
+    """Trusted coordinator wiring for the janitor's optional cross-tier gate."""
+
+    verifier: VerifyContract
+    task_result: dict[str, Any]
+    spine: LineageSpine
+    audit_chain: AuditChainStore
+
+    def run(self, run_id: str) -> RetryRecord:
+        return run_verify(
+            self.verifier, self.task_result, run_id=run_id, spine=self.spine, audit_chain=self.audit_chain
+        )
+
+
 def run_verify(
     verifier: VerifyContract,
-    task_result: dict[str, object],
+    task_result: dict[str, Any],
     *,
     run_id: str = "",
-    spine: object | None = None,
-    audit_chain: object | None = None,
-    sleep_fn: object | None = None,
+    spine: LineageSpine | None = None,
+    audit_chain: AuditChainStore | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
 ) -> RetryRecord:
-    """Run verification with retries and record the outcome in lineage.
+    """Check a candidate; optionally retain and authenticate every actual attempt.
 
-    This is the primary entry point for the coordinator. It:
-    1. Runs the verifier through the retry loop.
-    2. Records the final verdict in the lineage spine (if provided).
-    3. Records an audit-chain entry (if provided).
-
-    Parameters:
-        verifier: A tier-specific :class:`VerifyContract` implementation.
-        task_result: The backend's result payload.
-        run_id: Lineage run identifier for recording.
-        spine: Optional :class:`~bernstein.core.lineage.spine.LineageSpine`
-            instance for provenance recording.
-        audit_chain: Optional
-            :class:`~bernstein.core.security.audit_chain.AuditChainStore`
-            for HMAC-signed audit recording.
-        sleep_fn: Override for :func:`time.sleep` (test injection).
-
-    Returns:
-        A :class:`RetryRecord` with the final verdict and all attempts.
+    Stores are an all-or-nothing configuration. A recording failure raises,
+    never returns a successfully recorded PASS. See the operation guide for
+    the non-transactional partial-write recovery contract.
     """
-    record = run_with_retries(verifier, task_result, sleep_fn=sleep_fn)  # type: ignore[arg-type]
+    if spine is not None or audit_chain is not None:
+        if not isinstance(spine, LineageSpine) or not isinstance(audit_chain, AuditChainStore):
+            raise ValueError("recording requires both LineageSpine and AuditChainStore")
+        if not run_id or spine.run_dir.name != run_id:
+            raise ValueError("run_id must match the supplied lineage spine")
+    record = run_with_retries(verifier, task_result, sleep_fn=sleep_fn)
+    if spine is None or audit_chain is None:
+        return record
 
-    # Record in lineage if spine is available.
-    if spine is not None and run_id:
-        _record_in_lineage(spine, record, run_id)
-
-    # Record in audit chain if available.
-    if audit_chain is not None and run_id:
-        _record_in_audit_chain(audit_chain, record, run_id)
-
-    return record
-
-
-def _record_in_lineage(
-    spine: object,
-    record: RetryRecord,
-    run_id: str,
-) -> None:
-    """Record the verify outcome in the lineage spine.
-
-    Records tier, backend, verdict, evidence hash, and attempt count
-    under the run's lineage entry. The spine's own HMAC signing handles
-    integrity.
-    """
     try:
-        from bernstein.core.lineage.spine import LineageSpine
-
-        if not isinstance(spine, LineageSpine):
-            return
+        payload = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "final_verdict": asdict(record.final_verdict),
+            "attempts": [asdict(attempt) for attempt in record.attempts],
+            "total_elapsed_s": record.total_elapsed_s,
+        }
+        content = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+        payload_hash = verify_evidence_hash(payload)
+        relative = Path("verification") / (payload_hash.removeprefix("sha256:") + ".json")
+        destination = spine.run_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic_bytes(destination, content)
+        if destination.read_bytes() != content:
+            raise OSError("verification artifact readback mismatch")
+        record = replace(record, artifact_path=str(destination))
         verdict = record.final_verdict
-        spine.record(
-            run_id=run_id,
-            artifact_path=f"verify/{verdict.tier}/{verdict.backend}",
-            content_hash=verdict.evidence_hash,
+        anchor = spine.record(
+            artifact_path=relative.as_posix(),
+            content=content,
             actor="bernstein.verification",
-            step_id=f"verify-{verdict.tier}-attempt-{verdict.attempt}",
+            step_id=f"verify:{verdict.tier}:{run_id}",
             model=verdict.backend,
-            extra={
-                "tier": verdict.tier,
-                "verdict": verdict.verdict.value,
-                "attempt_count": record.attempt_count,
-                "elapsed_s": record.total_elapsed_s,
-            },
+            timestamp=int(verdict.timestamp),
         )
-    except Exception:
-        # Lineage recording must never fail the verify outcome.
-        import logging
-
-        logging.getLogger(__name__).debug("lineage recording failed for verify outcome", exc_info=True)
-
-
-def _record_in_audit_chain(
-    audit_chain: object,
-    record: RetryRecord,
-    run_id: str,
-) -> None:
-    """Record the verify outcome in the HMAC audit chain.
-
-    Hashes and verdicts only -- never raw diff, model output, or report text.
-    """
-    try:
-        verdict = record.final_verdict
-        # Use the audit chain's record method if available.
-        record_fn = getattr(audit_chain, "record", None)
-        if record_fn is None:
-            return
-        record_fn(
+        record = replace(record, spine_entry_hash=anchor)
+        event = audit_chain.log_with_prev_digest(
             event_type="verify_outcome",
-            payload={
+            actor="bernstein.verification",
+            resource_type="run",
+            resource_id=run_id,
+            details={
                 "run_id": run_id,
                 "tier": verdict.tier,
                 "backend": verdict.backend,
                 "verdict": verdict.verdict.value,
                 "evidence_hash": verdict.evidence_hash,
+                "artifact_path": relative.as_posix(),
+                "artifact_hash": payload_hash,
                 "attempt_count": record.attempt_count,
-                "elapsed_s": record.total_elapsed_s,
+                "spine_entry_hash": anchor,
             },
         )
-    except Exception:
-        import logging
-
-        logging.getLogger(__name__).debug("audit chain recording failed for verify outcome", exc_info=True)
+        return replace(record, recorded=True, audit_event_hash=event.hmac)
+    except Exception as exc:
+        raise VerificationRecordingError(f"verification recording incomplete: {exc}", record) from exc

@@ -40,6 +40,7 @@ from bernstein.core.quality.verifier_ladder import (
     build_ladder_receipt,
     canonical_hash,
 )
+from bernstein.core.verification import VerificationRecordingError, VerificationRequest
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -1068,6 +1069,7 @@ async def run_janitor(
     ladder: VerifierLadderContext | None = None,
     lineage_audit_chain: AuditChainStore | None = None,
     lineage_operator_secret: bytes | None = None,
+    tier_verifications: Mapping[str, VerificationRequest] | None = None,
 ) -> list[JanitorResult]:
     """Evaluate tasks and return structured results.
 
@@ -1102,6 +1104,9 @@ async def run_janitor(
             LineageGate/tool-call coupling. When supplied, a signed lineage
             entry without matching identity-valid dispatch evidence blocks the
             janitor verdict. ``None`` preserves legacy/audit-disabled behavior.
+        tier_verifications: Optional task-id keyed, coordinator-supplied cross-tier
+            requests. Each is verified and durably recorded before acceptance;
+            failures block the task. Omission preserves existing behavior.
         lineage_operator_secret: Optional HMAC secret for the ordinary signed
             lineage checks performed by that coupled gate.
 
@@ -1130,7 +1135,13 @@ async def run_janitor(
         # and produced no JanitorResult at all -- neither accepted nor
         # rejected (#4562). Skip only when nothing whatsoever can be checked:
         # no signals, no lineage gate, and no git repo to attribute work in.
-        if not task.completion_signals and lineage_gate_result is None and not _attribution_possible:
+        tier_request = tier_verifications.get(task.id) if tier_verifications is not None else None
+        if (
+            not task.completion_signals
+            and lineage_gate_result is None
+            and not _attribution_possible
+            and tier_request is None
+        ):
             continue
 
         judge_verdict: JudgeVerdict | None = None
@@ -1151,6 +1162,19 @@ async def run_janitor(
             )
             all_passed = all(passed for _, passed, _ in signal_results)
             failed_descs = [desc for desc, passed, _ in signal_results if not passed]
+
+        if tier_request is not None:
+            try:
+                tier_record = tier_request.run(task.id)
+                tier_passed = tier_record.ok and tier_record.recorded
+                tier_detail = tier_record.artifact_path
+            except VerificationRecordingError as exc:
+                tier_passed = False
+                tier_detail = str(exc)
+            signal_results.append(("cross_tier:verification", tier_passed, tier_detail))
+            if not tier_passed:
+                all_passed = False
+                failed_descs.append("cross_tier:verification")
 
         # Empty-diff guard + attribution (item 15 / S2): a non-no-op task
         # with zero attributable changed files must NOT pass -- catches both

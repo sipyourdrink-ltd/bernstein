@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import hashlib
+import sys
 
+from bernstein.core.verification import run_with_retries
 from bernstein.core.verification.contract import Verdict
 from bernstein.core.verification.tiers import (
     EdgeVerifier,
@@ -37,69 +39,27 @@ class TestEdgeVerifier:
         assert result.verdict is Verdict.FAIL
         assert "no diff" in result.reason
 
-    def test_ruff_failure(self) -> None:
-        v = EdgeVerifier()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = type("R", (), {"returncode": 1, "stdout": "E123 error", "stderr": ""})()
-            result = v.verify(
-                {
-                    "diff": "--- a.py\n+++ b.py",
-                    "changed_files": ["a.py"],
-                    "backend": "test",
-                }
-            )
+    def test_ruff_failure(self, candidate) -> None:
+        _, make = candidate
+        result = EdgeVerifier().verify(make("VALUE = (\n"))
         assert result.verdict is Verdict.FAIL
         assert "ruff" in result.reason
 
-    def test_pytest_failure_retries(self) -> None:
-        v = EdgeVerifier()
-        with patch("subprocess.run") as mock_run:
-            # ruff passes, pytest fails
-            def side_effect(cmd, **kwargs):
-                r = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-                if "pytest" in cmd[0]:
-                    r.returncode = 1
-                    r.stdout = "FAILED test_foo"
-                return r
-
-            mock_run.side_effect = side_effect
-            result = v.verify(
-                {
-                    "diff": "--- a.py\n+++ b.py",
-                    "changed_files": ["test_foo.py"],
-                    "backend": "test",
-                },
-                attempt=1,
-            )
+    def test_pytest_failure_retries(self, candidate) -> None:
+        _, make = candidate
+        result = EdgeVerifier(test_paths=["test_value.py"]).verify(make("VALUE = 2\n"))
         assert result.verdict is Verdict.RETRY
 
-    def test_all_pass(self) -> None:
-        v = EdgeVerifier()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
-            result = v.verify(
-                {
-                    "diff": "--- a.py\n+++ b.py",
-                    "changed_files": ["a.py", "test_a.py"],
-                    "backend": "test",
-                }
-            )
-        assert result.verdict is Verdict.PASS
-        assert result.ok is True
+    def test_all_pass(self, candidate) -> None:
+        _, make = candidate
+        result = EdgeVerifier(test_paths=["test_value.py"]).verify(make("VALUE = 1  # checked\n"))
+        assert result.ok
 
-    def test_no_python_files_pass_ruff(self) -> None:
-        v = EdgeVerifier()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-            result = v.verify(
-                {
-                    "diff": "--- a.md\n+++ b.md",
-                    "changed_files": ["README.md"],
-                    "backend": "test",
-                }
-            )
-        # No python files -> ruff passes, no test files -> pytest passes.
-        assert result.verdict is Verdict.PASS
+    def test_no_python_files_pass_ruff(self, candidate) -> None:
+        _, make = candidate
+        result = EdgeVerifier().verify(make("Updated\n", "README.md"))
+        assert result.ok
+        assert result.evidence["pytest_status"] == "not_selected"
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +110,13 @@ class TestSearchVerifier:
         assert result.verdict is Verdict.RETRY
 
     def test_valid_results_pass(self) -> None:
-        v = SearchVerifier()
+        v = SearchVerifier(
+            manifest_id="capture-1",
+            expected_digests={
+                "https://example.com": hashlib.sha256(b"some text").hexdigest(),
+                "https://other.com": hashlib.sha256(b"more text").hexdigest(),
+            },
+        )
         result = v.verify(
             {
                 "results": [
@@ -203,34 +169,34 @@ class TestResearchVerifier:
         assert result.verdict is Verdict.FAIL
         assert "empty" in result.reason
 
-    def test_no_judge_structural_pass(self) -> None:
+    def test_no_judge_fails(self) -> None:
         v = ResearchVerifier()
         result = v.verify({"report": "A valid research report.", "backend": "test"})
-        assert result.verdict is Verdict.PASS
-        assert result.evidence.get("judge") == "none"
+        assert result.verdict is Verdict.FAIL
+        assert "judge required" in result.reason
 
     def test_judge_passes(self) -> None:
         def judge(report: str, rubric: str) -> float:
             return 0.9
 
-        v = ResearchVerifier(judge_fn=judge, threshold=0.7)
+        v = ResearchVerifier(judge_id="test-judge", judge_fn=judge, threshold=0.7)
         result = v.verify({"report": "Good report.", "backend": "test"})
         assert result.verdict is Verdict.PASS
         assert result.evidence.get("judge_score") == 0.9
 
-    def test_judge_below_threshold_retries(self) -> None:
+    def test_judge_below_threshold_fails(self) -> None:
         def judge(report: str, rubric: str) -> float:
             return 0.3
 
-        v = ResearchVerifier(judge_fn=judge, threshold=0.7)
+        v = ResearchVerifier(judge_id="test-judge", judge_fn=judge, threshold=0.7)
         result = v.verify({"report": "Weak report.", "backend": "test"}, attempt=1)
-        assert result.verdict is Verdict.RETRY
+        assert result.verdict is Verdict.FAIL
 
     def test_judge_below_threshold_fails_on_last(self) -> None:
         def judge(report: str, rubric: str) -> float:
             return 0.3
 
-        v = ResearchVerifier(judge_fn=judge, threshold=0.7)
+        v = ResearchVerifier(judge_id="test-judge", judge_fn=judge, threshold=0.7)
         result = v.verify({"report": "Weak report.", "backend": "test"}, attempt=4)
         assert result.verdict is Verdict.FAIL
 
@@ -238,7 +204,7 @@ class TestResearchVerifier:
         def judge(report: str, rubric: str) -> float:
             raise RuntimeError("model timeout")
 
-        v = ResearchVerifier(judge_fn=judge)
+        v = ResearchVerifier(judge_id="test-judge", judge_fn=judge)
         result = v.verify({"report": "Report.", "backend": "test"}, attempt=1)
         assert result.verdict is Verdict.RETRY
         assert "judge_error" in result.evidence
@@ -247,7 +213,7 @@ class TestResearchVerifier:
         def judge(report: str, rubric: str) -> float:
             return 0.5
 
-        v = ResearchVerifier(judge_fn=judge, threshold=0.4)
+        v = ResearchVerifier(judge_id="test-judge", judge_fn=judge, threshold=0.4)
         result = v.verify({"report": "Decent report.", "backend": "test"})
         assert result.verdict is Verdict.PASS
 
@@ -278,111 +244,39 @@ class TestSandboxVerifier:
         assert result.verdict is Verdict.FAIL
         assert "no workdir" in result.reason
 
-    def test_command_success(self) -> None:
-        v = SandboxVerifier()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = type(
-                "R",
-                (),
-                {
-                    "returncode": 0,
-                    "stdout": "ok",
-                    "stderr": "",
-                },
-            )()
-            result = v.verify(
-                {
-                    "verify_command": ["true"],
-                    "workdir": "/tmp",
-                    "backend": "test",
-                }
-            )
-        assert result.verdict is Verdict.PASS
+    def test_command_success(self, candidate) -> None:
+        _, make = candidate
+        data = make("VALUE = 1 # verified\n")
+        data["verify_command"] = [sys.executable, "-c", "pass"]
+        assert SandboxVerifier().verify(data).ok
 
-    def test_command_failure_retries(self) -> None:
-        v = SandboxVerifier()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = type(
-                "R",
-                (),
-                {
-                    "returncode": 1,
-                    "stdout": "",
-                    "stderr": "error",
-                },
-            )()
-            result = v.verify(
-                {
-                    "verify_command": ["false"],
-                    "workdir": "/tmp",
-                    "backend": "test",
-                },
-                attempt=1,
-            )
-        assert result.verdict is Verdict.RETRY
+    def test_command_failure_retries(self, candidate) -> None:
+        _, make = candidate
+        data = make("VALUE = 2\n")
+        data["verify_command"] = [sys.executable, "-c", "raise SystemExit(1)"]
+        assert SandboxVerifier().verify(data).verdict is Verdict.RETRY
 
-    def test_command_failure_fails_on_last(self) -> None:
-        v = SandboxVerifier()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = type(
-                "R",
-                (),
-                {
-                    "returncode": 1,
-                    "stdout": "",
-                    "stderr": "error",
-                },
-            )()
-            result = v.verify(
-                {
-                    "verify_command": ["false"],
-                    "workdir": "/tmp",
-                    "backend": "test",
-                },
-                attempt=3,
-            )
-        assert result.verdict is Verdict.FAIL
+    def test_command_failure_fails_on_last(self, candidate) -> None:
+        _, make = candidate
+        data = make("VALUE = 2\n")
+        data["verify_command"] = [sys.executable, "-c", "raise SystemExit(1)"]
+        record = run_with_retries(SandboxVerifier(), data, sleep_fn=lambda _: None)
+        assert record.final_verdict.verdict is Verdict.FAIL
+        assert record.attempts[-1].verdict is Verdict.RETRY
 
-    def test_timeout_retries(self) -> None:
-        v = SandboxVerifier()
-        with patch("subprocess.run") as mock_run:
-            import subprocess
-
-            mock_run.side_effect = subprocess.TimeoutExpired(cmd=["test"], timeout=300)
-            result = v.verify(
-                {
-                    "verify_command": ["sleep", "999"],
-                    "workdir": "/tmp",
-                    "backend": "test",
-                },
-                attempt=1,
-            )
+    def test_timeout_retries(self, candidate) -> None:
+        _, make = candidate
+        data = make("VALUE = 2\n")
+        data["verify_command"] = [sys.executable, "-c", "import time; time.sleep(5)"]
+        result = SandboxVerifier(default_timeout_s=0.01).verify(data)
         assert result.verdict is Verdict.RETRY
         assert "timed out" in result.reason
 
-    def test_string_command_accepted(self) -> None:
-        v = SandboxVerifier()
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = type(
-                "R",
-                (),
-                {
-                    "returncode": 0,
-                    "stdout": "ok",
-                    "stderr": "",
-                },
-            )()
-            result = v.verify(
-                {
-                    "verify_command": "echo ok",
-                    "workdir": "/tmp",
-                    "backend": "test",
-                }
-            )
-        assert result.verdict is Verdict.PASS
-        # Verify it was wrapped in a list.
-        mock_run.assert_called_once()
-        assert mock_run.call_args[0][0] == ["echo ok"]
+    def test_string_command_accepted(self, candidate) -> None:
+        _, make = candidate
+        data = make("VALUE = 2\n")
+        data["verify_command"] = "true"
+        assert SandboxVerifier().verify(data).ok
 
 
 # ---------------------------------------------------------------------------
