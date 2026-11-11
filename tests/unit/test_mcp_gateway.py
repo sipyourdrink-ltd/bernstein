@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from bernstein.core.mcp_gateway import GatewayReplay, MCPGateway, ToolMetrics
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -600,3 +603,18 @@ async def test_initialized_notification_does_not_wait_for_optional_probe(tmp_pat
         await asyncio.wait_for(started.wait(), timeout=1)
         await gateway.stop()
     assert cancelled.is_set()
+
+
+def test_capability_store_preserves_other_writers(tmp_path: Path) -> None:
+    from bernstein.core.protocols.mcp_catalog import ServerCapabilitiesStore
+
+    first = ServerCapabilitiesStore(str(tmp_path))
+    second = ServerCapabilitiesStore(str(tmp_path))
+    first.set_capabilities("first", frozenset({"alpha"}), "alpha-v1")
+    second.set_capabilities("second", frozenset({"beta"}), "beta-v1")
+    previous = first.set_capabilities("second", frozenset({"beta"}), "beta-v2")
+
+    assert previous is not None
+    assert previous.capability_digest == "beta-v1"
+    assert second.get_digest("second") == "beta-v2"
+    assert second.get_digest("first") == "alpha-v1"

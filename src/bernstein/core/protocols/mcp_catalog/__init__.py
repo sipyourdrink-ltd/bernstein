@@ -26,10 +26,12 @@ Install pattern::
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
+from bernstein.core.persistence.atomic_write import write_atomic_text
+from bernstein.core.persistence.file_locks import _cross_process_lock  # pyright: ignore[reportPrivateUsage]
 from bernstein.core.protocols.mcp_catalog.audit import (
     AUDIT_ACTOR,
     AUDIT_RESOURCE_TYPE,
@@ -159,45 +161,51 @@ class ServerCapabilitiesStore:
     """
 
     def __init__(self, sdd_dir: str):
-        self._sdd_dir = sdd_dir
-        self._file_path = os.path.join(sdd_dir, ".sdd", "mcp_server_capabilities.json")
+        self._file_path = Path(sdd_dir) / ".sdd" / "mcp_server_capabilities.json"
+        self._lock_path = self._file_path.with_suffix(".lock")
         self._capabilities: dict[str, MCPServerCapabilities] = {}
         self.load()
 
-    def load(self) -> None:
-        """Load capabilities from JSON file."""
-        if os.path.exists(self._file_path):
-            try:
-                with open(self._file_path) as f:
-                    data = json.load(f)
-                for server_name, caps_data in data.items():
-                    tool_names = frozenset(caps_data["tool_names"])
-                    self._capabilities[server_name] = MCPServerCapabilities(
-                        server_name=server_name,
-                        tool_names=tool_names,
-                        capability_digest=caps_data["capability_digest"],
-                        first_contact_at=caps_data["first_contact_at"],
-                    )
-            except (json.JSONDecodeError, KeyError):
-                # Corrupt file - start fresh
-                self._capabilities = {}
+    def _read_capabilities(self) -> dict[str, MCPServerCapabilities]:
+        try:
+            data = json.loads(self._file_path.read_text(encoding="utf-8"))
+            return {
+                server_name: MCPServerCapabilities(
+                    server_name=server_name,
+                    tool_names=frozenset(caps_data["tool_names"]),
+                    capability_digest=caps_data["capability_digest"],
+                    first_contact_at=caps_data["first_contact_at"],
+                )
+                for server_name, caps_data in data.items()
+            }
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            return {}
 
-    def save(self) -> None:
-        """Persist capabilities to JSON file."""
-        os.makedirs(os.path.dirname(self._file_path), exist_ok=True)
-        data = {}
-        for server_name, caps in self._capabilities.items():
-            data[server_name] = {
+    def load(self) -> None:
+        """Reload capabilities from the current persisted snapshot."""
+        self._capabilities = self._read_capabilities()
+
+    def _write_capabilities(self, entries: dict[str, MCPServerCapabilities]) -> None:
+        data = {
+            server_name: {
                 "tool_names": sorted(caps.tool_names),
                 "capability_digest": caps.capability_digest,
                 "first_contact_at": caps.first_contact_at,
             }
-        with open(self._file_path, "w") as f:
-            json.dump(data, f, indent=2)
+            for server_name, caps in entries.items()
+        }
+        write_atomic_text(self._file_path, json.dumps(data, indent=2))
+
+    def save(self) -> None:
+        """Persist the latest snapshot without overwriting newer observations."""
+        with _cross_process_lock(self._lock_path):
+            entries = self._read_capabilities()
+            self._write_capabilities(entries)
+            self._capabilities = entries
 
     def get_digest(self, server_name: str) -> str | None:
         """Get current capability digest for server."""
-        caps = self._capabilities.get(server_name)
+        caps = self.get_capabilities(server_name)
         return caps.capability_digest if caps else None
 
     def set_capabilities(
@@ -213,20 +221,21 @@ class ServerCapabilitiesStore:
         Returns:
             Previous capabilities if drift detected, None otherwise.
         """
-        old = self._capabilities.get(server_name)
-        now = datetime.now().isoformat()
-        new_caps = MCPServerCapabilities(
-            server_name=server_name,
-            tool_names=tool_names,
-            capability_digest=capability_digest,
-            first_contact_at=now if old is None else old.first_contact_at,
-        )
-        self._capabilities[server_name] = new_caps
-        self.save()
+        with _cross_process_lock(self._lock_path):
+            entries = self._read_capabilities()
+            old = entries.get(server_name)
+            entries[server_name] = MCPServerCapabilities(
+                server_name=server_name,
+                tool_names=tool_names,
+                capability_digest=capability_digest,
+                first_contact_at=datetime.now().isoformat() if old is None else old.first_contact_at,
+            )
+            self._write_capabilities(entries)
+            self._capabilities = entries
         if old is None or old.capability_digest != capability_digest:
             return old
         return None
 
     def get_capabilities(self, server_name: str) -> MCPServerCapabilities | None:
         """Get full capabilities record for server."""
-        return self._capabilities.get(server_name)
+        return self._read_capabilities().get(server_name)
