@@ -116,6 +116,13 @@ readers see either the startup manifest or the complete declaration. A crash
 before close or a failed write leaves the run incomplete. Repeating close
 cannot replace an existing declaration with a shorter or longer chain.
 
+Crew trace imports also commit a final head and count after recording all
+validated handoffs, under the same per-run append lock. Their declaration is
+derived from the complete input trace and stored in the run manifest alongside
+the ledger. Re-importing the same trace is idempotent; a different final head or
+count cannot replace an existing declaration. `CrewIngestAdapter.verify_run`
+reads that manifest, so removing the last imported receipt fails verification.
+
 The verifier compares both values, detecting tail deletion and post-close
 appends as well as interior deletion. Missing manifests and older manifests
 without a head are incomplete, never valid. `chain_ok` still reports integrity

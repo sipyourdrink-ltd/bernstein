@@ -156,7 +156,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
 | `bernstein live` — לוח הבקרה במסוף | `bernstein gui serve` — לוח הבקרה בדפדפן |
 
 ### הוכחת ריצה
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
 
 דטרמיניזם כאן הוא מאפיין שאתה בודק בעצמך, לא משהו שמקבלים כמובן מאליו. הרץ פעם אחת עם ביקורת מופעלת, ואז אמת את מה שתועד:
 
@@ -177,6 +177,8 @@ bernstein verify receipt .sdd/runs/<run_id>/run-receipt.json  # verify it offlin
 קבלת ריצה כורכת את ראש היומן, ראש עמוד שדרה של השושלת (כאשר נכתבו רשומות) ובאופן אופציונלי טווח שרשרת ביקורת, תחת ישות יחידה חתומה ב-Ed25519 עם מפתח ציבורי מוטמע. בודק המחזיק בקובץ זה ובמפתח הציבורי של המפעיל יכול לאשר שהפעולות והשרשראות לא שונו: אין צורך במפתח HMAC, אין צורך בתיקיית `.sdd/` פעילה, וקוד יציאה `2` מציין את השלב הסוטה הראשון במקרה של חבלה. קבלה זו מזהה את מצב היומן המוטמע בה; הוכחה שמצב זה הוא היומן המלא שהסתיים דורשת בנוסף חותם ראש/ספירה עצמאי. עם הקובץ לבדו וללא קיבוע `--public-key`, הבדיקה היא לשלמות פנימית בלבד. פרטים ב[שחזור דטרמיניסטי](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 אותה יכולת בדיקה חלה על מספרי הערכה. הפקודה `bernstein bench run <suite> --reliability k` (הנכתבת גם `bernstein eval --reliability k`) מריצה כל משימה `k` פעמים תחת תיאום קבוע, ומדווחת על רצפת `pass^k` (כל `k` הניסיונות חייבים לעבור) לצד תקרת `pass@1`. תוצאה זו נחתמת בקבלה חתומה אותה `bernstein bench reliability-verify` מחשב מחדש באופן לא מקוון, כך שרצפה מפוברקת תיכשל באימות. פרטים: [רצפת מהימנות pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+`bernstein delegation verify RUN` משווה את שרשרת הקבלות לראש הסופי ולמספר החוליות שהוצהרו במניפסט הריצה, וכך מזהה קיטוע של סוף השרשרת. ריצה ללא הצהרה זו אינה שלמה (קוד יציאה `3`), ולעולם אינה תקפה. ראו את [תהליך אימות ההאצלה](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### איך זה עובד
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

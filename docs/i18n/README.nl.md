@@ -156,7 +156,7 @@ Een actieve run kan worden gevolgd vanaf beide gebruikersinterfaces. Beide lezen
 | `bernstein live` — het terminaldashboard | `bernstein gui serve` — het browserdashboard |
 
 ### een run bewijzen
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
 
 Determinisme is hier iets wat u controleert, niet iets wat u op goed vertrouwen aanneemt. Voer eenmaal uit met audit ingeschakeld en controleer wat is vastgelegd:
 
@@ -177,6 +177,8 @@ Het journaal wordt bij elke run geschreven; de lineage-ruggengraat staat altijd 
 Een run-receipt bindt de journaalkop, de lineage-kop (als er stappen zijn vastgelegd) en optioneel een auditketenbereik onder één met Ed25519 ondertekend subject met ingesloten openbare sleutel. Een controleur met dat bestand en de openbare sleutel van de beheerder kan bevestigen dat de ingesloten acties en ketens ongewijzigd zijn: geen HMAC-sleutel nodig, geen actieve `.sdd/`, en exitcode `2` met vermelding van de eerste afwijkende stap bij manipulatie. Dat ontvangstbewijs identificeert de ingesloten journaalstatus; om te bewijzen dat die status het volledige voltooide journaal is, is bovendien een onafhankelijk kop/telling-zegel vereist. Zonder `--public-key` controleert het bestand alleen de interne integriteit. Details in [deterministische replay](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 Dezelfde controleerbaarheid geldt voor evaluatiecijfers. `bernstein bench run <suite> --reliability k` (ook geschreven als `bernstein eval --reliability k`) voert elke taak `k` keer uit onder vaste coördinatie en rapporteert een `pass^k`-ondergrens (alle `k` pogingen moeten slagen) naast het `pass@1`-plafond. Dat resultaat wordt verzegeld in een ondertekend ontvangstbewijs dat `bernstein bench reliability-verify` offline herberekenen kan, zodat een gemanipuleerde ondergrens faalt bij verificatie. Details: [pass^k betrouwbaarheidsondergrens](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+`bernstein delegation verify RUN` vergelijkt de bewijsketen met de definitieve kop en het aantal stappen dat in het uitvoeringsmanifest is vastgelegd, en detecteert zo het afkappen van het keteneinde. Een uitvoering zonder die verklaring is onvolledig (exitcode `3`), nooit geldig. Zie de [werkwijze voor delegatieverificatie](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### hoe het werkt
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

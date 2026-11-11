@@ -156,7 +156,7 @@ Uma execução em andamento pode ser assistida a partir de qualquer uma das inte
 | `bernstein live` — o dashboard no terminal | `bernstein gui serve` — o dashboard no navegador |
 
 ### comprovar uma execução
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
 
 O determinismo aqui é algo que você confere, não algo que você aceita por fé. Execute uma vez com auditoria habilitada e depois verifique o que foi registrado:
 
@@ -177,6 +177,8 @@ O journal é gravado em cada execução; a espinha de lineage está sempre ativa
 Um recibo de execução vincula o cabeçalho do journal, o cabeçalho da espinha de lineage quando a execução gravou entradas e, opcionalmente, um intervalo de cadeia de auditoria, sob um único sujeito assinado por Ed25519 com a chave pública embutida. Um revisor de posse desse arquivo e da chave pública do operador pode confirmar que as ações e cadeias embutidas não foram alteradas: sem chave HMAC, sem `.sdd/` ativo, e saída `2` identificando a primeira etapa divergente em caso de adulteração. Esse recibo identifica o estado do journal nele embutido; provar que esse estado é o journal finalizado completo exige adicionalmente um selo independente de cabeçalho/contagem. Apenas com o arquivo e sem a chave `--public-key`, a verificação é somente de integridade — prova que o recibo é internamente consistente, não quem o assinou, e o veredito deixa isso claro. Detalhes em [replay determinístico](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 A mesma verificabilidade se aplica a números de benchmark. `bernstein bench run <suite> --reliability k` (também escrito `bernstein eval --reliability k`) executa cada tarefa `k` vezes sob coordenação fixa, e então relata um piso `pass^k` (todas as `k` tentativas devem passar) ao lado do teto `pass@1`. Esse resultado é selado em um recibo assinado que `bernstein bench reliability-verify` recalcula offline, de modo que um piso forjado falha na verificação. Detalhes: [piso de confiabilidade pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+`bernstein delegation verify RUN` compara a cadeia de recibos com a cabeça final e o número de saltos declarados no manifesto da execução, detectando o truncamento do fim da cadeia. Uma execução sem essa declaração está incompleta (código de saída `3`), nunca é válida. Veja o [fluxo de verificação de delegações](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### como funciona
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->

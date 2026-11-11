@@ -156,7 +156,7 @@ Une exécution en cours est observable depuis l'une ou l'autre des interfaces op
 | `bernstein live` — le tableau de bord terminal | `bernstein gui serve` — le tableau de bord navigateur |
 
 ### prouver une exécution
-<!-- l10n: en="prove a run" hash="sha256:a97100ca1818" -->
+<!-- l10n: en="prove a run" hash="sha256:842986d136a5" -->
 
 Le déterminisme est ici un élément vérifiable, non un acte de foi. Lancez une exécution avec audit activé, puis vérifiez les enregistrements :
 
@@ -177,6 +177,8 @@ Le journal est écrit à chaque exécution ; la colonne vertébrale de lignage e
 Un reçu d'exécution lie la tête du journal, la tête de lignage (si des entrées ont été écrites) et, en option, une plage de chaîne d'audit, sous un objet signé Ed25519 intégrant la clé publique. Un relecteur disposant de ce fichier et de la clé publique de l'opérateur peut vérifier l'intégrité des actions et chaînes sans clé HMAC ni dossier `.sdd/` actif, avec un code de sortie `2` précisant la première divergence en cas d'altération. Ce reçu certifie l'état du journal qu'il intègre ; prouver que cet état constitue l'intégralité du journal final requiert en outre un scellé indépendant d'en-tête et de décompte. Sans spécifier de clé via `--public-key`, le contrôle valide l'intégrité interne sans certifier l'émetteur. Détails dans le [guide de relecture déterministe](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/deterministic-replay.md#signed-run-receipt-one-file-offline-verification).
 
 La même vérifiabilité s'applique aux métriques d'évaluation. `bernstein bench run <suite> --reliability k` (aussi disponible sous `bernstein eval --reliability k`) exécute chaque tâche `k` fois sous coordination fixe, puis rapporte le plancher `pass^k` (les `k` tentatives doivent réussir) ainsi que le plafond `pass@1`. Ce résultat est scellé dans un reçu signé recalculé hors ligne par `bernstein bench reliability-verify`, invalidant toute valeur falsifiée. Détails : [plancher de fiabilité pass^k](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/eval/reliability.md).
+
+`bernstein delegation verify RUN` compare la chaîne de reçus à la tête finale et au nombre de maillons déclarés dans le manifeste d’exécution, ce qui détecte la suppression de la fin de la chaîne. Une exécution sans cette déclaration est incomplète (code de sortie `3`), jamais valide. Voir le [processus de vérification des délégations](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/delegation-verify.md).
 
 ### comment ça marche
 <!-- l10n: en="how it works" hash="sha256:f818df2e6cbb" -->
