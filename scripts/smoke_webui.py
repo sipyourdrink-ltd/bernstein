@@ -96,11 +96,11 @@ def main() -> None:
             expect(created).to_be_ok()
 
             page.goto(f"{base}/ui/")
-            prompt = page.get_by_role("alert").filter(has_text="Access token missing or rejected")
-            expect(prompt).to_be_visible()
-            prompt.get_by_label("Access token").fill(token)
-            prompt.get_by_role("button", name="Save").click()
-            expect(prompt).to_be_hidden()
+            token_input = page.get_by_label("Access token", exact=True)
+            expect(token_input).to_be_visible()
+            token_input.fill(token)
+            page.get_by_role("button", name="Save", exact=True).click()
+            expect(token_input).to_be_hidden()
             expect(page.get_by_role("row").filter(has_text=TASK_TITLE)).to_be_visible()
 
             check_routes(page, base, dashboard_password, headers)
