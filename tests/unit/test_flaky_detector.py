@@ -142,3 +142,32 @@ def test_malformed_history_lines_are_skipped(tmp_path: Path) -> None:
 
     assert len(result.flaky_tests) == 1
     assert result.flaky_tests[0].test_id == "tests/unit/test_demo.py::test_ok"
+
+
+def test_pytest_outcomes_distinguish_assertion_failures_and_execution_errors() -> None:
+    from bernstein.core.quality.flaky_detector import iter_pytest_outcomes
+
+    output = (
+        "tests/test_demo.py::test_pass PASSED [ 25%]\n"
+        "tests/test_demo.py::test_bug FAILED [ 50%]\n"
+        "tests/test_demo.py::test_fixture ERROR [ 75%]\n"
+        "tests/test_demo.py::test_optional[param] SKIPPED (dependency [database] FAILED\n"
+        "setup) [100%]\n"
+        "tests/test_demo.py::test_case[with space: value] PASSED [1/2]\r\n"
+        "tests/test_demo.py::test_timed PASSED 1m 3s\n"
+    )
+    assert list(iter_pytest_outcomes(output)) == [
+        ("tests/test_demo.py::test_pass", "PASSED"),
+        ("tests/test_demo.py::test_bug", "FAILED"),
+        ("tests/test_demo.py::test_fixture", "ERROR"),
+        ("tests/test_demo.py::test_optional[param]", "SKIPPED"),
+        ("tests/test_demo.py::test_case[with space: value]", "PASSED"),
+        ("tests/test_demo.py::test_timed", "PASSED"),
+    ]
+    assert [record.passed for record in parse_pytest_output(output, run_id="fixture")] == [
+        True,
+        False,
+        False,
+        True,
+        True,
+    ]

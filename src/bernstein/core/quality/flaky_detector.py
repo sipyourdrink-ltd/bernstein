@@ -10,12 +10,19 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
 _PYTEST_RESULT_RE = re.compile(
-    r"^(?P<test_id>[^\s:]+(?:::[^\s:]+)+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b",
+    r"^(?P<test_id>[^\s:]+(?:::[^\s:\[]+)+(?:\[[^\r\n]*?\])?)[ \t]+"
+    r"(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
+    r"(?:[ \t]+\([^\r\n]*)?"
+    r"(?:[ \t]+(?:\[[ \t]*\d+(?:%|[ \t]*/[ \t]*\d+[ \t]*)\]|"
+    r"\d+(?:\.\d+)?(?:us|ms|s|m|h)(?:[ \t]+\d+[sm])?))?[ \t]*\r?$",
     re.MULTILINE,
 )
 _WRITE_LOCK = threading.Lock()
@@ -69,17 +76,25 @@ class FlakyDetectorResult:
     resolved: list[str]
 
 
+type PytestOutcome = Literal["PASSED", "FAILED", "ERROR", "SKIPPED", "XFAIL", "XPASS"]
+
+
+def iter_pytest_outcomes(output: str) -> Iterator[tuple[str, PytestOutcome]]:
+    """Yield verbose pytest node outcomes, preserving errors and skipped cases."""
+    for match in _PYTEST_RESULT_RE.finditer(output):
+        yield match.group("test_id"), cast("PytestOutcome", match.group("status"))
+
+
 def parse_pytest_output(output: str, *, run_id: str, timestamp: str | None = None) -> list[TestRun]:
     """Parse pytest terminal output into per-test run records."""
     ts = timestamp or datetime.now(UTC).isoformat()
     results: list[TestRun] = []
-    for match in _PYTEST_RESULT_RE.finditer(output):
-        status = match.group("status")
+    for test_id, status in iter_pytest_outcomes(output):
         if status not in {"PASSED", "FAILED", "ERROR"}:
             continue
         results.append(
             TestRun(
-                test_id=match.group("test_id"),
+                test_id=test_id,
                 passed=status == "PASSED",
                 duration_ms=0,
                 timestamp=ts,
