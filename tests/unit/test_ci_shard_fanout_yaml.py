@@ -15,7 +15,12 @@ here.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import Any, cast
 
@@ -37,7 +42,7 @@ def _test_job() -> dict[str, Any]:
     return cast("dict[str, Any]", job)
 
 
-def _shard_count_for(os_name: str) -> int:
+def _shard_count_for(os_name: str, event: str = "pull_request") -> int:
     """The `--shard i/N` denominator this row resolves to.
 
     Read out of the expression rather than restated, so the test cannot pass against a workflow that
@@ -45,15 +50,23 @@ def _shard_count_for(os_name: str) -> int:
     """
     expression = str(_test_job()["env"]["TEST_SHARD_COUNT"])
     counts = re.findall(r"'(\d+)'", expression)
-    assert len(counts) == 2, f"expected a two-branch shard-count expression, got {expression!r}"
-    windows_count, other_count = (int(value) for value in counts)
+    assert "github.event_name == 'merge_group'" in expression
+    assert len(counts) == 3, f"expected queue, Windows and Ubuntu shard counts, got {expression!r}"
+    queue_count, windows_count, other_count = (int(value) for value in counts)
     assert WINDOWS in expression, "the shard count no longer keys off the matrix row"
+    if event == "merge_group":
+        return queue_count
     return windows_count if os_name == WINDOWS else other_count
 
 
-def _declared_shards() -> list[int]:
-    shards = _test_job()["strategy"]["matrix"]["shard"]
-    assert isinstance(shards, list), "the shard list is an expression again; keep it literal"
+def _declared_shards(event: str = "pull_request") -> list[int]:
+    expression = _test_job()["strategy"]["matrix"]["shard"]
+    match = re.fullmatch(
+        r"\$\{\{ github.event_name == 'merge_group' && fromJSON\('([^']+)'\) \|\| fromJSON\('([^']+)'\) \}\}",
+        expression,
+    )
+    assert match, f"expected a merge-group-only shard override, got {expression!r}"
+    shards = json.loads(match.group(1 if event == "merge_group" else 2))
     return [int(value) for value in shards]
 
 
@@ -64,17 +77,18 @@ def _excluded_shards_for(os_name: str) -> set[int]:
     }
 
 
-def _shards_that_run_on(os_name: str) -> list[int]:
+def _shards_that_run_on(os_name: str, event: str = "pull_request") -> list[int]:
     excluded = _excluded_shards_for(os_name)
-    return [shard for shard in _declared_shards() if shard not in excluded]
+    return [shard for shard in _declared_shards(event) if shard not in excluded]
 
 
 @pytest.mark.parametrize("os_name", [UBUNTU, WINDOWS])
-def test_every_row_runs_exactly_its_own_shard_count(os_name: str) -> None:
+@pytest.mark.parametrize("event", ["pull_request", "push", "workflow_dispatch", "schedule"])
+def test_every_row_runs_exactly_its_own_shard_count(os_name: str, event: str) -> None:
     """`--shard i/N` for i beyond N is either a hard failure or a silent no-op."""
-    running = _shards_that_run_on(os_name)
-    assert running == list(range(1, _shard_count_for(os_name) + 1)), (
-        f"{os_name} runs shards {running} against a count of {_shard_count_for(os_name)}"
+    running = _shards_that_run_on(os_name, event)
+    assert running == list(range(1, _shard_count_for(os_name, event) + 1)), (
+        f"{os_name} runs shards {running} against a count of {_shard_count_for(os_name, event)}"
     )
 
 
@@ -104,3 +118,59 @@ def test_the_matrix_list_is_the_widest_row() -> None:
     """
     assert max(_declared_shards()) == _shard_count_for(UBUNTU)
     assert _excluded_shards_for(UBUNTU) == set()
+
+
+def test_merge_group_runs_one_complete_ubuntu_shard() -> None:
+    matrix = _test_job()["strategy"]["matrix"]
+    assert matrix["os"] == (
+        "${{ github.event_name == 'merge_group' && fromJSON('[\"ubuntu-latest\"]') "
+        '|| fromJSON(\'["ubuntu-latest", "windows-latest"]\') }}'
+    )
+    assert matrix["python-version"] == (
+        "${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') "
+        '&& fromJSON(\'["3.12", "3.13"]\') || fromJSON(\'["3.13"]\') }}'
+    )
+    assert _shards_that_run_on(UBUNTU, "merge_group") == [1]
+    assert _shard_count_for(UBUNTU, "merge_group") == 1
+
+
+@pytest.mark.parametrize(
+    ("event", "test_result", "windows_result", "expected"),
+    [
+        ("merge_group", "success", "skipped", 0),
+        ("merge_group", "failure", "skipped", 1),
+        ("merge_group", "cancelled", "skipped", 1),
+        ("merge_group", "skipped", "skipped", 1),
+        ("merge_group", None, "skipped", 1),
+        ("merge_group", "success", "failure", 1),
+        ("merge_group", "success", "cancelled", 1),
+        ("pull_request", "success", "skipped", 1),
+        ("push", "success", "skipped", 1),
+        ("workflow_dispatch", "success", "skipped", 1),
+    ],
+)
+def test_queue_platform_skip_keeps_ci_gate_honest(
+    tmp_path: Path, event: str, test_result: str | None, windows_result: str, expected: int
+) -> None:
+    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    jobs = doc["jobs"]
+    assert jobs["adapter-conformance-windows"]["if"] == "github.event_name != 'merge_group'"
+    gate = jobs["ci-gate"]
+    assert gate["if"] == "always() && !cancelled()"
+    needs = {name: {"result": "success"} for name in gate["needs"]}
+    needs["test"]["result"] = test_result
+    needs["adapter-conformance-windows"]["result"] = windows_result
+    (tmp_path / "results.json").write_text(json.dumps(needs))
+    (tmp_path / "plan.json").write_text(json.dumps({"docs_only": "false", "macos_sensitive": "true"}))
+    rollup = next(step["run"] for step in gate["steps"] if step.get("id") == "roll-up")
+    match = re.search(r"<<'PY'\n(.*?)\n\s*PY\b", rollup, re.DOTALL)
+    assert match
+    proc = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(match.group(1))],
+        cwd=tmp_path,
+        env={**os.environ, "EVENT_NAME": event},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == expected, proc.stdout + proc.stderr

@@ -69,7 +69,6 @@ CI_WF = Path(".github/workflows/ci.yml")
 # a job gaining one must be added to DOCS_ONLY_SKIPPABLE in the same
 # change (property 3) or docs-only entries stop merging entirely.
 DOCS_ONLY_GUARDED_JOBS = (
-    "adapter-conformance-windows",
     "adapter-integration",
     "bandit",
     "beartype",

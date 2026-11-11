@@ -1930,13 +1930,9 @@ jobs:
     # worktree-isolation contract (clean worktree, junction-into-parent
     # rejection, robust long-path teardown), so worktree isolation is asserted
     # on the Windows lane. Required (in the ci-gate needs list), not advisory.
-    # Skips only when a merge-queue group's combined diff is docs-only
-    # (determine-changes computes it from the group's base; its failure
-    # mode is over-broad, never over-narrow). The roll-up tolerates the
-    # skip via DOCS_ONLY_SKIPPABLE. pull_request never takes this branch
-    # (paths-ignore keeps docs-only PRs out of this workflow entirely)
-    # and push runs everything, so main keeps the full suite.
-    if: ${{ !(github.event_name == 'merge_group' && needs.determine-changes.outputs.docs_only == 'true') }}
+    # Merge groups use the single ubuntu test run. Keep Windows coverage
+    # on pull requests and pushes; the roll-up allows this queue-only skip.
+    if: github.event_name != 'merge_group'
     name: Adapter conformance + e2e (windows)
     needs: [determine-changes, lint]
     runs-on: windows-latest
@@ -2003,9 +1999,9 @@ jobs:
       # it (and the `shard:` list, plus the windows `exclude` rows) together
       # to rescale the fan-out.
       #
-      # Eight on ubuntu, four on windows -- keyed on the ROW rather than the
-      # event (#5794). The merge queue took eight first, because each queue
-      # build sits on the critical path of every entry behind it. The same
+      # One on merge_group; otherwise eight on ubuntu, four on windows.
+      # Before the single-run queue policy, the merge queue took eight first,
+      # because each build sits on the critical path of every entry behind it. The same
       # argument turned out to hold for push: measured 2026-09-03..09-10, a
       # single ubuntu shard was the critical path of every trunk run at a
       # 28.7 min median against a 30.8 min median to `CI gate` -- under three
@@ -2021,13 +2017,16 @@ jobs:
       # Windows stays at four: it is not on the critical path (the ubuntu
       # row is slower), and a windows runner-minute is dearer than a linux
       # one. See the `exclude` rows that drop shards 5-8 there.
-      TEST_SHARD_COUNT: ${{ matrix.os == 'windows-latest' && '4' || '8' }}
+      TEST_SHARD_COUNT: ${{ github.event_name == 'merge_group' && '1' || (matrix.os == 'windows-latest' && '4' || '8') }}
       # Main push coverage runs are slower than local file runs; keep the
       # per-file guard, but allow heavy adapter contract files to finish.
       BERNSTEIN_TEST_FILE_TIMEOUT_SECONDS: "600"
     strategy:
       fail-fast: false
       matrix:
+        # merge_group - one ubuntu-latest run on Python 3.13, shard 1/1.
+        # pull_request and nightly - keep the existing full matrix policy.
+        # Shard 1/1 runs all unit tests, with no affected-test plan.
         # macOS removed from the default matrix to relieve hosted-runner
         # saturation during burst-merge waves (see #1468). The test-macos
         # job below runs the same suite on macOS when the diff is
@@ -2053,11 +2052,11 @@ jobs:
         # revert. dispatch runs the full matrix: an operator invoking the
         # workflow by hand is asking for coverage, not queue throughput.
         python-version: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && fromJSON('["3.12", "3.13"]') || fromJSON('["3.13"]') }}
-        # Fan the per-file suite out across deterministic shards per cell.
-        # The list is the WIDEST row (ubuntu, 8); windows drops 5-8 in
+        # Outside merge_group, fan out across deterministic shards per cell.
+        # That list is the WIDEST row (ubuntu, 8); windows drops 5-8 in
         # `exclude` below because a matrix dimension cannot be computed from
         # another dimension. Keep all three in sync with TEST_SHARD_COUNT.
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ github.event_name == 'merge_group' && fromJSON('[1]') || fromJSON('[1, 2, 3, 4, 5, 6, 7, 8]') }}
         exclude:
           # Coverage/JUnit upload only on ubuntu; skip duplicate slow jobs on Windows for 3.12
           - os: windows-latest
@@ -2161,9 +2160,9 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ env.TEST_SHARD_COUNT }}
         run: |
-          # When the planner wrote a plan (pull requests, and merge groups
-          # whose batch root resolved) it selects this cell's deterministic
-          # shard. Otherwise run_tests.py shards the discovered full-suite list.
+          # When the planner wrote a plan (pull requests only), it selects
+          # this cell's deterministic shard. Otherwise run_tests.py shards
+          # the discovered full-suite list.
           coverage_args=()
           if { [ "${EVENT_NAME}" = "push" ] || { [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; }; } && \
              [ "${RUNNER_OS}" = "Linux" ] && [ "${PYTHON_VERSION}" = "3.13" ]; then
@@ -2658,11 +2657,10 @@ jobs:
           # / tests / workflows touched). Mirrors paths-ignore at the top.
           DOCS_ONLY_SKIPPABLE = {
               "test",
-              # integration-tests and adapter-conformance-windows carry the
-              # same merge_group docs-only guard as the rest of this set: a
-              # queue group whose combined diff is docs-only cannot change
-              # what they exercise, and the post-merge push to main runs
-              # both un-gated.
+              # A docs-only queue group cannot change integration-tests;
+              # the post-merge push to main runs it un-gated. Preserve the
+              # existing Windows docs-only allowance as well; all Windows
+              # queue skips are now explicitly allowed below.
               "integration-tests",
               "adapter-conformance-windows",
               "schemathesis-smoke",
@@ -2766,6 +2764,10 @@ jobs:
                   if ordinary_main_push and name in POST_MERGE_PUSH_SKIPPABLE:
                       continue
                   if name == "coverage-report" and not coverage_required:
+                      continue
+                  # The queue uses one ubuntu test run; Windows coverage
+                  # remains required on every other event as before.
+                  if event == "merge_group" and name == "adapter-conformance-windows":
                       continue
                   if docs_only and name in DOCS_ONLY_SKIPPABLE:
                       continue
