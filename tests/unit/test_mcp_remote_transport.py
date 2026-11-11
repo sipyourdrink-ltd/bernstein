@@ -543,6 +543,40 @@ class TestToolExecution:
         assert folded["counts"]["total"] == 5
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("observation", ["2026-11-10T12:00:00Z", "9999-01-01T00:00:00Z", "invalid"])
+    async def test_status_projects_only_usable_coordinator_observations(
+        self, transport: StreamableHTTPTransport, observation: str
+    ) -> None:
+        upstream = {
+            "execution_readiness": {
+                "schema_version": 1,
+                "coordinator": {
+                    "version": "7.8.9",
+                    "source": "task_server_status",
+                    "observed_at": observation,
+                    "provenance": {"tenant_id": "test"},
+                },
+                "scheduler": {"state": "ready"},
+                "dispatch": {"state": "ready"},
+            },
+        }
+        with patch.object(transport, "_proxy_get", return_value=json.dumps(upstream)) as proxy:
+            body = _jsonrpc_request("tools/call", {"name": "bernstein_status", "arguments": {}})
+            status, _, response = await transport.handle_request("POST", "/mcp", {}, body)
+
+        assert status == 200
+        result = json.loads(response)["result"]
+        folded = _tool_result(result["content"][0]["text"])
+        proxy.assert_awaited_once_with("/status")
+        if observation.startswith("2026"):
+            assert folded["readiness"]["coordinator"]["version"] == "7.8.9"
+            assert folded["readiness"]["state"] == "unknown"
+            assert folded["readiness"]["scheduler"] == {"state": "unknown"}
+            assert folded["readiness"]["dispatch"] == {"state": "unknown"}
+        else:
+            assert "readiness" not in folded
+
+    @pytest.mark.anyio
     async def test_status_preserves_bridge_liveness_during_coordinator_outage(
         self, transport: StreamableHTTPTransport
     ) -> None:
