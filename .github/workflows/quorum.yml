@@ -24,8 +24,8 @@ name: quorum
 # instead of passing it. The rules a pull request is measured against are
 # therefore always the current ones, whenever it was opened.
 #
-# An organization ruleset requires the context this workflow publishes,
-# `quorum`, on the default branch. The context is required by name rather
+# The repository ruleset `main-merge-queue` requires the context this
+# workflow publishes, `quorum`, on the default branch. The context is required by name rather
 # than the workflow by path, because a verdict that turns on elapsed time -
 # the 72-hour objection window - has to be answerable again after the clock
 # moves, by a re-run or by a re-publish of the same context, without the
@@ -79,7 +79,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4

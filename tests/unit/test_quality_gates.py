@@ -39,6 +39,13 @@ def _make_task(*, id: str = "T-001", role: str = "backend") -> Task:
 # ---------------------------------------------------------------------------
 
 
+#: QualityGatesConfig fields that ``_parse_quality_gates`` does not read from a
+#: seed. Each is a gate an operator cannot configure from ``bernstein.yaml``.
+#: #6615 wired the ``dlp_*`` ten and then the remaining seventeen, so this is
+#: empty; a new field lands here only until its parser line does.
+_KNOWN_UNWIRED: frozenset[str] = frozenset()
+
+
 class TestRunCommand:
     def test_success_exit_zero(self, tmp_path: Path) -> None:
         ok, output, _exit_code = _run_command("exit 0", tmp_path, timeout_s=5)
@@ -514,6 +521,176 @@ class TestSeedQualityGatesParsing:
         assert cfg.quality_gates.lint_command == "flake8 ."
         assert cfg.quality_gates.tests
         assert cfg.quality_gates.test_command == "pytest"
+
+    def test_parse_quality_gates_dlp_keys_reach_the_config(self, tmp_path: Path) -> None:
+        """Every ``dlp_*`` key documented beside ``pii_scan`` is read from the seed (#6615).
+
+        Before the fix the parser built ``QualityGatesConfig`` from an explicit
+        keyword list that named no ``dlp_*`` field, and ``QualityGatesSchema``
+        allows extra keys, so ``dlp_scan: false`` was accepted and then dropped:
+        the gate stayed on with no way to turn it off from ``bernstein.yaml``.
+        """
+        from bernstein.core.seed import parse_seed
+
+        seed_file = tmp_path / "bernstein.yaml"
+        lines = [
+            "goal: test",
+            "quality_gates:",
+            "  dlp_scan: false",
+            "  dlp_check_license_violations: false",
+            "  dlp_check_regulated_data: false",
+            "  dlp_check_proprietary_data: false",
+            "  dlp_block_license_violations: false",
+            "  dlp_block_regulated_data: false",
+            "  dlp_block_proprietary_data: true",
+            "  dlp_internal_url_patterns: ['intranet[.]corp']",
+            "  dlp_ignore_paths: ['vendor/']",
+            "  dlp_allowlist_prefixes: ['FAKE']",
+        ]
+        seed_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        qg = cfg.quality_gates
+        assert qg.dlp_scan is False
+        assert qg.dlp_check_license_violations is False
+        assert qg.dlp_check_regulated_data is False
+        assert qg.dlp_check_proprietary_data is False
+        assert qg.dlp_block_license_violations is False
+        assert qg.dlp_block_regulated_data is False
+        assert qg.dlp_block_proprietary_data is True
+        assert qg.dlp_internal_url_patterns == ["intranet[.]corp"]
+        assert qg.dlp_ignore_paths == ["vendor/"]
+        assert qg.dlp_allowlist_prefixes == ["FAKE"]
+
+    def test_parse_quality_gates_remaining_keys_reach_the_config(self, tmp_path: Path) -> None:
+        """The seventeen fields left after the ``dlp_*`` fix are read from the seed (#6615).
+
+        Every value here differs from the dataclass default, so a key the
+        parser still drops shows up as the default and fails its assert.
+        """
+        from bernstein.core.seed import parse_seed
+
+        seed_file = tmp_path / "bernstein.yaml"
+        lines = [
+            "goal: test",
+            "quality_gates:",
+            "  mutation_testing: true",
+            "  mutation_command: 'mutmut run --paths-to-mutate src'",
+            "  mutation_threshold: 0.8",
+            "  mutation_timeout_s: 42",
+            "  dep_audit: true",
+            "  dep_audit_command: 'pip-audit --strict'",
+            "  dep_audit_files: ['pyproject.toml']",
+            "  migration_reversibility_check: true",
+            "  large_file_check: true",
+            "  large_file_threshold: 7",
+            "  integration_test_gen: true",
+            "  review_rubric: true",
+            "  test_expansion: true",
+            "  agent_test_mutation: true",
+            "  agent_test_mutation_threshold: 0.9",
+            "  agent_test_mutation_timeout_s: 11",
+            "  intent_verification:",
+            "    enabled: true",
+            "    model: 'openai/gpt-4o-mini'",
+            "    provider: 'openai'",
+            "    max_diff_chars: 123",
+            "    max_tokens: 45",
+            "    block_on_no: false",
+            "    block_on_partial: true",
+            "    fork_from_context: 'summary'",
+        ]
+        seed_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        qg = cfg.quality_gates
+        assert qg.mutation_testing is True
+        assert qg.mutation_command == "mutmut run --paths-to-mutate src"
+        assert qg.mutation_threshold == 0.8
+        assert qg.mutation_timeout_s == 42
+        assert qg.dep_audit is True
+        assert qg.dep_audit_command == "pip-audit --strict"
+        assert qg.dep_audit_files == ["pyproject.toml"]
+        assert qg.migration_reversibility_check is True
+        assert qg.large_file_check is True
+        assert qg.large_file_threshold == 7
+        assert qg.integration_test_gen is True
+        assert qg.review_rubric is True
+        assert qg.test_expansion is True
+        assert qg.agent_test_mutation is True
+        assert qg.agent_test_mutation_threshold == 0.9
+        assert qg.agent_test_mutation_timeout_s == 11
+        iv = qg.intent_verification
+        assert iv.enabled is True
+        assert iv.model == "openai/gpt-4o-mini"
+        assert iv.provider == "openai"
+        assert iv.max_diff_chars == 123
+        assert iv.max_tokens == 45
+        assert iv.block_on_no is False
+        assert iv.block_on_partial is True
+        assert iv.fork_from_context == "summary"
+
+    @pytest.mark.parametrize("key", ["large_file_threshold", "timeout_s", "mutation_timeout_s"])
+    def test_parse_quality_gates_integer_keys_reject_bools(self, tmp_path: Path, key: str) -> None:
+        """``bool`` subclasses ``int``; a bare ``true`` under an integer key is a typo, not a value."""
+        from bernstein.core.seed import SeedError, parse_seed
+
+        yaml_text = f"""goal: Test
+quality_gates:
+  {key}: true
+"""
+        seed_path = tmp_path / "bernstein.yaml"
+        seed_path.write_text(yaml_text)
+        with pytest.raises(SeedError, match=f"quality_gates.{key} must be an integer"):
+            parse_seed(seed_path)
+
+    def test_parse_quality_gates_intent_verification_rejects_wrong_types(self, tmp_path: Path) -> None:
+        """A mistyped nested key fails loudly, like every other quality_gates key."""
+        from bernstein.core.seed import SeedError, parse_seed
+
+        seed_file = tmp_path / "bernstein.yaml"
+        seed_file.write_text(
+            "goal: test\nquality_gates:\n  intent_verification:\n    enabled: 'yes'\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SeedError, match="intent_verification.enabled must be a bool"):
+            parse_seed(seed_file)
+
+        seed_file.write_text("goal: test\nquality_gates:\n  intent_verification: true\n", encoding="utf-8")
+        with pytest.raises(SeedError, match="intent_verification must be a mapping"):
+            parse_seed(seed_file)
+
+    def test_every_quality_gates_field_is_reachable_from_the_seed_parser(self) -> None:
+        """A ``QualityGatesConfig`` field the parser never sets cannot be configured.
+
+        ``QualityGatesSchema`` is ``extra="allow"``, so an unwired key is accepted
+        and silently dropped -- which is how ``dlp_scan`` sat unreachable for as
+        long as it did (#6615). This pins the parser's keyword list against the
+        dataclass. Fields in ``_KNOWN_UNWIRED`` are the ones still outstanding;
+        wire one and remove it here, add one and this fails until it is wired.
+        """
+        import ast
+        import dataclasses
+        import inspect
+
+        from bernstein.core.config import seed_parser
+        from bernstein.core.quality.quality_gates import QualityGatesConfig
+
+        tree = ast.parse(inspect.getsource(seed_parser))
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_parse_quality_gates")
+        passed = {
+            kw.arg
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "QualityGatesConfig"
+            for kw in node.keywords
+            if kw.arg
+        }
+        fields = {f.name for f in dataclasses.fields(QualityGatesConfig)}
+        unwired = fields - passed
+        assert unwired == _KNOWN_UNWIRED, (
+            f"newly unwired: {sorted(unwired - _KNOWN_UNWIRED)}; "
+            f"now wired, remove from _KNOWN_UNWIRED: {sorted(_KNOWN_UNWIRED - unwired)}"
+        )
 
     def test_parse_quality_gates_pipeline_and_bypass(self, tmp_path: Path) -> None:
         from bernstein.core.seed import parse_seed

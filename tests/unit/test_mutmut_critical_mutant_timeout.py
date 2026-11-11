@@ -9,10 +9,12 @@ budget_seconds. These tests pin the fixed behaviour using mocked runs.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from scripts import mutmut_critical
 from scripts.mutmut_critical import (
     Module,
     _mutant_timeout_seconds,  # pyright: ignore[reportPrivateUsage]
@@ -28,6 +30,16 @@ TEST_MODULE = Module(
     max_candidates=2,
     note="Test module for mutant timeout regression.",
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_mutation_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the real mutator against a per-test copy, never the shared checkout."""
+    source = Path(__file__).resolve().parents[2] / TEST_MODULE.source
+    target = tmp_path / TEST_MODULE.source
+    target.parent.mkdir(parents=True)
+    target.write_bytes(source.read_bytes())
+    monkeypatch.setattr(mutmut_critical, "REPO", tmp_path)
 
 
 def test_mutant_timeout_derived_from_module_budget() -> None:
@@ -85,3 +97,21 @@ def test_material_timeouts_mark_module_unmeasured(
     assert res.unmeasured is True
     assert res.passed is False
     assert res.to_dict()["unmeasured"] is True
+
+
+def test_surviving_mutants_restore_only_private_source(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Normal mutant returns restore the same private file used by timeout probes."""
+    target = tmp_path / TEST_MODULE.source
+    original = target.read_bytes()
+    checkout_source = Path(__file__).resolve().parents[2] / TEST_MODULE.source
+    checkout_original = checkout_source.read_bytes()
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+
+    result = _mutate_module(TEST_MODULE, verbose=False)
+
+    assert result.baseline_ok is True
+    assert result.total == 2
+    assert len(result.survivors) == 2
+    assert result.timeouts == 0
+    assert target.read_bytes() == original
+    assert checkout_source.read_bytes() == checkout_original

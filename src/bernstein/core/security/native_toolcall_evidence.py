@@ -280,6 +280,7 @@ class NativeToolCallEvidenceProvider:
         duration_ms: float,
         outcome: str,
         patch: str | None = None,
+        received: bytes | None = None,
     ) -> None:
         """Append ``toolcall.effect`` bound to the same intent digest (#6270)."""
         if evidence.intent_digest != intent.digest():
@@ -287,7 +288,7 @@ class NativeToolCallEvidenceProvider:
         if patch is not None:
             effect_digest = canonical_effect_digest(patch)
         else:
-            effect_digest = effect_digest_for_connector_response(response)
+            effect_digest = effect_digest_for_connector_response(response, received)
         event = record_toolcall_effect(
             chain=self.chain,
             intent_digest=evidence.intent_digest,

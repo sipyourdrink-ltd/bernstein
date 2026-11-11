@@ -13,6 +13,9 @@ import bernstein.core.store_postgres as store_postgres
 import pytest
 from bernstein.core.models import TaskStatus, TaskType
 
+from bernstein.core.server.server_models import TaskCreate
+from bernstein.core.tasks.models import DispatchTier
+
 
 class _AcquireContext:
     def __init__(self, conn: object) -> None:
@@ -116,6 +119,37 @@ def test_row_to_task_parses_upgrade_details_and_completion_signals() -> None:
     assert task.upgrade_details is not None
     assert task.upgrade_details.risk_assessment.level == "high"
     assert [(signal.type, signal.value) for signal in task.completion_signals] == [("path_exists", "src/demo.py")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", ["local", "edge", "search", "research", "sandbox", "omitted"])
+async def test_dispatch_tier_persistence(monkeypatch: pytest.MonkeyPatch, tier: str) -> None:
+    monkeypatch.setattr(store_postgres, "_ASYNCPG_AVAILABLE", True)
+    ddl = " ".join(store_postgres._DDL.split())
+    assert "dispatch_tier TEXT NOT NULL DEFAULT 'local'" in ddl.split(");", 1)[0]
+    assert "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS dispatch_tier TEXT NOT NULL DEFAULT 'local';" in ddl
+    expected = DispatchTier.LOCAL if tier == "omitted" else DispatchTier(tier)
+
+    class _Conn:
+        row: dict[str, object] = {}
+
+        async def execute(self, query: str, *args: object) -> None:
+            await asyncio.sleep(0)
+            columns = query.split("INSERT INTO tasks (", 1)[1].split(")", 1)[0].split(",")
+            assert len(columns) == len(args)
+            self.row = dict(zip((column.strip() for column in columns), args, strict=True))
+            assert self.row["dispatch_tier"] == expected.value
+            assert type(self.row["dispatch_tier"]) is str
+            assert f"${len(args)}" in query
+
+    conn = _Conn()
+    store = store_postgres.PostgresTaskStore("postgresql://example")
+    cast("Any", store)._pool = _FakePool(conn)
+    payload = {} if tier == "omitted" else {"dispatch_tier": tier}
+    created = await store.create(TaskCreate(title="tier", description="d", **payload))
+    assert created.dispatch_tier is expected
+    assert store_postgres._row_to_task(_task_row(dispatch_tier=conn.row["dispatch_tier"])).dispatch_tier is expected
+    assert store_postgres._row_to_task(_task_row()).dispatch_tier is DispatchTier.LOCAL
 
 
 def test_claim_by_id_releases_distributed_lock_on_version_conflict(monkeypatch: pytest.MonkeyPatch) -> None:

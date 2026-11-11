@@ -218,14 +218,17 @@ def executed_test_count(counts: dict[str, int]) -> int:
 def classify_file_outcome(code: int, output: str) -> str:
     """Classify one test file's subprocess result.
 
-    - ``OUTCOME_CRASHED``: the process exited non-zero and printed no pytest
-      terminal summary, so it died before pytest could report anything.
+    - ``OUTCOME_CRASHED``: the process was killed by a signal, or exited
+      non-zero without a pytest summary.
     - ``OUTCOME_FAILED``: pytest reported a failure, *or* exited 0 without a
       terminal summary (the process was replaced mid-run).
     - ``OUTCOME_NO_TESTS``: pytest ran to completion and executed nothing
       (exit code 5, or every test skipped).
     - ``OUTCOME_PASSED``: pytest ran at least one test and none failed.
     """
+    if code < 0:
+        # Nested subprocesses can print pytest summaries before this process dies.
+        return OUTCOME_CRASHED
     if code == 5:
         return OUTCOME_NO_TESTS
     if code != 0:
@@ -544,10 +547,6 @@ def retry_on_thread_exhaustion(
     return retry_code, retry_duration, retry_output, retry_stderr
 
 
-#: How much of a crashed file's stderr to quote under its report line.
-_CRASH_STDERR_LINES = 30
-
-
 def _format_exit_status(code: int) -> str:
     """Describe a subprocess exit status, naming the signal when one killed it."""
     if code >= 0:
@@ -558,16 +557,16 @@ def _format_exit_status(code: int) -> str:
         return f"killed by signal {-code}"
 
 
-def _print_crash_detail(stderr: str, exit_status: str) -> None:
-    """Print what is known about a file whose process died without reporting."""
-    print(f"       process {exit_status}, and printed no pytest summary")
-    tail = [line for line in stderr.strip().split("\n") if line.strip()][-_CRASH_STDERR_LINES:]
-    if not tail:
-        print("       it wrote nothing to stderr")
-        return
-    print("       last lines of its stderr:")
-    for line in tail:
-        print(f"       {line}")
+def _print_process_output(output: str, stderr: str) -> None:
+    """Retain both captured streams when pytest supplied no failure sections."""
+    # run_file concatenates stdout and stderr; remove only that exact suffix.
+    stdout = output.removesuffix(stderr) if stderr else output
+    for name, stream in (("stdout", stdout), ("stderr", stderr)):
+        print(f"       {name}:")
+        if not stream:
+            print(f"       it wrote nothing to {name}")
+        for line in stream.splitlines():
+            print(f"       {line}")
 
 
 def _print_failure_summary(output: str, stderr: str = "", exit_status: str = "") -> None:
@@ -576,17 +575,14 @@ def _print_failure_summary(output: str, stderr: str = "", exit_status: str = "")
     Extracts the 'FAILURES' section and 'short test summary' rather than
     dumping everything (which can be 1000+ lines with -s / no-capture).
 
-    ``exit_status`` is passed only for a crashed file, where pytest printed
-    neither section. The tail of the output is no use there: the suite runs
-    uncaptured, so the last lines belong to whichever test printed most
-    recently and say nothing about the crash. The exit status and the
-    process's own stderr do.
+    For a nonzero exit, retain both streams if neither section exists: the
+    tail alone can discard the actual failure behind unrelated debug output.
     """
     lines = output.strip().split("\n")
     extracted = _extract_failure_sections(lines)
     if not extracted:
         if exit_status:
-            _print_crash_detail(stderr, exit_status)
+            _print_process_output(output, stderr)
             return
         for line in lines[-30:]:
             if line.strip():
@@ -632,9 +628,8 @@ def _report_file_result(label: str, code: int, duration: float, output: str, std
         print(f"  {prefix} {label} ({duration:.1f}s) {detail}")
         return outcome
     if outcome == OUTCOME_CRASHED:
-        # No counts to print: pytest never got as far as a terminal summary.
-        # The exit status takes their place, so the shard log says why the file
-        # is red without anyone having to reproduce it locally.
+        # The native exit status remains authoritative even if a nested pytest
+        # subprocess printed a summary before this process was killed.
         exit_status = _format_exit_status(code)
         print(f"  CRASH {label} ({duration:.1f}s) {exit_status}")
         _print_failure_summary(output, stderr=stderr, exit_status=exit_status)
@@ -645,8 +640,9 @@ def _report_file_result(label: str, code: int, duration: float, output: str, std
         print(f"  FAIL {label} ({duration:.1f}s) exited 0 without a pytest summary; the process was replaced mid-run")
         _print_failure_summary(output)
         return outcome
-    print(f"  FAIL {label} ({duration:.1f}s)")
-    _print_failure_summary(output)
+    exit_status = _format_exit_status(code)
+    print(f"  FAIL {label} ({duration:.1f}s) {exit_status}")
+    _print_failure_summary(output, stderr=stderr, exit_status=exit_status)
     return outcome
 
 

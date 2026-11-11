@@ -8,6 +8,21 @@ flags. Other run-related docs:
 * [`runbooks.md`](runbooks.md) -- recovery playbooks for stuck or
   failed runs.
 
+## Selected policy during server recovery
+
+When bootstrap selects a seed file, its absolute path is passed to that
+server's child environment for the initial launch, supervisor restarts and
+watchdog recovery. Two local supervisors keep separate selections; launch
+validation does not apply the child's tuning to the parent. A missing or
+invalid selected file refuses launch with a path-only error instead of
+falling back to another policy. With no explicit selection, normal environment
+and workdir discovery remain available.
+
+`.sdd/runtime/supervisor_state.json` records the optional `seed_path` for
+operator inspection without seed contents. Older snapshots remain readable.
+The path identifies the selected file, not an immutable snapshot: edits to
+that file are revalidated on the next launch.
+
 ## Image attachments (`--attach`)
 
 `bernstein run` accepts one or more `--attach <path>` arguments to

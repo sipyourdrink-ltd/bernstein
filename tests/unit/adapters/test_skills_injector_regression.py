@@ -126,6 +126,86 @@ def test_audit_record_digests_match_written_bytes(tmp_path: Path, templates_dir:
     assert record["rendered_digest"] == actual_rendered_digest
 
 
+_ORIGINAL_WRITE_TEXT = Path.write_text
+
+
+def _write_text_as_on_windows(
+    self: Path,
+    data: str,
+    encoding: str | None = None,
+    errors: str | None = None,
+    newline: str | None = None,
+) -> int:
+    """``Path.write_text`` as it behaves on Windows, on any host.
+
+    With ``newline=None`` (the default) text mode translates every ``\\n`` to
+    ``os.linesep``, which is ``\\r\\n`` on Windows. Forcing that translation
+    here makes the Windows-only defect (#5787) reproducible on Linux and macOS
+    CI too, where text mode never translates.
+    """
+    return _ORIGINAL_WRITE_TEXT(
+        self, data, encoding=encoding, errors=errors, newline="\r\n" if newline is None else newline
+    )
+
+
+def test_written_bytes_and_digest_survive_windows_text_mode(
+    tmp_path: Path, templates_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The audit digest must describe the file on disk on every host.
+
+    The digest is taken over the rendered string's UTF-8 bytes; a text-mode
+    write on Windows put ``\\r\\n`` on disk instead, so the recorded
+    ``rendered_digest`` matched no file a verifier could hash.
+    """
+    monkeypatch.setattr(Path, "write_text", _write_text_as_on_windows)
+    workdir = tmp_path / "worktree"
+    workdir.mkdir()
+    tasks = [Task(id="task-1", title="Digest test", description="Check hash", role="backend")]
+
+    audit_records = inject_skills(
+        workdir=workdir,
+        role="backend",
+        tasks=tasks,
+        session_id="sess-win",
+        templates_dir=templates_dir,
+    )
+
+    written_bytes = (workdir / ".claude" / "skills" / "example.md").read_bytes()
+    assert b"\r" not in written_bytes
+    assert written_bytes == _expected_bytes(session_id="sess-win", tasks=tasks)
+    (record,) = [r for r in audit_records if r["template_name"] == "example.md"]
+    assert record["rendered_digest"] == hashlib.blake2b(written_bytes).hexdigest()
+
+
+def test_a_crlf_template_injects_the_same_bytes_and_digests_as_an_lf_one(tmp_path: Path, templates_dir: Path):
+    """A Windows checkout (``core.autocrlf``) stores templates with CRLF.
+
+    The template is read with universal newlines, so the rendered skill, both
+    audit digests and the written file must not depend on how the template
+    happens to be stored on this host.
+    """
+    tasks = [Task(id="task-1", title="Line endings", description="Check", role="backend")]
+    skills_dir = templates_dir.parent / "skills"
+
+    def inject(into: Path) -> tuple[bytes, dict[str, str]]:
+        into.mkdir()
+        records = inject_skills(
+            workdir=into, role="backend", tasks=tasks, session_id="sess-eol", templates_dir=templates_dir
+        )
+        (record,) = [r for r in records if r["template_name"] == "example.md"]
+        return (into / ".claude" / "skills" / "example.md").read_bytes(), record
+
+    lf_bytes, lf_record = inject(tmp_path / "lf")
+    (skills_dir / "example.md").write_bytes(SKILL_BODY.replace("\n", "\r\n").encode("utf-8"))
+    crlf_bytes, crlf_record = inject(tmp_path / "crlf")
+
+    assert crlf_bytes == lf_bytes
+    assert b"\r" not in crlf_bytes
+    assert crlf_record["pre_render_digest"] == lf_record["pre_render_digest"]
+    assert crlf_record["rendered_digest"] == lf_record["rendered_digest"]
+    assert crlf_record["rendered_digest"] == hashlib.blake2b(crlf_bytes).hexdigest()
+
+
 def test_empty_injection_returns_explicit_empty_list(tmp_path: Path):
     workdir = tmp_path / "worktree"
     workdir.mkdir()

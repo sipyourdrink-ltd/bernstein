@@ -2,6 +2,9 @@ name: Dependabot Auto-merge
 
 on:
   pull_request:
+    # The default three, plus ready_for_review: a Draft is never armed
+    # (below), so the event that ends the draft has to reach the gate.
+    types: [opened, reopened, synchronize, ready_for_review]
 
 concurrency:
   group: dependabot-merge-${{ github.event.pull_request.number }}
@@ -28,7 +31,7 @@ jobs:
       github.event.pull_request.user.type == 'Bot'
     steps:
       - name: Harden runner (audit mode)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
       - name: Fetch Dependabot metadata
@@ -46,7 +49,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          # The event's own Draft boolean, bound directly so the shell sees
+          # exactly "true" or "false" and nothing a label or title could spoof.
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        # A Draft is deliberate: enabling auto-merge on one is refused by the
+        # API anyway (#6758), so finish without calling gh and let the
+        # ready_for_review event bring the PR back here. Anything other than
+        # a literal true/false means the event did not say, and an update is
+        # not armed on a guess.
+        #
         # No merge-method flag: main is behind a merge queue, so --auto
         # enqueues and the queue applies its own configured method. An
         # explicit --merge asks for a method the ruleset does not allow.
-        run: gh pr merge --auto "$PR_URL"
+        run: |
+          case "$PR_DRAFT" in
+            true)
+              echo "Draft pull request: auto-merge is not armed until it is marked ready for review."
+              exit 0
+              ;;
+            false)
+              ;;
+            *)
+              echo "::error::pull_request.draft is '${PR_DRAFT:-<unset>}', not true/false; refusing to arm auto-merge."
+              exit 1
+              ;;
+          esac
+          gh pr merge --auto "$PR_URL"
