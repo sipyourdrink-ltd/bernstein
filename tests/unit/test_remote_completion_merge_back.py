@@ -109,6 +109,9 @@ class _Spawner:
     def merge_remote_branch(self, session: Any) -> MergeResult | None:
         self.merged.append(session)
         self.worktree_present_at_merge = (self.workdir / ".sdd" / "worktrees" / session.id / "planned.txt").exists()
+        if self.merge_result is not None and self.merge_result.success:
+            # Land it for real, so the branch is merged when cleanup runs.
+            _git(self.workdir, "merge", "-q", "--no-ff", "-m", "land", f"agent/{session.id}")
         return self.merge_result
 
 
@@ -305,6 +308,8 @@ def test_a_negative_verification_gate_blocks_the_merge_and_grades_the_branch_tre
     assert orch._client.posts == [f"http://127.0.0.1:8052/tasks/{_TASK}/reopen"]
     assert spawner.cleaned == [_SESSION]
     assert not (repo / ".sdd" / "worktrees" / _SESSION).exists()
+    # Unmerged work is never force-deleted.
+    assert _BRANCH in _git(repo, "branch", "--list", _BRANCH)
 
 
 def test_approval_pr_mode_opens_the_pr_from_the_remote_worktree(tmp_path: Path) -> None:
@@ -332,5 +337,42 @@ def test_approval_pr_mode_opens_the_pr_from_the_remote_worktree(tmp_path: Path) 
         (_TASK, _SESSION, repo / ".sdd" / "worktrees" / _SESSION)
     ]
     assert spawner.merged == []
-    # Held for approval: not closed, not reopened.
+    # Held for approval: not closed, not reopened, and the work is kept.
     assert orch._client.posts == []
+    assert spawner.cleaned == []
+    assert (repo / ".sdd" / "worktrees" / _SESSION / "planned.txt").exists()
+    assert _BRANCH in _git(repo, "branch", "--list", _BRANCH)
+
+
+def test_an_approval_hold_without_a_pr_keeps_the_worktree_and_branch(tmp_path: Path) -> None:
+    """A rejected or timed-out approval holds the merge; it must not destroy the verified work."""
+    repo = _repo_with_remote_branch(tmp_path)
+    spawner = _Spawner(MergeResult(success=True, conflicting_files=[]))
+    orch = _orch(repo, spawner)
+    orch._remote_completion_branches = {_TASK: _BRANCH}
+    orch._approval_gate = SimpleNamespace(
+        evaluate=lambda task, **kwargs: SimpleNamespace(rejected=True, approved=False, resolution="timed_out"),
+    )
+
+    _process_single_completed_task(orch, _task(), _verdict(True), _tick_result())
+
+    assert spawner.merged == []
+    assert spawner.cleaned == []
+    assert orch._client.posts == []
+    assert (repo / ".sdd" / "worktrees" / _SESSION / "planned.txt").exists()
+    assert _BRANCH in _git(repo, "branch", "--list", _BRANCH)
+
+
+def test_a_merge_with_no_result_is_not_treated_as_landed(tmp_path: Path) -> None:
+    """``merge_remote_branch`` is typed ``MergeResult | None``; None must not close the task."""
+    repo = _repo_with_remote_branch(tmp_path)
+    spawner = _Spawner(None)
+    orch = _orch(repo, spawner)
+    orch._remote_completion_branches = {_TASK: _BRANCH}
+
+    _process_single_completed_task(orch, _task(), _verdict(True), _tick_result())
+
+    assert len(spawner.merged) == 1
+    assert orch._client.posts == [f"http://127.0.0.1:8052/tasks/{_TASK}/reopen"]
+    assert any(kind == "alert" and "no merge result" in text for kind, text in orch._bulletins)
+    assert _BRANCH in _git(repo, "branch", "--list", _BRANCH)

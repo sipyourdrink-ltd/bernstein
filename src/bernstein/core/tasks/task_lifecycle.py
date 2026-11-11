@@ -4996,9 +4996,13 @@ def _remote_completion_branches(orch: Any) -> dict[str, str]:
     """Branches the janitor materialised for remote completions, keyed by task id (issue #6611).
 
     Recorded when the alive-exit pass ingests a posted artifact and consumed
-    when the verdict is processed, so the merge-back lands the branch the
-    verdict was computed on, not whatever the newest posted artifact is by
-    then.
+    when the verdict is processed. One slot per task is enough because
+    :func:`process_completed_tasks` enqueues a task's pass and processes its
+    verdict in the same call (``verify_futures`` is local to that call): the
+    ingest that writes this slot is the one whose verdict pops it. A record left
+    by a pass enqueued elsewhere is overwritten by the next pass's own ingest
+    before that pass's verdict is read, so the merge-back lands the branch the
+    processed verdict was computed on.
     """
     branches = getattr(orch, "_remote_completion_branches", None)
     if branches is None:
@@ -5015,10 +5019,12 @@ def _discard_remote_worktree(orch: Any, session: AgentSession, worktree: Path, b
     if worktree.exists():
         # No worktree manager was registered for the run (worktrees disabled),
         # so the session cleanup had nothing to act on; remove what the
-        # merge-back created itself.
+        # merge-back created itself. ``-d``, not ``-D``: a merged branch goes,
+        # an unmerged one stays, as the manager's cleanup preserves unmerged
+        # commits rather than dropping them.
         workdir = Path(orch._workdir)
         run_git(["worktree", "remove", "--force", str(worktree)], workdir, timeout=60)
-        run_git(["branch", "-D", branch], workdir, timeout=30)
+        run_git(["branch", "-d", branch], workdir, timeout=30)
 
 
 def _merge_remote_completion(
@@ -5088,13 +5094,27 @@ def _merge_remote_completion(
         return False, False
 
     if _evaluate_approval_gate(orch, task, session, None, janitor_passed):
-        logger.info("remote_merge_back: task=%s branch=%s held by the approval gate", task.id, branch)
-        _discard_remote_worktree(orch, session, worktree, branch)
+        # A hold is the gate working, not a failure: keep the verified work.
+        # In PR mode ``create_pr`` has already pushed the branch for the pull
+        # request; the worktree and local branch stay so an operator, or a
+        # later approval, can land it without re-ingesting the artifact.
+        logger.info(
+            "remote_merge_back: task=%s branch=%s held by the approval gate; keeping %s and the branch",
+            task.id,
+            branch,
+            worktree,
+        )
         return True, False
 
     merge_result = orch._spawner.merge_remote_branch(session)
+    if merge_result is None:
+        # ``_handle_merge_result`` reads None as "no merge to report" and
+        # succeeds, which here would close a task whose work never landed.
+        logger.error("remote_merge_back: task=%s branch=%s merge returned no result; not closing", task.id, branch)
+        orch._post_bulletin("alert", f"remote merge-back for task {task.id} produced no merge result for {branch}")
+        return True, True
     merge_ok = _handle_merge_result(orch, task, result, merge_result, janitor_passed, False)
-    merge_failed = merge_result is not None and not merge_result.success and not merge_result.conflicting_files
+    merge_failed = not merge_result.success and not merge_result.conflicting_files
     if not merge_ok:
         logger.error(
             "remote_merge_back: task=%s branch=%s not merged; preserving the branch and %s: %s",
@@ -5201,7 +5221,9 @@ def _enqueue_alive_exit_janitor_pass(
         # Materialise the receipted bytes as a branch and grade the merged tree.
         preview_branch = _ingest_remote_completion(orch, task)
         if preview_branch is not None:
-            session_id = f"remote-{task.id}"
+            # Name the preview session after the branch, as the merge-back
+            # does, so preview logs and the journal's merge row agree.
+            session_id = preview_branch.removeprefix("agent/")
             _remote_completion_branches(orch)[task.id] = preview_branch
     preview_setup = _preview_setup(orch) if preview_branch is not None else None
     if executor is None:

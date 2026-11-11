@@ -363,15 +363,20 @@ or the declared output key for an artifact-mode task) and then calls
 alive-exit janitor pass materialises the newest verified artifact as the
 branch `agent/remote-<task>-v<n>` and grades the merged tree through the
 same merge preview a local agent gets (#6611). On PASS the verdict pass
-merges that branch into the run branch through the spawner merge path under
-a synthetic session named after the branch, so the merge queue, the
+checks the branch out at `.sdd/worktrees/remote-<task>-v<n>`, registers it
+under a synthetic session named after the branch, and runs the verification
+gates a local agent's work meets (quality gates, rule enforcement,
+cross-model review, formal verification) on that tree. Then come the approval
+gate and the merge through the spawner merge path, so the merge queue, the
 default-branch guard, the blast-radius ceiling, the signed file scope, the
-quality gates, landed provenance and the push all apply; it then closes the
-task, seals its evidence, records `task_merged` in the run journal and
-removes the branch. A non-conflict merge failure takes the same bounded
-reopen budget as a local agent (`BERNSTEIN_JANITOR_REOPEN_MAX`) and leaves
-the branch and its worktree under `.sdd/worktrees/remote-<task>-v<n>` for
-inspection; a conflict creates a resolver task. A completion with no posted
+quality gates, landed provenance and the push all apply. On success it
+closes the task, seals its evidence, records `task_merged` in the run journal
+and removes the worktree and the branch. A failed checkout, a merge with no
+result or a non-conflict merge failure takes the same bounded reopen budget
+as a local agent (`BERNSTEIN_JANITOR_REOPEN_MAX`) and keeps the branch; a
+conflict creates a resolver task. An approval hold keeps the worktree and the
+branch (in PR mode the pull request is opened from them); remove them once
+the hold is resolved. A completion with no posted
 artifact is graded on the run checkout and fails honestly, with the log line
 `remote completion without a posted artifact`.
 
