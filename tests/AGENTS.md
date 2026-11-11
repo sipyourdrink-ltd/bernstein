@@ -1,8 +1,8 @@
 # Test suite
 
-Layered pytest suite. `unit/` is the big one (2800+ files, external network blocked by default), more and more of it in subdirectories that mirror `src/bernstein/`; `integration/` includes in-process fixtures and service-backed tests; `contract/` holds the adapter capability contracts; `integration/conformance/auditor/` and `conformance/auditor/` score what an exported bundle alone can answer; `protocol/` is the MCP/A2A/ACP version matrix; plus `property/`, `snapshot/`, `golden/`, `perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`. Shared fakes (vault, ssh) live in `support/`.
+Layered pytest suite. `unit/` is the big one (2900+ files, external network blocked by default), more and more of it in subdirectories that mirror `src/bernstein/`; `integration/` includes in-process fixtures and service-backed tests; `contract/` holds the adapter capability contracts; `integration/conformance/auditor/` and `conformance/auditor/` score what an exported bundle alone can answer; `protocol/` is the MCP/A2A/ACP version matrix; plus `property/`, `snapshot/`, `golden/`, `perf/`, `chaos/`, `stress/`, `pentest/`, and `benchmarks/`. Shared fakes (vault, ssh) live in `support/`.
 
-Focused regressions in `unit/routing/`, `unit/security/`, and `unit/tasks/` cover ladder changes, PII boundaries, concurrent claims, and cooperative STOP_REQ cancellation. `unit/adapters/test_bandit_scanner.py` uses recorded SARIF under `fixtures/scanners/bandit/`; `unit/test_thread_stream_route.py` covers the journal SSE route.
+Focused regressions in `unit/routing/`, `unit/security/`, and `unit/tasks/` cover ladder changes, PII boundaries, concurrent claims, and cooperative STOP_REQ cancellation. Scanner adapter tests (`unit/adapters/test_bandit_scanner.py`, `unit/adapters/test_osv_scanner.py`) read SARIF recorded from a pinned tool under `fixtures/scanners/` (one directory per tool); `unit/test_thread_stream_route.py` covers the journal SSE route. `unit/checks/` pins the finding contract the doctor producers share with the installation audit (#5073), `unit/volunteer/test_federation.py` federated index trust and limits, `unit/test_auth_attempt_limits.py` the auth lockout, and `integration/test_admission_spawn_refusal.py` external policy at spawn (#6956).
 
 ## How to run
 
@@ -28,8 +28,8 @@ uv run python scripts/run_tests.py --affected origin/main  # only tests the chan
 
 ## Gotchas
 
-- CI shards the suite with `scripts/run_tests.py --shard N/M`, balanced by `fixtures/ci/test-shard-durations.json`; a test that depends on sibling-file ordering is already broken.
+- CI shards the suite with `scripts/run_tests.py --shard N/M` (eight shards at `--parallel 8` on Ubuntu, four at `--parallel 4` on Windows, #6926), balanced by `fixtures/ci/test-shard-durations.json`; a test that depends on sibling-file ordering is already broken.
 - A change under `src/`, `scripts/`, `tests/` or `.github/workflows/` with an empty affected set fails closed, except changes confined to `contract/`, `property/` or `snapshot/` (covered by full jobs), or deleted test files.
 - Live adapter conformance tests are opt-in via the `--live` flag registered in `conftest.py`.
 
-<!-- Reviewed against main 943bf279c3a8, including STOP_REQ, Bandit, journal SSE and mutation-runner regressions. -->
+<!-- Reviewed 2026-11-11 against main 535af7532, including OSV scanner, doctor producers, federation, auth limits and the eight-shard CI layout. -->
