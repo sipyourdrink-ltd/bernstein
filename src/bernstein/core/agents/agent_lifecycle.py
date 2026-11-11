@@ -3253,7 +3253,11 @@ def _refresh_heartbeat_from_signals(orch: Any, session: AgentSession, now: float
     """
     _hb_freshness_s = _IDLE_HEARTBEAT_THRESHOLD_S * 0.8
 
-    if session.pid and _is_process_alive(session.pid):
+    from bernstein.core.agents.spawner_core import _in_process_observer
+
+    observe_thread = _in_process_observer(getattr(orch, "_spawner", None), session)
+    alive = observe_thread() if observe_thread is not None else bool(session.pid and _is_process_alive(session.pid))
+    if alive:
         session.heartbeat_ts = now
         session.log_only_heartbeat_ticks = 0
         return

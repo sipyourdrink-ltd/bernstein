@@ -8,6 +8,7 @@ import copy
 import inspect
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -15,6 +16,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
@@ -109,6 +111,7 @@ from bernstein.core.agents.spawner_worktree import (
 from bernstein.core.agents.spawner_worktree import (
     prune_orphan_worktrees as _prune_orphan_worktrees,
 )
+from bernstein.core.config import platform_compat
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.defaults import SDD_SERVER_PORT, SPAWN
@@ -140,6 +143,7 @@ from bernstein.core.security.executor_admission import (
     AdmissionPolicyError,
     AdmissionSubject,
 )
+from bernstein.core.security.external_policy_hook import HookRequest, HookVerdict, PolicyHookRegistry
 from bernstein.core.tasks.artifact_completion import needs_git_worktree
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, new_trace
@@ -193,6 +197,49 @@ _read_cached = _project_context.read_cached
 # whole daily log. Module-level (not per-spawner) so multiple spawner
 # instances in one process share the same critical section.
 _SANDBOX_AUDIT_LOCK = threading.Lock()
+
+
+@dataclass
+class _SessionExecution:
+    """Ephemeral identity of one dispatch, independent of mutable registries."""
+
+    session: AgentSession
+    in_process: bool
+    pgid: int | None
+    request: Callable[[], None]
+    observe: Callable[[], bool]
+    cleanup: Callable[[], None]
+    completed: bool = False
+
+
+def _in_process_observer(spawner: Any, session: AgentSession) -> Callable[[], bool] | None:
+    """Resolve a real thread handle; synthetic pid values never identify a process."""
+    record = getattr(spawner, "_session_executions", {}).get(session.id)
+    if record is not None:
+        if record.session is not session:
+            return lambda: True  # stale session has no authority over its replacement
+        return record.observe if record.in_process else None
+    in_process = getattr(spawner, "_in_process", None)
+    if not isinstance(in_process, InProcessAgent):
+        return None
+    handle = in_process.active_sessions.get(session.id)
+    return handle.thread.is_alive if handle is not None else None
+
+
+def _leader_pgid(pid: int | None) -> int | None:
+    """Return a process group only when the spawned process leads it safely."""
+    if pid is None:
+        return None
+    if platform_compat.IS_WINDOWS:
+        return pid if pid > 0 else None
+    if os.name != "posix" or pid <= 1:
+        return None
+    try:
+        if os.getpgid(pid) == pid and pid != os.getpgrp():
+            return pid
+    except OSError:
+        return None
+    return None
 
 
 def _list_subdirs_cached(path: Path) -> list[str]:
@@ -1622,6 +1669,8 @@ class AgentSpawner:
         templates_dir: Path to templates/roles/ directory.
         workdir: Project working directory.
         agent_registry: Optional agent registry for dynamic agent types.
+        policy_hook_registry: Optional external policy registry for additional
+            fail-closed spawn admission, audited in the install chain.
     """
 
     def __init__(
@@ -1660,7 +1709,9 @@ class AgentSpawner:
         availability_prober: Callable[[ChainElement], ProbeResult] | None = None,
         adapter_pinned: bool = False,
         context_policy_config: dict[str, Any] | None = None,
+        policy_hook_registry: PolicyHookRegistry | None = None,
     ) -> None:
+        self._policy_hook_registry = policy_hook_registry
         self._enable_caching = enable_caching
         # True when the run-level adapter was explicitly selected by the
         # operator (--adapter flag, BERNSTEIN_ADAPTER env var, or a non-"auto"
@@ -1760,6 +1811,7 @@ class AgentSpawner:
         self._file_ownership_provider: Callable[[], dict[str, str]] | None = None
         self._cost_anomaly_spawn_observer: Callable[[list[Task], ModelConfig], None] | None = None
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
+        self._session_executions: dict[str, _SessionExecution] = {}
         # Per-session baseline of operator-checkout untracked paths, captured
         # at manager/planning spawn so the reap-time sweep can quarantine any
         # stray write that escaped the worktree cwd (issue #2793).
@@ -2640,6 +2692,7 @@ class AgentSpawner:
             logger.error("Refusing spawn %s: invalid admission policy: %s", session_id, exc)
             raise SpawnError(f"admission policy is invalid: {exc}") from exc
         if policy is None:
+            self._enforce_external_admission(session_id=session_id, subject=subject)
             return
 
         decision = policy.evaluate(subject)
@@ -2656,6 +2709,7 @@ class AgentSpawner:
             logger.warning("Could not persist admission record for %s: %s", session_id, exc)
 
         if decision.allowed:
+            self._enforce_external_admission(session_id=session_id, subject=subject)
             return
 
         logger.error(
@@ -2667,6 +2721,42 @@ class AgentSpawner:
         )
         self._emit_admission_refusal_audit_event(session_id=session_id, decision=decision)
         raise SpawnError(f"admission refused: {decision.reason}")
+
+    def _enforce_external_admission(self, *, session_id: str, subject: AdmissionSubject) -> None:
+        """Apply the injected registry as an additional, audited spawn boundary.
+
+        Every hook is evaluated and recorded in the install's existing chain.
+        Unlike general-purpose ``first_decisive``, admission requires at least
+        one explicit allow and rejects any denial, unavailable engine or allow
+        obligation. Registry fail-open and default-verdict settings therefore
+        cannot weaken this boundary. Native admission denials never reach it.
+        """
+        registry = self._policy_hook_registry
+        if registry is None:
+            return
+
+        from bernstein.core.security.audit_chain import AuditChainStore
+
+        try:
+            chain = AuditChainStore(self._workdir / ".sdd" / "audit")
+            responses = registry.with_audit_chain(chain).evaluate(
+                HookRequest(
+                    action="spawn",
+                    resource=f"agent_session:{session_id}",
+                    agent_id=session_id,
+                    role=subject.role,
+                    metadata=subject.as_dict(),
+                )
+            )
+        except Exception as exc:
+            raise SpawnError("external admission could not evaluate or record the policy") from exc
+
+        if any(response.verdict not in (HookVerdict.ALLOW, HookVerdict.ABSTAIN) for response in responses):
+            raise SpawnError("external admission refused: policy denied or unavailable")
+        if any(response.obligations for response in responses if response.verdict == HookVerdict.ALLOW):
+            raise SpawnError("external admission refused: unsupported policy obligation")
+        if not any(response.verdict == HookVerdict.ALLOW for response in responses):
+            raise SpawnError("external admission refused: no explicit policy allow")
 
     def _admission_sandbox_tier(self, isolation_mode: IsolationMode) -> str:
         """Return the sandbox tier this spawn runs under, for admission.
@@ -4834,20 +4924,29 @@ class AgentSpawner:
 
         # Executor admission (#4907).  The gate runs here rather than
         # beside the lethal-trifecta check above because the executor
-        # identity it judges - adapter, model, endpoint - is only fully
-        # resolved at this point; it is still ahead of every process
-        # start, so a refusal produces no agent.
-        self._enforce_admission_policy(
-            session_id=session_id,
-            subject=AdmissionSubject(
-                role=role,
-                adapter=resolved_endpoint_adapter_name,
-                model=resolved_endpoint_model,
-                endpoint=resolved_endpoint_base_url,
-                sandbox=self._admission_sandbox_tier(isolation_mode),
-                task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
-            ),
-        )
+        # identity it judges is sufficient for the legacy native preflight.
+        # An injected registry instead needs the actual per-attempt subject
+        # below, before the adapter action and outside its retry handlers.
+        if self._policy_hook_registry is None:
+            # Preserve the existing native-only preflight. Injected registries
+            # use this same gate below once the actual attempt is fully bound;
+            # the primary adapter must not refuse an authorized selected target.
+            self._enforce_admission_policy(
+                session_id=session_id,
+                subject=AdmissionSubject(
+                    role=role,
+                    adapter=resolved_endpoint_adapter_name,
+                    model=resolved_endpoint_model,
+                    endpoint=resolved_endpoint_base_url,
+                    sandbox=self._admission_sandbox_tier(isolation_mode),
+                    task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
+                ),
+            )
+        elif (unbound_transport := self._attachment_routing_refusal()) is not None:
+            # These paths either own another backend or may fall back to a
+            # different confinement boundary. Their execution subject is not
+            # bound by the direct-adapter contract, so never bypass the hook.
+            raise SpawnError(f"external admission cannot bind executor subject for {unbound_transport}")
 
         session = AgentSession(
             id=session_id,
@@ -5356,12 +5455,36 @@ class AgentSpawner:
                                 len(role_council.get("candidates") or ()),
                             )
 
+                    if self._policy_hook_registry is not None:
+                        endpoint = (attempt_mcp or {}).get("base_url", "")
+                        if not isinstance(endpoint, str):
+                            raise SpawnError("external admission cannot bind a non-string endpoint")
+                        try:
+                            self._enforce_admission_policy(
+                                session_id=session_id,
+                                subject=AdmissionSubject(
+                                    role=session.role,
+                                    adapter=target_adapter.name(),
+                                    model=model_config.model,
+                                    endpoint=endpoint,
+                                    sandbox=self._admission_sandbox_tier(isolation_mode),
+                                    task_type=getattr(tasks[0].task_type, "value", str(tasks[0].task_type)),
+                                ),
+                            )
+                        except SpawnError:
+                            self._release_warm_pool_slot(session_id)
+                            raise
+
+                    # Policy refusal is outside every adapter retry handler:
+                    # failure to authorize or audit B cannot select C instead.
                     try:
                         # Apply OS-level resource limits to non-sandboxed spawns.
                         self._notify_cost_anomaly_spawn(tasks, model_config)
                         target_adapter.set_resource_limits(self._resource_limits)
                         spawn_start = time.perf_counter()
-                        if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+                        spawned_in_process = self._in_process is not None and self._backend == AgentBackend.IN_PROCESS
+                        if spawned_in_process:
+                            assert self._in_process is not None
                             # In-process: run the adapter's subprocess via
                             # a thread inside the current Python process
                             fake_pid, actual_log_path = self._in_process.run(
@@ -5620,6 +5743,7 @@ class AgentSpawner:
             # Post-spawn session setup
             if result is not None:
                 session.pid = result.pid
+                session.pgid = None if spawned_in_process else _leader_pgid(result.pid)
                 session.abort_reason = result.abort_reason
                 session.abort_detail = result.abort_detail
                 session.finish_reason = result.finish_reason
@@ -5643,6 +5767,9 @@ class AgentSpawner:
                     from bernstein.core.agents.agent_ipc import register_stdin_pipe
 
                     register_stdin_pipe(session_id, proc_stdin)
+
+            if not remote_spawned and session.container_id is None and session.id not in self._sandbox_exec_handles:
+                self._capture_session_execution(session, in_process=spawned_in_process, adapter=target_adapter)
 
             # Create and persist the initial trace
             # Serialize task fields to JSON-safe types (convert Enums to their values)
@@ -5869,12 +5996,15 @@ class AgentSpawner:
         """
         if not tasks:
             raise ValueError("Cannot resume with empty task list")
+        if self._policy_hook_registry is not None:
+            raise SpawnError("external admission cannot bind executor subject for crash resume")
 
         # Sovereign posture drift gate (#2518): the resume path goes straight to
         # the adapter without ``_spawn_for_tasks_internal``, so it must apply the
         # same gate or a sovereign run could resume an agent after the posture
         # drifted. A hard stop (``PostureDriftRefusal``), same as the main path.
         self._preflight_posture_drift()
+        resume_adapter = self._adapter
 
         # Build resume context prefix
         files_list = "\n".join(f"  - {f}" for f in changed_files) if changed_files else "  (none)"
@@ -5921,14 +6051,14 @@ class AgentSpawner:
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
-        # Resume goes straight to ``self._adapter``; gate its model like the
+        # Resume goes straight to ``resume_adapter``; gate its model like the
         # fresh-spawn path does, before any process starts.
         self._enforce_model_registry_gate(
             session_id=session_id,
             tasks=tasks,
             model_config=model_config,
             provider_name=None,
-            adapter=self._adapter,
+            adapter=resume_adapter,
             routing_path="spawner_resume",
         )
 
@@ -5939,7 +6069,7 @@ class AgentSpawner:
         # exactly the kind of short, tightly-budgeted resume where a model
         # exploring instead of finishing is most costly.
         #
-        # Resume spawns go straight to ``self._adapter`` (no provider
+        # Resume spawns go straight to ``resume_adapter`` (no provider
         # routing below), so the env/tuning fallback - which only the
         # openai_agents runner enforces - applies only when that adapter
         # is the openai_agents one. See the matching gate and rationale in
@@ -5948,7 +6078,7 @@ class AgentSpawner:
         if _resume_max_turns is None:
             from bernstein.adapters.openai_agents import OpenAIAgentsAdapter
 
-            if isinstance(self._adapter, OpenAIAgentsAdapter):
+            if isinstance(resume_adapter, OpenAIAgentsAdapter):
                 try:
                     from bernstein.adapters.openai_agents_runner import _resolve_max_turns
 
@@ -5988,14 +6118,14 @@ class AgentSpawner:
             role=role,
             task_ids=[t.id for t in tasks],
             model_config=model_config,
-            model_vendor=getattr(self._adapter, "model_vendor", "") or "",
+            model_vendor=getattr(resume_adapter, "model_vendor", "") or "",
             status="starting",
             timeout_s=self._resolve_spawn_timeout(tasks),
             context_receipt=receipt.to_dict()["entries"],
             # Endpoint identity fields (issue #4908) - resume resolves the
             # same way the primary spawn path does: role policy overrides
             # the adapter and model that actually serve this spawn.
-            endpoint_adapter_name=self._adapter.name(),
+            endpoint_adapter_name=resume_adapter.name(),
             endpoint_model=model_config.model,
             endpoint_base_url=_policy_preview.get("base_url", ""),
             endpoint_profile_name=_policy_preview.get("endpoint", ""),
@@ -6027,7 +6157,7 @@ class AgentSpawner:
         # Same task-identity forwarding as the primary spawn path: a resumed
         # agent must attribute its output to the task it continues.
         _resume_extra: dict[str, Any] = {}
-        _resume_params = inspect.signature(self._adapter.spawn).parameters
+        _resume_params = inspect.signature(resume_adapter.spawn).parameters
         if "task_id" in _resume_params:
             _resume_extra["task_id"] = tasks[0].id
         if "task_title" in _resume_params:
@@ -6035,11 +6165,11 @@ class AgentSpawner:
         if _resume_attachments is not None:
             if "multimodal_context" not in _resume_params:
                 raise AttachmentDispatchError(
-                    f"adapter {self._adapter.name()!r} cannot carry attachments on resume: its "
+                    f"adapter {resume_adapter.name()!r} cannot carry attachments on resume: its "
                     "spawn() does not accept multimodal_context."
                 )
             _resume_extra["multimodal_context"] = _resume_attachments
-        # Issue #3565: a resumed agent goes straight to ``self._adapter``
+        # Issue #3565: a resumed agent goes straight to ``resume_adapter``
         # (no ``_spawn_for_tasks_internal``), so it used to skip the
         # response-style resolution that path performs and the resumed
         # process never received ``system_addendum`` - the channel that
@@ -6080,7 +6210,7 @@ class AgentSpawner:
                     f"Cannot hand preserved worktree {preserved_path} to resume session {session_id}: {exc}"
                 ) from exc
         try:
-            result = self._adapter.spawn(
+            result = resume_adapter.spawn(
                 prompt=prompt,
                 workdir=worktree_path,
                 model_config=model_config,
@@ -6106,6 +6236,7 @@ class AgentSpawner:
         if owner is not None:
             self._worktree_roots[session_id] = owner.repo_root
         session.pid = result.pid
+        session.pgid = _leader_pgid(result.pid)
         session.abort_reason = result.abort_reason
         session.abort_detail = result.abort_detail
         session.finish_reason = result.finish_reason
@@ -6121,12 +6252,14 @@ class AgentSpawner:
         if result.proc is not None:
             self._procs[session_id] = result.proc  # type: ignore[assignment]
 
+        self._capture_session_execution(session, in_process=False, adapter=resume_adapter)
+
         # Track worktree so reap_completed_agent can merge+clean up
         self._worktree_paths[session_id] = worktree_path
 
         # Record persistent-agent step for each task if adapter is persistent
         for _t in tasks:
-            record_persistent_agent_step(self._workdir / ".sdd", _t.id, self._adapter.name())
+            record_persistent_agent_step(self._workdir / ".sdd", _t.id, resume_adapter.name())
 
         return session
 
@@ -7135,6 +7268,9 @@ class AgentSpawner:
         Returns:
             True if the process is alive, False otherwise.
         """
+        execution = self._session_executions.get(session.id)
+        if execution is not None:
+            return execution.observe() if execution.session is session else True
         if session.runtime_backend == "openclaw":
             return self._check_alive_openclaw(session)
 
@@ -7151,6 +7287,161 @@ class AgentSpawner:
         if session.pid is None:
             return False
         return self._adapter.is_alive(session.pid)
+
+    def _capture_session_execution(self, session: AgentSession, *, in_process: bool, adapter: CLIAdapter) -> None:
+        """Capture an actual dispatch once; record identity acts as its epoch."""
+        owner = self._in_process
+        handle = owner.active_sessions.get(session.id) if in_process and owner is not None else None
+        proc = self._procs.get(session.id)
+        pid, pgid = session.pid, session.pgid
+
+        def current() -> bool:
+            return self._session_executions.get(session.id) is record
+
+        def request() -> None:
+            if not current() or record.completed:
+                return
+            if in_process:
+                if handle is not None and owner is not None:
+                    # Set the captured handle even after registry retirement.
+                    handle.stop_requested = True
+                    registered = owner.active_sessions.get(session.id)
+                    if registered is None or registered is handle:
+                        owner.stop(session.id)
+            elif pid is not None:
+                receipt = adapter.kill(pid)
+                emit_process_reap_receipt(self._workdir, session.id, receipt, reason="stop_requested")
+
+        def observe() -> bool:
+            if not current():
+                return True  # stale callbacks cannot confirm another dispatch
+            if record.completed:
+                return False
+            if in_process:
+                return handle.thread.is_alive() if handle is not None else True
+            if proc is not None:
+                code = proc.poll()
+                if code is not None:
+                    session.exit_code = code
+                if pgid is not None:
+                    return platform_compat.process_group_alive(pgid)
+                return code is None
+            if pgid is not None:
+                return platform_compat.process_group_alive(pgid)
+            return adapter.is_alive(pid) if pid is not None else True
+
+        def cleanup() -> None:
+            if in_process and handle is not None and owner is not None:
+                session.exit_code = handle.exit_code
+                owner._cleanup_observed(session.id, handle)
+            if proc is not None and self._procs.get(session.id) is proc:
+                self._procs.pop(session.id)
+
+        record = _SessionExecution(session, in_process, pgid, request, observe, cleanup)
+        self._session_executions[session.id] = record
+
+    def _cooperative_group_sender(self, session: AgentSession) -> Callable[[int, int], bool]:
+        """Bind every escalation signal to the captured dispatch and group."""
+        record = self._session_executions.get(session.id)
+
+        def send(pgid: int, sig: int) -> bool:
+            if (
+                record is None
+                or self._session_executions.get(session.id) is not record
+                or record.session is not session
+                or record.completed
+                or record.in_process
+                or record.pgid != pgid
+            ):
+                return False
+            return platform_compat.kill_process_group(pgid, sig)
+
+        return send
+
+    def _cooperative_stop_finalizer(self, session: AgentSession) -> Callable[[], None]:
+        """Pin finalization to the same dispatch epoch as stop observation."""
+        record = self._session_executions.get(session.id)
+
+        def finalize() -> None:
+            if self._session_executions.get(session.id) is not record:
+                raise RuntimeError("Cannot finalize a replaced execution")
+            self._finalize_cooperative_stop(session)
+
+        return finalize
+
+    def _finalize_cooperative_stop(self, session: AgentSession) -> None:
+        """Retire observed-dead execution metadata without targeting any process."""
+        record = self._session_executions.get(session.id)
+        if record is not None:
+            if record.session is not session:
+                raise RuntimeError("Cannot finalize a replaced execution")
+            if record.completed:
+                return
+            if record.observe():
+                raise RuntimeError("Cannot finalize a live execution")
+            record.cleanup()
+        if session.timeout_timer is not None:
+            session.timeout_timer.cancel()
+        from bernstein.core.agents.agent_ipc import unregister_stdin_pipe
+
+        unregister_stdin_pipe(session.id)
+        self._transition_to_dead(session, "stop confirmed", "execution observed dead by cooperative reaper")
+        if record is not None:
+            record.completed = True
+            # Retain identity, discard strong execution handles and callbacks.
+            record.request = lambda: None
+            record.observe = lambda: False
+            record.cleanup = lambda: None
+
+    def _cooperative_stop_callbacks(self, session: AgentSession) -> tuple[Callable[[], None], Callable[[], bool]]:
+        """Bind stop intent and observation to this session's actual execution handle."""
+        execution = self._session_executions.get(session.id)
+        if execution is not None:
+            if execution.session is session:
+                return execution.request, execution.observe
+            return lambda: None, lambda: True
+        in_process = self._in_process
+        observe_thread = _in_process_observer(self, session)
+        if observe_thread is not None:
+            # Keep the real thread observable even if unrelated legacy cleanup
+            # removes its registry entry. A stop request never joins or cleans it.
+            assert in_process is not None
+            return lambda: in_process.stop(session.id), observe_thread
+
+        local_process = (
+            session.runtime_backend == "local"
+            and session.container_id is None
+            and session.id not in self._sandbox_exec_handles
+        )
+        if local_process:
+            if session.id in self._procs or session.pgid is not None:
+                self._capture_session_execution(session, in_process=False, adapter=self._adapter)
+                execution = self._session_executions[session.id]
+                return execution.request, execution.observe
+            # Missing provenance must not turn a possible synthetic identifier
+            # into an OS target, nor turn an unknown worker into observed death.
+            if session.pid is None or (
+                in_process is not None and session.id not in self._procs and session.pgid is None
+            ):
+                return lambda: None, lambda: True
+
+            def request_process_stop() -> None:
+                assert session.pid is not None
+                receipt = self._adapter.kill(session.pid)
+                emit_process_reap_receipt(self._workdir, session.id, receipt, reason="stop_requested")
+
+            def process_alive() -> bool:
+                observed = self._check_alive_process(session)
+                if observed is not None:
+                    return observed
+                if session.pgid is not None:
+                    return platform_compat.process_group_alive(session.pgid)
+                assert session.pid is not None
+                return self._adapter.is_alive(session.pid)
+
+            return request_process_stop, process_alive
+        # Preserve existing policies for remote/container/sandbox runtimes.
+        return lambda: self.kill(session), lambda: self.check_alive(session)
 
     def kill(self, session: AgentSession) -> None:
         """Terminate the agent process and mark session dead.

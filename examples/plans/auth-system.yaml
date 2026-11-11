@@ -148,8 +148,8 @@ stages:
         completion_signals:
           - type: path_exists
             path: "tests/test_auth.py"
-          - type: command
-            run: "pytest tests/test_auth.py tests/test_oauth.py -x -q"
+          - type: test_passes
+            command: "pytest tests/test_auth.py tests/test_oauth.py -x -q"
 
   # ── Stage 3: Security Hardening ──
   - name: "Hardening"

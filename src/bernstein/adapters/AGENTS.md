@@ -18,8 +18,8 @@ One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 
 | `http_429_classifier.py` | Classifies HTTP 429 errors into standing quotas vs. transient rate limits |
 | `canary.py`, `onboarding.py` | Nightly conformance matrix; interactive probe and capability discovery for new agent CLIs |
 | `mock.py` | Mock agent for zero-API-key demos; produces the same completion evidence real agents do (`Modified:` log lines plus a per-fix commit scoped to the mutated file) |
-| `scanner.py`, `scanner_registry.py`, `scanner_conformance.py` | Scanner contract, registry (semgrep, gitleaks, trivy, nmap built-ins), and golden-transcript conformance; canonical per-finding hashes |
-| `nmap.py`, `semgrep.py` | Nmap XML normalization, host-level network policy and port-syntax validation; Semgrep SARIF normalization and local ruleset digest |
+| `scanner.py`, `scanner_registry.py`, `scanner_conformance.py` | Scanner contract, registry (bandit, checkov, gitleaks, nmap, osv-scanner, semgrep, trivy built-ins), and golden-transcript conformance; canonical per-finding hashes |
+| `bandit.py`, `nmap.py`, `semgrep.py` | Bandit SARIF normalization and version/configuration provenance (`bandit[sarif]` required); Nmap XML, host policy and port validation; Semgrep SARIF and ruleset digest |
 | `deep_research.py` | Shared machinery for `gpt_researcher.py` and `tongyi_deepresearch.py`: per-agent gateway variables, egress check, standalone runner, digest-checked read-back |
 | `crew_ingest.py`, `directory/`, `digest/` | Ingest of role-and-crew traces as delegation receipts; SCIM directory provisioning; deterministic tool-output digesters |
 
@@ -36,4 +36,4 @@ One adapter per upstream coding-agent CLI (claude, codex, gemini, aider, goose, 
 
 Per-adapter unit tests are mostly flat as `tests/unit/test_adapter_<name>.py`, with a growing set under `tests/unit/adapters/` beside the shared subsystem tests. Both layouts are current; follow whichever one an adapter already uses, and run one file at a time. Contract checks live under `tests/contract/`; live-binary conformance is opt-in via the `--live` pytest flag.
 
-<!-- Reviewed 2026-10-24 against main b80e0aa71ee7; the notes above still hold. -->
+<!-- Reviewed against main 943bf279c3a8, including Bandit registry and provenance changes from a5bd6e882dd4. -->

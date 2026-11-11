@@ -135,7 +135,7 @@ flowchart LR
 Jeden Knoten übernimmt ein Agent, dessen Rolle die Phase zulässt; Rollenzäune und Freigabe-Gates halten, egal was der Agent innerhalb der Aufgabe tut. Ein Code-Knoten endet hinter Merge-Gates im eigenen git worktree. Die Knoten oben enden anders: ein [Artefaktvertrag](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/artifacts.md) benennt das Ergebnis (Bericht, Datensatz, Scan, Aktionslog), und der Knoten schließt mit einer signierten Lineage-Quittung statt eines Commits. Derselbe Scheduler, dasselbe Journal, dieselbe Offline-Verifikation - ob der Graph Code, Forschung, eine Ops-Änderung oder eine Mischung aus allen dreien liefert. Fertige Graphen für Software, Forschung, Doku, Enterprise und Contributor-Workflows liegen in [`.bernstein/scenarios/`](https://github.com/sipyourdrink-ltd/bernstein/tree/main/.bernstein/scenarios).
 
 ### in 30 Sekunden installieren
-<!-- l10n: en="install in 30 seconds" hash="sha256:c3811ac56cb5" -->
+<!-- l10n: en="install in 30 seconds" hash="sha256:8445ecc023db" -->
 
 ```bash
 uv tool install bernstein    # or: pipx install bernstein
@@ -143,6 +143,8 @@ bernstein init
 bernstein doctor             # checks a CLI agent is installed and authenticated
 bernstein -g "fix the failing test in tests/test_foo.py"
 ```
+
+`bernstein doctor --json` gibt auch die Audit-Vertragsbefunde `findings` aus, die bei denselben Installationsbeobachtungen mit denen von `bernstein govern audit --only INS --json` identisch sind. Der normale doctor-Bericht behält seine bisherige Darstellung. Stabile Prüfungs-IDs sind im [Betriebshandbuch für doctor](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/operations/doctor.md) beschrieben.
 
 pipx, pip, brew, dnf, npm und Docker werden in der [Installationsanleitung](https://docs.bernstein.run/en/latest/getting-started/install/) behandelt; das Air-Gap-Wheelhouse verfügt über einen eigenen [Air-Gap-Leitfaden](https://docs.bernstein.run/en/latest/installation/air-gap/).
 
@@ -155,7 +157,7 @@ bernstein verify receipt docs/assets/demo-run/run-receipt.json \
     --public-key docs/assets/demo-run/run-receipt.pub.pem
 ```
 
-Die CI prüft den committeten Receipt bei jedem Push auf main erneut – und belegt, dass manipulierte Kopien fehlschlagen –, damit publizierte Nachweise nicht zu dekorativen Dateien verkommen. `scripts/record_demo.sh` regeneriert Aufnahme, Receipt und Schlüssel aus einem frischen realen Durchlauf; im Terminal wird nichts synthetisiert.
+Der committete Receipt lässt sich jederzeit mit dem obigen Befehl erneut prüfen; eine manipulierte Kopie besteht dieselbe Prüfung nicht. `scripts/record_demo.sh` regeneriert Aufnahme, Receipt und Schlüssel aus einem frischen realen Durchlauf; im Terminal wird nichts synthetisiert.
 
 Ein laufender Durchlauf kann über beide Bedienoberflächen beobachtet werden. Beide lesen dieselbe Task-API, sodass keine Oberfläche ein verzögertes Abbild der anderen ist. In `bernstein live` scrollen linke und rechte Spalte unabhängig als vollständige Bereiche, sodass Steuerelemente auch in kleineren Terminals erreichbar bleiben.
 
@@ -231,7 +233,7 @@ Claude Code, Codex CLI, Gemini CLI, GitHub Copilot CLI, Cursor, Aider, Goose, Mu
 Kombinieren Sie Agenten im selben Lauf: Günstige lokale Modelle für Boilerplate-Code, leistungsfähigere Cloud-Modelle für Architekturfragen. `bernstein integrations list --installed` zeigt verfügbare Installationen auf Ihrem System.
 
 ### freiwillige rechenleistung
-<!-- l10n: en="volunteer compute" hash="sha256:1029883f94aa" -->
+<!-- l10n: en="volunteer compute" hash="sha256:3795224c8f81" -->
 
 Ein Projekt kann Issues als offen für Freiwillige markieren, und jeder kann eines davon auf der eigenen Maschine ausführen - ohne Konto und ohne Koordinator. Was eine Aufgabe tun darf, erklärt das Projekt in einem `volunteer.json`-Manifest - Sandbox-Backend, erlaubte Netzwerkziele, Obergrenzen für Laufzeit und Speicher - und die eigenen Limits des Spenders können das nur enger ziehen, niemals weiter. Die Quittung einer abgeschlossenen Aufgabe bindet das Ergebnis an die Isolationsentscheidung, unter der es entstanden ist, sodass ein Maintainer noch Monate später prüfen kann, worauf die Arbeit tatsächlich zugreifen durfte.
 
@@ -240,7 +242,7 @@ bernstein volunteer verify .
 bernstein volunteer browse --budget 60
 ```
 
-Der [Spenderleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt den Betrieb eines Workers und das Budget, das Sie setzen, der [Projektleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) das Deklarieren eines Manifests, und das [Bedrohungsmodell](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschreibt, wovor jede Grenze schützt und wovor nicht. Der Runner mit einem einzigen Befehl ist noch nicht veröffentlicht: Heute sind `verify`, `browse`, `budget`, `verify-bundle` und `hub` die funktionierenden Unterbefehle.
+Der [Spenderleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/donor-guide.md) behandelt den Betrieb eines Workers und das Budget, das Sie setzen, der [Projektleitfaden](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/project-guide.md) das Deklarieren eines Manifests, und das [Bedrohungsmodell](https://github.com/sipyourdrink-ltd/bernstein/blob/main/docs/volunteer/threat-model.md) beschreibt, wovor jede Grenze schützt und wovor nicht. Der Runner mit einem einzigen Befehl ist noch nicht veröffentlicht: Heute sind `verify`, `browse`, `budget`, `verify-bundle` und `hub` die funktionierenden Unterbefehle. `autopilot` ist registriert, verweigert aber die Ausführung, bis eine `TaskSource` implementiert ist.
 
 ### hinter den Kulissen
 <!-- l10n: en="beyond the front page" hash="sha256:1236c84b4c20" -->

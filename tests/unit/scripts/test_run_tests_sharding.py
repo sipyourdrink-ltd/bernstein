@@ -105,10 +105,10 @@ def test_parse_shard_spec_invalid_raises(run_tests_module: ModuleType, spec: str
 # --- shard_files partition properties --------------------------------------
 
 
-def test_shard_files_covers_every_file_exactly_once(run_tests_module: ModuleType) -> None:
-    """Union of all 4 shards == full list; intersection of any pair is empty."""
+@pytest.mark.parametrize("shard_count", [4, 8])
+def test_shard_files_covers_every_file_exactly_once(run_tests_module: ModuleType, shard_count: int) -> None:
+    """Union of all shards == full list; intersection of any pair is empty."""
     files = _fixed_files(1428)
-    shard_count = 4
 
     shards = [run_tests_module.shard_files(files, i, shard_count) for i in range(1, shard_count + 1)]
     _assert_complete_disjoint(files, shards)
@@ -123,12 +123,13 @@ def test_shard_files_partitions_are_disjoint_pairwise(run_tests_module: ModuleTy
             assert shards[a].isdisjoint(shards[b]), f"shards {a + 1} and {b + 1} overlap"
 
 
-def test_shard_files_is_deterministic_across_runs(run_tests_module: ModuleType) -> None:
+@pytest.mark.parametrize("shard_count", [4, 8])
+def test_shard_files_is_deterministic_across_runs(run_tests_module: ModuleType, shard_count: int) -> None:
     """Same inputs -> identical slice, every time (no hashing salt drift)."""
     files = _fixed_files(257)
-    first = run_tests_module.shard_files(files, 2, 4)
-    second = run_tests_module.shard_files(files, 2, 4)
-    third = run_tests_module.shard_files(list(files), 2, 4)
+    first = run_tests_module.shard_files(files, 2, shard_count)
+    second = run_tests_module.shard_files(files, 2, shard_count)
+    third = run_tests_module.shard_files(list(files), 2, shard_count)
     assert first == second == third
 
 
@@ -172,8 +173,10 @@ def test_shard_files_rejects_out_of_range_index(run_tests_module: ModuleType) ->
         run_tests_module.shard_files(files, 5, 4)
 
 
+@pytest.mark.parametrize("shard_count", [4, 8])
 def test_shard_files_duration_partition_covers_every_file_exactly_once(
     run_tests_module: ModuleType,
+    shard_count: int,
 ) -> None:
     """Duration-weighted path: union across shards equals input, no overlaps.
 
@@ -190,15 +193,18 @@ def test_shard_files_duration_partition_covers_every_file_exactly_once(
         if index % 2 == 0
     }
     assert len(durations) == len(files) // 2
-    shards = [run_tests_module.shard_files(files, i, 4, durations=durations) for i in range(1, 5)]
+    shards = [
+        run_tests_module.shard_files(files, i, shard_count, durations=durations) for i in range(1, shard_count + 1)
+    ]
     _assert_complete_disjoint(files, shards)
 
 
-def test_shard_files_duration_partition_is_deterministic(run_tests_module: ModuleType) -> None:
+@pytest.mark.parametrize("shard_count", [4, 8])
+def test_shard_files_duration_partition_is_deterministic(run_tests_module: ModuleType, shard_count: int) -> None:
     files = _fixed_files(64)
     durations = {run_tests_module.durations_key(path): float((index % 5) + 1) for index, path in enumerate(files)}
-    first = run_tests_module.shard_files(files, 3, 4, durations=durations)
-    second = run_tests_module.shard_files(list(files), 3, 4, durations=dict(durations))
+    first = run_tests_module.shard_files(files, 3, shard_count, durations=durations)
+    second = run_tests_module.shard_files(list(files), 3, shard_count, durations=dict(durations))
     assert first == second
 
 
