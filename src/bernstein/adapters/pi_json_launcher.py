@@ -33,6 +33,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+#: Printed when the pi binary cannot be started.
+PI_INSTALL_HINT = (
+    "Install: npm install -g @mariozechner/pi-coding-agent "
+    "or see https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent"
+)
+
 #: Stop reasons pi's text mode turns into exit code 1.
 FAILED_STOP_REASONS = frozenset({"error", "aborted", "length"})
 
@@ -84,7 +90,14 @@ def terminal_failure(lines: Iterable[str]) -> str | None:
 
 def run(argv: list[str]) -> int:
     """Run ``argv`` (the pi command), streaming its stdout, and return the exit code."""
-    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=None, text=True, encoding="utf-8", errors="replace")
+    try:
+        child = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=None, text=True, encoding="utf-8", errors="replace"
+        )
+    except FileNotFoundError:
+        # The adapter launches this module, not pi, so a missing pi lands here.
+        print(f"{argv[0]} not found in PATH. {PI_INSTALL_HINT}", file=sys.stderr, flush=True)
+        return 127
 
     def _forward(signum: int, _frame: Any) -> None:
         # Heartbeat escalation and the timeout watchdog signal this process;

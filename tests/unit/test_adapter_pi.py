@@ -18,12 +18,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("no_watchdog_threads")
 
 
-@pytest.fixture(autouse=True)
-def _pi_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Spawn tests mock Popen; the binary preflight must see a ``pi``."""
-    monkeypatch.setattr("bernstein.adapters.pi.shutil.which", lambda name, path=None: f"/usr/bin/{name}")
-
-
 def pi_cmd(full_cmd: list[str]) -> list[str]:
     """The pi argv inside ``python -m bernstein.adapters.pi_json_launcher -- ...``."""
     inner = inner_cmd(full_cmd)
@@ -137,25 +131,6 @@ class TestPiAdapterSpawn:
         inner = inner_cmd(popen.call_args.args[0])
         assert inner[:4] == [sys.executable, "-m", "bernstein.adapters.pi_json_launcher", "--"]
         assert inner[4] == "pi"
-
-    def test_spawn_refuses_before_launch_when_pi_is_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The launched process is Python, so a missing pi is caught by the preflight."""
-        monkeypatch.setattr("bernstein.adapters.pi.shutil.which", lambda name, path=None: None)
-        adapter = PiAdapter()
-        with (
-            patch("bernstein.adapters.pi.subprocess.Popen") as popen,
-            pytest.raises(RuntimeError, match="pi not found") as excinfo,
-        ):
-            adapter.spawn(
-                prompt="hello",
-                workdir=tmp_path,
-                model_config=ModelConfig(model="sonnet", effort="high"),
-                session_id="pi-missing-preflight",
-            )
-        assert "npm install -g @mariozechner/pi-coding-agent" in str(excinfo.value)
-        popen.assert_not_called()
 
     def test_spawn_translates_missing_cli(self, tmp_path: Path) -> None:
         adapter = PiAdapter()

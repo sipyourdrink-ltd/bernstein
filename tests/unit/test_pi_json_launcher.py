@@ -150,3 +150,18 @@ def test_the_log_grows_while_pi_is_still_working_and_a_late_failure_still_fails(
             proc.kill()
     assert proc.returncode == 1, stderr
     assert '"message_end"' in log.read_text(encoding="utf-8")
+
+
+def test_a_missing_pi_exits_127_with_the_install_hint(tmp_path: Path) -> None:
+    """The adapter launches Python, so a missing pi is reported by the launcher, not by Popen."""
+    env = {**os.environ, "PYTHONPATH": _SRC + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    missing = str(tmp_path / "no-such-pi")
+    done = subprocess.run(
+        [sys.executable, "-m", "bernstein.adapters.pi_json_launcher", "--", missing, "--mode", "json"],
+        capture_output=True,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    assert done.returncode == 127
+    assert b"npm install -g @mariozechner/pi-coding-agent" in done.stderr

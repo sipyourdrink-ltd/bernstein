@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
@@ -114,10 +113,6 @@ class PiAdapter(CLIAdapter):
         env = build_filtered_env(
             ["PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
         )
-        # The process launched below is the Python launcher, so a missing
-        # ``pi`` would otherwise only surface inside it, after spawn.
-        if shutil.which("pi", path=env.get("PATH")) is None:
-            raise RuntimeError(_PI_NOT_FOUND)
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
