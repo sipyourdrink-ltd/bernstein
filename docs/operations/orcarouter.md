@@ -25,7 +25,7 @@ If credential scoping is enabled, also permit `ORCAROUTER_API_KEY` for
 the intended role in `.sdd/config/credential_scopes.yaml`, following the
 [adapter credential guide](../adapters/openai-agents.md#credentials).
 
-Copy [the example bernstein.yaml](../../examples/orcarouter/bernstein.yaml)
+Copy [the example bernstein.yaml](https://github.com/sipyourdrink-ltd/bernstein/blob/main/examples/orcarouter/bernstein.yaml)
 into your project or merge its endpoint and `backend` role entries into
 your existing configuration. Despite its name, `local_endpoints` accepts
 an OpenAI-compatible hosted URL. The role inherits the profile's
